@@ -8,7 +8,7 @@
 //
 // REF: THESIS.md §11, §53, krama K1 step 6.
 
-import { OrbitControls } from '@react-three/drei';
+import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
@@ -62,6 +62,11 @@ export function Viewport() {
           <GroundClick />
           <Gizmo />
           <EditorOrbit />
+          {/* Blender-style axis-orientation widget in the bottom-right.
+              Click an axis label to snap the camera to that view. */}
+          <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+            <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
+          </GizmoHelper>
         </Suspense>
       </Canvas>
       <FpsMeter />
