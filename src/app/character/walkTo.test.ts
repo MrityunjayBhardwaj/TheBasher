@@ -175,6 +175,96 @@ describe('buildWalkToOps', () => {
     expect(second.ops[2].type).toBe('connect');
   });
 
+  it('auto-seeds TimeSource + wires loco.time when neither exists (silent-failure prevention)', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [10, 10], obstacles: [] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'loco',
+      nodeType: 'LocomotionState',
+      params: { speed: 1, loop: true },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'char',
+      nodeType: 'Character',
+      params: { name: 'a' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'loco', socket: 'out' },
+      to: { node: 'char', socket: 'locomotion' },
+    }).next;
+
+    const result = buildWalkToOps(state, 'char', [3, 0, 0]);
+    if (!result) throw new Error('expected ops');
+    // 4 ops: addNode TimeSource, connect Time→loco.time, addNode WalkPath, connect WP→loco.path
+    expect(result.ops).toHaveLength(4);
+    expect(result.ops[0].type).toBe('addNode');
+    expect((result.ops[0] as { nodeType?: string }).nodeType).toBe('TimeSource');
+    expect(result.ops[1].type).toBe('connect');
+    expect(result.ops[2].type).toBe('addNode');
+    expect((result.ops[2] as { nodeType?: string }).nodeType).toBe('WalkPath');
+    expect(result.ops[3].type).toBe('connect');
+
+    // Apply and verify the character actually moves at t>0.
+    const next = applyAll(state, result.ops);
+    const at0 = evaluate(next, 'char', { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } })
+      .value as CharacterValue;
+    const at2 = evaluate(next, 'char', { ctx: { time: { frame: 120, seconds: 2, normalized: 0 } } })
+      .value as CharacterValue;
+    expect(at0.position[0]).not.toBe(at2.position[0]);
+  });
+
+  it('connects existing TimeSource to loco.time when loco.time is unwired but TimeSource exists', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [10, 10], obstacles: [] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'loco',
+      nodeType: 'LocomotionState',
+      params: { speed: 1, loop: true },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'char',
+      nodeType: 'Character',
+      params: { name: 'a' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'loco', socket: 'out' },
+      to: { node: 'char', socket: 'locomotion' },
+    }).next;
+    // Note: NO connect from time → loco.time.
+
+    const result = buildWalkToOps(state, 'char', [3, 0, 0]);
+    if (!result) throw new Error('expected ops');
+    // 3 ops: connect existing-Time→loco.time, addNode WalkPath, connect WP→loco.path
+    expect(result.ops).toHaveLength(3);
+    expect(result.ops[0]).toEqual({
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'loco', socket: 'time' },
+    });
+  });
+
   it("second walkTo's `from` carries forward from the first walkTo's `to` (continuity)", () => {
     let state = buildBaselineCharacter();
     const first = buildWalkToOps(state, 'char', [3, 0, 0]);

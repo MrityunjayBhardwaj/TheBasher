@@ -10,10 +10,18 @@
 //   2. addNode(WalkPath) with from/to/sampleCount + pre-wired navmesh input
 //   3. connect(newWalkPath.out → loco.path)
 //
-// Pre-conditions (caller responsibility — macro returns [] if violated):
+// Pre-conditions (caller responsibility — macro returns null if violated):
 //   - characterId resolves to a Character node
 //   - that Character's `locomotion` input is connected to a LocomotionState
 //   - a Navmesh node exists in the DAG (for the new WalkPath's input)
+//
+// TimeSource auto-seed: if no TimeSource exists in the DAG, the macro
+// prepends `addNode(TimeSource)` AND a `connect(TimeSource → loco.time)`
+// op so the locomotion actually animates. Without this, a freshly-created
+// Character would have a static LocomotionState (no time flowing) and the
+// click-to-move would APPEAR to do nothing — silent-failure mode the user
+// can't diagnose. We choose seed-one over fail-loud because the P2 UX
+// goal is "no manual setup."
 //
 // The ORPHANED previous WalkPath stays in the DAG. P2 trade-off: the
 // op-only mutation discipline (V1) means the macro emits exactly the
@@ -95,14 +103,47 @@ export function buildWalkToOps(
 
   const sampleCount = options.sampleCount ?? 16;
   const from = getCurrentPositionFromLocomotion(state, locoRef.node);
+  const nodeCount = Object.keys(state.nodes).length;
 
-  // Deterministic id derived from existing-node count so dispatchAtomic's
+  // Deterministic ids derived from existing-node count so dispatchAtomic's
   // validator never collides with a previously-emitted id within the same
   // atomic batch. The store assigns its own ids if we omit, but explicit ids
   // keep the macro testable in isolation.
-  const newWalkPathId = `wp_${characterId}_${Object.keys(state.nodes).length}`;
+  const newWalkPathId = `wp_${characterId}_${nodeCount}`;
+  const newTimeSourceId = `time_${nodeCount}`;
 
   const ops: Op[] = [];
+
+  // Auto-seed TimeSource if absent. Without time flowing into LocomotionState,
+  // the character would APPEAR static after walkTo — silent-failure mode.
+  // The new TimeSource also gets connected to loco.time as part of the same
+  // atomic batch so one Cmd+Z still reverts the whole click.
+  const existingTimeId = findFirstNodeOfType(state, 'TimeSource');
+  const timeIdToWire = existingTimeId ?? newTimeSourceId;
+  if (!existingTimeId) {
+    ops.push({
+      type: 'addNode',
+      nodeId: newTimeSourceId,
+      nodeType: 'TimeSource',
+      params: {},
+    });
+    ops.push({
+      type: 'connect',
+      from: { node: newTimeSourceId, socket: 'out' },
+      to: { node: locoRef.node, socket: 'time' },
+    });
+  } else {
+    // If TimeSource exists but loco.time is not wired (e.g. an
+    // agent-created character that skipped the time wire), connect now.
+    const loco = state.nodes[locoRef.node];
+    if (loco && !loco.inputs.time) {
+      ops.push({
+        type: 'connect',
+        from: { node: timeIdToWire, socket: 'out' },
+        to: { node: locoRef.node, socket: 'time' },
+      });
+    }
+  }
 
   const existingPath = getCurrentPathRef(state, locoRef.node);
   if (existingPath) {

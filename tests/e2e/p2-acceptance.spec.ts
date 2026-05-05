@@ -439,6 +439,15 @@ test("P2#4 multi-character isolation: setParam on A's locomotion does not flip B
 
 // ---------------------------------------------------------------------------
 // P2#5 — Reload restores poses + paths bit-exact at the same t.
+//
+// What this test proves: the DAG round-trip (save → reload via V4 migration
+// runner → re-evaluate) produces a byte-identical Character output when given
+// the SAME explicit ctx.time. The playhead (`useTimeStore`) is intentionally
+// NOT persisted (it's a UI projection, not the DAG); the test re-injects t
+// into evaluate() through __basher_evaluate to isolate the DAG-restoration
+// guarantee from playhead-restoration concerns. Playhead persistence is a
+// separate concern that lands when timeline scrub state becomes part of
+// projects (P3+).
 // ---------------------------------------------------------------------------
 
 test('P2#5 reload restores poses + paths bit-exact (V4 round-trip)', async ({ page }) => {

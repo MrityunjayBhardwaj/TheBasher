@@ -428,11 +428,7 @@ function CharacterR({ value }: { value: CharacterValue }) {
     });
   }
   return (
-    <group
-      position={value.position as [number, number, number]}
-      rotation={[0, value.heading, 0]}
-      userData={{ basherCharacterName: value.name }}
-    >
+    <group position={value.position as [number, number, number]} rotation={[0, value.heading, 0]}>
       {skel.bones.length === 0 ? (
         // Fallback marker if no skeleton wired yet.
         <mesh position={[0, 0.5, 0]}>
