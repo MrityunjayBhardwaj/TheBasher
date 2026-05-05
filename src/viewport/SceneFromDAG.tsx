@@ -19,6 +19,7 @@ import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/dre
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -305,9 +306,12 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
 }
 
 function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
-  // useGLTF is suspense-driven — it throws a promise until the asset loads.
-  // Suspense at the Canvas root catches it.
-  const gltf = useGLTF(value.assetRef) as unknown as { scene: THREE.Group };
+  // useResolvedAssetUrl turns OPFS-relative paths (e.g. "assets/cube.gltf")
+  // into blob URLs; passthrough URLs (/foo, http://..., blob:) are returned
+  // as-is. Both this hook and useGLTF are suspense-driven; the Canvas-root
+  // Suspense boundary catches the throws.
+  const url = useResolvedAssetUrl(value.assetRef);
+  const gltf = useGLTF(url) as unknown as { scene: THREE.Group };
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
   useEffect(() => {
     if (!override) return;

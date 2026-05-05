@@ -5,8 +5,10 @@
 //
 // REF: THESIS.md §11, §17, krama K1.
 
+import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { Inspector } from './Inspector';
+import { Library } from './Library';
 import { NodeList } from './NodeList';
 import { RightDrawer } from './RightDrawer';
 import { Viewport } from '../viewport/Viewport';
@@ -41,9 +43,12 @@ export function Layout() {
       <div
         style={{
           gridArea: 'library',
-          display: mode === 'simple' ? 'none' : 'block',
+          display: mode === 'simple' ? 'none' : 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
         }}
       >
+        <Library />
         <NodeList />
       </div>
 
@@ -67,7 +72,9 @@ export function Layout() {
         className="relative overflow-hidden"
         data-testid="viewport-slot"
       >
-        <Viewport />
+        <AssetDropZone>
+          <Viewport />
+        </AssetDropZone>
       </div>
 
       <div

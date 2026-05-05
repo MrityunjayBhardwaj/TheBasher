@@ -18,6 +18,7 @@ import {
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
+import { seedAssetsIntoStorage } from './asset/seedOpfs';
 
 let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
@@ -52,6 +53,15 @@ export function boot(): Promise<void> {
   bootPromise = (async () => {
     registerAllNodes();
     const storage = await getStorage();
+
+    // K1 step 2.5 — seed bundled sample assets into OPFS on first boot.
+    // No-op on subsequent boots; failures are non-fatal (Library will mark
+    // missing assets as unavailable rather than crash boot).
+    try {
+      await seedAssetsIntoStorage(storage);
+    } catch (e) {
+      console.warn('boot: asset seeding failed', e);
+    }
 
     let project;
     try {
