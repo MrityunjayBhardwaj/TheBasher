@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import {
-  __resetRegistryForTests,
-  applyOp,
-  emptyDagState,
-  registerNodeType,
-} from '../dag';
+import { __resetRegistryForTests, applyOp, emptyDagState, registerNodeType } from '../dag';
 import type { Op } from '../dag/types';
 import { MemoryStorage } from '../storage';
 import {
@@ -108,7 +103,14 @@ describe('Project save/load round-trip', () => {
     // it. (Self-uninstalls after the test by calling __resetRegistryForTests
     // in beforeEach for the next test; format migrations live module-level so
     // we register a no-op-and-unregister pattern locally.)
-    type V0 = { formatVersion: 0; id: string; name: string; createdAt: number; nodes: Record<string, unknown>; outputs: Record<string, unknown> };
+    type V0 = {
+      formatVersion: 0;
+      id: string;
+      name: string;
+      createdAt: number;
+      nodes: Record<string, unknown>;
+      outputs: Record<string, unknown>;
+    };
     registerFormatMigration(0, (raw) => {
       const r = raw as V0;
       return {
@@ -133,10 +135,7 @@ describe('Project save/load round-trip', () => {
       },
       outputs: { scene: { node: 'n', socket: 'out' } },
     };
-    await storage.write(
-      'projects/old/project.json',
-      new TextEncoder().encode(JSON.stringify(v0)),
-    );
+    await storage.write('projects/old/project.json', new TextEncoder().encode(JSON.stringify(v0)));
     const loaded = await loadProject(storage, 'old');
     expect(loaded.formatVersion).toBe(1);
     expect(loaded.state.nodes.n.params).toEqual({ value: 5 });
@@ -144,10 +143,7 @@ describe('Project save/load round-trip', () => {
 
   it('rejects malformed JSON with a clear error', async () => {
     const storage = new MemoryStorage();
-    await storage.write(
-      'projects/broken/project.json',
-      new TextEncoder().encode('{ not json'),
-    );
+    await storage.write('projects/broken/project.json', new TextEncoder().encode('{ not json'));
     await expect(loadProject(storage, 'broken')).rejects.toThrow(/corrupt JSON/);
   });
 });

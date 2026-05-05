@@ -21,17 +21,18 @@ describe('BrowserBlenderBridge', () => {
   });
 
   it('reports companionConnected:false on a vite-mock response', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          ok: true,
-          source: 'vite-mock',
-          companionConnected: false,
-          assetsDir: null,
-          lastUpdate: null,
-        }),
-        { status: 200 },
-      ),
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            source: 'vite-mock',
+            companionConnected: false,
+            assetsDir: null,
+            lastUpdate: null,
+          }),
+          { status: 200 },
+        ),
     ) as typeof fetch;
 
     const bridge = new BrowserBlenderBridge();
@@ -86,8 +87,8 @@ describe('BrowserBlenderBridge', () => {
   });
 
   it('start is idempotent', () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ companionConnected: false }), { status: 200 }),
+    globalThis.fetch = vi.fn(
+      async () => new Response(JSON.stringify({ companionConnected: false }), { status: 200 }),
     ) as typeof fetch;
     const bridge = new BrowserBlenderBridge();
     bridge.start({ intervalMs: 100 });
@@ -97,8 +98,8 @@ describe('BrowserBlenderBridge', () => {
 
   it('does not poll when DEV is false (production guard)', () => {
     (import.meta.env as { DEV: boolean }).DEV = false;
-    const fetchSpy = vi.fn(async () =>
-      new Response(JSON.stringify({}), { status: 200 }),
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify({}), { status: 200 }),
     ) as typeof fetch;
     globalThis.fetch = fetchSpy;
     const bridge = new BrowserBlenderBridge();

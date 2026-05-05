@@ -5,27 +5,24 @@ import tseslint from 'typescript-eslint';
 
 const PURE_FORBIDDEN = [
   {
-    selector:
-      "MemberExpression[object.name='Math'][property.name='random']",
+    selector: "MemberExpression[object.name='Math'][property.name='random']",
     message:
-      "Math.random is forbidden inside `pure: true` node evaluators (V2). Use mulberry32(seed) and pass `seed` as a parameter.",
+      'Math.random is forbidden inside `pure: true` node evaluators (V2). Use mulberry32(seed) and pass `seed` as a parameter.',
   },
   {
     selector: "MemberExpression[object.name='Date'][property.name='now']",
     message:
-      "Date.now is forbidden inside `pure: true` node evaluators (V2/V3). Time enters via the `Time` socket.",
+      'Date.now is forbidden inside `pure: true` node evaluators (V2/V3). Time enters via the `Time` socket.',
   },
   {
-    selector:
-      "MemberExpression[object.name='performance'][property.name='now']",
+    selector: "MemberExpression[object.name='performance'][property.name='now']",
     message:
-      "performance.now is forbidden inside `pure: true` node evaluators (V2/V3). Time enters via the `Time` socket.",
+      'performance.now is forbidden inside `pure: true` node evaluators (V2/V3). Time enters via the `Time` socket.',
   },
   {
-    selector:
-      "MemberExpression[object.name='crypto'][property.name='randomUUID']",
+    selector: "MemberExpression[object.name='crypto'][property.name='randomUUID']",
     message:
-      "crypto.randomUUID is forbidden inside `pure: true` node evaluators (V2). Use a deterministic id from (params, inputs).",
+      'crypto.randomUUID is forbidden inside `pure: true` node evaluators (V2). Use a deterministic id from (params, inputs).',
   },
 ];
 

@@ -113,9 +113,7 @@ export function Inspector() {
             </div>
           </div>
           <div className="flex flex-col py-1">
-            {Object.entries(
-              (node.params ?? {}) as Record<string, unknown>,
-            ).map(([key, value]) => {
+            {Object.entries((node.params ?? {}) as Record<string, unknown>).map(([key, value]) => {
               const path = key;
               if (typeof value === 'number') {
                 return (

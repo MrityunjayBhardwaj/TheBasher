@@ -16,8 +16,7 @@ export class OpfsStorage implements StorageCapability {
 
   async isAvailable(): Promise<boolean> {
     return (
-      typeof navigator !== 'undefined' &&
-      typeof navigator.storage?.getDirectory === 'function'
+      typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function'
     );
   }
 
@@ -26,10 +25,7 @@ export class OpfsStorage implements StorageCapability {
     return top.getDirectoryHandle(this.rootName, { create: true });
   }
 
-  private async resolveDir(
-    parts: string[],
-    create: boolean,
-  ): Promise<FileSystemDirectoryHandle> {
+  private async resolveDir(parts: string[], create: boolean): Promise<FileSystemDirectoryHandle> {
     let dir = await this.getRoot();
     for (const part of parts) {
       if (part === '' || part === '.') continue;

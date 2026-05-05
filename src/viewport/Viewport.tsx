@@ -16,10 +16,7 @@ import { SceneFromDAG } from './SceneFromDAG';
 
 export function Viewport() {
   return (
-    <div
-      data-testid="viewport"
-      className="relative h-full w-full bg-black"
-    >
+    <div data-testid="viewport" className="relative h-full w-full bg-black">
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}

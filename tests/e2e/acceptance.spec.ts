@@ -86,9 +86,7 @@ test('#4 save → reload restores identical state', async ({ page }) => {
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();
   await page.getByTestId('node-list-item-n_camera').click();
-  const xVal = await page
-    .getByTestId('inspector-vec-n_camera-position-x')
-    .inputValue();
+  const xVal = await page.getByTestId('inspector-vec-n_camera-position-x').inputValue();
   expect(parseFloat(xVal)).toBeCloseTo(7.5, 5);
 });
 
@@ -142,9 +140,7 @@ test('#6b beacon endpoint absent in prod build (dist/ has no middleware code)', 
     withFileTypes: true,
   })) {
     if (dirent.isFile() && dirent.name.endsWith('.js')) {
-      allJs.push(
-        fs.readFileSync(path.join(distPath, 'assets', dirent.name), 'utf8'),
-      );
+      allJs.push(fs.readFileSync(path.join(distPath, 'assets', dirent.name), 'utf8'));
     }
   }
   const haystack = allJs.join('\n');
@@ -179,9 +175,7 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
   });
 });
 
-test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async ({
-  page,
-}) => {
+test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('viewport')).toBeVisible();
   // Tag the canvas. If Layout remounted on mode switch, the tag is gone.
@@ -232,9 +226,7 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
   await expect(page.getByTestId('save-status')).toBeVisible();
   await page.reload();
   await page.getByTestId('node-list-item-n_camera').click();
-  await expect(page.getByTestId('inspector-vec-n_camera-position-x')).toHaveValue(
-    '1.25',
-  );
+  await expect(page.getByTestId('inspector-vec-n_camera-position-x')).toHaveValue('1.25');
 });
 
 test('#8 FPS ≥60fps on M1 baseline (≥30fps in CI)', async ({ page }) => {
@@ -245,9 +237,7 @@ test('#8 FPS ≥60fps on M1 baseline (≥30fps in CI)', async ({ page }) => {
   const meter = page.getByTestId('fps-meter');
   await expect(meter).toBeVisible();
   await page.waitForFunction(() => {
-    const el = document.querySelector(
-      '[data-testid="fps-meter"]',
-    ) as HTMLElement | null;
+    const el = document.querySelector('[data-testid="fps-meter"]') as HTMLElement | null;
     return !!el && /\d+ fps/.test(el.textContent ?? '');
   });
   // Sample for 1.5s — gives the meter three flushes at its 500ms cadence.

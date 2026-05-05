@@ -1,11 +1,6 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type {
-  BoxMeshValue,
-  CameraValue,
-  DirectionalLightValue,
-  SceneValue,
-} from './types';
+import type { BoxMeshValue, CameraValue, DirectionalLightValue, SceneValue } from './types';
 
 export const SceneParams = z.object({}).passthrough();
 export type SceneParams = z.infer<typeof SceneParams>;

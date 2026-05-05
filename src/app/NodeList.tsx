@@ -31,9 +31,7 @@ export function NodeList() {
                 data-testid={`node-list-item-${id}`}
                 data-selected={isSel || undefined}
                 className={`flex w-full items-baseline justify-between gap-2 border-b border-border/60 px-3 py-1.5 text-left font-mono ${
-                  isSel
-                    ? 'bg-accent/15 text-accent'
-                    : 'text-fg/80 hover:bg-muted'
+                  isSel ? 'bg-accent/15 text-accent' : 'text-fg/80 hover:bg-muted'
                 }`}
               >
                 <span>{id}</span>

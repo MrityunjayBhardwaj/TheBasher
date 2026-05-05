@@ -75,9 +75,7 @@ function migrateOneNode(node: Node): Node {
     if (working.version >= def.version) break;
     const step = def.migrations?.[working.version];
     if (!step) {
-      throw new Error(
-        `No migration for ${def.type} v${working.version} → v${working.version + 1}`,
-      );
+      throw new Error(`No migration for ${def.type} v${working.version} → v${working.version + 1}`);
     }
     working = {
       ...working,
@@ -88,9 +86,7 @@ function migrateOneNode(node: Node): Node {
   return working;
 }
 
-function snapshotCurrentNodeVersions(
-  nodes: Record<string, Node>,
-): Record<string, number> {
+function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const node of Object.values(nodes)) {
     out[node.type] = Math.max(out[node.type] ?? 0, node.version);

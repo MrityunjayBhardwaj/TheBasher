@@ -19,7 +19,10 @@ import type { InputBinding, Node, NodeRef, Op } from './types';
 import { OpSchema } from './types';
 
 export class OpError extends Error {
-  constructor(message: string, readonly op: Op) {
+  constructor(
+    message: string,
+    readonly op: Op,
+  ) {
     super(message);
     this.name = 'OpError';
   }
@@ -99,10 +102,7 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
   }
 }
 
-function applyAddNode(
-  state: DagState,
-  op: Extract<Op, { type: 'addNode' }>,
-): ApplyResult {
+function applyAddNode(state: DagState, op: Extract<Op, { type: 'addNode' }>): ApplyResult {
   if (hasNode(state, op.nodeId)) {
     throw new OpError(`addNode: id already exists: ${op.nodeId}`, op);
   }
@@ -129,10 +129,7 @@ function applyAddNode(
   return { next, inverse };
 }
 
-function applyRemoveNode(
-  state: DagState,
-  op: Extract<Op, { type: 'removeNode' }>,
-): ApplyResult {
+function applyRemoveNode(state: DagState, op: Extract<Op, { type: 'removeNode' }>): ApplyResult {
   const node = getNode(state, op.nodeId);
   // Refuse if any other node still consumes this one — caller must disconnect
   // first. This keeps undo composable: removeNode does not silently dangle.
@@ -140,20 +137,14 @@ function applyRemoveNode(
     for (const binding of Object.values(consumer.inputs)) {
       const refs = Array.isArray(binding) ? binding : [binding];
       if (refs.some((r) => r.node === op.nodeId)) {
-        throw new OpError(
-          `removeNode: ${op.nodeId} is still consumed by ${consumer.id}`,
-          op,
-        );
+        throw new OpError(`removeNode: ${op.nodeId} is still consumed by ${consumer.id}`, op);
       }
     }
   }
   // Also fail if it's a named output socket — caller must rewire outputs first.
   for (const [name, ref] of Object.entries(state.outputs)) {
     if (ref.node === op.nodeId) {
-      throw new OpError(
-        `removeNode: ${op.nodeId} is bound as output '${name}'`,
-        op,
-      );
+      throw new OpError(`removeNode: ${op.nodeId} is bound as output '${name}'`, op);
     }
   }
   const { [op.nodeId]: _removed, ...rest } = state.nodes;
@@ -169,10 +160,7 @@ function applyRemoveNode(
   return { next, inverse };
 }
 
-function applyConnect(
-  state: DagState,
-  op: Extract<Op, { type: 'connect' }>,
-): ApplyResult {
+function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): ApplyResult {
   const consumer = getNode(state, op.to.node);
   const producer = getNode(state, op.from.node);
   const consumerDef = requireNodeType(consumer.type);
@@ -180,17 +168,11 @@ function applyConnect(
 
   const inputDesc = consumerDef.inputs[op.to.socket];
   if (!inputDesc) {
-    throw new OpError(
-      `connect: ${consumer.type} has no input socket '${op.to.socket}'`,
-      op,
-    );
+    throw new OpError(`connect: ${consumer.type} has no input socket '${op.to.socket}'`, op);
   }
   const outputDesc = producerDef.outputs[op.from.socket];
   if (!outputDesc) {
-    throw new OpError(
-      `connect: ${producer.type} has no output socket '${op.from.socket}'`,
-      op,
-    );
+    throw new OpError(`connect: ${producer.type} has no output socket '${op.from.socket}'`, op);
   }
   if (inputDesc.type !== outputDesc.type) {
     throw new OpError(
@@ -199,10 +181,7 @@ function applyConnect(
     );
   }
   if (wouldCreateCycle(state, op.from.node, op.to.node)) {
-    throw new OpError(
-      `connect: would create a cycle (${op.from.node} → ${op.to.node})`,
-      op,
-    );
+    throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
   }
 
   const ref: NodeRef = { node: op.from.node, socket: op.from.socket };
@@ -236,18 +215,12 @@ function applyConnect(
   return { next, inverse };
 }
 
-function applyDisconnect(
-  state: DagState,
-  op: Extract<Op, { type: 'disconnect' }>,
-): ApplyResult {
+function applyDisconnect(state: DagState, op: Extract<Op, { type: 'disconnect' }>): ApplyResult {
   const consumer = getNode(state, op.to.node);
   const def = requireNodeType(consumer.type);
   const inputDesc = def.inputs[op.to.socket];
   if (!inputDesc) {
-    throw new OpError(
-      `disconnect: ${consumer.type} has no input socket '${op.to.socket}'`,
-      op,
-    );
+    throw new OpError(`disconnect: ${consumer.type} has no input socket '${op.to.socket}'`, op);
   }
   const prior = consumer.inputs[op.to.socket];
   if (prior === undefined) {
@@ -255,9 +228,7 @@ function applyDisconnect(
   }
   const inputs = { ...consumer.inputs };
   if (Array.isArray(prior)) {
-    const idx = prior.findIndex(
-      (r) => r.node === op.from.node && r.socket === op.from.socket,
-    );
+    const idx = prior.findIndex((r) => r.node === op.from.node && r.socket === op.from.socket);
     if (idx === -1) {
       throw new OpError(
         `disconnect: ${op.from.node}.${op.from.socket} not bound at ${consumer.id}.${op.to.socket}`,
@@ -288,10 +259,7 @@ function applyDisconnect(
   return { next, inverse };
 }
 
-function applySetParam(
-  state: DagState,
-  op: Extract<Op, { type: 'setParam' }>,
-): ApplyResult {
+function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): ApplyResult {
   const node = getNode(state, op.nodeId);
   const def = requireNodeType(node.type);
   const prior = getAtPath(node.params, op.paramPath);

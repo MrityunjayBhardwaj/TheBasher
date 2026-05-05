@@ -239,13 +239,14 @@ describe('applyOp — setParam', () => {
   beforeEach(() => seedTestRegistry());
 
   it('sets a top-level param and returns inverse with prior value', () => {
-    const state = withState((s) =>
-      applyOp(s, {
-        type: 'addNode',
-        nodeId: 'n1',
-        nodeType: 'TestNumber',
-        params: { value: 5 },
-      }).next,
+    const state = withState(
+      (s) =>
+        applyOp(s, {
+          type: 'addNode',
+          nodeId: 'n1',
+          nodeType: 'TestNumber',
+          params: { value: 5 },
+        }).next,
     );
     const { next, inverse } = applyOp(state, {
       type: 'setParam',
@@ -266,13 +267,14 @@ describe('applyOp — setParam', () => {
   });
 
   it('rejects values that fail schema after the set', () => {
-    const state = withState((s) =>
-      applyOp(s, {
-        type: 'addNode',
-        nodeId: 'n1',
-        nodeType: 'TestNumber',
-        params: { value: 5 },
-      }).next,
+    const state = withState(
+      (s) =>
+        applyOp(s, {
+          type: 'addNode',
+          nodeId: 'n1',
+          nodeType: 'TestNumber',
+          params: { value: 5 },
+        }).next,
     );
     expect(() =>
       applyOp(state, {

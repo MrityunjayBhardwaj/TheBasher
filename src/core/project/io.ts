@@ -18,12 +18,7 @@
 import type { DagState } from '../dag/state';
 import type { StorageCapability } from '../storage';
 import { migrateNodes, migrateProjectFormat } from './migrations';
-import {
-  PROJECT_FILENAME,
-  PROJECT_FORMAT_VERSION,
-  ProjectSchema,
-  type Project,
-} from './schema';
+import { PROJECT_FILENAME, PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -60,19 +55,13 @@ export function projectPath(projectId: string): string {
   return `projects/${projectId}/${PROJECT_FILENAME}`;
 }
 
-export async function saveProject(
-  storage: StorageCapability,
-  project: Project,
-): Promise<void> {
+export async function saveProject(storage: StorageCapability, project: Project): Promise<void> {
   const validated = ProjectSchema.parse(project);
   const json = JSON.stringify(validated, null, 2);
   await storage.write(projectPath(validated.id), encoder.encode(json));
 }
 
-export async function loadProject(
-  storage: StorageCapability,
-  projectId: string,
-): Promise<Project> {
+export async function loadProject(storage: StorageCapability, projectId: string): Promise<Project> {
   const bytes = await storage.read(projectPath(projectId));
   const text = decoder.decode(bytes);
   let raw: unknown;

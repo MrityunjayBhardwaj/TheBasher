@@ -90,11 +90,7 @@ describe('DagStore', () => {
       { type: 'addNode', nodeId: 's', nodeType: 'TestSum', params: {} },
     ];
     store.dispatchAtomic(ops, 'macro', 'add three');
-    expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual([
-      'a',
-      'b',
-      's',
-    ]);
+    expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual(['a', 'b', 's']);
     expect(useDagStore.getState().undoStack.length).toBe(1);
 
     // ONE undo reverts the whole atomic group.
@@ -104,11 +100,7 @@ describe('DagStore', () => {
 
     // Redo restores all three.
     store.redo();
-    expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual([
-      'a',
-      'b',
-      's',
-    ]);
+    expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual(['a', 'b', 's']);
     expect(useDagStore.getState().redoStack.length).toBe(0);
   });
 
@@ -169,8 +161,6 @@ describe('DagStore', () => {
 
   it('rejects invalid op shape via zod (V7 spirit, P0 today)', () => {
     const store = useDagStore.getState();
-    expect(() =>
-      store.dispatch({ type: 'nope', nodeId: 'x' } as unknown as Op),
-    ).toThrow();
+    expect(() => store.dispatch({ type: 'nope', nodeId: 'x' } as unknown as Op)).toThrow();
   });
 });

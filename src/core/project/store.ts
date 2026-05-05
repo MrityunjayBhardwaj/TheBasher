@@ -17,7 +17,5 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   current: null,
   setCurrent: (project) => set({ current: project }),
   patchMeta: (patch) =>
-    set((s) =>
-      s.current ? { current: { ...s.current, ...patch, updatedAt: Date.now() } } : s,
-    ),
+    set((s) => (s.current ? { current: { ...s.current, ...patch, updatedAt: Date.now() } } : s)),
 }));

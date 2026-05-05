@@ -93,9 +93,7 @@ export function Layout() {
         className="border-t border-border bg-muted/30 text-xs text-fg/40"
         data-testid="timeline-slot"
       >
-        <div className="px-3 py-1 font-mono">
-          timeline · empty (lands in P3)
-        </div>
+        <div className="px-3 py-1 font-mono">timeline · empty (lands in P3)</div>
       </div>
     </div>
   );

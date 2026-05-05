@@ -56,11 +56,7 @@ export interface DagStore {
    * `disconnect → connect` to undo as one keypress. The Diff system (P2.5)
    * also lands on top of this.
    */
-  dispatchAtomic: (
-    ops: Op[],
-    source?: OpSource,
-    description?: string,
-  ) => InverseOp[];
+  dispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => InverseOp[];
   /** Replace state wholesale (project load only — bypasses op log). */
   hydrate: (state: DagState) => void;
   undo: () => UndoEntry | undefined;

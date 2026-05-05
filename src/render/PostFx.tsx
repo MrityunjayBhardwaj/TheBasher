@@ -22,9 +22,7 @@ export function PostFx({ config }: PostFxProps) {
   return (
     <EffectComposer multisampling={0}>
       {config.smaa ? <SMAA /> : <></>}
-      <ToneMapping
-        mode={useAces ? ToneMappingMode.ACES_FILMIC : ToneMappingMode.LINEAR}
-      />
+      <ToneMapping mode={useAces ? ToneMappingMode.ACES_FILMIC : ToneMappingMode.LINEAR} />
     </EffectComposer>
   );
 }

@@ -9,10 +9,7 @@ export const DirectionalLightParams = z.object({
 });
 export type DirectionalLightParams = z.infer<typeof DirectionalLightParams>;
 
-export const DirectionalLightNode: NodeDefinition<
-  DirectionalLightParams,
-  DirectionalLightValue
-> = {
+export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, DirectionalLightValue> = {
   type: 'DirectionalLight',
   version: 1,
   pure: true,

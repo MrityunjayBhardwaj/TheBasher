@@ -16,10 +16,7 @@ import {
   useProjectStore,
 } from '../core/project';
 import { pickStorage, type StorageCapability } from '../core/storage';
-import {
-  BrowserBlenderBridge,
-  type BlenderBridgeCapability,
-} from '../integrations/blender';
+import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
 
 let cachedStorage: StorageCapability | null = null;

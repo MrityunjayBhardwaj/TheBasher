@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  __resetRegistryForTests,
-  evaluate,
-  listNodeTypes,
-  topoSort,
-} from '../core/dag';
+import { __resetRegistryForTests, evaluate, listNodeTypes, topoSort } from '../core/dag';
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
 import { ProjectSchema } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
