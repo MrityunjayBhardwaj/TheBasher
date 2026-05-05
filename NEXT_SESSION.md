@@ -1,4 +1,4 @@
-# Basher — Next Session Prompt (P2.1: Viewport Polish + Menu Bar)
+# Basher — Next Session Prompt (P2.1: Resume from Wave C)
 
 **Copy this entire file into the new session as your first message.**
 
@@ -6,135 +6,161 @@
 
 ## Mission
 
-You are taking over autonomous execution of **Basher v0.5 — Phase P2.1 (Viewport Polish + Menu Bar)**. P0+P1+P2 are merged; the P2 branch (`feat/p2-character-and-move`, PR #4) added time-as-socket plumbing, character chain, click-to-move macro, multi-project picker, IndexedDB storage, OrbitControls + axis widget. The user tested it and ran a Blender-table-stakes audit — five 🔴 + four 🟡 gaps fall out as P2.1 scope.
+You are taking over autonomous execution of **Basher v0.5 — Phase P2.1 (Viewport Polish + Menu Bar)**. P0+P1+P2 + viewport-polish are merged. P2.1 Waves A + B already shipped on PR #4 in commit `5e4b1cf`. Resume from Wave C.
 
-P2.1 closes the table-stakes gap so Basher feels like a real DCC tool. **Do not regress thesis invariants** — V1 (Op-only mutation), V2/V3 (purity, time-as-socket), V8 (file-rooted viewport boundary), V9 (materials = data) all still bind.
+P2.1 closes Blender table-stakes gaps so Basher feels like a real DCC tool. **Do not regress thesis invariants** — V1 (Op-only mutation), V2/V3 (purity, time-as-socket), V8 (file-rooted viewport boundary), V9 (materials = data) all still bind.
 
-Your job: ship P2.1 to acceptance, open a draft PR, run goal-backward self-review, fold top fixes inline, and stop.
+Your job: ship Waves C + D + E (and the menu bar), open a draft PR if not on the existing one, run goal-backward self-review, fold top fixes inline, and stop.
 
-## What's already true after P2 + viewport-polish round (2026-05-06)
+## What's already true after Waves A + B (commit `5e4b1cf`, 2026-05-06)
 
 1. **Project root:** `/Users/mrityunjaybhardwaj/Documents/projects/basher/`
-2. **Repo:** `git@github.com:MrityunjayBhardwaj/TheBasher.git`. Default branch `main`. Branch off `main` (P2 PR #4 may or may not be merged when you start — check `gh pr view 4`; if open, base your branch off `main` not `feat/p2-character-and-move`).
-3. **Source of truth:** `THESIS.md`. P2.1 is below P2 in the cut list — these are quality-of-life features that don't introduce new thesis commitments. NO changes to THESIS.md unless you discover an architectural gap.
+2. **Repo:** `git@github.com:MrityunjayBhardwaj/TheBasher.git`. Default branch `main`. Branch you'll work on: `feat/p2-character-and-move` (PR #4 — open). All P2 + viewport-polish + Waves A+B sit on this branch.
+3. **Source of truth:** `THESIS.md`. P2.1 introduces no new thesis commitments.
 4. **Catalogues:** `.anvi/{dharana,hetvabhasa,vyapti,krama}.md`. H1-H12, V1/V2/V3/V4/V5/V6/V8/V9 ALIGNED, V7 NOT YET (P2.5). K1-K8 cataloged.
 5. **Memory:** auto-loads at session start. `project_p2_shipped.md` has the post-P2 inventory.
 6. **Dev port:** 5180 (strictPort).
-7. **Quality gates locally:** `npm run typecheck && npm run lint && npm test && npm run test:e2e && npm run license-audit && npm run format:check` all green at end of P2 viewport-polish round (137 vitest, 22 Playwright). Re-run before starting P2.1.
+7. **Quality gates:** at end of A+B — 137 vitest, 22 Playwright, typecheck/lint/format/license-audit all green.
+
+### Wave A shipped (selection model refactor)
+
+`src/app/stores/selectionStore.ts` extended:
+- `selectedNodeIds: ReadonlySet<NodeId>` — the multi-set
+- `primaryNodeId: NodeId | null` — most-recent; gizmo binds here
+- `selectedNodeId: NodeId | null` — DEPRECATED mirror of `primaryNodeId`, kept so P0/P1/P2 callers don't break
+- API: `select / selectAdditive / selectMany / clear / selectAll / invert`
+
+Inspector + Gizmo already updated to read `primaryNodeId`. NodeList + SceneTree still use the deprecated single-id mirror — extending those to shift-click / box-select is part of Wave C if you want to.
+
+### Wave B shipped (click-to-pick + grid + keyboard shortcuts)
+
+- `src/viewport/SceneFromDAG.tsx` — each top-level scene child wraps in a `<group onClick>` that walks back to the producer nodeId via Scene aggregator's `inputs.children[i]`. Click selects; shift-click adds. **selectionStore writes only — V1 stays clean.**
+- `src/viewport/Viewport.tsx` — drei `<Grid />` (cell+section Blender-style floor) + `<Canvas onPointerMissed>` clears selection.
+- `src/app/Gizmo.tsx` — `gizmoStore.mode: 'translate' | 'rotate' | 'scale'`. Gizmo dispatches setParam to position/rotation/scale paramPath. Character is locked to `translate`.
+- `src/app/KeyboardShortcuts.tsx` (NEW) — global window-level handler. G/R/S, Esc, Cmd+Z, Cmd+Shift+Z (or Cmd+Y) for redo, Cmd+S, Cmd+A, **Cmd+Shift+C** for camera-from-view. Skips when inputs are focused.
+- `src/app/character/cameraFromView.ts` (NEW) — macro that snapshots the editor's OrbitControls pose into a new PerspectiveCamera node + reroutes scene.camera. Atomic.
+- `src/app/character/{threeRef.ts, ThreeBridge.tsx}` (NEW) — UI-projection store + bridge that pushes the active camera + controls target into the store every frame so out-of-Canvas code can read them without useThree().
+- `src/app/App.tsx` — mounts `<KeyboardShortcuts />` alongside `<Clock />`.
 
 ## Read order (do this before any code)
 
-1. `THESIS.md` §11 (viewport), §12 (scene tree), §15 (chat drawer — context only), §17 (mode hierarchy), §50 (Op system).
+1. `THESIS.md` §11 (viewport), §12 (scene tree), §15 (right rail), §17 (mode hierarchy), §50 (Op system).
 2. `.anvi/dharana.md` — boundaries B1-B5, post-P2 fatality test result.
-3. `.anvi/vyapti.md` — V1, V8 are the ones P2.1 must not violate.
-4. `.anvi/hetvabhasa.md` — H11, H12 are recent and relevant (R3F primitives + camera-snap-back).
-5. `.anvi/krama.md` — K2 (op dispatch), K7 (walkTo), K8 (boot-with-last-project).
-6. `src/app/Gizmo.tsx` — current TransformControls integration (Transform + Character).
-7. `src/app/stores/{selectionStore,gizmoStore,modeStore,timeStore}.ts` — all the UI projections.
-8. `src/viewport/Viewport.tsx` + `SceneFromDAG.tsx` — V8 enforcement surface.
-9. `src/app/Inspector.tsx` — XYZ inputs you'll be extending with drag-scrub.
-10. `src/app/character/walkTo.ts` — the macro pattern you'll mirror for camera-from-view.
+3. `.anvi/hetvabhasa.md` — H11 (data-testid on R3F), H12 (camera-snap-back) are recent and critical.
+4. `.anvi/krama.md` — K2 (op dispatch), K7 (walkTo), K8 (boot-with-last-project).
+5. `src/app/Gizmo.tsx` — current Transform + Character + mode wiring.
+6. `src/app/Inspector.tsx` — your XYZ inputs target for Wave C drag-scrub.
+7. `src/app/KeyboardShortcuts.tsx` — extend with menu-bar shortcuts in Wave D.
+8. `src/app/character/cameraFromView.ts` — already wired to Cmd+Shift+C; extend to a menu item in Wave D.
+9. `src/app/{Layout,Chrome}.tsx` — where the menu bar mounts.
 
 ## Locked decisions (do NOT relitigate)
 
 - Op system is the only mutation path; UI projections (selection, gizmo, time, mode) live in their own zustand stores.
-- `<GroundClick />` mounts only when a Character exists — keeps default-project pixel baseline bit-exact.
-- TransformControls binds to Transform AND Character; OrbitControls is suppressed while gizmo is dragging via `gizmoStore.dragging`.
-- `data-testid` is FORBIDDEN on R3F primitives (`<mesh>`, `<group>`, etc.) — H11. Use `userData` if needed; tests drive through `__basher_dag` / `__basher_evaluate`.
+- `<GroundClick />` mounts only when a Character exists.
+- `data-testid` is FORBIDDEN on R3F primitives (`<mesh>`, `<group>`, etc.) — H11. Use `userData`; tests drive through `__basher_dag` / `__basher_evaluate`.
 - Camera position must NOT use the `position` prop on drei's `<PerspectiveCamera>` — H12. Use a ref + `useEffect` keyed on primitive scalars.
 - IndexedDB is the universal fallback after OPFS — pickStorage chain stays OPFS → IDB → Memory.
-- Last-open project id persists in `localStorage['basher.lastProjectId']` (K8). Switch flow auto-saves outgoing first.
+- Last-open project id persists in `localStorage['basher.lastProjectId']` (K8).
+- selectionStore exposes `primaryNodeId` as the canonical "what's the gizmo bound to" + `selectedNodeIds` as the multi-set. Don't go back to a single-id model.
 
-## P2.1 Scope — verbatim from the audit
+## Wave C — Inspector drag-scrub + N-panel overlay + pivot/snap toggles
 
-### 🔴 Critical (blocks usability — must ship in P2.1)
+Files to add:
+- `src/app/stores/viewportStore.ts` — pivot + snapStep + gridVisible + axisWidgetVisible + snap()/snapVec3() helpers.
+- `src/app/NPanel.tsx` — semi-transparent overlay top-right of viewport. Reads primary node + transform, shows quick toggles (mode buttons, snap-step input, grid/axis toggles).
+- `src/app/Inspector.tsx` — extend NumericField + VectorField with drag-scrub on the LABEL (not the input itself — Blender-style). Click+drag horizontally → preview in local state, commit setParam Op on pointer-up. Shift = fine (0.001), Cmd/Ctrl = coarse (0.1), default 0.01 per pixel.
+- `src/viewport/Viewport.tsx` — wrap Grid + GizmoHelper in `<FloorGrid />` and `<AxisWidget />` that read `viewportStore.gridVisible / axisWidgetVisible`. Mount `<NPanel />` outside the Canvas (it's HTML, not R3F).
+- Apply snap in `src/app/Gizmo.tsx` translate path AND in `src/app/character/GroundClick.tsx` worldPoint.
 
-1. **Click-to-select objects in viewport** (raycast pick). Click a mesh → `selectionStore.select(nodeId)`. Click empty ground → `select(null)`. Multi-select: shift-click adds to selection. The current selectionStore has `selectedNodeId: NodeId | null` — extend to `selectedNodeIds: Set<NodeId>` (or `NodeId[]`) and provide a primary getter for backward compatibility with the gizmo.
-2. **Background grid + ground plane.** Drei ships `<Grid />`. Mount in Viewport.tsx alongside the OrbitControls. Default extent matches navmesh half-size (10×10), large enough to feel like a world floor.
-3. **Keyboard transform shortcuts.** G/R/S → switch gizmo mode (translate/rotate/scale). X/Y/Z while dragging → axis-lock. Esc during drag → cancel and revert. The gizmo currently only supports translate; extend to rotate + scale modes via `<TransformControls mode="translate|rotate|scale">`. Mode is per-session (not in the DAG).
-4. **Numeric drag-scrub on Inspector XYZ inputs.** Click+drag horizontally on a number field → nudge the value (Blender-style). Shift = fine, Ctrl = coarse. Existing Inspector inputs are controlled — extend with a `<DragScrubInput value={...} onChange={...} />` component.
+Pivot point selector — defer to Wave C polish OR cut from P2.1 if budget bites. Multi-select isn't yet exercised so pivot has no observable effect today.
 
-### 🟡 Strong UX gap (ship in P2.1)
+## Wave D — Menu bar (File / Edit / Select / View)
 
-5. **Pivot point selector.** Median / Individual Origins / 3D Cursor / Active. UI: dropdown or pie menu in viewport overlay. Affects the Gizmo's mounting position when multiple nodes are selected.
-6. **Snap toggles.** Grid increment + axis-aligned vertex snap. UI: a toggle in the viewport overlay. Implementation: `Math.round(value / step) * step` applied at the gizmo's setParam emit + at click-to-move's `worldPoint`.
-7. **Multi-select.** Shift-click in NodeList; box-select (drag-rectangle) in viewport. Extend `selectionStore`. Gizmo position becomes the median (or per-pivot rule).
-8. **N-panel viewport overlay.** Top-right of the viewport, semi-transparent: shows active object name, transform XYZ, vertex count if applicable. Read-only first cut; editable in P3.
-9. **Camera-from-view** (thesis-aligned). One-click "snapshot OrbitControls pose into a new PerspectiveCamera node and set it as `outputs.scene.camera`". Lives in the View menu. Lets the director frame a shot via OrbitControls then bake it into the DAG — the killer feature of director-first.
+Build a Blender-style menu bar across the top of the page **above** the existing `<Chrome />` header. Native `<details><summary>` popovers OR a small custom popover component (your call — drei doesn't ship one).
 
-### Menu bar (top of layout)
+### File menu
+- New Project (prompt for name, calls `createNewProject`)
+- Open… (opens ProjectsMenu's panel — or absorb ProjectsMenu into File entirely; pick whichever is cleaner)
+- Duplicate Current
+- Rename Current
+- Delete Current (with confirm)
+- Save (Cmd+S)
+- Export Scene as glTF (stub OK if blocking)
+- Export DAG as JSON (download the project JSON via Blob — easy)
 
-A Blender-style menu bar across the top of the page above the existing Chrome:
+### Edit menu
+- Undo (Cmd+Z)
+- Redo (Cmd+Shift+Z)
+- Reset to Default Scene
+- Settings (stub)
 
-- **File**: New Project, Open (project picker, replaces ProjectsMenu's main path), Duplicate, Rename, Delete Current, Save (Cmd+S), Export Scene as glTF (stub OK if blocking), Export DAG as JSON (stub OK).
-- **Edit**: Undo (Cmd+Z), Redo (Cmd+Shift+Z), Reset Project to Default, Settings (stub).
-- **Select**: All (Cmd+A), None (Esc), Invert, By Type → submenu of node types.
-- **View**: Frame Selected (F), Frame All (Home), Camera-from-View (Ctrl+Shift+C), Toggle Grid, Toggle Axis Widget, Set Mode (Simple / Director / Pro).
+### Select menu
+- All (Cmd+A)
+- None (Esc)
+- Invert
+- By Type → submenu of distinct node types in the current DAG, each one selectMany on those ids
 
-UI: native `<details><summary>` popovers OR a small custom menu component. Keyboard shortcuts MUST work even when no menu is open. Shortcuts that conflict with browser defaults (Cmd+S triggers browser save) → preventDefault inside the handler.
+### View menu
+- Frame Selected (F) — set OrbitControls target to primary node's evaluated position
+- Frame All (Home)
+- **Camera-from-View (Cmd+Shift+C)** — already wired in `cameraFromView.ts`
+- Toggle Grid
+- Toggle Axis Widget
+- Set Mode → Simple / Director / Pro (mirrors ModeSwitcher, can absorb it)
 
-## Execution Protocol
+Keyboard shortcuts in the menu bar:
+- Hotkeys MUST work whether the menu is open or not (already true for Cmd+Z/S/A/Shift+C).
+- Add F + Home in `KeyboardShortcuts.tsx`. F/Home need access to `useThreeRef.getState().camera + controlsTarget` AND a way to fit the camera — drei's OrbitControls doesn't ship `.fit()`; either compute manually (camera.position = target + offset where offset preserves direction; OrbitControls.target = node position) OR swap to `<CameraControls />` which has `.fit()`. Pick the simpler path.
 
-### Wave A — Selection model refactor (UNBLOCKS everything else)
+Cmd+S in browsers triggers the native save dialog — already preventDefault'd. Same pattern for any new shortcut that conflicts.
 
-- `selectionStore`: change `selectedNodeId: NodeId | null` → `selectedNodeIds: Set<NodeId>` + `primaryNodeId: NodeId | null` (the most-recently-selected, used by the gizmo).
-- Update every reader (Gizmo, GroundClick, NodeList, Inspector, SceneTree). Add a `primaryNodeId` selector for places that conceptually want one id.
-- `select(id)` → replace; `selectAdditive(id)` → toggle in set; `clear()` → empty.
+## Wave E — Tests + Catalogue + Close
 
-### Wave B — Click-to-select via raycast pick + background grid + axis lock keys
-
-- Click any mesh inside the Canvas → walk up the React tree to find the producing nodeId. Approach: each MeshChild registers its nodeId in a context, raycast hit → context gives nodeId. OR: emit an `onClick` handler at every MeshChild that calls `useSelectionStore.select(nodeId)`. Skip GroundClick.
-- Empty-canvas click → clear selection.
-- Background `<Grid />` from drei. Subtle styling (low contrast, fades at distance).
-- Keyboard shortcuts via a top-level `<KeyboardShortcuts />` component mounted in App.tsx. G/R/S/X/Y/Z/Esc/F/Cmd+Z/Cmd+Shift+Z/Cmd+S/Cmd+A.
-
-### Wave C — Inspector drag-scrub + N-panel + pivot/snap toggles
-
-- `<DragScrubInput />` reusable component: pointer-down → start drag, deltaX → value delta scaled by sensitivity (0.01 default, 0.001 with Shift, 0.1 with Ctrl). Pointer-up commits the final value via `setParam` Op. (Per-frame setParam during drag = many undo entries — wrap in an atomic group or debounce; pick the simpler path that preserves undo semantics.)
-- `<NPanel />` overlay: position absolute top-right inside Viewport.tsx slot. Read primaryNode + its evaluated value. No mutation.
-- `pivotStore` + `snapStore`. Toggles in the N-panel.
-
-### Wave D — Camera-from-view + Menu bar
-
-- Camera-from-view: read OrbitControls' camera position + target. Emit `addNode(PerspectiveCamera, {position, lookAt: target, fov: same})` + `connect → scene.camera` + `disconnect` previous if any. dispatchAtomic. Pure macro pattern (mirror of walkTo).
-- `<MenuBar />` at the top of the layout, ABOVE Chrome. Native `<details>` or custom popover. Keyboard shortcuts. Cmd+S preventDefault. File/Edit/Select/View per spec above.
-
-### Wave E — Tests + Catalogue + close
-
-- Vitest: selectionStore multi-select, dragScrub math, camera-from-view macro shape.
-- Playwright: click-to-select, keyboard shortcut undo, menu bar opens + actions fire, camera-from-view bakes a new PerspectiveCamera node.
-- New hetvabhasa entries IF any patterns emerge (e.g. native browser keyboard collisions).
-- New krama entry IF a new lifecycle is introduced (camera-from-view chain probably qualifies — K9).
+- Vitest:
+  - selectionStore multi-select toggling, selectAll, invert.
+  - dragScrub math (sensitivity scaling per modifier).
+  - cameraFromView macro shape.
+  - viewportStore snap helpers.
+- Playwright:
+  - Click-to-select fires selectionStore.
+  - Cmd+Z reverts the last Op.
+  - Cmd+Shift+C bakes a new PerspectiveCamera node + reroutes scene.camera.
+  - Menu bar opens + every action fires (or stub gracefully).
+- Catalogue updates:
+  - K9 (camera-from-view chain) — add to krama.md if not yet there.
+  - Any new hetvabhasa from the round (e.g. browser keyboard collisions, focus-trap surprises).
+  - Bump dharana.md provenance entry.
 - README + CHANGELOG entries.
-- Open draft PR; goal-backward self-review; fold 🔴 fixes inline before marking ready.
+- Open or extend the existing PR #4 (it's still the same branch). Run goal-backward self-review; fold 🔴 fixes inline.
 
 ## Honesty Contract (do NOT violate)
 
 - **Never** put `data-testid` on R3F primitive elements (H11). Use `userData`.
 - **Never** apply `position={...}` as a prop to drei's `<PerspectiveCamera>` (H12). Use ref + useEffect on primitive scalars.
-- **Never** dispatch from a file inside `src/viewport/` (V8 file-rooted).
-- **Never** mutate the DAG store outside the Op dispatcher (V1) — `hydrate()` is the only legal exception, used only for project load.
+- **Never** dispatch from a file inside `src/viewport/` (V8 file-rooted). Use a component imported from `src/app/`.
+- **Never** mutate the DAG store outside the Op dispatcher (V1) — `hydrate()` is the only legal exception (project load).
 - **Never** read `useFrame`, `useThree`, `Math.random`, `Date.now`, `performance.now`, `crypto.randomUUID` inside `src/nodes/**` evaluators (V2/V3 lint).
 - **Never** ship without running goal-backward self-review (CLAUDE.md AnviDev §5).
-- **Always** preserve the file-rooted V8 boundary: any new component that dispatches lives in `src/app/`, even if it renders inside the Canvas.
+- **Always** preserve the file-rooted V8 boundary: any new component that dispatches lives in `src/app/`.
 - **Always** wrap multi-Op user actions in `dispatchAtomic` (one Cmd+Z = one user action).
 - **Always** verify quality gates before commit; per-wave atomic commits with gitmoji + Problem/Fix bodies; no AI co-author.
 
 ## Decision Defaults (when thesis is silent)
 
-- DragScrubInput per-frame setParam vs commit-on-release: **commit on release**. Cleaner undo. Show live preview by setting CSS `--preview-value` and applying to the input visually; only emit the Op on pointer-up.
-- Multi-select pivot rule: **median by default**, settings panel can switch to individual-origins later.
-- Camera-from-view fov: **inherit from OrbitControls' active camera** so the bake matches what the director sees.
+- DragScrubInput: **commit on release** (pointer-up). Live preview via local state. One drag = one undo entry.
+- Multi-select pivot rule: **median by default** (when implemented). v0.5 ships median-only; settings add others later.
 - Menu bar styling: **monospace, low-saturation, follows existing chrome aesthetic**. No icons in v0.5.
-- Keyboard shortcut conflicts: **preventDefault explicitly per shortcut**, don't add a global capture.
+- Frame Selected (F): manual fit (target + offset). If complex, swap to `<CameraControls />` from drei — its `.fit()` solves it. Verify the swap doesn't break existing OrbitControls mouse map.
+- Snap: applies to translation only (rotation + scale are continuous-by-default in v0.5).
 
 ## Hard-Stop Triggers (escalate to user)
 
-- Selection model refactor breaks more than 5 existing tests after Wave A — the `Set` shape may bite zustand's shallow equality. Pause + ask before brute-forcing.
-- Click-to-select in the canvas conflicts with the existing GroundClick in unexpected ways (e.g. event order, propagation).
+- Selection model issues that bite more than 5 existing tests after Wave C.
+- `<CameraControls />` swap breaks existing acceptance tests.
 - Native browser keyboard shortcut conflicts you can't `preventDefault` cleanly (e.g. Cmd+Q on macOS).
 - License violation discovered (any new dep must pass `license-audit`).
-- Need to amend THESIS.md (escalate; this is QoL, not new thesis commitment).
+- Need to amend THESIS.md.
 
 ## Kill Phrase
 
@@ -142,20 +168,20 @@ If you ever see the user message **"stop, rethink"** — freeze immediately. Do 
 
 ## When P2.1 Is Done
 
-1. All 🔴 (1-4) shipped + verified locally.
-2. All 🟡 (5-9) shipped + verified locally.
-3. Menu bar (File/Edit/Select/View) shipped with keyboard shortcuts working.
+1. All 🔴 (1-4 from the audit: click-to-select ✓, grid ✓, keyboard shortcuts ✓ done in A+B; drag-scrub still TODO in C).
+2. All 🟡 (pivot, snap, multi-select wiring, N-panel, camera-from-view).
+3. Menu bar (File/Edit/Select/View) shipped with keyboard shortcuts.
 4. Goal-backward self-review run; 🔴 fixes folded inline.
-5. Draft PR opened, marked Ready after self-review pass.
+5. Mark PR #4 ready (it may already be ready).
 6. End-of-phase summary in conversation:
-   - What shipped (mapped to audit items + thesis sections).
-   - What cut from P2.1 scope (deferred with justification).
-   - What surprised (anything that took >1.5x estimate or revealed a thesis gap).
-   - Risk register updates (new B<N> boundaries observed).
-   - Confidence for P2.5 (high/med/low and why).
+   - What shipped (mapped to audit items).
+   - What cut (deferred).
+   - What surprised.
+   - Risk register updates.
+   - Confidence for P2.5.
 7. Update `NEXT_SESSION.md` for P2.5 (AI Agent on the DAG).
-8. **STOP.** Do not start P2.5.
+8. **STOP.**
 
 ---
 
-**Begin.** Read the thesis. Then build.
+**Begin.** Read the catalogues. Then build.
