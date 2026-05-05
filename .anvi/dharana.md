@@ -114,6 +114,17 @@
 - B3 (agent ↔ DAG): not exercised in P0; ships with P2.5.
 - B5 (web ↔ Blender): polled endpoint works in dev, inert in prod. Companion-setup-blocks-adoption is the real risk; deferred to P1+ (not on the P0 path).
 
+**Self-review pass (post-merge, same day):**
+Goal-backward review caught two real bugs that all 8 acceptance tests missed:
+1. Uncontrolled inputs in Inspector (H7) — visible only when external state mutates the DAG (undo, agent ops). Fixed inline; regression test #10 added.
+2. ambientLight DAG leak in SceneFromDAG — V8 violation. Removed; threshold absorbed the visual delta in #7.
+Plus three structural improvements: `dispatchAtomic` for P1's drag-reorder, `bootPromise` guard for StrictMode, Canvas-preservation E2E #9.
+
+**Lesson:** acceptance tests prove the goal is met under the canonical input path. They DO NOT prove the system holds under non-canonical mutations (external state changes, repeated mounts, mode toggles). After every phase ship, run a goal-backward review for these classes specifically:
+ - "What if state mutates from a path I didn't test?"
+ - "What if a component re-mounts when I assumed it wouldn't?"
+ - "What invariant did I declare but not enforce?"
+
 ---
 
 ## 5. GROUND TRUTH INVENTORY
