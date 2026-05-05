@@ -149,6 +149,10 @@ test('#6b beacon endpoint absent in prod build (dist/ has no middleware code)', 
   // source-side identifier is gone.
   expect(haystack).not.toContain('basher:blender-mock');
   expect(haystack).not.toContain('vite-plugin-blender-mock');
+  // P1 dev-only store handle (boot.ts gates on import.meta.env.DEV) — must
+  // also be tree-shaken out of prod so the running app exposes nothing
+  // mutation-capable on `window`.
+  expect(haystack).not.toContain('__basher_dag');
 });
 
 test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page }) => {

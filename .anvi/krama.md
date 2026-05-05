@@ -20,6 +20,7 @@
 ### K1: Application boot sequence (P0)
 
 **Steps:**
+
 1. Detect platform (browser / PWA / future-Tauri).
 2. Initialize zustand stores in dependency order: `mode` → `project` → `dag` → `selection` → `agent`.
 3. Load persisted project from OPFS (if any) or initialize default 4-node DAG.
@@ -32,6 +33,7 @@
 10. Show start screen / project picker.
 
 **Common violations:**
+
 - Hydrating `dag` before `mode` → first render uses default mode, then snaps to user's saved mode (visible flash).
 - Mounting Canvas inside a mode-conditional → mode switch remounts Canvas → loses GPU state, flashes black.
 - Starting beacon in production → silent prod-only network spam.
@@ -42,6 +44,7 @@
 ### K2: Op dispatch lifecycle
 
 **Steps:**
+
 1. UI/agent emits `Op` (typed, zod-validated).
 2. Dispatcher validates op against current DAG state (e.g. node exists for `removeNode`).
 3. Compute inverse op for undo.
@@ -53,6 +56,7 @@
 9. Subscribed surfaces re-render.
 
 **Common violations:**
+
 - Skipping step 2 (validation) → invalid ops corrupt state, undo fails.
 - Skipping step 6 (cache invalidate) → viewport shows stale scene.
 - Computing inverse AFTER applying → can't capture original state for undo.
@@ -64,6 +68,7 @@
 ### K3: Diff (agent transaction) lifecycle
 
 **Steps:**
+
 1. Agent emits text + tool calls (streaming).
 2. Tool handler validates args (zod) → returns `Op[]`.
 3. Ops applied to FORKED DAG copy (not real store).
@@ -74,6 +79,7 @@
 8. Reject: discard fork; no real state change.
 
 **Common violations:**
+
 - Step 3 → applying to real store: bypasses accept/reject; user can't preview.
 - Step 7 → one undo entry per op instead of per diff: undo becomes painful (hit it 30 times to revert one agent action).
 - Skipping validation (step 2): malformed agent output corrupts forked DAG; reject still leaves zombie state if forked DAG leaks.
@@ -84,6 +90,7 @@
 ### K4: Render job lifecycle (P4)
 
 **Steps:**
+
 1. User triggers render (UI button OR agent `render.shot` macro).
 2. RenderJob node added to DAG with frame range, fps, output dir, pass list.
 3. Job worker walks frames sequentially.
@@ -93,6 +100,7 @@
 7. On failure: persist last-good-frame index; allow resume.
 
 **Common violations:**
+
 - Reading "current viewport time" instead of frame-N time → render and viewport diverge.
 - Reusing material override targets across passes → race conditions, wrong colors.
 - Encoding on main thread → frame budget blown, viewport drops to 5fps during render.
@@ -104,6 +112,7 @@
 ### K5: Project save/load lifecycle
 
 **Steps:**
+
 1. (Save) Serialize DAG → JSON via zod schema.
 2. Compute integrity hash.
 3. Write to OPFS with versioned filename.
@@ -115,6 +124,7 @@
 9. Trigger evaluator → first render.
 
 **Common violations:**
+
 - Skipping step 4 → silent data loss when OPFS quota exceeded.
 - Skipping step 7 → load older project crashes or corrupts.
 - Running migrations after hydrate → stores see old-shaped data first → component crashes.

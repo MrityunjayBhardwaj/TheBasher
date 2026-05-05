@@ -47,8 +47,7 @@ export function SceneTree() {
   function canDropOn(srcRow: TreeRow, dstRow: TreeRow): boolean {
     if (!srcRow.parent || !dstRow.parent) return false;
     return (
-      srcRow.parent.nodeId === dstRow.parent.nodeId &&
-      srcRow.parent.socket === dstRow.parent.socket
+      srcRow.parent.nodeId === dstRow.parent.nodeId && srcRow.parent.socket === dstRow.parent.socket
     );
   }
 
@@ -80,13 +79,8 @@ export function SceneTree() {
     // shift left for everything to its right. Compensate when the target
     // index is greater than the source.
     const newIndex =
-      dstRow.parent.index > srcRow.parent.index
-        ? dstRow.parent.index
-        : dstRow.parent.index;
-    const adjusted =
-      dstRow.parent.index > srcRow.parent.index
-        ? newIndex - 1
-        : newIndex;
+      dstRow.parent.index > srcRow.parent.index ? dstRow.parent.index : dstRow.parent.index;
+    const adjusted = dstRow.parent.index > srcRow.parent.index ? newIndex - 1 : newIndex;
 
     const ops: Op[] = [
       { type: 'disconnect', from: ref, to },

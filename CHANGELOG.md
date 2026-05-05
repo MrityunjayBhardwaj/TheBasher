@@ -9,6 +9,7 @@ uses semantic-ish versioning during the v0.5 phase plan.
 **P0 — Foundation + DAG core.** First runnable Basher.
 
 ### Added
+
 - **DAG core** (THESIS.md §6-10): `NodeDefinition<P,O>` with zod
   `paramSchema`, version, pure flag, cost; FNV-1a content-hash evaluator
   with depth-32 cycle detection; five Op primitives + inverses; zustand
@@ -40,6 +41,7 @@ uses semantic-ish versioning during the v0.5 phase plan.
   ACES + SMAA beauty pass.
 
 ### Cut from P0 scope (pulled to later phases)
+
 - Scene tree projection — P1 (Director-mode `tree-slot` is a placeholder).
 - Library / asset thumbnails — P1.
 - TransformControls gizmo — P1 (drag-to-edit lands with the scene tree).
@@ -48,6 +50,7 @@ uses semantic-ish versioning during the v0.5 phase plan.
 - Blender-companion live proxy from Vite to the Python server — P1.
 
 ### Notes
+
 - 58 vitest unit tests; 9 Playwright E2E specs; production bundle ~360KB
   gzipped (THESIS.md §53 budget: 2MB).
 - Default project file is the THESIS App. C 5-node DAG; built via the

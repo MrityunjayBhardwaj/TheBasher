@@ -7,7 +7,11 @@ export const SpotLightParams = z.object({
   position: z.tuple([z.number(), z.number(), z.number()]).default([0, 5, 0]),
   target: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   color: z.string().default('#ffffff'),
-  angle: z.number().min(0).max(Math.PI / 2).default(Math.PI / 6),
+  angle: z
+    .number()
+    .min(0)
+    .max(Math.PI / 2)
+    .default(Math.PI / 6),
   penumbra: z.number().min(0).max(1).default(0.1),
   distance: z.number().min(0).default(0),
   decay: z.number().min(0).default(2),

@@ -41,7 +41,12 @@ export function buildAssetDropOps(args: DropChainArgs): Op[] {
   };
   const position = args.position ?? [0, 0, 0];
   return [
-    { type: 'addNode', nodeId: ids.gltf, nodeType: 'GltfAsset', params: { assetRef: args.assetRef } },
+    {
+      type: 'addNode',
+      nodeId: ids.gltf,
+      nodeType: 'GltfAsset',
+      params: { assetRef: args.assetRef },
+    },
     {
       type: 'addNode',
       nodeId: ids.transform,

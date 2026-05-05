@@ -57,6 +57,7 @@ Your job is to build P1 to acceptance, open a draft PR, run goal-backward self-r
 ## Execution Protocol
 
 ### Wave A — New node types (THESIS.md §39, §11-12)
+
 - `src/nodes/GltfAsset.ts` — params: assetRef (path/url), output: Mesh. impure for v0.5 (loads externally) OR pure if we treat the path as a content key. Default to `pure: false, cost: 'medium'` and re-evaluate on path change only.
 - `src/nodes/Transform.ts` — params: position, rotation, scale; input: target (any geometry); output: transformed geometry.
 - `src/nodes/Group.ts` — input: children (list); output: Group with transform composition.
@@ -68,30 +69,35 @@ Your job is to build P1 to acceptance, open a draft PR, run goal-backward self-r
 - All zod schemas, twice-eval determinism tests for pure nodes, register in `registerAll.ts`.
 
 ### Wave B — Asset Library panel (THESIS.md §14)
+
 - `src/app/Library.tsx` — left rail (Director mode); replaces or augments the current NodeList placeholder.
 - Folder tree from OPFS at `assets/` (writes through StorageCapability — no fs leak).
 - Drag-drop emits Op chain via `dispatchAtomic`.
 - Thumbnails: offscreen `<Canvas>` rendering the GltfAsset's bounding box at 128×128 → blob → cache. Observe whether the offscreen Canvas fights the main Canvas for GL context; if it does, drop to a worker.
 
 ### Wave C — Scene tree (THESIS.md §12)
+
 - `src/app/SceneTree.tsx` — fills the `tree-slot` placeholder.
 - Walks back from `state.outputs.scene` through Group/Transform/Attachment; emits a hierarchy.
 - Drag-reorder: emits `disconnect → connect` via `dispatchAtomic`.
 - Two non-identical DAGs that evaluate to the same hierarchy show the same tree (THESIS.md §12 — projection, not truth).
 
 ### Wave D — TransformControls gizmo
+
 - `src/viewport/Gizmo.tsx` — drei `<TransformControls>` bound to the selected Transform node.
 - Live-drag: writes one `setParam` per frame, debounced to 16ms (THESIS.md §53).
 - On release: full re-eval (the cache invalidates anyway because params changed).
 - Single-writer queue: if a `setParam` from elsewhere collides mid-drag, the user's drag wins (THESIS.md §25).
 
 ### Wave E — Tests + CI
+
 - Vitest determinism for ScatterNode (twice-eval with same seed = identical output).
 - Vitest twice-eval for every new pure node.
 - Playwright E2E for all 5 P1 acceptance tests. Linux + darwin baselines for any new screenshot test.
 - Update CI workflow if new dirs need lint coverage.
 
 ### Wave F — Catalogue + close
+
 - Flip V3 to ALIGNED if any new node consumes Time (likely not in P1; explicit NOT YET if not).
 - Add new boundaries to dharana if any surface; otherwise note "no new boundaries observed."
 - Catalog any patterns hit during P1 to hetvabhasa.

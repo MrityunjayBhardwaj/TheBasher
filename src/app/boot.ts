@@ -79,6 +79,14 @@ export function boot(): Promise<void> {
       outputs: project.state.outputs,
     });
 
+    // Test affordance — expose the stores in dev only. Production builds
+    // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
+    // these to drive scenarios that native HTML5 D&D would make brittle.
+    if (import.meta.env.DEV) {
+      const w = window as unknown as Record<string, unknown>;
+      w.__basher_dag = useDagStore;
+    }
+
     // K1 step 9 — bridge polls only in dev (impl no-ops when DEV is false).
     getBlenderBridge().start();
   })();

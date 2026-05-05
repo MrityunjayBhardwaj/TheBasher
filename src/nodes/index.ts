@@ -6,10 +6,7 @@ export { DirectionalLightNode, DirectionalLightParams } from './DirectionalLight
 export { GltfAssetNode, GltfAssetParams } from './GltfAsset';
 export { GroupNode, GroupParams } from './Group';
 export { MaterialOverrideNode, MaterialOverrideParams } from './MaterialOverride';
-export {
-  OrthographicCameraNode,
-  OrthographicCameraParams,
-} from './OrthographicCamera';
+export { OrthographicCameraNode, OrthographicCameraParams } from './OrthographicCamera';
 export { PerspectiveCameraNode, PerspectiveCameraParams } from './PerspectiveCamera';
 export { PointLightNode, PointLightParams } from './PointLight';
 export { RenderOutputNode, RenderOutputParams } from './RenderOutput';

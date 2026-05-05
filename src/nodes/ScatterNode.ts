@@ -25,7 +25,8 @@ export const ScatterNodeParams = z.object({
   /** mulberry32 seed. Same seed → same placement across runs. */
   seed: z.number().int().default(42),
   /** Half-extents of the axis-aligned box the points are scattered within. */
-  bounds: z.tuple([z.number().nonnegative(), z.number().nonnegative(), z.number().nonnegative()])
+  bounds: z
+    .tuple([z.number().nonnegative(), z.number().nonnegative(), z.number().nonnegative()])
     .default([5, 0, 5]),
   /** Random scale jitter range (per axis), uniform in [1-jitter, 1+jitter]. */
   scaleJitter: z.number().min(0).max(1).default(0.2),

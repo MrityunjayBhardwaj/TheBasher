@@ -72,18 +72,18 @@ THESIS.md            # source of truth for v0.5
 
 ## Phase map (11 weeks to v0.5)
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| **P0** | **Foundation + DAG core** | **shipped** |
-| P1   | First node types + Asset Library | next |
-| P2   | Character + Move (as nodes) | |
-| P2.5 | AI Agent on the DAG | |
-| P3   | Timeline = animation nodes | |
-| P4   | Render graph = render nodes | |
-| P5   | AI Render Bridge | |
-| P6   | Splats node | |
-| P7   | PlayCanvas export | |
-| P8   | Progressive UX + Demo | |
+| Phase  | Description                      | Status      |
+| ------ | -------------------------------- | ----------- |
+| **P0** | **Foundation + DAG core**        | **shipped** |
+| P1     | First node types + Asset Library | next        |
+| P2     | Character + Move (as nodes)      |             |
+| P2.5   | AI Agent on the DAG              |             |
+| P3     | Timeline = animation nodes       |             |
+| P4     | Render graph = render nodes      |             |
+| P5     | AI Render Bridge                 |             |
+| P6     | Splats node                      |             |
+| P7     | PlayCanvas export                |             |
+| P8     | Progressive UX + Demo            |             |
 
 ## License
 

@@ -69,9 +69,7 @@ export function Library() {
                 style={{ background: a.swatch }}
               />
               <span className="grow truncate">{a.name}</span>
-              <span className="text-[9px] text-fg/40">
-                {a.available ? 'glb' : '—'}
-              </span>
+              <span className="text-[9px] text-fg/40">{a.available ? 'glb' : '—'}</span>
             </button>
           </li>
         ))}
