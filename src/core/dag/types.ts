@@ -148,6 +148,14 @@ export const OpConnectSchema = z.object({
   type: z.literal('connect'),
   from: NodeRefSchema,
   to: NodeRefSchema,
+  /**
+   * Optional insertion position for list-cardinality sockets. Default
+   * (omitted) appends to the end — preserves the P0 behavior. Drag-reorder
+   * (P1, scene tree) sets this to the new sibling index. THESIS.md App. B
+   * lists five Op types; this is a parameter on `connect`, not a sixth
+   * type.
+   */
+  index: z.number().int().nonnegative().optional(),
 });
 
 export const OpDisconnectSchema = z.object({

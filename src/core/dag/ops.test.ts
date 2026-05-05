@@ -179,6 +179,69 @@ describe('applyOp — connect/disconnect', () => {
     ]);
   });
 
+  it('connect with explicit index inserts at position (P1 drag-reorder protocol)', () => {
+    let state = emptyDagState();
+    for (const id of ['a', 'b', 'c']) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: id,
+        nodeType: 'TestNumber',
+        params: { value: 1 },
+      }).next;
+    }
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sl',
+      nodeType: 'TestSumList',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 'sl', socket: 'items' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'b', socket: 'out' },
+      to: { node: 'sl', socket: 'items' },
+    }).next;
+    // Insert c at index 0 — should land before a/b.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'c', socket: 'out' },
+      to: { node: 'sl', socket: 'items' },
+      index: 0,
+    }).next;
+    expect(state.nodes.sl.inputs.items).toEqual([
+      { node: 'c', socket: 'out' },
+      { node: 'a', socket: 'out' },
+      { node: 'b', socket: 'out' },
+    ]);
+  });
+
+  it('connect with index > length clamps to append (no out-of-bounds)', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'a',
+      nodeType: 'TestNumber',
+      params: { value: 1 },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sl',
+      nodeType: 'TestSumList',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 'sl', socket: 'items' },
+      index: 99,
+    }).next;
+    expect(state.nodes.sl.inputs.items).toEqual([{ node: 'a', socket: 'out' }]);
+  });
+
   it('round-trips connect → disconnect via inverse', () => {
     const state = buildPair();
     const r1 = applyOp(state, {

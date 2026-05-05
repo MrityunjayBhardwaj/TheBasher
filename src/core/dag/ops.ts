@@ -190,8 +190,10 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   let inverse: Op;
 
   if (inputDesc.cardinality === 'list') {
-    const list = Array.isArray(prior) ? [...prior, ref] : prior ? [prior, ref] : [ref];
-    nextBinding = list;
+    const existing = Array.isArray(prior) ? [...prior] : prior ? [prior] : [];
+    const insertAt = op.index === undefined ? existing.length : Math.min(op.index, existing.length);
+    existing.splice(insertAt, 0, ref);
+    nextBinding = existing;
     inverse = { type: 'disconnect', from: ref, to: op.to };
   } else {
     nextBinding = ref;
