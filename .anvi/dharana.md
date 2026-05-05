@@ -139,6 +139,14 @@
 
 **Verdict: organization is sound after P0.** Continue with current structure into P1.
 
+**Post-P1 fatality test (2026-05-05):**
+
+1. **Hetvabhasa clustering:** 10 patterns cataloged (H1-H10). H9/H10 are tooling/test patterns (GLTFExporter polyfill, zustand snapshot stale across async hops) — not boundary issues. H1-H8 distribution is unchanged from P0. **No new 3+ clustering at any B-boundary.**
+2. **Vyapti span:** V9 lands ALIGNED with `MaterialOverride` (single module, no entanglement). V1/V2/V4/V5/V6/V8 still single-module-spanning. **No invariant gained a multi-module span during P1.**
+3. **Krama crossing:** K6 (asset-drop chain) lives entirely in `src/app/asset/dropChain.ts` + `src/app/AssetDropZone.tsx` + `src/core/dag/store.ts` (the dispatchAtomic seam). **No new lifecycle crosses 3+ module boundaries.**
+
+**Verdict: organization is still sound after P1.** New "boundary" B6 emerges (Library ↔ OPFS asset store) but it is a clean specialization of B2 (Evaluator ↔ Storage) — same StorageCapability seam, same V6 enforcement.
+
 **Predicted high-risk boundaries (THESIS.md §57 pre-mortem) — P0 status:**
 
 - B1 (editor ↔ evaluator): perf was the worry. P0 shows `dispatch → evaluate → render` synchronous chain runs in <16ms (acceptance #5 ✓). 91 fps observed on M1 with default DAG (acceptance #8 ✓). No stutter. Watch on bigger graphs in P1.
@@ -178,4 +186,5 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 **Created:** 2026-05-05 — before P0 begins.
 **Updated:** 2026-05-05 — initial seed from THESIS.md commitments.
 **Updated:** 2026-05-05 — post-P0 re-derivation: V1/V2/V4/V5/V6/V8 flipped from NOT YET IMPLEMENTED to ALIGNED. Hetvabhasa H1-H6 added. Organizational fatality test passed — no boundary needs restructuring.
-**Next update trigger:** end of P1 — re-validate after first node-type bump exercises the migration runner end-to-end.
+**Updated:** 2026-05-05 — post-P1: V9 flipped to ALIGNED. K6 (asset-drop chain) added. H9/H10 cataloged. Connect-with-index extension is backward-compatible with V1; existing tests unchanged.
+**Next update trigger:** end of P2 (Character + Move) — re-validate after first node consumes Time.

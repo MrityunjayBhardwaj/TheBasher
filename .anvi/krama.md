@@ -131,3 +131,23 @@
 
 **REF:** THESIS.md §52
 **Why it matters:** every saved project is a trust commitment. Migration policy lives or dies here.
+
+### K6: Asset-drop chain (P1)
+
+**Steps:**
+
+1. Library item drag emits `application/x-basher-asset` MIME with the OPFS-relative path.
+2. AssetDropZone captures `drop`, reads `state.outputs.scene.node` to learn the parent.
+3. `buildAssetDropOps` returns the 6-op chain: `addNode(GltfAsset) → addNode(Transform) → connect(gltf→tx.target) → addNode(Group) → connect(tx→grp.children) → connect(grp→scene.children)`.
+4. `dispatchAtomic` applies the chain as one undo entry (`description: "import asset: <path>"`).
+5. The viewport's GltfAssetR component resolves the assetRef via `useResolvedAssetUrl` (OPFS read → blob URL), then `useGLTF` loads the glTF and renders.
+6. Subsequent drops append (no Group reuse — every drop creates its own Group).
+
+**Common violations:**
+
+- Calling `dispatchBatch` (per-op undo entries) instead of `dispatchAtomic` → user must hit Cmd+Z six times to revert one drop. Acceptance #1 fails.
+- Reading `state.outputs.scene` from a stale getState() snapshot → drops attach under a different parent than the user expects.
+- Passing the asset's filesystem URL (`/assets/cube.gltf`) as `assetRef` in production → bypasses OPFS, breaks save/reload portability across machines.
+
+**REF:** THESIS.md §39, krama K2; `src/app/asset/dropChain.ts:36`; `src/app/AssetDropZone.tsx:33`; `src/app/asset/dropChain.test.ts`.
+**Why it matters:** the drop-chain is the canonical example of a multi-Op user action. P2.5's agent macros (e.g. `library.import`) reuse the same chain — if the human path mutates correctly under undo, the agent path inherits the property for free.
