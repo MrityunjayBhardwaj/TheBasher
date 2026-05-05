@@ -29,6 +29,7 @@ import type {
   AreaLightValue,
   BoxMeshValue,
   CameraValue,
+  CharacterValue,
   DirectionalLightValue,
   GltfAssetValue,
   GroupValue,
@@ -247,6 +248,8 @@ function MeshChild({ value, override }: MeshChildProps) {
       return <MaterialOverrideR value={value} override={override} />;
     case 'Scatter':
       return <ScatterR value={value} override={override} />;
+    case 'Character':
+      return <CharacterR value={value} />;
   }
 }
 
@@ -391,4 +394,77 @@ function ScatterR({ value, override }: { value: ScatterValue; override?: Materia
       })}
     </group>
   );
+}
+
+// P2 placeholder character — boxes per bone, transformed by the pose.
+// Real skinning lands in P3 (animation depth). The bone hierarchy is
+// resolved into world transforms via parent indices declared on the
+// skeleton itself.
+function CharacterR({ value }: { value: CharacterValue }) {
+  const boneTransforms: {
+    position: [number, number, number];
+    rotation: [number, number, number];
+  }[] = [];
+  const skel = value.pose.skeleton;
+  for (let i = 0; i < skel.bones.length; i++) {
+    const pose = value.pose.poses[i];
+    boneTransforms.push({
+      position: (pose?.position ?? skel.bones[i].position) as [number, number, number],
+      rotation: (pose?.rotation ?? skel.bones[i].rotation) as [number, number, number],
+    });
+  }
+  return (
+    <group
+      position={value.position as [number, number, number]}
+      rotation={[0, value.heading, 0]}
+      userData={{ basherCharacterName: value.name }}
+    >
+      {skel.bones.length === 0 ? (
+        // Fallback marker if no skeleton wired yet.
+        <mesh position={[0, 0.5, 0]}>
+          <boxGeometry args={[0.4, 1, 0.4]} />
+          <meshStandardMaterial color="#88aaff" roughness={0.6} metalness={0.0} />
+        </mesh>
+      ) : (
+        <CharacterBoneRig
+          bones={skel.bones.map((b) => ({ parent: b.parent }))}
+          transforms={boneTransforms}
+        />
+      )}
+    </group>
+  );
+}
+
+function CharacterBoneRig({
+  bones,
+  transforms,
+}: {
+  bones: readonly { parent: number }[];
+  transforms: readonly { position: [number, number, number]; rotation: [number, number, number] }[];
+}) {
+  // Build a recursive tree: each bone is a <group> with its parent's group
+  // as the React parent, so bone-local transforms compose by THREE matrix
+  // multiplication. This lets pose updates remain bit-exactly driven by
+  // upstream evaluator output (V8: viewport reads, never authors).
+  const childrenOf = new Map<number, number[]>();
+  bones.forEach((b, i) => {
+    const list = childrenOf.get(b.parent) ?? [];
+    list.push(i);
+    childrenOf.set(b.parent, list);
+  });
+  function renderBone(i: number): React.ReactElement {
+    const t = transforms[i];
+    const kids = childrenOf.get(i) ?? [];
+    return (
+      <group key={`b:${i}`} position={t.position} rotation={t.rotation}>
+        <mesh position={[0, 0.05, 0]}>
+          <boxGeometry args={[0.18, 0.18, 0.18]} />
+          <meshStandardMaterial color="#88aaff" roughness={0.6} metalness={0.0} />
+        </mesh>
+        {kids.map(renderBone)}
+      </group>
+    );
+  }
+  const roots = childrenOf.get(-1) ?? [];
+  return <>{roots.map(renderBone)}</>;
 }

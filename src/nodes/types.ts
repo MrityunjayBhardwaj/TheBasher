@@ -164,13 +164,106 @@ export interface ScatterValue {
   readonly assets: readonly SceneChild[];
 }
 
+// ---------------------------------------------------------------------------
+// P2 — Time, Character, Skeleton, Animation, Navmesh, Locomotion
+//
+// Time enters as a typed socket value (THESIS.md §49). The TimeSource node
+// is the only impure source; pure consumers receive `TimeValue` as an input
+// and remain bit-exact reproducible given (params, inputs).
+// ---------------------------------------------------------------------------
+
+export interface TimeValue {
+  readonly frame: number;
+  readonly seconds: number;
+  readonly normalized: number;
+}
+
+/** A single bone in a skeleton hierarchy. P2 keeps it data-only (V9). */
+export interface BoneSpec {
+  readonly name: string;
+  /** Parent bone index, or -1 for root. */
+  readonly parent: number;
+  /** Bind-pose translation (relative to parent). */
+  readonly position: Vec3;
+  /** Bind-pose Euler rotation (relative to parent). */
+  readonly rotation: Vec3;
+}
+
+export interface SkeletonValue {
+  readonly kind: 'Skeleton';
+  readonly bones: readonly BoneSpec[];
+}
+
+export interface BonePose {
+  /** Index into the skeleton's `bones`. */
+  readonly bone: number;
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+}
+
+export interface PosedSkeletonValue {
+  readonly kind: 'PosedSkeleton';
+  readonly skeleton: SkeletonValue;
+  readonly poses: readonly BonePose[];
+}
+
+/** A single keyframe targeting a bone (by index) at a given clip-time. */
+export interface AnimationKeyframe {
+  readonly bone: number;
+  readonly time: number;
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+}
+
+export interface AnimationClipValue {
+  readonly kind: 'AnimationClip';
+  readonly name: string;
+  readonly duration: number;
+  /** Sampled pose at the input `Time`, given the clip's keyframes. */
+  readonly pose: PosedSkeletonValue;
+}
+
+export interface NavmeshValue {
+  readonly kind: 'Navmesh';
+  /** Half-extents of the ground-plane navmesh primitive (P2 hardcoded source). */
+  readonly halfSize: readonly [number, number];
+  /** Listed obstacles (axis-aligned boxes) on the navmesh, projected to the ground plane. */
+  readonly obstacles: readonly {
+    readonly center: readonly [number, number];
+    readonly halfSize: readonly [number, number];
+  }[];
+}
+
+export interface WalkPathValue {
+  readonly kind: 'WalkPath';
+  readonly samples: readonly Vec3[];
+  /** Total path length (sum of segment lengths). */
+  readonly length: number;
+}
+
+export interface LocomotionStateValue {
+  readonly kind: 'LocomotionState';
+  readonly position: Vec3;
+  readonly heading: number;
+  readonly pose: PosedSkeletonValue;
+}
+
+export interface CharacterValue {
+  readonly kind: 'Character';
+  readonly name: string;
+  readonly position: Vec3;
+  readonly heading: number;
+  readonly pose: PosedSkeletonValue;
+}
+
 export type SceneChild =
   | BoxMeshValue
   | GltfAssetValue
   | TransformValue
   | GroupValue
   | MaterialOverrideValue
-  | ScatterValue;
+  | ScatterValue
+  | CharacterValue;
 
 // ---------------------------------------------------------------------------
 // Scene (socket type: 'Scene')

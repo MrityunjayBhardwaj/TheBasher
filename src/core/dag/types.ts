@@ -59,7 +59,15 @@ export type SocketTypeName =
   | 'Group'
   | 'Transform'
   | 'RenderOutput'
-  | 'NodeRef';
+  | 'NodeRef'
+  // P2 — Character + Move (THESIS.md §40)
+  | 'Character'
+  | 'Skeleton'
+  | 'PosedSkeleton'
+  | 'AnimationClip'
+  | 'Navmesh'
+  | 'WalkPath'
+  | 'LocomotionState';
 
 export type Cardinality = 'single' | 'list';
 
