@@ -11,6 +11,7 @@
 import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
+import { Gizmo } from '../app/Gizmo';
 import { FpsMeter } from '../render/FpsMeter';
 import { SceneFromDAG } from './SceneFromDAG';
 
@@ -39,6 +40,7 @@ export function Viewport() {
         <Suspense fallback={null}>
           <color attach="background" args={['#0a0a0a']} />
           <SceneFromDAG />
+          <Gizmo />
         </Suspense>
       </Canvas>
       <FpsMeter />
