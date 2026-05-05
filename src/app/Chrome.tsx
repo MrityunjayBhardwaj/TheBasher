@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useProjectStore } from '../core/project/store';
 import { saveCurrent } from './boot';
 import { ModeSwitcher } from './ModeSwitcher';
+import { ProjectsMenu } from './ProjectsMenu';
 
 export function Chrome() {
   const projectName = useProjectStore((s) => s.current?.name ?? 'Untitled');
@@ -45,6 +46,7 @@ export function Chrome() {
             saved {new Date(savedAt).toLocaleTimeString()}
           </span>
         )}
+        <ProjectsMenu />
         <ModeSwitcher />
       </div>
     </header>

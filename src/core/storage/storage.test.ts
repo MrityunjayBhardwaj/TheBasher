@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { IndexedDbStorage } from './IndexedDbStorage';
 import { MemoryStorage } from './MemoryStorage';
 import { TauriStorage } from './TauriStorage';
 
@@ -33,6 +34,18 @@ describe('MemoryStorage', () => {
     const s = new MemoryStorage();
     await s.delete('missing.txt'); // no throw
     expect(await s.exists('missing.txt')).toBe(false);
+  });
+});
+
+// IndexedDB tests run only when the test environment provides an IDB
+// shim (happy-dom does not as of v15 — but a real browser does). The
+// E2E suite exercises the real path; the unit suite proves at least
+// that the feature-detect doesn't crash and falls back gracefully.
+describe('IndexedDbStorage (feature-detect)', () => {
+  it('isAvailable returns false in environments without IndexedDB', async () => {
+    const hasIDB = typeof (globalThis as { indexedDB?: unknown }).indexedDB !== 'undefined';
+    if (hasIDB) return; // skip — real path is exercised in E2E
+    expect(await new IndexedDbStorage('basher-test').isAvailable()).toBe(false);
   });
 });
 
