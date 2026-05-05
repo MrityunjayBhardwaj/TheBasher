@@ -101,17 +101,18 @@
 
 ## 4. ORGANIZATIONAL HEALTH
 
-> No code yet. First fatality test runs after P0 ships.
+**Post-P0 fatality test (2026-05-05):**
 
-**Future fatality tests to run after each phase:**
-1. **Hetvabhasa clustering:** do 3+ error patterns cluster at the same boundary? If yes, restructure that boundary.
-2. **Vyapti span:** does any invariant span 3+ modules? If yes, modules are entangled — consolidate.
-3. **Krama crossing:** does any lifecycle cross module boundaries 3+ times? If yes, the sequence is broken into too many handoffs.
+1. **Hetvabhasa clustering:** 6 patterns cataloged (H1-H6). H1/H2/H3 cluster at *tooling/dev-loop*, NOT at any of B1-B5. H4 sits at B2 (storage TS typing). H5 sits at B1 (DAG types). H6 is at the test/observation boundary (UI overlay vs pixel diff). **No 3+ clustering at a single B-boundary** — boundaries B1-B5 are correctly placed for now.
+2. **Vyapti span:** V1 (op dispatcher) spans `core/dag/store.ts` only — single module, no entanglement. V2 spans `src/nodes/**` (declared) + `eslint.config.js` (enforced) + `src/nodes/nodes.test.ts` (verified) — three sites, but they're complementary not overlapping. V6 (capability) spans `core/storage/` and `integrations/blender/` — distinct interfaces, distinct directories. **No invariant spans 3+ modules with overlapping concerns.**
+3. **Krama crossing:** K1 boot sequence runs through `src/app/boot.ts` end-to-end, single entry. K2 op dispatch lives entirely in `src/core/dag/store.ts` + `ops.ts`. K5 save/load lives in `core/project/io.ts`. **No lifecycle crosses 3+ module boundaries.**
 
-**Predicted high-risk boundaries (THESIS.md §57 pre-mortem):**
-- B1 (editor ↔ evaluator): perf — drag stutters because eval too slow.
-- B3 (agent ↔ DAG): reliability — tool calls succeed only 80% of the time.
-- B5 (web ↔ Blender): UX — companion-script setup blocks adoption.
+**Verdict: organization is sound after P0.** Continue with current structure into P1.
+
+**Predicted high-risk boundaries (THESIS.md §57 pre-mortem) — P0 status:**
+- B1 (editor ↔ evaluator): perf was the worry. P0 shows `dispatch → evaluate → render` synchronous chain runs in <16ms (acceptance #5 ✓). 91 fps observed on M1 with default DAG (acceptance #8 ✓). No stutter. Watch on bigger graphs in P1.
+- B3 (agent ↔ DAG): not exercised in P0; ships with P2.5.
+- B5 (web ↔ Blender): polled endpoint works in dev, inert in prod. Companion-setup-blocks-adoption is the real risk; deferred to P1+ (not on the P0 path).
 
 ---
 
@@ -131,4 +132,5 @@
 
 **Created:** 2026-05-05 — before P0 begins.
 **Updated:** 2026-05-05 — initial seed from THESIS.md commitments.
-**Next update trigger:** end of P0 — re-derive based on first real boundaries observed during implementation.
+**Updated:** 2026-05-05 — post-P0 re-derivation: V1/V2/V4/V5/V6/V8 flipped from NOT YET IMPLEMENTED to ALIGNED. Hetvabhasa H1-H6 added. Organizational fatality test passed — no boundary needs restructuring.
+**Next update trigger:** end of P1 — re-validate after first node-type bump exercises the migration runner end-to-end.

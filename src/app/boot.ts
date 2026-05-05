@@ -1,0 +1,104 @@
+// Application boot sequence — K1 (THESIS.md §38, krama K1).
+//
+// Order is load-bearing. Re-shuffling these steps causes flashes (mode
+// loaded after first render → snap), Canvas remounts (mode-conditional
+// mounting — V8/K1 step 6), or stale eval state (DAG hydrated before its
+// node types are registered).
+
+import { useDagStore } from '../core/dag/store';
+import {
+  buildDefaultDagState,
+  buildDefaultProject,
+  composeProject,
+  DEFAULT_PROJECT_ID,
+  loadProject,
+  saveProject,
+  useProjectStore,
+} from '../core/project';
+import { pickStorage, type StorageCapability } from '../core/storage';
+import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
+import { registerAllNodes } from '../nodes/registerAll';
+
+let cachedStorage: StorageCapability | null = null;
+let cachedBridge: BlenderBridgeCapability | null = null;
+
+export async function getStorage(): Promise<StorageCapability> {
+  if (!cachedStorage) cachedStorage = await pickStorage();
+  return cachedStorage;
+}
+
+export function getBlenderBridge(): BlenderBridgeCapability {
+  if (!cachedBridge) cachedBridge = new BrowserBlenderBridge();
+  return cachedBridge;
+}
+
+/**
+ * Run the boot sequence. Returns once the DAG store and project store are
+ * populated and the React shell is safe to render.
+ *
+ * Steps (K1 1-3): registry → load-or-default → hydrate stores. Steps 4-10
+ * (mount React, Canvas, beacon) belong to the calling component tree.
+ *
+ * StrictMode-safe: React 18+ in dev mounts effects twice. Without the shared
+ * promise guard, the second mount would re-run loadProject + saveProject
+ * after the first hydrate has populated the store — wasted I/O at best, an
+ * OPFS write race at worst. Cached promise: every concurrent caller awaits
+ * the same in-flight boot.
+ */
+let bootPromise: Promise<void> | null = null;
+
+export function boot(): Promise<void> {
+  if (bootPromise) return bootPromise;
+  bootPromise = (async () => {
+    registerAllNodes();
+    const storage = await getStorage();
+
+    let project;
+    try {
+      project = await loadProject(storage, DEFAULT_PROJECT_ID);
+    } catch {
+      project = buildDefaultProject();
+      // Persist immediately so subsequent reloads round-trip the same bytes
+      // (acceptance #4).
+      await saveProject(storage, project);
+    }
+
+    useProjectStore.getState().setCurrent(project);
+    useDagStore.getState().hydrate({
+      nodes: project.state.nodes,
+      outputs: project.state.outputs,
+    });
+
+    // K1 step 9 — bridge polls only in dev (impl no-ops when DEV is false).
+    getBlenderBridge().start();
+  })();
+  return bootPromise;
+}
+
+/** Test-only: forget the cached boot so the next boot() runs fresh. */
+export function __resetBootForTests(): void {
+  bootPromise = null;
+}
+
+export async function saveCurrent(): Promise<void> {
+  const storage = await getStorage();
+  const dag = useDagStore.getState().state;
+  const meta = useProjectStore.getState().current;
+  if (!meta) return;
+  const project = composeProject({
+    id: meta.id,
+    name: meta.name,
+    state: dag,
+    createdAt: meta.createdAt,
+    updatedAt: Date.now(),
+  });
+  await saveProject(storage, project);
+  useProjectStore.getState().setCurrent(project);
+}
+
+/** Tests / dev only — replaces the persisted project with a fresh default. */
+export async function resetProjectForDev(): Promise<void> {
+  const storage = await getStorage();
+  await saveProject(storage, buildDefaultProject());
+  useDagStore.getState().hydrate(buildDefaultDagState());
+}

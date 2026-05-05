@@ -18,19 +18,17 @@
 
 ### V1: Every store mutation goes through the Op dispatcher
 
-**Span:** All zustand stores (DAG, selection, mode, agent, render-job).
-**Enforcement:** Reviewer rejects `setState` outside `dispatch(op)`. Future: lint rule.
-**Status:** NOT YET IMPLEMENTED
-**REF:** THESIS.md §50
-**Why it matters:** undo, agent control, save/load, multiplayer all assume one mutation path.
+**Span:** DAG store (`src/core/dag/store.ts`). UI projections (mode store, selection store) have their own state and never touch the DAG.
+**Enforcement:** `useDagStore.dispatch(op, source, description)` is the SOLE mutation entry; `hydrate()` is the project-load seam (clearly named, bypasses op log). Inspector + future agent surfaces emit Ops, never `setState`.
+**Status:** ALIGNED (P0)
+**REF:** THESIS.md §50; `src/core/dag/store.ts:46`
 
 ### V2: Pure node evaluators are bit-exact reproducible given (params, inputs)
 
-**Span:** Every node-type definition where `pure: true`.
-**Enforcement:** Lint bans `Math.random`/`Date.now`/`performance.now`/`crypto.randomUUID` inside pure evaluators. CI test harness runs each pure node twice on identical inputs.
-**Status:** NOT YET IMPLEMENTED
-**REF:** THESIS.md §48, §51
-**Why it matters:** cache correctness; agent reproducibility; render = viewport at same time.
+**Span:** All five P0 node types (`src/nodes/*.ts`). Future nodes inherit the constraint.
+**Enforcement:** ESLint `no-restricted-syntax` on `src/nodes/**` bans `Math.random`/`Date.now`/`performance.now`/`crypto.randomUUID` (`eslint.config.js`). Vitest twice-eval test asserts deep-equal value + identical content hash on the default DAG (`src/nodes/nodes.test.ts`). Hash is FNV-1a over a stable JSON of (nodeId, params, inputHashes-sorted, time iff impure).
+**Status:** ALIGNED (P0)
+**REF:** THESIS.md §48, §51; `src/core/dag/evaluator.ts:79`
 
 ### V3: Time enters as a `Time` socket, never as a closure or global
 
@@ -42,27 +40,24 @@
 
 ### V4: Every node type carries a `version: number`; project loaders migrate
 
-**Span:** Every node-type definition + project loader + storage backend.
-**Enforcement:** Type system requires `version` field. CI runs migration corpus on every PR.
-**Status:** NOT YET IMPLEMENTED (P0 ships runner; v1 = no migrations)
-**REF:** THESIS.md §52
-**Why it matters:** every saved project from every Basher version must load. Without this, P3+ schema changes break P0/P1 demo files.
+**Span:** Every node-type definition (`NodeDefinition.version`) + project loader (`src/core/project/io.ts`) + migration runner (`src/core/project/migrations.ts`).
+**Enforcement:** Type system requires `version` field. Two ladders run on load: format migrations (registered by version) and per-node migrations (`def.migrations[v]`). v0.5 ships zero registered migrations — first node-type bump adds the first.
+**Status:** ALIGNED — runner + format-migration + per-node migration paths tested (`src/core/project/project.test.ts`). P0 ships at format=1, node version=1 across the board, no migrations registered.
+**REF:** THESIS.md §52; `src/core/project/migrations.ts:1`
 
 ### V5: Permissive licenses only in dependency tree
 
-**Span:** Every `package.json` dependency, transitive included.
-**Enforcement:** CI license-audit step on every package.json diff.
-**Status:** NOT YET IMPLEMENTED
-**REF:** THESIS.md §35; memory/feedback_license.md
-**Why it matters:** GPL infection forces Basher under GPL. One-way door.
+**Span:** Every production dependency (`scripts/license-audit.mjs` walks `npm ls --omit=dev --all`).
+**Enforcement:** `npm run license-audit` job in `.github/workflows/ci.yml`. Allowlist: MIT/ISC/BSD-2/BSD-3/0BSD/Apache-2.0/CC0/Unlicense/Python-2.0/WTFPL/Zlib/BlueOak-1.0; forbidden tokens: GPL/AGPL/LGPL/CC-BY-NC/SSPL/BUSL/CDDL. Falls back to LICENSE-file scan when `package.json.license` is absent.
+**Status:** ALIGNED — 74 production deps, all permissive. GPL `blockbench/` reference checkout is gitignored AND vite-fs-denied.
+**REF:** THESIS.md §35; `scripts/license-audit.mjs:1`
 
 ### V6: Capability interfaces decouple browser/native impls
 
-**Span:** `core/storage/`, `core/blender-bridge/`, `core/file-picker/`, `core/render-encoder/`.
-**Enforcement:** No code outside these directories imports `tauri-*` or `node:fs` directly. Reviewer enforces.
-**Status:** NOT YET IMPLEMENTED
-**REF:** THESIS.md §33; memory/project_stack.md
-**Why it matters:** v0.6 Tauri swap is a capability impl swap, not a feature rewrite.
+**Span:** `src/core/storage/` (`StorageCapability` → `OpfsStorage`/`TauriStorage`/`MemoryStorage`); `src/integrations/blender/` (`BlenderBridgeCapability` → `BrowserBlenderBridge`). v0.6 will add `core/file-picker/` and `core/render-encoder/`.
+**Enforcement:** No code outside `src/core/storage/` or `src/integrations/blender/` imports a Tauri or `node:fs` symbol. `pickStorage()` selects at runtime via `isAvailable()`.
+**Status:** ALIGNED for storage + Blender bridge. v0.6 swap point is a one-line provider change in `src/app/boot.ts`.
+**REF:** THESIS.md §33; `src/core/storage/StorageCapability.ts:1`
 
 ### V7: Agent tool handlers return `Op[]`; do not mutate state directly
 
@@ -74,8 +69,7 @@
 
 ### V8: Viewport never mutates DAG; viewport renders evaluated DAG output
 
-**Span:** R3F `Canvas` and all components inside it.
-**Enforcement:** R3F components are read-only consumers of `evaluate('scene', t)`; user-input handlers emit Ops via dispatchers passed in via props/context.
-**Status:** NOT YET IMPLEMENTED
-**REF:** THESIS.md §11
-**Why it matters:** the DAG is the truth; the viewport is the result. Reverse this and the entire architecture inverts.
+**Span:** R3F `Canvas` (`src/viewport/Viewport.tsx`) + `SceneFromDAG` (`src/viewport/SceneFromDAG.tsx`).
+**Enforcement:** `SceneFromDAG` calls `evaluate(state, target.node, { cache })` and walks the result. There is no path inside `src/viewport/**` that calls `dispatch` or mutates store state. Mode switches do not unmount the Canvas — Layout flips slot visibility via `display:none` (K1 step 6).
+**Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG).
+**REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`
