@@ -202,3 +202,25 @@
 
 **REF:** `src/app/boot.ts` (boot, switchProject, createNewProject, deleteProject, duplicateCurrentProject, renameCurrentProject); `src/app/ProjectsMenu.tsx`.
 **Why it matters:** multi-project is the first feature where the user has expectations about UI continuity across sessions. Get the persisted-handle wrong and the user sees their work disappear on reload — irreversible trust loss.
+
+### K9: camera-from-view chain (P2.1)
+
+**Steps:**
+
+1. User triggers Cmd+Shift+C (KeyboardShortcuts.tsx) or View → Camera-from-View (MenuBar.tsx).
+2. Both routes call `snapshotCameraFromOrbit()` in `src/app/character/cameraFromView.ts`.
+3. Read editor pose from `useThreeRef.getState()` — populated each frame by `<ThreeBridge />` (lives inside Canvas; pushes `useThree(camera)` + `controls.target` into the projection store). Returns early when no camera is mounted yet.
+4. Read `state.outputs.scene` and the Scene aggregator's `inputs.camera`. Returns early when missing or list-shaped (Scene's camera socket is single-cardinality).
+5. Build atomic op chain:
+   - **If a camera is currently wired:** `[disconnect old → addNode PerspectiveCamera{fov, position, lookAt} → connect new → scene.camera]`
+   - **Else (rare in seed projects but possible after Edit→Reset):** `[addNode PerspectiveCamera{...} → connect new → scene.camera]`
+6. `useDagStore.getState().dispatchAtomic(ops, 'user', 'camera-from-view')` — single Cmd+Z reverts the snapshot end-to-end.
+
+**Common violations:**
+
+- Calling `useThree()` from outside Canvas (KeyboardShortcuts is in the React tree but not inside Canvas) → undefined hook context. Fix: read via `useThreeRef`, populated by `<ThreeBridge />`.
+- Writing to `state.outputs.scene.camera` directly (outputs are not Op-managed in v0.5; only inputs are) — the right plumbing is to disconnect/reconnect the Scene aggregator's `camera` input. Mirrors the asset-drop pattern (K6).
+- Skipping the disconnect when an existing camera is wired → `applyOp` rejects the second connect because Scene.camera is single-cardinality.
+
+**REF:** THESIS.md §11; `src/app/character/cameraFromView.ts:21`; `src/app/character/threeRef.ts:24`; `src/app/character/ThreeBridge.tsx:11`; `src/app/character/cameraFromView.test.ts`.
+**Why it matters:** camera-from-view is the killer move for the director-first thesis — frame a shot via OrbitControls, bake it into the DAG, and renders reproduce the pose deterministically. The same `Op[]` shape will be the agent's `camera.snapshot` tool surface when P2.5 lands.

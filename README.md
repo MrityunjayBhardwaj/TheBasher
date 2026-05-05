@@ -5,12 +5,17 @@
 
 Director-first, agent-native, procedural AI video platform.
 
-**Status:** v0.5 P2 (Character + Move). 23 node types, Time as a typed
-socket (V3 ALIGNED), animation/locomotion/path/navmesh nodes, click-to-move
-via the `character.walkTo` macro, multi-character cache isolation, scrubbable
-playhead with rAF clock. P0+P1 features still ship: R3F viewport with
-recursive Mesh dispatcher, OPFS-backed asset library, drag-drop import,
-scene tree, TransformControls gizmo, deterministic ScatterNode.
+**Status:** v0.5 P2.1 (Viewport polish + menu bar). 23 node types, Time as a
+typed socket (V3 ALIGNED), animation/locomotion/path/navmesh nodes,
+click-to-move via the `character.walkTo` macro, multi-character cache
+isolation, scrubbable playhead with rAF clock. P2.1 adds: selection
+multi-select, click-to-pick, Inspector drag-scrub, NPanel overlay (snap +
+grid + axis toggles), Blender-style File / Edit / Select / View menu bar
+with keyboard shortcuts, camera-from-view (Cmd+Shift+C → atomic Op chain
+that bakes the editor camera into a new PerspectiveCamera DAG node),
+Frame Selected (F) / Frame All (Home). P0+P1 still ships: R3F viewport
+with recursive Mesh dispatcher, OPFS-backed asset library, drag-drop
+import, scene tree, TransformControls gizmo, deterministic ScatterNode.
 
 ## What is this
 
@@ -95,6 +100,7 @@ THESIS.md            # source of truth for v0.5
 | **P0** | **Foundation + DAG core**            | **shipped** |
 | **P1** | **First node types + Asset Library** | **shipped** |
 | **P2** | **Character + Move (as nodes)**      | **shipped** |
+| P2.1   | Viewport polish + menu bar           | **shipped** |
 | P2.5   | AI Agent on the DAG                  | next        |
 | P3     | Timeline = animation nodes           |             |
 | P4     | Render graph = render nodes          |             |

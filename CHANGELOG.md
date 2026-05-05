@@ -4,6 +4,82 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2.1] — 2026-05-06
+
+**P2.1 — Viewport polish + menu bar.** Selection multi-select +
+click-to-pick (Wave A+B, already shipped at `5e4b1cf`). Inspector
+drag-scrub, NPanel overlay, snap, grid + axis toggles (Wave C).
+Blender-style File / Edit / Select / View menu bar with keyboard
+shortcuts that work whether or not the menu is open (Wave D). 24 new
+vitest specs + 5 new Playwright specs (Wave E).
+
+### Added
+
+- **viewportStore** (`src/app/stores/viewportStore.ts`) — UI projection
+  for editor-only behaviors: pivot (median-only in v0.5), snapStep +
+  snapEnabled, gridVisible, axisWidgetVisible. `snap` / `snapVec3` /
+  `maybeSnapVec3` helpers. Snap applies to translation only.
+- **NPanel** (`src/app/NPanel.tsx`) — Blender-style top-right overlay:
+  gizmo mode buttons, snap controls, grid + axis-widget toggles,
+  primary-selection summary. HTML, not R3F (lives outside the Canvas).
+- **Inspector drag-scrub** (`src/app/dragScrub.ts` + `Inspector.tsx`) —
+  drag the LABEL horizontally to scrub. Live preview is local React
+  state; one drag commits one `setParam` Op on pointer-up. Sensitivity:
+  default 0.01/px, Shift = fine 0.001/px, Cmd/Ctrl = coarse 0.1/px.
+- **MenuBar** (`src/app/MenuBar.tsx`) — File (New / Duplicate / Rename /
+  Delete / Save / Export glTF [stub] / Export DAG JSON), Edit (Undo /
+  Redo / Reset to Default / Settings [stub]), Select (All / None /
+  Invert / By Type), View (Frame Selected / Frame All / Camera-from-View
+  / Toggle Grid / Toggle Axis / Set Mode). Hotkeys mirror the menu
+  items and are owned by `KeyboardShortcuts.tsx` so they work
+  regardless of menu state.
+- **Frame Selected / Frame All** (`src/app/character/framing.ts`) —
+  manual fit (target + offset preserved). Reads via `useThreeRef` so
+  the action runs from outside the Canvas. F + Home keyboard shortcuts.
+- **K9 — camera-from-view chain** (`.anvi/krama.md`) — atomic
+  `[disconnect old → addNode PerspectiveCamera → connect new]` chain
+  via `dispatchAtomic`. Single Cmd+Z reverts.
+- **H13 — layout-shifting features invalidate pixel-diff baselines**
+  (`.anvi/hetvabhasa.md`) — observed when the menu bar's row shrunk the
+  viewport DIV by ~35px and acceptance #7 mismatched the prior darwin
+  baseline despite no scene-content change.
+
+### Changed
+
+- **Layout** (`src/app/Layout.tsx`) — added a `menu` row above
+  `chrome` so the menu bar is the topmost surface. Existing slot
+  visibility (mode-driven `display:none`) preserved; Canvas still
+  mounts ONCE (V8 / K1 step 6).
+- **Gizmo** (`src/app/Gizmo.tsx`) — translate-mode setParam Op snaps
+  via `maybeSnapVec3` when `viewportStore.snapEnabled`. Character
+  drag-end walkTo target snaps the same way.
+- **GroundClick** (`src/app/character/GroundClick.tsx`) — clicked
+  worldPoint snaps before being fed to `buildWalkToOps`.
+- **KeyboardShortcuts** (`src/app/KeyboardShortcuts.tsx`) — added F
+  (Frame Selected) and Home (Frame All).
+- **PostFx-beauty darwin baseline** regenerated to match the new
+  viewport dimensions (35px shorter due to menu-row addition). Linux
+  baseline regenerates on the first CI run via H8's recipe.
+
+### Tests
+
+- **+24 vitest** (now 161): selectionStore multi-select / invert /
+  toggle, dragScrub sensitivity math, viewportStore snap / toggles,
+  cameraFromView atomic-chain shape + no-op when no editor camera.
+- **+5 Playwright** (now 27): Cmd+Z keyboard reverts last Op,
+  Cmd+Shift+C bakes new PerspectiveCamera + reroutes scene.camera,
+  menu bar opens File/Edit/Select/View, View → Toggle Grid flips
+  NPanel state, NodeList click → Inspector header shows the node id.
+
+### Catalogue
+
+- `dharana.md` — post-P2.1 fatality test passes (no new B-boundary
+  needed; viewportStore is a UI projection alongside selectionStore /
+  gizmoStore / threeRef).
+- `krama.md` — K9 (camera-from-view chain) cataloged.
+- `hetvabhasa.md` — H13 (layout-shifting features invalidate pixel-diff
+  baselines) cataloged.
+
 ## [0.5.0-p2] — 2026-05-06
 
 **P2 — Character + Move.** Time becomes a typed socket. Click-to-move

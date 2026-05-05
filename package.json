@@ -1,7 +1,7 @@
 {
   "name": "basher",
   "private": true,
-  "version": "0.5.0-p2",
+  "version": "0.5.0-p2.1",
   "type": "module",
   "description": "Director-first, agent-native, procedural AI video platform",
   "license": "MIT",

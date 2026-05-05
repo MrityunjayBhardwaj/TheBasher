@@ -208,3 +208,22 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 - Character gizmo binding: TransformControls bound to selected Character emits walkTo on drag-end (mirrors click-to-move) — same Op-shape, different trigger.
 - No new B-boundary needed. The "Viewport-pointer ↔ DAG-mutation" surface (GroundClick + Gizmo) is a clean V8 file-rooted echo of B1 — dispatch lives in `src/app/`, not `src/viewport/`.
   **Next update trigger:** end of P2.1 (viewport polish + menu bar + click-to-select) — re-validate selection-store cardinality (single → array) and any new keyboard-driven Op surfaces.
+
+**Updated:** 2026-05-06 — post-P2.1 (Waves A+B already shipped; this entry covers Waves C+D+E):
+
+- **Selection model now multi.** `selectionStore.selectedNodeIds: ReadonlySet<NodeId>` + `primaryNodeId` is the canonical pair; `selectedNodeId` is a deprecated single-id mirror kept so P0/P1/P2 surfaces (Inspector header, Gizmo binding, Cmd+S save indicator) continue without rewrites. Wave A's choice held under Wave C/D/E exercise — no churn at the call sites.
+- **viewportStore added** as the sister UI projection alongside selectionStore + gizmoStore + threeRef. Lives in `src/app/stores/viewportStore.ts`. Owns: pivot (median-only in v0.5), snapStep + snapEnabled, gridVisible, axisWidgetVisible. `maybeSnapVec3()` is the read-once helper Gizmo translate + GroundClick worldPoint call to honor snap.
+- **New Op-surfaces wired in P2.1 — all preserve V1 + V8 file-rooted enforcement:**
+  - `src/app/character/cameraFromView.ts` (K9) — Cmd+Shift+C / View menu → atomic `[disconnect → addNode PerspectiveCamera → connect]` chain.
+  - `src/app/dragScrub.ts` + `src/app/Inspector.tsx` — Inspector label drag-scrub. Live preview is local React state; one drag commits ONE setParam Op on pointer-up. No per-pixel dispatches → undo stack stays clean (one drag = one Cmd+Z entry).
+  - `src/app/MenuBar.tsx` — File / Edit / Select / View. Every action funnels through existing helpers (boot.ts for project ops, useDagStore.dispatch for ops, hydrate for Edit→Reset). The reset path is the only V1-exception escape and matches the documented project-load seam.
+- **No new B-boundary needed.** The P2.1 surfaces (NPanel + MenuBar + framing.ts) all live in `src/app/` and dispatch from there. The viewport (`src/viewport/`) read viewportStore but never writes the DAG — V8 file-rooted holds.
+- **Hetvabhasa update:** H13 (Playwright pixel-diff baseline must be regenerated after layout shifts). Cataloged because the menu bar legitimately shrunk the viewport DIV by ~35px → acceptance #7 fails on the old darwin baseline despite no scene-content change. Linux baseline regen deferred to first CI run (H8 pattern).
+- **Fatality test (post-P2.1, 2026-05-06):**
+  1. Hetvabhasa clustering: H13 sits at the test/observation boundary (same family as H6/H8/H11). Total now 13 cataloged. No B1-B5 boundary newly clusters 3+ patterns.
+  2. Vyapti span: V1/V2/V3/V4/V5/V6/V8/V9 still single-module-spanning. The MenuBar/NPanel/dragScrub additions did NOT widen any invariant.
+  3. Krama crossing: K9 lives in `cameraFromView.ts` + `threeRef.ts` + `ThreeBridge.tsx` + `useDagStore.dispatchAtomic` — three sites, all atomic, mirrors K7's shape. No new lifecycle crosses 3+ module boundaries.
+
+  **Verdict: organization remains sound after P2.1.**
+
+  **Next update trigger:** start of P2.5 (AI Agent on the DAG). Expect new clustering at B3 (Agent ↔ DAG) — currently empty. V7 will flip to ALIGNED.
