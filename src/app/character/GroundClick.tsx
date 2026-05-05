@@ -19,6 +19,13 @@ import type { NodeId } from '../../core/dag/types';
 import { useSelectionStore } from '../stores/selectionStore';
 import { buildWalkToOps } from './walkTo';
 
+function hasCharacter(state: ReturnType<typeof useDagStore.getState>['state']): boolean {
+  for (const node of Object.values(state.nodes)) {
+    if (node.type === 'Character') return true;
+  }
+  return false;
+}
+
 interface GroundClickProps {
   /** Half-extents of the click-capture plane. Should match the navmesh's. */
   halfSize?: readonly [number, number];
@@ -33,9 +40,22 @@ function findFirstCharacterId(): NodeId | null {
 }
 
 export function GroundClick({ halfSize = [10, 10] }: GroundClickProps) {
+  // Mount the ground-click plane only when at least one Character lives in
+  // the DAG. This keeps the canonical default project's rasterized output
+  // unchanged (acceptance #7 PostFx pixel-diff stays bit-exact for the
+  // P0/P1 baseline) and makes click-to-move appear precisely when a
+  // character exists for it to drive. Subscribing via useDagStore re-runs
+  // when the DAG mutates.
+  const present = useDagStore((s) => hasCharacter(s.state));
+  if (!present) return null;
   return (
     <mesh
-      data-testid="ground-click"
+      // No data-testid — R3F's reconciler routes this prop to THREE.Mesh
+      // which throws on unknown DOM-style attributes. E2E tests drive the
+      // walkTo macro through `__basher_dag.dispatchAtomic` directly (the
+      // canonical H3 lesson: bypass headless-Chromium pointer events for
+      // anything inside the Canvas).
+      userData={{ basherTestid: 'ground-click' }}
       rotation={[-Math.PI / 2, 0, 0]}
       onPointerDown={(e: ThreeEvent<PointerEvent>) => {
         // Gizmo precedence: don't intercept while a node is selected
@@ -56,8 +76,8 @@ export function GroundClick({ halfSize = [10, 10] }: GroundClickProps) {
       }}
     >
       <planeGeometry args={[halfSize[0] * 2, halfSize[1] * 2]} />
-      {/* visible: false keeps the plane interaction-only — no pixels */}
-      <meshBasicMaterial visible={false} />
+      {/* Fully transparent so click-pickup works but no pixels are drawn. */}
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
   );
 }

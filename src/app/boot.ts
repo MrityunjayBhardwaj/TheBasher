@@ -5,7 +5,9 @@
 // mounting — V8/K1 step 6), or stale eval state (DAG hydrated before its
 // node types are registered).
 
+import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
+import type { EvalCtx, NodeId } from '../core/dag/types';
 import {
   buildDefaultDagState,
   buildDefaultProject,
@@ -87,6 +89,12 @@ export function boot(): Promise<void> {
       const w = window as unknown as Record<string, unknown>;
       w.__basher_dag = useDagStore;
       w.__basher_time = useTimeStore;
+      // Eval seam for E2E: evaluate any node at a given ctx.time without
+      // round-tripping through the viewport. Returns { hash, value }.
+      w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        return evaluateDag(state, nodeId, { ctx });
+      };
     }
 
     // K1 step 9 — bridge polls only in dev (impl no-ops when DEV is false).
