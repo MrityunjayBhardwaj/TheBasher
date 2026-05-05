@@ -9,7 +9,9 @@ import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { Inspector } from './Inspector';
 import { Library } from './Library';
+import { MenuBar } from './MenuBar';
 import { NodeList } from './NodeList';
+import { NPanel } from './NPanel';
 import { RightDrawer } from './RightDrawer';
 import { SceneTree } from './SceneTree';
 import { Timebar } from './Timebar';
@@ -30,14 +32,18 @@ export function Layout() {
             : mode === 'pro'
               ? '220px 220px 1fr 320px 320px'
               : '180px 0 1fr 280px 280px',
-        gridTemplateRows: 'auto 1fr auto',
+        gridTemplateRows: 'auto auto 1fr auto',
         gridTemplateAreas: `
+          "menu menu menu menu menu"
           "chrome chrome chrome chrome chrome"
           "library tree viewport inspector drawer"
           "timeline timeline timeline timeline timeline"
         `,
       }}
     >
+      <div style={{ gridArea: 'menu' }}>
+        <MenuBar />
+      </div>
       <div style={{ gridArea: 'chrome' }}>
         <Chrome />
       </div>
@@ -72,6 +78,8 @@ export function Layout() {
         <AssetDropZone>
           <Viewport />
         </AssetDropZone>
+        {/* NPanel is HTML, NOT R3F — overlays the viewport via DOM. */}
+        <NPanel />
       </div>
 
       <div

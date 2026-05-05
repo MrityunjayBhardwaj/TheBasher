@@ -17,6 +17,7 @@ import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { useViewportStore } from '../app/stores/viewportStore';
 import { FpsMeter } from '../render/FpsMeter';
 import { SceneFromDAG } from './SceneFromDAG';
 
@@ -37,6 +38,10 @@ function EditorOrbit() {
 }
 
 export function Viewport() {
+  // Editor-only viewport projections — show/hide grid + axis widget. These
+  // do not affect the DAG (V8 read-only on this side).
+  const gridVisible = useViewportStore((s) => s.gridVisible);
+  const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   return (
     <div data-testid="viewport" className="relative h-full w-full bg-black">
       <Canvas
@@ -70,19 +75,21 @@ export function Viewport() {
           {/* Subtle floor grid — gives the world weight so the user can
               orient drags and place objects relative to a stable reference.
               cellSize/sectionSize follow Blender's "grid + sub-grid" idiom. */}
-          <Grid
-            args={[40, 40]}
-            cellSize={1}
-            cellThickness={0.6}
-            cellColor="#2a2a2a"
-            sectionSize={5}
-            sectionThickness={1.2}
-            sectionColor="#3a3a4a"
-            fadeDistance={40}
-            fadeStrength={1.5}
-            infiniteGrid={false}
-            position={[0, -0.001, 0]}
-          />
+          {gridVisible ? (
+            <Grid
+              args={[40, 40]}
+              cellSize={1}
+              cellThickness={0.6}
+              cellColor="#2a2a2a"
+              sectionSize={5}
+              sectionThickness={1.2}
+              sectionColor="#3a3a4a"
+              fadeDistance={40}
+              fadeStrength={1.5}
+              infiniteGrid={false}
+              position={[0, -0.001, 0]}
+            />
+          ) : null}
           <SceneFromDAG />
           <GroundClick />
           <Gizmo />
@@ -90,9 +97,11 @@ export function Viewport() {
           <ThreeBridge />
           {/* Blender-style axis-orientation widget in the bottom-right.
               Click an axis label to snap the camera to that view. */}
-          <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-            <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
-          </GizmoHelper>
+          {axisWidgetVisible ? (
+            <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+              <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
+            </GizmoHelper>
+          ) : null}
         </Suspense>
       </Canvas>
       <FpsMeter />

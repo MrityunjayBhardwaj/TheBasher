@@ -22,6 +22,7 @@ import { useEffect } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
+import { frameAll, frameSelected } from './character/framing';
 import { useGizmoStore } from './stores/gizmoStore';
 import { useSelectionStore } from './stores/selectionStore';
 
@@ -100,6 +101,15 @@ export function KeyboardShortcuts() {
         case 's':
         case 'S':
           useGizmoStore.getState().setMode('scale');
+          return;
+        case 'f':
+        case 'F':
+          // Frame the primary selection (Blender's F). No-op when nothing
+          // selected.
+          frameSelected();
+          return;
+        case 'Home':
+          frameAll();
           return;
         case 'Escape':
           useSelectionStore.getState().clear();

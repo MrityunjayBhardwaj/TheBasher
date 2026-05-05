@@ -17,6 +17,7 @@ import type { ThreeEvent } from '@react-three/fiber';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
 import { useSelectionStore } from '../stores/selectionStore';
+import { maybeSnapVec3 } from '../stores/viewportStore';
 import { buildWalkToOps } from './walkTo';
 
 function hasCharacter(state: ReturnType<typeof useDagStore.getState>['state']): boolean {
@@ -70,7 +71,8 @@ export function GroundClick({ halfSize = [10, 10] }: GroundClickProps) {
         e.stopPropagation();
         const point = e.point;
         const dagState = useDagStore.getState().state;
-        const result = buildWalkToOps(dagState, characterId, [point.x, 0, point.z]);
+        const target = maybeSnapVec3([point.x, 0, point.z]);
+        const result = buildWalkToOps(dagState, characterId, target);
         if (!result) return;
         useDagStore.getState().dispatchAtomic(result.ops, 'user', result.description);
       }}

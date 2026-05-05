@@ -7,6 +7,7 @@
 
 import { useDagStore } from '../core/dag/store';
 import type { NodeRef } from '../core/dag/types';
+import { useDragScrub } from './dragScrub';
 import { useSelectionStore } from './stores/selectionStore';
 
 interface NumericFieldProps {
@@ -18,22 +19,95 @@ interface NumericFieldProps {
 
 function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
   const dispatch = useDagStore((s) => s.dispatch);
+  // Drag the LABEL horizontally to scrub. One drag = one Op = one undo entry.
+  const scrub = useDragScrub({
+    value,
+    onCommit: (next) => {
+      dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `scrub ${paramPath}`);
+    },
+  });
+  const display = scrub.isDragging ? scrub.previewValue : value;
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="font-mono text-fg/60">{label}</span>
+      <span
+        className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
+        onPointerDown={scrub.onPointerDown}
+        data-testid={`inspector-scrub-${nodeId}-${paramPath}`}
+        title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
+      >
+        {label}
+      </span>
       <input
         type="number"
         step="0.1"
         // Controlled — `value` reflects external state (undo/redo, agent ops,
         // load). Uncontrolled `defaultValue` would silently desync the moment
         // the param changes outside this input (e.g. Cmd+Z).
-        value={value}
+        value={display}
         data-testid={`inspector-input-${nodeId}-${paramPath}`}
         className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus:border-accent focus:outline-none"
         onChange={(e) => {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: next });
+        }}
+      />
+    </label>
+  );
+}
+
+function VectorComponent({
+  nodeId,
+  paramPath,
+  axisLabel,
+  axisIndex,
+  value,
+  vec,
+}: {
+  nodeId: string;
+  paramPath: string;
+  axisLabel: string;
+  axisIndex: number;
+  value: number;
+  vec: readonly number[];
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const scrub = useDragScrub({
+    value,
+    onCommit: (next) => {
+      const newVec = [...vec] as number[];
+      newVec[axisIndex] = next;
+      dispatch(
+        { type: 'setParam', nodeId, paramPath, value: newVec },
+        'user',
+        `scrub ${paramPath}.${axisLabel}`,
+      );
+    },
+  });
+  const display = scrub.isDragging ? scrub.previewValue : value;
+  return (
+    <label className="flex flex-1 items-center gap-1">
+      <span
+        className="w-4 cursor-ew-resize select-none text-center font-mono text-[10px] uppercase text-fg/50 hover:text-accent"
+        onPointerDown={scrub.onPointerDown}
+        data-testid={`inspector-scrub-${nodeId}-${paramPath}-${axisLabel}`}
+        title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
+      >
+        {axisLabel}
+      </span>
+      <input
+        type="number"
+        step="0.1"
+        // Controlled — see NumericField for the why.
+        value={display}
+        data-testid={`inspector-vec-${nodeId}-${paramPath}-${axisLabel}`}
+        className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus:border-accent focus:outline-none"
+        onChange={(e) => {
+          const next = parseFloat(e.target.value);
+          if (Number.isNaN(next)) return;
+          const newVec = [...vec] as number[];
+          newVec[axisIndex] = next;
+          dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
         }}
       />
     </label>
@@ -51,28 +125,20 @@ function VectorField({
   label: string;
   value: readonly number[];
 }) {
-  const dispatch = useDagStore((s) => s.dispatch);
   const dims = ['x', 'y', 'z'];
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{label}</span>
       <div className="flex gap-1">
         {value.slice(0, 3).map((v, i) => (
-          <input
+          <VectorComponent
             key={dims[i]}
-            type="number"
-            step="0.1"
-            // Controlled — see NumericField for the why.
+            nodeId={nodeId}
+            paramPath={paramPath}
+            axisLabel={dims[i]}
+            axisIndex={i}
             value={v}
-            data-testid={`inspector-vec-${nodeId}-${paramPath}-${dims[i]}`}
-            className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus:border-accent focus:outline-none"
-            onChange={(e) => {
-              const next = parseFloat(e.target.value);
-              if (Number.isNaN(next)) return;
-              const newVec = [...value] as number[];
-              newVec[i] = next;
-              dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
-            }}
+            vec={value}
           />
         ))}
       </div>

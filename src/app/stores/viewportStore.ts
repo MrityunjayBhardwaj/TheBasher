@@ -1,0 +1,83 @@
+// Viewport store — UI projections that govern editor-only behaviors of the
+// 3D viewport: floor grid visibility, axis-widget visibility, transform
+// snapping, and the active pivot point.
+//
+// Discipline: this is a UI projection, NOT the DAG. None of these settings
+// are persisted with the project (they belong to the editor session, like
+// the camera orbit pose). Mutations never go through the Op dispatcher.
+//
+// File-rooted V8: this store is mutated by src/app/* (NPanel, menu bar,
+// keyboard shortcuts) and read by src/viewport/Viewport.tsx + src/app/Gizmo.tsx
+// + src/app/character/GroundClick.tsx. The dispatch surface stays in
+// src/app/, the renderer stays in src/viewport/.
+//
+// REF: THESIS.md §11; vyapti V1, V8.
+
+import { create } from 'zustand';
+
+/** Median is the only pivot mode shipped in v0.5 (dharana §3 default). The
+ *  type stays open so future modes (individual / 3d-cursor / active) can land
+ *  without a store rewrite. */
+export type Pivot = 'median' | 'individual' | 'cursor' | 'active';
+
+export interface ViewportStore {
+  /** Currently-active pivot. v0.5 ships median-only. */
+  pivot: Pivot;
+  /** World-space step size used by snap(). 0 disables snapping. */
+  snapStep: number;
+  /** True when snap is on (snapStep > 0 alone is not enough — the user may
+   *  want to keep their step value while toggling snap off). */
+  snapEnabled: boolean;
+  /** Whether the floor Grid renders. */
+  gridVisible: boolean;
+  /** Whether the bottom-right axis widget renders. */
+  axisWidgetVisible: boolean;
+
+  setPivot(pivot: Pivot): void;
+  setSnapStep(step: number): void;
+  setSnapEnabled(enabled: boolean): void;
+  setGridVisible(visible: boolean): void;
+  setAxisWidgetVisible(visible: boolean): void;
+  toggleGridVisible(): void;
+  toggleAxisWidgetVisible(): void;
+  toggleSnapEnabled(): void;
+}
+
+export const useViewportStore = create<ViewportStore>((set, get) => ({
+  pivot: 'median',
+  snapStep: 0.25,
+  snapEnabled: false,
+  gridVisible: true,
+  axisWidgetVisible: true,
+
+  setPivot: (pivot) => set({ pivot }),
+  setSnapStep: (snapStep) => set({ snapStep: Math.max(0, snapStep) }),
+  setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
+  setGridVisible: (gridVisible) => set({ gridVisible }),
+  setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
+  toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
+  toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
+  toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
+}));
+
+/** Round `value` to the nearest multiple of `step`. Returns `value` unchanged
+ *  when step ≤ 0 (snap disabled). */
+export function snap(value: number, step: number): number {
+  if (!Number.isFinite(step) || step <= 0) return value;
+  return Math.round(value / step) * step;
+}
+
+/** Snap a 3-vector component-wise. The shape is preserved so callers can
+ *  feed it directly to setParam Ops. */
+export function snapVec3(
+  value: readonly [number, number, number],
+  step: number,
+): [number, number, number] {
+  return [snap(value[0], step), snap(value[1], step), snap(value[2], step)];
+}
+
+/** Convenience: read-once helper for non-React callers (Gizmo, GroundClick). */
+export function maybeSnapVec3(value: readonly [number, number, number]): [number, number, number] {
+  const { snapEnabled, snapStep } = useViewportStore.getState();
+  return snapEnabled && snapStep > 0 ? snapVec3(value, snapStep) : [value[0], value[1], value[2]];
+}

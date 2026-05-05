@@ -31,6 +31,7 @@ import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore } from './stores/gizmoStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
+import { maybeSnapVec3 } from './stores/viewportStore';
 
 export function Gizmo() {
   const selectedId = useSelectionStore((s) => s.primaryNodeId);
@@ -88,9 +89,11 @@ export function Gizmo() {
     if (!g || !selectedId) return;
     const mode = useGizmoStore.getState().mode;
     const paramPath = mode === 'translate' ? 'position' : mode === 'rotate' ? 'rotation' : 'scale';
+    // Snap applies to translation only — rotation + scale stay continuous in
+    // v0.5 (NEXT_SESSION.md decision default).
     const value =
       mode === 'translate'
-        ? [g.position.x, g.position.y, g.position.z]
+        ? maybeSnapVec3([g.position.x, g.position.y, g.position.z])
         : mode === 'rotate'
           ? [g.rotation.x, g.rotation.y, g.rotation.z]
           : [g.scale.x, g.scale.y, g.scale.z];
@@ -110,7 +113,8 @@ export function Gizmo() {
     // End of drag — emit walkTo to the gizmo's current position.
     const g = groupRef.current;
     const dagState = useDagStore.getState().state;
-    const result = buildWalkToOps(dagState, selectedId, [g.position.x, 0, g.position.z]);
+    const target = maybeSnapVec3([g.position.x, 0, g.position.z]);
+    const result = buildWalkToOps(dagState, selectedId, target);
     if (!result) return;
     useDagStore.getState().dispatchAtomic(result.ops, 'user', result.description);
   }
