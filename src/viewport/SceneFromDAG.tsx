@@ -114,10 +114,19 @@ function PerspectiveCameraNode({
   value: Extract<CameraValue, { kind: 'PerspectiveCamera' }>;
 }) {
   const ref = useRef<THREE.PerspectiveCamera | null>(null);
+  // Set initial position once on mount, then let OrbitControls own it.
+  // Without this, every render (e.g. timeStore tick) re-runs the prop
+  // assignment + lookAt, snapping the camera back and fighting the
+  // editor camera. Camera params from the DAG still take effect via
+  // the value-keyed useEffect below — but only when the values
+  // actually change, not on every render.
+  const [px, py, pz] = value.position;
+  const [lx, ly, lz] = value.lookAt;
   useEffect(() => {
     if (!ref.current) return;
-    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
-  }, [value.lookAt, value.position]);
+    ref.current.position.set(px, py, pz);
+    ref.current.lookAt(new THREE.Vector3(lx, ly, lz));
+  }, [px, py, pz, lx, ly, lz]);
   return (
     <PerspectiveCamera
       ref={ref as React.MutableRefObject<THREE.PerspectiveCamera>}
@@ -125,7 +134,6 @@ function PerspectiveCameraNode({
       fov={value.fov}
       near={value.near}
       far={value.far}
-      position={value.position as [number, number, number]}
     />
   );
 }
@@ -136,10 +144,13 @@ function OrthographicCameraNode({
   value: Extract<CameraValue, { kind: 'OrthographicCamera' }>;
 }) {
   const ref = useRef<THREE.OrthographicCamera | null>(null);
+  const [px, py, pz] = value.position;
+  const [lx, ly, lz] = value.lookAt;
   useEffect(() => {
     if (!ref.current) return;
-    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
-  }, [value.lookAt, value.position]);
+    ref.current.position.set(px, py, pz);
+    ref.current.lookAt(new THREE.Vector3(lx, ly, lz));
+  }, [px, py, pz, lx, ly, lz]);
   return (
     <OrthographicCamera
       ref={ref as React.MutableRefObject<THREE.OrthographicCamera>}
@@ -147,7 +158,6 @@ function OrthographicCameraNode({
       zoom={value.zoom}
       near={value.near}
       far={value.far}
-      position={value.position as [number, number, number]}
     />
   );
 }

@@ -8,13 +8,31 @@
 //
 // REF: THESIS.md §11, §53, krama K1 step 6.
 
+import { OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { Gizmo } from '../app/Gizmo';
+import { useGizmoStore } from '../app/stores/gizmoStore';
 import { FpsMeter } from '../render/FpsMeter';
 import { SceneFromDAG } from './SceneFromDAG';
+
+function EditorOrbit() {
+  // Disable orbit while a TransformControls handle is being dragged
+  // (gizmoStore.dragging). Without this, gizmo + orbit fire simultaneously.
+  // Reading via subscription so the prop flips at the right frame.
+  const dragging = useGizmoStore((s) => s.dragging);
+  return (
+    <OrbitControls
+      makeDefault
+      enabled={!dragging}
+      enableDamping
+      dampingFactor={0.08}
+      // Default mouse map: rotate (LMB), zoom (wheel), pan (RMB / two-finger).
+    />
+  );
+}
 
 export function Viewport() {
   return (
@@ -43,6 +61,7 @@ export function Viewport() {
           <SceneFromDAG />
           <GroundClick />
           <Gizmo />
+          <EditorOrbit />
         </Suspense>
       </Canvas>
       <FpsMeter />
