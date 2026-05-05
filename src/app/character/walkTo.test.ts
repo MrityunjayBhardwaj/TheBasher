@@ -188,3 +188,118 @@ describe('buildWalkToOps', () => {
     expect(params.from).toEqual([3, 0, 0]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Wave D — multi-character isolation through the walkTo macro
+// ---------------------------------------------------------------------------
+
+describe('Wave D — walkTo over multiple characters preserves isolation', () => {
+  function buildTwoCharacters(): DagState {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sk',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [10, 10], obstacles: [] },
+    }).next;
+    for (const id of ['a', 'b'] as const) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `clip_${id}`,
+        nodeType: 'AnimationClip',
+        params: { name: `walk_${id}`, duration: 1, loop: true, keyframes: [] },
+      }).next;
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `loco_${id}`,
+        nodeType: 'LocomotionState',
+        params: { speed: 1, loop: true },
+      }).next;
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `char_${id}`,
+        nodeType: 'Character',
+        params: { name: id },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'sk', socket: 'out' },
+        to: { node: `clip_${id}`, socket: 'skeleton' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'time', socket: 'out' },
+        to: { node: `clip_${id}`, socket: 'time' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: `clip_${id}`, socket: 'out' },
+        to: { node: `loco_${id}`, socket: 'clip' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'time', socket: 'out' },
+        to: { node: `loco_${id}`, socket: 'time' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: `loco_${id}`, socket: 'out' },
+        to: { node: `char_${id}`, socket: 'locomotion' },
+      }).next;
+    }
+    return state;
+  }
+
+  it("walkTo A does not modify B's locomotion or path wiring", () => {
+    let state = buildTwoCharacters();
+    const ctx = { time: { frame: 60, seconds: 1, normalized: 0 } };
+    const hashB_before = evaluate(state, 'char_b', { ctx }).hash;
+
+    const result = buildWalkToOps(state, 'char_a', [3, 0, 0]);
+    if (!result) throw new Error('expected ops');
+    state = applyAll(state, result.ops);
+
+    // B's hash is unchanged; A's hash flipped.
+    const hashB_after = evaluate(state, 'char_b', { ctx }).hash;
+    expect(hashB_after).toBe(hashB_before);
+
+    // B's locomotion still has no path wired (untouched).
+    expect(state.nodes.loco_b.inputs.path).toBeUndefined();
+    // A's locomotion now points at the new WalkPath.
+    expect(state.nodes.loco_a.inputs.path).toEqual({
+      node: result.newWalkPathId,
+      socket: 'out',
+    });
+  });
+
+  it('two consecutive walkTos to A and B leave both characters with distinct paths', () => {
+    let state = buildTwoCharacters();
+    const a = buildWalkToOps(state, 'char_a', [3, 0, 0]);
+    if (!a) throw new Error('expected a ops');
+    state = applyAll(state, a.ops);
+    const b = buildWalkToOps(state, 'char_b', [-2, 0, 1]);
+    if (!b) throw new Error('expected b ops');
+    state = applyAll(state, b.ops);
+
+    expect(a.newWalkPathId).not.toBe(b.newWalkPathId);
+    expect(state.nodes.loco_a.inputs.path).toEqual({ node: a.newWalkPathId, socket: 'out' });
+    expect(state.nodes.loco_b.inputs.path).toEqual({ node: b.newWalkPathId, socket: 'out' });
+    // Each WalkPath carries its own `to`.
+    const wpA = state.nodes[a.newWalkPathId].params as { to: [number, number, number] };
+    const wpB = state.nodes[b.newWalkPathId].params as { to: [number, number, number] };
+    expect(wpA.to).toEqual([3, 0, 0]);
+    expect(wpB.to).toEqual([-2, 0, 1]);
+  });
+});
