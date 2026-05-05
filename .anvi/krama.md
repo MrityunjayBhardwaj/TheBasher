@@ -151,3 +151,27 @@
 
 **REF:** THESIS.md §39, krama K2; `src/app/asset/dropChain.ts:36`; `src/app/AssetDropZone.tsx:33`; `src/app/asset/dropChain.test.ts`.
 **Why it matters:** the drop-chain is the canonical example of a multi-Op user action. P2.5's agent macros (e.g. `library.import`) reuse the same chain — if the human path mutates correctly under undo, the agent path inherits the property for free.
+
+### K7: character.walkTo chain (P2)
+
+**Steps:**
+
+1. User clicks a point on the navmesh ground plane via the `<GroundClick />` mesh inside the Canvas.
+2. `GroundClick.tsx` checks `selectionStore.selectedNodeId === null` (gizmo precedence — selection means manipulation, not navigation). Returns early if a node is selected.
+3. Picks the first `Character` node from `useDagStore.getState().state.nodes`. Returns early if none exists.
+4. Calls `buildWalkToOps(state, characterId, [worldPoint.x, 0, worldPoint.z])`. The macro discovers the character's existing `LocomotionState` and the project's `Navmesh`. Returns null if either is missing.
+5. The macro returns `{ ops, description, newWalkPathId }`:
+   - **If a previous WalkPath is wired to `loco.path`:** ops = [disconnect old → addNode new (navmesh pre-wired) → connect new]
+   - **Else:** ops = [addNode new (navmesh pre-wired) → connect new]
+6. `useDagStore.getState().dispatchAtomic(ops, 'user', description)` applies them as a single atomic group → one Cmd+Z reverts the whole interaction.
+7. The previous WalkPath becomes orphaned (V1: ops are emitted as intended, not auto-cleaned). A future hygiene phase may add a "garbage-collect orphans" pass.
+
+**Common violations:**
+
+- Calling `dispatchBatch` (per-op undo entries) instead of `dispatchAtomic` → user must hit Cmd+Z three times to revert one click. P2 acceptance #2 fails.
+- Skipping the disconnect-old step → multiple `connect` ops on the same `loco.path` socket; the `applyOp` validator rejects the second connect.
+- Using `data-testid` on R3F primitive elements (`<mesh>`) → THREE reconciler throws `Cannot read properties of undefined (reading 'testid')`; whole Canvas crashes (cataloged as H11).
+- Mounting `<GroundClick />` unconditionally → the invisible plane interferes with depth/blending and the canonical default-project pixel-diff baseline shifts. Gate on `hasCharacter(state)`.
+
+**REF:** THESIS.md §40; `src/app/character/walkTo.ts:46`; `src/app/character/GroundClick.tsx:30`; `src/app/character/walkTo.test.ts`.
+**Why it matters:** click-to-move is the first user-perceivable proof that the agent and the user share the same Op surface. P2.5's `character.walkTo` agent tool will return the SAME `Op[]` shape — if the human path mutates correctly under undo, the agent path inherits the property for free (mirrors K6's reasoning).

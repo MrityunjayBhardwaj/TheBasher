@@ -4,6 +4,84 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2] — 2026-05-06
+
+**P2 — Character + Move.** Time becomes a typed socket. Click-to-move
+emits an atomic Op chain. Multi-character isolation proven at unit + E2E.
+
+### Added
+
+- **Seven new P2 node types** (THESIS.md §40):
+  - `TimeSource` (the impure singleton — output socket type `Time`,
+    evaluator returns `ctx.time`; the only legal time producer).
+  - `Skeleton` — POJO bone hierarchy with a default 3-bone stick figure.
+  - `PosedSkeleton` — deterministic procedural sway driven by Time.
+  - `AnimationClip` — piecewise-linear keyframe interpolator with
+    looping. NO three.js AnimationMixer (it secretly clocks).
+  - `Navmesh` — hardcoded ground-plane primitive with axis-aligned
+    obstacles. Mesh-driven navmeshes deferred to P3 (recast).
+  - `WalkPath` — straight-line sampling with obstacle clamping +
+    navmesh half-extent clamping; deterministic given (params, navmesh).
+  - `LocomotionState` — integrates path + clip + time into
+    position + heading + pose; loops along the path.
+  - `Character` — `SceneChild` kind that elevates a LocomotionState to
+    a renderable. Placeholder per-bone box rig until skinning lands
+    in P3.
+- **Time injection** (`src/app/stores/timeStore.ts`): zustand
+  projection of the playhead. `<Clock />` runs rAF and dispatches
+  deltas; capped at 100ms so a stalled tab can't fast-forward time.
+  The viewport reads from the store and threads time into
+  `evaluate()`'s ctx — TimeSource hash flips per frame and propagates
+  through `inputHashes` to flush downstream pure consumer caches.
+- **Timebar** (`src/app/Timebar.tsx`): minimal play/pause + scrub UI in
+  the timeline grid slot. Replaces the P0 placeholder; full
+  clip-aware timeline still lands in P3 (THESIS.md §42).
+- **`character.walkTo` macro + click-to-move** (THESIS.md §40, krama K7):
+  `buildWalkToOps(state, characterId, worldPoint)` returns a 2-op (or
+  3-op when replacing a previous path) chain. `<GroundClick />`
+  captures pointer-down on an invisible ground plane inside the Canvas
+  — file-rooted in `src/app/` so V8 stays clean. Mounted only when at
+  least one Character exists. Gizmo precedence: when a node is
+  selected, ground-clicks are ignored.
+- **Vyapti V3 lands ALIGNED**. ESLint `no-restricted-syntax` on
+  `src/nodes/**` extended to ban `useFrame` and `useThree` (R3F clock
+  readers).
+- **Dev-only handles**: `__basher_time` (timeStore) and
+  `__basher_evaluate(nodeId, ctx)` (DAG eval seam). Mirror the
+  established `__basher_dag` pattern; tree-shaken from prod.
+- **Acceptance tests**: five P2 criteria, all green —
+  - P2#1 time-scrub bit-exact at t=2.5s.
+  - P2#2 click-to-move atomic 2-op chain reverts via one undo.
+  - P2#3 navmesh clamps WalkPath samples out of obstacles.
+  - P2#4 multi-character cache isolation (setParam on A doesn't flip B).
+  - P2#5 reload restores poses + paths bit-exact via V4 migration runner.
+    Plus ~46 new vitest cases (twice-eval determinism for every
+    Time-aware pure node sampled at t∈{0, 0.5, 1, 2.5, 5}; walkTo macro
+    chain shape + multi-character isolation; timeStore behavior). Total:
+    134 vitest, 22 Playwright — all green locally on darwin.
+
+### Changed
+
+- `src/core/dag/types.ts`: `SocketTypeName` extended with
+  `Character | Skeleton | PosedSkeleton | AnimationClip | Navmesh | WalkPath | LocomotionState`.
+- `src/nodes/types.ts`: `SceneChild` union extended with `CharacterValue`.
+- `src/viewport/SceneFromDAG.tsx`: subscribes to timeStore; threads
+  `ctx.time` into evaluate(). MeshChild dispatcher gains a
+  `'Character'` case rendered as a per-bone box rig.
+- Refreshed darwin PostFx pixel-diff baseline (1-2px shift from the
+  ctx-bearing eval path). Linux baseline pending CI artifact regen
+  (Docker not available in dev env).
+
+### Catalogued
+
+- **H11**: `data-testid` on R3F primitive elements (`<mesh>`,
+  `<group>`) crashes the entire Canvas. Use
+  `userData={{ basherTestid: '...' }}`; tests drive through
+  `__basher_dag` / `__basher_evaluate`.
+- **K7**: character.walkTo chain (mirrors K6 asset-drop). 2-op or 3-op
+  atomic; orphaned previous WalkPath stays in DAG (P2 trade-off
+  pending a hygiene phase).
+
 ## [0.5.0-p1] — 2026-05-05
 
 **P1 — First node types + Asset Library.** Library, scene tree, gizmo,

@@ -32,11 +32,15 @@
 
 ### V3: Time enters as a `Time` socket, never as a closure or global
 
-**Span:** All animation and render node evaluators.
-**Enforcement:** Lint rule bans reading time from `useFrame`/`Date.now`/`performance.now` inside evaluators. Reviewer enforces.
-**Status:** NOT YET IMPLEMENTED
-**REF:** THESIS.md §49
-**Why it matters:** scrubbing, frame-stepping, agent's "what does scene look like at t=2.5?" all depend on this.
+**Span:** All animation and render node evaluators in `src/nodes/**`. The `TimeSource` node (`src/nodes/TimeSource.ts`) is the SOLE legal time producer; pure consumers wire their `time` input to it.
+**Enforcement:**
+
+- ESLint `no-restricted-syntax` on `src/nodes/**` bans `Math.random` / `Date.now` / `performance.now` / `crypto.randomUUID` / `useFrame` / `useThree` (`eslint.config.js:6-32`).
+- Vitest twice-eval at multiple t values for every Time-aware pure node — PosedSkeleton, AnimationClip, LocomotionState, Character (`src/nodes/nodes.test.ts` Wave A block).
+- The evaluator's cache key includes time only for `pure: false` nodes (`src/core/dag/evaluator.ts:119`); pure consumers re-evaluate via the upstream TimeSource hash flip propagated through `inputHashes`.
+  **Status:** ALIGNED (P2). The first user — `AnimationClip` consuming `Time` via socket — flipped this from NOT YET IMPLEMENTED. P2 acceptance #1 (E2E) verifies bit-exact replay at t=2.5s.
+  **REF:** THESIS.md §49; `src/nodes/TimeSource.ts:1`; `src/nodes/AnimationClip.ts:1`; `src/nodes/PosedSkeleton.ts:1`; `src/nodes/LocomotionState.ts:1`.
+  **Why it matters:** scrubbing, frame-stepping, agent's "what does scene look like at t=2.5?" all depend on this.
 
 ### V4: Every node type carries a `version: number`; project loaders migrate
 
