@@ -1,8 +1,2 @@
-dist
-build
-node_modules
-playwright-report
-test-results
-blockbench
-package-lock.json
-*.md
+public/assets/*.gltf
+public/assets/*.glb

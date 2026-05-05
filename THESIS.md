@@ -18,9 +18,9 @@ The current generation of AI video tools is split across two failure modes:
 
 **Failure mode B — traditional 3D pipeline with AI sprinkled on top.** The user opens Blender or Unreal, builds a scene the conventional way, then sends frames to a stylization model. AI is a render filter. The user is a 3D generalist before they are a director. The on-ramp is a year long.
 
-Both failures share a root cause: **the wrong abstraction is exposed to the user.** Prompt tools expose *language* and lose structure. 3D pipelines expose *geometry primitives* and lose intent.
+Both failures share a root cause: **the wrong abstraction is exposed to the user.** Prompt tools expose _language_ and lose structure. 3D pipelines expose _geometry primitives_ and lose intent.
 
-The right primitive is neither. It is **the directorial unit** — the shot, the scene, the move, the look — composed in a way that is *editable, reproducible, and machine-readable*, and that humans and AI agents can both author into.
+The right primitive is neither. It is **the directorial unit** — the shot, the scene, the move, the look — composed in a way that is _editable, reproducible, and machine-readable_, and that humans and AI agents can both author into.
 
 ### 2. The thesis
 
@@ -36,19 +36,19 @@ Three forces converge:
 
 1. **Browser 3D matured.** WebGPU, R3F, drei, Theatre.js, gaussian-splats-3d. The runtime is good enough that an editor in the browser is competitive with a desktop app for a focused use case.
 2. **Tool-calling LLMs matured.** Claude/GPT can drive typed APIs reliably enough that "agent as privileged user" is a viable interaction primitive, not a demo.
-3. **The procedural-as-substrate idea has reference implementations.** Houdini, USD, Substance, Geometry Nodes. The pattern is proven; nobody has shipped it as the *default* for a director-first AI video tool. There is room.
+3. **The procedural-as-substrate idea has reference implementations.** Houdini, USD, Substance, Geometry Nodes. The pattern is proven; nobody has shipped it as the _default_ for a director-first AI video tool. There is room.
 
 ### 4. Why not just X?
 
-| Alternative | Why it loses |
-|---|---|
-| Sora / Runway / Veo | Editorial control absent. Continuity per-scene is fragile. No graph to edit. |
-| Blockbench fork | Voxel/low-poly first. Animation is bone-rig-centric. Retrofitting splats/AI/timeline is a rewrite. |
-| Blender + AI plugins | Desktop-first. On-ramp is months. Procedural is opt-in. AI is a render filter. |
-| Theatre.js + R3F from scratch | We need this stack — but starting blank costs ~3 months of plumbing. We borrow from Triplex + RubicsWorld instead. |
-| Triplex fork as-is | Triplex assumes JSX = scene. Procedural-as-substrate breaks that invariant. We use Triplex for chrome, not for the model. |
-| Reze Studio fork | GPLv3 (license-trap), MMD-specific, custom WebGPU engine incompatible with R3F ecosystem. Pattern source, not code source. |
-| Houdini-class DAG (USD/Omniverse) | Right shape, wrong cost. v2+ territory. We ship Path A: tree-projected DAG with procedural generators. |
+| Alternative                       | Why it loses                                                                                                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Sora / Runway / Veo               | Editorial control absent. Continuity per-scene is fragile. No graph to edit.                                               |
+| Blockbench fork                   | Voxel/low-poly first. Animation is bone-rig-centric. Retrofitting splats/AI/timeline is a rewrite.                         |
+| Blender + AI plugins              | Desktop-first. On-ramp is months. Procedural is opt-in. AI is a render filter.                                             |
+| Theatre.js + R3F from scratch     | We need this stack — but starting blank costs ~3 months of plumbing. We borrow from Triplex + RubicsWorld instead.         |
+| Triplex fork as-is                | Triplex assumes JSX = scene. Procedural-as-substrate breaks that invariant. We use Triplex for chrome, not for the model.  |
+| Reze Studio fork                  | GPLv3 (license-trap), MMD-specific, custom WebGPU engine incompatible with R3F ecosystem. Pattern source, not code source. |
+| Houdini-class DAG (USD/Omniverse) | Right shape, wrong cost. v2+ territory. We ship Path A: tree-projected DAG with procedural generators.                     |
 
 ### 5. The pitch in one sentence
 
@@ -87,7 +87,7 @@ EVALUATION
     5. store in cache, return output
 ```
 
-That is the entire spine. Eighty percent of Basher is node *definitions*. The remaining twenty percent is the evaluator, the storage layer, the UI surfaces, and the agent.
+That is the entire spine. Eighty percent of Basher is node _definitions_. The remaining twenty percent is the evaluator, the storage layer, the UI surfaces, and the agent.
 
 ### 7. The seven properties of every node
 
@@ -148,7 +148,7 @@ The evaluator is the highest-leverage code in the project. Every contributor rea
 
 ## Part III — The Surfaces
 
-The DAG is the truth. The user does not see the DAG by default. They see one of three surfaces, each of which is a *projection* of the DAG.
+The DAG is the truth. The user does not see the DAG by default. They see one of three surfaces, each of which is a _projection_ of the DAG.
 
 ### 11. The viewport (always visible)
 
@@ -191,17 +191,17 @@ In Simple mode, the chat is the editor. The user describes; the agent proposes; 
 
 ### 16. The DAG view (Pro mode, read-only in v0.5)
 
-Force-directed graph visualization of the project's nodes and edges. In v0.5 it is read-only — a debug surface that says *"this is what your project looks like under the hood."* In v0.6 it becomes editable: a true visual node editor for power users.
+Force-directed graph visualization of the project's nodes and edges. In v0.5 it is read-only — a debug surface that says _"this is what your project looks like under the hood."_ In v0.6 it becomes editable: a true visual node editor for power users.
 
 The discipline is that **everything is a DAG underneath; authoring surfaces are still familiar.** Showing the graph too early is the failure mode of Houdini-for-everyone. We must not.
 
 ### 17. Mode hierarchy
 
-| Mode | Default surfaces | DAG visible? | Primary input |
-|---|---|---|---|
-| **Simple** | Viewport + Timeline + Chat | No | Natural language |
-| **Director** | + Scene tree + Library + Inspector | No | Mixed (chat + direct) |
-| **Pro** | + DAG view + Render-graph editor + Theatre Studio + Code | Yes (read-only v0.5) | Direct manipulation + code |
+| Mode         | Default surfaces                                         | DAG visible?         | Primary input              |
+| ------------ | -------------------------------------------------------- | -------------------- | -------------------------- |
+| **Simple**   | Viewport + Timeline + Chat                               | No                   | Natural language           |
+| **Director** | + Scene tree + Library + Inspector                       | No                   | Mixed (chat + direct)      |
+| **Pro**      | + DAG view + Render-graph editor + Theatre Studio + Code | Yes (read-only v0.5) | Direct manipulation + code |
 
 Mode persists per-project. Onboarding starts in Simple. Director is the default after first project. Pro is opt-in.
 
@@ -271,12 +271,12 @@ The whole DAG is never sent. Summaries and queries are the agent's contract with
 
 ### 22. The four agent modes
 
-| Mode | Behavior |
-|---|---|
-| **Read-only** | Agent can describe, search, query, screenshot. Every mutation requires accept. (Default for new sessions.) |
-| **Co-pilot** | Trivial mutations (transform <0.5u, single keyframe edits) auto-apply. Structural changes (delete, render trigger) prompt. |
-| **Sandbox** | Agent edits a fork of the DAG. User merges back at session end via PR-style review. |
-| **Autopilot** | Agent operates without prompts within an explicit token + cost budget. (v0.6.) |
+| Mode          | Behavior                                                                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Read-only** | Agent can describe, search, query, screenshot. Every mutation requires accept. (Default for new sessions.)                 |
+| **Co-pilot**  | Trivial mutations (transform <0.5u, single keyframe edits) auto-apply. Structural changes (delete, render trigger) prompt. |
+| **Sandbox**   | Agent edits a fork of the DAG. User merges back at session end via PR-style review.                                        |
+| **Autopilot** | Agent operates without prompts within an explicit token + cost budget. (v0.6.)                                             |
 
 ### 23. Memory
 
@@ -287,7 +287,7 @@ The whole DAG is never sent. Summaries and queries are the agent's contract with
 ### 24. Cost & safety guardrails
 
 - Live token tracker in drawer per session.
-- AI render cost preview *before* dispatch — agent must call `render.estimateCost` and present it.
+- AI render cost preview _before_ dispatch — agent must call `render.estimateCost` and present it.
 - Hard token cap per session (configurable). Auto-pause at 80% with notification.
 - Spending alerts at $1, $5, $10 per session.
 - Destructive Ops (`deleteNode`, `removeMany`) always require accept, even in Co-pilot mode.
@@ -353,9 +353,9 @@ Failure handling: ComfyUI not running → clear error + setup link. Partial fram
 
 ### 29. Procedural generation as substrate
 
-`ScatterNode`, `ArrayNode`, `CurveFollowNode`, `GridNode` — each is a node whose outputs are *generated* from inputs. Deterministic given a seed. The `ScatterNode` ships in P1 and proves the pattern.
+`ScatterNode`, `ArrayNode`, `CurveFollowNode`, `GridNode` — each is a node whose outputs are _generated_ from inputs. Deterministic given a seed. The `ScatterNode` ships in P1 and proves the pattern.
 
-Procedural is the default. Authored content is the degenerate case: a node with no inputs, only parameters. There is no philosophical distinction between *"the user placed three trees here"* and *"the user wrote a scatter rule that produced three trees here."* The first is just a `Group { children: [Tree, Tree, Tree] }` node; the second is `ScatterNode { area, density, seed }`. Both are part of the same DAG.
+Procedural is the default. Authored content is the degenerate case: a node with no inputs, only parameters. There is no philosophical distinction between _"the user placed three trees here"_ and _"the user wrote a scatter rule that produced three trees here."_ The first is just a `Group { children: [Tree, Tree, Tree] }` node; the second is `ScatterNode { area, density, seed }`. Both are part of the same DAG.
 
 ### 30. Generative as substrate
 
@@ -365,7 +365,7 @@ There is no "generative pipeline" separate from the rendering pipeline. Both are
 
 ### 31. PlayCanvas streaming export
 
-Export traverses the evaluated DAG output and emits PlayCanvas scene JSON. Procedural nodes are *baked* at export — their evaluated output is shipped, not their definition. Animation: keyframe nodes are baked to PlayCanvas tracks (or to a replay script).
+Export traverses the evaluated DAG output and emits PlayCanvas scene JSON. Procedural nodes are _baked_ at export — their evaluated output is shipped, not their definition. Animation: keyframe nodes are baked to PlayCanvas tracks (or to a replay script).
 
 In v0.5 we ship static-bundle export only. WebRTC pixel-streaming is v0.6.
 
@@ -481,6 +481,7 @@ Each phase is end-to-end demoable on its own. No phase exists only to enable the
 - Lint rules: no `Date.now`/`Math.random`/`performance.now` inside `pure: true` evaluators; no time-as-closure.
 
 **P0 acceptance (8 tests):**
+
 1. Dev server up in <5s.
 2. Default project: 4 nodes, evaluator produces correct scene.
 3. Mode toggle reconfigures chrome.
@@ -651,35 +652,35 @@ No content telemetry. No prompt telemetry. No DAG dumps. The user owns their wor
 
 Each risk has a likelihood, a failure mode, and a mitigation. Mitigations are budgeted into specific phases.
 
-| Risk | Likelihood | Failure mode | Mitigation |
-|---|---|---|---|
-| Eval performance kills 60fps | High | Drag stutters; user feels editor is broken | Sub-graph re-eval, live-drag mode, workers, cost hints. P0/P1. |
-| Time-as-input not enforced | High | Scrubbing breaks; render diverges from viewport | Lint rule + test harness + reviewer enforcement, day one |
-| Pure-flag lying | High | Cache corruption manifests as random bugs | Twice-eval test harness in CI. Mandatory. |
-| Triplex repositioning blocks lift | Medium | More own-code than expected | Reduce Triplex use to chrome + gizmos + inspector; build authoring ourselves |
-| Agent generates invalid Ops | Medium | Diff contains malformed nodes | Zod-validate every tool call before reaching store; agent self-corrects on validation error |
-| Generator nodes recurse infinitely | Low | Eval hangs main thread | Depth limit (4) + cycle detection at evaluation |
-| Procedural eval blocks main thread | Medium | Heavy scatter freezes UI | Yield via `requestIdleCallback`; progress UI; cap N=5000 in v0.5 |
-| Agent hallucinates non-existent tools | Medium | Tool call rejected; user confused | Tool schema in system prompt; validate name; error message back to agent for self-correction |
-| DAG visible too early scares users | High | "Why is this so complicated?" | Hidden in Simple + Director modes. Pro mode read-only in v0.5. |
-| Diff preview ghost confuses user | Medium | User can't tell what's pending | Distinct visual treatment: semi-transparent + dotted + label badge; toggle to hide |
-| Cost runs away (agent loops) | Medium | Bill spikes | Hard token cap per session; spending alerts; auto-pause at 80% |
-| Migration policy slips | High | Old projects break on load | First node-type bump triggers first migration. Mandatory before second bump. CI corpus. |
-| ComfyUI dependency blocks adoption | High | Users can't run AI render | Document setup in v0.5; bundle one-click installer in v0.6; demo cloud in v0.7 |
-| 4DGS slow on average hardware | Medium | Playback stutters | WebGPU feature-flag; WebGL fallback message |
-| Multi-pass + splats incoherent | Medium | Depth/normal of splats wrong | Splats render to beauty only; bounding-mesh proxies for depth/normal. Documented. |
-| Scope blows 11-week timeline | High | Ship slips | P6 (splats) and P7 (streaming) are explicit cut candidates. Demo (P8) is non-negotiable. |
-| GPL infection from careless dep add | Low | License contamination | License-audit CI; allowlist of permissive licenses; pattern-source-only rule for GPL projects |
-| User edits during agent's mid-stream | Medium | Op conflict, lost user input | Single-writer queue; user always wins ties; agent Ops queue until release |
+| Risk                                  | Likelihood | Failure mode                                    | Mitigation                                                                                    |
+| ------------------------------------- | ---------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Eval performance kills 60fps          | High       | Drag stutters; user feels editor is broken      | Sub-graph re-eval, live-drag mode, workers, cost hints. P0/P1.                                |
+| Time-as-input not enforced            | High       | Scrubbing breaks; render diverges from viewport | Lint rule + test harness + reviewer enforcement, day one                                      |
+| Pure-flag lying                       | High       | Cache corruption manifests as random bugs       | Twice-eval test harness in CI. Mandatory.                                                     |
+| Triplex repositioning blocks lift     | Medium     | More own-code than expected                     | Reduce Triplex use to chrome + gizmos + inspector; build authoring ourselves                  |
+| Agent generates invalid Ops           | Medium     | Diff contains malformed nodes                   | Zod-validate every tool call before reaching store; agent self-corrects on validation error   |
+| Generator nodes recurse infinitely    | Low        | Eval hangs main thread                          | Depth limit (4) + cycle detection at evaluation                                               |
+| Procedural eval blocks main thread    | Medium     | Heavy scatter freezes UI                        | Yield via `requestIdleCallback`; progress UI; cap N=5000 in v0.5                              |
+| Agent hallucinates non-existent tools | Medium     | Tool call rejected; user confused               | Tool schema in system prompt; validate name; error message back to agent for self-correction  |
+| DAG visible too early scares users    | High       | "Why is this so complicated?"                   | Hidden in Simple + Director modes. Pro mode read-only in v0.5.                                |
+| Diff preview ghost confuses user      | Medium     | User can't tell what's pending                  | Distinct visual treatment: semi-transparent + dotted + label badge; toggle to hide            |
+| Cost runs away (agent loops)          | Medium     | Bill spikes                                     | Hard token cap per session; spending alerts; auto-pause at 80%                                |
+| Migration policy slips                | High       | Old projects break on load                      | First node-type bump triggers first migration. Mandatory before second bump. CI corpus.       |
+| ComfyUI dependency blocks adoption    | High       | Users can't run AI render                       | Document setup in v0.5; bundle one-click installer in v0.6; demo cloud in v0.7                |
+| 4DGS slow on average hardware         | Medium     | Playback stutters                               | WebGPU feature-flag; WebGL fallback message                                                   |
+| Multi-pass + splats incoherent        | Medium     | Depth/normal of splats wrong                    | Splats render to beauty only; bounding-mesh proxies for depth/normal. Documented.             |
+| Scope blows 11-week timeline          | High       | Ship slips                                      | P6 (splats) and P7 (streaming) are explicit cut candidates. Demo (P8) is non-negotiable.      |
+| GPL infection from careless dep add   | Low        | License contamination                           | License-audit CI; allowlist of permissive licenses; pattern-source-only rule for GPL projects |
+| User edits during agent's mid-stream  | Medium     | Op conflict, lost user input                    | Single-writer queue; user always wins ties; agent Ops queue until release                     |
 
 ### 57. The pre-mortem
 
 Imagine v0.5 ships and fails. The most likely autopsy:
 
-1. **The DAG was right but the perf wasn't.** Drag-and-drop felt sluggish because we under-budgeted eval. Users tried it once and never came back. *Mitigation: P0/P1 perf budget is hard-gated; live-drag mode is shipped before any node-author UI.*
-2. **The agent was impressive but unreliable.** Tool calls succeeded 80% of the time, but the 20% failure was so frustrating users disabled the chat. *Mitigation: zod-validate everything; agent self-corrects on validation error; Read-only mode is default; trivial-only auto-apply.*
-3. **The simple mode was too simple.** New users hit the wall — couldn't do anything beyond the demo without enabling Director. *Mitigation: chat is the editor in Simple; the agent can do everything; the wall is "you have to type".*
-4. **ComfyUI killed the demo.** Every new user got stuck on setup. *Mitigation: cloud demo endpoint for first AI render in v0.5; bundle installer in v0.6.*
+1. **The DAG was right but the perf wasn't.** Drag-and-drop felt sluggish because we under-budgeted eval. Users tried it once and never came back. _Mitigation: P0/P1 perf budget is hard-gated; live-drag mode is shipped before any node-author UI._
+2. **The agent was impressive but unreliable.** Tool calls succeeded 80% of the time, but the 20% failure was so frustrating users disabled the chat. _Mitigation: zod-validate everything; agent self-corrects on validation error; Read-only mode is default; trivial-only auto-apply._
+3. **The simple mode was too simple.** New users hit the wall — couldn't do anything beyond the demo without enabling Director. _Mitigation: chat is the editor in Simple; the agent can do everything; the wall is "you have to type"._
+4. **ComfyUI killed the demo.** Every new user got stuck on setup. _Mitigation: cloud demo endpoint for first AI render in v0.5; bundle installer in v0.6._
 
 We address each in the plan; we revisit each at v0.5 retrospective.
 
@@ -746,7 +747,7 @@ This is the directorial unit, made concrete: a node, with inputs, parameters, an
 
 In Simple mode, the user speaks. The agent edits. The viewport reflects. The DAG is invisible.
 
-This is the test of the architecture. If the simplest interaction is *natural language → result*, and the deepest interaction is *direct DAG editing*, and they are the same system underneath, then Basher works.
+This is the test of the architecture. If the simplest interaction is _natural language → result_, and the deepest interaction is _direct DAG editing_, and they are the same system underneath, then Basher works.
 
 If they diverge — if Simple mode requires a special "easy" pipeline and Pro mode requires a special "real" pipeline — the architecture has failed. Two systems. Two bugs. Two roadmaps.
 
@@ -756,7 +757,7 @@ One graph. Many surfaces. One discipline.
 
 A film is a graph that evaluates to a sequence of frames. We commit to this primitive. We expose three surfaces over it (viewport, timeline, chat) and let the user choose. We let the agent share the same authoring path. We make procedural the substrate, generative one node category among many, and AI restyle a chain in the render graph.
 
-This thesis is not a feature list. It is a commitment. Every line of code in Basher will be evaluable against it: *does this respect the single primitive? Does this preserve determinism? Does this go through the Op system? Does this hide the DAG by default? Does this make the director more in control, not less?*
+This thesis is not a feature list. It is a commitment. Every line of code in Basher will be evaluable against it: _does this respect the single primitive? Does this preserve determinism? Does this go through the Op system? Does this hide the DAG by default? Does this make the director more in control, not less?_
 
 If yes, the line stays. If no, it does not.
 
@@ -785,22 +786,22 @@ type Op =
   | { type: 'removeNode'; nodeId: NodeId }
   | { type: 'connect'; from: NodeRef; to: NodeRef }
   | { type: 'disconnect'; from: NodeRef; to: NodeRef }
-  | { type: 'setParam'; nodeId: NodeId; paramPath: string; value: unknown }
+  | { type: 'setParam'; nodeId: NodeId; paramPath: string; value: unknown };
 
-type NodeRef = { node: NodeId; socket: SocketId }
+type NodeRef = { node: NodeId; socket: SocketId };
 
 interface InverseOp {
-  forward: Op
-  inverse: Op
+  forward: Op;
+  inverse: Op;
 }
 
 interface Diff {
-  id: string
-  description: string
-  ops: InverseOp[]
-  status: 'proposed' | 'previewing' | 'applied' | 'rejected'
-  source: 'user' | 'agent' | 'macro'
-  timestamp: number
+  id: string;
+  description: string;
+  ops: InverseOp[];
+  status: 'proposed' | 'previewing' | 'applied' | 'rejected';
+  source: 'user' | 'agent' | 'macro';
+  timestamp: number;
 }
 ```
 
@@ -832,4 +833,4 @@ Boot Basher with this DAG. See a cube. Edit `n_camera.params.position`. See the 
 
 **End of thesis.**
 
-*This document is the source of truth for v0.5. Every PR references the section it implements or the section it amends. Amendments require a changelog entry at the top of this file. The thesis evolves; the commitments do not.*
+_This document is the source of truth for v0.5. Every PR references the section it implements or the section it amends. Amendments require a changelog entry at the top of this file. The thesis evolves; the commitments do not._

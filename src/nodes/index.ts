@@ -1,7 +1,18 @@
 export * from './types';
+export { AmbientLightNode, AmbientLightParams } from './AmbientLight';
+export { AreaLightNode, AreaLightParams } from './AreaLight';
 export { BoxMeshNode, BoxMeshParams } from './BoxMesh';
 export { DirectionalLightNode, DirectionalLightParams } from './DirectionalLight';
+export { GltfAssetNode, GltfAssetParams } from './GltfAsset';
+export { GroupNode, GroupParams } from './Group';
+export { MaterialOverrideNode, MaterialOverrideParams } from './MaterialOverride';
+export { OrthographicCameraNode, OrthographicCameraParams } from './OrthographicCamera';
 export { PerspectiveCameraNode, PerspectiveCameraParams } from './PerspectiveCamera';
+export { PointLightNode, PointLightParams } from './PointLight';
 export { RenderOutputNode, RenderOutputParams } from './RenderOutput';
+export { ScatterNode, ScatterNodeParams, SCATTER_MAX } from './ScatterNode';
 export { SceneNode, SceneParams } from './Scene';
+export { SpotLightNode, SpotLightParams } from './SpotLight';
+export { TransformNode, TransformParams } from './Transform';
+export { mulberry32, randInt, randRange } from './random';
 export { registerAllNodes, __reseedAllNodesForTests } from './registerAll';

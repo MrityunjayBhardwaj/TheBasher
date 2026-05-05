@@ -1,0 +1,43 @@
+// Static catalog of bundled sample assets. The seeder copies these into
+// OPFS at boot; the Library panel lists OPFS, not this file. Adding to the
+// catalog + running `npm run seed:assets` is how new bundled assets land.
+//
+// The thumbnail field is a CSS-only swatch in P1 (an offscreen R3F render
+// is the v0.6 plan; here we ship cheap and unblock the drag-drop flow).
+//
+// REF: THESIS.md §14, P1 Wave B.
+
+export interface CatalogEntry {
+  /** Storage-relative path (becomes the OPFS path AND the GltfAsset.assetRef). */
+  readonly path: string;
+  /** Public-facing display name. */
+  readonly name: string;
+  /** Static dev-server URL where the original is fetched during seeding. */
+  readonly seedUrl: string;
+  /** Display swatch color (CSS) for the placeholder thumbnail. */
+  readonly swatch: string;
+}
+
+export const ASSET_CATALOG: readonly CatalogEntry[] = [
+  {
+    path: 'assets/cube.gltf',
+    name: 'Cube',
+    seedUrl: '/assets/cube.gltf',
+    swatch: '#5af07a',
+  },
+  {
+    path: 'assets/sphere.gltf',
+    name: 'Sphere',
+    seedUrl: '/assets/sphere.gltf',
+    swatch: '#7aaaff',
+  },
+  {
+    path: 'assets/cone.gltf',
+    name: 'Cone',
+    seedUrl: '/assets/cone.gltf',
+    swatch: '#ff8a5a',
+  },
+];
+
+/** Mime type sent over dataTransfer during library → viewport drag. */
+export const DRAG_MIME = 'application/x-basher-asset';

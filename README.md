@@ -5,8 +5,10 @@
 
 Director-first, agent-native, procedural AI video platform.
 
-**Status:** v0.5 P0 (Foundation + DAG core). Five node types, R3F viewport,
-OPFS persistence, ACES + SMAA PostFx, dev-only Blender bridge.
+**Status:** v0.5 P1 (First node types + Asset Library). 15 node types, R3F
+viewport with recursive Mesh dispatcher, OPFS-backed asset library with
+drag-drop import, scene tree projection with sibling drag-reorder,
+TransformControls gizmo, deterministic ScatterNode.
 
 ## What is this
 
@@ -46,9 +48,14 @@ src/
   core/dag/          # types, ops (5 primitives), evaluator, registry, store
   core/storage/      # StorageCapability + OpfsStorage / TauriStorage / MemoryStorage
   core/project/      # schema (versioned), migrations runner, save/load, default DAG
-  nodes/             # PerspectiveCamera, DirectionalLight, BoxMesh, Scene, RenderOutput
-  app/               # boot, Layout (CSS-grid named regions), Mode/SelectionStore, Inspector
-  viewport/          # R3F Canvas + SceneFromDAG (DAG → primitives)
+  nodes/             # 15 node types: cameras (Perspective/Orthographic), lights
+                     # (Directional/Ambient/Point/Spot/Area), meshes (BoxMesh/
+                     # GltfAsset/Transform/Group/MaterialOverride/Scatter), and
+                     # aggregators (Scene, RenderOutput). All pure where possible.
+  app/               # boot, Layout (CSS-grid), Library, AssetDropZone, SceneTree,
+                     # Gizmo, Inspector, mode/selection stores, asset/{catalog,
+                     # seedOpfs, opfsLoader, dropChain}
+  viewport/          # R3F Canvas + SceneFromDAG (recursive DAG → primitives)
   render/            # PostFx (ACES + SMAA), FpsMeter
   integrations/blender/  # capability + browser-poll bridge
 tools/
@@ -58,7 +65,7 @@ tools/
 THESIS.md            # source of truth for v0.5
 ```
 
-## Disciplines (active in P0)
+## Disciplines (active in P0 + P1)
 
 - **Op system is the only mutation path.** Stores never set state directly.
 - **Pure nodes are bit-exact reproducible.** Lint bans `Math.random` /
@@ -69,21 +76,24 @@ THESIS.md            # source of truth for v0.5
 - **Permissive licenses only.** `license-audit` is a CI gate. No GPL.
 - **Capability interfaces decouple browser/native.** Storage and Blender
   bridge already follow this; v0.6 Tauri swap is a one-line provider change.
+- **Materials are data, not code (V9, P1).** `MaterialOverride` exposes
+  preset PBR scalars only — no shader source surface in v0.5. TSL deferred
+  to P4 per `.anvi/dharana.md` §3.
 
 ## Phase map (11 weeks to v0.5)
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| **P0** | **Foundation + DAG core** | **shipped** |
-| P1   | First node types + Asset Library | next |
-| P2   | Character + Move (as nodes) | |
-| P2.5 | AI Agent on the DAG | |
-| P3   | Timeline = animation nodes | |
-| P4   | Render graph = render nodes | |
-| P5   | AI Render Bridge | |
-| P6   | Splats node | |
-| P7   | PlayCanvas export | |
-| P8   | Progressive UX + Demo | |
+| Phase  | Description                          | Status      |
+| ------ | ------------------------------------ | ----------- |
+| **P0** | **Foundation + DAG core**            | **shipped** |
+| **P1** | **First node types + Asset Library** | **shipped** |
+| P2     | Character + Move (as nodes)          | next        |
+| P2.5   | AI Agent on the DAG                  |             |
+| P3     | Timeline = animation nodes           |             |
+| P4     | Render graph = render nodes          |             |
+| P5     | AI Render Bridge                     |             |
+| P6     | Splats node                          |             |
+| P7     | PlayCanvas export                    |             |
+| P8     | Progressive UX + Demo                |             |
 
 ## License
 

@@ -5,10 +5,13 @@
 //
 // REF: THESIS.md §11, §17, krama K1.
 
+import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { Inspector } from './Inspector';
+import { Library } from './Library';
 import { NodeList } from './NodeList';
 import { RightDrawer } from './RightDrawer';
+import { SceneTree } from './SceneTree';
 import { Viewport } from '../viewport/Viewport';
 import { useModeStore } from './stores/modeStore';
 
@@ -41,25 +44,23 @@ export function Layout() {
       <div
         style={{
           gridArea: 'library',
-          display: mode === 'simple' ? 'none' : 'block',
+          display: mode === 'simple' ? 'none' : 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
         }}
       >
+        <Library />
         <NodeList />
       </div>
 
-      {/* tree slot reserved for P1 scene-tree projection */}
       <div
         style={{
           gridArea: 'tree',
           display: mode === 'pro' ? 'block' : 'none',
         }}
-        className="border-r border-border bg-muted/20 text-xs text-fg/40"
         data-testid="tree-slot"
       >
-        <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">
-          tree
-        </header>
-        <div className="p-4">scene tree (P1)</div>
+        <SceneTree />
       </div>
 
       <div
@@ -67,7 +68,9 @@ export function Layout() {
         className="relative overflow-hidden"
         data-testid="viewport-slot"
       >
-        <Viewport />
+        <AssetDropZone>
+          <Viewport />
+        </AssetDropZone>
       </div>
 
       <div

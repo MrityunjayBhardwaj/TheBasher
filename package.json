@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "license-audit": "node scripts/license-audit.mjs"
+    "license-audit": "node scripts/license-audit.mjs",
+    "seed:assets": "node scripts/seed-sample-assets.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

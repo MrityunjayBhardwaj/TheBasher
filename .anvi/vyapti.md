@@ -70,6 +70,14 @@
 ### V8: Viewport never mutates DAG; viewport renders evaluated DAG output
 
 **Span:** R3F `Canvas` (`src/viewport/Viewport.tsx`) + `SceneFromDAG` (`src/viewport/SceneFromDAG.tsx`).
-**Enforcement:** `SceneFromDAG` calls `evaluate(state, target.node, { cache })` and walks the result. There is no path inside `src/viewport/**` that calls `dispatch` or mutates store state. Mode switches do not unmount the Canvas — Layout flips slot visibility via `display:none` (K1 step 6).
-**Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG).
-**REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`
+**Enforcement:** `SceneFromDAG` calls `evaluate(state, target.node, { cache })` and walks the result. The rule is now **file-rooted, not call-stack-rooted**: no source file under the `src/viewport/` tree contains a `dispatch(...)` call or `useDagStore.setState`. Components imported from `src/app/` that dispatch (e.g. `src/app/Gizmo.tsx` — the TransformControls authoring surface) are allowed even when they render inside the Canvas — the dispatch is defined in their own file's source. Mode switches do not unmount the Canvas — Layout flips slot visibility via `display:none` (K1 step 6).
+**Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG). The P1 Gizmo (`src/app/Gizmo.tsx`) follows the same pattern — file location, not Canvas containment, defines the boundary.
+**REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`; `src/app/Gizmo.tsx:1`
+
+### V9: Materials are data, not code (in v0.5)
+
+**Span:** `src/nodes/MaterialOverride.ts` + any node exposing material parameters.
+**Enforcement:** Material nodes expose preset choice + scalar/texture params only. No string-typed shader source, no JS callback that returns a `Material`, no TSL/OSL/GLSL/WGSL authoring surface in v0.5. Reviewer rejects any `new ShaderMaterial({ vertexShader, fragmentShader })` outside `core/render/` (none expected in v0.5).
+**Status:** ALIGNED (P1). `src/nodes/MaterialOverride.ts` exposes preset PBR scalars (`color`, `roughness`, `metalness`, `opacity`, `emissive`, `emissiveIntensity`) only. The viewport applies via `MeshStandardMaterial`; no shader-source pathway exists anywhere in `src/`.
+**REF:** THESIS.md §39 (`MaterialOverride`); deferred-decision rationale in `dharana.md` §3 ("Shader-as-node-graph"); `src/nodes/MaterialOverride.ts:10`.
+**Why it matters:** PBR via GLB + parameter overrides keeps the asset library decoupled from the renderer. Allowing shader-as-code in P1 leaks renderer concerns into content authoring, breaks determinism/caching guarantees (V2), and pulls TSL's WebGPU surface area into a phase whose job is content placement. Re-evaluate when the render graph lands (P4).

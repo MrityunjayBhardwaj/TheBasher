@@ -18,6 +18,7 @@ import {
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
+import { seedAssetsIntoStorage } from './asset/seedOpfs';
 
 let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
@@ -53,6 +54,15 @@ export function boot(): Promise<void> {
     registerAllNodes();
     const storage = await getStorage();
 
+    // K1 step 2.5 — seed bundled sample assets into OPFS on first boot.
+    // No-op on subsequent boots; failures are non-fatal (Library will mark
+    // missing assets as unavailable rather than crash boot).
+    try {
+      await seedAssetsIntoStorage(storage);
+    } catch (e) {
+      console.warn('boot: asset seeding failed', e);
+    }
+
     let project;
     try {
       project = await loadProject(storage, DEFAULT_PROJECT_ID);
@@ -68,6 +78,14 @@ export function boot(): Promise<void> {
       nodes: project.state.nodes,
       outputs: project.state.outputs,
     });
+
+    // Test affordance — expose the stores in dev only. Production builds
+    // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
+    // these to drive scenarios that native HTML5 D&D would make brittle.
+    if (import.meta.env.DEV) {
+      const w = window as unknown as Record<string, unknown>;
+      w.__basher_dag = useDagStore;
+    }
 
     // K1 step 9 — bridge polls only in dev (impl no-ops when DEV is false).
     getBlenderBridge().start();

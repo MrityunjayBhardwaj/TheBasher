@@ -9,21 +9,46 @@
 // remounting geometries — keeps acceptance #5 (<16ms inspector → viewport)
 // in budget.
 //
+// P1: dispatcher is recursive — Transform/Group/MaterialOverride/Scatter are
+// all SceneChild kinds. MeshChild walks them, threading an optional material
+// override down to the leaf renderer.
+//
 // REF: THESIS.md §11, vyapti V8.
 
-import { PerspectiveCamera } from '@react-three/drei';
+import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/drei';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
 import { PostFx } from '../render/PostFx';
 import type {
+  AmbientLightValue,
+  AreaLightValue,
   BoxMeshValue,
   CameraValue,
   DirectionalLightValue,
+  GltfAssetValue,
+  GroupValue,
+  LightValue,
+  MaterialOverrideValue,
+  MaterialValue,
+  PointLightValue,
   RenderOutputValue,
+  ScatterValue,
+  SceneChild,
+  SpotLightValue,
+  TransformValue,
 } from '../nodes/types';
+
+let rectAreaInit = false;
+function ensureRectAreaInit() {
+  if (rectAreaInit) return;
+  RectAreaLightUniformsLib.init();
+  rectAreaInit = true;
+}
 
 interface SceneFromDAGProps {
   /** Override the named output to render. Defaults to 'render'. */
@@ -50,18 +75,29 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         <LightNode key={`light:${i}`} value={light} />
       ))}
       {value.scene.children.map((child, i) => (
-        <MeshNode key={`mesh:${i}`} value={child} />
+        <MeshChild key={`mesh:${i}`} value={child} />
       ))}
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
-          If a project wants ambient fill, it adds an AmbientLight node (P1
-          ships the type — until then, the cube is lit by the DirectionalLight
-          alone). */}
+          If a project wants ambient fill, it adds an AmbientLight node. */}
       <PostFx config={value.postFx} />
     </>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Cameras
+// ---------------------------------------------------------------------------
+
 function CameraNode({ value }: { value: CameraValue }) {
+  if (value.kind === 'PerspectiveCamera') return <PerspectiveCameraNode value={value} />;
+  return <OrthographicCameraNode value={value} />;
+}
+
+function PerspectiveCameraNode({
+  value,
+}: {
+  value: Extract<CameraValue, { kind: 'PerspectiveCamera' }>;
+}) {
   const ref = useRef<THREE.PerspectiveCamera | null>(null);
   useEffect(() => {
     if (!ref.current) return;
@@ -79,7 +115,48 @@ function CameraNode({ value }: { value: CameraValue }) {
   );
 }
 
-function LightNode({ value }: { value: DirectionalLightValue }) {
+function OrthographicCameraNode({
+  value,
+}: {
+  value: Extract<CameraValue, { kind: 'OrthographicCamera' }>;
+}) {
+  const ref = useRef<THREE.OrthographicCamera | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
+  }, [value.lookAt, value.position]);
+  return (
+    <OrthographicCamera
+      ref={ref as React.MutableRefObject<THREE.OrthographicCamera>}
+      makeDefault
+      zoom={value.zoom}
+      near={value.near}
+      far={value.far}
+      position={value.position as [number, number, number]}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lights
+// ---------------------------------------------------------------------------
+
+function LightNode({ value }: { value: LightValue }) {
+  switch (value.kind) {
+    case 'DirectionalLight':
+      return <DirectionalLightR value={value} />;
+    case 'AmbientLight':
+      return <AmbientLightR value={value} />;
+    case 'PointLight':
+      return <PointLightR value={value} />;
+    case 'SpotLight':
+      return <SpotLightR value={value} />;
+    case 'AreaLight':
+      return <AreaLightR value={value} />;
+  }
+}
+
+function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
   return (
     <directionalLight
       intensity={value.intensity}
@@ -90,14 +167,228 @@ function LightNode({ value }: { value: DirectionalLightValue }) {
   );
 }
 
-function MeshNode({ value }: { value: BoxMeshValue }) {
+function AmbientLightR({ value }: { value: AmbientLightValue }) {
+  return <ambientLight intensity={value.intensity} color={value.color} />;
+}
+
+function PointLightR({ value }: { value: PointLightValue }) {
+  return (
+    <pointLight
+      intensity={value.intensity}
+      color={value.color}
+      position={value.position as [number, number, number]}
+      distance={value.distance}
+      decay={value.decay}
+    />
+  );
+}
+
+function SpotLightR({ value }: { value: SpotLightValue }) {
+  const ref = useRef<THREE.SpotLight | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.target.position.set(...value.target);
+    ref.current.target.updateMatrixWorld();
+  }, [value.target]);
+  return (
+    <spotLight
+      ref={ref as React.MutableRefObject<THREE.SpotLight>}
+      intensity={value.intensity}
+      color={value.color}
+      position={value.position as [number, number, number]}
+      angle={value.angle}
+      penumbra={value.penumbra}
+      distance={value.distance}
+      decay={value.decay}
+    />
+  );
+}
+
+function AreaLightR({ value }: { value: AreaLightValue }) {
+  ensureRectAreaInit();
+  const ref = useRef<THREE.RectAreaLight | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
+  }, [value.lookAt, value.position]);
+  return (
+    <rectAreaLight
+      ref={ref as React.MutableRefObject<THREE.RectAreaLight>}
+      intensity={value.intensity}
+      color={value.color}
+      width={value.width}
+      height={value.height}
+      position={value.position as [number, number, number]}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mesh dispatcher (recursive)
+// ---------------------------------------------------------------------------
+
+interface MeshChildProps {
+  value: SceneChild;
+  /** Inherited material override pushed down by an ancestor MaterialOverride. */
+  override?: MaterialValue;
+}
+
+function MeshChild({ value, override }: MeshChildProps) {
+  switch (value.kind) {
+    case 'BoxMesh':
+      return <BoxMeshR value={value} override={override} />;
+    case 'GltfAsset':
+      return <GltfAssetR value={value} override={override} />;
+    case 'Transform':
+      return <TransformR value={value} override={override} />;
+    case 'Group':
+      return <GroupR value={value} override={override} />;
+    case 'MaterialOverride':
+      return <MaterialOverrideR value={value} override={override} />;
+    case 'Scatter':
+      return <ScatterR value={value} override={override} />;
+  }
+}
+
+function applyOverride(
+  baseColor: string,
+  override: MaterialValue | undefined,
+): {
+  color: string;
+  roughness: number;
+  metalness: number;
+  opacity: number;
+  emissive: string;
+  emissiveIntensity: number;
+  transparent: boolean;
+} {
+  if (!override) {
+    return {
+      color: baseColor,
+      roughness: 0.5,
+      metalness: 0,
+      opacity: 1,
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      transparent: false,
+    };
+  }
+  return {
+    color: override.color,
+    roughness: override.roughness,
+    metalness: override.metalness,
+    opacity: override.opacity,
+    emissive: override.emissive,
+    emissiveIntensity: override.emissiveIntensity,
+    transparent: override.opacity < 1,
+  };
+}
+
+function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
+  const mat = applyOverride(value.material.color, override);
   return (
     <mesh
       position={value.position as [number, number, number]}
       rotation={value.rotation as [number, number, number]}
     >
       <boxGeometry args={value.size as [number, number, number]} />
-      <meshStandardMaterial color={value.material.color} />
+      <meshStandardMaterial
+        color={mat.color}
+        roughness={mat.roughness}
+        metalness={mat.metalness}
+        opacity={mat.opacity}
+        emissive={mat.emissive}
+        emissiveIntensity={mat.emissiveIntensity}
+        transparent={mat.transparent}
+      />
     </mesh>
+  );
+}
+
+function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
+  // useResolvedAssetUrl turns OPFS-relative paths (e.g. "assets/cube.gltf")
+  // into blob URLs; passthrough URLs (/foo, http://..., blob:) are returned
+  // as-is. Both this hook and useGLTF are suspense-driven; the Canvas-root
+  // Suspense boundary catches the throws.
+  const url = useResolvedAssetUrl(value.assetRef);
+  const gltf = useGLTF(url) as unknown as { scene: THREE.Group };
+  const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  useEffect(() => {
+    if (!override) return;
+    const mat = applyOverride('#ffffff', override);
+    cloned.traverse((child) => {
+      const m = child as THREE.Mesh;
+      if (m.isMesh) {
+        m.material = new THREE.MeshStandardMaterial({
+          color: mat.color,
+          roughness: mat.roughness,
+          metalness: mat.metalness,
+          opacity: mat.opacity,
+          emissive: mat.emissive,
+          emissiveIntensity: mat.emissiveIntensity,
+          transparent: mat.transparent,
+        });
+      }
+    });
+  }, [cloned, override]);
+  return <primitive object={cloned} />;
+}
+
+function TransformR({ value, override }: { value: TransformValue; override?: MaterialValue }) {
+  if (!value.child) return null;
+  return (
+    <group
+      position={value.position as [number, number, number]}
+      rotation={value.rotation as [number, number, number]}
+      scale={value.scale as [number, number, number]}
+    >
+      <MeshChild value={value.child} override={override} />
+    </group>
+  );
+}
+
+function GroupR({ value, override }: { value: GroupValue; override?: MaterialValue }) {
+  return (
+    <group>
+      {value.children.map((c, i) => (
+        <MeshChild key={`g:${i}`} value={c} override={override} />
+      ))}
+    </group>
+  );
+}
+
+function MaterialOverrideR({
+  value,
+  override,
+}: {
+  value: MaterialOverrideValue;
+  override?: MaterialValue;
+}) {
+  if (!value.child) return null;
+  // The deepest override wins — an outer MaterialOverride passes its material
+  // to children, but a nested MaterialOverride replaces it. This matches the
+  // intuition: the closer override (lower in the DAG) is the more specific one.
+  const next = override ?? value.material;
+  return <MeshChild value={value.child} override={next} />;
+}
+
+function ScatterR({ value, override }: { value: ScatterValue; override?: MaterialValue }) {
+  return (
+    <group>
+      {value.instances.map((inst, i) => {
+        const asset = value.assets[inst.assetIndex];
+        if (!asset) return null;
+        return (
+          <group
+            key={`s:${i}`}
+            position={inst.position as [number, number, number]}
+            rotation={inst.rotation as [number, number, number]}
+            scale={inst.scale as [number, number, number]}
+          >
+            <MeshChild value={asset} override={override} />
+          </group>
+        );
+      })}
+    </group>
   );
 }
