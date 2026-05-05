@@ -1,4 +1,4 @@
-# Basher — Next Session Prompt (Autonomous P0 Execution)
+# Basher — Next Session Prompt (P1: First node types + Asset Library)
 
 **Copy this entire file into the new session as your first message.**
 
@@ -6,113 +6,96 @@
 
 ## Mission
 
-You are taking over autonomous execution of **Basher v0.5 — Phase P0 (Foundation + DAG core)**. The architecture, plan, and disciplines are fully specified. Your job is to build P0 to acceptance, open a draft PR, summarize, and stop. The user is asleep. Do not wait for input that isn't required.
+You are taking over autonomous execution of **Basher v0.5 — Phase P1 (First node types + Asset Library)**. P0 (Foundation + DAG core) shipped on 2026-05-05 via PR #1 to `MrityunjayBhardwaj/TheBasher`. The DAG spine works: 5 node types render, save/reload round-trips, all 8 acceptance tests + 3 reinforcement tests pass.
+
+Your job is to build P1 to acceptance, open a draft PR, run goal-backward self-review, fold top fixes inline, and stop. The user is asleep. Do not wait for input that isn't required.
 
 ## What's already true
 
-1. **Project root:** `/Users/mrityunjaybhardwaj/Documents/projects/basher/` (currently contains only `THESIS.md`, `.anvi/`, and `NEXT_SESSION.md` — this file).
-2. **Source of truth:** `/Users/mrityunjaybhardwaj/Documents/projects/basher/THESIS.md` — 11 parts, 65 sections, 3 appendices. Read it FIRST, end-to-end. Every architectural question has an answer there.
-3. **Catalogues seeded:** `/Users/mrityunjaybhardwaj/Documents/projects/basher/.anvi/{dharana,hetvabhasa,vyapti,krama}.md` — read and update as you work.
-4. **Memory loaded:** `/Users/mrityunjaybhardwaj/.claude/projects/-Users-mrityunjaybhardwaj-Documents-projects-basher/memory/MEMORY.md` lists all relevant memories. They are auto-loaded at session start.
-5. **Anvi framework:** active globally (`~/.claude/CLAUDE.md`). Use `/anvi:execute-phase 0` if you want the formal workflow; otherwise execute directly per the protocol below.
+1. **Project root:** `/Users/mrityunjaybhardwaj/Documents/projects/basher/` — full v0.5 codebase as of P0 merge.
+2. **Repo:** `git@github.com:MrityunjayBhardwaj/TheBasher.git` (NOT `MrityunjayBhardwaj/Basher` — that's a separate older repo). Default branch `main`.
+3. **Source of truth:** `THESIS.md` — Part VII, §39 defines P1 acceptance.
+4. **Catalogues:** `.anvi/{dharana,hetvabhasa,vyapti,krama}.md` — read AND update as you work. H1-H8 cataloged; V1/V2/V4/V5/V6/V8 ALIGNED, V3/V7 NOT YET.
+5. **Memory loaded:** all relevant memories auto-load at session start. Note `project_p0_shipped.md` — what's real, what's NOT yet there.
+6. **Dev port: 5180.** NOT 5173 (collides with another local project). `vite.config.ts` and `playwright.config.ts` are pinned with `strictPort: true`.
+7. **Quality gates locally:** `npm run typecheck && npm run lint && npm test && npm run test:e2e && npm run license-audit` all green at P0 merge. Re-run before starting P1.
 
 ## Read order (do this before any code)
 
-1. `/Users/mrityunjaybhardwaj/Documents/projects/basher/THESIS.md` — entire file. Especially Parts II, III, VII, VIII.
-2. `/Users/mrityunjaybhardwaj/Documents/projects/basher/.anvi/dharana.md` — boundaries B1-B5.
-3. `/Users/mrityunjaybhardwaj/Documents/projects/basher/.anvi/vyapti.md` — invariants V1-V8 you must enforce.
-4. `/Users/mrityunjaybhardwaj/Documents/projects/basher/.anvi/krama.md` — lifecycle K1, K2, K5 are P0-relevant.
-5. `/Users/mrityunjaybhardwaj/Documents/projects/RubicsWorld/src/world/{PostFx.tsx, RealismFX.tsx, FpsMeter.tsx}` and `RubicsWorld/src/App.tsx:169-184` (Blender beacon) — donor code reference.
+1. `THESIS.md` §39 (P1) + §29 (procedural generation as substrate) + §50 (Op system).
+2. `.anvi/dharana.md` — boundaries B1-B5 + the post-P0 lesson at §4.
+3. `.anvi/vyapti.md` — V1/V2/V4/V6/V8 are now load-bearing; everything you write must respect them.
+4. `.anvi/hetvabhasa.md` — H1-H8 are real traps; check before you commit.
+5. `.anvi/krama.md` — K2 (op dispatch) + K5 (save/load) for any state-touching change.
+6. `src/core/dag/store.ts` — note `dispatchAtomic(ops, source, description)` exists; USE IT for drag-reorder.
+7. `src/core/project/default.ts` — pattern for any new default scene.
+8. `src/nodes/registerAll.ts` — where new node types must register at boot.
 
 ## Locked decisions (do NOT relitigate)
 
-- **Browser-first.** Vite + React 19 + TypeScript + PWA manifest. No Electron. No Tauri until v0.6.
-- **Stack:** R3F + drei + @react-three/postprocessing + zustand + Tailwind + shadcn/ui + Theatre.js + zod + dnd-kit. (Not all needed in P0; ship only what P0 requires.)
-- **Storage v0.5:** OPFS only. Capability interface: `core/storage/StorageCapability.ts` + `OpfsStorage.ts`. `TauriStorage.ts` is a stub for v0.6.
-- **License:** MIT. Permissive deps only. Reject any GPL/AGPL/LGPL.
-- **Theme default:** dark, electric green accent `#5af07a`, geometric mono wordmark (Geist Mono / JetBrains Mono).
-- **Modes:** Simple / Director / Pro. P0 ships the shell; only Director default-renders the placeholder full chrome. Right drawer placeholder renders empty but reserves slot.
+- All disciplines from P0 still bind: V1 (Op-only mutation), V2 (pure node bit-exact + lint), V3 (time as socket), V4 (versioned + migration), V5 (permissive licenses), V6 (capability interfaces), V8 (viewport reads, never authors).
+- New node types are `pure: true` unless they CANNOT be (and then declare `pure: false` and document why).
+- Drag-reorder of scene tree → emits `disconnect` + `connect` ops via `dispatchAtomic` so undo is one keypress.
+- Asset thumbnails generated by an offscreen R3F Canvas — but if it fights the main Canvas for GL context, fall back to a worker. Observe before committing the design.
+- Permissive licenses only — `npm run license-audit` is a CI gate.
+- ScatterNode determinism: use `mulberry32(seed)` (not `Math.random` — lint will reject).
+- ScatterNode N capped at 5000 in v0.5 (THESIS.md §53). Worker offload is v0.6.
 
-## P0 Goal (verbatim from THESIS.md §38)
+## P1 Goal (verbatim from THESIS.md §39)
 
-> Stand up a Basher dev environment that boots a Vite+React+R3F shell, persists a Project to OPFS, exposes Simple/Director/Pro routes, integrates RubicsWorld's PostFx + Blender live-link companion-script polling, evaluates a default 4-node DAG, and renders the result at 60fps.
+> Library panel + scene tree + drag-drop GLB import emits Op chains; ScatterNode produces deterministic placement re-evaluating on param change. New node types: GltfAsset, Transform, Group, Light (4 variants), Camera (2 variants), MaterialOverride, ScatterNode.
 
-## P0 Acceptance Tests (8 — all must pass)
+## P1 Acceptance Tests (5 — all must pass)
 
-1. Dev server up in <5s.
-2. Default project = 4-node DAG (PerspectiveCamera + DirectionalLight + BoxMesh + Scene aggregator + RenderOutput per THESIS.md App. C). Evaluator produces correct scene.
-3. Mode toggle (Simple/Director/Pro) reconfigures chrome correctly.
-4. Save → OPFS write succeeds; reload → identical state restored.
-5. Inspector edits a node param → viewport updates within 16ms.
-6. Beacon endpoint exists at `/__assets/active`; in dev mode polls for Blender companion-script; absent in prod build (verified by build-output check).
-7. PostFx beauty matches a reference screenshot (committed) within 2% pixel diff.
-8. ≥60fps on M1 baseline with default scene (FPS meter visible in dev).
+1. **Drag a GLB into the viewport** → places the asset via Op chain (`addNode(GltfAsset) → addNode(Transform) → connect → addNode(Group) → connect`). One atomic undo entry reverts the whole chain.
+2. **Reload restores** the placed asset bit-exact through the migration runner (V4).
+3. **ScatterNode** with seed=42 produces the same placement twice in a row (twice-eval determinism harness, V2). Re-evaluating after `setParam` on density produces a different placement that matches the new seed → density mapping.
+4. **Scene tree shows the DAG hierarchy** walking back from the `scene` output through Group/Transform; drag-reorder emits `disconnect`+`connect` via `dispatchAtomic` (one undo reverts the move).
+5. **Inspector edits a Transform's position via gizmo** → viewport updates within 16ms; the gizmo's writes go through `setParam` Ops in live-drag mode (16ms debounce), full re-eval on release.
 
 ## Execution Protocol
 
-### Wave A — Repo + tooling
-- `git init`. Create initial commit with the existing THESIS.md, .anvi/, NEXT_SESSION.md.
-- `gh repo create mrityunjaybhardwaj/basher --public --source=. --license=MIT --description="Director-first, agent-native, procedural AI video platform"`. If `gh` auth fails, skip GitHub creation and note in summary.
-- `npm create vite@latest . -- --template react-ts` (handle "directory not empty" by initializing in-place; preserve THESIS.md, .anvi/, NEXT_SESSION.md).
-- Install only what P0 needs: `react three @react-three/fiber @react-three/drei @react-three/postprocessing zustand zod tailwindcss @tailwindcss/vite shadcn/ui` and dev deps for typescript, vitest, playwright, @playwright/test, eslint, prettier.
-- Configure: `tsconfig.json`, `tailwind.config.ts`, `vite.config.ts`, `eslint.config.js`, `playwright.config.ts`, `.prettierrc`.
-- License-audit GitHub Action skeleton (run on every PR).
+### Wave A — New node types (THESIS.md §39, §11-12)
+- `src/nodes/GltfAsset.ts` — params: assetRef (path/url), output: Mesh. impure for v0.5 (loads externally) OR pure if we treat the path as a content key. Default to `pure: false, cost: 'medium'` and re-evaluate on path change only.
+- `src/nodes/Transform.ts` — params: position, rotation, scale; input: target (any geometry); output: transformed geometry.
+- `src/nodes/Group.ts` — input: children (list); output: Group with transform composition.
+- `src/nodes/Light.ts` variants — Directional (already shipped), Point, Spot, Area. Add three new types.
+- `src/nodes/Camera.ts` variants — Perspective (shipped), Orthographic.
+- `src/nodes/MaterialOverride.ts` — input: target, material; output: target with material swapped.
+- `src/nodes/AmbientLight.ts` — closes the V8 leak from P0 (the placeholder ambient light is gone; projects that want fill add this node).
+- `src/nodes/ScatterNode.ts` — params: density, seed, areaMesh ref OR bounds; input: assetList (list of Mesh refs); output: Group of placed meshes. `mulberry32(seed)` for randomness. Cap N at 5000.
+- All zod schemas, twice-eval determinism tests for pure nodes, register in `registerAll.ts`.
 
-### Wave B — DAG core (THESIS.md Part II)
-- `src/core/dag/types.ts` — `NodeId`, `SocketId`, `NodeRef`, `TypeDescriptor`, `NodeDefinition<P, I, O>` interface, `Node`, `Op`, `InverseOp`, `Diff`. ALL with zod schemas.
-- `src/core/dag/registry.ts` — node-type registry; agent-introspectable.
-- `src/core/dag/evaluator.ts` — topological sort, lazy eval, content-hash caching (use `xxhash-wasm` or simple JSON-stringify hash), cycle detection (visited set + depth limit 32).
-- `src/core/dag/ops.ts` — five Op primitives + dispatcher. Each Op has `apply(state) → newState` and `inverse(state) → InverseOp`.
-- `src/core/dag/store.ts` — zustand store; `dispatch(op)` is the only mutation entry.
-- Tests in `src/core/dag/*.test.ts` — unit-test every Op + inverse round-trip + evaluator determinism.
+### Wave B — Asset Library panel (THESIS.md §14)
+- `src/app/Library.tsx` — left rail (Director mode); replaces or augments the current NodeList placeholder.
+- Folder tree from OPFS at `assets/` (writes through StorageCapability — no fs leak).
+- Drag-drop emits Op chain via `dispatchAtomic`.
+- Thumbnails: offscreen `<Canvas>` rendering the GltfAsset's bounding box at 128×128 → blob → cache. Observe whether the offscreen Canvas fights the main Canvas for GL context; if it does, drop to a worker.
 
-### Wave C — Storage & Project (THESIS.md §52, §38)
-- `src/core/storage/StorageCapability.ts` — interface.
-- `src/core/storage/OpfsStorage.ts` — implementation using `navigator.storage.getDirectory()` + File System Access API.
-- `src/core/storage/TauriStorage.ts` — STUB only; throws "v0.6".
-- `src/core/project/schema.ts` — `Project` zod schema with `version: 1`.
-- `src/core/project/migrations.ts` — runner skeleton; no migrations yet.
-- `src/core/project/store.ts` — load/save/create.
-- Round-trip tests.
+### Wave C — Scene tree (THESIS.md §12)
+- `src/app/SceneTree.tsx` — fills the `tree-slot` placeholder.
+- Walks back from `state.outputs.scene` through Group/Transform/Attachment; emits a hierarchy.
+- Drag-reorder: emits `disconnect → connect` via `dispatchAtomic`.
+- Two non-identical DAGs that evaluate to the same hierarchy show the same tree (THESIS.md §12 — projection, not truth).
 
-### Wave D — Default 4-node DAG (THESIS.md App. C)
-- `src/nodes/PerspectiveCamera.ts`, `DirectionalLight.ts`, `BoxMesh.ts`, `Scene.ts`, `RenderOutput.ts` — node definitions.
-- All `pure: true` for v0.5. Test harness verifies determinism.
-- Bootstrap `src/core/project/default.ts` returning the 4-node DAG.
+### Wave D — TransformControls gizmo
+- `src/viewport/Gizmo.tsx` — drei `<TransformControls>` bound to the selected Transform node.
+- Live-drag: writes one `setParam` per frame, debounced to 16ms (THESIS.md §53).
+- On release: full re-eval (the cache invalidates anyway because params changed).
+- Single-writer queue: if a `setParam` from elsewhere collides mid-drag, the user's drag wins (THESIS.md §25).
 
-### Wave E — Editor shell (THESIS.md §11, §17)
-- `src/app/App.tsx` — root; hydrates stores in K1 order; renders Layout.
-- `src/app/Layout.tsx` — CSS-grid named regions (`viewport`, `library`, `tree`, `inspector`, `timeline`, `chrome`, `right-drawer`).
-- `src/app/modes/{Simple,Director,Pro}Layout.tsx` — only differ in slot visibility.
-- `src/app/ModeSwitcher.tsx` — title-bar dropdown; persists to localStorage.
-- `src/app/RightDrawer.tsx` — placeholder for P2.5 agent.
+### Wave E — Tests + CI
+- Vitest determinism for ScatterNode (twice-eval with same seed = identical output).
+- Vitest twice-eval for every new pure node.
+- Playwright E2E for all 5 P1 acceptance tests. Linux + darwin baselines for any new screenshot test.
+- Update CI workflow if new dirs need lint coverage.
 
-### Wave F — Viewport + render (THESIS.md §11, RubicsWorld donor)
-- `src/viewport/Viewport.tsx` — R3F Canvas mounted at app root, NEVER unmounts on mode switch (V8).
-- `src/viewport/SceneFromDAG.tsx` — calls `evaluate('scene', currentTime)` and emits R3F primitives from the result.
-- `src/render/PostFx.tsx` — port from RubicsWorld (`/Users/mrityunjaybhardwaj/Documents/projects/RubicsWorld/src/world/PostFx.tsx`); strip game-specific bits; keep ACES + SMAA.
-- `src/render/FpsMeter.tsx` — port from RubicsWorld.
-
-### Wave G — Blender bridge (browser-shaped)
-- `src/integrations/blender/BlenderBridgeCapability.ts` — interface.
-- `src/integrations/blender/BrowserBlenderBridge.ts` — polls a localhost companion script (Python) at `/active` every 2s in dev. Companion script lives in `tools/blender-companion/serve.py` (write skeleton; document setup in README).
-- Vite middleware `vite-plugin-blender-mock.ts` for the dev endpoint when companion not running.
-
-### Wave H — Lint, tests, CI
-- ESLint rules: ban `Math.random`/`Date.now`/`performance.now`/`crypto.randomUUID` in files matching `src/nodes/**` (V2 enforcement).
-- Vitest config + run all unit tests.
-- Playwright E2E for the 8 acceptance tests.
-- GitHub Actions: lint, typecheck, vitest, playwright, license-audit.
-- Reference screenshot committed for test #7.
-
-### Wave I — Docs + close
-- `README.md` — quickstart, "what is this", link to THESIS.md.
-- `CHANGELOG.md` — `## [0.5.0-p0] - YYYY-MM-DD` entry summarizing what shipped.
-- Update `.anvi/dharana.md` with any new boundaries observed during P0.
-- Update `.anvi/hetvabhasa.md` with any patterns hit during P0.
-- Update `.anvi/vyapti.md` — flip status of V1-V8 from NOT YET IMPLEMENTED to ALIGNED where true.
-- Open draft PR (or skip if no GitHub remote): title `"P0: Foundation + DAG core"`. Body references THESIS.md §38 and lists which acceptance tests pass.
-- Final summary message in conversation: what shipped, what cut, what surprised, ETA confidence for P1.
+### Wave F — Catalogue + close
+- Flip V3 to ALIGNED if any new node consumes Time (likely not in P1; explicit NOT YET if not).
+- Add new boundaries to dharana if any surface; otherwise note "no new boundaries observed."
+- Catalog any patterns hit during P1 to hetvabhasa.
+- README + CHANGELOG entries.
+- Open draft PR; run goal-backward self-review; fold 🔴 fixes inline before marking ready.
 
 ## Honesty Contract (do NOT violate)
 
@@ -120,10 +103,11 @@ You are taking over autonomous execution of **Basher v0.5 — Phase P0 (Foundati
 - **Never** skip an acceptance test to make a deadline.
 - **Never** copy GPL code under any circumstances.
 - **Never** push to main without CI green.
-- **Never** ship without the migration runner (even no-op).
+- **Never** ship without running goal-backward self-review (CLAUDE.md AnviDev §5).
 - **Always** run twice-eval test for every pure node.
-- **Always** validate every Op via zod before dispatch.
+- **Always** use `dispatchAtomic` when a user-perceived action is multiple ops.
 - **Always** record provenance in `.anvi/dharana.md` for every new boundary.
+- **Always** generate Linux + macOS Playwright baselines when adding screenshot tests (H8).
 
 ## Decision Defaults (when thesis is silent)
 
@@ -131,6 +115,7 @@ You are taking over autonomous execution of **Basher v0.5 — Phase P0 (Foundati
 - Fork-in-the-road: pick the most reversible option; document in PR; flag in summary.
 - Unclear license on a transitive dep: reject and find an alternative.
 - Bundle size at risk: lazy-load before sacrificing a feature.
+- Offscreen Canvas vs worker for thumbnails: try Canvas first; observe; fall back to worker only if context-fight is real (Lokayata).
 
 ## Hard-Stop Triggers (escalate to user)
 
@@ -144,17 +129,19 @@ You are taking over autonomous execution of **Basher v0.5 — Phase P0 (Foundati
 
 If you ever see the user message **"stop, rethink"** — freeze immediately. Do not commit. Do not push. Output: (1) what you were about to do, (2) what's already committed, (3) what's uncommitted/stage-revertable, (4) wait.
 
-## When P0 Is Done
+## When P1 Is Done
 
-1. All 8 acceptance tests green in CI.
-2. Draft PR opened (or skip-noted if no remote).
-3. End-of-phase summary posted in conversation:
-   - What shipped (bullet list, mapped to thesis sections).
-   - What cut from P0 scope (deferred to P1+ with justification).
+1. All 5 acceptance tests green in CI on both darwin and Linux.
+2. Goal-backward self-review run; 🔴 fixes folded inline.
+3. Draft PR opened, then marked Ready for Review after self-review pass.
+4. End-of-phase summary in conversation:
+   - What shipped (mapped to thesis sections).
+   - What cut from P1 scope (deferred with justification).
    - What surprised (anything that took >1.5x estimate or revealed a thesis gap).
-   - Risk register updates (any new B<N> boundaries observed).
-   - Confidence for P1 (high/med/low and why).
-4. **STOP.** Do not start P1. P0 is the foundation; user reviews before stacking on it.
+   - Risk register updates (new B<N> boundaries observed).
+   - Confidence for P2 (high/med/low and why).
+5. Update `NEXT_SESSION.md` for P2 (Character + Move).
+6. **STOP.** Do not start P2.
 
 ---
 
