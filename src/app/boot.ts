@@ -16,13 +16,23 @@ import {
   useProjectStore,
 } from '../core/project';
 import { pickStorage, type StorageCapability } from '../core/storage';
+import {
+  BrowserBlenderBridge,
+  type BlenderBridgeCapability,
+} from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
 
 let cachedStorage: StorageCapability | null = null;
+let cachedBridge: BlenderBridgeCapability | null = null;
 
 export async function getStorage(): Promise<StorageCapability> {
   if (!cachedStorage) cachedStorage = await pickStorage();
   return cachedStorage;
+}
+
+export function getBlenderBridge(): BlenderBridgeCapability {
+  if (!cachedBridge) cachedBridge = new BrowserBlenderBridge();
+  return cachedBridge;
 }
 
 /**
@@ -51,6 +61,9 @@ export async function boot(): Promise<void> {
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
+
+  // K1 step 9 — Blender beacon polls in dev only (the impl no-ops in prod).
+  getBlenderBridge().start();
 }
 
 export async function saveCurrent(): Promise<void> {
