@@ -175,3 +175,30 @@
 
 **REF:** THESIS.md §40; `src/app/character/walkTo.ts:46`; `src/app/character/GroundClick.tsx:30`; `src/app/character/walkTo.test.ts`.
 **Why it matters:** click-to-move is the first user-perceivable proof that the agent and the user share the same Op surface. P2.5's `character.walkTo` agent tool will return the SAME `Op[]` shape — if the human path mutates correctly under undo, the agent path inherits the property for free (mirrors K6's reasoning).
+
+### K8: Boot-with-last-project (P2 viewport-polish)
+
+**Steps:**
+
+1. K1 step 1-2 (registry → storage pick) unchanged.
+2. Read `localStorage['basher.lastProjectId']`. If present, attempt `loadProject(storage, lastId)`.
+3. On miss/corrupt/absent: fall through to `loadProject(storage, DEFAULT_PROJECT_ID)`.
+4. On second miss: build the seed project + persist it (covers first-ever boot AND catastrophic data loss).
+5. After load: `persistLastProjectId(project.id)` so the chosen project becomes the next-boot default.
+6. K1 step 3-9 (hydrate + Canvas + beacon) unchanged.
+
+**Switch flow** (user clicks a different project in `<ProjectsMenu />`):
+
+1. Auto-save the OUTGOING project via `saveCurrent()` before swapping. (No "did you save?" modal — saves are cheap, idempotent, atomic per K5.)
+2. Load the target project's bytes via `loadProject(storage, targetId)`.
+3. `persistLastProjectId(targetId)`.
+4. `useProjectStore.setCurrent(target)` + `useDagStore.hydrate(target.state)`. The hydrate seam bypasses the Op log by design (V1 documented exception).
+
+**Common violations:**
+
+- Skipping step 1 (auto-save outgoing) → user loses uncommitted edits when switching.
+- Mutating the DAG store via `setState` instead of `hydrate` → V1 leak; the Op log gains incoherent entries that don't match either project's history.
+- Persisting `lastProjectId` BEFORE the load succeeds → a corrupt project poisons the boot loop forever (every boot re-attempts, fails, retries the same id).
+
+**REF:** `src/app/boot.ts` (boot, switchProject, createNewProject, deleteProject, duplicateCurrentProject, renameCurrentProject); `src/app/ProjectsMenu.tsx`.
+**Why it matters:** multi-project is the first feature where the user has expectations about UI continuity across sessions. Get the persisted-handle wrong and the user sees their work disappear on reload — irreversible trust loss.

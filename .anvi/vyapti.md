@@ -58,10 +58,10 @@
 
 ### V6: Capability interfaces decouple browser/native impls
 
-**Span:** `src/core/storage/` (`StorageCapability` → `OpfsStorage`/`TauriStorage`/`MemoryStorage`); `src/integrations/blender/` (`BlenderBridgeCapability` → `BrowserBlenderBridge`). v0.6 will add `core/file-picker/` and `core/render-encoder/`.
-**Enforcement:** No code outside `src/core/storage/` or `src/integrations/blender/` imports a Tauri or `node:fs` symbol. `pickStorage()` selects at runtime via `isAvailable()`.
-**Status:** ALIGNED for storage + Blender bridge. v0.6 swap point is a one-line provider change in `src/app/boot.ts`.
-**REF:** THESIS.md §33; `src/core/storage/StorageCapability.ts:1`
+**Span:** `src/core/storage/` (`StorageCapability` → `OpfsStorage`/`IndexedDbStorage`/`TauriStorage`/`MemoryStorage`); `src/integrations/blender/` (`BlenderBridgeCapability` → `BrowserBlenderBridge`). v0.6 will add `core/file-picker/` and `core/render-encoder/`.
+**Enforcement:** No code outside `src/core/storage/` or `src/integrations/blender/` imports a Tauri, `idb`, OPFS, or `node:fs` symbol. `pickStorage()` chains OPFS → IndexedDB → Memory at runtime via `isAvailable()`.
+**Status:** ALIGNED for storage + Blender bridge. P2 viewport-polish added IndexedDB without a single caller change — capability discipline held. v0.6 Tauri swap point remains a one-line provider change in `src/app/boot.ts`.
+**REF:** THESIS.md §33; `src/core/storage/StorageCapability.ts:1`; `src/core/storage/IndexedDbStorage.ts:1`
 
 ### V7: Agent tool handlers return `Op[]`; do not mutate state directly
 
