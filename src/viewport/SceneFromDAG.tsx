@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
+import { useTimeStore } from '../app/stores/timeStore';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -58,15 +59,28 @@ interface SceneFromDAGProps {
 
 export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const state = useDagStore((s) => s.state);
+  // Time is a UI-projection store, NOT the DAG. The viewport reads it on
+  // every render and threads it into ctx; pure consumers re-evaluate via
+  // TimeSource hash flips (V3). Subscribing here makes scrub-rendered
+  // frames bit-exactly track the playhead.
+  const seconds = useTimeStore((s) => s.seconds);
+  const frame = useTimeStore((s) => s.frame);
+  const normalized = useTimeStore((s) => s.normalized);
   // Single shared cache across renders; param edits invalidate via content
   // hash (the cache key changes when params change, so old entries leak but
   // are pruned at LRU ceiling — P1 wires the 512MB cap from THESIS.md §51).
+  // P2 note: time-driven invalidation creates a new entry per (frame, node)
+  // tuple. Bounded by N pure consumers × distinct frames visited; LRU is
+  // the right home for this concern when it bites (P3+).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
   const target = state.outputs[outputName];
   if (!target) return null;
 
-  const result = evaluate(state, target.node, { cache });
+  const result = evaluate(state, target.node, {
+    cache,
+    ctx: { time: { frame, seconds, normalized } },
+  });
   const value = result.value as RenderOutputValue;
 
   return (

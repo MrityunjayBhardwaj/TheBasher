@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { boot } from './boot';
+import { Clock } from './Clock';
 import { Layout } from './Layout';
 
 type BootState = 'pending' | 'ready' | 'failed';
@@ -44,5 +45,10 @@ export function App() {
     );
   }
 
-  return <Layout />;
+  return (
+    <>
+      <Clock />
+      <Layout />
+    </>
+  );
 }

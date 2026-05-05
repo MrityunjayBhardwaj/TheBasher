@@ -19,6 +19,7 @@ import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
+import { useTimeStore } from './stores/timeStore';
 
 let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
@@ -85,6 +86,7 @@ export function boot(): Promise<void> {
     if (import.meta.env.DEV) {
       const w = window as unknown as Record<string, unknown>;
       w.__basher_dag = useDagStore;
+      w.__basher_time = useTimeStore;
     }
 
     // K1 step 9 — bridge polls only in dev (impl no-ops when DEV is false).

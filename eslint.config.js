@@ -24,6 +24,19 @@ const PURE_FORBIDDEN = [
     message:
       'crypto.randomUUID is forbidden inside `pure: true` node evaluators (V2). Use a deterministic id from (params, inputs).',
   },
+  {
+    // V3 — Time enters every animation/render evaluator through a typed Time
+    // socket, never via R3F's per-frame closure. The TimeSource node is the
+    // ONLY legal time source; pure consumers wire to it.
+    selector: "CallExpression[callee.name='useFrame']",
+    message:
+      'useFrame is forbidden inside src/nodes/** evaluators (V3, THESIS.md §49). Time enters via the `Time` socket — wire a TimeSource node to your `time` input.',
+  },
+  {
+    selector: "CallExpression[callee.name='useThree']",
+    message:
+      'useThree is forbidden inside src/nodes/** evaluators (V3, THESIS.md §49). Three.js clock state is not a determinism-safe input. Use the `Time` socket.',
+  },
 ];
 
 export default tseslint.config(

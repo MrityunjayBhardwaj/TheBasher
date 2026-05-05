@@ -12,6 +12,7 @@ import { Library } from './Library';
 import { NodeList } from './NodeList';
 import { RightDrawer } from './RightDrawer';
 import { SceneTree } from './SceneTree';
+import { Timebar } from './Timebar';
 import { Viewport } from '../viewport/Viewport';
 import { useModeStore } from './stores/modeStore';
 
@@ -91,12 +92,8 @@ export function Layout() {
         <RightDrawer />
       </div>
 
-      <div
-        style={{ gridArea: 'timeline' }}
-        className="border-t border-border bg-muted/30 text-xs text-fg/40"
-        data-testid="timeline-slot"
-      >
-        <div className="px-3 py-1 font-mono">timeline · empty (lands in P3)</div>
+      <div style={{ gridArea: 'timeline' }} data-testid="timeline-slot">
+        <Timebar />
       </div>
     </div>
   );
