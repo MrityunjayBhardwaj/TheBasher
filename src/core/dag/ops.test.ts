@@ -191,7 +191,7 @@ describe('applyOp — connect/disconnect', () => {
   });
 
   it('refuses to connect mismatched types', () => {
-    let state = buildPair();
+    const state = buildPair();
     expect(() =>
       applyOp(state, {
         type: 'connect',
@@ -239,7 +239,7 @@ describe('applyOp — setParam', () => {
   beforeEach(() => seedTestRegistry());
 
   it('sets a top-level param and returns inverse with prior value', () => {
-    let state = withState((s) =>
+    const state = withState((s) =>
       applyOp(s, {
         type: 'addNode',
         nodeId: 'n1',
@@ -266,7 +266,7 @@ describe('applyOp — setParam', () => {
   });
 
   it('rejects values that fail schema after the set', () => {
-    let state = withState((s) =>
+    const state = withState((s) =>
       applyOp(s, {
         type: 'addNode',
         nodeId: 'n1',
@@ -330,7 +330,7 @@ describe('inverse round-trip — every op restores prior state', () => {
   });
 
   it('setParam → setParam is identity', () => {
-    let state = applyOp(emptyDagState(), {
+    const state = applyOp(emptyDagState(), {
       type: 'addNode',
       nodeId: 'n',
       nodeType: 'TestNumber',

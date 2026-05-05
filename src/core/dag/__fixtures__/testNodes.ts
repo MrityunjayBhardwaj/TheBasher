@@ -17,7 +17,7 @@ export function seedTestRegistry(): void {
     evaluate: (params) => params.value,
   });
 
-  registerNodeType<{}, number>({
+  registerNodeType<Record<string, unknown>, number>({
     type: 'TestSum',
     version: 1,
     pure: true,
@@ -35,7 +35,7 @@ export function seedTestRegistry(): void {
     },
   });
 
-  registerNodeType<{}, number>({
+  registerNodeType<Record<string, unknown>, number>({
     type: 'TestSumList',
     version: 1,
     pure: true,
@@ -50,7 +50,7 @@ export function seedTestRegistry(): void {
   });
 
   let counter = 0;
-  registerNodeType<{}, number>({
+  registerNodeType<Record<string, unknown>, number>({
     type: 'TestImpureCounter',
     version: 1,
     pure: false,

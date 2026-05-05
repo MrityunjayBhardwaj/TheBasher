@@ -89,7 +89,13 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   version: number;
   pure: boolean;
   cost: NodeCost;
-  paramSchema: z.ZodType<P>;
+  /**
+   * Output type widened to `unknown` for the input shape so zod schemas with
+   * `.default()` (input may be undefined, output is filled) still satisfy
+   * `z.ZodType<P, _, unknown>` — the boundary parses unknown bytes to a
+   * defaulted P.
+   */
+  paramSchema: z.ZodType<P, z.ZodTypeDef, unknown>;
   inputs: Record<SocketId, TypeDescriptor>;
   outputs: Record<SocketId, TypeDescriptor>;
   /**
