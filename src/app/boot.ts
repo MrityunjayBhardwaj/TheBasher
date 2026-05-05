@@ -41,29 +41,46 @@ export function getBlenderBridge(): BlenderBridgeCapability {
  *
  * Steps (K1 1-3): registry → load-or-default → hydrate stores. Steps 4-10
  * (mount React, Canvas, beacon) belong to the calling component tree.
+ *
+ * StrictMode-safe: React 18+ in dev mounts effects twice. Without the shared
+ * promise guard, the second mount would re-run loadProject + saveProject
+ * after the first hydrate has populated the store — wasted I/O at best, an
+ * OPFS write race at worst. Cached promise: every concurrent caller awaits
+ * the same in-flight boot.
  */
-export async function boot(): Promise<void> {
-  registerAllNodes();
-  const storage = await getStorage();
+let bootPromise: Promise<void> | null = null;
 
-  let project;
-  try {
-    project = await loadProject(storage, DEFAULT_PROJECT_ID);
-  } catch {
-    project = buildDefaultProject();
-    // Persist immediately so subsequent reloads round-trip the same bytes
-    // (acceptance #4).
-    await saveProject(storage, project);
-  }
+export function boot(): Promise<void> {
+  if (bootPromise) return bootPromise;
+  bootPromise = (async () => {
+    registerAllNodes();
+    const storage = await getStorage();
 
-  useProjectStore.getState().setCurrent(project);
-  useDagStore.getState().hydrate({
-    nodes: project.state.nodes,
-    outputs: project.state.outputs,
-  });
+    let project;
+    try {
+      project = await loadProject(storage, DEFAULT_PROJECT_ID);
+    } catch {
+      project = buildDefaultProject();
+      // Persist immediately so subsequent reloads round-trip the same bytes
+      // (acceptance #4).
+      await saveProject(storage, project);
+    }
 
-  // K1 step 9 — Blender beacon polls in dev only (the impl no-ops in prod).
-  getBlenderBridge().start();
+    useProjectStore.getState().setCurrent(project);
+    useDagStore.getState().hydrate({
+      nodes: project.state.nodes,
+      outputs: project.state.outputs,
+    });
+
+    // K1 step 9 — bridge polls only in dev (impl no-ops when DEV is false).
+    getBlenderBridge().start();
+  })();
+  return bootPromise;
+}
+
+/** Test-only: forget the cached boot so the next boot() runs fresh. */
+export function __resetBootForTests(): void {
+  bootPromise = null;
 }
 
 export async function saveCurrent(): Promise<void> {

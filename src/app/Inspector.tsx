@@ -24,7 +24,10 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
       <input
         type="number"
         step="0.1"
-        defaultValue={value}
+        // Controlled — `value` reflects external state (undo/redo, agent ops,
+        // load). Uncontrolled `defaultValue` would silently desync the moment
+        // the param changes outside this input (e.g. Cmd+Z).
+        value={value}
         data-testid={`inspector-input-${nodeId}-${paramPath}`}
         className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus:border-accent focus:outline-none"
         onChange={(e) => {
@@ -59,7 +62,8 @@ function VectorField({
             key={dims[i]}
             type="number"
             step="0.1"
-            defaultValue={v}
+            // Controlled — see NumericField for the why.
+            value={v}
             data-testid={`inspector-vec-${nodeId}-${paramPath}-${dims[i]}`}
             className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus:border-accent focus:outline-none"
             onChange={(e) => {

@@ -69,7 +69,7 @@ describe('DagStore', () => {
     expect(useDagStore.getState().redoStack.length).toBe(0);
   });
 
-  it('dispatchBatch produces atomic undo (one undo reverts the whole batch)', () => {
+  it('dispatchBatch produces per-op undo entries (one undo per op)', () => {
     const store = useDagStore.getState();
     const ops: Op[] = [
       { type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } },
@@ -77,10 +77,94 @@ describe('DagStore', () => {
     ];
     store.dispatchBatch(ops, 'macro', 'add two');
     expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual(['a', 'b']);
-    // Per-op undo entries (atomic-as-batch is a Diff concern, P2.5).
     store.undo();
     store.undo();
     expect(useDagStore.getState().state.nodes).toEqual({});
+  });
+
+  it('dispatchAtomic groups ops into ONE undo entry', () => {
+    const store = useDagStore.getState();
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } },
+      { type: 'addNode', nodeId: 'b', nodeType: 'TestNumber', params: { value: 2 } },
+      { type: 'addNode', nodeId: 's', nodeType: 'TestSum', params: {} },
+    ];
+    store.dispatchAtomic(ops, 'macro', 'add three');
+    expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual([
+      'a',
+      'b',
+      's',
+    ]);
+    expect(useDagStore.getState().undoStack.length).toBe(1);
+
+    // ONE undo reverts the whole atomic group.
+    store.undo();
+    expect(useDagStore.getState().state.nodes).toEqual({});
+    expect(useDagStore.getState().redoStack.length).toBe(1);
+
+    // Redo restores all three.
+    store.redo();
+    expect(Object.keys(useDagStore.getState().state.nodes).sort()).toEqual([
+      'a',
+      'b',
+      's',
+    ]);
+    expect(useDagStore.getState().redoStack.length).toBe(0);
+  });
+
+  it('dispatchAtomic undoes inverses in REVERSE order (so removeNode-after-disconnect works)', () => {
+    const store = useDagStore.getState();
+    // Build a→s; the atomic group disconnects then removes s. Forward order
+    // matters: removeNode would fail if `s` still consumed `a`.
+    store.dispatch({
+      type: 'addNode',
+      nodeId: 'a',
+      nodeType: 'TestNumber',
+      params: { value: 5 },
+    });
+    store.dispatch({
+      type: 'addNode',
+      nodeId: 's',
+      nodeType: 'TestSum',
+      params: {},
+    });
+    store.dispatch({
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    const sizeBefore = useDagStore.getState().undoStack.length;
+
+    store.dispatchAtomic(
+      [
+        {
+          type: 'disconnect',
+          from: { node: 'a', socket: 'out' },
+          to: { node: 's', socket: 'a' },
+        },
+        { type: 'removeNode', nodeId: 's' },
+      ],
+      'user',
+      'detach and remove',
+    );
+    expect(useDagStore.getState().state.nodes.s).toBeUndefined();
+    expect(useDagStore.getState().undoStack.length).toBe(sizeBefore + 1);
+
+    // Undo MUST replay [addNode s, then connect a→s] — reverse of forward.
+    // If order were forward, addNode would run AFTER connect → connect's
+    // inverse refers to a node that doesn't exist yet → throws.
+    store.undo();
+    expect(useDagStore.getState().state.nodes.s).toBeDefined();
+    expect(useDagStore.getState().state.nodes.s.inputs.a).toEqual({
+      node: 'a',
+      socket: 'out',
+    });
+  });
+
+  it('empty dispatchAtomic is a no-op', () => {
+    const store = useDagStore.getState();
+    store.dispatchAtomic([], 'user', 'nothing');
+    expect(useDagStore.getState().undoStack.length).toBe(0);
   });
 
   it('rejects invalid op shape via zod (V7 spirit, P0 today)', () => {

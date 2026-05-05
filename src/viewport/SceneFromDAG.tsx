@@ -52,7 +52,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {value.scene.children.map((child, i) => (
         <MeshNode key={`mesh:${i}`} value={child} />
       ))}
-      <ambientLight intensity={0.15} />
+      {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
+          If a project wants ambient fill, it adds an AmbientLight node (P1
+          ships the type — until then, the cube is lit by the DirectionalLight
+          alone). */}
       <PostFx config={value.postFx} />
     </>
   );
