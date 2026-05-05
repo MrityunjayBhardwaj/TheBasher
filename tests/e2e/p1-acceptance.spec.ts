@@ -370,6 +370,69 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
   expect(afterOurs).toEqual(['p1_4r2', 'p1_4r']);
 });
 
+test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', async ({ page }) => {
+  // Self-review found that P1#1 drives the chain via dispatchAtomic directly,
+  // never exercising the AssetDropZone's drop event handler. This test
+  // simulates an HTML5 drag-drop end-to-end so a regression in those five
+  // wiring lines (AssetDropZone.tsx onDrop) is caught.
+  await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+    'data-available',
+    'true',
+    { timeout: 10_000 },
+  );
+
+  const beforeNodeCount = await page.evaluate(() => {
+    const w = window as unknown as DagWindow;
+    return Object.keys(w.__basher_dag!.getState().state.nodes).length;
+  });
+
+  // Synthesize the dragstart → dragover → drop sequence with a shared
+  // DataTransfer so the asset MIME survives across events. Playwright's
+  // dragTo doesn't preserve the custom MIME type reliably.
+  await page.evaluate(() => {
+    const item = document.querySelector(
+      '[data-testid="library-item-assets/cube.gltf"]',
+    ) as HTMLElement | null;
+    const zone = document.querySelector('[data-testid="asset-drop-zone"]') as HTMLElement | null;
+    if (!item || !zone) throw new Error('library item or drop zone missing');
+    const dt = new DataTransfer();
+    dt.setData('application/x-basher-asset', 'assets/cube.gltf');
+    dt.setData('text/plain', 'assets/cube.gltf');
+    item.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true }));
+    zone.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
+    zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+    item.dispatchEvent(new DragEvent('dragend', { dataTransfer: dt, bubbles: true }));
+  });
+
+  const after = await page.evaluate(() => {
+    const w = window as unknown as DagWindow;
+    const s = w.__basher_dag!.getState();
+    const nodes = s.state.nodes;
+    const newNodeIds = Object.keys(nodes).filter((id) => id.startsWith('n_'));
+    // The dropChain helper generates ids prefixed with `n_gltf_`, `n_tx_`,
+    // `n_grp_`. Only the three from this drop should match (default project
+    // ids are `n_camera`, `n_light`, `n_box`, `n_scene`, `n_render`).
+    const gltf = newNodeIds.find((id) => id.startsWith('n_gltf_'));
+    const tx = newNodeIds.find((id) => id.startsWith('n_tx_'));
+    const grp = newNodeIds.find((id) => id.startsWith('n_grp_'));
+    const assetRef = gltf ? (nodes[gltf].params as { assetRef: string }).assetRef : null;
+    return {
+      delta: Object.keys(nodes).length - newNodeIds.length, // pre-existing count
+      nodeCount: Object.keys(nodes).length,
+      sawGltf: Boolean(gltf),
+      sawTransform: Boolean(tx),
+      sawGroup: Boolean(grp),
+      assetRef,
+      undoLen: s.undoStack.length,
+    };
+  });
+  expect(after.nodeCount).toBe(beforeNodeCount + 3);
+  expect(after.sawGltf).toBe(true);
+  expect(after.sawTransform).toBe(true);
+  expect(after.sawGroup).toBe(true);
+  expect(after.assetRef).toBe('assets/cube.gltf');
+});
+
 test('P1#5 setParam on a Transform position propagates within 16ms (gizmo path)', async ({
   page,
 }) => {

@@ -11,6 +11,14 @@
 // Live-drag mode: every `objectChange` event dispatches `setParam` for the
 // changed param only. Browser pointer events fire at ≤60 Hz, so this is
 // already at the THESIS.md §53 16 ms cadence; no extra debounce needed.
+//
+// Known refinement (deferred to P2): each event currently produces its own
+// undo-stack entry, so a 1-second drag at 60 fps creates ~60 undo entries.
+// A future patch will subscribe to TransformControls' `dragging-changed`
+// event and collapse the per-event entries into one `dispatchAtomic` group
+// at drag end (matching the asset-drop chain's atomic-undo property — K6).
+// Tracked in CHANGELOG cut list; not blocking acceptance #5.
+//
 // Single-writer-queue (THESIS.md §25): mid-drag agent ops are deferred
 // in P2.5 — out of P1 scope.
 //

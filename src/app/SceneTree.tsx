@@ -75,12 +75,13 @@ export function SceneTree() {
 
     const ref = { node: srcRow.nodeId, socket: 'out' };
     const to = { node: dstRow.parent.nodeId, socket: dstRow.parent.socket };
-    // After disconnecting the source from its current position, indices
-    // shift left for everything to its right. Compensate when the target
-    // index is greater than the source.
-    const newIndex =
-      dstRow.parent.index > srcRow.parent.index ? dstRow.parent.index : dstRow.parent.index;
-    const adjusted = dstRow.parent.index > srcRow.parent.index ? newIndex - 1 : newIndex;
+    // Drop semantic: source takes target's visual slot. After disconnecting
+    // the source from its current position, indices shift left for
+    // everything that was to its right — including the target row when
+    // dst > src. Compensate so the connected source lands precisely where
+    // the user dropped.
+    const adjusted =
+      dstRow.parent.index > srcRow.parent.index ? dstRow.parent.index - 1 : dstRow.parent.index;
 
     const ops: Op[] = [
       { type: 'disconnect', from: ref, to },
