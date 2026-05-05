@@ -73,3 +73,11 @@
 **Enforcement:** `SceneFromDAG` calls `evaluate(state, target.node, { cache })` and walks the result. There is no path inside `src/viewport/**` that calls `dispatch` or mutates store state. Mode switches do not unmount the Canvas — Layout flips slot visibility via `display:none` (K1 step 6).
 **Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG).
 **REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`
+
+### V9: Materials are data, not code (in v0.5)
+
+**Span:** `src/nodes/MaterialOverride.ts` + any node exposing material parameters.
+**Enforcement:** Material nodes expose preset choice + scalar/texture params only. No string-typed shader source, no JS callback that returns a `Material`, no TSL/OSL/GLSL/WGSL authoring surface in v0.5. Reviewer rejects any `new ShaderMaterial({ vertexShader, fragmentShader })` outside `core/render/` (none expected in v0.5).
+**Status:** NOT YET IMPLEMENTED (lands in P1 with `MaterialOverride`).
+**REF:** THESIS.md §39 (`MaterialOverride`); deferred-decision rationale in `dharana.md` §3 ("Shader-as-node-graph").
+**Why it matters:** PBR via GLB + parameter overrides keeps the asset library decoupled from the renderer. Allowing shader-as-code in P1 leaks renderer concerns into content authoring, breaks determinism/caching guarantees (V2), and pulls TSL's WebGPU surface area into a phase whose job is content placement. Re-evaluate when the render graph lands (P4).

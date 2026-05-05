@@ -97,6 +97,25 @@
 
 > None yet. Will accumulate as catalogues grow.
 
+### Deferred decisions (seeds — re-evaluate at named trigger)
+
+#### Shader-as-node-graph (TSL) — defer to P4
+
+**ORIGIN:** P1 scoping discussion (2026-05-05). Question raised: should `MaterialOverride` accept TSL or OSL alongside PBR?
+**WHY:** TSL is the right *long-term* fit for Basher (shaders-as-DAG-nodes). But authoring it in P1 destabilizes the asset library:
+- TSL lives in `three/webgpu`; API is still moving. Pinning P1 to it imports churn.
+- WebGPU path forces dual-rendering (WebGL fallback), which is real complexity, not a P1 line item.
+- P1's job is *content placement* (drag GLB → see asset). Shader authoring is a *renderer* concern; the natural home is P4 (render graph), where pass nodes land.
+- OSL is unviable in v0.5 entirely — no browser runtime, compiling OSL → WGSL is research not a phase.
+**HOW (when triggered at P4):**
+- Add a `Shader` node type (TSL-typed inputs/outputs).
+- `MaterialOverride` gains an optional `shader: ShaderRef` input alongside the existing PBR params.
+- Determinism: TSL graphs are pure-by-construction; verify with the same twice-eval harness as other pure nodes.
+- Renderer support: gate on `webgpu` capability; WebGL fallback uses preset PBR only.
+- OSL: still deferred to v0.6+ research; if revisited, importing OSL semantics into a TSL graph is the path, not running OSL itself.
+**P1 guard:** V9 (materials = data, not code) blocks accidental shader-source leakage during P1.
+**Status:** SEED. No implementation in P1–P3. Re-evaluate during P4 planning.
+
 ---
 
 ## 4. ORGANIZATIONAL HEALTH

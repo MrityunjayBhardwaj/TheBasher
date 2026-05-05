@@ -40,6 +40,7 @@ Your job is to build P1 to acceptance, open a draft PR, run goal-backward self-r
 - Permissive licenses only — `npm run license-audit` is a CI gate.
 - ScatterNode determinism: use `mulberry32(seed)` (not `Math.random` — lint will reject).
 - ScatterNode N capped at 5000 in v0.5 (THESIS.md §53). Worker offload is v0.6.
+- **Materials are data, not code (V9, new).** PBR only in P1 — preset + scalar/texture params on `MaterialOverride`. No TSL, no OSL, no GLSL/WGSL authoring surface in P1. TSL deferred to P4 (render graph); OSL deferred to v0.6+ research. See `.anvi/dharana.md` §3 "Deferred decisions" for the full rationale and re-evaluation trigger.
 
 ## P1 Goal (verbatim from THESIS.md §39)
 
