@@ -17,11 +17,17 @@ export default defineConfig({
     entries: ['index.html', 'src/**/*.{ts,tsx}'],
   },
   server: {
-    port: 5173,
-    strictPort: false,
+    // 5173 collides with another local project on this dev box; pin to 5180
+    // and refuse to fall through. Playwright config matches.
+    port: 5180,
+    strictPort: true,
     fs: {
       deny: ['blockbench/**'],
     },
+  },
+  preview: {
+    port: 5181,
+    strictPort: true,
   },
   build: {
     target: 'es2022',
