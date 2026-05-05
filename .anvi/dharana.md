@@ -200,10 +200,11 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 **Updated:** 2026-05-05 — post-P1: V9 flipped to ALIGNED. K6 (asset-drop chain) added. H9/H10 cataloged. Connect-with-index extension is backward-compatible with V1; existing tests unchanged.
 **Updated:** 2026-05-06 — post-P2: V3 (Time-as-socket) flipped to ALIGNED. K7 (character.walkTo chain) added. H11 (data-testid on R3F primitives crashes Canvas) cataloged. ESLint extended to ban `useFrame`/`useThree` in `src/nodes/**`. The TimeSource impure singleton + cache-key path through the evaluator preserves twice-eval determinism for pure consumers; verified by 5 t-sample harness in `src/nodes/nodes.test.ts`. Multi-character cache isolation verified at both unit + E2E layers.
 **Updated:** 2026-05-06 — post-P2 viewport-polish round (orbit + axis widget + char-gizmo + multi-project + IDB):
-  - V6 span widened: `IndexedDbStorage` adopted as the OPFS fallback; `pickStorage()` now chains OPFS → IDB → Memory. Added without a single caller change — capability discipline held.
-  - K8 added: boot-with-last-project lifecycle. Multi-project switch auto-saves the outgoing project before hydrating the incoming one (no "did you save?" modal — saves are cheap, atomic per K5).
-  - H12 added: declarative R3F `<PerspectiveCamera position={...}>` fights OrbitControls (and any externally-mutating control system). Fix: ref + useEffect keyed on primitive scalars, not array identity.
-  - New small UI store: `gizmoStore` (TransformControls dragging flag) — separates gizmo + orbit responsibilities cleanly. Editor-camera + DAG-camera are now distinct concerns: DAG-camera authors initial pose + render output (P4); editor-camera is OrbitControls' free orbit.
-  - Character gizmo binding: TransformControls bound to selected Character emits walkTo on drag-end (mirrors click-to-move) — same Op-shape, different trigger.
-  - No new B-boundary needed. The "Viewport-pointer ↔ DAG-mutation" surface (GroundClick + Gizmo) is a clean V8 file-rooted echo of B1 — dispatch lives in `src/app/`, not `src/viewport/`.
-**Next update trigger:** end of P2.1 (viewport polish + menu bar + click-to-select) — re-validate selection-store cardinality (single → array) and any new keyboard-driven Op surfaces.
+
+- V6 span widened: `IndexedDbStorage` adopted as the OPFS fallback; `pickStorage()` now chains OPFS → IDB → Memory. Added without a single caller change — capability discipline held.
+- K8 added: boot-with-last-project lifecycle. Multi-project switch auto-saves the outgoing project before hydrating the incoming one (no "did you save?" modal — saves are cheap, atomic per K5).
+- H12 added: declarative R3F `<PerspectiveCamera position={...}>` fights OrbitControls (and any externally-mutating control system). Fix: ref + useEffect keyed on primitive scalars, not array identity.
+- New small UI store: `gizmoStore` (TransformControls dragging flag) — separates gizmo + orbit responsibilities cleanly. Editor-camera + DAG-camera are now distinct concerns: DAG-camera authors initial pose + render output (P4); editor-camera is OrbitControls' free orbit.
+- Character gizmo binding: TransformControls bound to selected Character emits walkTo on drag-end (mirrors click-to-move) — same Op-shape, different trigger.
+- No new B-boundary needed. The "Viewport-pointer ↔ DAG-mutation" surface (GroundClick + Gizmo) is a clean V8 file-rooted echo of B1 — dispatch lives in `src/app/`, not `src/viewport/`.
+  **Next update trigger:** end of P2.1 (viewport polish + menu bar + click-to-select) — re-validate selection-store cardinality (single → array) and any new keyboard-driven Op surfaces.

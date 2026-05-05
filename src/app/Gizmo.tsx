@@ -33,8 +33,9 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 
 export function Gizmo() {
-  const selectedId = useSelectionStore((s) => s.selectedNodeId);
+  const selectedId = useSelectionStore((s) => s.primaryNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
+  const mode = useGizmoStore((s) => s.mode);
   const groupRef = useRef<THREE.Group>(null);
   const [ready, setReady] = useState(false);
 
@@ -85,16 +86,21 @@ export function Gizmo() {
     if (!isTransform) return;
     const g = groupRef.current;
     if (!g || !selectedId) return;
-    useDagStore.getState().dispatch(
-      {
-        type: 'setParam',
-        nodeId: selectedId,
-        paramPath: 'position',
-        value: [g.position.x, g.position.y, g.position.z],
-      },
-      'user',
-      'gizmo drag',
-    );
+    const mode = useGizmoStore.getState().mode;
+    const paramPath = mode === 'translate' ? 'position' : mode === 'rotate' ? 'rotation' : 'scale';
+    const value =
+      mode === 'translate'
+        ? [g.position.x, g.position.y, g.position.z]
+        : mode === 'rotate'
+          ? [g.rotation.x, g.rotation.y, g.rotation.z]
+          : [g.scale.x, g.scale.y, g.scale.z];
+    useDagStore
+      .getState()
+      .dispatch(
+        { type: 'setParam', nodeId: selectedId, paramPath, value },
+        'user',
+        `gizmo ${mode}`,
+      );
   }
 
   function onDraggingChanged(dragging: boolean) {
@@ -118,7 +124,9 @@ export function Gizmo() {
       {ready && groupRef.current ? (
         <TransformControls
           object={groupRef.current}
-          mode="translate"
+          // Character can only be repositioned via walkTo — rotate/scale
+          // are nonsense for a path-driven entity. Force translate.
+          mode={isCharacter ? 'translate' : mode}
           onObjectChange={onObjectChange}
           onMouseDown={() => onDraggingChanged(true)}
           onMouseUp={() => onDraggingChanged(false)}

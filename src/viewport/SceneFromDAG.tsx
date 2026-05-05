@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
+import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
@@ -83,15 +84,40 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   });
   const value = result.value as RenderOutputValue;
 
+  // Map each top-level scene child to its producer nodeId so click-to-select
+  // can route a viewport hit back to a DAG node. The Scene aggregator's
+  // `inputs.children` is a list of NodeRefs; index i in `value.scene.children`
+  // corresponds to index i in that list.
+  const sceneRef = state.outputs.scene;
+  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
+  const childRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.children)
+      ? (sceneNode.inputs.children as { node: string; socket: string }[])
+      : [];
+
   return (
     <>
       <CameraNode value={value.scene.camera} />
       {value.scene.lights.map((light, i) => (
         <LightNode key={`light:${i}`} value={light} />
       ))}
-      {value.scene.children.map((child, i) => (
-        <MeshChild key={`mesh:${i}`} value={child} />
-      ))}
+      {value.scene.children.map((child, i) => {
+        const pickId = childRefs[i]?.node ?? null;
+        return (
+          <group
+            key={`mesh:${i}`}
+            onClick={(e) => {
+              if (!pickId) return;
+              e.stopPropagation();
+              const sel = useSelectionStore.getState();
+              if (e.shiftKey) sel.selectAdditive(pickId);
+              else sel.select(pickId);
+            }}
+          >
+            <MeshChild value={child} />
+          </group>
+        );
+      })}
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
       <PostFx config={value.postFx} />

@@ -9,12 +9,18 @@
 
 import { create } from 'zustand';
 
+export type GizmoMode = 'translate' | 'rotate' | 'scale';
+
 export interface GizmoStore {
   dragging: boolean;
+  mode: GizmoMode;
   setDragging: (dragging: boolean) => void;
+  setMode: (mode: GizmoMode) => void;
 }
 
 export const useGizmoStore = create<GizmoStore>((set) => ({
   dragging: false,
+  mode: 'translate',
   setDragging: (dragging) => set({ dragging }),
+  setMode: (mode) => set({ mode }),
 }));

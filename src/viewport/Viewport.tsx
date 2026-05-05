@@ -8,13 +8,15 @@
 //
 // REF: THESIS.md §11, §53, krama K1 step 6.
 
-import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
+import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
+import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
 import { useGizmoStore } from '../app/stores/gizmoStore';
+import { useSelectionStore } from '../app/stores/selectionStore';
 import { FpsMeter } from '../render/FpsMeter';
 import { SceneFromDAG } from './SceneFromDAG';
 
@@ -55,13 +57,37 @@ export function Viewport() {
           gl.toneMappingExposure = 1;
           void ACESFilmicToneMapping; // re-export to avoid tree-shake
         }}
+        // Click-on-empty-space → clear selection. R3F fires onPointerMissed
+        // when a pointer event in the canvas didn't hit any handler-bearing
+        // mesh. selectionStore is a UI projection, not the DAG (V1 stays
+        // clean).
+        onPointerMissed={() => {
+          useSelectionStore.getState().clear();
+        }}
       >
         <Suspense fallback={null}>
           <color attach="background" args={['#0a0a0a']} />
+          {/* Subtle floor grid — gives the world weight so the user can
+              orient drags and place objects relative to a stable reference.
+              cellSize/sectionSize follow Blender's "grid + sub-grid" idiom. */}
+          <Grid
+            args={[40, 40]}
+            cellSize={1}
+            cellThickness={0.6}
+            cellColor="#2a2a2a"
+            sectionSize={5}
+            sectionThickness={1.2}
+            sectionColor="#3a3a4a"
+            fadeDistance={40}
+            fadeStrength={1.5}
+            infiniteGrid={false}
+            position={[0, -0.001, 0]}
+          />
           <SceneFromDAG />
           <GroundClick />
           <Gizmo />
           <EditorOrbit />
+          <ThreeBridge />
           {/* Blender-style axis-orientation widget in the bottom-right.
               Click an axis label to snap the camera to that view. */}
           <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
