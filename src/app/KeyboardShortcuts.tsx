@@ -23,6 +23,7 @@ import { useDagStore } from '../core/dag/store';
 import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { useEditorStore } from './stores/editorStore';
 import { useGizmoStore } from './stores/gizmoStore';
 import { useSelectionStore } from './stores/selectionStore';
 
@@ -110,6 +111,14 @@ export function KeyboardShortcuts() {
           return;
         case 'Home':
           frameAll();
+          return;
+        case 'Tab':
+          // Toggle 3D Viewport ↔ UV Editor (Blender's Tab idiom). Skip
+          // when the user is typing — already handled by isTypingTarget
+          // earlier in this function. preventDefault so the browser
+          // doesn't tab-focus into chrome.
+          e.preventDefault();
+          useEditorStore.getState().toggleSpace();
           return;
         case 'Escape':
           useSelectionStore.getState().clear();

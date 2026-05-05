@@ -23,9 +23,10 @@ import {
 } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
-import { useViewportStore } from './stores/viewportStore';
+import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -263,6 +264,10 @@ export function MenuBar() {
   const redoLen = useDagStore((s) => s.redoStack.length);
   const gridVisible = useViewportStore((s) => s.gridVisible);
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
+  const shading = useViewportStore((s) => s.shading);
+  const setShading = useViewportStore((s) => s.setShading);
+  const space = useEditorStore((s) => s.space);
+  const setSpace = useEditorStore((s) => s.setSpace);
   const mode = useModeStore((s) => s.mode);
   const setMode = useModeStore((s) => s.setMode);
 
@@ -418,6 +423,32 @@ export function MenuBar() {
           onSelect={() => useViewportStore.getState().toggleAxisWidgetVisible()}
           testId="menu-view-toggle-axis"
         />
+        <Divider />
+        <Submenu label="Shading" testId="menu-view-shading">
+          {(['studio', 'rendered'] as ShadingMode[]).map((s) => (
+            <Item
+              key={s}
+              label={`${s === shading ? '✓ ' : '   '}${s.charAt(0).toUpperCase() + s.slice(1)}`}
+              onSelect={() => setShading(s)}
+              testId={`menu-view-shading-${s}`}
+            />
+          ))}
+        </Submenu>
+        <Submenu label="Editor Space" testId="menu-view-space">
+          {(
+            [
+              { value: 'view3d', label: '3D Viewport' },
+              { value: 'uv', label: 'UV Editor' },
+            ] as { value: SpaceType; label: string }[]
+          ).map((s) => (
+            <Item
+              key={s.value}
+              label={`${s.value === space ? '✓ ' : '   '}${s.label}`}
+              onSelect={() => setSpace(s.value)}
+              testId={`menu-view-space-${s.value}`}
+            />
+          ))}
+        </Submenu>
         <Divider />
         <Submenu label="Set Mode" testId="menu-view-mode">
           {(['simple', 'director', 'pro'] as Mode[]).map((m) => (

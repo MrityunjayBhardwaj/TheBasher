@@ -19,6 +19,7 @@ import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { FpsMeter } from '../render/FpsMeter';
+import { EditorLights } from './EditorLights';
 import { SceneFromDAG } from './SceneFromDAG';
 
 function EditorOrbit() {
@@ -90,6 +91,9 @@ export function Viewport() {
               position={[0, -0.001, 0]}
             />
           ) : null}
+          {/* Editor-only fill rig — gated on viewportStore.shading. Does
+              NOT enter the DAG; production renders bypass it. */}
+          <EditorLights />
           <SceneFromDAG />
           <GroundClick />
           <Gizmo />

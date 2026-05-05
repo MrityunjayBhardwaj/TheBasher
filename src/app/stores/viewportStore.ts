@@ -20,6 +20,15 @@ import { create } from 'zustand';
  *  without a store rewrite. */
 export type Pivot = 'median' | 'individual' | 'cursor' | 'active';
 
+/** Editor shading mode — Blender-style "Solid / Material / Rendered". v0.5
+ *  ships two: `studio` adds editor-only fill lights so the user always sees
+ *  shaded geometry regardless of DAG lights; `rendered` is what the production
+ *  renderer (P4) will see — DAG lights only.
+ *
+ *  IMPORTANT: studio lights are a viewport projection. They MUST NOT leak
+ *  into the DAG (V8) and MUST NOT influence render-mode evaluation. */
+export type ShadingMode = 'studio' | 'rendered';
+
 export interface ViewportStore {
   /** Currently-active pivot. v0.5 ships median-only. */
   pivot: Pivot;
@@ -32,12 +41,15 @@ export interface ViewportStore {
   gridVisible: boolean;
   /** Whether the bottom-right axis widget renders. */
   axisWidgetVisible: boolean;
+  /** Editor shading mode — see ShadingMode for semantics. */
+  shading: ShadingMode;
 
   setPivot(pivot: Pivot): void;
   setSnapStep(step: number): void;
   setSnapEnabled(enabled: boolean): void;
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
+  setShading(shading: ShadingMode): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
   toggleSnapEnabled(): void;
@@ -49,12 +61,16 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   snapEnabled: false,
   gridVisible: true,
   axisWidgetVisible: true,
+  // Default 'studio' so a fresh seed scene with one DirectionalLight still
+  // looks lit. Production renders (P4) read 'rendered' to match.
+  shading: 'studio',
 
   setPivot: (pivot) => set({ pivot }),
   setSnapStep: (snapStep) => set({ snapStep: Math.max(0, snapStep) }),
   setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
+  setShading: (shading) => set({ shading }),
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),

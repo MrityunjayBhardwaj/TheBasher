@@ -4,6 +4,68 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2.6] — 2026-05-06
+
+**P2.6 — Editor polish: TransformToolbar + viewport shading + UV editor
+scaffold.** Top-bar Move/Rotate/Scale toggles. Editor-only fill rig
+(studio shading) so dim DAGs are still visible during editing — without
+leaking into render output. Read-only UV editor scaffold for BoxMesh.
+9 new vitest specs + 5 new Playwright specs.
+
+### Added
+
+- **TransformToolbar** (`src/app/TransformToolbar.tsx`) — sits above
+  Chrome. Mode group (Move / Rotate / Scale) + Snap group (toggle +
+  step) + Shading group (Studio / Rendered) + Space group (3D View /
+  UV Editor). Mirrors the NPanel controls so the top bar is always
+  visible.
+- **editorStore** (`src/app/stores/editorStore.ts`) — UI projection
+  for the active editor space (`view3d` / `uv`). Tab keyboard toggle
+  added in `KeyboardShortcuts.tsx`.
+- **viewportStore.shading** — `studio` (default — adds editor fill
+  rig) or `rendered` (DAG-only; matches what production renders will
+  look like).
+- **EditorLights** (`src/viewport/EditorLights.tsx`) — hemisphere +
+  fill directional + back rim, intensity calibrated low so DAG
+  authoring still drives final shading. Returns `null` in `rendered`
+  mode → no leak into render output.
+- **UVEditor** (`src/app/UVEditor.tsx`) + **uvLayout** (`src/app/uvLayout.ts`)
+  — read-only 2D HTML canvas. Paints 0..1 grid + axis labels + the
+  canonical box UV cross unfold for BoxMesh selections. ResizeObserver
+  handles display:none → block transitions. glTF UV preview deferred
+  until the geometry registry ships.
+- **MenuBar View → Shading + View → Editor Space submenus** — mirror
+  the toolbar groups.
+- **B6 — Editor shading ↔ DAG render** boundary cataloged in
+  `.anvi/dharana.md`. Editor lights MUST NOT leak into render output
+  (acceptance #7 verifies by switching to `rendered` before screenshot).
+
+### Changed
+
+- **Layout** — added a `toolbar` row between Chrome and the
+  viewport/inspector grid row. Grid template now 5 rows.
+- **Viewport slot** — split into `view3d-slot` + `uv-slot` siblings;
+  display:none preserves the Canvas DOM node across space switches
+  (K1 step 6).
+- **Acceptance #7 (PostFx beauty)** — clicks `toolbar-shading-rendered`
+  before screenshot so the baseline reflects DAG-only lights, not the
+  editor fill.
+- **Boot** — exposes `__basher_editor`, `__basher_viewport`,
+  `__basher_selection` projection stores in dev for E2E.
+- **PostFx-beauty darwin baseline** regenerated (toolbar row shrunk
+  viewport DIV again — H13 pattern re-confirmed). Linux baseline
+  regenerates on first CI run.
+
+### Tests
+
+- **+9 vitest** (now 170): editorStore (default + setSpace +
+  toggleSpace), viewportStore.shading transitions, uvLayout shape
+  (6 quads, in-bounds, distinct centers, deterministic).
+- **+5 Playwright** (now 32): toolbar mode buttons drive gizmo,
+  shading toggle flips store without DAG mutation, space toggle
+  preserves Canvas DOM node, UV editor status reflects selection,
+  View → Editor Space submenu wires up.
+
 ## [0.5.0-p2.1] — 2026-05-06
 
 **P2.1 — Viewport polish + menu bar.** Selection multi-select +

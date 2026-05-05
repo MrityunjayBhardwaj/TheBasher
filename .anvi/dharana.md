@@ -227,3 +227,21 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization remains sound after P2.1.**
 
   **Next update trigger:** start of P2.5 (AI Agent on the DAG). Expect new clustering at B3 (Agent ↔ DAG) — currently empty. V7 will flip to ALIGNED.
+
+**Updated:** 2026-05-06 — post-P2.6 (Editor polish: TransformToolbar + viewport shading + UV editor scaffold):
+
+- **New boundary B6: Editor shading ↔ DAG render.** Conceptual: editor-only lights (`src/viewport/EditorLights.tsx`) MUST NOT leak into render output. Mechanism: EditorLights returns `null` when `viewportStore.shading === 'rendered'`. Acceptance #7 (PostFx pixel-diff) sets `rendered` before screenshot — proves the seal. **Silent-failure mode:** designer composes scene under studio fill, hits render, sees a much darker output because their DAG had no lights and they were unknowingly relying on editor lighting. Mitigation: `rendered` mode in the toolbar is one click away — designers can preview the DAG-only result anytime.
+- **New UI projection store: `editorStore`** — a sister to selectionStore / gizmoStore / threeRef / viewportStore. Owns the active editor space (`view3d` / `uv`). Tab key toggles. Layout flips slot visibility via display:none — Canvas survives the space switch (K1 step 6 discipline preserved).
+- **New surfaces in P2.6 — all preserve V1 + V8 file-rooted enforcement:**
+  - `src/app/TransformToolbar.tsx` — top-bar gizmo mode + snap + shading + space groups. Mutates only UI projections.
+  - `src/app/UVEditor.tsx` + `src/app/uvLayout.ts` — read-only UV editor that paints canonical box UVs in HTML 2D canvas; reads selection + DAG, never writes.
+  - `src/viewport/EditorLights.tsx` — first src/viewport/ component that mutates nothing, just renders R3F primitives gated on a viewport projection. Confirms the V8 file-rooted rule's spirit (no dispatch from src/viewport/) is the right cut: pure-rendering helpers belong here, dispatching helpers belong in src/app/.
+- **Hetvabhasa note (NOT a new entry):** layout-shifting features re-tripped H13 (toolbar's row added another ~32px shrink to viewport DIV → acceptance #7 baseline regen needed again). Pattern is the same as last round; no new entry, just confirmation H13 is the right framing.
+- **Fatality test (post-P2.6, 2026-05-06):**
+  1. Hetvabhasa clustering: 13 entries (no new). H13 reaffirmed at the test/observation boundary.
+  2. Vyapti span: V1/V2/V3/V4/V5/V6/V8/V9 still single-module-spanning. New stores (`editorStore`) and components (TransformToolbar / UVEditor / EditorLights) didn't widen any invariant.
+  3. Krama crossing: no new lifecycle exceeded 2 module boundaries. The space toggle is a single store-set; the shading toggle is a single store-set with one downstream component re-render.
+
+  **Verdict: organization remains sound after P2.6.** B6 (editor-shading ↔ DAG-render) is conceptual not file-structural — no new directory, no new module, just a contract that EditorLights honors.
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).

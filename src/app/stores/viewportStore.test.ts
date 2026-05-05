@@ -11,6 +11,7 @@ beforeEach(() => {
     snapEnabled: false,
     gridVisible: true,
     axisWidgetVisible: true,
+    shading: 'studio',
   });
 });
 
@@ -54,5 +55,13 @@ describe('viewportStore — toggles', () => {
   it('setSnapStep clamps negatives to zero (no inverted-snap surprises)', () => {
     useViewportStore.getState().setSnapStep(-1);
     expect(useViewportStore.getState().snapStep).toBe(0);
+  });
+
+  it('setShading switches between studio and rendered modes', () => {
+    expect(useViewportStore.getState().shading).toBe('studio');
+    useViewportStore.getState().setShading('rendered');
+    expect(useViewportStore.getState().shading).toBe('rendered');
+    useViewportStore.getState().setShading('studio');
+    expect(useViewportStore.getState().shading).toBe('studio');
   });
 });
