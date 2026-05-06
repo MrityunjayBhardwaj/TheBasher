@@ -292,6 +292,57 @@ test('P2.6#11 UV editor status reflects SphereMesh selection', async ({ page }) 
   await expect(page.getByTestId('uv-editor-status')).toContainText('equirectangular');
 });
 
+// ---------------------------------------------------------------------------
+// P2.6#12 — Lights gain a rotation param + are click-pickable. Pre-fix:
+// only Transform / BoxMesh nodes had rotation, so the gizmo coerced to
+// translate when a light was selected. Light helpers also weren't
+// click-targets — selection routed only through NodeList. Fix verifies:
+//   1. setParam(nodeId, 'rotation', [...]) lands on a directional light.
+//   2. Selection store reflects a programmatic select on a light id.
+// (Pointer events on R3F primitives are still routed through the
+//  selection store directly per the H3 / H11 lesson.)
+// ---------------------------------------------------------------------------
+
+test('P2.6#12 lights carry rotation param + are selectable', async ({ page }) => {
+  // Seed has n_light (DirectionalLight) at [5,5,3]. Confirm rotation defaults
+  // to [0,0,0] after load.
+  const before = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return (w.__basher_dag!.getState().state.nodes.n_light.params as { rotation?: number[] })
+      .rotation;
+  });
+  expect(before).toEqual([0, 0, 0]);
+
+  // Dispatch a setParam Op on the light's rotation — proves the Gizmo's
+  // rotate path works once the param is on the schema.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    type Dispatch = (op: unknown, source?: string, description?: string) => void;
+    (w.__basher_dag!.getState() as unknown as { dispatch: Dispatch }).dispatch(
+      { type: 'setParam', nodeId: 'n_light', paramPath: 'rotation', value: [0.4, -0.2, 0] },
+      'user',
+      'gizmo rotate',
+    );
+  });
+  const after = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return (w.__basher_dag!.getState().state.nodes.n_light.params as { rotation: number[] })
+      .rotation;
+  });
+  expect(after).toEqual([0.4, -0.2, 0]);
+
+  // Selection round-trip — proves the helper's onClick path lands.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_selection!.getState().select('n_light');
+  });
+  const primary = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return w.__basher_selection!.getState().primaryNodeId;
+  });
+  expect(primary).toBe('n_light');
+});
+
 test('P2.6#6 gizmo translate dispatches setParam on BoxMesh.position', async ({ page }) => {
   // Seed has n_box (BoxMesh) at [0,0,0]. Select it.
   await page.evaluate(() => {

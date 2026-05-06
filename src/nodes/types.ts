@@ -45,6 +45,7 @@ export interface DirectionalLightValue {
   readonly kind: 'DirectionalLight';
   readonly intensity: number;
   readonly position: Vec3;
+  readonly rotation: Vec3;
   readonly color: string;
 }
 
@@ -52,6 +53,7 @@ export interface PointLightValue {
   readonly kind: 'PointLight';
   readonly intensity: number;
   readonly position: Vec3;
+  readonly rotation: Vec3;
   readonly color: string;
   readonly distance: number;
   readonly decay: number;
@@ -62,6 +64,7 @@ export interface SpotLightValue {
   readonly intensity: number;
   readonly position: Vec3;
   readonly target: Vec3;
+  readonly rotation: Vec3;
   readonly color: string;
   readonly angle: number;
   readonly penumbra: number;
@@ -73,6 +76,7 @@ export interface AreaLightValue {
   readonly kind: 'AreaLight';
   readonly intensity: number;
   readonly position: Vec3;
+  readonly rotation: Vec3;
   readonly color: string;
   readonly width: number;
   readonly height: number;

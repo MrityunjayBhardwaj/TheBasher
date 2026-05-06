@@ -4,15 +4,21 @@
 // <pointLight> / <spotLight> / <areaLight> in SceneFromDAG; this layer
 // is purely visual feedback for editing.
 //
-// Discipline: lives in src/viewport/ but renders only — no dispatch,
-// no DAG mutation. The shading gate (`viewportStore.shading !==
-// 'rendered'`) lives upstream in SceneFromDAG; consumers of these
-// helpers control visibility, the helpers themselves are stateless.
+// Click pickup: each helper accepts a `pickId` (the producing DAG node's
+// id) and dispatches selection on click. R3F's onClick fires on the
+// helper's wireframe meshes; we stopPropagation so OrbitControls doesn't
+// also see the event.
 //
-// REF: THESIS.md §11.
+// Discipline: lives in src/viewport/ but renders only — `useSelectionStore`
+// is a UI projection (not the DAG), and the helper writes through it via
+// the same path NodeList / SceneFromDAG meshes use. V1 (DAG mutation
+// only via Op) holds.
+//
+// REF: THESIS.md §11; vyapti V1, V8.
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
+import { useSelectionStore } from '../app/stores/selectionStore';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -27,17 +33,23 @@ const POINT = '#ff8c42';
 const SPOT = '#ffb86c';
 const AREA = '#88c0ff';
 
+export interface LightHelperProps {
+  value: LightValue;
+  /** The producing DAG node id; null when selection routing is unavailable. */
+  pickId: string | null;
+}
+
 /** Top-level dispatcher — returns the right helper for the light kind. */
-export function LightHelper({ value }: { value: LightValue }) {
+export function LightHelper({ value, pickId }: LightHelperProps) {
   switch (value.kind) {
     case 'DirectionalLight':
-      return <DirectionalLightHelper value={value} />;
+      return <DirectionalLightHelper value={value} pickId={pickId} />;
     case 'PointLight':
-      return <PointLightHelper value={value} />;
+      return <PointLightHelper value={value} pickId={pickId} />;
     case 'SpotLight':
-      return <SpotLightHelper value={value} />;
+      return <SpotLightHelper value={value} pickId={pickId} />;
     case 'AreaLight':
-      return <AreaLightHelper value={value} />;
+      return <AreaLightHelper value={value} pickId={pickId} />;
     case 'AmbientLight':
       // Ambient is non-positional — Blender doesn't draw a helper for it.
       return <AmbientLightHelper value={value} />;
@@ -68,32 +80,81 @@ function HelperLine({
   );
 }
 
-function DirectionalLightHelper({ value }: { value: DirectionalLightValue }) {
-  // Blender's "sun" — ring at the position + line indicating direction.
-  // DirectionalLight's direction in our DAG is from `position` toward the
-  // origin (the lookAt is implicit). Show that line so users can read
-  // which way the sun is facing.
-  const dir = useMemo(() => {
-    const v = new THREE.Vector3(-value.position[0], -value.position[1], -value.position[2]);
-    if (v.lengthSq() === 0) v.set(0, -1, 0);
-    return v.normalize().multiplyScalar(1.2);
-  }, [value.position[0], value.position[1], value.position[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+/** Bind a click handler to a helper group → select(pickId). Shift adds
+ *  to the multi-select set. stopPropagation so OrbitControls / fallthrough
+ *  pickers don't also act on this click. */
+function selectOnClick(pickId: string | null) {
+  return (e: { stopPropagation: () => void; shiftKey: boolean }) => {
+    if (!pickId) return;
+    e.stopPropagation();
+    const sel = useSelectionStore.getState();
+    if (e.shiftKey) sel.selectAdditive(pickId);
+    else sel.select(pickId);
+  };
+}
+
+/** Compute the world-space direction the directional light shines along.
+ *  When rotation is non-zero, derive from rotation × (0,-1,0). When zero,
+ *  fall back to the legacy "from position toward origin" interpretation
+ *  so seed scenes look the same as before. */
+function directionalDirection(value: DirectionalLightValue): THREE.Vector3 {
+  const [rx, ry, rz] = value.rotation;
+  if (rx !== 0 || ry !== 0 || rz !== 0) {
+    return new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(rx, ry, rz)).normalize();
+  }
+  const v = new THREE.Vector3(-value.position[0], -value.position[1], -value.position[2]);
+  if (v.lengthSq() === 0) v.set(0, -1, 0);
+  return v.normalize();
+}
+
+function DirectionalLightHelper({
+  value,
+  pickId,
+}: {
+  value: DirectionalLightValue;
+  pickId: string | null;
+}) {
+  // Sun "donut" — ring whose normal aligns to the light's direction so
+  // looking down the direction shows it as a circle (matches the user's
+  // expectation: the ring orients toward the direction vector).
+  const direction = useMemo(() => directionalDirection(value), [value]);
+  const ringQuat = useMemo(() => {
+    // ringGeometry's plane is XY (normal = +Z). Rotate +Z → direction.
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+  }, [direction]);
+  const tip = useMemo(
+    () => direction.clone().multiplyScalar(1.2),
+    [direction.x, direction.y, direction.z], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   return (
-    <group position={value.position as [number, number, number]}>
-      <mesh>
+    <group position={value.position as [number, number, number]} onClick={selectOnClick(pickId)}>
+      <mesh quaternion={ringQuat}>
         <ringGeometry args={[0.18, 0.22, 24]} />
         <meshBasicMaterial color={SUN} side={THREE.DoubleSide} />
       </mesh>
-      <HelperLine from={[0, 0, 0]} to={[dir.x, dir.y, dir.z]} color={SUN} />
+      <HelperLine from={[0, 0, 0]} to={[tip.x, tip.y, tip.z]} color={SUN} />
+      {/* Invisible click target — ringGeometry alone has a tiny pickable
+          area; this small invisible sphere at origin makes the helper
+          easier to click without affecting visuals. */}
+      <mesh>
+        <sphereGeometry args={[0.25, 8, 6]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
     </group>
   );
 }
 
-function PointLightHelper({ value }: { value: PointLightValue }) {
-  // Small wireframe sphere. If decay > 0 and distance > 0, render a
-  // larger ghost sphere at `distance` to hint at falloff range.
+function PointLightHelper({ value, pickId }: { value: PointLightValue; pickId: string | null }) {
+  const rotQuat = useMemo(() => {
+    const e = new THREE.Euler(value.rotation[0], value.rotation[1], value.rotation[2]);
+    return new THREE.Quaternion().setFromEuler(e);
+  }, [value.rotation[0], value.rotation[1], value.rotation[2]]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <group position={value.position as [number, number, number]}>
+    <group
+      position={value.position as [number, number, number]}
+      quaternion={rotQuat}
+      onClick={selectOnClick(pickId)}
+    >
       <mesh>
         <sphereGeometry args={[0.15, 12, 8]} />
         <meshBasicMaterial color={POINT} wireframe />
@@ -108,7 +169,7 @@ function PointLightHelper({ value }: { value: PointLightValue }) {
   );
 }
 
-function SpotLightHelper({ value }: { value: SpotLightValue }) {
+function SpotLightHelper({ value, pickId }: { value: SpotLightValue; pickId: string | null }) {
   // Cone from position toward target. The cone's height is the
   // distance-to-target and its base radius is `tan(angle) * height`.
   const { length, baseR } = useMemo(() => {
@@ -132,12 +193,15 @@ function SpotLightHelper({ value }: { value: SpotLightValue }) {
     // position, opening toward target. Rotate +Y → dir (so the base ends
     // at target). Cone geometry is centered on its origin with height
     // along Y, so we then translate down by length/2.
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
-    return q;
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
   }, [value.position, value.target]);
 
   return (
-    <group position={value.position as [number, number, number]} quaternion={quat}>
+    <group
+      position={value.position as [number, number, number]}
+      quaternion={quat}
+      onClick={selectOnClick(pickId)}
+    >
       <mesh position={[0, -length / 2, 0]}>
         <coneGeometry args={[baseR, length, 16, 1, true]} />
         <meshBasicMaterial color={SPOT} wireframe />
@@ -150,7 +214,7 @@ function SpotLightHelper({ value }: { value: SpotLightValue }) {
   );
 }
 
-function AreaLightHelper({ value }: { value: AreaLightValue }) {
+function AreaLightHelper({ value, pickId }: { value: AreaLightValue; pickId: string | null }) {
   // Wireframe rectangle facing lookAt.
   const quat = useMemo(() => {
     const dir = new THREE.Vector3(
@@ -164,7 +228,11 @@ function AreaLightHelper({ value }: { value: AreaLightValue }) {
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
   }, [value.position, value.lookAt]);
   return (
-    <group position={value.position as [number, number, number]} quaternion={quat}>
+    <group
+      position={value.position as [number, number, number]}
+      quaternion={quat}
+      onClick={selectOnClick(pickId)}
+    >
       <mesh>
         <planeGeometry args={[value.width, value.height]} />
         <meshBasicMaterial color={AREA} wireframe side={THREE.DoubleSide} />

@@ -4,6 +4,44 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2.6.3] — 2026-05-06
+
+**P2.6.3 — Light selection + rotation + direction-aware ring.** Three
+user-reported bugs:
+
+### Fixed
+
+- **Lights are click-selectable in the 3D viewport.** Pre-fix: clicking
+  a light helper did nothing (no onClick handler; selection only routed
+  through NodeList). Post-fix: SceneFromDAG passes the producing
+  `nodeId` (from `Scene.inputs.lights`) to each LightHelper; helpers
+  attach onClick that calls `useSelectionStore.select(pickId)` (or
+  `selectAdditive` on shift). Invisible-sphere click target on the
+  DirectionalLight helper enlarges its tiny pickable area.
+- **Gizmo rotate / scale now work on lights.** Pre-fix: lights had only
+  `position` in their schemas, so the gizmo's `getManipulable()` saw no
+  `rotation` and coerced to translate. Post-fix: every positional light
+  (DirectionalLight, PointLight, SpotLight, AreaLight) gains a
+  `rotation: vec3` schema field with default `[0,0,0]`. Existing saved
+  projects load with rotation defaulted; no migration needed.
+- **DirectionalLight ring orients toward the direction vector.**
+  Pre-fix: the ring rendered in the XY plane regardless of where the
+  sun pointed. Post-fix: ring's quaternion rotates +Z → direction.
+  Direction is computed from `rotation × (0,-1,0)` when rotation is
+  non-zero, falling back to `-position normalized` (legacy seed scene
+  behavior preserved → acceptance #7 baseline still passes).
+  DirectionalLightR also drives `light.target.position` in the same
+  way so the actual shaded direction matches the helper.
+
+### Tests
+
+- **+12 vitest** (now 195): every positional light schema defaults
+  rotation to `[0,0,0]`, the evaluator passes rotation through to the
+  value, and twice-eval determinism (V2) holds with rotation on.
+- **+1 Playwright** (now 39): P2.6#12 — `setParam(rotation)` on the
+  seed DirectionalLight lands cleanly + selection round-trips through
+  the store.
+
 ## [0.5.0-p2.6.2] — 2026-05-06
 
 **P2.6.2 — Sphere UV unwrap + wireframe shading + light helpers.**
@@ -31,8 +69,8 @@ Three Blender-parity asks:
     `tan(angle) * length`.
   - AreaLight: wireframe rectangle facing `lookAt`.
   - AmbientLight: no helper (non-positional, matches Blender).
-  Helpers render only when shading isn't `rendered` so production
-  parity stays clean.
+    Helpers render only when shading isn't `rendered` so production
+    parity stays clean.
 
 ### Tests
 

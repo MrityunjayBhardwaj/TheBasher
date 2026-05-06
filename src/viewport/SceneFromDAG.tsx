@@ -102,6 +102,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     sceneNode && Array.isArray(sceneNode.inputs.children)
       ? (sceneNode.inputs.children as { node: string; socket: string }[])
       : [];
+  const lightRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.lights)
+      ? (sceneNode.inputs.lights as { node: string; socket: string }[])
+      : [];
 
   return (
     <>
@@ -113,7 +117,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           for every DAG light. Hidden in `rendered` mode so the screenshot
           / production parity stays clean. */}
       {showLightHelpers
-        ? value.scene.lights.map((light, i) => <LightHelper key={`helper:${i}`} value={light} />)
+        ? value.scene.lights.map((light, i) => (
+            <LightHelper key={`helper:${i}`} value={light} pickId={lightRefs[i]?.node ?? null} />
+          ))
         : null}
       {value.scene.children.map((child, i) => {
         const pickId = childRefs[i]?.node ?? null;
@@ -222,8 +228,32 @@ function LightNode({ value }: { value: LightValue }) {
 }
 
 function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
+  const ref = useRef<THREE.DirectionalLight | null>(null);
+  // When rotation is non-zero, drive the light's target so direction =
+  // rotation × (0,-1,0). When rotation is identity (default), leave
+  // target at the origin — three.js's default behavior makes the light
+  // shine from `position` toward (0,0,0), which preserves the legacy
+  // seed scene's look (sun pointing roughly inward).
+  const [rx, ry, rz] = value.rotation;
+  const [px, py, pz] = value.position;
+  const hasRotation = rx !== 0 || ry !== 0 || rz !== 0;
+  useEffect(() => {
+    const light = ref.current;
+    if (!light) return;
+    if (!hasRotation) {
+      // Legacy default: target at origin.
+      light.target.position.set(0, 0, 0);
+      light.target.updateMatrixWorld();
+      return;
+    }
+    // direction = rotation applied to (0,-1,0). target = position + dir.
+    const dir = new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(rx, ry, rz));
+    light.target.position.set(px + dir.x, py + dir.y, pz + dir.z);
+    light.target.updateMatrixWorld();
+  }, [hasRotation, rx, ry, rz, px, py, pz]);
   return (
     <directionalLight
+      ref={ref as React.MutableRefObject<THREE.DirectionalLight>}
       intensity={value.intensity}
       color={value.color}
       position={value.position as [number, number, number]}

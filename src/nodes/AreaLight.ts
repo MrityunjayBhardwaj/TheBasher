@@ -13,6 +13,9 @@ export const AreaLightParams = z.object({
   width: z.number().positive().default(2),
   height: z.number().positive().default(2),
   lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+  // Euler XYZ. v1: helper visualization only — `lookAt` stays
+  // authoritative for the rendered RectAreaLight orientation.
+  rotation: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
 });
 export type AreaLightParams = z.infer<typeof AreaLightParams>;
 
@@ -29,6 +32,7 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
       kind: 'AreaLight',
       intensity: params.intensity,
       position: params.position,
+      rotation: params.rotation,
       color: params.color,
       width: params.width,
       height: params.height,
