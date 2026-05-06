@@ -258,6 +258,18 @@ test('P1#3 ScatterNode produces deterministic placement; setParam(density) chang
 test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => {
   // Place an asset, switch to Pro mode, expect the scene tree to render
   // Scene → Group → Transform → GltfAsset for the dropped chain.
+  //
+  // Race guard: beforeEach clears OPFS + reloads; the library re-seeds
+  // assets asynchronously. Dispatching `addNode GltfAsset` before the
+  // seed lands produces a blob URL whose payload is empty → GLTFLoader
+  // throws "Unexpected end of JSON input" → ErrorBoundary unmounts the
+  // tree → the whole page goes black → scene-tree never renders.
+  // Mirror P1#1's gate: wait for the library entry before dispatching.
+  await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+    'data-available',
+    'true',
+    { timeout: 10_000 },
+  );
   await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     const dag = w.__basher_dag!.getState();
