@@ -113,41 +113,41 @@ describe('Point/Spot/Directional — scale drives intensity (volume product)', (
     expect(effective).toBe(16);
   });
 
+  it.each(POWER_SCALED_LIGHTS)('%s render-side power is monotonic in scale magnitude', (kind) => {
+    const def = getNodeType(kind)!;
+    const make = (s: [number, number, number]) => {
+      const p: Record<string, unknown> = { intensity: 1, position: [0, 0, 0], scale: s };
+      if (kind === 'SpotLight') p.target = [0, 0, 0];
+      const parsed = def.paramSchema.parse(p);
+      const v = def.evaluate(parsed, {}, { time: { frame: 0, seconds: 0, normalized: 0 } }) as {
+        intensity: number;
+        scale: number[];
+      };
+      return v.intensity * Math.abs(v.scale[0] * v.scale[1] * v.scale[2]);
+    };
+    expect(make([0.5, 0.5, 0.5])).toBeLessThan(make([1, 1, 1]));
+    expect(make([1, 1, 1])).toBeLessThan(make([2, 2, 2]));
+  });
+
   it.each(POWER_SCALED_LIGHTS)(
-    '%s render-side power is monotonic in scale magnitude',
+    '%s render-side power treats negative scale by magnitude',
     (kind) => {
       const def = getNodeType(kind)!;
-      const make = (s: [number, number, number]) => {
-        const p: Record<string, unknown> = { intensity: 1, position: [0, 0, 0], scale: s };
-        if (kind === 'SpotLight') p.target = [0, 0, 0];
-        const parsed = def.paramSchema.parse(p);
-        const v = def.evaluate(parsed, {}, { time: { frame: 0, seconds: 0, normalized: 0 } }) as {
-          intensity: number;
-          scale: number[];
-        };
-        return v.intensity * Math.abs(v.scale[0] * v.scale[1] * v.scale[2]);
+      const p: Record<string, unknown> = {
+        intensity: 1,
+        position: [0, 0, 0],
+        scale: [-2, 1, 1],
       };
-      expect(make([0.5, 0.5, 0.5])).toBeLessThan(make([1, 1, 1]));
-      expect(make([1, 1, 1])).toBeLessThan(make([2, 2, 2]));
+      if (kind === 'SpotLight') p.target = [0, 0, 0];
+      const parsed = def.paramSchema.parse(p);
+      const v = def.evaluate(parsed, {}, { time: { frame: 0, seconds: 0, normalized: 0 } }) as {
+        intensity: number;
+        scale: number[];
+      };
+      // |(-2)*1*1| = 2 — never negative (renderer would clamp via Math.abs).
+      expect(v.intensity * Math.abs(v.scale[0] * v.scale[1] * v.scale[2])).toBe(2);
     },
   );
-
-  it.each(POWER_SCALED_LIGHTS)('%s render-side power treats negative scale by magnitude', (kind) => {
-    const def = getNodeType(kind)!;
-    const p: Record<string, unknown> = {
-      intensity: 1,
-      position: [0, 0, 0],
-      scale: [-2, 1, 1],
-    };
-    if (kind === 'SpotLight') p.target = [0, 0, 0];
-    const parsed = def.paramSchema.parse(p);
-    const v = def.evaluate(parsed, {}, { time: { frame: 0, seconds: 0, normalized: 0 } }) as {
-      intensity: number;
-      scale: number[];
-    };
-    // |(-2)*1*1| = 2 — never negative (renderer would clamp via Math.abs).
-    expect(v.intensity * Math.abs(v.scale[0] * v.scale[1] * v.scale[2])).toBe(2);
-  });
 });
 
 describe('AreaLight — scale drives width/height multiplication', () => {
