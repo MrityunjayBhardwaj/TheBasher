@@ -43,6 +43,7 @@ import type {
   ScatterValue,
   SceneChild,
   SpotLightValue,
+  SphereMeshValue,
   TransformValue,
 } from '../nodes/types';
 
@@ -288,6 +289,8 @@ function MeshChild({ value, override }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
+    case 'SphereMesh':
+      return <SphereMeshR value={value} override={override} />;
     case 'GltfAsset':
       return <GltfAssetR value={value} override={override} />;
     case 'Transform':
@@ -345,6 +348,27 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
       rotation={value.rotation as [number, number, number]}
     >
       <boxGeometry args={value.size as [number, number, number]} />
+      <meshStandardMaterial
+        color={mat.color}
+        roughness={mat.roughness}
+        metalness={mat.metalness}
+        opacity={mat.opacity}
+        emissive={mat.emissive}
+        emissiveIntensity={mat.emissiveIntensity}
+        transparent={mat.transparent}
+      />
+    </mesh>
+  );
+}
+
+function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
+  const mat = applyOverride(value.material.color, override);
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={value.rotation as [number, number, number]}
+    >
+      <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
       <meshStandardMaterial
         color={mat.color}
         roughness={mat.roughness}

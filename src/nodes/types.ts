@@ -125,6 +125,16 @@ export interface BoxMeshValue {
   readonly material: InlineMaterialSpec;
 }
 
+export interface SphereMeshValue {
+  readonly kind: 'SphereMesh';
+  readonly radius: number;
+  readonly widthSegments: number;
+  readonly heightSegments: number;
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly material: InlineMaterialSpec;
+}
+
 export interface GltfAssetValue {
   readonly kind: 'GltfAsset';
   readonly assetRef: string;
@@ -258,6 +268,7 @@ export interface CharacterValue {
 
 export type SceneChild =
   | BoxMeshValue
+  | SphereMeshValue
   | GltfAssetValue
   | TransformValue
   | GroupValue

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AddMenu } from './AddMenu';
 import { boot } from './boot';
 import { Clock } from './Clock';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
@@ -51,6 +52,7 @@ export function App() {
       <Clock />
       <KeyboardShortcuts />
       <Layout />
+      <AddMenu />
     </>
   );
 }

@@ -18,6 +18,7 @@ import { Timebar } from './Timebar';
 import { TransformToolbar } from './TransformToolbar';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
+import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore } from './stores/editorStore';
 import { useModeStore } from './stores/modeStore';
 
@@ -83,6 +84,14 @@ export function Layout() {
         style={{ gridArea: 'viewport' }}
         className="relative overflow-hidden"
         data-testid="viewport-slot"
+        onContextMenu={(e) => {
+          // RMB click (without drag) → Blender-style Add menu. RMB drag
+          // still pans via OrbitControls — the browser only fires
+          // contextmenu when there was no drag motion. preventDefault
+          // suppresses the native menu so ours wins.
+          e.preventDefault();
+          useAddMenuStore.getState().openAt(e.clientX, e.clientY);
+        }}
       >
         {/* Space toggle uses display:none so the Canvas DOM node stays
             mounted while the user is in the UV editor — K1 step 6 (Canvas

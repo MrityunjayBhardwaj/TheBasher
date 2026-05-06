@@ -4,6 +4,52 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2.6.1] — 2026-05-06
+
+**P2.6.1 — Add menu (Blender-style) + gizmo regression fix.** Right-click
+in the viewport (or Shift+A) opens a nested menu with mesh / light /
+camera / empty groups. SphereMesh node type lands. Gizmo no longer
+disappears on the second selection.
+
+### Added
+
+- **Blender-style Add menu** — right-click on the 3D viewport OR press
+  Shift+A → nested menu with Mesh (Cube / UV Sphere), Light (Sun /
+  Point / Spot / Area / Ambient), Camera (Perspective / Orthographic),
+  Empty (Group / Transform). New primitives spawn at the OrbitControls
+  target so they land where the camera is looking; one menu pick = one
+  atomic Op chain = one Cmd+Z. The new node is auto-selected so the
+  gizmo binds immediately (Blender parity).
+- **MenuBar → Add** top-level entry mirrors the right-click menu so
+  the same actions are reachable from the menu bar.
+- **SphereMesh** node type — 24 node types total. Pure, deterministic,
+  parallels BoxMesh's shape (radius / segments / position / rotation /
+  material). Renders via THREE's `<sphereGeometry>`.
+- **addPrimitives.ts** — pure Op-chain builders for every menu item.
+  Tested at unit level (8 specs).
+
+### Fixed
+
+- **Gizmo disappears on re-selection (user reported).** Pre-fix:
+  selecting an object showed handles; deselecting unmounted them;
+  re-selecting silently failed because TransformControls was gated on
+  a stale `groupRef.current`. Refs don't trigger re-renders, so the
+  conditional render's view of the ref stayed null.
+  Post-fix: lift the proxy group into React state via a callback ref
+  (`useState<THREE.Group | null>`). The setter triggers a re-render
+  the moment the new group attaches → TransformControls remounts on
+  every selection. P2.6#9 covers the regression.
+
+### Tests
+
+- **+8 vitest** (now 177): `addPrimitives` Op-chain shape — null when
+  scene is missing, Cube → BoxMesh + connect-children, Sphere →
+  SphereMesh, lights connect to `lights`, cameras + empties stay
+  floating, unique newNodeId per call.
+- **+3 Playwright** (now 36): Shift+A opens menu and adds a Cube;
+  Add menu UV Sphere produces a SphereMesh; gizmo proxy group
+  survives select → deselect → reselect.
+
 ## [0.5.0-p2.6] — 2026-05-06
 
 **P2.6 — Editor polish: TransformToolbar + viewport shading + UV editor

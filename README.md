@@ -5,19 +5,22 @@
 
 Director-first, agent-native, procedural AI video platform.
 
-**Status:** v0.5 P2.6 (Editor polish: toolbar + shading + UV scaffold).
-TransformToolbar across the top (Move/Rotate/Scale + Snap + Studio/Rendered
-shading + 3D View/UV Editor space). Editor-only studio fill rig so dim
-DAGs are still visible while editing — Rendered mode reverts to DAG-only
-lights for production parity. Read-only UV editor scaffold for BoxMesh.
-On top of P2.1: selection multi-select, click-to-pick, Inspector
-drag-scrub, NPanel overlay, File/Edit/Select/View menu bar with keyboard
-shortcuts, camera-from-view, Frame Selected (F) / Frame All (Home). P2
-ships 23 node types, Time as a typed socket (V3 ALIGNED), the Character
-+ walkTo chain, multi-character cache isolation, scrubbable playhead.
-P0+P1 still ships: R3F viewport with recursive Mesh dispatcher,
-OPFS-backed asset library, drag-drop import, scene tree, TransformControls
-gizmo, deterministic ScatterNode.
+**Status:** v0.5 P2.6 (Editor polish + Add menu). Blender-style Add menu
+(Shift+A or right-click in the viewport): meshes (Cube, UV Sphere),
+lights (Sun / Point / Spot / Area / Ambient), cameras (Perspective /
+Orthographic), empties (Group / Transform). TransformToolbar across the
+top (Move/Rotate/Scale + Snap + Studio/Rendered shading + 3D View/UV
+Editor space). Editor-only studio fill rig so dim DAGs are still
+visible while editing; Rendered mode reverts to DAG-only lights for
+production parity. Read-only UV editor scaffold for BoxMesh. Selection
+multi-select, click-to-pick, Inspector drag-scrub, NPanel overlay, full
+menu bar (File/Add/Edit/Select/View) with keyboard shortcuts,
+camera-from-view, Frame Selected (F) / Frame All (Home). P2 shipped 23
+node types (24 with SphereMesh), Time as a typed socket (V3 ALIGNED),
+the Character + walkTo chain, multi-character cache isolation,
+scrubbable playhead. P0+P1 still ships: R3F viewport with recursive
+Mesh dispatcher, OPFS-backed asset library, drag-drop import, scene
+tree, TransformControls gizmo, deterministic ScatterNode.
 
 ## What is this
 

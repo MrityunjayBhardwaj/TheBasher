@@ -29,7 +29,7 @@
 // REF: THESIS.md §11, §15, §40; vyapti V1, V8; krama K7.
 
 import { TransformControls } from '@react-three/drei';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { useDagStore } from '../core/dag/store';
 import { evaluate } from '../core/dag/evaluator';
@@ -86,8 +86,17 @@ export function Gizmo() {
   const selectedId = useSelectionStore((s) => s.primaryNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
   const mode = useGizmoStore((s) => s.mode);
-  const groupRef = useRef<THREE.Group>(null);
-  const [ready, setReady] = useState(false);
+  // ref-as-state — setting `groupNode` triggers a re-render so the
+  // TransformControls mounts the moment the proxy <group> attaches.
+  // A bare useRef would silently break the deselect → re-select cycle:
+  // groupRef.current goes null on unmount; the new ref attaches AFTER
+  // the next render commits, but ref writes don't cause a re-render, so
+  // the conditional `<TransformControls>` block (which gates on the
+  // ref) never re-evaluates. Using state closes that loop.
+  const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
+  const groupRefCb = useCallback((g: THREE.Group | null) => {
+    setGroupNode(g);
+  }, []);
 
   const isCharacter = node?.type === 'Character';
   const manip = isCharacter ? null : getManipulable(node);
@@ -114,14 +123,13 @@ export function Gizmo() {
           : mode;
 
   useEffect(() => {
-    if (!groupRef.current || !selectedId) return;
+    if (!groupNode || !selectedId) return;
     if (manip) {
-      groupRef.current.position.set(...manip.position);
-      if (manip.rotation) groupRef.current.rotation.set(...manip.rotation);
-      else groupRef.current.rotation.set(0, 0, 0);
-      if (manip.scaleSeed) groupRef.current.scale.set(...manip.scaleSeed);
-      else groupRef.current.scale.set(1, 1, 1);
-      setReady(true);
+      groupNode.position.set(...manip.position);
+      if (manip.rotation) groupNode.rotation.set(...manip.rotation);
+      else groupNode.rotation.set(0, 0, 0);
+      if (manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
+      else groupNode.scale.set(1, 1, 1);
       return;
     }
     if (isCharacter) {
@@ -131,17 +139,14 @@ export function Gizmo() {
           ctx: { time: { frame, seconds, normalized } },
         });
         const v = result.value as CharacterValue;
-        groupRef.current.position.set(...v.position);
-        groupRef.current.rotation.set(0, v.heading, 0);
-        groupRef.current.scale.set(1, 1, 1);
-        setReady(true);
+        groupNode.position.set(...v.position);
+        groupNode.rotation.set(0, v.heading, 0);
+        groupNode.scale.set(1, 1, 1);
       } catch {
         // node missing or eval error — leave gizmo unmounted
       }
-      return;
     }
-    setReady(false);
-  }, [manip, isCharacter, selectedId, seconds, frame, normalized]);
+  }, [groupNode, manip, isCharacter, selectedId, seconds, frame, normalized]);
 
   if (!selectedId) return null;
   if (!isCharacter && !manip) return null;
@@ -150,7 +155,7 @@ export function Gizmo() {
     // Character: no per-frame dispatch — walkTo fires on drag end only.
     if (isCharacter) return;
     if (!manip) return;
-    const g = groupRef.current;
+    const g = groupNode;
     if (!g || !selectedId) return;
     const liveMode = useGizmoStore.getState().mode;
     if (liveMode === 'translate') {
@@ -191,9 +196,9 @@ export function Gizmo() {
   function onDraggingChanged(dragging: boolean) {
     useGizmoStore.getState().setDragging(dragging);
     if (dragging) return; // start: nothing to dispatch
-    if (!isCharacter || !selectedId || !groupRef.current) return;
+    if (!isCharacter || !selectedId || !groupNode) return;
     // End of drag — emit walkTo to the gizmo's current position.
-    const g = groupRef.current;
+    const g = groupNode;
     const dagState = useDagStore.getState().state;
     const target = maybeSnapVec3([g.position.x, 0, g.position.z]);
     const result = buildWalkToOps(dagState, selectedId, target);
@@ -203,10 +208,10 @@ export function Gizmo() {
 
   return (
     <>
-      <group ref={groupRef} />
-      {ready && groupRef.current ? (
+      <group ref={groupRefCb} />
+      {groupNode ? (
         <TransformControls
-          object={groupRef.current}
+          object={groupNode}
           mode={effectiveMode}
           onObjectChange={onObjectChange}
           onMouseDown={() => onDraggingChanged(true)}

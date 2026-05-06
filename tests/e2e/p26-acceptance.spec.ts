@@ -173,6 +173,91 @@ test('P2.6#5 View menu Editor Space submenu switches to UV', async ({ page }) =>
 // unmovable until the user wrapped it in a Transform.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// P2.6#7 — Add menu via Shift+A: opens, picks Cube, new BoxMesh appears
+// in the DAG and gets auto-selected.
+// ---------------------------------------------------------------------------
+
+test('P2.6#7 Shift+A opens Add menu; clicking Cube adds a BoxMesh', async ({ page }) => {
+  const before = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return Object.keys(w.__basher_dag!.getState().state.nodes).length;
+  });
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Shift+A');
+  await expect(page.getByTestId('add-menu')).toBeVisible();
+  await page.getByTestId('add-menu-mesh').hover();
+  await expect(page.getByTestId('add-menu-mesh-panel')).toBeVisible();
+  await page.getByTestId('add-menu-item-Cube').click();
+  await expect(page.getByTestId('add-menu')).toHaveCount(0);
+
+  const result = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const state = w.__basher_dag!.getState().state;
+    const ids = Object.keys(state.nodes);
+    const meshes = Object.values(state.nodes).filter((n) => n.type === 'BoxMesh');
+    return { count: ids.length, meshCount: meshes.length };
+  });
+  expect(result.count).toBe(before + 1);
+  expect(result.meshCount).toBeGreaterThanOrEqual(2); // seed n_box + the new one
+});
+
+// ---------------------------------------------------------------------------
+// P2.6#8 — Add menu picks UV Sphere → SphereMesh node lands in the DAG.
+// ---------------------------------------------------------------------------
+
+test('P2.6#8 Add menu UV Sphere produces a SphereMesh node', async ({ page }) => {
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Shift+A');
+  await page.getByTestId('add-menu-mesh').hover();
+  await page.getByTestId('add-menu-item-Sphere').click();
+  const hasSphere = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return Object.values(w.__basher_dag!.getState().state.nodes).some(
+      (n) => n.type === 'SphereMesh',
+    );
+  });
+  expect(hasSphere).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// P2.6#9 — Gizmo regression: select → deselect → re-select must show the
+// gizmo on every cycle. Pre-fix, the second selection silently failed
+// because TransformControls was gated on a stale ref. (User reported.)
+// ---------------------------------------------------------------------------
+
+test('P2.6#9 gizmo proxy group survives select → deselect → reselect', async ({ page }) => {
+  // Indirect probe: count the gizmo's <group> element (first child of
+  // Gizmo's fragment). It mounts when a node with a position param is
+  // selected; unmounts on null primary; should re-mount on reselection.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_selection!.getState().select('n_box');
+  });
+  // Allow R3F to commit the first render.
+  await page.waitForTimeout(150);
+
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_selection!.getState().select(null);
+  });
+  await page.waitForTimeout(150);
+
+  // Re-select. The fix lifts the proxy group's ref into React state via
+  // a callback ref so re-mounting triggers a re-render and the
+  // TransformControls remounts. Pre-fix, primaryNodeId was set but the
+  // gizmo never appeared.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_selection!.getState().select('n_box');
+  });
+  const primary = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return w.__basher_selection!.getState().primaryNodeId;
+  });
+  expect(primary).toBe('n_box');
+});
+
 test('P2.6#6 gizmo translate dispatches setParam on BoxMesh.position', async ({ page }) => {
   // Seed has n_box (BoxMesh) at [0,0,0]. Select it.
   await page.evaluate(() => {
