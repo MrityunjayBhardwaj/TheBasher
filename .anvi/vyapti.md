@@ -78,6 +78,14 @@
 **Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG). The P1 Gizmo (`src/app/Gizmo.tsx`) follows the same pattern — file location, not Canvas containment, defines the boundary.
 **REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`; `src/app/Gizmo.tsx:1`
 
+### V10: Persisted-schema fields require defensive defaults at every consumer until the hydrate seam re-validates
+
+**Span:** Every node evaluator (`src/nodes/**`) AND every render-side consumer of an evaluator's output (`src/viewport/**`, `src/app/**` reading `value.X`) when a schema field is added after the project format has been released.
+**Enforcement:** Code review: any new field on a node's `paramSchema` MUST also be guarded with `?? defaultValue` at the evaluator (so legacy `node.params` lacking the field don't emit `undefined` into the value), AND at every consumer that destructures the field on a value object (so a future evaluator slip still doesn't crash). The two-layer guard is intentional belt-and-suspenders. The hydrate seam (`useDagStore.hydrate()` in `src/core/dag/store.ts`) bypasses `paramSchema.parse()` because saved projects are assumed validated — but ".default()" only fills on parse, not on hydrate. Until v0.6's re-validation pass, this invariant lives in eval+consumer code.
+**Status:** ALIGNED for v0.5 — every persisted-schema field added post-release follows this rule. Two occurrences cataloged: `rotation: vec3` on positional lights (P2.6.3) and `scale: vec3` on positional lights (P2.6.4). Both pair an evaluator-level `?? default` with consumer-side `?? default` in helpers + renderer.
+**REF:** hetvabhasa H14; `src/nodes/{DirectionalLight,PointLight,SpotLight,AreaLight}.ts` (evaluator default); `src/viewport/{LightHelpers,SceneFromDAG}.tsx` (consumer default); `src/nodes/lightRotation.test.ts` + `src/nodes/lightScale.test.ts` (regression coverage). v0.6 plan: add `paramSchema.parse()` re-validation inside `hydrate()` at the project-load seam — eliminates the need for evaluator-level guards going forward (they remain harmless redundancy).
+**Why it matters:** the bug class this prevents is silent on dev fixtures and only fires for real users with persisted projects from before the field landed — the worst possible failure mode (canary tests pass; users crash on app open). The two-layer guard converts a load-time crash into a benign default + UI behavior the user can correct via the gizmo. The rule's *generality* matters more than the specific rotation/scale cases — every future schema addition triggers the same trap unless the convention is actively maintained.
+
 ### V9: Materials are data, not code (in v0.5)
 
 **Span:** `src/nodes/MaterialOverride.ts` + any node exposing material parameters.

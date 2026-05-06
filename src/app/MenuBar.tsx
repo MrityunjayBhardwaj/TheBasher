@@ -21,11 +21,14 @@ import {
   renameCurrentProject,
   saveCurrent,
 } from './boot';
+import { addPrimitive } from './AddMenu';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
-import { useViewportStore } from './stores/viewportStore';
+import { useViewportStore, type ShadingMode } from './stores/viewportStore';
+import type { PrimitiveKind } from './addPrimitives';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -251,7 +254,49 @@ function onSettings() {
 // MenuBar
 // ---------------------------------------------------------------------------
 
-type OpenMenu = null | 'file' | 'edit' | 'select' | 'view';
+type OpenMenu = null | 'file' | 'add' | 'edit' | 'select' | 'view';
+
+const ADD_GROUPS: {
+  label: string;
+  testId: string;
+  items: { kind: PrimitiveKind; label: string }[];
+}[] = [
+  {
+    label: 'Mesh',
+    testId: 'menu-add-mesh',
+    items: [
+      { kind: 'Cube', label: 'Cube' },
+      { kind: 'Sphere', label: 'UV Sphere' },
+    ],
+  },
+  {
+    label: 'Light',
+    testId: 'menu-add-light',
+    items: [
+      { kind: 'DirectionalLight', label: 'Sun (Directional)' },
+      { kind: 'PointLight', label: 'Point' },
+      { kind: 'SpotLight', label: 'Spot' },
+      { kind: 'AreaLight', label: 'Area' },
+      { kind: 'AmbientLight', label: 'Ambient' },
+    ],
+  },
+  {
+    label: 'Camera',
+    testId: 'menu-add-camera',
+    items: [
+      { kind: 'PerspectiveCamera', label: 'Perspective' },
+      { kind: 'OrthographicCamera', label: 'Orthographic' },
+    ],
+  },
+  {
+    label: 'Empty',
+    testId: 'menu-add-empty',
+    items: [
+      { kind: 'Group', label: 'Group' },
+      { kind: 'Transform', label: 'Transform' },
+    ],
+  },
+];
 
 export function MenuBar() {
   const [open, setOpen] = useState<OpenMenu>(null);
@@ -263,6 +308,10 @@ export function MenuBar() {
   const redoLen = useDagStore((s) => s.redoStack.length);
   const gridVisible = useViewportStore((s) => s.gridVisible);
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
+  const shading = useViewportStore((s) => s.shading);
+  const setShading = useViewportStore((s) => s.setShading);
+  const space = useEditorStore((s) => s.space);
+  const setSpace = useEditorStore((s) => s.setSpace);
   const mode = useModeStore((s) => s.mode);
   const setMode = useModeStore((s) => s.setMode);
 
@@ -303,6 +352,44 @@ export function MenuBar() {
           label="Export DAG as JSON"
           onSelect={onExportDagJson}
           testId="menu-file-export-json"
+        />
+      </Menu>
+
+      <Menu
+        label="Add"
+        testId="menu-add"
+        open={open === 'add'}
+        onOpen={() => setOpen('add')}
+        onClose={close}
+      >
+        {ADD_GROUPS.map((g) => (
+          <Submenu key={g.label} label={g.label} testId={g.testId}>
+            {g.items.map((item) => (
+              <Item
+                key={item.kind}
+                label={item.label}
+                onSelect={() => addPrimitive(item.kind)}
+                testId={`menu-add-item-${item.kind}`}
+              />
+            ))}
+          </Submenu>
+        ))}
+        <Divider />
+        <Item
+          label="Open Add Menu (Shift+A)"
+          shortcut="⇧A"
+          onSelect={() => {
+            const slot = document.querySelector(
+              '[data-testid="viewport-slot"]',
+            ) as HTMLElement | null;
+            if (slot) {
+              const r = slot.getBoundingClientRect();
+              import('./stores/addMenuStore').then((m) => {
+                m.useAddMenuStore.getState().openAt(r.left + r.width / 2, r.top + r.height / 2);
+              });
+            }
+          }}
+          testId="menu-add-open"
         />
       </Menu>
 
@@ -418,6 +505,32 @@ export function MenuBar() {
           onSelect={() => useViewportStore.getState().toggleAxisWidgetVisible()}
           testId="menu-view-toggle-axis"
         />
+        <Divider />
+        <Submenu label="Shading" testId="menu-view-shading">
+          {(['studio', 'wireframe', 'rendered'] as ShadingMode[]).map((s) => (
+            <Item
+              key={s}
+              label={`${s === shading ? '✓ ' : '   '}${s.charAt(0).toUpperCase() + s.slice(1)}`}
+              onSelect={() => setShading(s)}
+              testId={`menu-view-shading-${s}`}
+            />
+          ))}
+        </Submenu>
+        <Submenu label="Editor Space" testId="menu-view-space">
+          {(
+            [
+              { value: 'view3d', label: '3D Viewport' },
+              { value: 'uv', label: 'UV Editor' },
+            ] as { value: SpaceType; label: string }[]
+          ).map((s) => (
+            <Item
+              key={s.value}
+              label={`${s.value === space ? '✓ ' : '   '}${s.label}`}
+              onSelect={() => setSpace(s.value)}
+              testId={`menu-view-space-${s.value}`}
+            />
+          ))}
+        </Submenu>
         <Divider />
         <Submenu label="Set Mode" testId="menu-view-mode">
           {(['simple', 'director', 'pro'] as Mode[]).map((m) => (

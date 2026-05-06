@@ -227,3 +227,60 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization remains sound after P2.1.**
 
   **Next update trigger:** start of P2.5 (AI Agent on the DAG). Expect new clustering at B3 (Agent ↔ DAG) — currently empty. V7 will flip to ALIGNED.
+
+**Updated:** 2026-05-06 — post-P2.6 (Editor polish: TransformToolbar + viewport shading + UV editor scaffold):
+
+- **New boundary B6: Editor shading ↔ DAG render.** Conceptual: editor-only lights (`src/viewport/EditorLights.tsx`) MUST NOT leak into render output. Mechanism: EditorLights returns `null` when `viewportStore.shading === 'rendered'`. Acceptance #7 (PostFx pixel-diff) sets `rendered` before screenshot — proves the seal. **Silent-failure mode:** designer composes scene under studio fill, hits render, sees a much darker output because their DAG had no lights and they were unknowingly relying on editor lighting. Mitigation: `rendered` mode in the toolbar is one click away — designers can preview the DAG-only result anytime.
+- **New UI projection store: `editorStore`** — a sister to selectionStore / gizmoStore / threeRef / viewportStore. Owns the active editor space (`view3d` / `uv`). Tab key toggles. Layout flips slot visibility via display:none — Canvas survives the space switch (K1 step 6 discipline preserved).
+- **New surfaces in P2.6 — all preserve V1 + V8 file-rooted enforcement:**
+  - `src/app/TransformToolbar.tsx` — top-bar gizmo mode + snap + shading + space groups. Mutates only UI projections.
+  - `src/app/UVEditor.tsx` + `src/app/uvLayout.ts` — read-only UV editor that paints canonical box UVs in HTML 2D canvas; reads selection + DAG, never writes.
+  - `src/viewport/EditorLights.tsx` — first src/viewport/ component that mutates nothing, just renders R3F primitives gated on a viewport projection. Confirms the V8 file-rooted rule's spirit (no dispatch from src/viewport/) is the right cut: pure-rendering helpers belong here, dispatching helpers belong in src/app/.
+- **Hetvabhasa note (NOT a new entry):** layout-shifting features re-tripped H13 (toolbar's row added another ~32px shrink to viewport DIV → acceptance #7 baseline regen needed again). Pattern is the same as last round; no new entry, just confirmation H13 is the right framing.
+- **Fatality test (post-P2.6, 2026-05-06):**
+  1. Hetvabhasa clustering: 13 entries (no new). H13 reaffirmed at the test/observation boundary.
+  2. Vyapti span: V1/V2/V3/V4/V5/V6/V8/V9 still single-module-spanning. New stores (`editorStore`) and components (TransformToolbar / UVEditor / EditorLights) didn't widen any invariant.
+  3. Krama crossing: no new lifecycle exceeded 2 module boundaries. The space toggle is a single store-set; the shading toggle is a single store-set with one downstream component re-render.
+
+  **Verdict: organization remains sound after P2.6.** B6 (editor-shading ↔ DAG-render) is conceptual not file-structural — no new directory, no new module, just a contract that EditorLights honors.
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-06 — post-P2.6.1 / P2.6.2 / P2.6.3 (Editor polish hotfix train):
+
+- **Add menu shipped** (P2.6.1) — Blender-style right-click + Shift+A: meshes (Cube, UV Sphere via new SphereMesh node type — **24 → 25 node types**), lights (Sun / Point / Spot / Area / Ambient), cameras (Perspective / Orthographic), empties (Group / Transform). Single dispatchAtomic per pick. New nodes auto-select for instant gizmo binding.
+- **Sphere UV unwrap** (P2.6.2) — equirectangular grid mirrors THREE.SphereGeometry's actual UV layout. Honest about pole stretch.
+- **Wireframe shading mode** (P2.6.2) — viewportStore.shading: 'studio' | 'wireframe' | 'rendered'. Toolbar third button; menu mirrored. Gates pass through every meshStandardMaterial + traverses cloned glTF scenes.
+- **Light helpers + selection + rotation** (P2.6.2 + P2.6.3) — wireframe gizmo per light kind; helpers gain onClick → selectionStore.select(pickId); every positional light schema gains `rotation: vec3` default [0,0,0]; DirectionalLight ring + actual shaded direction both compute from `rotation × (0,-1,0)` (legacy fallback to `-position` when rotation is zero — preserves seed scene + acceptance #7 baseline).
+- **Two new hetvabhasa entries:**
+  - **H15** (gizmo re-select bug) — conditional R3F render gated on a useRef breaks on remount because ref writes don't trigger re-render. Fix: lift to useState + callback ref. P2.6.1 hotfix.
+  - **H14** (hydrate seam bypasses zod default-fill) — schema additions land as `undefined` for projects saved before the field existed; the load path skips `paramSchema.parse()`. Fix: defensive defaults at the evaluator (cheap, no migration). P2.6.3 hotfix.
+- **Fatality test (post-P2.6.3, 2026-05-06):**
+  1. Hetvabhasa: 15 entries (added H14 + H15). H14 sits at the hydrate boundary — the test/observation cluster grew to 4 (H6/H8/H11/H13/H14/H15 — though H14 is closer to a load-path issue and H15 is a render-path issue). No B-boundary cluster reaches 3+ same-cause patterns.
+  2. Vyapti span: V1/V2/V3/V4/V5/V6/V8/V9 still single-module-spanning. The new `addMenuStore` + `editorStore` are sister UI projections; viewportStore widened with `shading` (no span change). SphereMesh adds one more registered node type.
+  3. Krama crossing: no new lifecycle exceeded 2 module boundaries. Add menu spawn = single dispatchAtomic call. Light helpers click pickup = single selectionStore.select call. Both mirror existing K6 / K7 shapes without creating new crossings.
+
+  **Verdict: organization still sound after the P2.6.x hotfix train.** A potential future invariant: V10 — "node value shape MUST be defensive against missing schema fields after additions" — could land at the evaluator boundary if H14 recurs. Hold off until the second occurrence per dharana promotion criteria.
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-07 — post-P2.6.4 (light scale gizmo + size-driven power):
+
+- **Promotion triggered.** P2.6.4 added `scale: vec3` to the four positional lights — second occurrence of the H14 pattern (rotation in P2.6.3 was the first). Both followed identical mechanics: schema field with `.default()`, defensive `?? default` at evaluator, defensive `?? default` at every consumer (helper + renderer). Per dharana promotion criteria (single → memory; recurrence → vyapti), V10 has been added to vyapti.md as ALIGNED for v0.5 with a v0.6 plan to fold the guard into a hydrate-seam re-validation pass.
+
+  - **ORIGIN:** P2.6.3 hotfix (H14, rotation field) — first observation. P2.6.4 (scale field) — second observation, confirming the pattern.
+  - **WHY:** the bug class this prevents fires only for users with persisted projects from before the field landed — silent on dev/CI fixtures, visible only in production. The two-layer guard converts a load-time crash into a benign default the user can correct via the gizmo.
+  - **HOW:** vyapti V10 codifies the rule. Code reviewers reject any new `paramSchema` field that lacks the eval-side guard. Until v0.6's hydrate re-validation lands, every consumer that destructures the new field must also `?? default`.
+
+- **Scale-drives-power** is a design choice on top of the schema rollout (volume product on Sun/Point/Spot, area-natural for AreaLight). Render-side projection only — DAG round-trip stays exact. Not a bug pattern; not catalogued in hetvabhasa.
+
+- **Fatality test (post-P2.6.4, 2026-05-07):**
+  1. Hetvabhasa clustering: 15 entries (no new). H14's REF list extended to include the scale rollout as a sister case. No B-boundary newly clusters 3+ patterns.
+  2. Vyapti span: **V10 added (ALIGNED for v0.5).** Span: every node evaluator + every viewport/app consumer of evaluator output. Single concern (defensive defaults across the hydrate seam), complementary sites — no module entanglement. V1/V2/V3/V4/V5/V6/V8/V9 unchanged.
+  3. Krama crossing: no new lifecycle. Light scale write = standard gizmo `setParam` Op (K2 lifecycle); render side multiplies at projection time, no new crossing.
+
+  **Verdict: organization still sound after P2.6.4.**
+
+- **Known catalogue staleness (NOT introduced by P2.6.4 — flagged for future housekeeping):** dharana §2 "ACTIVE INVARIANT SPANS" only mirrors V1-V5 and still says "NOT YET IMPLEMENTED." Vyapti has V1-V10 with current statuses. Section 2 needs a regen pass against vyapti.md before P2.5 work begins, so dhyana's session-start "scope to current work" can correctly load V6-V10 boundaries.
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).

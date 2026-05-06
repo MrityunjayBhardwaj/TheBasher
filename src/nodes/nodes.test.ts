@@ -46,6 +46,7 @@ const ALL_TYPES = [
   'Scatter',
   'Scene',
   'Skeleton',
+  'SphereMesh',
   'SpotLight',
   'TimeSource',
   'Transform',

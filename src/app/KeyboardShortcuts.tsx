@@ -23,6 +23,8 @@ import { useDagStore } from '../core/dag/store';
 import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { useAddMenuStore } from './stores/addMenuStore';
+import { useEditorStore } from './stores/editorStore';
 import { useGizmoStore } from './stores/gizmoStore';
 import { useSelectionStore } from './stores/selectionStore';
 
@@ -56,6 +58,21 @@ export function KeyboardShortcuts() {
       if (cmd && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
         e.preventDefault();
         void snapshotCameraFromOrbit();
+        return;
+      }
+
+      // Shift + A — Add menu (Blender's idiom). Opens at viewport
+      // center so Shift+A from anywhere on the page surfaces the menu
+      // somewhere predictable.
+      if (!cmd && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        const slot = document.querySelector('[data-testid="viewport-slot"]') as HTMLElement | null;
+        if (slot) {
+          const r = slot.getBoundingClientRect();
+          useAddMenuStore.getState().openAt(r.left + r.width / 2, r.top + r.height / 2);
+        } else {
+          useAddMenuStore.getState().openAt(window.innerWidth / 2, window.innerHeight / 2);
+        }
         return;
       }
 
@@ -110,6 +127,14 @@ export function KeyboardShortcuts() {
           return;
         case 'Home':
           frameAll();
+          return;
+        case 'Tab':
+          // Toggle 3D Viewport ↔ UV Editor (Blender's Tab idiom). Skip
+          // when the user is typing — already handled by isTypingTarget
+          // earlier in this function. preventDefault so the browser
+          // doesn't tab-focus into chrome.
+          e.preventDefault();
+          useEditorStore.getState().toggleSpace();
           return;
         case 'Escape':
           useSelectionStore.getState().clear();

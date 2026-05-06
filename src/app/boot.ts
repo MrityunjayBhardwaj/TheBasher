@@ -109,6 +109,18 @@ export function boot(): Promise<void> {
       const w = window as unknown as Record<string, unknown>;
       w.__basher_dag = useDagStore;
       w.__basher_time = useTimeStore;
+      // Lazy import (top-level cycle would tangle stores into boot's
+      // dependency graph). The dynamic import is sync-resolved by Vite at
+      // build time; only the shape is needed here.
+      void import('./stores/editorStore').then((m) => {
+        w.__basher_editor = m.useEditorStore;
+      });
+      void import('./stores/viewportStore').then((m) => {
+        w.__basher_viewport = m.useViewportStore;
+      });
+      void import('./stores/selectionStore').then((m) => {
+        w.__basher_selection = m.useSelectionStore;
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {

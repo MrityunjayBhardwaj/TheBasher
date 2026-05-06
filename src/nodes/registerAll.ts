@@ -23,6 +23,7 @@ import { ScatterNode } from './ScatterNode';
 import { SceneNode } from './Scene';
 import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
+import { SphereMeshNode } from './SphereMesh';
 import { TimeSourceNode } from './TimeSource';
 import { TransformNode } from './Transform';
 import { WalkPathNode } from './WalkPath';
@@ -41,6 +42,7 @@ const ALL: NodeDefinition[] = [
   AreaLightNode as unknown as NodeDefinition,
   // Meshes
   BoxMeshNode as unknown as NodeDefinition,
+  SphereMeshNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,

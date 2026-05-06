@@ -22,6 +22,8 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useViewportStore } from '../app/stores/viewportStore';
+import { LightHelper } from './LightHelpers';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -43,6 +45,7 @@ import type {
   ScatterValue,
   SceneChild,
   SpotLightValue,
+  SphereMeshValue,
   TransformValue,
 } from '../nodes/types';
 
@@ -75,6 +78,11 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // the right home for this concern when it bites (P3+).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
+  // Light helpers display only when shading isn't 'rendered'. Subscribed
+  // here so the top-level result re-renders when the user toggles modes.
+  const shading = useViewportStore((s) => s.shading);
+  const showLightHelpers = shading !== 'rendered';
+
   const target = state.outputs[outputName];
   if (!target) return null;
 
@@ -94,6 +102,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     sceneNode && Array.isArray(sceneNode.inputs.children)
       ? (sceneNode.inputs.children as { node: string; socket: string }[])
       : [];
+  const lightRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.lights)
+      ? (sceneNode.inputs.lights as { node: string; socket: string }[])
+      : [];
 
   return (
     <>
@@ -101,6 +113,14 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {value.scene.lights.map((light, i) => (
         <LightNode key={`light:${i}`} value={light} />
       ))}
+      {/* Editor-only wireframe helpers — show position/direction/range
+          for every DAG light. Hidden in `rendered` mode so the screenshot
+          / production parity stays clean. */}
+      {showLightHelpers
+        ? value.scene.lights.map((light, i) => (
+            <LightHelper key={`helper:${i}`} value={light} pickId={lightRefs[i]?.node ?? null} />
+          ))
+        : null}
       {value.scene.children.map((child, i) => {
         const pickId = childRefs[i]?.node ?? null;
         return (
@@ -207,10 +227,49 @@ function LightNode({ value }: { value: LightValue }) {
   }
 }
 
+/** Volume product of the (defensive) scale vec — drives power scaling
+ *  on Point/Spot/Directional lights. AreaLight handles power via
+ *  width/height multiplication instead, so it does NOT use this. */
+function scalePower(scale: readonly [number, number, number] | undefined): number {
+  const s = scale ?? [1, 1, 1];
+  return Math.abs(s[0] * s[1] * s[2]);
+}
+
 function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
+  const ref = useRef<THREE.DirectionalLight | null>(null);
+  // When rotation is non-zero, drive the light's target so direction =
+  // rotation × (0,-1,0). When rotation is identity (default), leave
+  // target at the origin — three.js's default behavior makes the light
+  // shine from `position` toward (0,0,0), which preserves the legacy
+  // seed scene's look (sun pointing roughly inward).
+  // Defensive — old saved DirectionalLights pre-P2.6.3 don't have
+  // rotation in their evaluated value. The evaluator now defaults but
+  // this guard makes the renderer robust regardless.
+  const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
+  const [px, py, pz] = value.position;
+  const hasRotation = rx !== 0 || ry !== 0 || rz !== 0;
+  useEffect(() => {
+    const light = ref.current;
+    if (!light) return;
+    if (!hasRotation) {
+      // Legacy default: target at origin.
+      light.target.position.set(0, 0, 0);
+      light.target.updateMatrixWorld();
+      return;
+    }
+    // direction = rotation applied to (0,-1,0). target = position + dir.
+    const dir = new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(rx, ry, rz));
+    light.target.position.set(px + dir.x, py + dir.y, pz + dir.z);
+    light.target.updateMatrixWorld();
+  }, [hasRotation, rx, ry, rz, px, py, pz]);
+  // Power scales with the scale vec's volume product — bigger gizmo =
+  // brighter sun. Round-trip stays clean: value.intensity stays raw,
+  // multiplication is a render-side projection.
+  const intensity = value.intensity * scalePower(value.scale);
   return (
     <directionalLight
-      intensity={value.intensity}
+      ref={ref as React.MutableRefObject<THREE.DirectionalLight>}
+      intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
       castShadow={false}
@@ -223,9 +282,11 @@ function AmbientLightR({ value }: { value: AmbientLightValue }) {
 }
 
 function PointLightR({ value }: { value: PointLightValue }) {
+  // Power scales with scale-vec volume product (see scalePower above).
+  const intensity = value.intensity * scalePower(value.scale);
   return (
     <pointLight
-      intensity={value.intensity}
+      intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
       distance={value.distance}
@@ -241,10 +302,12 @@ function SpotLightR({ value }: { value: SpotLightValue }) {
     ref.current.target.position.set(...value.target);
     ref.current.target.updateMatrixWorld();
   }, [value.target]);
+  // Power scales with scale-vec volume product.
+  const intensity = value.intensity * scalePower(value.scale);
   return (
     <spotLight
       ref={ref as React.MutableRefObject<THREE.SpotLight>}
-      intensity={value.intensity}
+      intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
       angle={value.angle}
@@ -262,13 +325,19 @@ function AreaLightR({ value }: { value: AreaLightValue }) {
     if (!ref.current) return;
     ref.current.lookAt(new THREE.Vector3(...value.lookAt));
   }, [value.lookAt, value.position]);
+  // AreaLight has a real geometric extent — scale.x multiplies width
+  // and scale.y multiplies height so the gizmo's scale gesture maps
+  // 1:1 onto the lit rectangle. Defensive default for legacy projects.
+  const scale = value.scale ?? [1, 1, 1];
+  const width = value.width * scale[0];
+  const height = value.height * scale[1];
   return (
     <rectAreaLight
       ref={ref as React.MutableRefObject<THREE.RectAreaLight>}
       intensity={value.intensity}
       color={value.color}
-      width={value.width}
-      height={value.height}
+      width={width}
+      height={height}
       position={value.position as [number, number, number]}
     />
   );
@@ -288,6 +357,8 @@ function MeshChild({ value, override }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
+    case 'SphereMesh':
+      return <SphereMeshR value={value} override={override} />;
     case 'GltfAsset':
       return <GltfAssetR value={value} override={override} />;
     case 'Transform':
@@ -339,6 +410,7 @@ function applyOverride(
 
 function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
   const mat = applyOverride(value.material.color, override);
+  const shading = useViewportStore((s) => s.shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -353,6 +425,30 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
         emissive={mat.emissive}
         emissiveIntensity={mat.emissiveIntensity}
         transparent={mat.transparent}
+        wireframe={shading === 'wireframe'}
+      />
+    </mesh>
+  );
+}
+
+function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
+  const mat = applyOverride(value.material.color, override);
+  const shading = useViewportStore((s) => s.shading);
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={value.rotation as [number, number, number]}
+    >
+      <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
+      <meshStandardMaterial
+        color={mat.color}
+        roughness={mat.roughness}
+        metalness={mat.metalness}
+        opacity={mat.opacity}
+        emissive={mat.emissive}
+        emissiveIntensity={mat.emissiveIntensity}
+        transparent={mat.transparent}
+        wireframe={shading === 'wireframe'}
       />
     </mesh>
   );
@@ -366,6 +462,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   const url = useResolvedAssetUrl(value.assetRef);
   const gltf = useGLTF(url) as unknown as { scene: THREE.Group };
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  const shading = useViewportStore((s) => s.shading);
   useEffect(() => {
     if (!override) return;
     const mat = applyOverride('#ffffff', override);
@@ -384,6 +481,22 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
     });
   }, [cloned, override]);
+  // Wireframe pass — flip every mesh material on the cloned scene. Runs
+  // independent of override so toggling shading after the override is
+  // applied still works.
+  useEffect(() => {
+    const wireframe = shading === 'wireframe';
+    cloned.traverse((child) => {
+      const m = child as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) {
+        if (mat && 'wireframe' in mat) {
+          (mat as { wireframe: boolean }).wireframe = wireframe;
+        }
+      }
+    });
+  }, [cloned, shading]);
   return <primitive object={cloned} />;
 }
 

@@ -158,6 +158,11 @@ test('#6b beacon endpoint absent in prod build (dist/ has no middleware code)', 
 test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible();
+  // Switch the editor to 'rendered' shading so the screenshot reflects
+  // ONLY DAG-authored lights (P2.6 default is 'studio' for editing UX,
+  // which adds editor-only fill rigs — those must NOT be the production
+  // render baseline).
+  await page.getByTestId('toolbar-shading-rendered').click();
   // Wait for the canvas to have rendered at least one frame. We check by
   // polling for a non-empty pixel sample.
   await page.waitForFunction(() => {

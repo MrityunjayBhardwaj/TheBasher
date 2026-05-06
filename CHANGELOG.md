@@ -4,6 +4,192 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2.6.3] — 2026-05-06
+
+**P2.6.3 — Light selection + rotation + direction-aware ring.** Three
+user-reported bugs:
+
+### Fixed
+
+- **Lights are click-selectable in the 3D viewport.** Pre-fix: clicking
+  a light helper did nothing (no onClick handler; selection only routed
+  through NodeList). Post-fix: SceneFromDAG passes the producing
+  `nodeId` (from `Scene.inputs.lights`) to each LightHelper; helpers
+  attach onClick that calls `useSelectionStore.select(pickId)` (or
+  `selectAdditive` on shift). Invisible-sphere click target on the
+  DirectionalLight helper enlarges its tiny pickable area.
+- **Gizmo rotate / scale now work on lights.** Pre-fix: lights had only
+  `position` in their schemas, so the gizmo's `getManipulable()` saw no
+  `rotation` and coerced to translate. Post-fix: every positional light
+  (DirectionalLight, PointLight, SpotLight, AreaLight) gains a
+  `rotation: vec3` schema field with default `[0,0,0]`. Existing saved
+  projects load with rotation defaulted; no migration needed.
+- **DirectionalLight ring orients toward the direction vector.**
+  Pre-fix: the ring rendered in the XY plane regardless of where the
+  sun pointed. Post-fix: ring's quaternion rotates +Z → direction.
+  Direction is computed from `rotation × (0,-1,0)` when rotation is
+  non-zero, falling back to `-position normalized` (legacy seed scene
+  behavior preserved → acceptance #7 baseline still passes).
+  DirectionalLightR also drives `light.target.position` in the same
+  way so the actual shaded direction matches the helper.
+
+### Tests
+
+- **+12 vitest** (now 195): every positional light schema defaults
+  rotation to `[0,0,0]`, the evaluator passes rotation through to the
+  value, and twice-eval determinism (V2) holds with rotation on.
+- **+1 Playwright** (now 39): P2.6#12 — `setParam(rotation)` on the
+  seed DirectionalLight lands cleanly + selection round-trips through
+  the store.
+
+## [0.5.0-p2.6.2] — 2026-05-06
+
+**P2.6.2 — Sphere UV unwrap + wireframe shading + light helpers.**
+Three Blender-parity asks:
+
+### Added
+
+- **SphereMesh equirectangular UV unwrap** (`generateSphereUVs` in
+  `uvLayout.ts`) — meridians + parallels at the geometry's segment
+  density. Mirrors THREE.SphereGeometry's actual UV layout so the
+  editor shows the truth, not a synthetic proxy. UVEditor status
+  reads "SphereMesh — equirectangular grid (read-only)."
+- **Wireframe shading mode** — `viewportStore.shading: 'wireframe'`
+  passes through to every `meshStandardMaterial` and traverses cloned
+  glTF scenes to flip wireframe per material. Toolbar adds a "wire"
+  button between studio and rendered; View → Shading submenu adds the
+  same. Editor lights stay so wires read against background.
+- **Light helpers** (`src/viewport/LightHelpers.tsx`) — Blender-style
+  wireframe gizmos per light kind:
+  - DirectionalLight: ring at position + line toward origin (sun
+    direction).
+  - PointLight: small wireframe sphere; ghost sphere at `distance`
+    when finite (range hint).
+  - SpotLight: wireframe cone from position to target, base radius =
+    `tan(angle) * length`.
+  - AreaLight: wireframe rectangle facing `lookAt`.
+  - AmbientLight: no helper (non-positional, matches Blender).
+    Helpers render only when shading isn't `rendered` so production
+    parity stays clean.
+
+### Tests
+
+- **+6 vitest** (now 183): generateSphereUVs counts (W+1 meridians,
+  H+1 parallels), all coords in [0,1], first/last meridians span the
+  full equirectangular wrap, parallels span u=0..1 horizontally,
+  determinism. viewportStore accepts wireframe transition.
+- **+2 Playwright** (now 38): P2.6#10 toolbar wireframe button flips
+  store; P2.6#11 UV editor reflects SphereMesh equirectangular status
+  after an Add → Sphere → Tab flow.
+
+## [0.5.0-p2.6.1] — 2026-05-06
+
+**P2.6.1 — Add menu (Blender-style) + gizmo regression fix.** Right-click
+in the viewport (or Shift+A) opens a nested menu with mesh / light /
+camera / empty groups. SphereMesh node type lands. Gizmo no longer
+disappears on the second selection.
+
+### Added
+
+- **Blender-style Add menu** — right-click on the 3D viewport OR press
+  Shift+A → nested menu with Mesh (Cube / UV Sphere), Light (Sun /
+  Point / Spot / Area / Ambient), Camera (Perspective / Orthographic),
+  Empty (Group / Transform). New primitives spawn at the OrbitControls
+  target so they land where the camera is looking; one menu pick = one
+  atomic Op chain = one Cmd+Z. The new node is auto-selected so the
+  gizmo binds immediately (Blender parity).
+- **MenuBar → Add** top-level entry mirrors the right-click menu so
+  the same actions are reachable from the menu bar.
+- **SphereMesh** node type — 24 node types total. Pure, deterministic,
+  parallels BoxMesh's shape (radius / segments / position / rotation /
+  material). Renders via THREE's `<sphereGeometry>`.
+- **addPrimitives.ts** — pure Op-chain builders for every menu item.
+  Tested at unit level (8 specs).
+
+### Fixed
+
+- **Gizmo disappears on re-selection (user reported).** Pre-fix:
+  selecting an object showed handles; deselecting unmounted them;
+  re-selecting silently failed because TransformControls was gated on
+  a stale `groupRef.current`. Refs don't trigger re-renders, so the
+  conditional render's view of the ref stayed null.
+  Post-fix: lift the proxy group into React state via a callback ref
+  (`useState<THREE.Group | null>`). The setter triggers a re-render
+  the moment the new group attaches → TransformControls remounts on
+  every selection. P2.6#9 covers the regression.
+
+### Tests
+
+- **+8 vitest** (now 177): `addPrimitives` Op-chain shape — null when
+  scene is missing, Cube → BoxMesh + connect-children, Sphere →
+  SphereMesh, lights connect to `lights`, cameras + empties stay
+  floating, unique newNodeId per call.
+- **+3 Playwright** (now 36): Shift+A opens menu and adds a Cube;
+  Add menu UV Sphere produces a SphereMesh; gizmo proxy group
+  survives select → deselect → reselect.
+
+## [0.5.0-p2.6] — 2026-05-06
+
+**P2.6 — Editor polish: TransformToolbar + viewport shading + UV editor
+scaffold.** Top-bar Move/Rotate/Scale toggles. Editor-only fill rig
+(studio shading) so dim DAGs are still visible during editing — without
+leaking into render output. Read-only UV editor scaffold for BoxMesh.
+9 new vitest specs + 5 new Playwright specs.
+
+### Added
+
+- **TransformToolbar** (`src/app/TransformToolbar.tsx`) — sits above
+  Chrome. Mode group (Move / Rotate / Scale) + Snap group (toggle +
+  step) + Shading group (Studio / Rendered) + Space group (3D View /
+  UV Editor). Mirrors the NPanel controls so the top bar is always
+  visible.
+- **editorStore** (`src/app/stores/editorStore.ts`) — UI projection
+  for the active editor space (`view3d` / `uv`). Tab keyboard toggle
+  added in `KeyboardShortcuts.tsx`.
+- **viewportStore.shading** — `studio` (default — adds editor fill
+  rig) or `rendered` (DAG-only; matches what production renders will
+  look like).
+- **EditorLights** (`src/viewport/EditorLights.tsx`) — hemisphere +
+  fill directional + back rim, intensity calibrated low so DAG
+  authoring still drives final shading. Returns `null` in `rendered`
+  mode → no leak into render output.
+- **UVEditor** (`src/app/UVEditor.tsx`) + **uvLayout** (`src/app/uvLayout.ts`)
+  — read-only 2D HTML canvas. Paints 0..1 grid + axis labels + the
+  canonical box UV cross unfold for BoxMesh selections. ResizeObserver
+  handles display:none → block transitions. glTF UV preview deferred
+  until the geometry registry ships.
+- **MenuBar View → Shading + View → Editor Space submenus** — mirror
+  the toolbar groups.
+- **B6 — Editor shading ↔ DAG render** boundary cataloged in
+  `.anvi/dharana.md`. Editor lights MUST NOT leak into render output
+  (acceptance #7 verifies by switching to `rendered` before screenshot).
+
+### Changed
+
+- **Layout** — added a `toolbar` row between Chrome and the
+  viewport/inspector grid row. Grid template now 5 rows.
+- **Viewport slot** — split into `view3d-slot` + `uv-slot` siblings;
+  display:none preserves the Canvas DOM node across space switches
+  (K1 step 6).
+- **Acceptance #7 (PostFx beauty)** — clicks `toolbar-shading-rendered`
+  before screenshot so the baseline reflects DAG-only lights, not the
+  editor fill.
+- **Boot** — exposes `__basher_editor`, `__basher_viewport`,
+  `__basher_selection` projection stores in dev for E2E.
+- **PostFx-beauty darwin baseline** regenerated (toolbar row shrunk
+  viewport DIV again — H13 pattern re-confirmed). Linux baseline
+  regenerates on first CI run.
+
+### Tests
+
+- **+9 vitest** (now 170): editorStore (default + setSpace +
+  toggleSpace), viewportStore.shading transitions, uvLayout shape
+  (6 quads, in-bounds, distinct centers, deterministic).
+- **+5 Playwright** (now 32): toolbar mode buttons drive gizmo,
+  shading toggle flips store without DAG mutation, space toggle
+  preserves Canvas DOM node, UV editor status reflects selection,
+  View → Editor Space submenu wires up.
+
 ## [0.5.0-p2.1] — 2026-05-06
 
 **P2.1 — Viewport polish + menu bar.** Selection multi-select +
