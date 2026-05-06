@@ -22,6 +22,8 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useViewportStore } from '../app/stores/viewportStore';
+import { LightHelper } from './LightHelpers';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -76,6 +78,11 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // the right home for this concern when it bites (P3+).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
+  // Light helpers display only when shading isn't 'rendered'. Subscribed
+  // here so the top-level result re-renders when the user toggles modes.
+  const shading = useViewportStore((s) => s.shading);
+  const showLightHelpers = shading !== 'rendered';
+
   const target = state.outputs[outputName];
   if (!target) return null;
 
@@ -102,6 +109,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {value.scene.lights.map((light, i) => (
         <LightNode key={`light:${i}`} value={light} />
       ))}
+      {/* Editor-only wireframe helpers — show position/direction/range
+          for every DAG light. Hidden in `rendered` mode so the screenshot
+          / production parity stays clean. */}
+      {showLightHelpers
+        ? value.scene.lights.map((light, i) => <LightHelper key={`helper:${i}`} value={light} />)
+        : null}
       {value.scene.children.map((child, i) => {
         const pickId = childRefs[i]?.node ?? null;
         return (
@@ -342,6 +355,7 @@ function applyOverride(
 
 function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
   const mat = applyOverride(value.material.color, override);
+  const shading = useViewportStore((s) => s.shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -356,6 +370,7 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
         emissive={mat.emissive}
         emissiveIntensity={mat.emissiveIntensity}
         transparent={mat.transparent}
+        wireframe={shading === 'wireframe'}
       />
     </mesh>
   );
@@ -363,6 +378,7 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
 
 function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
   const mat = applyOverride(value.material.color, override);
+  const shading = useViewportStore((s) => s.shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -377,6 +393,7 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
         emissive={mat.emissive}
         emissiveIntensity={mat.emissiveIntensity}
         transparent={mat.transparent}
+        wireframe={shading === 'wireframe'}
       />
     </mesh>
   );
@@ -390,6 +407,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   const url = useResolvedAssetUrl(value.assetRef);
   const gltf = useGLTF(url) as unknown as { scene: THREE.Group };
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  const shading = useViewportStore((s) => s.shading);
   useEffect(() => {
     if (!override) return;
     const mat = applyOverride('#ffffff', override);
@@ -408,6 +426,22 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
     });
   }, [cloned, override]);
+  // Wireframe pass — flip every mesh material on the cloned scene. Runs
+  // independent of override so toggling shading after the override is
+  // applied still works.
+  useEffect(() => {
+    const wireframe = shading === 'wireframe';
+    cloned.traverse((child) => {
+      const m = child as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) {
+        if (mat && 'wireframe' in mat) {
+          (mat as { wireframe: boolean }).wireframe = wireframe;
+        }
+      }
+    });
+  }, [cloned, shading]);
   return <primitive object={cloned} />;
 }
 

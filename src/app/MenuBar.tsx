@@ -507,7 +507,7 @@ export function MenuBar() {
         />
         <Divider />
         <Submenu label="Shading" testId="menu-view-shading">
-          {(['studio', 'rendered'] as ShadingMode[]).map((s) => (
+          {(['studio', 'wireframe', 'rendered'] as ShadingMode[]).map((s) => (
             <Item
               key={s}
               label={`${s === shading ? '✓ ' : '   '}${s.charAt(0).toUpperCase() + s.slice(1)}`}

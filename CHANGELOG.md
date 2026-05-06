@@ -4,6 +4,46 @@ All notable changes to Basher are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project
 uses semantic-ish versioning during the v0.5 phase plan.
 
+## [0.5.0-p2.6.2] — 2026-05-06
+
+**P2.6.2 — Sphere UV unwrap + wireframe shading + light helpers.**
+Three Blender-parity asks:
+
+### Added
+
+- **SphereMesh equirectangular UV unwrap** (`generateSphereUVs` in
+  `uvLayout.ts`) — meridians + parallels at the geometry's segment
+  density. Mirrors THREE.SphereGeometry's actual UV layout so the
+  editor shows the truth, not a synthetic proxy. UVEditor status
+  reads "SphereMesh — equirectangular grid (read-only)."
+- **Wireframe shading mode** — `viewportStore.shading: 'wireframe'`
+  passes through to every `meshStandardMaterial` and traverses cloned
+  glTF scenes to flip wireframe per material. Toolbar adds a "wire"
+  button between studio and rendered; View → Shading submenu adds the
+  same. Editor lights stay so wires read against background.
+- **Light helpers** (`src/viewport/LightHelpers.tsx`) — Blender-style
+  wireframe gizmos per light kind:
+  - DirectionalLight: ring at position + line toward origin (sun
+    direction).
+  - PointLight: small wireframe sphere; ghost sphere at `distance`
+    when finite (range hint).
+  - SpotLight: wireframe cone from position to target, base radius =
+    `tan(angle) * length`.
+  - AreaLight: wireframe rectangle facing `lookAt`.
+  - AmbientLight: no helper (non-positional, matches Blender).
+  Helpers render only when shading isn't `rendered` so production
+  parity stays clean.
+
+### Tests
+
+- **+6 vitest** (now 183): generateSphereUVs counts (W+1 meridians,
+  H+1 parallels), all coords in [0,1], first/last meridians span the
+  full equirectangular wrap, parallels span u=0..1 horizontally,
+  determinism. viewportStore accepts wireframe transition.
+- **+2 Playwright** (now 38): P2.6#10 toolbar wireframe button flips
+  store; P2.6#11 UV editor reflects SphereMesh equirectangular status
+  after an Add → Sphere → Tab flow.
+
 ## [0.5.0-p2.6.1] — 2026-05-06
 
 **P2.6.1 — Add menu (Blender-style) + gizmo regression fix.** Right-click

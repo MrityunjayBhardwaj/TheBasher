@@ -105,6 +105,17 @@ function ShadingGroup() {
       </button>
       <button
         type="button"
+        onClick={() => setShading('wireframe')}
+        data-testid="toolbar-shading-wireframe"
+        title="Wireframe — every material renders as wireframe overlay"
+        className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide ${
+          shading === 'wireframe' ? 'bg-accent/25 text-accent' : 'text-fg/60 hover:text-fg'
+        }`}
+      >
+        wire
+      </button>
+      <button
+        type="button"
         onClick={() => setShading('rendered')}
         data-testid="toolbar-shading-rendered"
         title="Rendered — DAG lights only (matches what renders will look like)"

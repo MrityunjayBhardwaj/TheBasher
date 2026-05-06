@@ -258,6 +258,40 @@ test('P2.6#9 gizmo proxy group survives select → deselect → reselect', async
   expect(primary).toBe('n_box');
 });
 
+// ---------------------------------------------------------------------------
+// P2.6#10 — Wireframe shading toggle. Toolbar exposes three modes; the
+// store snapshot reflects the click; the canvas re-renders.
+// ---------------------------------------------------------------------------
+
+test('P2.6#10 toolbar wireframe button flips viewportStore.shading to wireframe', async ({
+  page,
+}) => {
+  await page.getByTestId('toolbar-shading-wireframe').click();
+  await expect(page.getByTestId('toolbar-shading-wireframe')).toHaveClass(/text-accent/);
+  const shading = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return w.__basher_viewport!.getState().shading;
+  });
+  expect(shading).toBe('wireframe');
+});
+
+// ---------------------------------------------------------------------------
+// P2.6#11 — UV editor renders SphereMesh equirectangular grid.
+// ---------------------------------------------------------------------------
+
+test('P2.6#11 UV editor status reflects SphereMesh selection', async ({ page }) => {
+  // Add a sphere first.
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Shift+A');
+  await page.getByTestId('add-menu-mesh').hover();
+  await page.getByTestId('add-menu-item-Sphere').click();
+
+  // Switch to UV space.
+  await page.getByTestId('toolbar-space-uv').click();
+  await expect(page.getByTestId('uv-editor-status')).toContainText('SphereMesh');
+  await expect(page.getByTestId('uv-editor-status')).toContainText('equirectangular');
+});
+
 test('P2.6#6 gizmo translate dispatches setParam on BoxMesh.position', async ({ page }) => {
   // Seed has n_box (BoxMesh) at [0,0,0]. Select it.
   await page.evaluate(() => {

@@ -64,4 +64,9 @@ describe('viewportStore — toggles', () => {
     useViewportStore.getState().setShading('studio');
     expect(useViewportStore.getState().shading).toBe('studio');
   });
+
+  it('setShading accepts wireframe mode', () => {
+    useViewportStore.getState().setShading('wireframe');
+    expect(useViewportStore.getState().shading).toBe('wireframe');
+  });
 });

@@ -20,14 +20,18 @@ import { create } from 'zustand';
  *  without a store rewrite. */
 export type Pivot = 'median' | 'individual' | 'cursor' | 'active';
 
-/** Editor shading mode — Blender-style "Solid / Material / Rendered". v0.5
- *  ships two: `studio` adds editor-only fill lights so the user always sees
- *  shaded geometry regardless of DAG lights; `rendered` is what the production
- *  renderer (P4) will see — DAG lights only.
+/** Editor shading mode — Blender-style "Solid / Material / Rendered" plus
+ *  Wireframe. v0.5 ships:
+ *   - `studio`: editor-only fill rig + shaded materials. Always-visible
+ *     geometry regardless of DAG lights.
+ *   - `rendered`: DAG lights only. Matches what production renders see.
+ *   - `wireframe`: every material renders as wireframe. Editor fill rig
+ *     stays so the wires read against background; light helpers also
+ *     stay so the user can position lights in this mode.
  *
  *  IMPORTANT: studio lights are a viewport projection. They MUST NOT leak
  *  into the DAG (V8) and MUST NOT influence render-mode evaluation. */
-export type ShadingMode = 'studio' | 'rendered';
+export type ShadingMode = 'studio' | 'rendered' | 'wireframe';
 
 export interface ViewportStore {
   /** Currently-active pivot. v0.5 ships median-only. */

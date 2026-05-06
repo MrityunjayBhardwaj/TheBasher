@@ -60,3 +60,36 @@ export function generateBoxUVs(): UVPolygon[] {
     quad(1, 2), // down
   ];
 }
+
+/**
+ * Equirectangular UV grid for a UV sphere — matches THREE.SphereGeometry's
+ * built-in unwrap: each meridian is a vertical line at u = i/widthSegments,
+ * each parallel is a horizontal line at v = j/heightSegments. Top edge is
+ * the north pole (degenerate in the geometry but full-width in UV space);
+ * bottom edge is the south pole. The unwrap stretches at the poles — this
+ * is honest THREE behavior, not a flaw in the visualization.
+ *
+ * Each polyline is a 2-point degenerate "polygon" — the canvas drawer's
+ * closePath creates a no-op closing edge for 2-point lists, so the
+ * visible result is a clean stroke.
+ */
+export function generateSphereUVs(widthSegments: number, heightSegments: number): UVPolygon[] {
+  const polys: UVPolygon[] = [];
+  // Vertical meridians.
+  for (let i = 0; i <= widthSegments; i++) {
+    const u = i / widthSegments;
+    polys.push([
+      [u, 0],
+      [u, 1],
+    ]);
+  }
+  // Horizontal parallels.
+  for (let j = 0; j <= heightSegments; j++) {
+    const v = j / heightSegments;
+    polys.push([
+      [0, v],
+      [1, v],
+    ]);
+  }
+  return polys;
+}

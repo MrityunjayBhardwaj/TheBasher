@@ -11,24 +11,31 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
-import { generateBoxUVs, type UVPolygon } from './uvLayout';
+import { generateBoxUVs, generateSphereUVs, type UVPolygon } from './uvLayout';
 
 export function UVEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const primaryId = useSelectionStore((s) => s.primaryNodeId);
   const node = useDagStore((s) => (primaryId ? s.state.nodes[primaryId] : null));
 
-  const polygons = useMemo<UVPolygon[]>(
-    () => (node?.type === 'BoxMesh' ? generateBoxUVs() : []),
-    [node?.type],
-  );
+  const polygons = useMemo<UVPolygon[]>(() => {
+    if (!node) return [];
+    if (node.type === 'BoxMesh') return generateBoxUVs();
+    if (node.type === 'SphereMesh') {
+      const params = node.params as { widthSegments?: number; heightSegments?: number };
+      return generateSphereUVs(params.widthSegments ?? 24, params.heightSegments ?? 16);
+    }
+    return [];
+  }, [node]);
   const status = !node
     ? 'Select a mesh to view UVs.'
     : node.type === 'BoxMesh'
-      ? `${node.id} · BoxMesh — canonical UV layout (read-only).`
-      : node.type === 'GltfAsset'
-        ? `${node.id} · GltfAsset — UV preview lands when the geometry registry ships.`
-        : `${node.id} · ${node.type} — no UV layout.`;
+      ? `${node.id} · BoxMesh — canonical cross unfold (read-only).`
+      : node.type === 'SphereMesh'
+        ? `${node.id} · SphereMesh — equirectangular grid (read-only).`
+        : node.type === 'GltfAsset'
+          ? `${node.id} · GltfAsset — UV preview lands when the geometry registry ships.`
+          : `${node.id} · ${node.type} — no UV layout.`;
 
   // ResizeObserver handles three triggers in one place:
   //   - initial mount once the canvas has a layout box,

@@ -2,7 +2,7 @@
 // inside the 0..1 UV square.
 
 import { describe, expect, it } from 'vitest';
-import { generateBoxUVs } from './uvLayout';
+import { generateBoxUVs, generateSphereUVs } from './uvLayout';
 
 describe('generateBoxUVs', () => {
   it('returns six face quads', () => {
@@ -46,5 +46,49 @@ describe('generateBoxUVs', () => {
 
   it('is deterministic — same call twice returns identical layout', () => {
     expect(generateBoxUVs()).toEqual(generateBoxUVs());
+  });
+});
+
+describe('generateSphereUVs', () => {
+  it('returns (widthSegments + 1) meridians + (heightSegments + 1) parallels', () => {
+    // 24 + 1 verticals + 16 + 1 horizontals = 25 + 17 = 42 polylines.
+    const polys = generateSphereUVs(24, 16);
+    expect(polys.length).toBe(25 + 17);
+  });
+
+  it('every polyline is a 2-point line inside the 0..1 square', () => {
+    for (const p of generateSphereUVs(8, 6)) {
+      expect(p).toHaveLength(2);
+      for (const [u, v] of p) {
+        expect(u).toBeGreaterThanOrEqual(0);
+        expect(u).toBeLessThanOrEqual(1);
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('first meridian is at u=0; last meridian is at u=1 (full equirectangular wrap)', () => {
+    const polys = generateSphereUVs(8, 6);
+    // Meridians come first; first and last span u=0 and u=1 respectively.
+    expect(polys[0][0][0]).toBe(0);
+    expect(polys[0][1][0]).toBe(0);
+    expect(polys[8][0][0]).toBe(1);
+    expect(polys[8][1][0]).toBe(1);
+  });
+
+  it('parallels span u=0..1 horizontally', () => {
+    const polys = generateSphereUVs(8, 6);
+    // Parallels begin at index widthSegments+1 = 9.
+    const firstParallel = polys[9];
+    expect(firstParallel[0][0]).toBe(0);
+    expect(firstParallel[1][0]).toBe(1);
+    // First parallel sits at v=0 (south pole row).
+    expect(firstParallel[0][1]).toBe(0);
+    expect(firstParallel[1][1]).toBe(0);
+  });
+
+  it('is deterministic', () => {
+    expect(generateSphereUVs(12, 8)).toEqual(generateSphereUVs(12, 8));
   });
 });
