@@ -263,3 +263,24 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization still sound after the P2.6.x hotfix train.** A potential future invariant: V10 — "node value shape MUST be defensive against missing schema fields after additions" — could land at the evaluator boundary if H14 recurs. Hold off until the second occurrence per dharana promotion criteria.
 
   **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-07 — post-P2.6.4 (light scale gizmo + size-driven power):
+
+- **Promotion triggered.** P2.6.4 added `scale: vec3` to the four positional lights — second occurrence of the H14 pattern (rotation in P2.6.3 was the first). Both followed identical mechanics: schema field with `.default()`, defensive `?? default` at evaluator, defensive `?? default` at every consumer (helper + renderer). Per dharana promotion criteria (single → memory; recurrence → vyapti), V10 has been added to vyapti.md as ALIGNED for v0.5 with a v0.6 plan to fold the guard into a hydrate-seam re-validation pass.
+
+  - **ORIGIN:** P2.6.3 hotfix (H14, rotation field) — first observation. P2.6.4 (scale field) — second observation, confirming the pattern.
+  - **WHY:** the bug class this prevents fires only for users with persisted projects from before the field landed — silent on dev/CI fixtures, visible only in production. The two-layer guard converts a load-time crash into a benign default the user can correct via the gizmo.
+  - **HOW:** vyapti V10 codifies the rule. Code reviewers reject any new `paramSchema` field that lacks the eval-side guard. Until v0.6's hydrate re-validation lands, every consumer that destructures the new field must also `?? default`.
+
+- **Scale-drives-power** is a design choice on top of the schema rollout (volume product on Sun/Point/Spot, area-natural for AreaLight). Render-side projection only — DAG round-trip stays exact. Not a bug pattern; not catalogued in hetvabhasa.
+
+- **Fatality test (post-P2.6.4, 2026-05-07):**
+  1. Hetvabhasa clustering: 15 entries (no new). H14's REF list extended to include the scale rollout as a sister case. No B-boundary newly clusters 3+ patterns.
+  2. Vyapti span: **V10 added (ALIGNED for v0.5).** Span: every node evaluator + every viewport/app consumer of evaluator output. Single concern (defensive defaults across the hydrate seam), complementary sites — no module entanglement. V1/V2/V3/V4/V5/V6/V8/V9 unchanged.
+  3. Krama crossing: no new lifecycle. Light scale write = standard gizmo `setParam` Op (K2 lifecycle); render side multiplies at projection time, no new crossing.
+
+  **Verdict: organization still sound after P2.6.4.**
+
+- **Known catalogue staleness (NOT introduced by P2.6.4 — flagged for future housekeeping):** dharana §2 "ACTIVE INVARIANT SPANS" only mirrors V1-V5 and still says "NOT YET IMPLEMENTED." Vyapti has V1-V10 with current statuses. Section 2 needs a regen pass against vyapti.md before P2.5 work begins, so dhyana's session-start "scope to current work" can correctly load V6-V10 boundaries.
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
