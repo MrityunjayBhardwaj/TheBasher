@@ -16,6 +16,16 @@ export const AreaLightParams = z.object({
   // Euler XYZ. v1: helper visualization only — `lookAt` stays
   // authoritative for the rendered RectAreaLight orientation.
   rotation: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+  // Transform scale. AreaLight has a real geometric extent — width
+  // and height — so scale.x multiplies width and scale.y multiplies
+  // height when the RectAreaLight + helper render. Power scales
+  // naturally with area (RectAreaLight intensity is luminance, cd/m²,
+  // so total flux = intensity × width × height × scale.x × scale.y).
+  // Bigger area = more light cast — matching the "size = power" rule
+  // used on the other lights (volume product), but expressed through
+  // geometry rather than an intensity multiplier (avoids double-count).
+  // scale.z is preserved for round-trip but has no shading effect.
+  scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
 });
 export type AreaLightParams = z.infer<typeof AreaLightParams>;
 
@@ -29,11 +39,13 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
   outputs: { out: { type: 'Light', cardinality: 'single' } },
   evaluate(params) {
     const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
+    const scale = params.scale ?? ([1, 1, 1] as [number, number, number]);
     return {
       kind: 'AreaLight',
       intensity: params.intensity,
       position: params.position,
       rotation,
+      scale,
       color: params.color,
       width: params.width,
       height: params.height,

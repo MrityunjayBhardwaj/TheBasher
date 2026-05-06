@@ -227,6 +227,14 @@ function LightNode({ value }: { value: LightValue }) {
   }
 }
 
+/** Volume product of the (defensive) scale vec — drives power scaling
+ *  on Point/Spot/Directional lights. AreaLight handles power via
+ *  width/height multiplication instead, so it does NOT use this. */
+function scalePower(scale: readonly [number, number, number] | undefined): number {
+  const s = scale ?? [1, 1, 1];
+  return Math.abs(s[0] * s[1] * s[2]);
+}
+
 function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
   const ref = useRef<THREE.DirectionalLight | null>(null);
   // When rotation is non-zero, drive the light's target so direction =
@@ -254,10 +262,14 @@ function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
     light.target.position.set(px + dir.x, py + dir.y, pz + dir.z);
     light.target.updateMatrixWorld();
   }, [hasRotation, rx, ry, rz, px, py, pz]);
+  // Power scales with the scale vec's volume product — bigger gizmo =
+  // brighter sun. Round-trip stays clean: value.intensity stays raw,
+  // multiplication is a render-side projection.
+  const intensity = value.intensity * scalePower(value.scale);
   return (
     <directionalLight
       ref={ref as React.MutableRefObject<THREE.DirectionalLight>}
-      intensity={value.intensity}
+      intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
       castShadow={false}
@@ -270,9 +282,11 @@ function AmbientLightR({ value }: { value: AmbientLightValue }) {
 }
 
 function PointLightR({ value }: { value: PointLightValue }) {
+  // Power scales with scale-vec volume product (see scalePower above).
+  const intensity = value.intensity * scalePower(value.scale);
   return (
     <pointLight
-      intensity={value.intensity}
+      intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
       distance={value.distance}
@@ -288,10 +302,12 @@ function SpotLightR({ value }: { value: SpotLightValue }) {
     ref.current.target.position.set(...value.target);
     ref.current.target.updateMatrixWorld();
   }, [value.target]);
+  // Power scales with scale-vec volume product.
+  const intensity = value.intensity * scalePower(value.scale);
   return (
     <spotLight
       ref={ref as React.MutableRefObject<THREE.SpotLight>}
-      intensity={value.intensity}
+      intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
       angle={value.angle}
@@ -309,13 +325,19 @@ function AreaLightR({ value }: { value: AreaLightValue }) {
     if (!ref.current) return;
     ref.current.lookAt(new THREE.Vector3(...value.lookAt));
   }, [value.lookAt, value.position]);
+  // AreaLight has a real geometric extent — scale.x multiplies width
+  // and scale.y multiplies height so the gizmo's scale gesture maps
+  // 1:1 onto the lit rectangle. Defensive default for legacy projects.
+  const scale = value.scale ?? [1, 1, 1];
+  const width = value.width * scale[0];
+  const height = value.height * scale[1];
   return (
     <rectAreaLight
       ref={ref as React.MutableRefObject<THREE.RectAreaLight>}
       intensity={value.intensity}
       color={value.color}
-      width={value.width}
-      height={value.height}
+      width={width}
+      height={height}
       position={value.position as [number, number, number]}
     />
   );

@@ -129,8 +129,14 @@ function DirectionalLightHelper({
     () => direction.clone().multiplyScalar(1.2),
     [direction.x, direction.y, direction.z], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  // Defensive default — pre-scale projects load with no scale field.
+  const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
   return (
-    <group position={value.position as [number, number, number]} onClick={selectOnClick(pickId)}>
+    <group
+      position={value.position as [number, number, number]}
+      scale={scale}
+      onClick={selectOnClick(pickId)}
+    >
       <mesh quaternion={ringQuat}>
         <ringGeometry args={[0.18, 0.22, 24]} />
         <meshBasicMaterial color={SUN} side={THREE.DoubleSide} />
@@ -153,10 +159,12 @@ function PointLightHelper({ value, pickId }: { value: PointLightValue; pickId: s
     const e = new THREE.Euler(rot[0], rot[1], rot[2]);
     return new THREE.Quaternion().setFromEuler(e);
   }, [rot[0], rot[1], rot[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
   return (
     <group
       position={value.position as [number, number, number]}
       quaternion={rotQuat}
+      scale={scale}
       onClick={selectOnClick(pickId)}
     >
       <mesh>
@@ -200,10 +208,12 @@ function SpotLightHelper({ value, pickId }: { value: SpotLightValue; pickId: str
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
   }, [value.position, value.target]);
 
+  const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
   return (
     <group
       position={value.position as [number, number, number]}
       quaternion={quat}
+      scale={scale}
       onClick={selectOnClick(pickId)}
     >
       <mesh position={[0, -length / 2, 0]}>
@@ -231,6 +241,13 @@ function AreaLightHelper({ value, pickId }: { value: AreaLightValue; pickId: str
     // Plane normal is +Z by default. Rotate +Z → dir.
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
   }, [value.position, value.lookAt]);
+  // AreaLight: scale.x → width factor, scale.y → height factor. Mirrors
+  // the renderer (SceneFromDAG → AreaLightR), so the wireframe outline
+  // tracks the actual lit rectangle. scale.z is preserved on the value
+  // for round-trip but has no shading effect (the area is planar).
+  const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
+  const w = value.width * scale[0];
+  const h = value.height * scale[1];
   return (
     <group
       position={value.position as [number, number, number]}
@@ -238,7 +255,7 @@ function AreaLightHelper({ value, pickId }: { value: AreaLightValue; pickId: str
       onClick={selectOnClick(pickId)}
     >
       <mesh>
-        <planeGeometry args={[value.width, value.height]} />
+        <planeGeometry args={[w, h]} />
         <meshBasicMaterial color={AREA} wireframe side={THREE.DoubleSide} />
       </mesh>
     </group>
