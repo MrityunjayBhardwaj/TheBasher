@@ -151,3 +151,76 @@
 
 **REF:** THESIS.md §39, krama K2; `src/app/asset/dropChain.ts:36`; `src/app/AssetDropZone.tsx:33`; `src/app/asset/dropChain.test.ts`.
 **Why it matters:** the drop-chain is the canonical example of a multi-Op user action. P2.5's agent macros (e.g. `library.import`) reuse the same chain — if the human path mutates correctly under undo, the agent path inherits the property for free.
+
+### K7: character.walkTo chain (P2)
+
+**Steps:**
+
+1. User clicks a point on the navmesh ground plane via the `<GroundClick />` mesh inside the Canvas.
+2. `GroundClick.tsx` checks `selectionStore.selectedNodeId === null` (gizmo precedence — selection means manipulation, not navigation). Returns early if a node is selected.
+3. Picks the first `Character` node from `useDagStore.getState().state.nodes`. Returns early if none exists.
+4. Calls `buildWalkToOps(state, characterId, [worldPoint.x, 0, worldPoint.z])`. The macro discovers the character's existing `LocomotionState` and the project's `Navmesh`. Returns null if either is missing.
+5. The macro returns `{ ops, description, newWalkPathId }`:
+   - **If a previous WalkPath is wired to `loco.path`:** ops = [disconnect old → addNode new (navmesh pre-wired) → connect new]
+   - **Else:** ops = [addNode new (navmesh pre-wired) → connect new]
+6. `useDagStore.getState().dispatchAtomic(ops, 'user', description)` applies them as a single atomic group → one Cmd+Z reverts the whole interaction.
+7. The previous WalkPath becomes orphaned (V1: ops are emitted as intended, not auto-cleaned). A future hygiene phase may add a "garbage-collect orphans" pass.
+
+**Common violations:**
+
+- Calling `dispatchBatch` (per-op undo entries) instead of `dispatchAtomic` → user must hit Cmd+Z three times to revert one click. P2 acceptance #2 fails.
+- Skipping the disconnect-old step → multiple `connect` ops on the same `loco.path` socket; the `applyOp` validator rejects the second connect.
+- Using `data-testid` on R3F primitive elements (`<mesh>`) → THREE reconciler throws `Cannot read properties of undefined (reading 'testid')`; whole Canvas crashes (cataloged as H11).
+- Mounting `<GroundClick />` unconditionally → the invisible plane interferes with depth/blending and the canonical default-project pixel-diff baseline shifts. Gate on `hasCharacter(state)`.
+
+**REF:** THESIS.md §40; `src/app/character/walkTo.ts:46`; `src/app/character/GroundClick.tsx:30`; `src/app/character/walkTo.test.ts`.
+**Why it matters:** click-to-move is the first user-perceivable proof that the agent and the user share the same Op surface. P2.5's `character.walkTo` agent tool will return the SAME `Op[]` shape — if the human path mutates correctly under undo, the agent path inherits the property for free (mirrors K6's reasoning).
+
+### K8: Boot-with-last-project (P2 viewport-polish)
+
+**Steps:**
+
+1. K1 step 1-2 (registry → storage pick) unchanged.
+2. Read `localStorage['basher.lastProjectId']`. If present, attempt `loadProject(storage, lastId)`.
+3. On miss/corrupt/absent: fall through to `loadProject(storage, DEFAULT_PROJECT_ID)`.
+4. On second miss: build the seed project + persist it (covers first-ever boot AND catastrophic data loss).
+5. After load: `persistLastProjectId(project.id)` so the chosen project becomes the next-boot default.
+6. K1 step 3-9 (hydrate + Canvas + beacon) unchanged.
+
+**Switch flow** (user clicks a different project in `<ProjectsMenu />`):
+
+1. Auto-save the OUTGOING project via `saveCurrent()` before swapping. (No "did you save?" modal — saves are cheap, idempotent, atomic per K5.)
+2. Load the target project's bytes via `loadProject(storage, targetId)`.
+3. `persistLastProjectId(targetId)`.
+4. `useProjectStore.setCurrent(target)` + `useDagStore.hydrate(target.state)`. The hydrate seam bypasses the Op log by design (V1 documented exception).
+
+**Common violations:**
+
+- Skipping step 1 (auto-save outgoing) → user loses uncommitted edits when switching.
+- Mutating the DAG store via `setState` instead of `hydrate` → V1 leak; the Op log gains incoherent entries that don't match either project's history.
+- Persisting `lastProjectId` BEFORE the load succeeds → a corrupt project poisons the boot loop forever (every boot re-attempts, fails, retries the same id).
+
+**REF:** `src/app/boot.ts` (boot, switchProject, createNewProject, deleteProject, duplicateCurrentProject, renameCurrentProject); `src/app/ProjectsMenu.tsx`.
+**Why it matters:** multi-project is the first feature where the user has expectations about UI continuity across sessions. Get the persisted-handle wrong and the user sees their work disappear on reload — irreversible trust loss.
+
+### K9: camera-from-view chain (P2.1)
+
+**Steps:**
+
+1. User triggers Cmd+Shift+C (KeyboardShortcuts.tsx) or View → Camera-from-View (MenuBar.tsx).
+2. Both routes call `snapshotCameraFromOrbit()` in `src/app/character/cameraFromView.ts`.
+3. Read editor pose from `useThreeRef.getState()` — populated each frame by `<ThreeBridge />` (lives inside Canvas; pushes `useThree(camera)` + `controls.target` into the projection store). Returns early when no camera is mounted yet.
+4. Read `state.outputs.scene` and the Scene aggregator's `inputs.camera`. Returns early when missing or list-shaped (Scene's camera socket is single-cardinality).
+5. Build atomic op chain:
+   - **If a camera is currently wired:** `[disconnect old → addNode PerspectiveCamera{fov, position, lookAt} → connect new → scene.camera]`
+   - **Else (rare in seed projects but possible after Edit→Reset):** `[addNode PerspectiveCamera{...} → connect new → scene.camera]`
+6. `useDagStore.getState().dispatchAtomic(ops, 'user', 'camera-from-view')` — single Cmd+Z reverts the snapshot end-to-end.
+
+**Common violations:**
+
+- Calling `useThree()` from outside Canvas (KeyboardShortcuts is in the React tree but not inside Canvas) → undefined hook context. Fix: read via `useThreeRef`, populated by `<ThreeBridge />`.
+- Writing to `state.outputs.scene.camera` directly (outputs are not Op-managed in v0.5; only inputs are) — the right plumbing is to disconnect/reconnect the Scene aggregator's `camera` input. Mirrors the asset-drop pattern (K6).
+- Skipping the disconnect when an existing camera is wired → `applyOp` rejects the second connect because Scene.camera is single-cardinality.
+
+**REF:** THESIS.md §11; `src/app/character/cameraFromView.ts:21`; `src/app/character/threeRef.ts:24`; `src/app/character/ThreeBridge.tsx:11`; `src/app/character/cameraFromView.test.ts`.
+**Why it matters:** camera-from-view is the killer move for the director-first thesis — frame a shot via OrbitControls, bake it into the DAG, and renders reproduce the pose deterministically. The same `Op[]` shape will be the agent's `camera.snapshot` tool surface when P2.5 lands.

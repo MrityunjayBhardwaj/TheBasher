@@ -20,6 +20,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
+import { useSelectionStore } from '../app/stores/selectionStore';
+import { useTimeStore } from '../app/stores/timeStore';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -29,6 +31,7 @@ import type {
   AreaLightValue,
   BoxMeshValue,
   CameraValue,
+  CharacterValue,
   DirectionalLightValue,
   GltfAssetValue,
   GroupValue,
@@ -57,16 +60,40 @@ interface SceneFromDAGProps {
 
 export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const state = useDagStore((s) => s.state);
+  // Time is a UI-projection store, NOT the DAG. The viewport reads it on
+  // every render and threads it into ctx; pure consumers re-evaluate via
+  // TimeSource hash flips (V3). Subscribing here makes scrub-rendered
+  // frames bit-exactly track the playhead.
+  const seconds = useTimeStore((s) => s.seconds);
+  const frame = useTimeStore((s) => s.frame);
+  const normalized = useTimeStore((s) => s.normalized);
   // Single shared cache across renders; param edits invalidate via content
   // hash (the cache key changes when params change, so old entries leak but
   // are pruned at LRU ceiling — P1 wires the 512MB cap from THESIS.md §51).
+  // P2 note: time-driven invalidation creates a new entry per (frame, node)
+  // tuple. Bounded by N pure consumers × distinct frames visited; LRU is
+  // the right home for this concern when it bites (P3+).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
   const target = state.outputs[outputName];
   if (!target) return null;
 
-  const result = evaluate(state, target.node, { cache });
+  const result = evaluate(state, target.node, {
+    cache,
+    ctx: { time: { frame, seconds, normalized } },
+  });
   const value = result.value as RenderOutputValue;
+
+  // Map each top-level scene child to its producer nodeId so click-to-select
+  // can route a viewport hit back to a DAG node. The Scene aggregator's
+  // `inputs.children` is a list of NodeRefs; index i in `value.scene.children`
+  // corresponds to index i in that list.
+  const sceneRef = state.outputs.scene;
+  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
+  const childRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.children)
+      ? (sceneNode.inputs.children as { node: string; socket: string }[])
+      : [];
 
   return (
     <>
@@ -74,9 +101,23 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {value.scene.lights.map((light, i) => (
         <LightNode key={`light:${i}`} value={light} />
       ))}
-      {value.scene.children.map((child, i) => (
-        <MeshChild key={`mesh:${i}`} value={child} />
-      ))}
+      {value.scene.children.map((child, i) => {
+        const pickId = childRefs[i]?.node ?? null;
+        return (
+          <group
+            key={`mesh:${i}`}
+            onClick={(e) => {
+              if (!pickId) return;
+              e.stopPropagation();
+              const sel = useSelectionStore.getState();
+              if (e.shiftKey) sel.selectAdditive(pickId);
+              else sel.select(pickId);
+            }}
+          >
+            <MeshChild value={child} />
+          </group>
+        );
+      })}
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
       <PostFx config={value.postFx} />
@@ -99,10 +140,19 @@ function PerspectiveCameraNode({
   value: Extract<CameraValue, { kind: 'PerspectiveCamera' }>;
 }) {
   const ref = useRef<THREE.PerspectiveCamera | null>(null);
+  // Set initial position once on mount, then let OrbitControls own it.
+  // Without this, every render (e.g. timeStore tick) re-runs the prop
+  // assignment + lookAt, snapping the camera back and fighting the
+  // editor camera. Camera params from the DAG still take effect via
+  // the value-keyed useEffect below — but only when the values
+  // actually change, not on every render.
+  const [px, py, pz] = value.position;
+  const [lx, ly, lz] = value.lookAt;
   useEffect(() => {
     if (!ref.current) return;
-    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
-  }, [value.lookAt, value.position]);
+    ref.current.position.set(px, py, pz);
+    ref.current.lookAt(new THREE.Vector3(lx, ly, lz));
+  }, [px, py, pz, lx, ly, lz]);
   return (
     <PerspectiveCamera
       ref={ref as React.MutableRefObject<THREE.PerspectiveCamera>}
@@ -110,7 +160,6 @@ function PerspectiveCameraNode({
       fov={value.fov}
       near={value.near}
       far={value.far}
-      position={value.position as [number, number, number]}
     />
   );
 }
@@ -121,10 +170,13 @@ function OrthographicCameraNode({
   value: Extract<CameraValue, { kind: 'OrthographicCamera' }>;
 }) {
   const ref = useRef<THREE.OrthographicCamera | null>(null);
+  const [px, py, pz] = value.position;
+  const [lx, ly, lz] = value.lookAt;
   useEffect(() => {
     if (!ref.current) return;
-    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
-  }, [value.lookAt, value.position]);
+    ref.current.position.set(px, py, pz);
+    ref.current.lookAt(new THREE.Vector3(lx, ly, lz));
+  }, [px, py, pz, lx, ly, lz]);
   return (
     <OrthographicCamera
       ref={ref as React.MutableRefObject<THREE.OrthographicCamera>}
@@ -132,7 +184,6 @@ function OrthographicCameraNode({
       zoom={value.zoom}
       near={value.near}
       far={value.far}
-      position={value.position as [number, number, number]}
     />
   );
 }
@@ -247,6 +298,8 @@ function MeshChild({ value, override }: MeshChildProps) {
       return <MaterialOverrideR value={value} override={override} />;
     case 'Scatter':
       return <ScatterR value={value} override={override} />;
+    case 'Character':
+      return <CharacterR value={value} />;
   }
 }
 
@@ -391,4 +444,73 @@ function ScatterR({ value, override }: { value: ScatterValue; override?: Materia
       })}
     </group>
   );
+}
+
+// P2 placeholder character — boxes per bone, transformed by the pose.
+// Real skinning lands in P3 (animation depth). The bone hierarchy is
+// resolved into world transforms via parent indices declared on the
+// skeleton itself.
+function CharacterR({ value }: { value: CharacterValue }) {
+  const boneTransforms: {
+    position: [number, number, number];
+    rotation: [number, number, number];
+  }[] = [];
+  const skel = value.pose.skeleton;
+  for (let i = 0; i < skel.bones.length; i++) {
+    const pose = value.pose.poses[i];
+    boneTransforms.push({
+      position: (pose?.position ?? skel.bones[i].position) as [number, number, number],
+      rotation: (pose?.rotation ?? skel.bones[i].rotation) as [number, number, number],
+    });
+  }
+  return (
+    <group position={value.position as [number, number, number]} rotation={[0, value.heading, 0]}>
+      {skel.bones.length === 0 ? (
+        // Fallback marker if no skeleton wired yet.
+        <mesh position={[0, 0.5, 0]}>
+          <boxGeometry args={[0.4, 1, 0.4]} />
+          <meshStandardMaterial color="#88aaff" roughness={0.6} metalness={0.0} />
+        </mesh>
+      ) : (
+        <CharacterBoneRig
+          bones={skel.bones.map((b) => ({ parent: b.parent }))}
+          transforms={boneTransforms}
+        />
+      )}
+    </group>
+  );
+}
+
+function CharacterBoneRig({
+  bones,
+  transforms,
+}: {
+  bones: readonly { parent: number }[];
+  transforms: readonly { position: [number, number, number]; rotation: [number, number, number] }[];
+}) {
+  // Build a recursive tree: each bone is a <group> with its parent's group
+  // as the React parent, so bone-local transforms compose by THREE matrix
+  // multiplication. This lets pose updates remain bit-exactly driven by
+  // upstream evaluator output (V8: viewport reads, never authors).
+  const childrenOf = new Map<number, number[]>();
+  bones.forEach((b, i) => {
+    const list = childrenOf.get(b.parent) ?? [];
+    list.push(i);
+    childrenOf.set(b.parent, list);
+  });
+  function renderBone(i: number): React.ReactElement {
+    const t = transforms[i];
+    const kids = childrenOf.get(i) ?? [];
+    return (
+      <group key={`b:${i}`} position={t.position} rotation={t.rotation}>
+        <mesh position={[0, 0.05, 0]}>
+          <boxGeometry args={[0.18, 0.18, 0.18]} />
+          <meshStandardMaterial color="#88aaff" roughness={0.6} metalness={0.0} />
+        </mesh>
+        {kids.map(renderBone)}
+      </group>
+    );
+  }
+  const roots = childrenOf.get(-1) ?? [];
+  return <>{roots.map(renderBone)}</>;
 }

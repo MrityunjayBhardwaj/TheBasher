@@ -147,6 +147,17 @@
 
 **Verdict: organization is still sound after P1.** New "boundary" B6 emerges (Library ↔ OPFS asset store) but it is a clean specialization of B2 (Evaluator ↔ Storage) — same StorageCapability seam, same V6 enforcement.
 
+**Post-P2 fatality test (2026-05-06):**
+
+1. **Hetvabhasa clustering:** 11 patterns cataloged (H1-H11). H11 (data-testid on R3F primitives) is a UI-test pattern, not a boundary issue. No B-boundary newly clusters 3+ patterns.
+2. **Vyapti span:**
+   - V3 (Time-as-socket) flips from NOT YET IMPLEMENTED → ALIGNED with the TimeSource singleton + 4 pure consumers (PosedSkeleton, AnimationClip, LocomotionState, Character). Span: `src/nodes/TimeSource.ts` + 4 evaluators + `eslint.config.js` (lint enforcement) + the evaluator's cache-key path. All within `src/nodes/**` and `src/core/dag/evaluator.ts:119`. Single concern, complementary sites — no entanglement.
+   - V1/V2/V4/V5/V6/V8/V9 still single-module-spanning.
+   - **No invariant gained a multi-module span during P2.**
+3. **Krama crossing:** K7 (walkTo chain) lives in `src/app/character/walkTo.ts` (pure macro) + `src/app/character/GroundClick.tsx` (pointer capture + dispatch) + `src/core/dag/store.ts` (dispatchAtomic). Three sites, all atomic, mirrors K6's shape. **No lifecycle crosses 3+ module boundaries beyond the already-allowed app-store seam.**
+
+**Verdict: organization is sound after P2.** A nascent "B7: Viewport-pointer ↔ DAG-mutation" boundary appears (GroundClick translates pointer hits into Op chains) but it shares the V8 file-rooted enforcement with B1 — the dispatch lives in `src/app/`, not `src/viewport/`, so the boundary is structurally identical to the asset-drop one. No new dharana B-entry needed.
+
 **Predicted high-risk boundaries (THESIS.md §57 pre-mortem) — P0 status:**
 
 - B1 (editor ↔ evaluator): perf was the worry. P0 shows `dispatch → evaluate → render` synchronous chain runs in <16ms (acceptance #5 ✓). 91 fps observed on M1 with default DAG (acceptance #8 ✓). No stutter. Watch on bigger graphs in P1.
@@ -187,4 +198,32 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 **Updated:** 2026-05-05 — initial seed from THESIS.md commitments.
 **Updated:** 2026-05-05 — post-P0 re-derivation: V1/V2/V4/V5/V6/V8 flipped from NOT YET IMPLEMENTED to ALIGNED. Hetvabhasa H1-H6 added. Organizational fatality test passed — no boundary needs restructuring.
 **Updated:** 2026-05-05 — post-P1: V9 flipped to ALIGNED. K6 (asset-drop chain) added. H9/H10 cataloged. Connect-with-index extension is backward-compatible with V1; existing tests unchanged.
-**Next update trigger:** end of P2 (Character + Move) — re-validate after first node consumes Time.
+**Updated:** 2026-05-06 — post-P2: V3 (Time-as-socket) flipped to ALIGNED. K7 (character.walkTo chain) added. H11 (data-testid on R3F primitives crashes Canvas) cataloged. ESLint extended to ban `useFrame`/`useThree` in `src/nodes/**`. The TimeSource impure singleton + cache-key path through the evaluator preserves twice-eval determinism for pure consumers; verified by 5 t-sample harness in `src/nodes/nodes.test.ts`. Multi-character cache isolation verified at both unit + E2E layers.
+**Updated:** 2026-05-06 — post-P2 viewport-polish round (orbit + axis widget + char-gizmo + multi-project + IDB):
+
+- V6 span widened: `IndexedDbStorage` adopted as the OPFS fallback; `pickStorage()` now chains OPFS → IDB → Memory. Added without a single caller change — capability discipline held.
+- K8 added: boot-with-last-project lifecycle. Multi-project switch auto-saves the outgoing project before hydrating the incoming one (no "did you save?" modal — saves are cheap, atomic per K5).
+- H12 added: declarative R3F `<PerspectiveCamera position={...}>` fights OrbitControls (and any externally-mutating control system). Fix: ref + useEffect keyed on primitive scalars, not array identity.
+- New small UI store: `gizmoStore` (TransformControls dragging flag) — separates gizmo + orbit responsibilities cleanly. Editor-camera + DAG-camera are now distinct concerns: DAG-camera authors initial pose + render output (P4); editor-camera is OrbitControls' free orbit.
+- Character gizmo binding: TransformControls bound to selected Character emits walkTo on drag-end (mirrors click-to-move) — same Op-shape, different trigger.
+- No new B-boundary needed. The "Viewport-pointer ↔ DAG-mutation" surface (GroundClick + Gizmo) is a clean V8 file-rooted echo of B1 — dispatch lives in `src/app/`, not `src/viewport/`.
+  **Next update trigger:** end of P2.1 (viewport polish + menu bar + click-to-select) — re-validate selection-store cardinality (single → array) and any new keyboard-driven Op surfaces.
+
+**Updated:** 2026-05-06 — post-P2.1 (Waves A+B already shipped; this entry covers Waves C+D+E):
+
+- **Selection model now multi.** `selectionStore.selectedNodeIds: ReadonlySet<NodeId>` + `primaryNodeId` is the canonical pair; `selectedNodeId` is a deprecated single-id mirror kept so P0/P1/P2 surfaces (Inspector header, Gizmo binding, Cmd+S save indicator) continue without rewrites. Wave A's choice held under Wave C/D/E exercise — no churn at the call sites.
+- **viewportStore added** as the sister UI projection alongside selectionStore + gizmoStore + threeRef. Lives in `src/app/stores/viewportStore.ts`. Owns: pivot (median-only in v0.5), snapStep + snapEnabled, gridVisible, axisWidgetVisible. `maybeSnapVec3()` is the read-once helper Gizmo translate + GroundClick worldPoint call to honor snap.
+- **New Op-surfaces wired in P2.1 — all preserve V1 + V8 file-rooted enforcement:**
+  - `src/app/character/cameraFromView.ts` (K9) — Cmd+Shift+C / View menu → atomic `[disconnect → addNode PerspectiveCamera → connect]` chain.
+  - `src/app/dragScrub.ts` + `src/app/Inspector.tsx` — Inspector label drag-scrub. Live preview is local React state; one drag commits ONE setParam Op on pointer-up. No per-pixel dispatches → undo stack stays clean (one drag = one Cmd+Z entry).
+  - `src/app/MenuBar.tsx` — File / Edit / Select / View. Every action funnels through existing helpers (boot.ts for project ops, useDagStore.dispatch for ops, hydrate for Edit→Reset). The reset path is the only V1-exception escape and matches the documented project-load seam.
+- **No new B-boundary needed.** The P2.1 surfaces (NPanel + MenuBar + framing.ts) all live in `src/app/` and dispatch from there. The viewport (`src/viewport/`) read viewportStore but never writes the DAG — V8 file-rooted holds.
+- **Hetvabhasa update:** H13 (Playwright pixel-diff baseline must be regenerated after layout shifts). Cataloged because the menu bar legitimately shrunk the viewport DIV by ~35px → acceptance #7 fails on the old darwin baseline despite no scene-content change. Linux baseline regen deferred to first CI run (H8 pattern).
+- **Fatality test (post-P2.1, 2026-05-06):**
+  1. Hetvabhasa clustering: H13 sits at the test/observation boundary (same family as H6/H8/H11). Total now 13 cataloged. No B1-B5 boundary newly clusters 3+ patterns.
+  2. Vyapti span: V1/V2/V3/V4/V5/V6/V8/V9 still single-module-spanning. The MenuBar/NPanel/dragScrub additions did NOT widen any invariant.
+  3. Krama crossing: K9 lives in `cameraFromView.ts` + `threeRef.ts` + `ThreeBridge.tsx` + `useDagStore.dispatchAtomic` — three sites, all atomic, mirrors K7's shape. No new lifecycle crosses 3+ module boundaries.
+
+  **Verdict: organization remains sound after P2.1.**
+
+  **Next update trigger:** start of P2.5 (AI Agent on the DAG). Expect new clustering at B3 (Agent ↔ DAG) — currently empty. V7 will flip to ALIGNED.

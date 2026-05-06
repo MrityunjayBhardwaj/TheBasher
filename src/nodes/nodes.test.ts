@@ -12,30 +12,44 @@ import { ProjectSchema } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
 import type {
+  AnimationClipValue,
+  CharacterValue,
   GroupValue,
   MaterialOverrideValue,
+  PosedSkeletonValue,
   RenderOutputValue,
   ScatterValue,
   SceneValue,
+  SkeletonValue,
+  TimeValue,
   TransformValue,
+  WalkPathValue,
 } from './types';
 
 const ALL_TYPES = [
   'AmbientLight',
+  'AnimationClip',
   'AreaLight',
   'BoxMesh',
+  'Character',
   'DirectionalLight',
   'GltfAsset',
   'Group',
+  'LocomotionState',
   'MaterialOverride',
+  'Navmesh',
   'OrthographicCamera',
   'PerspectiveCamera',
   'PointLight',
+  'PosedSkeleton',
   'RenderOutput',
   'Scatter',
   'Scene',
+  'Skeleton',
   'SpotLight',
+  'TimeSource',
   'Transform',
+  'WalkPath',
 ];
 
 beforeEach(() => {
@@ -357,5 +371,495 @@ describe('SceneChild recursion', () => {
     expect(v.material.color).toBe('#ff0000');
     expect(v.material.roughness).toBeCloseTo(0.2);
     expect(v.child?.kind).toBe('BoxMesh');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2 — Time-aware pure nodes (vyapti V3 first-use)
+//
+// Each pure consumer of Time MUST be bit-exact at any given t and re-evaluate
+// when the upstream TimeSource's hash flips. The harness samples each node at
+// multiple times and checks: same t → same output; different t → different
+// output (where the node depends on time non-trivially). The TimeSource node
+// itself is `pure: false` (it's the only legal time source in the system).
+// ---------------------------------------------------------------------------
+
+const TIME_SAMPLES = [0, 0.5, 1, 2.5, 5];
+
+function evalAt<T>(state: ReturnType<typeof emptyDagState>, target: string, seconds: number): T {
+  const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+  return evaluate(state, target, { ctx }).value as T;
+}
+
+describe('P2 — Time socket plumbing (V3)', () => {
+  it('TimeSource produces a TimeValue equal to ctx.time', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    const v = evalAt<TimeValue>(state, 'time', 2.5);
+    expect(v.seconds).toBe(2.5);
+    expect(v.frame).toBe(150);
+  });
+
+  it('TimeSource hash flips when t changes (drives downstream cache invalidation)', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    const h0 = evaluate(state, 'time', {
+      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+    }).hash;
+    const h1 = evaluate(state, 'time', {
+      ctx: { time: { frame: 60, seconds: 1, normalized: 0 } },
+    }).hash;
+    expect(h0).not.toBe(h1);
+  });
+});
+
+describe('P2 — Skeleton (pure)', () => {
+  it('default 3-bone stick figure — twice-eval bit-exact', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sk',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    const a = evaluate(state, 'sk');
+    const b = evaluate(state, 'sk');
+    expect(a.hash).toBe(b.hash);
+    const sk = a.value as SkeletonValue;
+    expect(sk.bones).toHaveLength(3);
+    expect(sk.bones[0].name).toBe('root');
+  });
+});
+
+describe('P2 — PosedSkeleton (pure, time-aware)', () => {
+  function buildPosed() {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sk',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'posed',
+      nodeType: 'PosedSkeleton',
+      params: { amplitude: 0.2, frequency: 1 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'sk', socket: 'out' },
+      to: { node: 'posed', socket: 'skeleton' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'posed', socket: 'time' },
+    }).next;
+    return state;
+  }
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPosed();
+    const a = evalAt<PosedSkeletonValue>(state, 'posed', t);
+    const b = evalAt<PosedSkeletonValue>(state, 'posed', t);
+    expect(a).toEqual(b);
+  });
+
+  it('different t produces different pose (time actually flows through the socket)', () => {
+    const state = buildPosed();
+    const a = evalAt<PosedSkeletonValue>(state, 'posed', 0);
+    const b = evalAt<PosedSkeletonValue>(state, 'posed', 0.5);
+    expect(a.poses[1].rotation).not.toEqual(b.poses[1].rotation);
+  });
+});
+
+describe('P2 — AnimationClip (pure, time-aware)', () => {
+  function buildClip() {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sk',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'clip',
+      nodeType: 'AnimationClip',
+      params: {
+        name: 'walk',
+        duration: 2,
+        loop: true,
+        keyframes: [
+          { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+          { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
+          { bone: 1, time: 2, position: [0, 1, 0], rotation: [0, 0, 0] },
+        ],
+      },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'sk', socket: 'out' },
+      to: { node: 'clip', socket: 'skeleton' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'clip', socket: 'time' },
+    }).next;
+    return state;
+  }
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildClip();
+    const a = evalAt<AnimationClipValue>(state, 'clip', t);
+    const b = evalAt<AnimationClipValue>(state, 'clip', t);
+    expect(a).toEqual(b);
+  });
+
+  it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
+    const state = buildClip();
+    const v = evalAt<AnimationClipValue>(state, 'clip', 0.5);
+    const torsoRot = v.pose.poses[1].rotation;
+    expect(torsoRot[1]).toBeCloseTo(0.25, 5);
+  });
+
+  it('looping: t=2.0 wraps to t=0 (start of clip)', () => {
+    const state = buildClip();
+    const v0 = evalAt<AnimationClipValue>(state, 'clip', 0);
+    const vWrap = evalAt<AnimationClipValue>(state, 'clip', 2.0);
+    expect(vWrap.pose.poses[1].rotation).toEqual(v0.pose.poses[1].rotation);
+  });
+});
+
+describe('P2 — WalkPath (pure)', () => {
+  function buildPath(
+    navmeshObstacles: { center: [number, number]; halfSize: [number, number] }[] = [],
+  ) {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [10, 10], obstacles: navmeshObstacles },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'wp',
+      nodeType: 'WalkPath',
+      params: { from: [-3, 0, 0], to: [3, 0, 0], sampleCount: 8 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'nav', socket: 'out' },
+      to: { node: 'wp', socket: 'navmesh' },
+    }).next;
+    return state;
+  }
+
+  it('twice-eval bit-exact', () => {
+    const state = buildPath();
+    const a = evaluate(state, 'wp');
+    const b = evaluate(state, 'wp');
+    expect(a.hash).toBe(b.hash);
+    expect(a.value).toEqual(b.value);
+  });
+
+  it('without obstacles: samples land on the straight line', () => {
+    const state = buildPath();
+    const v = evaluate(state, 'wp').value as WalkPathValue;
+    expect(v.samples).toHaveLength(8);
+    expect(v.samples[0]).toEqual([-3, 0, 0]);
+    expect(v.samples[7]).toEqual([3, 0, 0]);
+  });
+
+  it('with an obstacle in the middle: samples are pushed out — none lie inside the obstacle', () => {
+    const state = buildPath([{ center: [0, 0], halfSize: [1, 1] }]);
+    const v = evaluate(state, 'wp').value as WalkPathValue;
+    for (const s of v.samples) {
+      const inside = Math.abs(s[0] - 0) < 1 && Math.abs(s[2] - 0) < 1;
+      expect(inside).toBe(false);
+    }
+  });
+
+  it('clamps samples to navmesh half-extents', () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [2, 2], obstacles: [] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'wp',
+      nodeType: 'WalkPath',
+      params: { from: [-100, 0, 0], to: [100, 0, 0], sampleCount: 4 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'nav', socket: 'out' },
+      to: { node: 'wp', socket: 'navmesh' },
+    }).next;
+    const v = evaluate(state, 'wp').value as WalkPathValue;
+    for (const s of v.samples) {
+      expect(s[0]).toBeGreaterThanOrEqual(-2);
+      expect(s[0]).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+describe('P2 — LocomotionState + Character (pure, time-aware integrating chain)', () => {
+  function buildLocoChain() {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sk',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'clip',
+      nodeType: 'AnimationClip',
+      params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [10, 10], obstacles: [] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'wp',
+      nodeType: 'WalkPath',
+      params: { from: [-3, 0, 0], to: [3, 0, 0], sampleCount: 8 },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'loco',
+      nodeType: 'LocomotionState',
+      params: { speed: 1, loop: true },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'char',
+      nodeType: 'Character',
+      params: { name: 'alice' },
+    }).next;
+    // Wires
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'sk', socket: 'out' },
+      to: { node: 'clip', socket: 'skeleton' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'clip', socket: 'time' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'nav', socket: 'out' },
+      to: { node: 'wp', socket: 'navmesh' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'wp', socket: 'out' },
+      to: { node: 'loco', socket: 'path' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'clip', socket: 'out' },
+      to: { node: 'loco', socket: 'clip' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'loco', socket: 'time' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'loco', socket: 'out' },
+      to: { node: 'char', socket: 'locomotion' },
+    }).next;
+    return state;
+  }
+
+  it.each(TIME_SAMPLES)('full chain twice-eval bit-exact at t=%d', (t) => {
+    const state = buildLocoChain();
+    const a = evalAt<CharacterValue>(state, 'char', t);
+    const b = evalAt<CharacterValue>(state, 'char', t);
+    expect(a).toEqual(b);
+  });
+
+  it('character moves along the path as time advances', () => {
+    const state = buildLocoChain();
+    const at0 = evalAt<CharacterValue>(state, 'char', 0);
+    const at3 = evalAt<CharacterValue>(state, 'char', 3);
+    expect(at0.position[0]).not.toBe(at3.position[0]);
+  });
+
+  it('looping: at t=path.length/speed the position wraps to start', () => {
+    const state = buildLocoChain();
+    // path is x in [-3, 3], length 6, speed 1 → period 6 seconds.
+    const at0 = evalAt<CharacterValue>(state, 'char', 0);
+    const atPeriod = evalAt<CharacterValue>(state, 'char', 6);
+    expect(atPeriod.position[0]).toBeCloseTo(at0.position[0], 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2 — Multi-character cache isolation (Wave D acceptance #4)
+// Two Characters with separate LocomotionStates must produce two distinct
+// hashes, and changing one Character's locomotion params must not flip the
+// other's hash.
+// ---------------------------------------------------------------------------
+
+describe('P2 — multi-character cache isolation (acceptance #4)', () => {
+  function buildTwoCharacters() {
+    let state = emptyDagState();
+    // Shared time + skeleton (legitimate sharing — same value).
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sk',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    // Shared navmesh.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nav',
+      nodeType: 'Navmesh',
+      params: { halfSize: [10, 10], obstacles: [] },
+    }).next;
+    // Per-character paths/clips/locos.
+    for (const id of ['a', 'b'] as const) {
+      const xFrom = id === 'a' ? -3 : -2;
+      const xTo = id === 'a' ? 3 : 2;
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `clip_${id}`,
+        nodeType: 'AnimationClip',
+        params: { name: `walk_${id}`, duration: 1, loop: true, keyframes: [] },
+      }).next;
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `wp_${id}`,
+        nodeType: 'WalkPath',
+        params: { from: [xFrom, 0, 0], to: [xTo, 0, 0], sampleCount: 6 },
+      }).next;
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `loco_${id}`,
+        nodeType: 'LocomotionState',
+        params: { speed: id === 'a' ? 1 : 1.5, loop: true },
+      }).next;
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `char_${id}`,
+        nodeType: 'Character',
+        params: { name: id },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'sk', socket: 'out' },
+        to: { node: `clip_${id}`, socket: 'skeleton' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'time', socket: 'out' },
+        to: { node: `clip_${id}`, socket: 'time' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'nav', socket: 'out' },
+        to: { node: `wp_${id}`, socket: 'navmesh' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: `wp_${id}`, socket: 'out' },
+        to: { node: `loco_${id}`, socket: 'path' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: `clip_${id}`, socket: 'out' },
+        to: { node: `loco_${id}`, socket: 'clip' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'time', socket: 'out' },
+        to: { node: `loco_${id}`, socket: 'time' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: `loco_${id}`, socket: 'out' },
+        to: { node: `char_${id}`, socket: 'locomotion' },
+      }).next;
+    }
+    return state;
+  }
+
+  it('two characters produce distinct hashes (no cache cross-pollination)', () => {
+    const state = buildTwoCharacters();
+    const a = evalAt<CharacterValue>(state, 'char_a', 1);
+    const b = evalAt<CharacterValue>(state, 'char_b', 1);
+    expect(a.position).not.toEqual(b.position);
+  });
+
+  it("changing character A's locomotion speed does NOT flip character B's hash", () => {
+    const state = buildTwoCharacters();
+    const ctx = { time: { frame: 60, seconds: 1, normalized: 0 } };
+    const hashB_before = evaluate(state, 'char_b', { ctx }).hash;
+    // Mutate A only.
+    const next = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        loco_a: { ...state.nodes.loco_a, params: { speed: 5, loop: true } },
+      },
+    };
+    const hashB_after = evaluate(next, 'char_b', { ctx }).hash;
+    expect(hashB_after).toBe(hashB_before);
+    // And A's hash DOES flip.
+    const hashA_before = evaluate(state, 'char_a', { ctx }).hash;
+    const hashA_after = evaluate(next, 'char_a', { ctx }).hash;
+    expect(hashA_after).not.toBe(hashA_before);
   });
 });

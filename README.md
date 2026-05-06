@@ -5,10 +5,17 @@
 
 Director-first, agent-native, procedural AI video platform.
 
-**Status:** v0.5 P1 (First node types + Asset Library). 15 node types, R3F
-viewport with recursive Mesh dispatcher, OPFS-backed asset library with
-drag-drop import, scene tree projection with sibling drag-reorder,
-TransformControls gizmo, deterministic ScatterNode.
+**Status:** v0.5 P2.1 (Viewport polish + menu bar). 23 node types, Time as a
+typed socket (V3 ALIGNED), animation/locomotion/path/navmesh nodes,
+click-to-move via the `character.walkTo` macro, multi-character cache
+isolation, scrubbable playhead with rAF clock. P2.1 adds: selection
+multi-select, click-to-pick, Inspector drag-scrub, NPanel overlay (snap +
+grid + axis toggles), Blender-style File / Edit / Select / View menu bar
+with keyboard shortcuts, camera-from-view (Cmd+Shift+C → atomic Op chain
+that bakes the editor camera into a new PerspectiveCamera DAG node),
+Frame Selected (F) / Frame All (Home). P0+P1 still ships: R3F viewport
+with recursive Mesh dispatcher, OPFS-backed asset library, drag-drop
+import, scene tree, TransformControls gizmo, deterministic ScatterNode.
 
 ## What is this
 
@@ -48,13 +55,14 @@ src/
   core/dag/          # types, ops (5 primitives), evaluator, registry, store
   core/storage/      # StorageCapability + OpfsStorage / TauriStorage / MemoryStorage
   core/project/      # schema (versioned), migrations runner, save/load, default DAG
-  nodes/             # 15 node types: cameras (Perspective/Orthographic), lights
-                     # (Directional/Ambient/Point/Spot/Area), meshes (BoxMesh/
-                     # GltfAsset/Transform/Group/MaterialOverride/Scatter), and
-                     # aggregators (Scene, RenderOutput). All pure where possible.
-  app/               # boot, Layout (CSS-grid), Library, AssetDropZone, SceneTree,
-                     # Gizmo, Inspector, mode/selection stores, asset/{catalog,
-                     # seedOpfs, opfsLoader, dropChain}
+  nodes/             # 23 node types: cameras, lights, meshes (P0+P1) plus the P2
+                     # Time chain — TimeSource (the impure singleton), Skeleton,
+                     # PosedSkeleton, AnimationClip, Navmesh, WalkPath,
+                     # LocomotionState, Character. All pure where possible.
+  app/               # boot, Layout (CSS-grid), Clock (rAF), Timebar (scrub),
+                     # Library, AssetDropZone, SceneTree, Gizmo, Inspector,
+                     # mode/selection/time stores, asset/{catalog, seedOpfs,
+                     # opfsLoader, dropChain}, character/{walkTo, GroundClick}
   viewport/          # R3F Canvas + SceneFromDAG (recursive DAG → primitives)
   render/            # PostFx (ACES + SMAA), FpsMeter
   integrations/blender/  # capability + browser-poll bridge
@@ -65,12 +73,17 @@ tools/
 THESIS.md            # source of truth for v0.5
 ```
 
-## Disciplines (active in P0 + P1)
+## Disciplines (active in P0 + P1 + P2)
 
 - **Op system is the only mutation path.** Stores never set state directly.
 - **Pure nodes are bit-exact reproducible.** Lint bans `Math.random` /
-  `Date.now` / `performance.now` / `crypto.randomUUID` in `src/nodes/**`.
-- **Time enters as a socket.** No closures, no globals.
+  `Date.now` / `performance.now` / `crypto.randomUUID` / `useFrame` /
+  `useThree` in `src/nodes/**`.
+- **Time enters as a socket (V3 ALIGNED, P2).** Pure consumers (Animation
+  Clip / PosedSkeleton / LocomotionState / Character) wire their `time`
+  input to the `TimeSource` singleton — the only impure time producer.
+  TimeSource's hash flips per frame, propagating through `inputHashes` to
+  re-evaluate every downstream pure node bit-exactly.
 - **Versioned node schemas + migration runner.** First bump triggers the
   first migration before the second bump is allowed.
 - **Permissive licenses only.** `license-audit` is a CI gate. No GPL.
@@ -86,8 +99,9 @@ THESIS.md            # source of truth for v0.5
 | ------ | ------------------------------------ | ----------- |
 | **P0** | **Foundation + DAG core**            | **shipped** |
 | **P1** | **First node types + Asset Library** | **shipped** |
-| P2     | Character + Move (as nodes)          | next        |
-| P2.5   | AI Agent on the DAG                  |             |
+| **P2** | **Character + Move (as nodes)**      | **shipped** |
+| P2.1   | Viewport polish + menu bar           | **shipped** |
+| P2.5   | AI Agent on the DAG                  | next        |
 | P3     | Timeline = animation nodes           |             |
 | P4     | Render graph = render nodes          |             |
 | P5     | AI Render Bridge                     |             |

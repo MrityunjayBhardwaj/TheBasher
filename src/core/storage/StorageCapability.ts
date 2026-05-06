@@ -17,7 +17,7 @@ export interface StorageQuota {
 export interface StorageCapability {
   readonly id: string;
   /** Human-readable backend name (for diagnostics). */
-  readonly kind: 'opfs' | 'tauri-fs' | 'memory';
+  readonly kind: 'opfs' | 'indexeddb' | 'tauri-fs' | 'memory';
 
   /** True iff this backend can run in the current environment. */
   isAvailable(): Promise<boolean>;

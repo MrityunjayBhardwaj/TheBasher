@@ -4,22 +4,32 @@
 import { getNodeType, registerNodeType } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { AmbientLightNode } from './AmbientLight';
+import { AnimationClipNode } from './AnimationClip';
 import { AreaLightNode } from './AreaLight';
 import { BoxMeshNode } from './BoxMesh';
+import { CharacterNode } from './Character';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
 import { GroupNode } from './Group';
+import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
+import { NavmeshNode } from './Navmesh';
 import { OrthographicCameraNode } from './OrthographicCamera';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PointLightNode } from './PointLight';
+import { PosedSkeletonNode } from './PosedSkeleton';
 import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
 import { SceneNode } from './Scene';
+import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
+import { TimeSourceNode } from './TimeSource';
 import { TransformNode } from './Transform';
+import { WalkPathNode } from './WalkPath';
 
 const ALL: NodeDefinition[] = [
+  // Time (P2 — the only impure source; pure consumers wire to it)
+  TimeSourceNode as unknown as NodeDefinition,
   // Cameras
   PerspectiveCameraNode as unknown as NodeDefinition,
   OrthographicCameraNode as unknown as NodeDefinition,
@@ -36,6 +46,14 @@ const ALL: NodeDefinition[] = [
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,
   ScatterNode as unknown as NodeDefinition,
+  // P2 — Character + Move
+  SkeletonNode as unknown as NodeDefinition,
+  PosedSkeletonNode as unknown as NodeDefinition,
+  AnimationClipNode as unknown as NodeDefinition,
+  NavmeshNode as unknown as NodeDefinition,
+  WalkPathNode as unknown as NodeDefinition,
+  LocomotionStateNode as unknown as NodeDefinition,
+  CharacterNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

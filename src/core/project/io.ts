@@ -82,3 +82,81 @@ export async function listProjects(storage: StorageCapability): Promise<string[]
     return [];
   }
 }
+
+export interface ProjectMetadata {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  formatVersion: number;
+  nodeCount: number;
+}
+
+/**
+ * Walk every project in storage and parse its metadata. Defensive: a single
+ * corrupt project file does not block listing the others — its id is
+ * skipped silently. Sorted newest-first by updatedAt for picker UIs.
+ */
+export async function listProjectMetadata(storage: StorageCapability): Promise<ProjectMetadata[]> {
+  const ids = await listProjects(storage);
+  const out: ProjectMetadata[] = [];
+  for (const id of ids) {
+    try {
+      const project = await loadProject(storage, id);
+      out.push({
+        id: project.id,
+        name: project.name,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        formatVersion: project.formatVersion,
+        nodeCount: Object.keys(project.state.nodes).length,
+      });
+    } catch {
+      // Corrupt or schema-mismatch project — skip rather than crash boot.
+    }
+  }
+  out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out;
+}
+
+export async function deleteProject(storage: StorageCapability, projectId: string): Promise<void> {
+  await storage.delete(projectPath(projectId));
+}
+
+/**
+ * Duplicate a project under a new id (and optional new name). The duplicate
+ * gets a fresh `createdAt`; `updatedAt` is bumped to now so it floats to the
+ * top of the picker.
+ */
+export async function duplicateProject(
+  storage: StorageCapability,
+  sourceId: string,
+  newId: string,
+  newName?: string,
+): Promise<Project> {
+  const source = await loadProject(storage, sourceId);
+  const now = Date.now();
+  const dup: Project = {
+    ...source,
+    id: newId,
+    name: newName ?? `${source.name} (copy)`,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await saveProject(storage, dup);
+  return dup;
+}
+
+/**
+ * Rename a project in place (updates name + bumps updatedAt; id is immutable).
+ */
+export async function renameProject(
+  storage: StorageCapability,
+  projectId: string,
+  newName: string,
+): Promise<Project> {
+  const project = await loadProject(storage, projectId);
+  const renamed: Project = { ...project, name: newName, updatedAt: Date.now() };
+  await saveProject(storage, renamed);
+  return renamed;
+}
