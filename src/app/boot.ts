@@ -25,6 +25,7 @@ import {
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
+import { registerAllTools } from '../agent/tools';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
 import { useTimeStore } from './stores/timeStore';
 
@@ -71,6 +72,7 @@ export function boot(): Promise<void> {
   if (bootPromise) return bootPromise;
   bootPromise = (async () => {
     registerAllNodes();
+    registerAllTools();
     const storage = await getStorage();
 
     // K1 step 2.5 — seed bundled sample assets into OPFS on first boot.
