@@ -23,11 +23,17 @@ export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, Direct
   inputs: {},
   outputs: { out: { type: 'Light', cardinality: 'single' } },
   evaluate(params) {
+    // Defensive default for rotation — projects saved before the
+    // rotation field existed land with `undefined` here because the
+    // hydrate seam bypasses zod's .default() fill. The schema-level
+    // default still works for new addNode ops (zod parses); this guard
+    // covers the load-old-project path.
+    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
     return {
       kind: 'DirectionalLight',
       intensity: params.intensity,
       position: params.position,
-      rotation: params.rotation,
+      rotation,
       color: params.color,
     };
   },

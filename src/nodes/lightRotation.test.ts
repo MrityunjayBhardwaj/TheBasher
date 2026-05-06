@@ -53,4 +53,26 @@ describe('positional lights — rotation param', () => {
       expect(def.evaluate(params, {}, ctx)).toEqual(def.evaluate(params, {}, ctx));
     },
   );
+
+  // Regression: projects saved before rotation existed land in the
+  // hydrate seam without zod re-parsing, so node.params has no rotation
+  // field. The evaluator MUST default to [0,0,0] rather than emit
+  // undefined — otherwise downstream destructures crash.
+  it.each(POSITIONAL_LIGHTS)(
+    '%s evaluator defaults rotation when params lacks it (legacy load)',
+    (kind) => {
+      const def = getNodeType(kind)!;
+      // Simulate old-project params (no rotation field) — bypass zod parse
+      // so the absence is preserved into the evaluator.
+      const oldParams: Record<string, unknown> = { intensity: 1, position: [1, 2, 3] };
+      if (kind === 'SpotLight') oldParams.target = [0, 0, 0];
+      if (kind === 'AreaLight') oldParams.lookAt = [0, 0, 0];
+      const value = def.evaluate(
+        oldParams as never,
+        {},
+        { time: { frame: 0, seconds: 0, normalized: 0 } },
+      );
+      expect((value as { rotation: number[] }).rotation).toEqual([0, 0, 0]);
+    },
+  );
 });

@@ -234,7 +234,10 @@ function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
   // target at the origin — three.js's default behavior makes the light
   // shine from `position` toward (0,0,0), which preserves the legacy
   // seed scene's look (sun pointing roughly inward).
-  const [rx, ry, rz] = value.rotation;
+  // Defensive — old saved DirectionalLights pre-P2.6.3 don't have
+  // rotation in their evaluated value. The evaluator now defaults but
+  // this guard makes the renderer robust regardless.
+  const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
   const [px, py, pz] = value.position;
   const hasRotation = rx !== 0 || ry !== 0 || rz !== 0;
   useEffect(() => {

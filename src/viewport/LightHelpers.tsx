@@ -98,7 +98,10 @@ function selectOnClick(pickId: string | null) {
  *  fall back to the legacy "from position toward origin" interpretation
  *  so seed scenes look the same as before. */
 function directionalDirection(value: DirectionalLightValue): THREE.Vector3 {
-  const [rx, ry, rz] = value.rotation;
+  // Defensive — projects saved before rotation existed land here with
+  // no rotation field. The evaluator defaults now, but guarding here
+  // makes the helper safe regardless.
+  const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
   if (rx !== 0 || ry !== 0 || rz !== 0) {
     return new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(rx, ry, rz)).normalize();
   }
@@ -145,10 +148,11 @@ function DirectionalLightHelper({
 }
 
 function PointLightHelper({ value, pickId }: { value: PointLightValue; pickId: string | null }) {
+  const rot = value.rotation ?? [0, 0, 0];
   const rotQuat = useMemo(() => {
-    const e = new THREE.Euler(value.rotation[0], value.rotation[1], value.rotation[2]);
+    const e = new THREE.Euler(rot[0], rot[1], rot[2]);
     return new THREE.Quaternion().setFromEuler(e);
-  }, [value.rotation[0], value.rotation[1], value.rotation[2]]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rot[0], rot[1], rot[2]]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <group
       position={value.position as [number, number, number]}

@@ -28,11 +28,12 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
   inputs: {},
   outputs: { out: { type: 'Light', cardinality: 'single' } },
   evaluate(params) {
+    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
     return {
       kind: 'AreaLight',
       intensity: params.intensity,
       position: params.position,
-      rotation: params.rotation,
+      rotation,
       color: params.color,
       width: params.width,
       height: params.height,

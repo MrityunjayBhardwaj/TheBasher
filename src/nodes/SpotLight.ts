@@ -32,12 +32,13 @@ export const SpotLightNode: NodeDefinition<SpotLightParams, SpotLightValue> = {
   inputs: {},
   outputs: { out: { type: 'Light', cardinality: 'single' } },
   evaluate(params) {
+    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
     return {
       kind: 'SpotLight',
       intensity: params.intensity,
       position: params.position,
       target: params.target,
-      rotation: params.rotation,
+      rotation,
       color: params.color,
       angle: params.angle,
       penumbra: params.penumbra,

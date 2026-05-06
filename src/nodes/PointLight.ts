@@ -24,11 +24,13 @@ export const PointLightNode: NodeDefinition<PointLightParams, PointLightValue> =
   inputs: {},
   outputs: { out: { type: 'Light', cardinality: 'single' } },
   evaluate(params) {
+    // Defensive default for rotation — see DirectionalLight for the why.
+    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
     return {
       kind: 'PointLight',
       intensity: params.intensity,
       position: params.position,
-      rotation: params.rotation,
+      rotation,
       color: params.color,
       distance: params.distance,
       decay: params.decay,
