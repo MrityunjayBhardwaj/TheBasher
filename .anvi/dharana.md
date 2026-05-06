@@ -283,3 +283,21 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 - **Known catalogue staleness (NOT introduced by P2.6.4 — flagged for future housekeeping):** dharana §2 "ACTIVE INVARIANT SPANS" only mirrors V1-V5 and still says "NOT YET IMPLEMENTED." Vyapti has V1-V10 with current statuses. Section 2 needs a regen pass against vyapti.md before P2.5 work begins, so dhyana's session-start "scope to current work" can correctly load V6-V10 boundaries.
 
   **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-07 — post-CI-fix train (PR #6: prettier + Linux baseline + P1#4 race guard):
+
+- **H16 added** to hetvabhasa: "Test dispatches asset-dependent op before OPFS seed lands → empty blob → `<GltfAssetR>` throws → ErrorBoundary unmounts the entire React tree → black page → every subsequent assertion times out with the wrong-looking 'element(s) not found' surface error." Promoted on first observation because the diagnostic cost was high enough to warrant immediate cataloguing — without the trace screenshot the surface error misleads the investigator into debugging mode-switch / SceneTree mounting / store reactivity, none of which is the cause.
+  - **ORIGIN:** PR #6 CI failure on `tests/e2e/p1-acceptance.spec.ts:258` (P1#4). Symptom-vs-cause gap was extreme (5+ inferences off the trail before the screenshot was checked).
+  - **WHY:** R3F's ErrorBoundary unmount-on-throw is invisible at the assertion layer. Future asset-dependent CI tests will hit this same race if added without the library-availability gate. Without the entry, every recurrence costs another full investigation cycle.
+  - **HOW:** the entry's "real fix" block names the gate pattern explicitly; "detection signal" pairs the surface error with the trace's `pageError` events so the next investigator skips the inference detour.
+
+- **Meta-pattern flagged inside H16 (not yet a separate entry):** speeding up CI exposes pre-existing races that slow upstream tests were silently masking. Holding off on a separate entry until the second occurrence per dharana promotion criteria. Recurrence trigger: any future "fix one CI test → unrelated CI test newly fails" sequence.
+
+- **Fatality test (post-CI-fix, 2026-05-07):**
+  1. Hetvabhasa clustering: 16 entries (added H16). Test/observation cluster grows to H6/H8/H11/H13/H16 — five entries, but each at a structurally different mechanism (overlay text, platform suffix, R3F primitive prop crash, layout-shift baseline, async-seed race). No 3+ clustering at a single mechanism. Cluster is a _category_ (test/observation boundary), not a _single fault line_.
+  2. Vyapti span: V1-V10 unchanged. The fix is in test code only; no production invariant moved.
+  3. Krama crossing: no new lifecycle. The test itself uses K6's library-seed pattern (already cataloged) — the fix just makes P1#4 honor an existing krama, doesn't introduce a new one.
+
+  **Verdict: organization still sound after the CI-fix train.** The repeat-rate at the test/observation boundary (5 of 16 entries) is the highest-density cluster — but the underlying mechanisms are distinct. If a third async-seed-race entry lands, that's the trigger to consolidate into a vyapti ("every test that depends on async-seeded state must wait on a seed-availability signal").
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
