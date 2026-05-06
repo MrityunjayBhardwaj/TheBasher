@@ -28,6 +28,7 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
 import { PostFx } from '../render/PostFx';
+import { DiffOverlay } from './DiffOverlay';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -140,6 +141,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       })}
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
+      <DiffOverlay />
       <PostFx config={value.postFx} />
     </>
   );

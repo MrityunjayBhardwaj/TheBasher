@@ -34,7 +34,8 @@
 **HOW:** Tool handlers return `Op[]`; never call `dagStore.setState`. Diff system applies to forked DAG; user accepts → ops flow through real Op dispatcher.
 **REF:** THESIS.md §18-20
 **Silent-failure modes:** agent applies tool that bypasses Diff; agent applies invalid op (zod validation skipped); user rejects but state already mutated.
-**Observation targets:** every agent turn → activity log shows source='agent'; reject path → confirm zero state changes.
+**Status:** EXERCISED (P2.5). 4 tools registered (`character.walkTo`, `camera.snapshot`, `library.import`, `mesh.add`). Tool registry + fork engine + diff store + ghost overlay + accept/reject bar all shipped. V7 ALIGNED. K3 cataloged with file:line REFs.
+**Observation targets:** every agent turn → diff store shows pending → accept lands single dispatchAtomic entry; reject clears with zero state changes.
 
 ### Boundary B4: Node evaluator ↔ time/randomness (purity)
 

@@ -7,6 +7,7 @@
 
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
+import { DiffBar } from './DiffBar';
 import { Inspector } from './Inspector';
 import { Library } from './Library';
 import { MenuBar } from './MenuBar';
@@ -105,6 +106,7 @@ export function Layout() {
           }}
           data-testid="view3d-slot"
         >
+          <DiffBar />
           <AssetDropZone>
             <Viewport />
           </AssetDropZone>

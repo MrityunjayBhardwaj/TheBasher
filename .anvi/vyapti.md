@@ -65,10 +65,10 @@
 
 ### V7: Agent tool handlers return `Op[]`; do not mutate state directly
 
-**Span:** Every agent tool definition.
-**Enforcement:** Tool handler signature is `(args) => Op[] | Promise<Op[]>`. No exceptions.
-**Status:** NOT YET IMPLEMENTED (P2.5)
-**REF:** THESIS.md §18, §20
+**Span:** Every agent tool definition (`src/agent/tools/*.ts`).
+**Enforcement:** Tool handler signature is `(args, ctx: ToolContext) => Op[] | Promise<Op[]>`. No exceptions.
+**Status:** ALIGNED (P2.5). Four tools shipped with Vitest twice-call tests proving pure output. Diff system enforces the Op-only return path — accept feeds through dispatchAtomic; reject discards fork.
+**REF:** THESIS.md §18, §20; `src/agent/tools/types.ts:10`; `src/agent/tools/registry.ts:15`; `src/agent/diff/forkedDag.ts:1`; `src/agent/diff/store.ts:113`
 **Why it matters:** agent edits via the same path as the user; one undo system; one diff system; one audit log.
 
 ### V8: Viewport never mutates DAG; viewport renders evaluated DAG output
