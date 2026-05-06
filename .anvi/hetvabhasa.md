@@ -177,6 +177,26 @@ Cheap, no migration, robust to any non-zod path (hydrate, agent state surgery, t
 **Detection signal:** PostFx-beauty diff ratio jumps from ~1% to ≥5% between local + CI. The diff image's mismatched region matches the canvas dimensions exactly (translation, not localized differences).
 **REF:** P2.1 Wave D (2026-05-06); `src/app/Layout.tsx:35` (added 'menu' grid row); `tests/e2e/acceptance.spec.ts-snapshots/postfx-beauty-chromium-darwin.png`.
 
+### H16: Test dispatches asset-dependent op before OPFS seed lands — full React tree unmounts
+
+**Symptom:** Playwright assertion `expect(page.getByTestId('scene-tree')).toBeVisible()` times out with "element(s) not found" five seconds after `selectOption('pro')`. The failure screenshot is solid black — not "scene-tree hidden", but the entire app gone. Scene tree, toolbar, NPanel, viewport — all missing.
+**Trap:** Believe the message. "scene-tree not found" reads like a SceneTree mounting bug or a mode-switch race. Both are wrong inferences from the surface error. Without observing the screenshot you'd debug the wrong thing for hours.
+**Root cause:** `beforeEach` clears OPFS recursively (`removeEntry('basher', { recursive: true })`) then reloads. The library re-seeds default assets asynchronously. The test then dispatches `addNode { type: 'GltfAsset', params: { assetRef: 'assets/cube.gltf' } }` BEFORE the seed lands. The blob URL points at an empty/missing file. `GLTFLoader.parse` rejects with "Unexpected end of JSON input". `<GltfAssetR>` throws synchronously, R3F's `<ErrorBoundary>` catches and unmounts the entire tree — Layout, mode-switcher, scene-tree, all of it. The next assertion looking for any testid times out because the DOM has no React-rendered content (just the dark theme `<body>` background).
+**Real fix:** mirror the existing P1#1 pattern — wait for the library entry to be seed-available before dispatching anything that references it:
+
+```ts
+await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+  'data-available',
+  'true',
+  { timeout: 10_000 },
+);
+// THEN dispatchAtomic with the assetRef.
+```
+
+**Detection signal:** Black failure screenshot + Playwright trace shows `pageError` events with "Could not load blob:.../...: Unexpected end of JSON input" thrown from `GltfAssetR` BEFORE the failing assertion. Also: the test passes locally but fails on CI, AND the test fails AFTER an unrelated upstream test got faster/passed (less wall-clock slack between page-load and the assertion).
+**Meta-pattern (worth its own entry the next time it bites):** CI test reliability often depends on incidental wall-clock slack from slow upstream tests. Speeding up the suite — even via legitimate fixes like landing a missing snapshot baseline — exposes pre-existing races that the slowness was silently masking. When fixing a single CI failure makes a _different_ unrelated test newly fail, the second failure is rarely a new bug; it's a latent race becoming observable. Hunt for the missing-await rather than blaming the speedup.
+**REF:** PR #6 CI investigation (2026-05-07); `tests/e2e/p1-acceptance.spec.ts:258` (P1#4 fix in `e022d62`); trace evidence in run `25461120030`. Sister entries: H6 (overlay text in pixel diff), H8 (per-platform snapshots), H13 (layout-shift baseline) — same test/observation cluster, different mechanisms.
+
 ### H8: Playwright pixel-diff snapshots are platform-suffixed by default
 
 **Symptom:** Local CI run on macOS green; GitHub Actions Ubuntu runner fails test #7 with `A snapshot doesn't exist at .../postfx-beauty-chromium-linux.png, writing actual.`
