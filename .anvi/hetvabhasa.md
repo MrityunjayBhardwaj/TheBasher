@@ -137,12 +137,14 @@ These are not yet cataloged from real bugs — they are pre-mortem predictions. 
 **Trap:** Suspect TransformControls; tinker with `mode`, `enabled`, mount keys. None work — the gizmo's own JSX is correct; the conditional gate is the bug.
 **Root cause:** the gizmo rendered its proxy via `useRef<THREE.Group>(null)` and gated `<TransformControls>` on `groupRef.current`. On deselect → re-select, the proxy unmounts (ref → null) and remounts (ref → new instance), but **ref writes don't trigger re-renders**. The conditional `{groupRef.current ? <TransformControls/> : null}` evaluates during render, sees the still-stale ref, and renders null. The fresh ref attaches AFTER commit; nothing re-evaluates.
 **Real fix:** lift the proxy node into React state via a callback ref:
+
 ```
 const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
 const groupRefCb = useCallback((g: THREE.Group | null) => setGroupNode(g), []);
 <group ref={groupRefCb} />
 {groupNode ? <TransformControls object={groupNode} ... /> : null}
 ```
+
 The setter triggers a re-render the moment the new group attaches; TransformControls remounts on every selection cycle.
 **Detection signal:** Conditional renders that depend on a ref's current value in the same component. Refs change without re-render; if the gate lives in JSX, the gate is permanently stale after any unmount/remount.
 **REF:** P2.6.1 (2026-05-06); `src/app/Gizmo.tsx`; tests/e2e/p26-acceptance.spec.ts P2.6#9.
@@ -153,12 +155,14 @@ The setter triggers a re-render the moment the new group attaches; TransformCont
 **Trap:** Add a migration runner entry. Migrations work but they're heavyweight — they touch every saved project, need a version bump, and only fix the project-load path. They DON'T fix in-memory state surgery (test fixtures, agent tool calls, dev-only setState patches).
 **Root cause:** zod's `paramSchema.parse()` runs at `addNode` Op dispatch — it fills `.default()` values into params. The hydrate seam (project-load path) sets `state.nodes` directly via `useDagStore.hydrate()` — it skips paramSchema.parse() because saved projects are assumed validated. New schema fields with `.default()` only get filled on dispatch, never on hydrate. Old saved params reach the evaluator with the new field undefined.
 **Real fix (v0.5):** defensive defaults at the EVALUATOR for any field added after a release:
+
 ```
 evaluate(params) {
   const rotation = params.rotation ?? [0, 0, 0];
   return { ...spread, rotation };
 }
 ```
+
 Cheap, no migration, robust to any non-zod path (hydrate, agent state surgery, test fixtures). Belt-and-suspenders: consumers also `?? defaultValue` when destructuring the new field, so a future evaluator slip still doesn't crash.
 **Real fix (v0.6+):** re-validate node.params through paramSchema during hydrate. One pass at load time fills all defaults across the graph. Eliminates the need for evaluator-level guards going forward.
 **Detection signal:** Crash mentions `value.X is undefined` or `Symbol.iterator` on a destructure of a recently-added schema field. Fresh-project tests pass; load-and-render of a pre-existing OPFS project fails. Browser console shows the stack inside the renderer / helper, not inside the dispatcher.
