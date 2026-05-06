@@ -245,3 +245,21 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization remains sound after P2.6.** B6 (editor-shading ↔ DAG-render) is conceptual not file-structural — no new directory, no new module, just a contract that EditorLights honors.
 
   **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-06 — post-P2.6.1 / P2.6.2 / P2.6.3 (Editor polish hotfix train):
+
+- **Add menu shipped** (P2.6.1) — Blender-style right-click + Shift+A: meshes (Cube, UV Sphere via new SphereMesh node type — **24 → 25 node types**), lights (Sun / Point / Spot / Area / Ambient), cameras (Perspective / Orthographic), empties (Group / Transform). Single dispatchAtomic per pick. New nodes auto-select for instant gizmo binding.
+- **Sphere UV unwrap** (P2.6.2) — equirectangular grid mirrors THREE.SphereGeometry's actual UV layout. Honest about pole stretch.
+- **Wireframe shading mode** (P2.6.2) — viewportStore.shading: 'studio' | 'wireframe' | 'rendered'. Toolbar third button; menu mirrored. Gates pass through every meshStandardMaterial + traverses cloned glTF scenes.
+- **Light helpers + selection + rotation** (P2.6.2 + P2.6.3) — wireframe gizmo per light kind; helpers gain onClick → selectionStore.select(pickId); every positional light schema gains `rotation: vec3` default [0,0,0]; DirectionalLight ring + actual shaded direction both compute from `rotation × (0,-1,0)` (legacy fallback to `-position` when rotation is zero — preserves seed scene + acceptance #7 baseline).
+- **Two new hetvabhasa entries:**
+  - **H15** (gizmo re-select bug) — conditional R3F render gated on a useRef breaks on remount because ref writes don't trigger re-render. Fix: lift to useState + callback ref. P2.6.1 hotfix.
+  - **H14** (hydrate seam bypasses zod default-fill) — schema additions land as `undefined` for projects saved before the field existed; the load path skips `paramSchema.parse()`. Fix: defensive defaults at the evaluator (cheap, no migration). P2.6.3 hotfix.
+- **Fatality test (post-P2.6.3, 2026-05-06):**
+  1. Hetvabhasa: 15 entries (added H14 + H15). H14 sits at the hydrate boundary — the test/observation cluster grew to 4 (H6/H8/H11/H13/H14/H15 — though H14 is closer to a load-path issue and H15 is a render-path issue). No B-boundary cluster reaches 3+ same-cause patterns.
+  2. Vyapti span: V1/V2/V3/V4/V5/V6/V8/V9 still single-module-spanning. The new `addMenuStore` + `editorStore` are sister UI projections; viewportStore widened with `shading` (no span change). SphereMesh adds one more registered node type.
+  3. Krama crossing: no new lifecycle exceeded 2 module boundaries. Add menu spawn = single dispatchAtomic call. Light helpers click pickup = single selectionStore.select call. Both mirror existing K6 / K7 shapes without creating new crossings.
+
+  **Verdict: organization still sound after the P2.6.x hotfix train.** A potential future invariant: V10 — "node value shape MUST be defensive against missing schema fields after additions" — could land at the evaluator boundary if H14 recurs. Hold off until the second occurrence per dharana promotion criteria.
+
+  **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
