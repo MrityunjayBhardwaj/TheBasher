@@ -13,6 +13,7 @@
 import { create } from 'zustand';
 import type { DagState } from '../../core/dag/state';
 import type { InverseOp, Op } from '../../core/dag/types';
+import type { OpSource } from '../../core/dag/store';
 import { cloneState, createFork } from './forkedDag';
 
 export type DiffStatus = 'idle' | 'pending' | 'previewing' | 'applied' | 'rejected';
@@ -26,6 +27,12 @@ export interface PendingDiff {
   ops: Op[];
   /** Inverse ops (one per forward op). */
   inverseOps: InverseOp[];
+  /**
+   * Per-op source label (e.g. "agent:mesh.add"). Aligned with `ops`.
+   * Used to rebuild a meaningful undo title when the user accepts only a
+   * subset of the proposed ops.
+   */
+  opSources?: string[];
   /** Human-readable description (becomes undo entry title if accepted). */
   description: string;
   /** Per-op acceptance. All true by default. */
@@ -42,6 +49,7 @@ export interface DiffStore {
     state: DagState,
     ops: Op[],
     description: string,
+    opSources?: string[],
   ) => PendingDiff;
   /** Toggle acceptance of a single op by index. */
   toggleOp: (index: number) => void;
@@ -61,13 +69,14 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
   status: 'idle',
   pendingDiff: null,
 
-  propose(state, ops, description) {
+  propose(state, ops, description, opSources) {
     const { fork, inverseOps } = createFork(state, ops);
     const diff: PendingDiff = {
       originalState: cloneState(state),
       forkState: fork,
       ops,
       inverseOps,
+      opSources,
       description,
       selected: ops.map(() => true),
       createdAt: Date.now(),
@@ -135,16 +144,35 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
  *   `useDagStore.getState().dispatchAtomic`
  */
 export function acceptSelectedOps(
-  dispatchAtomic: (ops: Op[], source: string, description?: string) => unknown,
+  dispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown,
 ): boolean {
   const diffStore = useDiffStore.getState();
   const selected = diffStore.getSelectedOps();
   if (!selected) return false;
 
   const diff = diffStore.pendingDiff!;
-  dispatchAtomic(selected.forward, 'agent', diff.description);
+  const allSelected = diff.selected.every(Boolean);
+  // P5: when only a subset is accepted, the original description (built from
+  // the full proposed batch) is misleading. Rebuild it from the selected
+  // op sources so the undo entry reflects what actually landed.
+  const description = allSelected
+    ? diff.description
+    : buildPartialDescription(diff);
+  dispatchAtomic(selected.forward, 'agent', description);
   diffStore.markApplied();
   return true;
+}
+
+function buildPartialDescription(diff: PendingDiff): string {
+  if (diff.opSources && diff.opSources.length === diff.ops.length) {
+    const acceptedSources = new Set<string>();
+    for (let i = 0; i < diff.ops.length; i++) {
+      if (diff.selected[i]) acceptedSources.add(diff.opSources[i]);
+    }
+    const list = [...acceptedSources].join(', ');
+    return list ? `(partial) ${list}` : `(partial) ${diff.description}`;
+  }
+  return `(partial) ${diff.description}`;
 }
 
 /**

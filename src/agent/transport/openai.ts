@@ -1,23 +1,34 @@
 // OpenAI-compatible streaming chat completion transport.
 //
 // Supports any provider with an OpenAI-compatible API:
-//   - Deep Infra (google/gemma-4-31B-it, etc.)
-//   - Groq
-//   - Together
+//   - DeepInfra (google/gemma-4-31B-it, etc.)
+//   - OpenRouter (Claude, GPT-4o, etc.)
 //   - OpenAI itself
-//   - Anyscale, Fireworks, etc.
+//   - Groq, Together, Fireworks, Anyscale.
 //
 // The connection is pure fetch (no SDK dependency). Streams via SSE.
 //
 // REF: THESIS.md §21.
 
-import type { LLMConfig, ChatMessage, ToolSchema, ToolCall, StreamChunk } from './types';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import type { z } from 'zod';
+import type {
+  LLMConfig,
+  ChatMessage,
+  ToolSchema,
+  ToolCall,
+  StreamChunk,
+} from './types';
 
 export interface StreamOptions {
   messages: ChatMessage[];
   tools?: ToolSchema[];
   signal?: AbortSignal;
   onChunk: (chunk: StreamChunk) => void;
+  /**
+   * tool_choice override per call. Falls back to `config.toolChoice` then 'auto'.
+   */
+  toolChoice?: LLMConfig['toolChoice'];
 }
 
 /**
@@ -25,6 +36,10 @@ export interface StreamOptions {
  * Calls `onChunk` for each text delta, tool call, and final usage.
  *
  * The function resolves when the stream completes or rejects on error.
+ *
+ * `messages` MUST follow OpenAI's tool-call protocol:
+ *   assistant.tool_calls → role:'tool' messages with matching tool_call_id
+ *   before the next assistant turn.
  */
 export async function streamChatCompletion(
   config: LLMConfig,
@@ -34,19 +49,30 @@ export async function streamChatCompletion(
 
   const body: Record<string, unknown> = {
     model: config.model,
-    messages,
+    messages: messages.map(serializeMessage),
     stream: true,
     max_tokens: config.maxTokens ?? 4096,
     temperature: config.temperature ?? 0.7,
   };
 
   if (tools && tools.length > 0) {
-    body.tools = tools;
-    // GPT-family models prefer `tool_choice: 'auto'`
-    body.tool_choice = 'auto';
+    body.tools = tools.map((t) => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    }));
+    const choice = options.toolChoice ?? config.toolChoice ?? 'auto';
+    if (typeof choice === 'object' && 'name' in choice) {
+      body.tool_choice = { type: 'function', function: { name: choice.name } };
+    } else {
+      body.tool_choice = choice;
+    }
   }
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+  const response = await fetchWithRetry(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -76,7 +102,6 @@ export async function streamChatCompletion(
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      // Keep the last partial line in the buffer
       buffer = lines.pop() ?? '';
 
       for (const line of lines) {
@@ -85,7 +110,6 @@ export async function streamChatCompletion(
 
         const data = trimmed.slice(6).trim();
 
-        // SSE done signal
         if (data === '[DONE]') {
           onChunk({ type: 'done', finish_reason: 'stop' });
           continue;
@@ -116,12 +140,10 @@ export async function streamChatCompletion(
 
           if (!delta) continue;
 
-          // Text content
           if (delta.content) {
             onChunk({ type: 'text', text: delta.content });
           }
 
-          // Tool calls
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
               const partial: ToolCall = {
@@ -147,146 +169,61 @@ export async function streamChatCompletion(
 }
 
 /**
- * Build tool schemas for the OpenAI-compatible API from our ToolDefinitions.
- * Returns the `tools` array for the chat completion request body.
+ * One-shot retry on transient network failure (TypeError / failed-to-fetch).
+ * Aborts and 4xx/5xx pass through to the caller.
  */
-export function buildToolSchemas(
-  tools: Array<{ name: string; description: string; paramSchema: { _def?: unknown } }>,
-): ToolSchema[] {
-  return tools.map((t) => {
-    // Convert zod schema to JSON Schema. OpenAI-compatible APIs accept
-    // JSON Schema in the `parameters` field.
-    const schema = zodToJsonSchema(t.paramSchema);
-    return {
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: schema,
-      },
-    };
-  });
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') throw err;
+    if (init.signal?.aborted) throw err;
+    return await fetch(url, init);
+  }
 }
 
 /**
- * Convert a zod schema to JSON Schema for OpenAI-compatible tool definitions.
- *
- * Handles: object, string, number, boolean, array, enum, optional, default,
- * nullable, and .describe() annotations. Recursive for nested objects/arrays.
+ * Serialize a domain ChatMessage to the OpenAI on-the-wire shape.
+ * The shape is mostly identical, but we normalize undefined fields.
  */
-function zodToJsonSchema(zodSchema: unknown): Record<string, unknown> {
-  // Top-level unwrap: zod schema is always a ZodType, but we work with
-  // what we can introspect through _def and public methods.
-
-  const schemaDef = (zodSchema as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
-  if (!schemaDef) return { type: 'object' };
-
-  const typeName = schemaDef.typeName as string | undefined;
-
-  // --- Leaf types ---
-  if (typeName === 'ZodString') {
-    const result: Record<string, unknown> = { type: 'string' };
-    const checks = schemaDef.checks as Array<Record<string, unknown>> | undefined;
-    if (checks) {
-      for (const c of checks) {
-        if (c.kind === 'min') result.minLength = c.value;
-        if (c.kind === 'max') result.maxLength = c.value;
-      }
+function serializeMessage(msg: ChatMessage): Record<string, unknown> {
+  if (msg.role === 'assistant') {
+    const out: Record<string, unknown> = { role: 'assistant', content: msg.content };
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      out.tool_calls = msg.tool_calls.map((tc) => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.function.name, arguments: tc.function.arguments },
+      }));
     }
-    return result;
+    return out;
   }
-
-  if (typeName === 'ZodNumber') {
-    const result: Record<string, unknown> = { type: 'number' };
-    const checks = schemaDef.checks as Array<Record<string, unknown>> | undefined;
-    if (checks) {
-      for (const c of checks) {
-        if (c.kind === 'min') result.minimum = c.value;
-        if (c.kind === 'max') result.maximum = c.value;
-        if (c.kind === 'positive') result.exclusiveMinimum = 0;
-      }
-    }
-    return result;
+  if (msg.role === 'tool') {
+    return { role: 'tool', tool_call_id: msg.tool_call_id, content: msg.content };
   }
+  return { role: msg.role, content: msg.content };
+}
 
-  if (typeName === 'ZodBoolean') return { type: 'boolean' };
-
-  // --- Array ---
-  if (typeName === 'ZodArray') {
-    const innerType = schemaDef.type;
-    const lengthCheck = (schemaDef.checks as Array<Record<string, unknown>> | undefined)
-      ?.find((c) => c.kind === 'length');
-    const result: Record<string, unknown> = {
-      type: 'array',
-      items: innerType ? zodToJsonSchema(innerType) : {},
-    };
-    if (lengthCheck) {
-      result.minItems = lengthCheck.value;
-      result.maxItems = lengthCheck.value;
-    }
-    return result;
-  }
-
-  // --- Enum ---
-  if (typeName === 'ZodEnum') {
-    const values = schemaDef.values as string[] | undefined;
+/**
+ * Build tool schemas for the OpenAI-compatible API from our ToolDefinitions.
+ * Returns ToolSchema[] (provider-agnostic); the transport adapter wraps each
+ * in `{type:'function', function:{...}}` at request time.
+ */
+export function buildToolSchemas(
+  tools: Array<{ name: string; description: string; paramSchema: z.ZodTypeAny }>,
+): ToolSchema[] {
+  return tools.map((t) => {
+    const json = zodToJsonSchema(t.paramSchema, {
+      $refStrategy: 'none',
+      target: 'openApi3',
+    }) as Record<string, unknown>;
+    // zod-to-json-schema returns a top-level $schema field; OpenAI ignores
+    // it but stripping keeps the body lean.
+    delete json.$schema;
     return {
-      type: 'string',
-      enum: values ?? [],
+      name: t.name,
+      description: t.description,
+      parameters: json,
     };
-  }
-
-  // --- Object ---
-  if (typeName === 'ZodObject') {
-    // zod stores shape as a function for object schemas
-    const shapeFn = schemaDef.shape as (() => Record<string, unknown>) | undefined;
-    const shape = shapeFn?.() ?? {};
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-
-    for (const [key, fieldSchema] of Object.entries(shape)) {
-      const fieldDef = (fieldSchema as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
-      const fieldTypeName = fieldDef?.typeName as string | undefined;
-
-      // Extract description from .describe() annotation
-      let description: string | undefined;
-      if (fieldDef?.description) {
-        description = fieldDef.description as string;
-      }
-
-      // Check if field is optional (ZodOptional, ZodDefault, or nullable)
-      const isOptional =
-        fieldTypeName === 'ZodOptional' ||
-        fieldTypeName === 'ZodDefault' ||
-        (fieldDef?.nullable === true);
-
-      // Unwrap optional/default to get the inner type
-      let innerSchema = fieldSchema;
-      if (fieldTypeName === 'ZodOptional' || fieldTypeName === 'ZodDefault') {
-        innerSchema = (fieldSchema as Record<string, unknown>).unwrap
-          ? ((fieldSchema as Record<string, unknown>).unwrap as () => unknown)()
-          : fieldSchema;
-      }
-
-      const propSchema = zodToJsonSchema(innerSchema);
-      if (description) {
-        propSchema.description = description;
-      }
-
-      properties[key] = propSchema;
-      if (!isOptional) {
-        required.push(key);
-      }
-    }
-
-    return {
-      type: 'object',
-      properties,
-      required: required.length > 0 ? required : undefined,
-      additionalProperties: false,
-    };
-  }
-
-  // Fallback — accept anything
-  return {};
+  });
 }

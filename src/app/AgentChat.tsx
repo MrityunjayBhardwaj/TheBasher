@@ -1,19 +1,32 @@
 // Agent chat UI — text input + message history + mode selector.
 //
 // Sits in the RightDrawer (pro mode) or as a floating panel (simple mode).
-// The orchestrator handles the LLM turn; this component drives it.
+// The orchestrator handles the LLM turn and reads fresh DAG state on every
+// round; this component just drives it with the user message + selection.
 //
 // REF: THESIS.md §15-17 (editor chrome), §21 (context strategy).
 
 import { useState, useCallback, useRef } from 'react';
 import { useAgentSessionStore, type AgentMode } from '../agent/session/store';
-import { useDagStore } from '../core/dag/store';
+import { useSelectionStore } from './stores/selectionStore';
+import { runAgentTurn } from '../agent/orchestrator';
+import type { LLMConfig } from '../agent/transport/types';
 
-const DEFAULT_CONFIG = {
-  baseUrl: '', // Set via settings or env
-  model: 'google/gemma-4-31B-it',
-  apiKey: '',
-};
+const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
+const DEFAULT_MODEL = 'google/gemma-4-31B-it';
+
+function getLLMConfig(): LLMConfig {
+  const env = import.meta.env;
+  const winOverrides = window as unknown as Record<string, string | undefined>;
+  return {
+    apiKey: winOverrides['__BASHER_LLM_KEY'] ?? env.VITE_BASHER_LLM_KEY ?? '',
+    baseUrl: winOverrides['__BASHER_LLM_BASE_URL'] ?? env.VITE_BASHER_LLM_BASE_URL ?? DEFAULT_BASE_URL,
+    model: winOverrides['__BASHER_LLM_MODEL'] ?? env.VITE_BASHER_LLM_MODEL ?? DEFAULT_MODEL,
+    temperature: 0.7,
+    maxTokens: 4096,
+    maxTurnTokens: 30_000,
+  };
+}
 
 export function AgentChat() {
   const session = useAgentSessionStore((s) => s.session);
@@ -28,17 +41,16 @@ export function AgentChat() {
     setInput('');
     setRunning(true);
 
-    // Lazy import the orchestrator — avoids circular deps at module level
-    const { runAgentTurn } = await import('../agent/orchestrator');
-    const { useSelectionStore } = await import('./stores/selectionStore');
-    const dagState = useDagStore.getState().state;
     const selectedNodeIds = useSelectionStore.getState().selectedNodeIds;
-    const config = {
-      ...DEFAULT_CONFIG,
-      // Read API key and base URL from settings/env
-      apiKey: (window as unknown as Record<string, string>)['__BASHLER_LLM_KEY'] ?? import.meta.env.VITE_BASHLER_LLM_KEY ?? '',
-      baseUrl: (window as unknown as Record<string, string>)['__BASHLER_LLM_BASE_URL'] ?? import.meta.env.VITE_BASHLER_LLM_BASE_URL ?? 'https://api.deepinfra.com/v1',
-    };
+    const config = getLLMConfig();
+
+    if (!config.apiKey) {
+      useAgentSessionStore.getState().setError(
+        'No LLM API key configured. Set VITE_BASHER_LLM_KEY in .env or window.__BASHER_LLM_KEY.',
+      );
+      setRunning(false);
+      return;
+    }
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -46,7 +58,6 @@ export function AgentChat() {
     try {
       await runAgentTurn(config, {
         message: msg,
-        dagState,
         mode: session.mode,
         signal: abort.signal,
         selectedNodeIds,

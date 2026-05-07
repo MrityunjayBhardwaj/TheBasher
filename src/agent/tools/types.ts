@@ -18,8 +18,11 @@ import type { DagState } from '../../core/dag/state';
 export interface ToolContext {
   /** Snapshot of the DAG at the time the tool is invoked. */
   dagState: DagState;
-  /** Node ids currently selected by the user (empty set = nothing selected). */
-  selectedNodeIds: ReadonlySet<string>;
+  /**
+   * Node ids currently selected by the user. Undefined when no selection
+   * channel is wired (tests, headless calls).
+   */
+  selectedNodeIds?: ReadonlySet<string>;
 }
 
 /**

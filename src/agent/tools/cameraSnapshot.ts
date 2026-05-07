@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
+import type { Op } from '../../core/dag/types';
 
 export const cameraSnapshotSchema = z.object({
   fov: z.number().positive().default(45).describe('Camera field of view in degrees'),
@@ -40,6 +41,11 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
     const sceneNode = ctx.dagState.nodes[sceneRef.node];
     if (!sceneNode) {
       throw new Error('camera.snapshot: Scene aggregator node not found');
+    }
+    if (sceneNode.type !== 'Scene') {
+      throw new Error(
+        `camera.snapshot: outputs.scene points at "${sceneRef.node}" but its type is "${sceneNode.type}", expected "Scene"`,
+      );
     }
     const existing = sceneNode.inputs.camera;
     if (Array.isArray(existing)) {

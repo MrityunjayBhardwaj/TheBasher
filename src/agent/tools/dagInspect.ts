@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from './types';
-import { getNodeType, listNodeTypes, snapshotRegistry } from '../../core/dag/registry';
+import { getNodeType, listNodeTypes } from '../../core/dag/registry';
 
 export const dagInspectSchema = z.object({
   scope: z
@@ -100,7 +100,6 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
           if (!def) return { type: typeId };
           return {
             type: typeId,
-            description: def.description ?? def.type,
             params: summarizeZodSchema(def.paramSchema),
             inputs: def.inputs,
             outputs: def.outputs,
@@ -130,7 +129,8 @@ function listInputs(
         result.push({ socket, from: `${ref.node}:${ref.socket}` });
       }
     } else if (binding && typeof binding === 'object' && 'node' in binding) {
-      result.push({ socket, from: `${(binding as { node: string }).node}:${(binding as { socket: string }).socket}` });
+      const ref = binding as { node: string; socket: string };
+      result.push({ socket, from: `${ref.node}:${ref.socket}` });
     }
   }
   return result;

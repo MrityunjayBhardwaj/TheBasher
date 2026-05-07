@@ -1,30 +1,51 @@
 // Agent orchestrator — one agent turn per user message.
 //
 // Lifecycle (krama K3):
-//   1. Build system prompt + context (DAG summary, recent activity, tool schemas)
-//   2. Stream response from LLM (text + tool calls)
-//   3. On each complete tool call: validate args via zod, execute handler → Op[]
-//   4. Collect all Op[] → propose diff to diffStore
-//   5. User accepts/rejects (DiffBar UI)
+//   1. Reset diff store (no stale pending diff carries across turns).
+//   2. Filter tools by mode; build a STATIC system prompt (no per-turn DAG
+//      state — keeps re-prompts cheap across multi-turn rounds).
+//   3. Build per-turn user-side context (DAG summary + selection + the
+//      user message). Read fresh DAG state at every round so the agent
+//      can never act on a stale snapshot.
+//   4. Stream a chat completion. On each round:
+//        - text deltas → appended to the current assistant bubble
+//        - tool calls → accumulated by index (H17)
+//        - usage → captured per round (per-request, not summed across
+//          chunks)
+//   5. After streaming: execute tool handlers; for EACH tool call emit a
+//      proper { role:'tool', tool_call_id } message back into the
+//      LLM-facing conversation. Errors come back the same way so the LLM
+//      can retry.
+//   6. If mutation ops were produced this round → fork DAG against
+//      CURRENT state and propose a diff. End the turn.
+//      Otherwise (read-only tools only) → loop for another round so the
+//      LLM can chain inspect → exec or refine its plan.
 //
-// Pure orchestration — no direct DAG mutation. All mutations go through the
-// diff system (V7).
+// Pure orchestration — no direct DAG mutation. All mutations go through
+// the diff system (V7).
 //
-// REF: THESIS.md §18-21, krama K3, vyapti V7.
+// REF: THESIS.md §18-21, krama K3, vyapti V7 + V11.
 
-import type { LLMConfig } from './transport/types';
+import type { LLMConfig, ChatMessage, AssistantToolCall } from './transport/types';
 import { streamChatCompletion, buildToolSchemas } from './transport/openai';
-import type { ToolCall } from './transport/types';
 import { getTool, listTools } from './tools/registry';
-import type { ToolContext, ToolResult } from './tools/types';
-import type { DagState } from '../core/dag/state';
+import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
+import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
+import type { Op } from '../core/dag/types';
+
+const MAX_ROUNDS = 4;
+const DEFAULT_TURN_TOKEN_BUDGET = 30_000;
+const PARAMS_PREVIEW_LIMIT = 240;
+/** Cap on prior session messages threaded into the LLM context. Anchored:
+ * always keep the first user message + the most-recent ones up to this cap. */
+const MAX_HISTORY_MESSAGES = 16;
 
 export interface TurnResult {
-  /** Assistant text response (accumulated from streaming deltas). */
+  /** Assistant text response (accumulated from streaming deltas across all rounds). */
   text: string;
-  /** Number of tool calls made. */
+  /** Number of mutation tool calls made (read-only inspect calls don't count). */
   toolCallCount: number;
   /** Error message if the turn failed. */
   error: string | null;
@@ -33,8 +54,6 @@ export interface TurnResult {
 export interface TurnOptions {
   /** User message text. */
   message: string;
-  /** Current DAG state snapshot (taken before the turn). */
-  dagState: DagState;
   /** Current agent mode. */
   mode: AgentMode;
   /** Abort signal to cancel the turn. */
@@ -48,49 +67,80 @@ export interface TurnOptions {
  * tools (e.g. dag.inspect), see the results, and then call mutation tools
  * (e.g. dag.exec) in a follow-up — all inside one user message.
  *
- * Max 3 rounds to prevent runaway loops.
- * Returns the accumulated text and tool call count.
+ * Bounded by MAX_ROUNDS and the per-turn token budget.
  */
 export async function runAgentTurn(
   config: LLMConfig,
   options: TurnOptions,
 ): Promise<TurnResult> {
-  const { message, dagState, mode, signal, selectedNodeIds } = options;
+  const { message, mode, signal, selectedNodeIds } = options;
   const sessionStore = useAgentSessionStore.getState();
-  const allText: string[] = [];
-  const allOps: { ops: import('../core/dag/types').Op[]; source: string }[] = [];
-  const allToolNames: string[] = [];
-  let error: string | null = null;
 
-  // Build initial messages
-  const systemPrompt = buildSystemPrompt(dagState, mode, selectedNodeIds);
-  const tools = listTools();
-  const toolSchemas = buildToolSchemas(tools);
+  // F7: clear any stale pending diff before starting.
+  useDiffStore.getState().reset();
 
-  // Start the conversation history for this turn
+  // A4: tools available depend on mode. read-only literally cannot call
+  // dag.exec / mesh.add / camera.snapshot / library.import / character.walkTo.
+  const availableTools = filterToolsByMode(listTools(), mode);
+  const toolSchemas = buildToolSchemas(availableTools);
+
+  // A6: static prompt — rules + tool catalogue + op examples. Doesn't
+  // include DAG state. Re-sending it across rounds is cheap.
+  const systemPrompt = buildStaticSystemPrompt(mode, availableTools);
+
+  // A8: capture the prior session history BEFORE pushing the current user
+  // message so we can thread it into the LLM context.
+  const priorHistory = anchorHistory(
+    useAgentSessionStore.getState().session.messages,
+    MAX_HISTORY_MESSAGES,
+  );
+
+  // Push the user message to session (UI history).
   sessionStore.addMessage({ role: 'user', content: message });
   sessionStore.setStreaming(true);
   sessionStore.setError(null);
-  sessionStore.addMessage({ role: 'assistant', content: '' });
 
-  // Multi-turn loop: read-only tools feed results back for another LLM call
-  // Read fresh store state — the snapshot at line 57 is stale after addMessage.
-  let messages = buildMessages(systemPrompt, message, useAgentSessionStore.getState().session.messages);
-  let round = 0;
-  const MAX_ROUNDS = 3;
+  // F2: read fresh DAG state for context. The LLM-facing user message
+  // bundles the current scene summary + selection + the user request.
+  const initialContext = buildContextBlock(useDagStore.getState().state, selectedNodeIds);
 
-  while (round < MAX_ROUNDS) {
-    round++;
-    const roundText: string[] = [];
-    const toolCallAccumulators = new Map<number, {
-      id: string;
-      name: string;
-      argsBuffer: string;
-    }>();
+  // The wire-format conversation — what we actually send to the API.
+  // Distinct from session.messages (UI-facing).
+  const messages: ChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    ...priorHistory.map((m): ChatMessage =>
+      m.role === 'assistant'
+        ? { role: 'assistant', content: m.content }
+        : { role: 'user', content: m.content },
+    ),
+    { role: 'user', content: `${initialContext}\n\nUser request: ${message}` },
+  ];
 
-    if (signal?.aborted) break;
+  const allText: string[] = [];
+  let mutationToolCallCount = 0;
+  let error: string | null = null;
+  let totalTokens = 0;
+  const turnBudget = config.maxTurnTokens ?? DEFAULT_TURN_TOKEN_BUDGET;
 
-    try {
+  try {
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      if (signal?.aborted) break;
+
+      // F5: a fresh assistant bubble per round. Clean separation in the UI
+      // between "round 1 said X, called inspect" and "round 2 said Y, called exec".
+      sessionStore.addMessage({ role: 'assistant', content: '' });
+
+      const roundText: string[] = [];
+      const toolCallAccumulators = new Map<number, {
+        id: string;
+        name: string;
+        argsBuffer: string;
+      }>();
+      // F3: capture exactly one usage event per round (provider sends
+      // cumulative-per-request totals on the final chunk).
+      let roundPromptTokens = 0;
+      let roundCompletionTokens = 0;
+
       await streamChatCompletion(config, {
         messages,
         tools: toolSchemas,
@@ -122,10 +172,8 @@ export async function runAgentTurn(
             }
             case 'done': {
               if (chunk.usage) {
-                sessionStore.addTokenUsage(
-                  chunk.usage.prompt_tokens,
-                  chunk.usage.completion_tokens,
-                );
+                roundPromptTokens = chunk.usage.prompt_tokens;
+                roundCompletionTokens = chunk.usage.completion_tokens;
               }
               break;
             }
@@ -137,198 +185,284 @@ export async function runAgentTurn(
           }
         },
       });
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') {
-        error = 'Cancelled';
-      } else {
-        error = (err as Error).message ?? 'Unknown error';
-      }
-      sessionStore.setError(error);
-      sessionStore.setStreaming(false);
-      return { text: allText.join(''), toolCallCount: allToolNames.length, error };
-    }
 
-    allText.push(...roundText);
+      allText.push(...roundText);
 
-    // Execute complete tool calls for this round
-    const roundOps: { ops: import('../core/dag/types').Op[]; source: string }[] = [];
-    const roundToolNames: string[] = [];
-    const roundToolResultTexts: string[] = [];
-
-    for (const [, acc] of toolCallAccumulators) {
-      if (!acc.name) continue;
-      const toolDef = getTool(acc.name);
-      if (!toolDef) {
-        sessionStore.appendToLastAssistant(`\n\n[Unknown tool: ${acc.name}]`);
-        continue;
+      // F3: one addTokenUsage per round. The session store accumulates
+      // across the turn; UI shows the running total.
+      if (roundPromptTokens > 0 || roundCompletionTokens > 0) {
+        sessionStore.addTokenUsage(roundPromptTokens, roundCompletionTokens);
+        totalTokens += roundPromptTokens + roundCompletionTokens;
       }
 
-      let args: unknown;
-      try {
-        args = JSON.parse(acc.argsBuffer);
-      } catch {
-        sessionStore.appendToLastAssistant(`\n\n[Tool ${acc.name}: invalid JSON arguments]`);
-        continue;
+      // A5: hard cost guard. Abort the loop instead of silently spending.
+      if (totalTokens > turnBudget) {
+        sessionStore.appendToLastAssistant(
+          `\n\n[Cost guard: turn exceeded ${turnBudget} tokens — stopping.]`,
+        );
+        break;
       }
 
-      const parsed = toolDef.paramSchema.safeParse(args);
-      if (!parsed.success) {
-        sessionStore.appendToLastAssistant(`\n\n[Tool ${acc.name}: validation failed — ${parsed.error.message}]`);
-        continue;
+      // No tool calls → text-only response → turn complete.
+      if (toolCallAccumulators.size === 0) {
+        break;
       }
 
-      const ctx: ToolContext = { dagState, selectedNodeIds };
-      try {
-        const handlerResult = toolDef.handler(parsed.data, ctx);
-        const result: ToolResult = handlerResult instanceof Promise ? await handlerResult : handlerResult;
+      // Execute tool calls and build the assistant{tool_calls} + tool result
+      // messages that we'll append to `messages` for the next round.
+      const completedToolCalls: AssistantToolCall[] = [];
+      const toolResultMessages: ChatMessage[] = [];
+      const roundOps: Op[] = [];
+      const roundOpSources: string[] = [];
+      const roundMutationToolNames: string[] = [];
+
+      // F2: re-read DAG state JUST before tool execution. If the user
+      // dispatched an op while the LLM was thinking, tools see the truth.
+      const currentDagState = useDagStore.getState().state;
+      const ctx: ToolContext = { dagState: currentDagState, selectedNodeIds };
+
+      // Iterate by accumulator index (insertion order).
+      const entries = Array.from(toolCallAccumulators.entries()).sort((a, b) => a[0] - b[0]);
+      for (const [, acc] of entries) {
+        if (!acc.name) continue;
+
+        // Reconstruct the assistant.tool_calls entry verbatim from what we
+        // accumulated. This is what we send back so the LLM sees the same
+        // call it made.
+        completedToolCalls.push({
+          id: acc.id || `call_${acc.name}_${Date.now().toString(36)}`,
+          type: 'function',
+          function: { name: acc.name, arguments: acc.argsBuffer },
+        });
+
+        const toolDef = getTool(acc.name);
+        const result = await executeToolCall(acc, toolDef, ctx, mode);
+        const resultMessage = result.text ?? `OK (${result.ops.length} ops)`;
+
+        // F1: each tool_call MUST be answered by exactly one role:'tool'
+        // message with matching tool_call_id. Otherwise OpenAI / Anthropic /
+        // Gemini reject the request. Don't rely on Gemma's leniency.
+        toolResultMessages.push({
+          role: 'tool',
+          tool_call_id: completedToolCalls[completedToolCalls.length - 1].id,
+          content: resultMessage,
+        });
+
+        // Surface the result to the user in the chat too (debuggability).
+        sessionStore.appendToLastAssistant(
+          `\n\n[${acc.name}] ${resultMessage}`,
+        );
+
         if (result.ops.length > 0) {
-          roundOps.push({ ops: result.ops, source: acc.name });
-          roundToolNames.push(acc.name);
+          for (const op of result.ops) {
+            roundOps.push(op);
+            roundOpSources.push(`agent:${acc.name}`);
+          }
+          roundMutationToolNames.push(acc.name);
         }
-        if (result.text) {
-          roundToolResultTexts.push(result.text);
-        }
-      } catch (handlerErr) {
-        sessionStore.appendToLastAssistant(`\n\n[Tool ${acc.name}: ${(handlerErr as Error).message}]`);
-        continue;
       }
+
+      // F1: append the assistant turn (with tool_calls) and the tool
+      // results to the conversation, in the exact order the spec requires.
+      messages.push({
+        role: 'assistant',
+        content: roundText.join(''),
+        tool_calls: completedToolCalls,
+      });
+      messages.push(...toolResultMessages);
+
+      // If mutation ops were produced → propose them as a diff and end the
+      // turn. The user accepts/rejects via DiffBar.
+      if (roundOps.length > 0) {
+        mutationToolCallCount += roundMutationToolNames.length;
+        const description = roundMutationToolNames.join(', ');
+        try {
+          // F8: createFork can throw on op validation (unknown node, cycle,
+          // type mismatch). Without try/catch the orchestrator never sets
+          // streaming=false and the UI hangs.
+          useDiffStore.getState().propose(currentDagState, roundOps, description, roundOpSources);
+        } catch (proposeErr) {
+          const msg = `Diff proposal failed: ${(proposeErr as Error).message}`;
+          sessionStore.appendToLastAssistant(`\n\n[${msg}]`);
+          error = msg;
+        }
+        break;
+      }
+
+      // Only read-only tools were called this round. Loop for another
+      // round so the LLM can act on the inspection results.
     }
-
-    // Accumulate ops across rounds
-    allOps.push(...roundOps);
-    allToolNames.push(...roundToolNames);
-
-    // If no tool calls were made, the LLM responded with text — done.
-    if (toolCallAccumulators.size === 0) {
-      break;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      error = 'Cancelled';
+    } else {
+      error = (err as Error).message ?? 'Unknown error';
     }
-
-    // If mutation ops were produced, propose the diff and done.
-    if (roundOps.length > 0) {
-      const resultBlock = '\n\n--- Tool results ---\n' + roundToolResultTexts.join('\n\n');
-      sessionStore.appendToLastAssistant(resultBlock);
-
-      const flatOps = allOps.flatMap((e) => e.ops);
-      const description = allToolNames.join(', ');
-      useDiffStore.getState().propose(dagState, flatOps, description);
-      break;
-    }
-
-    // Only read-only tools were called. Feed results back for a follow-up.
-    if (roundToolResultTexts.length > 0) {
-      const resultBlock = '\n\n--- Tool results ---\n' + roundToolResultTexts.join('\n\n');
-      sessionStore.appendToLastAssistant(resultBlock);
-    }
-
-    // Use the current message param directly — guaranteed current turn.
-    messages = [
-      ...messages,
-      { role: 'assistant', content: roundText.join('') + '\n\n--- Tool results ---\n' + roundToolResultTexts.join('\n\n') },
-      { role: 'user', content: `You inspected the DAG. Now execute what the user asked. The user's request was: "${message}". Call dag.exec with the concrete ops. Do exactly what was asked — no extra objects, no extra features.` },
-    ];
+    sessionStore.setError(error);
+  } finally {
+    sessionStore.setStreaming(false);
   }
 
-  sessionStore.setStreaming(false);
-  return { text: allText.join(''), toolCallCount: allToolNames.length, error };
+  return { text: allText.join(''), toolCallCount: mutationToolCallCount, error };
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Tool execution
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(dagState: DagState, mode: AgentMode, selectedNodeIds: ReadonlySet<string>): string {
-  const summary = summarizeDag(dagState.nodes, dagState.outputs);
-  const tools = listTools()
-    .map((t) => `  - ${t.name}: ${t.description}`)
-    .join('\n');
-
-  // Describe selected nodes with their current params so the LLM knows
-  // which node to operate on and what values it already has.
-  const selectedDetails: string[] = [];
-  for (const id of selectedNodeIds) {
-    const n = dagState.nodes[id];
-    if (n) {
-      selectedDetails.push(`  - ${id} (${n.type}): ${JSON.stringify(n.params)}`);
-    }
+async function executeToolCall(
+  acc: { id: string; name: string; argsBuffer: string },
+  toolDef: ToolDefinition | undefined,
+  ctx: ToolContext,
+  mode: AgentMode,
+): Promise<ToolResult> {
+  // F6: every error path returns a structured ToolResult so it lands in the
+  // LLM-facing tool message. The LLM can retry with corrections instead of
+  // looping on the same broken call.
+  if (!toolDef) {
+    return { ops: [], text: `ERROR: unknown tool "${acc.name}"` };
   }
-  const selectionBlock = selectedNodeIds.size > 0
-    ? `Selected nodes:\n${selectedDetails.join('\n')}`
-    : 'No node selected.';
 
-  // Concrete Op construction examples the LLM can reference.
+  // A4: belt-and-suspenders mode check. The tools array sent to the LLM is
+  // already filtered, but if the model hallucinates a tool name we don't
+  // want to execute it.
+  if (mode === 'read-only' && acc.name !== 'dag.inspect') {
+    return { ops: [], text: `ERROR: tool "${acc.name}" not available in read-only mode` };
+  }
+
+  let args: unknown;
+  try {
+    args = acc.argsBuffer ? JSON.parse(acc.argsBuffer) : {};
+  } catch {
+    return { ops: [], text: `ERROR: invalid JSON arguments — ${acc.argsBuffer.slice(0, 200)}` };
+  }
+
+  const parsed = toolDef.paramSchema.safeParse(args);
+  if (!parsed.success) {
+    return {
+      ops: [],
+      text: `ERROR: parameter validation failed — ${parsed.error.message}`,
+    };
+  }
+
+  try {
+    const handlerResult = toolDef.handler(parsed.data, ctx);
+    const result: ToolResult = handlerResult instanceof Promise ? await handlerResult : handlerResult;
+    return result;
+  } catch (handlerErr) {
+    return { ops: [], text: `ERROR: ${(handlerErr as Error).message}` };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mode + tool filtering
+// ---------------------------------------------------------------------------
+
+function filterToolsByMode(tools: ToolDefinition[], mode: AgentMode): ToolDefinition[] {
+  if (mode === 'read-only') {
+    return tools.filter((t) => t.name === 'dag.inspect');
+  }
+  // copilot + sandbox both expose the full surface; sandbox isolation is
+  // handled by the diff system (proposed ops never auto-merge regardless).
+  return tools;
+}
+
+// ---------------------------------------------------------------------------
+// Prompt construction
+// ---------------------------------------------------------------------------
+
+function buildStaticSystemPrompt(mode: AgentMode, tools: ToolDefinition[]): string {
+  const toolList = tools.map((t) => `  - ${t.name}: ${t.description}`).join('\n');
+
   const opExamples = `
-Examples — construct these inside dag.exec's ops array:
+Op shape examples (use inside dag.exec's "ops" array):
 
 1. Add a red BoxMesh:
    {"type":"addNode","nodeId":"box1","nodeType":"BoxMesh","params":{"size":[1,1,1],"position":[0,1,0],"rotation":[0,0,0],"material":{"name":"default","color":"#ff0000"}}}
 
-2. Add to scene children:
+2. Wire into scene children:
    {"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"scene","socket":"children"}}
 
 3. Remove a node:
    {"type":"removeNode","nodeId":"box1"}
 
-4. Change a pram:
+4. Change a param:
    {"type":"setParam","nodeId":"box1","paramPath":"material.color","value":"#00ff00"}
 
-5. Disonnect:
+5. Disconnect:
    {"type":"disconnect","from":{"node":"box1","socket":"out"},"to":{"node":"scene","socket":"children"}}
 
 Use lowerCamelCase for nodeId values (e.g. "myCube", "pointLight1").`;
 
+  const paramTips = `
+Common node params:
+- BoxMesh: { size: [1,1,1], position: [0,0,0], rotation: [0,0,0], material: { name: "default", color: "#5af07a" } }
+- SphereMesh: { radius: 1, position: [0,0,0] }
+- DirectionalLight: { intensity: 1, color: "#ffffff", position: [5,10,5], rotation: [0,0,0] }
+- setParam paramPath supports dot paths: "material.color", "position", "rotation".
+- Scene children use list connections: connect { from: {node: childId, socket: "out"}, to: {node: sceneId, socket: "children"} }`;
+
   return [
-    `You are Basher\'s AI agent — a director-first assistant for procedural 3D scene authoring.`,
-    `Current mode: ${mode}`,
+    `You are Basher's AI agent — a director-first assistant for procedural 3D scene authoring.`,
+    `Mode: ${mode}`,
     ``,
-    `You have the following tools available:`,
-    tools,
-    ``,
-    `Workflow (multi-turn — ALWAYS follow these steps):`,
-    `Step 1: Call dag.inspect(scope:"all") to understand the current scene.`,
-    `Step 2: Review the results. Plan your changes.`,
-    `Step 3: Call dag.exec(description, ops) with the concrete ops array.`,
-    `Step 4: The diff is proposed; the user must accept/reject it.`,
+    `Available tools:`,
+    toolList,
     ``,
     `Rules:`,
-    `- You NEVER mutate the scene directly. Every tool returns Op[] that gets proposed as a diff.`,
-    `- The user must accept/reject the diff before any change takes effect.`,
+    `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
+    `- Use dag.inspect when you need to discover node ids or types you don't already know.`,
+    `- Use dag.exec to execute concrete Ops. Make sure new nodes are wired into the scene's "children" socket so they appear.`,
+    `- The user's current selection appears in the Context block at the start of each turn — prefer acting on selected nodes when the request says "this", "selected", "it".`,
     `- Describe your changes clearly so the user knows what you propose.`,
-    `- If a tool call fails, explain the error to the user.`,
-    `- ALWAYS call dag.inspect first to understand the current state.`,
-    `- After dag.inspect returns results, you MUST call dag.exec to make changes — do not stop after inspecting.`,
-    `- Always include a "connect" op to wire new nodes into the scene's "children" socket, otherwise they won't appear.`,
-    ``,
-    `Node pram tips:`,
-    `- BoxMesh: params = { size: [1,1,1], position: [0,0,0], rotation: [0,0,0], material: { name: "default", color: "#5af07a" } }`,
-    `- SphereMesh: params = { radius: 1, position: [0,0,0] }`,
-    `- DirectionalLight: params = { intensity: 1, color: "#ffffff", position: [5,10,5], rotation: [0,0,0] }`,
-    `- To change pram after creation: setParam { nodeId, pramPath: "material.color" or "position" or "rotation" etc., value }`,
-    `- Scene children use list connections. To add a child: connect { from: {node: childId, socket: "out"}, to: {node: sceneId, socket: "children"} }`,
-    ``,
-    `Current DAG state:`,
-    summary,
-    ``,
-    selectionBlock,
-    ``,
+    `- If a tool call returns an ERROR, read the message and either retry with corrected args or explain to the user why it can't be done.`,
     opExamples,
+    paramTips,
   ].join('\n');
 }
 
-function buildMessages(
-  systemPrompt: string,
-  userMessage: string,
-  history: Array<{ role: string; content: string }>,
-): Array<{ role: string; content: string }> {
-  const msgs: Array<{ role: string; content: string }> = [
-    { role: 'system', content: systemPrompt },
-  ];
+function buildContextBlock(
+  dagState: { nodes: Record<string, { type: string; params?: unknown }>; outputs: Record<string, unknown> },
+  selectedNodeIds: ReadonlySet<string>,
+): string {
+  const summary = summarizeDag(dagState.nodes, dagState.outputs);
 
-  // history already contains the latest user message (pushed before calling
-  // this), plus previous turns for context. Keep within token budget.
-  const recentHistory = history.slice(-12);
-  for (const m of recentHistory) {
-    msgs.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
+  // Selection block — id, type, and a truncated JSON of params so the LLM
+  // can act on selected nodes without having to dag.inspect first.
+  const selectionDetails: string[] = [];
+  for (const id of selectedNodeIds) {
+    const n = dagState.nodes[id];
+    if (n) {
+      const paramsStr = truncate(JSON.stringify(n.params ?? {}), PARAMS_PREVIEW_LIMIT);
+      selectionDetails.push(`  - ${id} (${n.type}): ${paramsStr}`);
+    }
   }
+  const selectionBlock = selectedNodeIds.size > 0
+    ? `Selected nodes:\n${selectionDetails.join('\n')}`
+    : 'Selected nodes: none.';
 
-  return msgs;
+  return ['Context (current DAG state):', summary, '', selectionBlock].join('\n');
+}
+
+function truncate(s: string, limit: number): string {
+  return s.length <= limit ? s : `${s.slice(0, limit)}…`;
+}
+
+/**
+ * Anchor the conversation history: always keep the first non-empty message
+ * (preserves the original goal across long sessions) plus the most recent
+ * ones up to the cap.
+ *
+ * Drops empty assistant placeholders left over from in-progress / cancelled
+ * turns.
+ */
+function anchorHistory(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  cap: number,
+): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const filtered = messages.filter((m) => m.content.length > 0);
+  if (filtered.length <= cap) return filtered;
+  const head = filtered[0];
+  const tail = filtered.slice(-(cap - 1));
+  return [head, ...tail];
 }

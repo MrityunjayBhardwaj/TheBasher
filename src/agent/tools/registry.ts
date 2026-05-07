@@ -9,11 +9,11 @@ import type { ToolDefinition } from './types';
 
 const registry = new Map<string, ToolDefinition>();
 
-export function registerTool(def: ToolDefinition): void {
+export function registerTool<T>(def: ToolDefinition<T>): void {
   if (registry.has(def.name)) {
     throw new Error(`Tool already registered: ${def.name}`);
   }
-  registry.set(def.name, def);
+  registry.set(def.name, def as unknown as ToolDefinition);
 }
 
 export function getTool(name: string): ToolDefinition | undefined {

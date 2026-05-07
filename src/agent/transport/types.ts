@@ -1,8 +1,14 @@
-// LLM transport types — provider-agnostic.
+// LLM transport types — provider-agnostic at the domain level, with
+// provider-specific request shapes carved out where they actually differ.
 //
-// The transport layer abstracts over OpenAI-compatible APIs. Deep Infra's
-// google/gemma-4-31B-it uses this format; Anthropic, Groq, and others also
-// offer compatible endpoints.
+// OpenAI Chat Completions (the spec the codebase targets) requires:
+//   1. Assistant turns that emit tool calls carry `tool_calls: [...]`.
+//   2. Each `tool_calls` entry MUST be followed by exactly one
+//      `{ role: 'tool', tool_call_id, content }` message before the next
+//      assistant turn.
+// Without this shape, OpenAI / Anthropic / Gemini reject the request.
+// DeepInfra+Gemma is permissive enough to swallow malformed turns —
+// we don't rely on that.
 //
 // REF: THESIS.md §20-21 (tool surface, context strategy).
 
@@ -14,24 +20,30 @@ export interface LLMConfig {
   maxTokens?: number;
   /** Temperature for generation. 0 = deterministic. */
   temperature?: number;
+  /** Hard cap on cumulative tokens consumed within a single agent turn. */
+  maxTurnTokens?: number;
+  /**
+   * tool_choice strategy — 'auto' (default), 'none', 'required', or
+   * a specific tool name like 'dag.exec'.
+   */
+  toolChoice?: 'auto' | 'none' | 'required' | { name: string };
 }
 
+/**
+ * Provider-agnostic tool definition that the orchestrator passes through.
+ * The transport adapter converts this into the provider-specific request
+ * shape (OpenAI: `{type:'function', function:{name, parameters}}`;
+ * Anthropic would use `{name, input_schema}`).
+ */
 export interface ToolSchema {
   name: string;
   description: string;
   /** JSON Schema for the tool's parameters. */
-  input_schema: Record<string, unknown>;
+  parameters: Record<string, unknown>;
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_call_id?: string;
-  tool_calls?: ToolCall[];
-}
-
-export interface ToolCall {
-  index: number;
+/** Tool-call payload as it appears in an assistant message we send back to the LLM. */
+export interface AssistantToolCall {
   id: string;
   type: 'function';
   function: {
@@ -40,15 +52,30 @@ export interface ToolCall {
   };
 }
 
-export interface ChatChunk {
-  /** Text delta */
-  content: string | null;
-  /** Tool call delta (if streaming tool calls) */
-  tool_calls?: ToolCall[];
-  /** Finish reason if this is the final chunk */
-  finish_reason?: string | null;
-  /** Usage for the final chunk */
-  usage?: { prompt_tokens: number; completion_tokens: number };
+/**
+ * A message in the LLM-facing conversation. Distinct from the UI-facing
+ * session.Message — this is the on-the-wire chat shape.
+ *
+ * Three legitimate combos:
+ *   { role: 'system' | 'user',  content: string }
+ *   { role: 'assistant',        content: string, tool_calls?: [...] }
+ *   { role: 'tool',             content: string, tool_call_id: string }
+ */
+export type ChatMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string; tool_calls?: AssistantToolCall[] }
+  | { role: 'tool'; content: string; tool_call_id: string };
+
+/** Streaming tool-call delta. `id` and `name` may arrive only on the first chunk. */
+export interface ToolCall {
+  index: number;
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
 }
 
 export interface StreamChunk {

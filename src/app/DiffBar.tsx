@@ -15,7 +15,6 @@ import { useDagStore } from '../core/dag/store';
 export function DiffBar() {
   const status = useDiffStore((s) => s.status);
   const pendingDiff = useDiffStore((s) => s.pendingDiff);
-  const toggleOp = useDiffStore((s) => s.toggleOp);
   const selectAll = useDiffStore((s) => s.selectAll);
   const reject = useDiffStore((s) => s.reject);
   const [accepting, setAccepting] = useState(false);

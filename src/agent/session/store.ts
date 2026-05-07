@@ -59,7 +59,7 @@ const INITIAL_SESSION: SessionState = {
   error: null,
 };
 
-export const useAgentSessionStore = create<AgentSessionStore>((set, get) => ({
+export const useAgentSessionStore = create<AgentSessionStore>((set) => ({
   session: { ...INITIAL_SESSION },
   setMode: (mode) => set((s) => ({ session: { ...s.session, mode } })),
   setStreaming: (v) => set((s) => ({ session: { ...s.session, isStreaming: v } })),
@@ -101,7 +101,7 @@ export const useAgentSessionStore = create<AgentSessionStore>((set, get) => ({
 }));
 
 export function summarizeDag(
-  nodes: Record<string, { type: string; params?: Record<string, unknown> }>,
+  nodes: Record<string, { type: string }>,
   outputs: Record<string, unknown>,
 ): string {
   const typeCounts = new Map<string, number>();

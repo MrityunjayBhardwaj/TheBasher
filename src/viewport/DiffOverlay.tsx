@@ -7,11 +7,9 @@
 //
 // REF: THESIS.md §19 (Diff-first), krama K3, vyapti V7.
 
-import { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import * as THREE from 'three';
+import { useMemo } from 'react';
 import { useDiffStore } from '../agent/diff';
 import { evaluate, createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
-import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import type { RenderOutputValue, CameraValue, LightValue, SceneChild } from '../nodes/types';
 
