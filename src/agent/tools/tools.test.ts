@@ -33,13 +33,15 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('tool registry', () => {
-  it('registers all seven tools', () => {
+  it('registers all nine tools', () => {
     registerAllTools();
     const tools = listTools();
-    expect(tools).toHaveLength(7);
+    expect(tools).toHaveLength(9);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'agent.identify',
+      'agent.listMutators',
+      'agent.proposePlan',
       'camera.snapshot',
       'character.walkTo',
       'dag.exec',

@@ -238,6 +238,11 @@ export async function runAgentTurn(
       const roundOps: Op[] = [];
       const roundOpSources: string[] = [];
       const roundMutationToolNames: string[] = [];
+      // Wave C: when agent.proposePlan emits ops, the Mutator's
+      // declared closure spec (carried in the JSON result) overrides
+      // Wave A's selection-inferred spec for THIS round. Multi-mutator
+      // rounds union the roots; the gate runs once over the merged ops.
+      let mutatorClosureSpec: ClosureSpec | undefined;
 
       // F2: re-read DAG state JUST before tool execution. If the user
       // dispatched an op while the LLM was thinking, tools see the truth.
@@ -282,6 +287,21 @@ export async function runAgentTurn(
             roundOpSources.push(`agent:${acc.name}`);
           }
           roundMutationToolNames.push(acc.name);
+
+          // Wave C: capture the Mutator-declared closure when
+          // agent.proposePlan succeeds. The validator already ran the
+          // five gates inside the tool — but propose() will run gate 3
+          // again at the diff-store level, this time with the precise
+          // Mutator-declared spec instead of the orchestrator's
+          // selection-inferred fallback.
+          if (acc.name === 'agent.proposePlan') {
+            const spec = parseProposePlanClosureSpec(result.text);
+            if (spec) {
+              mutatorClosureSpec = mutatorClosureSpec
+                ? unionClosureSpecs(mutatorClosureSpec, spec)
+                : spec;
+            }
+          }
         }
 
         // Wave B Identify post-processing. The tool itself is read-only
@@ -346,12 +366,11 @@ export async function runAgentTurn(
       if (roundOps.length > 0) {
         mutationToolCallCount += roundMutationToolNames.length;
         const description = roundMutationToolNames.join(', ');
-        // V13 closure-preservation: closure roots = post-Identify
-        // selectors when Wave B's pre-stage ran, else raw user
-        // selection. No roots → no spec → vacuous gate (Wave A's
-        // conservative path; Wave C upgrades to Mutator-declared
-        // closures).
-        const closureSpec = inferClosureSpec(identifiedSelectors);
+        // V13 closure-preservation. Precedence:
+        //   1. Mutator-declared closure (Wave C) — exact, contract-driven.
+        //   2. Selection / Identify-resolved roots (Wave A + B) — conservative fallback.
+        //   3. None → vacuous gate (additive prompts).
+        const closureSpec = mutatorClosureSpec ?? inferClosureSpec(identifiedSelectors);
         try {
           // F8: createFork can throw on op validation (unknown node, cycle,
           // type mismatch). Without try/catch the orchestrator never sets
@@ -520,8 +539,9 @@ Common node params:
     ``,
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
+    `- Prefer agent.proposePlan with a Mutator (mutator.rotate, mutator.translate, mutator.scale, mutator.setMaterialColor, mutator.duplicate, mutator.deleteNode) over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, reason } you can react to. Call agent.listMutators to see the registered catalog and contracts.`,
     `- Use dag.inspect when you need to discover node ids or types you don't already know.`,
-    `- Use dag.exec to execute concrete Ops. Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,
+    `- Use dag.exec only for ops the Mutator catalog does not cover (raw addNode/connect/disconnect for node types not yet wrapped, custom multi-step plans). Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,
     `- The Context block lists "Anchors" — the project's named outputs (scene, render) resolved to their concrete node ids (e.g. "n_scene"). Use those exact ids when wiring connections. NEVER use the literal string "scene" or "render" as a node id; that's the placeholder NAME, not a real id.`,
     `- The user's current selection appears in the Context block at the start of each turn — prefer acting on selected nodes when the request says "this", "selected", "it".`,
     `- When the user references an existing node by description (e.g. "the cube", "the green sphere", "selected"), call agent.identify FIRST to resolve the reference to a concrete node id before constructing any Op. The orchestrator may force this call on round 1; receive a "match" with concrete ids, then act. If the result is "ambiguous" or "no-match" the turn ends — do not attempt to guess; the user will pick the candidate next turn.`,
@@ -666,4 +686,42 @@ function parseIdentifyResult(text: string | undefined): IdentifyResult | null {
     // fall through
   }
   return null;
+}
+
+/**
+ * Extract the Mutator-declared ClosureSpec from agent.proposePlan's
+ * success payload. Returns null on any structural mismatch — the
+ * orchestrator falls back to selection-inferred closure.
+ */
+function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | null {
+  if (!text) return null;
+  try {
+    const obj = JSON.parse(text) as unknown;
+    if (!obj || typeof obj !== 'object') return null;
+    const o = obj as Record<string, unknown>;
+    if (o.ok !== true) return null;
+    const roots = o.closureRoots;
+    const edges = o.closureFollowedEdges;
+    if (!Array.isArray(roots) || !Array.isArray(edges)) return null;
+    return {
+      rootSelectors: roots.filter((s): s is NodeId => typeof s === 'string'),
+      followedEdges: edges as ClosureSpec['followedEdges'],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Union two ClosureSpecs by merging root selectors and edge kinds.
+ * Used when a single round dispatches multiple agent.proposePlan
+ * calls — every targeted node must be in the union of declared
+ * closures (gate 3 then runs once over the combined ops).
+ */
+function unionClosureSpecs(a: ClosureSpec, b: ClosureSpec): ClosureSpec {
+  return {
+    rootSelectors: Array.from(new Set([...a.rootSelectors, ...b.rootSelectors])),
+    followedEdges: Array.from(new Set([...a.followedEdges, ...b.followedEdges])) as ClosureSpec['followedEdges'],
+    maxDepth: a.maxDepth ?? b.maxDepth,
+  };
 }
