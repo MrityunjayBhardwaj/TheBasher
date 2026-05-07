@@ -31,6 +31,7 @@
 import { TransformControls } from '@react-three/drei';
 import { useCallback, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
 import { evaluate } from '../core/dag/evaluator';
 import type { Node } from '../core/dag/types';
@@ -126,7 +127,8 @@ export function Gizmo() {
     if (!groupNode || !selectedId) return;
     if (manip) {
       groupNode.position.set(...manip.position);
-      if (manip.rotation) groupNode.rotation.set(...manip.rotation);
+      // params.rotation is degrees — Object3D.rotation expects radians.
+      if (manip.rotation) groupNode.rotation.set(...degVec3ToRad(manip.rotation));
       else groupNode.rotation.set(0, 0, 0);
       if (manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
       else groupNode.scale.set(1, 1, 1);
@@ -171,7 +173,8 @@ export function Gizmo() {
     }
     if (liveMode === 'rotate') {
       if (!manip.rotation) return; // node has no rotation param — no-op
-      const value: Vec3 = [g.rotation.x, g.rotation.y, g.rotation.z];
+      // Object3D.rotation is radians — params.rotation is degrees.
+      const value: Vec3 = radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
       useDagStore
         .getState()
         .dispatch(

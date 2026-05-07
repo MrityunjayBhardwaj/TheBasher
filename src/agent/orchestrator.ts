@@ -395,6 +395,11 @@ Op shape examples (use inside dag.exec's "ops" array):
 Use lowerCamelCase for nodeId values (e.g. "myCube", "pointLight1").`;
 
   const paramTips = `
+Units convention:
+- Positions and sizes are in METERS.
+- Rotations are in DEGREES (X, Y, Z Euler in degrees, like Blender / Unity / Unreal). 90 means a quarter-turn.
+- Colors are CSS hex strings ("#ff0000").
+
 Common node params:
 - BoxMesh: { size: [1,1,1], position: [0,0,0], rotation: [0,0,0], material: { name: "default", color: "#5af07a" } }
 - SphereMesh: { radius: 1, position: [0,0,0] }

@@ -11,6 +11,7 @@ import { useMemo } from 'react';
 import { useDiffStore } from '../agent/diff';
 import { evaluate, createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
+import { degVec3ToRad } from './rotation';
 import type { RenderOutputValue, CameraValue, LightValue, SceneChild } from '../nodes/types';
 
 export function DiffOverlay() {
@@ -82,7 +83,7 @@ function GhostChild({ value }: { value: SceneChild }) {
       return (
         <mesh
           position={value.position as [number, number, number]}
-          rotation={value.rotation as [number, number, number]}
+          rotation={degVec3ToRad(value.rotation as [number, number, number])}
         >
           <boxGeometry args={(value.size ?? [1, 1, 1]) as [number, number, number]} />
           <meshBasicMaterial
@@ -98,7 +99,7 @@ function GhostChild({ value }: { value: SceneChild }) {
       return (
         <mesh
           position={value.position as [number, number, number]}
-          rotation={value.rotation as [number, number, number]}
+          rotation={degVec3ToRad(value.rotation as [number, number, number])}
         >
           <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
           <meshBasicMaterial
@@ -115,7 +116,7 @@ function GhostChild({ value }: { value: SceneChild }) {
       return (
         <group
           position={value.position as [number, number, number]}
-          rotation={value.rotation as [number, number, number]}
+          rotation={degVec3ToRad(value.rotation as [number, number, number])}
           scale={value.scale as [number, number, number]}
         >
           <GhostChild value={value.child} />

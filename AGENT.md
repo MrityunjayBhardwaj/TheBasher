@@ -739,6 +739,30 @@ alone.
 
 ---
 
+## A. Conventions
+
+| Quantity   | Storage (DAG params) | THREE.js seam        | UI display                      |
+| ---------- | -------------------- | -------------------- | ------------------------------- |
+| Position   | meters               | meters (passthrough) | meters                          |
+| Size       | meters               | meters (passthrough) | meters                          |
+| Rotation   | **degrees**          | radians (converted)  | degrees (Inspector + Gizmo)     |
+| Color      | CSS hex (`#rrggbb`)  | hex / Color          | swatch + hex                    |
+
+**Why degrees:** every modern DCC and game engine (Blender, Maya, 3ds Max,
+Cinema 4D, Houdini, Unity, Unreal, Godot) stores user-facing rotation as
+degrees because `45`, `90`, `180` are readable while `π/4`, `π/2`, `π`
+are not. THREE.js's `Object3D.rotation` is radians, so we convert at the
+seam in `src/viewport/rotation.ts` (`degVec3ToRad` / `radVec3ToDeg`).
+
+The agent's system prompt declares this convention so the LLM emits
+`rotation: [90, 0, 0]` for a quarter-turn. Same as a human typing it.
+
+**Catalogued as H20** in `.anvi/hetvabhasa.md` (rotation units mismatch —
+agent wrote degrees, renderer treated as radians, visual was at
+116.6° instead of 90°).
+
+---
+
 ## 9. References
 
 | Source                              | Topic                                                  |

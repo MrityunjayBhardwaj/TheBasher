@@ -213,6 +213,85 @@ await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
 
 **Why:** Zustand `set()` does NOT mutate the existing state object — it creates a new one. Any closure holding the old reference sees pre-mutation data. This is correct Zustand behavior, not a bug, but easy to miss because the local variable name suggests it's the live store. Sister entry: H10 (same mechanism in test code via `dag = w.__basher_dag.getState()` cached across dispatches).
 
+### H20: Rotation units mismatch — DAG stores raw numbers, THREE Euler reads as radians
+
+**Symptom:** Agent (or human) types "rotate 45 degrees on X". `dag.inspect`
+shows `rotation: [90, 0, 0]` after three increments. Visually the cube
+sits at ~116° (past 90°, top-edge tilting toward camera). User says "the
+visual doesn't match the data."
+
+**Trap:** Suspect the LLM's math — did it accidentally add wrong? Check
+the increments: 45 + 20 + 25 = 90. The data is correct. Suspect
+floating-point drift in setParam? No — 90 stored exactly. Suspect a
+THREE quirk? Tinker with euler order, gizmo mode, axis basis. None of
+that fires. The bug isn't in the math or the gizmo — it's at the units
+boundary nobody declared.
+
+**Root cause:** `params.rotation` is a `vec3` of raw numbers. THREE.js's
+`<mesh rotation={[x,y,z]}>` interprets those numbers as **radians** via
+`THREE.Euler`. The codebase had no conversion step anywhere — `grep -rn
+degToRad` returned zero hits. The gizmo round-tripped in radians (so
+gizmo-only edits worked), but the agent and the human both think in
+degrees ("rotate 45 deg"), so any value entered as degrees gets
+rendered as that-many-radians: 90 stored = 90 rad ≈ 5157° ≈ 116.6°
+visual (mod 360).
+
+**Real fix:** adopt the universal DCC/game-engine convention — degrees
+in DAG params, radians at the THREE seam. Single helper module
+`src/viewport/rotation.ts` exporting `degVec3ToRad` / `radVec3ToDeg`.
+Convert at five sites:
+1. `SceneFromDAG.tsx` — every `<mesh|group rotation={...}>` for BoxMesh,
+   SphereMesh, Transform.
+2. `SceneFromDAG.tsx` — directional light Euler for direction
+   computation.
+3. `LightHelpers.tsx` — directional light helper Euler + light-gizmo
+   quaternion construction.
+4. `DiffOverlay.tsx` — ghost rendering mirrors SceneFromDAG.
+5. `Gizmo.tsx` — when reading stored params into the proxy
+   group (deg → rad), and when writing the proxy back into params
+   (rad → deg). Round-trip is exact (`radToDeg(degToRad(x)) ≈ x` to
+   float precision).
+
+Scatter `inst.rotation` is procedurally generated in radians by
+`ScatterNode` (yaw uniform in [0, 2π)) — leave as radians. Bone rotation
+in skeletal pose is also internal radians from animation clips —
+leave. Character `heading` is computed via `atan2` in `walkTo` —
+radians, leave.
+
+Update agent system prompt to declare the convention explicitly:
+"Rotations are in DEGREES (X, Y, Z Euler in degrees, like Blender /
+Unity / Unreal). 90 means a quarter-turn."
+
+**Detection signal:** stored rotation `[X, 0, 0]` produces a visual
+roughly at `X * 180/π mod 360` instead of `X mod 360`. The off-by-
+57.3× ratio is the radian-vs-degree fingerprint. For small values the
+mismatch is invisible (0.1 rad = 5.7°, both look like ~zero rotation),
+which is why the bug stayed hidden through P0-P2.6 — gizmo edits land
+small radian values that look fine.
+
+**Why nobody caught it earlier:** the gizmo round-trips in radians
+internally. Inspector displays raw numbers (no unit label). The seed
+scene uses `[0,0,0]` (unit-invariant). Acceptance pixel-diff tests use
+`[0,0,0]`. The bug only appeared the moment a non-zero rotation was
+entered as a degree value — which happened the first time the agent
+was asked "rotate 45 degrees."
+
+**REF:** P2.5 + agent integration (2026-05-07);
+`src/viewport/rotation.ts` (helpers); `src/viewport/SceneFromDAG.tsx`
+(BoxMesh/SphereMesh/Transform/DirLight conversion sites);
+`src/viewport/LightHelpers.tsx` (helper Euler);
+`src/viewport/DiffOverlay.tsx` (ghost render); `src/app/Gizmo.tsx:129,174`
+(read/write conversion); `src/agent/orchestrator.ts` (system prompt
+declares units convention).
+
+**Sister patterns:** any other field where a raw number's interpretation
+depends on the consumer's convention. Watch for: angles in animation
+clips, FOV in cameras (THREE PerspectiveCamera takes degrees on the
+constructor but the `.fov` property is also degrees — fine, consistent),
+HSL color values, units of light intensity (lumens vs unitless). The
+class is **silent unit boundary**: the value is correct in some unit,
+just not the unit the consumer expected.
+
 ### H8: Playwright pixel-diff snapshots are platform-suffixed by default
 
 **Symptom:** Local CI run on macOS green; GitHub Actions Ubuntu runner fails test #7 with `A snapshot doesn't exist at .../postfx-beauty-chromium-linux.png, writing actual.`

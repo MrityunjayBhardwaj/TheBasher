@@ -24,6 +24,7 @@ import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
+import { degVec3ToRad } from './rotation';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -260,7 +261,9 @@ function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
       return;
     }
     // direction = rotation applied to (0,-1,0). target = position + dir.
-    const dir = new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(rx, ry, rz));
+    // params.rotation is in degrees — Euler expects radians.
+    const [erx, ery, erz] = degVec3ToRad([rx, ry, rz]);
+    const dir = new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(erx, ery, erz));
     light.target.position.set(px + dir.x, py + dir.y, pz + dir.z);
     light.target.updateMatrixWorld();
   }, [hasRotation, rx, ry, rz, px, py, pz]);
@@ -416,7 +419,7 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
   return (
     <mesh
       position={value.position as [number, number, number]}
-      rotation={value.rotation as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
     >
       <boxGeometry args={value.size as [number, number, number]} />
       <meshStandardMaterial
@@ -439,7 +442,7 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
   return (
     <mesh
       position={value.position as [number, number, number]}
-      rotation={value.rotation as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
     >
       <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
       <meshStandardMaterial
@@ -507,7 +510,7 @@ function TransformR({ value, override }: { value: TransformValue; override?: Mat
   return (
     <group
       position={value.position as [number, number, number]}
-      rotation={value.rotation as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={value.scale as [number, number, number]}
     >
       <MeshChild value={value.child} override={override} />

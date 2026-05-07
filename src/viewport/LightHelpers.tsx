@@ -18,6 +18,7 @@
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
+import { degVec3ToRad } from './rotation';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import type {
   AmbientLightValue,
@@ -103,7 +104,9 @@ function directionalDirection(value: DirectionalLightValue): THREE.Vector3 {
   // makes the helper safe regardless.
   const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
   if (rx !== 0 || ry !== 0 || rz !== 0) {
-    return new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(rx, ry, rz)).normalize();
+    // params.rotation is in degrees — Euler expects radians.
+    const [erx, ery, erz] = degVec3ToRad([rx, ry, rz]);
+    return new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(erx, ery, erz)).normalize();
   }
   const v = new THREE.Vector3(-value.position[0], -value.position[1], -value.position[2]);
   if (v.lengthSq() === 0) v.set(0, -1, 0);
@@ -156,7 +159,9 @@ function DirectionalLightHelper({
 function PointLightHelper({ value, pickId }: { value: PointLightValue; pickId: string | null }) {
   const rot = value.rotation ?? [0, 0, 0];
   const rotQuat = useMemo(() => {
-    const e = new THREE.Euler(rot[0], rot[1], rot[2]);
+    // params.rotation is in degrees — Euler expects radians.
+    const [rx, ry, rz] = degVec3ToRad(rot as [number, number, number]);
+    const e = new THREE.Euler(rx, ry, rz);
     return new THREE.Quaternion().setFromEuler(e);
   }, [rot[0], rot[1], rot[2]]); // eslint-disable-line react-hooks/exhaustive-deps
   const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
