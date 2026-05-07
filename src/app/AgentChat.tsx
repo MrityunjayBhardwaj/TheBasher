@@ -4,6 +4,10 @@
 // The orchestrator handles the LLM turn and reads fresh DAG state on every
 // round; this component just drives it with the user message + selection.
 //
+// Styling matches the rest of the editor chrome: mono font, fg/muted/border
+// theme tokens, accent green for active states. No shadcn — the project
+// uses plain Tailwind with the palette in `tailwind.config.ts`.
+//
 // REF: THESIS.md §15-17 (editor chrome), §21 (context strategy).
 
 import { useState, useCallback, useRef } from 'react';
@@ -14,6 +18,8 @@ import type { LLMConfig } from '../agent/transport/types';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
 const DEFAULT_MODEL = 'google/gemma-4-31B-it';
+
+const MODES: AgentMode[] = ['read-only', 'copilot', 'sandbox'];
 
 function getLLMConfig(): LLMConfig {
   const env = import.meta.env;
@@ -80,120 +86,109 @@ export function AgentChat() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, fontSize: 13 }}>
+    <div className="flex h-full min-h-0 flex-col font-mono text-xs text-fg" data-testid="agent-chat">
       {/* Mode selector */}
-      <div style={{ display: 'flex', gap: 4, padding: '6px 8px', borderBottom: '1px solid #333' }}>
-        <span style={{ color: '#888', marginRight: 4 }}>Mode:</span>
-        {(['read-only', 'copilot', 'sandbox'] as AgentMode[]).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            style={{
-              flex: 1,
-              padding: '2px 6px',
-              border: '1px solid #444',
-              borderRadius: 3,
-              cursor: 'pointer',
-              fontSize: 11,
-              background: session.mode === m ? '#2a4a6a' : '#1a1a1a',
-              color: session.mode === m ? '#88ccff' : '#888',
-            }}
-          >
-            {m}
-          </button>
-        ))}
+      <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        <span className="mr-1 text-[10px] uppercase tracking-wide text-fg/50">Mode</span>
+        {MODES.map((m) => {
+          const active = session.mode === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              data-testid={`agent-mode-${m}`}
+              className={[
+                'flex-1 rounded border px-2 py-0.5 text-[10px]',
+                active
+                  ? 'border-accent bg-muted text-accent'
+                  : 'border-border bg-muted text-fg/60 hover:border-accent/60 hover:text-fg/90',
+              ].join(' ')}
+            >
+              {m}
+            </button>
+          );
+        })}
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflow: 'auto', padding: 8 }} data-testid="agent-messages">
-        {session.messages.map((msg) => (
-          <div
-            key={msg.id}
-            style={{
-              marginBottom: 8,
-              padding: '6px 8px',
-              borderRadius: 4,
-              background: msg.role === 'assistant' ? '#1a1a2e' : '#222',
-              borderLeft: `3px solid ${msg.role === 'assistant' ? '#88aaff' : '#5af07a'}`,
-            }}
-          >
-            <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>
-              {msg.role === 'assistant' ? 'Agent' : 'You'}
-            </div>
-            <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {msg.content || (session.isStreaming ? '...' : '')}
-            </div>
+      <div className="flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
+        {session.messages.length === 0 && !session.error ? (
+          <div className="px-1 py-3 text-[11px] text-fg/40">
+            Ask the agent to inspect, plan, or modify the scene. Selected nodes
+            are surfaced in the agent's context.
           </div>
-        ))}
-        {session.error && (
-          <div style={{ padding: '6px 8px', color: '#ff8888', fontSize: 12 }}>
-            Error: {session.error}
+        ) : null}
+        {session.messages.map((msg) => {
+          const isAgent = msg.role === 'assistant';
+          return (
+            <div
+              key={msg.id}
+              className={[
+                'mb-1.5 rounded border-l-2 px-2 py-1',
+                isAgent ? 'border-accent/70 bg-muted/60' : 'border-fg/30 bg-muted/30',
+              ].join(' ')}
+            >
+              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-fg/40">
+                {isAgent ? 'agent' : 'you'}
+              </div>
+              <div className="whitespace-pre-wrap break-words text-[11px] text-fg/85">
+                {msg.content || (session.isStreaming ? '…' : '')}
+              </div>
+            </div>
+          );
+        })}
+        {session.error ? (
+          <div className="mt-1 rounded border border-red-500/40 bg-red-500/5 px-2 py-1 text-[11px] text-red-300">
+            {session.error}
           </div>
-        )}
+        ) : null}
       </div>
 
-      {/* Token usage */}
-      {session.tokenUsage.total > 0 && (
+      {/* Token usage footer */}
+      {session.tokenUsage.total > 0 ? (
         <div
-          style={{ padding: '2px 8px', fontSize: 11, color: '#555', textAlign: 'right' }}
+          className="border-t border-border px-2 py-0.5 text-right text-[10px] text-fg/40"
           data-testid="agent-tokens"
         >
-          Tokens: {session.tokenUsage.total.toLocaleString()} (↑{session.tokenUsage.input} / ↓{session.tokenUsage.output})
+          Tokens: {session.tokenUsage.total.toLocaleString()}
+          <span className="ml-1 text-fg/30">
+            (↑{session.tokenUsage.input.toLocaleString()} ↓{session.tokenUsage.output.toLocaleString()})
+          </span>
         </div>
-      )}
+      ) : null}
 
       {/* Input area */}
-      <div style={{ borderTop: '1px solid #333', padding: 6 }}>
-        <div style={{ display: 'flex', gap: 4 }}>
+      <div className="border-t border-border p-2">
+        <div className="flex items-stretch gap-1.5">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={running ? 'Waiting for response...' : 'Ask the agent...'}
+            placeholder={running ? 'waiting for response…' : 'ask the agent…'}
             disabled={running}
             rows={2}
-            style={{
-              flex: 1,
-              background: '#111',
-              border: '1px solid #333',
-              borderRadius: 4,
-              padding: '4px 6px',
-              color: '#ccc',
-              fontSize: 12,
-              resize: 'none',
-              fontFamily: 'inherit',
-            }}
+            data-testid="agent-input"
+            className="flex-1 resize-none rounded border border-border bg-muted px-2 py-1 font-mono text-[11px] text-fg placeholder:text-fg/30 focus:border-accent focus:outline-none disabled:opacity-50"
           />
           {running ? (
             <button
+              type="button"
               onClick={handleCancel}
-              style={{
-                padding: '4px 10px',
-                border: '1px solid #844',
-                borderRadius: 4,
-                cursor: 'pointer',
-                background: '#2a1a1a',
-                color: '#ff8888',
-                fontSize: 12,
-              }}
+              data-testid="agent-cancel"
+              className="rounded border border-red-500/40 bg-muted px-2 text-[11px] text-red-300 hover:border-red-400 hover:text-red-200"
             >
-              Cancel
+              cancel
             </button>
           ) : (
             <button
+              type="button"
               onClick={handleSend}
               disabled={!input.trim()}
-              style={{
-                padding: '4px 10px',
-                border: '1px solid #444',
-                borderRadius: 4,
-                cursor: input.trim() ? 'pointer' : 'default',
-                background: input.trim() ? '#2d6a4f' : '#222',
-                color: input.trim() ? '#fff' : '#666',
-                fontSize: 12,
-              }}
+              data-testid="agent-send"
+              className="rounded border border-border bg-muted px-3 text-[11px] text-fg/80 hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg/80"
             >
-              Send
+              send
             </button>
           )}
         </div>
