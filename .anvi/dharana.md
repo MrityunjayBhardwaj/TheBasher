@@ -109,6 +109,41 @@
 
 ### Project-specific axes (created through blind spot detection)
 
+#### Axis: DCC-LLM bridge reference
+
+**ORIGIN:** 2026-05-08, blender-mcp adoption analysis. The question
+"should we adopt X from [DCC-LLM bridge]?" recurs as the ecosystem
+matures (blender-mcp at 21K stars; Houdini-MCP, C4D-MCP, Maya-LLM
+likely to land soon). Each bridge is a reference implementation
+mining ground for ideas, not an architectural template.
+
+**WHY this axis exists:** these bridges optimize for *Blender's API
+surface* (vast, unbounded — they need `execute_blender_code`).
+Basher's DAG vocabulary is *bounded* — we have V1 (op-as-only-mutation
+path) + V7 (handlers return Op[]) + diff-first preview. Adopting
+their patterns naively imports their compromises. We need a deliberate
+filter: take ideas that align with V1/V7; reject ones that violate
+them.
+
+**HOW to apply:** when surveying a DCC-LLM bridge (or any LLM-tool
+integration), separate ideas into three buckets:
+1. **Adopt** — vision/screenshot tools, asset-catalog integrations,
+   AI-3D-generation, telemetry, strategy-as-resource patterns.
+2. **Defer** — MCP-server-as-additional-surface (v0.6 scope when
+   external IDE drive becomes a real ask).
+3. **Reject** — arbitrary code execution, direct setState bypasses,
+   any pattern that puts the agent on a parallel mutation path.
+
+**Detection signal:** any time research surfaces a popular LLM-tool
+bridge. Default action: 30-minute survey, ranked recommendation,
+reject-list with reasoning. blender-mcp is the canonical first
+worked example.
+
+**Cross-refs:** P2.5.2 PLAN.md (the survey + adoption decisions);
+post-blender-mcp commits `a710a9f` (strategy + telemetry) and the
+rejected list in PLAN.md §10 (external assets → P3, AI gen → P5,
+vision tool → optional pull-forward, MCP server → v0.6+).
+
 #### Axis: Convention boundary (units / coordinate / format)
 
 **ORIGIN:** H20 (rotation units mismatch, 2026-05-07) — silent unit
@@ -342,6 +377,51 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization still sound after the CI-fix train.** The repeat-rate at the test/observation boundary (5 of 16 entries) is the highest-density cluster — but the underlying mechanisms are distinct. If a third async-seed-race entry lands, that's the trigger to consolidate into a vyapti ("every test that depends on async-seeded state must wait on a seed-availability signal").
 
   **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-08 — post-P2.5.1 correctness train + P2.5.2 plan committed (NOT executed):
+
+- **P2.5.1 shipped (commits 1ae2c92 → de84341 → a266e03):** orchestrator
+  rewrite + 8 correctness fixes (F1-F8 from AGENT.md analysis), Tailwind
+  AgentChat refactor, AGENT.md doc, H20 (rotation units → degrees in DAG,
+  radians at THREE seam), dcc-reference.md (20-section convention lookup
+  + V12 invariant), H21 (anchor placeholder bug + Anchors block in
+  per-turn context). Wire format now OpenAI-spec-correct (assistant
+  {tool_calls} → role:'tool' with tool_call_id) — testable on Claude /
+  GPT-4o via OpenRouter.
+- **B3 (Agent ↔ DAG)** observation targets extended for selection
+  context check + multi-turn drift check.
+- **B4 (Node evaluator ↔ time/randomness)** unchanged — V2 + V3 still
+  ALIGNED post-rewrite (rotation conversion lives in viewport, not in
+  evaluator; purity preserved).
+- **New axes activated:** convention boundary (post-H20 + dcc-reference);
+  DCC-LLM bridge reference (post-blender-mcp survey, 2026-05-08).
+- **P2.5.2 plan committed (62d58f1 + a710a9f):** four-wave pipeline
+  hardening (closure preservation + Identify stage + Mutator catalog +
+  catalogue/strategy/telemetry). 36-46h scope. NOT executed yet — picks
+  up in next session via `.planning/p2.5.2-agent-pipeline/PLAN.md`.
+
+- **Fatality test (post-P2.5.1, 2026-05-08):**
+  1. Hetvabhasa clustering: 19 entries (added H19, H20, H21 since P2.5).
+     Three new entries cluster at the agent boundary (B3) — three
+     occurrences within one milestone is the consolidation trigger.
+     **Verdict:** consolidate B3's hetvabhasa cluster into a vyapti
+     once Wave C lands ("every agent edit goes through a Mutator with
+     declared closure + preconditions"). Already specified in PLAN.md
+     as V13 + V14.
+  2. Vyapti span: V11 (selection wiring), V12 (convention declared) ALIGNED.
+     V13/V14/V15 planned, NOT YET IMPLEMENTED — Wave A-D will land them.
+  3. Krama crossing: K3 (agent tool dispatch) extended with multi-turn
+     loop in P2.5 v2; will extend further with Identify stage in Wave B.
+     No new lifecycle crossings 3+ module boundaries.
+
+  **Verdict: organization remains sound after P2.5.1.** B3's
+  three-pattern cluster is a *cluster of similar mechanisms*, not a
+  structural fatality — closure preservation + Mutator preconditions
+  (P2.5.2 plan) is the right structural answer. No restructuring;
+  invariant tightening.
+
+  **Next update trigger:** Wave A completion (closure expansion +
+  preservation gate ships) → V13 flips to ALIGNED.
 
 **Updated:** 2026-05-07 — post-P2.5 v2 (multi-turn agent loop + selection context):
 
