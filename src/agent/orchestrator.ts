@@ -375,13 +375,16 @@ function buildStaticSystemPrompt(mode: AgentMode, tools: ToolDefinition[]): stri
   const toolList = tools.map((t) => `  - ${t.name}: ${t.description}`).join('\n');
 
   const opExamples = `
-Op shape examples (use inside dag.exec's "ops" array):
+Op shape examples (use inside dag.exec's "ops" array). Tokens like
+<sceneId> are PLACEHOLDERS — read the actual id from the Context
+block's "Anchors" section (e.g. "scene → n_scene"). Never use the
+literal string "scene", "render", "ground" etc. as a node id.
 
 1. Add a red BoxMesh:
    {"type":"addNode","nodeId":"box1","nodeType":"BoxMesh","params":{"size":[1,1,1],"position":[0,1,0],"rotation":[0,0,0],"material":{"name":"default","color":"#ff0000"}}}
 
-2. Wire into scene children:
-   {"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"scene","socket":"children"}}
+2. Wire into scene children (replace <sceneId> with the actual scene id):
+   {"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
 
 3. Remove a node:
    {"type":"removeNode","nodeId":"box1"}
@@ -390,9 +393,11 @@ Op shape examples (use inside dag.exec's "ops" array):
    {"type":"setParam","nodeId":"box1","paramPath":"material.color","value":"#00ff00"}
 
 5. Disconnect:
-   {"type":"disconnect","from":{"node":"box1","socket":"out"},"to":{"node":"scene","socket":"children"}}
+   {"type":"disconnect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
 
-Use lowerCamelCase for nodeId values (e.g. "myCube", "pointLight1").`;
+Use lowerCamelCase for new nodeId values you create (e.g. "myCube",
+"pointLight1"). For existing nodes, ALWAYS use the exact id from the
+Context block or from a dag.inspect result.`;
 
   const paramTips = `
 Units convention:
@@ -417,7 +422,8 @@ Common node params:
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
     `- Use dag.inspect when you need to discover node ids or types you don't already know.`,
-    `- Use dag.exec to execute concrete Ops. Make sure new nodes are wired into the scene's "children" socket so they appear.`,
+    `- Use dag.exec to execute concrete Ops. Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,
+    `- The Context block lists "Anchors" — the project's named outputs (scene, render) resolved to their concrete node ids (e.g. "n_scene"). Use those exact ids when wiring connections. NEVER use the literal string "scene" or "render" as a node id; that's the placeholder NAME, not a real id.`,
     `- The user's current selection appears in the Context block at the start of each turn — prefer acting on selected nodes when the request says "this", "selected", "it".`,
     `- Describe your changes clearly so the user knows what you propose.`,
     `- If a tool call returns an ERROR, read the message and either retry with corrected args or explain to the user why it can't be done.`,
@@ -427,10 +433,28 @@ Common node params:
 }
 
 function buildContextBlock(
-  dagState: { nodes: Record<string, { type: string; params?: unknown }>; outputs: Record<string, unknown> },
+  dagState: { nodes: Record<string, { type: string; params?: unknown }>; outputs: Record<string, { node: string; socket: string } | unknown> },
   selectedNodeIds: ReadonlySet<string>,
 ): string {
   const summary = summarizeDag(dagState.nodes, dagState.outputs);
+
+  // Anchors block — resolve project-level named outputs (scene, render, ...)
+  // into their concrete node ids. Closes H21 (agent invented "scene" as a
+  // literal node id from prompt examples, not knowing the seed scene's
+  // aggregator is "n_scene"). Surfacing this up front means the model
+  // never has to guess.
+  const anchorLines: string[] = [];
+  for (const [name, ref] of Object.entries(dagState.outputs)) {
+    if (ref && typeof ref === 'object' && 'node' in ref) {
+      const r = ref as { node: string; socket: string };
+      const node = dagState.nodes[r.node];
+      const typeTag = node ? ` (${node.type})` : '';
+      anchorLines.push(`  - ${name} → ${r.node}${typeTag}, socket "${r.socket}"`);
+    }
+  }
+  const anchorsBlock = anchorLines.length > 0
+    ? `Anchors (project named outputs — use these ids verbatim, do NOT use the names "scene"/"render" as node ids):\n${anchorLines.join('\n')}`
+    : 'Anchors: (none — call dag.inspect to discover node ids)';
 
   // Selection block — id, type, and a truncated JSON of params so the LLM
   // can act on selected nodes without having to dag.inspect first.
@@ -446,7 +470,7 @@ function buildContextBlock(
     ? `Selected nodes:\n${selectionDetails.join('\n')}`
     : 'Selected nodes: none.';
 
-  return ['Context (current DAG state):', summary, '', selectionBlock].join('\n');
+  return ['Context (current DAG state):', summary, '', anchorsBlock, '', selectionBlock].join('\n');
 }
 
 function truncate(s: string, limit: number): string {

@@ -298,6 +298,82 @@ units/convention bugs should consult that doc BEFORE picking a side
 — it covers Blender / Houdini / Cinema 4D / 3ds Max / Maya / Unity /
 Unreal / Godot / glTF for every decision Basher faces.
 
+### H21: Agent invents node IDs from system-prompt placeholders
+
+**Symptom:** Agent calls `dag.exec` with ops referencing `node: "scene"`.
+DiffBar shows "Diff proposal failed: Node not found: scene". The DAG's
+actual scene aggregator is `n_scene` (or whatever id the seed / user's
+project picked). The agent never called `dag.inspect`, so it had no way
+to know.
+
+**Trap:** Suspect the LLM is hallucinating, suspect zod validation, suspect
+a missing tool call. None of those — the model did exactly what the
+system prompt taught it: copied the example verbatim. The model is
+disciplined; the *prompt* is wrong.
+
+**Root cause:** The agent system prompt's op-shape examples used
+`"scene"` as a literal placeholder for the scene aggregator's node id:
+
+```
+{"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"scene","socket":"children"}}
+```
+
+A model with no other signal will copy that string verbatim. The
+*Selection* block in the per-turn context gave the model selected node
+ids, but the scene-root anchor isn't selected — it's reachable only
+via `outputs.scene.node`, which the prompt never surfaced.
+
+This is a class bug, not a one-off — every project-level named output
+(scene, render, future ground/postFx pseudo-anchors) has the same gap.
+
+**Real fix:** two layers, one cause.
+
+1. **Make the placeholder syntactically distinct.** Replace literal
+   `"scene"` in op examples with `<sceneId>` and add an explicit rule:
+   "tokens like `<sceneId>` are PLACEHOLDERS; read the actual id from
+   the Context block's Anchors section."
+2. **Inject an Anchors block into the per-turn context** that resolves
+   each named output to its concrete `(nodeId, type, socket)` triple.
+   The model now sees:
+
+   ```
+   Anchors (project named outputs):
+     - scene → n_scene (Scene), socket "out"
+     - render → n_render (RenderOutput), socket "out"
+   ```
+
+   Combined, the model has both the hint (placeholder syntax) and the
+   answer (resolved id) up front. No `dag.inspect` round-trip needed
+   for the common case.
+
+**Detection signal:** any "Node not found: <name>" error where `<name>`
+matches a project-output key (`outputs[name]` exists in the DAG). The
+mismatch is **placeholder-as-id** — the model used the output key as
+the node id directly.
+
+**Why nobody caught it earlier:** the original P2.5 macro tools
+(`mesh.add`, `library.import`, `camera.snapshot`, `character.walkTo`)
+all read `outputs.scene` server-side and constructed the connect op
+with the resolved node id — the macros hid the gap. The new universal
+`dag.exec` tool (P2.5 v2) lets the agent author connections directly,
+exposing the prompt's literal `"scene"` to be copied. The bug appeared
+on the first dag.exec that needed to wire a child to the scene.
+
+**REF:** P2.5 v2 + agent integration (2026-05-08);
+`src/agent/orchestrator.ts` (`buildContextBlock` Anchors block,
+`buildStaticSystemPrompt` placeholder syntax + rule);
+`src/core/project/default.ts:36` (seed Scene node id is `n_scene`);
+`src/core/dag/ops.ts` (applyOp throws "Node not found: <id>"). Sister
+class to **anchor / placeholder confusion** more generally — every
+DAG that exposes named outputs has the same trap if the prompt
+collapses placeholder names with real ids.
+
+**Cross-refs:** `.anvi/dcc-reference.md` doesn't apply here (this isn't
+a units/format convention, it's a name-resolution boundary). Future
+related entries should track: (1) other named outputs added (P4
+render/passes), (2) any case where a tool surface conflates a "concept
+name" with a concrete id.
+
 ### H8: Playwright pixel-diff snapshots are platform-suffixed by default
 
 **Symptom:** Local CI run on macOS green; GitHub Actions Ubuntu runner fails test #7 with `A snapshot doesn't exist at .../postfx-beauty-chromium-linux.png, writing actual.`
