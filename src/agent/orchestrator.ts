@@ -35,6 +35,7 @@ import { useDiffStore } from './diff/store';
 import { ClosurePreservationError } from '../agent/closure/expand';
 import type { ClosureSpec } from './closure/types';
 import type { IdentifyResult } from './identify/types';
+import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
 import type { Op, NodeId } from '../core/dag/types';
 
@@ -264,8 +265,18 @@ export async function runAgentTurn(
         });
 
         const toolDef = getTool(acc.name);
+        const toolStart = performance.now();
         const result = await executeToolCall(acc, toolDef, ctx, mode);
+        const toolDuration = performance.now() - toolStart;
         const resultMessage = result.text ?? `OK (${result.ops.length} ops)`;
+        // Wave D telemetry: tool name + outcome + duration only. No
+        // args, no DAG content, no prompt text. Killswitch-respecting.
+        recordEvent({
+          kind: 'tool_call',
+          toolName: acc.name,
+          success: !resultMessage.startsWith('ERROR:'),
+          durationMs: Math.round(toolDuration),
+        });
 
         // F1: each tool_call MUST be answered by exactly one role:'tool'
         // message with matching tool_call_id. Otherwise OpenAI / Anthropic /
@@ -518,17 +529,11 @@ Use lowerCamelCase for new nodeId values you create (e.g. "myCube",
 Context block or from a dag.inspect result.`;
 
   const paramTips = `
-Units convention:
-- Positions and sizes are in METERS.
-- Rotations are in DEGREES (X, Y, Z Euler in degrees, like Blender / Unity / Unreal). 90 means a quarter-turn.
-- Colors are CSS hex strings ("#ff0000").
-
-Common node params:
-- BoxMesh: { size: [1,1,1], position: [0,0,0], rotation: [0,0,0], material: { name: "default", color: "#5af07a" } }
-- SphereMesh: { radius: 1, position: [0,0,0] }
-- DirectionalLight: { intensity: 1, color: "#ffffff", position: [5,10,5], rotation: [0,0,0] }
+Quick conventions (full guidance in strategy resources — call agent.getStrategy):
+- Positions/sizes in METERS, rotations in DEGREES, colors as "#rrggbb" hex.
 - setParam paramPath supports dot paths: "material.color", "position", "rotation".
-- Scene children use list connections: connect { from: {node: childId, socket: "out"}, to: {node: sceneId, socket: "children"} }`;
+- Scene children use list connections: connect { from: {node: childId, socket: "out"}, to: {node: sceneId, socket: "children"} }
+- For deeper guidance on units, materials, lighting, cameras, asset choice: agent.listStrategies / agent.getStrategy({ topic }).`;
 
   return [
     `You are Basher's AI agent — a director-first assistant for procedural 3D scene authoring.`,

@@ -1,0 +1,196 @@
+// Strategy catalog — register/get/list. Ships with five starter
+// resources covering units, materials, lighting, cameras, asset
+// choice. Author additional resources by calling registerStrategy.
+//
+// Resources are inline-stringified (vs separate .md files) for v0.5
+// to keep the bundle simple — Vite resolves them at build time. P3+
+// can move to glob-loaded markdown files when the catalog grows.
+//
+// REF: P2.5.2 PLAN §5 Wave D step 8.
+
+import type { StrategyResource, StrategyTopic } from './types';
+
+const registry = new Map<StrategyTopic, StrategyResource>();
+
+export function registerStrategy(resource: StrategyResource): void {
+  if (registry.has(resource.topic)) {
+    throw new Error(`Strategy already registered: ${resource.topic}`);
+  }
+  registry.set(resource.topic, resource);
+}
+
+export function getStrategy(topic: StrategyTopic): StrategyResource | undefined {
+  return registry.get(topic);
+}
+
+export function listStrategies(): StrategyResource[] {
+  return Array.from(registry.values());
+}
+
+/** Compact metadata view — drops the body. */
+export interface StrategyMetadata {
+  topic: StrategyTopic;
+  description: string;
+}
+
+export function listStrategyMetadata(): StrategyMetadata[] {
+  return listStrategies().map((s) => ({ topic: s.topic, description: s.description }));
+}
+
+export function __resetStrategyRegistryForTests(): void {
+  registry.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Starter resources (lifted from the orchestrator's inline paramTips +
+// dcc-reference convention notes — Wave D leans the system prompt by
+// moving these here).
+// ---------------------------------------------------------------------------
+
+const UNITS: StrategyResource = {
+  topic: 'units',
+  description: 'Units conventions: meters, degrees, hex colors.',
+  body: `# Units convention
+
+- **Positions and sizes** — meters. \`[1, 0, 0]\` = 1 meter on X.
+- **Rotations** — DEGREES (X, Y, Z Euler), not radians. \`90\` = quarter-turn.
+  This matches Blender / Unity / Unreal / Godot. The viewport converts
+  to radians at the THREE.Euler seam (V12 enforced; H20 catalogued).
+- **Colors** — CSS hex strings: \`"#ff0000"\`, \`"#00ff00"\`, \`"#5af07a"\`.
+- **FOV** — vertical, in degrees (PerspectiveCamera default 45°).
+
+When in doubt, consult \`.anvi/dcc-reference.md\` (20-section convention
+table across DCCs + game engines + glTF).`,
+};
+
+const MATERIALS: StrategyResource = {
+  topic: 'materials',
+  description: 'PBR material parameters and override patterns.',
+  body: `# Materials
+
+Basher v0.5 ships PBR-only materials (V9 — materials = data, not code).
+Shader authoring (TSL/OSL) is deferred to P4.
+
+## Mesh inline material
+Most meshes (BoxMesh, SphereMesh) carry a \`material\` block:
+\`{ name: "default", color: "#5af07a" }\`. Only \`color\` is exposed in v0.5.
+
+## MaterialOverride node
+Wraps a child mesh and replaces its material. Params:
+- \`name\` (string)
+- \`color\` (hex)
+- \`roughness\` (0..1, default 0.5)
+- \`metalness\` (0..1, default 0)
+- \`opacity\` (0..1, default 1)
+- \`emissive\` (hex, default "#000000")
+- \`emissiveIntensity\` (≥0, default 0)
+
+Use MaterialOverride when you need to drive properties beyond color
+(e.g. metallic surfaces, emissive panels). For simple recolours,
+prefer \`mutator.setMaterialColor\` — it touches \`material.color\`
+directly and runs the closure-preservation gate.`,
+};
+
+const LIGHTING: StrategyResource = {
+  topic: 'lighting',
+  description: 'Light type selection and intensity scaling.',
+  body: `# Lighting
+
+Basher ships five light types (P2.6+):
+- **DirectionalLight** — sun analogue. Direction = \`rotation × (0, -1, 0)\`.
+  Intensity ~1 for outdoor sun; can scale up for stylized lighting.
+- **PointLight** — omnidirectional. Use for lamps, fires, candles.
+  Intensity ranges 5–100 typical.
+- **SpotLight** — cone, has \`angle\` + \`penumbra\` params.
+- **AreaLight** — rectangle. \`width\` × \`height\` controls coverage;
+  intensity multiplied by area (V10 scale-drives-power applies).
+- **AmbientLight** — global fill, no position/rotation. Use sparingly.
+
+## Editor vs render
+
+\`viewportStore.shading === 'rendered'\` strips editor-only lighting
+(EditorLights component). When composing a scene, switch to 'rendered'
+to preview what the user actually sees on render output (B6 boundary —
+editor-shading separated from DAG-render).
+
+## Adding lights via the agent
+
+Use \`mesh.add\` macro with kinds \`DirectionalLight\`, \`PointLight\`,
+\`SpotLight\`, \`AreaLight\`, \`AmbientLight\`. Mirrors the user-facing
+Add menu (Shift+A → Light). For color, pass it on the \`color\` param
+directly — lights don't carry a \`material\` block.`,
+};
+
+const CAMERAS: StrategyResource = {
+  topic: 'cameras',
+  description: 'Camera framing, lens choice, FOV semantics.',
+  body: `# Cameras
+
+Two camera types in v0.5:
+- **PerspectiveCamera** — \`fov\` (vertical, degrees, default 45),
+  \`near\` (default 0.1), \`far\` (default 1000), \`position\`, \`lookAt\`.
+- **OrthographicCamera** — \`zoom\`, \`near\`, \`far\`, \`position\`, \`lookAt\`.
+
+## FOV cheat sheet (vertical, degrees)
+- 20° — telephoto / zoomed-in. Compressed depth.
+- 35° — typical "portrait" framing.
+- 45° — default, neutral. Matches most film + game defaults.
+- 60° — wide, slightly fish-eye. Action shots.
+- 90°+ — extreme wide, distortion visible at edges.
+
+## Snapshot vs author
+
+\`camera.snapshot\` macro captures the current editor camera pose into
+a new PerspectiveCamera DAG node and wires it to Scene.camera (K9
+lifecycle). Use when the user says "save this view" or "frame this".
+
+For explicit framing of a target node, compute camera position:
+- Distance ≈ \`bbox_diagonal / (2 * tan(fov/2 * π/180))\`.
+- LookAt at the target's center.
+
+## Future (P3+)
+\`camera.frameShot\` Mutator will auto-frame multiple targets.`,
+};
+
+const ASSET_CHOICE: StrategyResource = {
+  topic: 'assetChoice',
+  description: 'When to spawn library.import vs mesh.add vs (P5+) generate.',
+  body: `# Asset choice
+
+Three avenues for adding content:
+
+## library.import (recommended for assets)
+Drops a glTF asset from the project library. The user has curated
+these — they're known good, animation-ready, materials baked. Use for:
+- Characters
+- Props (furniture, vehicles, vegetation)
+- Buildings / sets
+
+## mesh.add (procedural primitives)
+Use for cubes, spheres, cameras, lights. Default sizes in meters.
+Mirrors the Add menu (Shift+A) — same vocabulary the human uses.
+
+## Procedural composition (dag.exec or Mutators)
+For nodes that need explicit wiring (Scatter, MaterialOverride, Group,
+Transform), compose with the appropriate Mutator or raw dag.exec.
+
+## Coming in P5
+\`generate.modelFromText({ prompt })\` — Hyper3D Rodin / Hunyuan3D bridge.
+Async-job pattern (poll → import). Use when no library asset fits AND
+the user asks for something stylized.
+
+## Decision flow
+1. User says "place a [thing]" → check library first (\`dag.inspect\`
+   the assets list / use the Library panel hint).
+2. If primitive (cube, sphere, light, camera) → \`mesh.add\`.
+3. If novel asset request → defer to P5; for now, explain that
+   external generation isn't wired and offer the closest library asset.`,
+};
+
+export function registerAllStrategies(): void {
+  registerStrategy(UNITS);
+  registerStrategy(MATERIALS);
+  registerStrategy(LIGHTING);
+  registerStrategy(CAMERAS);
+  registerStrategy(ASSET_CHOICE);
+}

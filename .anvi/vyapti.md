@@ -94,6 +94,111 @@
 **REF:** `src/agent/tools/types.ts:21`; `src/agent/orchestrator.ts:245-256`; `src/app/AgentChat.tsx:34`.
 **Why it matters:** Without selection context, "rotate selected to 45°" acts on all matching nodes or all nodes in the scene. The LLM has no way to know which node the user is pointing at.
 
+### V13: Agent mutations preserve the declared closure
+
+**Span:** `src/agent/closure/` (expand + types) + `src/agent/diff/store.ts`
+(propose-time gate) + `src/agent/orchestrator.ts` (closure inference and
+F6 retry threading) + every `src/agent/mutators/builders/*.ts`
+(buildClosureSpec) + `src/agent/mutators/validate.ts` (gate 3).
+
+**Enforcement:** `useDiffStore.propose` accepts an optional
+`closureSpec`. When provided, `expandClosure(spec, state)` resolves the
+roots into a node set and the gate rejects any op whose target lies
+outside (V13 acceptance #2: "rotate selected can NEVER produce ops
+that mutate any other node"). Fresh addNode introducing a new id is
+allowed; ids introduced earlier in the same diff propagate. Mutator
+plans declare their own closure via `MutatorDefinition.buildClosureSpec`
+— the orchestrator passes that to propose, overriding the
+selection-inferred fallback.
+
+Each declared edge kind runs its own per-root BFS. Mixing 'parent' and
+'children' produces a UNION ("ancestors and descendants of root"), not
+a free-mixing walk that would leak siblings under a shared parent.
+
+**Status:** ALIGNED (P2.5.2 Wave A + Wave C, 2026-05-08).
+**REF:** P2.5.2 PLAN §5; `src/agent/closure/expand.ts:1`;
+`src/agent/diff/store.ts:95` (gate); `src/agent/mutators/validate.ts:1`
+(gate 3); `src/agent/orchestrator.ts` (`inferClosureSpec`,
+`mutatorClosureSpec` precedence). Twice-call determinism + cycle-safety
++ maxDepth tested in `src/agent/closure/expand.test.ts`. Integration
+proven by `src/agent/diff/diff.test.ts` ("propose with closure rejects
+out-of-closure ops").
+
+**Why it matters:** without this gate, ops from fuzzy LLM output land
+on the wrong node and the user only catches it visually after accept.
+With the gate, the orchestrator threads the structured rejection back
+to the LLM as a follow-up message and the LLM either retries within
+scope, dag.inspects for context, or surfaces to the user. The bug
+class — agent mutating outside intent — becomes mechanically impossible
+when a closure is declared.
+
+### V14: Mutator non-redundancy
+
+**Span:** `src/agent/mutators/builders/*.ts` (every Mutator
+definition).
+
+**Enforcement:** code review. Every new Mutator must justify why it's
+not a parameterization of an existing one. Concrete checks:
+- Could `setBoxColor` be folded into the existing
+  `mutator.setMaterialColor` by widening its precondition? Yes →
+  reject the new entry.
+- Could `rotateAroundPivot` be a parameter on `mutator.rotate` (e.g.
+  optional `pivot: vec3`)? Yes → extend, don't fork.
+- Are two Mutators only differing in their requiredNodeTypes? Probably
+  the same Mutator with a richer contract.
+
+The catalog lives in one barrel file (`src/agent/mutators/index.ts`)
+so adding one is visible in any diff. Monthly catalogue audit if the
+catalog passes 20 entries in v0.5.
+
+**Status:** ALIGNED (P2.5.2 Wave C, 2026-05-08). Six starter Mutators
+ship with no redundancy: rotate, translate, scale, setMaterialColor,
+duplicate, deleteNode. Each covers a distinct Op-shape pattern.
+
+**REF:** P2.5.2 PLAN §2 P-4; `src/agent/mutators/index.ts:1` (the
+single visible catalog).
+
+**Why it matters:** Mutator-thinking is contagious — every new noun
+the LLM emits ("setLightColor", "setBoxColor") is a candidate Mutator
+unless the catalog actively resists. Without V14, the catalog grows
+into a per-node-type per-property surface (50+ entries) instead of
+staying at the semantic-operation layer (~10 entries). The five-gate
+validator works equally well at either size — but the LLM's decision
+quality drops sharply once "which Mutator?" becomes a search problem.
+
+### V15: Workflow strategy is fetched lazily, not inlined in the system prompt
+
+**Span:** `src/agent/orchestrator.ts` (`buildStaticSystemPrompt` —
+keeps only rules + tool catalogue + Op shape examples + a one-line
+quick-conventions summary) + `src/agent/strategy/` (the catalog +
+`agent.getStrategy({ topic })` tool).
+
+**Enforcement:** code review. Any new "tip / preference / workflow
+hint / how-to" content goes to a strategy resource via
+`registerStrategy(...)`, not into the inline system prompt. The
+prompt's role is rules + Op shape — non-negotiable on every round.
+The strategy catalog's role is contextual guidance — fetched only
+when the topic is relevant.
+
+**Status:** ALIGNED (P2.5.2 Wave D, 2026-05-08). Five starter
+resources land: units, materials, lighting, cameras, assetChoice.
+The orchestrator's old `paramTips` block (Common node params + Units
+convention) was lifted into the units + materials + lighting
+resources; the prompt keeps only a one-line pointer.
+
+**REF:** `src/agent/strategy/catalog.ts:1` (the registry +
+starter resources); `src/agent/strategy/tool.ts:1` (the LLM-facing
+tool); `src/agent/orchestrator.ts` (`paramTips` slimmed to one line +
+strategy pointer).
+
+**Why it matters:** the system prompt is the most expensive context
+window — re-sent every round of every turn. Moving 500-1000 tokens
+of contextual workflow guidance to lazy resources cuts each round's
+prompt cost without losing accessibility (the LLM can still pull the
+exact body when relevant). Privacy posture (V15-adjacent): the
+strategy catalog is local + deterministic — no external service
+holds the workflow library.
+
 ### V12: Every convention boundary is declared in `.anvi/dcc-reference.md`
 
 **Span:** every value-typed field on a node param schema, every agent tool

@@ -184,9 +184,22 @@ Cmd+Z reverts the entire turn. This is the K3 lifecycle (catalogued in
 
 ## 4. The skill catalogue
 
-Six tools today — two **universals** and four **macros**. The
-universal/macro split is straight from THESIS §20: primitives that always
-work, macros that emit primitive sequences for ergonomic operations.
+Eleven tools today after P2.5.2 — two **universals** (`dag.inspect`,
+`dag.exec`), four **macros** (`mesh.add`, `character.walkTo`,
+`camera.snapshot`, `library.import`), and five **structural** tools
+added by P2.5.2:
+
+- `agent.identify` — read-only resolver (Wave B)
+- `agent.listMutators` — read-only catalog metadata (Wave C)
+- `agent.proposePlan` — five-gate validated mutation surface (Wave C)
+- `agent.listStrategies` — read-only strategy catalog metadata (Wave D)
+- `agent.getStrategy` — fetch a strategy resource body (Wave D)
+
+The universal/macro split is straight from THESIS §20: primitives that always
+work, macros that emit primitive sequences for ergonomic operations. The
+P2.5.2 additions are the structural correctness train: identify resolves
+references, mutators wrap common operations under closure + precondition
+contracts, strategies pull workflow guidance lazily.
 
 ### 4.1 dag.inspect — universal, read-only
 
@@ -498,6 +511,7 @@ sees `Scatter×1, GltfAsset×3, Group×4` — proportionate context.
 | P2 (done)     | Character, Skeleton, AnimationClip, LocomotionState, Navmesh, WalkPath, TimeSource | Place characters, animate locomotion, navmesh-aware paths |
 | P2.6 (done)   | SphereMesh, all 4 light types with rotation+scale, EditorLights, AddMenu | Author lighting + mesh primitives via Add menu vocabulary |
 | **P2.5 v2 (this branch)** | + `dag.inspect`, `dag.exec` universals; mode + diff + cost guards | Agent now has full DAG visibility AND single mutation surface |
+| **P2.5.2 (this branch)** | + closure-preservation gate (V13); + `agent.identify` two-stage flow (B7); + Mutator catalog with five-gate validator (B8, V14); + strategy resources (V15); + opt-in telemetry | Agent surface now structurally rejects out-of-scope ops, surfaces ambiguity to the user explicitly, gates plans on contract preconditions, and pulls workflow guidance lazily — system prompt leaner; H19/H20/H21 mechanism class closed |
 | P3 (next)     | KeyframeChannel<T>, Curve<T>, AnimationLayer, Shot, Cut | **Agent can author keyframes, layered animations, shot lists** |
 | P4            | BeautyPass, DepthPass, NormalPass, AlbedoPass, IDPass, AlphaPass, MotionVectorPass, RenderJob | Agent can compose render graphs, trigger renders |
 | P5            | ComfyUIWorkflow, Prompt, VideoStitch                 | Agent can run AI restyle, estimate cost before dispatch |
@@ -602,13 +616,16 @@ One in-flight turn per chat. No agent that watches the scene and
 suggests fixes. No agent that runs an AI render in the background and
 reports when done.
 
-### 7.10 No tool-error retry threading on diff propose failure
+### 7.10 ~~No tool-error retry threading on diff propose failure~~ — CLOSED in P2.5.2 Wave A
 
-Most tool errors flow back as `role:'tool'` messages so the LLM can
-retry (F6). The exception is `useDiffStore.propose` — when fork
-validation fails (cycle, missing node, type mismatch), the F8 try/catch
-prints the error to the chat but doesn't re-prompt the LLM with the
-failure. **One-line fix in P3 hardening.**
+Closure-preservation rejections from `useDiffStore.propose` now thread
+back into the conversation as a follow-up `role:'user'` message
+(`DIFF_REJECTED_BY_CLOSURE_GATE: ...`) so the LLM can retry within
+scope, dag.inspect for context, or surface to the user. The
+assistant{tool_calls} ↔ role:'tool' pairing stays intact — clean F6
+path. Generic propose failures (createFork exceptions for cycle / type
+mismatch) still terminate the turn with a chat notice — those are
+schema-level errors, not retry-amenable.
 
 ### 7.11 No tool-call schema for vision-aware ops
 
@@ -616,20 +633,26 @@ failure. **One-line fix in P3 hardening.**
 LLM supported vision, we'd need a tool that returns a base64 image so
 the LLM can see what we see.
 
-### 7.12 No domain validation beyond zod
+### 7.12 ~~No domain validation beyond zod~~ — CLOSED in P2.5.2 Wave C
 
-`dag.exec` validates op shapes via OpSchema, but doesn't, e.g., check
-that a `connect` from `out:Mesh` to `children:Light` is a type-
-compatible socket pair before fork. The fork's `applyOp` does that
-check, and it throws — F8 catches and surfaces — but a pre-fork
-sanity pass would yield friendlier error messages to the model.
+The Mutator catalog adds five-gate validation BEFORE ops reach the
+fork: existence, schema (deep-set + paramSchema parse), closure,
+preconditions, adapter-fidelity stub. agent.proposePlan returns
+`{ ok: false, gate, reason }` on rejection — friendly, structured,
+retry-amenable. dag.exec keeps its lighter zod-only validation as a
+raw escape (mode-gated to copilot/sandbox).
 
-### 7.13 No memory of accepted vs rejected diffs
+### 7.13 ~~No memory of accepted vs rejected diffs~~ — PARTIALLY CLOSED in P2.5.2 Wave A + telemetry
 
-When the user rejects a diff, the model doesn't see "the user rejected
-your previous proposal because of X". It sees the conversation history
-but not the rejection signal. Future: thread "rejected" / "accepted"
-back as tool-result messages.
+Closure-gate rejections now thread back into the conversation as
+follow-up `role:'user'` messages so the model can react. User-driven
+diff accept/reject events also fire opt-in telemetry events
+(`diff_accept` / `diff_reject` — Wave D), so per-Mutator success
+rates surface in localStorage and (when enabled) any configured
+analytics endpoint. Threading the user's accept/reject directly into
+the next-turn context is still future work — the conversation history
+shows the diff was proposed, but doesn't yet carry "user rejected
+because of X" structurally. Land at P3 alongside session persistence.
 
 ### 7.14 No node-aware naming
 
@@ -770,6 +793,46 @@ Unreal / Godot / glTF. The doc is the canonical lookup before picking
 any new units boundary or default value.
 
 ---
+
+## B. Strategy resources catalog (Wave D)
+
+The system prompt is lean — rules + tool catalogue + Op shape examples
++ a one-line conventions summary. Workflow guidance is fetched lazily
+via `agent.getStrategy({ topic })`. Five resources ship in v0.5:
+
+| Topic         | When the LLM should fetch it                                                |
+| ------------- | --------------------------------------------------------------------------- |
+| `units`       | The user / context mentions rotation degrees, position units, or hex colors |
+| `materials`   | The request is about material properties, MaterialOverride, PBR, color/roughness/metalness/emissive |
+| `lighting`    | Adding / tuning lights; choosing between Directional/Point/Spot/Area/Ambient; intensity scaling questions |
+| `cameras`     | FOV choice, framing, snapshot vs author, lens guidance                      |
+| `assetChoice` | Decision between `library.import`, `mesh.add`, and (P5+) AI-generation      |
+
+The LLM picks via `agent.listStrategies()` (read-only metadata) then
+fetches a body with `agent.getStrategy({ topic: 'lighting' })`. New
+resources land via `registerStrategy(...)` — V15 in `.anvi/vyapti.md`
+is the code-review check that any new "tip / preference / how-to"
+content goes here, not into the system prompt.
+
+## C. Telemetry posture (Wave D)
+
+Opt-in by default. Privacy posture matches blender-mcp:
+
+- **What is recorded:** tool name (from a fixed allowlist), success
+  flag, duration in ms, opaque per-tab session id, timestamp.
+- **What is NEVER recorded:** prompt text, DAG content, node ids, op
+  payloads, user input, anything carrying user content.
+- **Storage:** `localStorage['basher.telemetry.events']`, capped at
+  500 events (older drop). No remote dispatch in v0.5 — flips on
+  only when `VITE_BASHER_TELEMETRY_URL` is set at build time.
+- **Killswitch:** `DISABLE_BASHER_TELEMETRY=true` env OR
+  `localStorage['basher.telemetry.disabled'] = 'true'` — either
+  disables the recorder.
+
+Code reviewers reject any `JSON.stringify(args)` near the recorder,
+any new `recordEvent` call that includes a tool name not on the
+allowlist, and any expansion of `TelemetryEvent` shape that adds a
+content-carrying field.
 
 ## 9. References
 

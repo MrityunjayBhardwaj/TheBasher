@@ -27,6 +27,7 @@ import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrati
 import { registerAllNodes } from '../nodes/registerAll';
 import { registerAllTools } from '../agent/tools';
 import { registerAllMutators } from '../agent/mutators';
+import { registerAllStrategies } from '../agent/strategy';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
 import { useTimeStore } from './stores/timeStore';
 
@@ -75,6 +76,7 @@ export function boot(): Promise<void> {
     registerAllNodes();
     registerAllTools();
     registerAllMutators();
+    registerAllStrategies();
     const storage = await getStorage();
 
     // K1 step 2.5 — seed bundled sample assets into OPFS on first boot.

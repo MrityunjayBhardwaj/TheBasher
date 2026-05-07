@@ -13,6 +13,7 @@ export { dagInspectTool } from './dagInspect';
 export { dagExecTool } from './dagExec';
 export { identifyTool } from '../identify/identify';
 export { listMutatorsTool, proposePlanTool } from '../mutators/tool';
+export { listStrategiesTool, getStrategyTool } from '../strategy/tool';
 
 import { registerTool } from './registry';
 import { characterWalkToTool } from './characterWalkTo';
@@ -23,6 +24,7 @@ import { dagInspectTool } from './dagInspect';
 import { dagExecTool } from './dagExec';
 import { identifyTool } from '../identify/identify';
 import { listMutatorsTool, proposePlanTool } from '../mutators/tool';
+import { listStrategiesTool, getStrategyTool } from '../strategy/tool';
 
 export function registerAllTools(): void {
   registerTool(characterWalkToTool);
@@ -34,7 +36,9 @@ export function registerAllTools(): void {
   registerTool(identifyTool);
   registerTool(listMutatorsTool);
   registerTool(proposePlanTool);
-  // Mutator catalog is registered separately via registerAllMutators()
-  // — keeps tool-registry resets independent from mutator-catalog
-  // resets in tests, and lets boot wire both in src/app/boot.ts.
+  registerTool(listStrategiesTool);
+  registerTool(getStrategyTool);
+  // Mutator + strategy catalogs are registered separately via
+  // registerAllMutators() / registerAllStrategies() — keeps registry
+  // resets independent in tests; boot wires all three.
 }
