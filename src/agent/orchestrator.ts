@@ -34,6 +34,7 @@ import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
 import { ClosurePreservationError } from '../agent/closure/expand';
 import type { ClosureSpec } from './closure/types';
+import type { IdentifyResult } from './identify/types';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
 import type { Op, NodeId } from '../core/dag/types';
 
@@ -124,6 +125,19 @@ export async function runAgentTurn(
   let totalTokens = 0;
   const turnBudget = config.maxTurnTokens ?? DEFAULT_TURN_TOKEN_BUDGET;
 
+  // Wave B (Identify pre-stage). When the user phrase references existing
+  // nodes ("the cube", "this", "selected"), round 1 is forced through
+  // agent.identify so the orchestrator commits to a concrete selector
+  // (or surfaces ambiguity to the user) BEFORE any mutation round runs.
+  // The heuristic skips Identify for purely additive prompts (P-3
+  // mitigation — no latency penalty for "add a red cube").
+  let identifiedSelectors: ReadonlySet<NodeId> = selectedNodeIds;
+  let nextRoundToolChoice: { name: string } | undefined;
+  let earlyExit = false;
+  if (mode !== 'read-only' && shouldRunIdentifyRound(message, selectedNodeIds)) {
+    nextRoundToolChoice = { name: 'agent.identify' };
+  }
+
   try {
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       if (signal?.aborted) break;
@@ -143,9 +157,16 @@ export async function runAgentTurn(
       let roundPromptTokens = 0;
       let roundCompletionTokens = 0;
 
+      // Per-round tool_choice override — used to force agent.identify
+      // for round 1 when the heuristic fires. Cleared after the round
+      // completes so subsequent rounds use the LLM's own judgment.
+      const roundToolChoice = nextRoundToolChoice;
+      nextRoundToolChoice = undefined;
+
       await streamChatCompletion(config, {
         messages,
         tools: toolSchemas,
+        toolChoice: roundToolChoice,
         signal,
         onChunk: (chunk) => {
           switch (chunk.type) {
@@ -262,6 +283,47 @@ export async function runAgentTurn(
           }
           roundMutationToolNames.push(acc.name);
         }
+
+        // Wave B Identify post-processing. The tool itself is read-only
+        // (ops:[]) — what matters is the JSON in result.text, which the
+        // orchestrator parses to commit / surface / reject the
+        // resolution. Three branches:
+        //   - match     → store selectors for closure scoping; thread a
+        //                 user-side resolution note into the conversation
+        //                 so subsequent rounds reference concrete ids.
+        //   - ambiguous → surface candidate list to user; end turn.
+        //   - no-match  → surface rationale; end turn.
+        if (acc.name === 'agent.identify') {
+          const parsed = parseIdentifyResult(result.text);
+          if (!parsed) {
+            // Resolver returned a non-JSON or unparseable payload. Treat
+            // as a no-op (let the LLM proceed in regular rounds) — the
+            // tool message has already been pushed for the LLM to see.
+          } else if (parsed.type === 'match') {
+            identifiedSelectors = new Set(parsed.selectors);
+            const idList = parsed.selectors.join(', ');
+            messages.push({
+              role: 'user',
+              content:
+                `Identify resolved → ${idList} ` +
+                `(strategy: ${parsed.strategy}, confidence ${parsed.confidence.toFixed(2)}). ` +
+                `Subsequent ops should target these node ids exactly.`,
+            });
+          } else if (parsed.type === 'ambiguous') {
+            const lines = parsed.candidates
+              .map((c) => `  - ${c.id} (${c.nodeType})${c.summary ? ` — ${c.summary}` : ''}`)
+              .join('\n');
+            sessionStore.appendToLastAssistant(
+              `\n\nI need disambiguation — multiple candidates match "${message}":\n${lines}\n\nReply with the id you want.`,
+            );
+            earlyExit = true;
+          } else if (parsed.type === 'no-match') {
+            sessionStore.appendToLastAssistant(
+              `\n\nI couldn't resolve "${message}" — ${parsed.rationale}`,
+            );
+            earlyExit = true;
+          }
+        }
       }
 
       // F1: append the assistant turn (with tool_calls) and the tool
@@ -273,16 +335,23 @@ export async function runAgentTurn(
       });
       messages.push(...toolResultMessages);
 
+      // Wave B: Identify resolution → ambiguous / no-match terminates the
+      // turn (the user picks; next turn references the chosen one). The
+      // assistant{tool_calls} ↔ role:'tool' pairing above is intact, so
+      // exiting now never leaves a malformed conversation.
+      if (earlyExit) break;
+
       // If mutation ops were produced → propose them as a diff and end the
       // turn. The user accepts/rejects via DiffBar.
       if (roundOps.length > 0) {
         mutationToolCallCount += roundMutationToolNames.length;
         const description = roundMutationToolNames.join(', ');
-        // V13 closure-preservation: if the user has a selection, scope
-        // mutations to that selection's parent + children chain. No
-        // selection → no spec → vacuous gate (Wave A's conservative
-        // path; Wave C upgrades to Mutator-declared closures).
-        const closureSpec = inferClosureSpec(selectedNodeIds);
+        // V13 closure-preservation: closure roots = post-Identify
+        // selectors when Wave B's pre-stage ran, else raw user
+        // selection. No roots → no spec → vacuous gate (Wave A's
+        // conservative path; Wave C upgrades to Mutator-declared
+        // closures).
+        const closureSpec = inferClosureSpec(identifiedSelectors);
         try {
           // F8: createFork can throw on op validation (unknown node, cycle,
           // type mismatch). Without try/catch the orchestrator never sets
@@ -455,6 +524,8 @@ Common node params:
     `- Use dag.exec to execute concrete Ops. Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,
     `- The Context block lists "Anchors" — the project's named outputs (scene, render) resolved to their concrete node ids (e.g. "n_scene"). Use those exact ids when wiring connections. NEVER use the literal string "scene" or "render" as a node id; that's the placeholder NAME, not a real id.`,
     `- The user's current selection appears in the Context block at the start of each turn — prefer acting on selected nodes when the request says "this", "selected", "it".`,
+    `- When the user references an existing node by description (e.g. "the cube", "the green sphere", "selected"), call agent.identify FIRST to resolve the reference to a concrete node id before constructing any Op. The orchestrator may force this call on round 1; receive a "match" with concrete ids, then act. If the result is "ambiguous" or "no-match" the turn ends — do not attempt to guess; the user will pick the candidate next turn.`,
+    `- After agent.identify resolves a "match", a follow-up user message will state the concrete ids ("Identify resolved → ..."). Use ONLY those ids in subsequent ops; the closure-preservation gate rejects ops that target nodes outside the resolved scope.`,
     `- Describe your changes clearly so the user knows what you propose.`,
     `- If a tool call returns an ERROR, read the message and either retry with corrected args or explain to the user why it can't be done.`,
     opExamples,
@@ -527,20 +598,72 @@ function anchorHistory(
 }
 
 /**
- * Wave A's conservative closure inference: when the user has a selection,
- * scope mutations to selection ∪ parents ∪ children. No selection → no
- * spec → vacuous gate (additive prompts like "add a red cube" still work
- * unchanged). Wave C will replace this with Mutator-declared closures
- * derived from each mutator's contract.
+ * Wave A's conservative closure inference: when the user has a selection
+ * (or Wave B's Identify pre-stage committed selectors), scope mutations
+ * to selectors ∪ parents ∪ children. No roots → no spec → vacuous gate
+ * (additive prompts like "add a red cube" still work unchanged). Wave C
+ * will replace this with Mutator-declared closures derived from each
+ * mutator's contract.
  *
- * REF: P2.5.2 PLAN §5 Wave A.4; vyapti V13.
+ * REF: P2.5.2 PLAN §5 Wave A.4 + Wave B.4; vyapti V13.
  */
 function inferClosureSpec(
-  selectedNodeIds: ReadonlySet<NodeId>,
+  rootIds: ReadonlySet<NodeId>,
 ): ClosureSpec | undefined {
-  if (selectedNodeIds.size === 0) return undefined;
+  if (rootIds.size === 0) return undefined;
   return {
-    rootSelectors: [...selectedNodeIds],
+    rootSelectors: [...rootIds],
     followedEdges: ['parent', 'children'],
   };
+}
+
+/**
+ * Wave B heuristic — should round 1 force agent.identify before any Plan
+ * round runs?
+ *
+ * Rationale: forcing Identify on every prompt doubles latency for
+ * additive requests ("add a red cube" doesn't reference any existing
+ * node). This heuristic skips Identify when the prompt is purely
+ * additive AND no selection is set; runs Identify when the prompt
+ * contains pronouns ("this", "it", "the") or explicit selection
+ * markers ("selected", "named", "with id"). When a selection exists,
+ * default to running Identify so the orchestrator commits the resolved
+ * selectors instead of acting on raw selection.
+ *
+ * REF: P2.5.2 PLAN §2 P-3 (latency mitigation), §5 Wave B step 3.
+ */
+export function shouldRunIdentifyRound(
+  message: string,
+  selectedNodeIds: ReadonlySet<NodeId>,
+): boolean {
+  const m = message.trim().toLowerCase();
+  // Pure additive — skip.
+  if (/^(add|make|create|spawn|insert)\s/.test(m)) return false;
+  // Selective references — run.
+  if (/\b(this|that|it|the|selected|chosen)\b/.test(m)) return true;
+  // Explicit identifier markers — run.
+  if (/\b(named|called|with id)\b/.test(m)) return true;
+  // Default: run when there's a selection, skip otherwise.
+  return selectedNodeIds.size > 0;
+}
+
+/**
+ * Parse the JSON payload `agent.identify` returns into an
+ * IdentifyResult. Returns null on any structural error — the
+ * orchestrator falls back to "no Identify resolution" semantics
+ * (no early exit, no committed selectors).
+ */
+function parseIdentifyResult(text: string | undefined): IdentifyResult | null {
+  if (!text) return null;
+  try {
+    const obj = JSON.parse(text) as unknown;
+    if (!obj || typeof obj !== 'object') return null;
+    const t = (obj as { type?: unknown }).type;
+    if (t === 'match' || t === 'ambiguous' || t === 'no-match') {
+      return obj as IdentifyResult;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }

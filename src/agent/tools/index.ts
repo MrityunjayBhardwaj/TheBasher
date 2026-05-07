@@ -11,6 +11,7 @@ export { libraryImportTool } from './libraryImport';
 export { meshAddTool } from './meshAdd';
 export { dagInspectTool } from './dagInspect';
 export { dagExecTool } from './dagExec';
+export { identifyTool } from '../identify/identify';
 
 import { registerTool } from './registry';
 import { characterWalkToTool } from './characterWalkTo';
@@ -19,6 +20,7 @@ import { libraryImportTool } from './libraryImport';
 import { meshAddTool } from './meshAdd';
 import { dagInspectTool } from './dagInspect';
 import { dagExecTool } from './dagExec';
+import { identifyTool } from '../identify/identify';
 
 export function registerAllTools(): void {
   registerTool(characterWalkToTool);
@@ -27,4 +29,5 @@ export function registerAllTools(): void {
   registerTool(meshAddTool);
   registerTool(dagInspectTool);
   registerTool(dagExecTool);
+  registerTool(identifyTool);
 }
