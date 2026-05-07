@@ -382,3 +382,63 @@ name" with a concrete id.
 **Real fix:** commit a Linux baseline alongside the macOS one. Generate it by (a) running Playwright in the official Docker image locally, OR (b) downloading the failed CI run's artifact (Playwright attaches the actual rendered PNG) and committing that as the baseline. Both baselines live in `tests/e2e/acceptance.spec.ts-snapshots/`.
 **Detection signal:** "snapshot doesn't exist" error naming a path with a different platform suffix than what's committed.
 **REF:** P0 CI fix (2026-05-05); `tests/e2e/acceptance.spec.ts-snapshots/postfx-beauty-chromium-{darwin,linux}.png`.
+
+### H22: BFS over multi-direction edge kinds free-mixes traversals, leaks siblings
+
+**Symptom:** Closure preservation gate accepts ops that target siblings
+of the selected node, defeating PLAN §0 acceptance #2 ("rotate selected
+can NEVER produce ops that mutate any other node"). Manifests as the
+diff-store integration test "closure spec rejects ops outside the
+closure" failing — the propose call doesn't throw despite the op
+targeting an out-of-scope node.
+
+**Trap:** Suspect the gate logic in `propose`. Tinker with the
+introducedIds tracker. Suspect the check order. None of these are the
+problem — the gate is fine; the input ClosureSet was wrong because
+the BFS over-expanded.
+
+**Root cause:** A naive BFS that processes the frontier in arrival
+order and visits ALL declared edge kinds at each node free-mixes
+direction semantics. For root `box` with edges `['parent', 'children']`,
+the walk goes box → parent → scene (✓) and then from scene → children
+→ sibling (✗). The intent is "ancestors of root + descendants of
+root", a UNION of two per-direction subgraphs. Combining mid-walk
+turns it into "everything reachable by any path under any kind",
+which leaks every sibling under a shared parent.
+
+**Real fix:** run one BFS per declared edge kind, each rooted only at
+`spec.rootSelectors`. Within a per-kind BFS, traversal continues only
+along that kind. Share a `visited` set across BFSes for membership
+(so the closure is a union), but use per-kind `seenInKind` sets to
+prevent within-kind loops. Mixing directions requires explicit
+declaration in the spec — never an emergent property of the walker.
+
+**Detection signal:** any closure containing a node that's a sibling
+of root (under a shared parent) when the spec only declares
+`['parent', 'children']`. Quick test: build a scene with two children
+under one Scene, root a closure at child A with edges `['parent',
+'children']`, assert child B is NOT in `closure.nodes`.
+
+**REF:** P2.5.2 Wave A (2026-05-08); `src/agent/closure/expand.ts`
+(`expandClosure`, `walkKind` — the per-kind BFS isolation is the
+fix); `src/agent/closure/expand.test.ts` ("['parent','children'] from
+a leaf does NOT reach a sibling" — the regression).
+
+**Why it stayed hidden until tests:** for the seed scene + an
+empty-closure test the over-expansion didn't matter (no out-of-scope
+ops were emitted to challenge it). The bug only fired when a sibling
+sat under the same parent AND the test asserted rejection. This is
+why the diff-store integration tests were essential — closure
+expansion correctness is observable only at the gate, not at the
+walker output in isolation.
+
+**Sister patterns:** any future per-direction graph operation that
+declares multiple edge kinds. Specifically watch for: P3 animation
+edges (`'animation'`), P4 render-pass edges (`'pass-input'`). When
+those land, every walker that consumes them must run per-kind BFSes
+unless the spec semantics are explicitly "free-mix any reachable
+path".
+
+**Cross-refs:** vyapti V13 (closure preservation — V13's enforcement
+hinges on H22's avoidance); dharana B7 (Agent identifier ↔ DAG
+node-set — closure roots come from this seam). PLAN §5 Wave A.
