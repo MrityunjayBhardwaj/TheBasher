@@ -31,6 +31,7 @@ export interface ChatMessage {
 }
 
 export interface ToolCall {
+  index: number;
   id: string;
   type: 'function';
   function: {

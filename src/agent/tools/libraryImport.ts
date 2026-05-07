@@ -7,8 +7,7 @@
 // REF: THESIS.md §39, vyapti V7, krama K6.
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from './types';
-import type { Op } from '../../core/dag/types';
+import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import { buildAssetDropOps } from '../../app/asset/dropChain';
 
 export const libraryImportSchema = z.object({
@@ -31,15 +30,16 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     'Returns an Op[] that creates a GltfAsset + Transform + Group chain ' +
     'and wires it into the Scene aggregator\'s children.',
   paramSchema: libraryImportSchema,
-  handler(args: LibraryImportArgs, ctx: ToolContext): Op[] {
+  handler(args: LibraryImportArgs, ctx: ToolContext): ToolResult {
     const sceneRef = ctx.dagState.outputs.scene;
     if (!sceneRef) {
       throw new Error('library.import: no Scene output found in the DAG');
     }
-    return buildAssetDropOps({
+    const dropOps = buildAssetDropOps({
       assetRef: args.assetRef,
       sceneNodeId: sceneRef.node,
       position: args.position as [number, number, number] | undefined,
     });
+    return { ops: dropOps, text: `Imported ${args.assetRef} at [${args.position}]` };
   },
 };

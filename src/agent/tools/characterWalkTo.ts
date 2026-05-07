@@ -6,8 +6,7 @@
 // REF: THESIS.md §40, vyapti V7, krama K7.
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from './types';
-import type { Op } from '../../core/dag/types';
+import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import { buildWalkToOps } from '../../app/character/walkTo';
 
 export const characterWalkToSchema = z.object({
@@ -26,7 +25,7 @@ export const characterWalkToTool: ToolDefinition<CharacterWalkToArgs> = {
     'Make a Character node walk to a world-space point. ' +
     'Returns an Op[] that adds/connects a WalkPath to the character\'s LocomotionState.',
   paramSchema: characterWalkToSchema,
-  handler(args: CharacterWalkToArgs, ctx: ToolContext): Op[] {
+  handler(args: CharacterWalkToArgs, ctx: ToolContext): ToolResult {
     const result = buildWalkToOps(
       ctx.dagState,
       args.characterId,
@@ -38,6 +37,6 @@ export const characterWalkToTool: ToolDefinition<CharacterWalkToArgs> = {
           'Ensure the character has a LocomotionState wired, and the project has a Navmesh node.',
       );
     }
-    return result.ops;
+    return { ops: result.ops, text: `Walk to [${args.worldPoint}]` };
   },
 };

@@ -30,12 +30,14 @@ export function AgentChat() {
 
     // Lazy import the orchestrator — avoids circular deps at module level
     const { runAgentTurn } = await import('../agent/orchestrator');
+    const { useSelectionStore } = await import('./stores/selectionStore');
     const dagState = useDagStore.getState().state;
+    const selectedNodeIds = useSelectionStore.getState().selectedNodeIds;
     const config = {
       ...DEFAULT_CONFIG,
       // Read API key and base URL from settings/env
-      apiKey: (window as unknown as Record<string, string>)['__BASHLER_LLM_KEY'] ?? '',
-      baseUrl: (window as unknown as Record<string, string>)['__BASHLER_LLM_BASE_URL'] ?? 'https://api.deepinfra.com/v1',
+      apiKey: (window as unknown as Record<string, string>)['__BASHLER_LLM_KEY'] ?? import.meta.env.VITE_BASHLER_LLM_KEY ?? '',
+      baseUrl: (window as unknown as Record<string, string>)['__BASHLER_LLM_BASE_URL'] ?? import.meta.env.VITE_BASHLER_LLM_BASE_URL ?? 'https://api.deepinfra.com/v1',
     };
 
     const abort = new AbortController();
@@ -47,6 +49,7 @@ export function AgentChat() {
         dagState,
         mode: session.mode,
         signal: abort.signal,
+        selectedNodeIds,
       });
     } finally {
       setRunning(false);
@@ -66,7 +69,7 @@ export function AgentChat() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontSize: 13 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, fontSize: 13 }}>
       {/* Mode selector */}
       <div style={{ display: 'flex', gap: 4, padding: '6px 8px', borderBottom: '1px solid #333' }}>
         <span style={{ color: '#888', marginRight: 4 }}>Mode:</span>
@@ -91,7 +94,7 @@ export function AgentChat() {
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: 8 }} data-testid="agent-messages">
         {session.messages.map((msg) => (
           <div
             key={msg.id}
@@ -120,7 +123,10 @@ export function AgentChat() {
 
       {/* Token usage */}
       {session.tokenUsage.total > 0 && (
-        <div style={{ padding: '2px 8px', fontSize: 11, color: '#555', textAlign: 'right' }}>
+        <div
+          style={{ padding: '2px 8px', fontSize: 11, color: '#555', textAlign: 'right' }}
+          data-testid="agent-tokens"
+        >
           Tokens: {session.tokenUsage.total.toLocaleString()} (↑{session.tokenUsage.input} / ↓{session.tokenUsage.output})
         </div>
       )}

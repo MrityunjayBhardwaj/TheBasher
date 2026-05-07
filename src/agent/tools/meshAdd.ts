@@ -6,8 +6,7 @@
 // REF: THESIS.md §39-40, vyapti V7.
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from './types';
-import type { Op } from '../../core/dag/types';
+import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import { buildAddPrimitiveOps } from '../../app/addPrimitives';
 
 const kindSchema = z.enum([
@@ -43,7 +42,7 @@ export const meshAddTool: ToolDefinition<MeshAddArgs> = {
     'Supports: Cube, Sphere, DirectionalLight, PointLight, SpotLight, AreaLight, ' +
     'AmbientLight, PerspectiveCamera, OrthographicCamera, Group, Transform.',
   paramSchema: meshAddSchema,
-  handler(args: MeshAddArgs, ctx: ToolContext): Op[] {
+  handler(args: MeshAddArgs, ctx: ToolContext): ToolResult {
     const result = buildAddPrimitiveOps(
       ctx.dagState,
       args.kind,
@@ -52,6 +51,6 @@ export const meshAddTool: ToolDefinition<MeshAddArgs> = {
     if (!result) {
       throw new Error('mesh.add: no Scene output found in the DAG');
     }
-    return result.ops;
+    return { ops: result.ops, text: `Added ${args.kind} at [${args.position}]` };
   },
 };

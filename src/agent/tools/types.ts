@@ -18,11 +18,23 @@ import type { DagState } from '../../core/dag/state';
 export interface ToolContext {
   /** Snapshot of the DAG at the time the tool is invoked. */
   dagState: DagState;
+  /** Node ids currently selected by the user (empty set = nothing selected). */
+  selectedNodeIds: ReadonlySet<string>;
+}
+
+/**
+ * Result of a tool handler.
+ * - `ops`: Ops to propose as a diff (empty for read-only tools like dag.inspect).
+ * - `text`: Optional text shown to the LLM after tool execution.
+ */
+export interface ToolResult {
+  ops: Op[];
+  text?: string;
 }
 
 export interface ToolDefinition<T = unknown> {
   name: string;
   description: string;
   paramSchema: z.ZodType<T, z.ZodTypeDef, unknown>;
-  handler: (args: T, ctx: ToolContext) => Op[] | Promise<Op[]>;
+  handler: (args: T, ctx: ToolContext) => ToolResult | Promise<ToolResult>;
 }

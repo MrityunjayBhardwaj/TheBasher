@@ -10,7 +10,7 @@ export function RightDrawer() {
   return (
     <aside
       data-testid="right-drawer"
-      className="flex flex-col border-l border-border bg-muted/40 text-xs text-fg/50"
+      className="flex flex-col min-h-0 border-l border-border bg-muted/40 text-xs text-fg/50"
     >
       <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">
         agent

@@ -8,8 +8,7 @@
 // REF: THESIS.md §11, vyapti V7, krama K9.
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolContext } from './types';
-import type { Op } from '../../core/dag/types';
+import type { ToolDefinition, ToolContext, ToolResult } from './types';
 
 export const cameraSnapshotSchema = z.object({
   fov: z.number().positive().default(45).describe('Camera field of view in degrees'),
@@ -33,7 +32,7 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
     'The new camera is wired into the Scene aggregator, replacing any existing camera. ' +
     'Returns an Op[] that the Diff system applies to the fork.',
   paramSchema: cameraSnapshotSchema,
-  handler(args: CameraSnapshotArgs, ctx: ToolContext): Op[] {
+  handler(args: CameraSnapshotArgs, ctx: ToolContext): ToolResult {
     const sceneRef = ctx.dagState.outputs.scene;
     if (!sceneRef) {
       throw new Error('camera.snapshot: no Scene output found in the DAG');
@@ -77,6 +76,6 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       to: { node: sceneRef.node, socket: 'camera' },
     });
 
-    return ops;
+    return { ops, text: `Snapshot camera at [${args.position}] looking at [${args.lookAt}]` };
   },
 };

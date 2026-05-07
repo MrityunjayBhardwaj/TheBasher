@@ -125,6 +125,7 @@ export async function streamChatCompletion(
           if (delta.tool_calls) {
             for (const tc of delta.tool_calls) {
               const partial: ToolCall = {
+                index: tc.index ?? 0,
                 id: tc.id ?? '',
                 type: 'function',
                 function: {
@@ -168,27 +169,124 @@ export function buildToolSchemas(
 }
 
 /**
- * Minimal zod-to-JSON-Schema converter.
- * Covers the subset needed for Basher's first-party tool schemas:
- * object, string, number, array, enum, optional, default.
+ * Convert a zod schema to JSON Schema for OpenAI-compatible tool definitions.
+ *
+ * Handles: object, string, number, boolean, array, enum, optional, default,
+ * nullable, and .describe() annotations. Recursive for nested objects/arrays.
  */
-function zodToJsonSchema(zodSchema: { _def?: unknown }): Record<string, unknown> {
-  // Our tool schemas are always z.object(...) at the top level.
-  // This returns a basic JSON Schema object shape.
-  const schema: Record<string, unknown> = {
-    type: 'object',
-    properties: {},
-    required: [],
-  };
+function zodToJsonSchema(zodSchema: unknown): Record<string, unknown> {
+  // Top-level unwrap: zod schema is always a ZodType, but we work with
+  // what we can introspect through _def and public methods.
 
-  // Since we can't reliably introspect zod schemas at runtime without
-  // the full zod-to-json-schema library, we return a minimal schema
-  // that accepts any object. The actual validation happens in the tool
-  // handler via zod's safeParse.
-  //
-  // For production, this should be replaced with a proper zod-to-json-schema
-  // transform when the LLM provider requires strict schema enforcement.
-  // For Deep Infra / Gemma, the descriptive tool names + descriptions
-  // do the heavy lifting; schema enforcement is at the handler boundary.
-  return schema;
+  const schemaDef = (zodSchema as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
+  if (!schemaDef) return { type: 'object' };
+
+  const typeName = schemaDef.typeName as string | undefined;
+
+  // --- Leaf types ---
+  if (typeName === 'ZodString') {
+    const result: Record<string, unknown> = { type: 'string' };
+    const checks = schemaDef.checks as Array<Record<string, unknown>> | undefined;
+    if (checks) {
+      for (const c of checks) {
+        if (c.kind === 'min') result.minLength = c.value;
+        if (c.kind === 'max') result.maxLength = c.value;
+      }
+    }
+    return result;
+  }
+
+  if (typeName === 'ZodNumber') {
+    const result: Record<string, unknown> = { type: 'number' };
+    const checks = schemaDef.checks as Array<Record<string, unknown>> | undefined;
+    if (checks) {
+      for (const c of checks) {
+        if (c.kind === 'min') result.minimum = c.value;
+        if (c.kind === 'max') result.maximum = c.value;
+        if (c.kind === 'positive') result.exclusiveMinimum = 0;
+      }
+    }
+    return result;
+  }
+
+  if (typeName === 'ZodBoolean') return { type: 'boolean' };
+
+  // --- Array ---
+  if (typeName === 'ZodArray') {
+    const innerType = schemaDef.type;
+    const lengthCheck = (schemaDef.checks as Array<Record<string, unknown>> | undefined)
+      ?.find((c) => c.kind === 'length');
+    const result: Record<string, unknown> = {
+      type: 'array',
+      items: innerType ? zodToJsonSchema(innerType) : {},
+    };
+    if (lengthCheck) {
+      result.minItems = lengthCheck.value;
+      result.maxItems = lengthCheck.value;
+    }
+    return result;
+  }
+
+  // --- Enum ---
+  if (typeName === 'ZodEnum') {
+    const values = schemaDef.values as string[] | undefined;
+    return {
+      type: 'string',
+      enum: values ?? [],
+    };
+  }
+
+  // --- Object ---
+  if (typeName === 'ZodObject') {
+    // zod stores shape as a function for object schemas
+    const shapeFn = schemaDef.shape as (() => Record<string, unknown>) | undefined;
+    const shape = shapeFn?.() ?? {};
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+
+    for (const [key, fieldSchema] of Object.entries(shape)) {
+      const fieldDef = (fieldSchema as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
+      const fieldTypeName = fieldDef?.typeName as string | undefined;
+
+      // Extract description from .describe() annotation
+      let description: string | undefined;
+      if (fieldDef?.description) {
+        description = fieldDef.description as string;
+      }
+
+      // Check if field is optional (ZodOptional, ZodDefault, or nullable)
+      const isOptional =
+        fieldTypeName === 'ZodOptional' ||
+        fieldTypeName === 'ZodDefault' ||
+        (fieldDef?.nullable === true);
+
+      // Unwrap optional/default to get the inner type
+      let innerSchema = fieldSchema;
+      if (fieldTypeName === 'ZodOptional' || fieldTypeName === 'ZodDefault') {
+        innerSchema = (fieldSchema as Record<string, unknown>).unwrap
+          ? ((fieldSchema as Record<string, unknown>).unwrap as () => unknown)()
+          : fieldSchema;
+      }
+
+      const propSchema = zodToJsonSchema(innerSchema);
+      if (description) {
+        propSchema.description = description;
+      }
+
+      properties[key] = propSchema;
+      if (!isOptional) {
+        required.push(key);
+      }
+    }
+
+    return {
+      type: 'object',
+      properties,
+      required: required.length > 0 ? required : undefined,
+      additionalProperties: false,
+    };
+  }
+
+  // Fallback — accept anything
+  return {};
 }

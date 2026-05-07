@@ -17,6 +17,8 @@ import {
   cameraSnapshotTool,
   libraryImportTool,
   meshAddTool,
+  dagInspectTool,
+  dagExecTool,
 } from './index';
 import type { ToolContext } from './types';
 
@@ -31,14 +33,16 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('tool registry', () => {
-  it('registers all four tools', () => {
+  it('registers all six tools', () => {
     registerAllTools();
     const tools = listTools();
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'camera.snapshot',
       'character.walkTo',
+      'dag.exec',
+      'dag.inspect',
       'library.import',
       'mesh.add',
     ]);
@@ -134,11 +138,11 @@ describe('character.walkTo tool', () => {
     );
 
     // Same inputs → same Op[] — pure function proof
-    expect(result1).toEqual(result2);
-    expect(result1.length).toBeGreaterThanOrEqual(2); // at least addNode + connect
+    expect(result1.ops).toEqual(result2.ops);
+    expect(result1.ops.length).toBeGreaterThanOrEqual(2); // at least addNode + connect
 
     // Every element is a valid Op shape
-    for (const op of result1) {
+    for (const op of result1.ops) {
       expect(op).toMatchObject({ type: expect.any(String) });
     }
   });
@@ -219,12 +223,12 @@ describe('camera.snapshot tool', () => {
       ctx,
     );
 
-    expect(result1).toEqual(result2);
+    expect(result1.ops).toEqual(result2.ops);
     // Should disconnect old + addNode + connect new = 3 ops
-    expect(result1).toHaveLength(3);
-    expect(result1[0].type).toBe('disconnect');
-    expect(result1[1].type).toBe('addNode');
-    expect(result1[2].type).toBe('connect');
+    expect(result1.ops).toHaveLength(3);
+    expect(result1.ops[0].type).toBe('disconnect');
+    expect(result1.ops[1].type).toBe('addNode');
+    expect(result1.ops[2].type).toBe('connect');
   });
 
   it('returns Op[] with just addNode + connect when no camera is wired (twice-call)', () => {
@@ -245,10 +249,10 @@ describe('camera.snapshot tool', () => {
       ctx,
     );
 
-    expect(result1).toEqual(result2);
-    expect(result1).toHaveLength(2);
-    expect(result1[0].type).toBe('addNode');
-    expect(result1[1].type).toBe('connect');
+    expect(result1.ops).toEqual(result2.ops);
+    expect(result1.ops).toHaveLength(2);
+    expect(result1.ops[0].type).toBe('addNode');
+    expect(result1.ops[1].type).toBe('connect');
   });
 
   it('throws when scene output is missing', () => {
@@ -299,11 +303,11 @@ describe('library.import tool', () => {
 
     // Twice-call check: same args → same shape (ids contain randomness, so
     // we verify structural equality of types and connections instead of deep equality)
-    expect(result1.length).toBe(6);
-    expect(result2.length).toBe(6);
+    expect(result1.ops.length).toBe(6);
+    expect(result2.ops.length).toBe(6);
 
     // Structure: addNode gltf → addNode transform → connect → addNode group → connect → connect
-    const types1 = result1.map((o) => o.type);
+    const types1 = result1.ops.map((o) => o.type);
     expect(types1).toEqual([
       'addNode',
       'addNode',
@@ -314,16 +318,16 @@ describe('library.import tool', () => {
     ]);
 
     // The second result is structurally identical
-    const types2 = result2.map((o) => o.type);
+    const types2 = result2.ops.map((o) => o.type);
     expect(types2).toEqual(types1);
 
     // Each connect references ids from preceding addNode calls
-    const gltfId = (result1[0] as { nodeId: string }).nodeId;
-    const txId = (result1[1] as { nodeId: string }).nodeId;
-    const grpId = (result1[3] as { nodeId: string }).nodeId;
-    const connect1 = result1[2] as { from: { node: string }; to: { node: string } };
-    const connect2 = result1[4] as { from: { node: string }; to: { node: string } };
-    const connect3 = result1[5] as { from: { node: string }; to: { node: string } };
+    const gltfId = (result1.ops[0] as { nodeId: string }).nodeId;
+    const txId = (result1.ops[1] as { nodeId: string }).nodeId;
+    const grpId = (result1.ops[3] as { nodeId: string }).nodeId;
+    const connect1 = result1.ops[2] as { from: { node: string }; to: { node: string } };
+    const connect2 = result1.ops[4] as { from: { node: string }; to: { node: string } };
+    const connect3 = result1.ops[5] as { from: { node: string }; to: { node: string } };
 
     expect(connect1.from.node).toBe(gltfId);
     expect(connect1.to.node).toBe(txId);
@@ -353,18 +357,18 @@ describe('mesh.add tool', () => {
     const result2 = meshAddTool.handler({ kind: 'Cube', position: [0, 1, 0] }, ctx);
 
     // IDs are random so we check structural equality
-    expect(result1.length).toBe(result2.length);
-    const types1 = result1.map((o) => o.type);
-    const types2 = result2.map((o) => o.type);
+    expect(result1.ops.length).toBe(result2.ops.length);
+    const types1 = result1.ops.map((o) => o.type);
+    const types2 = result2.ops.map((o) => o.type);
     expect(types2).toEqual(types1);
 
     // addNode(Cube) + connect → scene.children = 2 ops
-    expect(result1).toHaveLength(2);
-    expect(result1[0].type).toBe('addNode');
-    expect(result1[1].type).toBe('connect');
+    expect(result1.ops).toHaveLength(2);
+    expect(result1.ops[0].type).toBe('addNode');
+    expect(result1.ops[1].type).toBe('connect');
     // The same nodeType in both calls
-    expect((result1[0] as { nodeType: string }).nodeType).toBe('BoxMesh');
-    expect((result2[0] as { nodeType: string }).nodeType).toBe('BoxMesh');
+    expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('BoxMesh');
+    expect((result2.ops[0] as { nodeType: string }).nodeType).toBe('BoxMesh');
   });
 
   it('returns Op[] for a PointLight with no connect (twice-call — structural check)', () => {
@@ -373,14 +377,14 @@ describe('mesh.add tool', () => {
     const result1 = meshAddTool.handler({ kind: 'PointLight', position: [0, 5, 0] }, ctx);
     const result2 = meshAddTool.handler({ kind: 'PointLight', position: [0, 5, 0] }, ctx);
 
-    expect(result1.length).toBe(result2.length);
-    const types1 = result1.map((o) => o.type);
-    const types2 = result2.map((o) => o.type);
+    expect(result1.ops.length).toBe(result2.ops.length);
+    const types1 = result1.ops.map((o) => o.type);
+    const types2 = result2.ops.map((o) => o.type);
     expect(types2).toEqual(types1);
 
     // PointLight is a light so it gets connected to scene.lights
-    expect(result1).toHaveLength(2);
-    expect((result1[0] as { nodeType: string }).nodeType).toBe('PointLight');
+    expect(result1.ops).toHaveLength(2);
+    expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('PointLight');
   });
 
   it('returns a single Op for cameras and empties', () => {
@@ -388,8 +392,8 @@ describe('mesh.add tool', () => {
 
     const result = meshAddTool.handler({ kind: 'Group', position: [0, 0, 0] }, ctx);
     // Group/Transform/PerspectiveCamera have no auto-connect to scene
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe('addNode');
+    expect(result.ops).toHaveLength(1);
+    expect(result.ops[0].type).toBe('addNode');
   });
 
   it('throws when scene output is missing', () => {
@@ -397,5 +401,73 @@ describe('mesh.add tool', () => {
     expect(() => meshAddTool.handler({ kind: 'Cube', position: [0, 0, 0] }, ctx)).toThrow(
       'no Scene output',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dag.inspect
+// ---------------------------------------------------------------------------
+
+describe('dag.inspect tool', () => {
+  let baseCtx: ToolContext;
+
+  beforeEach(() => {
+    baseCtx = { dagState: buildSceneBaseline() };
+  });
+
+  it('returns text for scope=all', () => {
+    const result = dagInspectTool.handler({ scope: 'all' }, baseCtx);
+    expect(result.ops).toHaveLength(0);
+    expect(result.text).toContain('nodeCount');
+    expect(result.text).toContain('Scene');
+  });
+
+  it('returns text for scope=node with valid nodeId', () => {
+    const result = dagInspectTool.handler({ scope: 'node', nodeId: 'scene' }, baseCtx);
+    expect(result.ops).toHaveLength(0);
+    expect(result.text).toContain('"Scene"');
+  });
+
+  it('returns error for scope=node with missing nodeId', () => {
+    const result = dagInspectTool.handler({ scope: 'node', nodeId: 'nonexistent' }, baseCtx);
+    expect(result.text).toContain('not found');
+  });
+
+  it('returns types list for scope=types', () => {
+    const result = dagInspectTool.handler({ scope: 'types' }, baseCtx);
+    expect(result.ops).toHaveLength(0);
+    expect(result.text).toContain('BoxMesh');
+    expect(result.text).toContain('Scene');
+  });
+
+  it('returns outputs for scope=output', () => {
+    const result = dagInspectTool.handler({ scope: 'output' }, baseCtx);
+    expect(result.text).toContain('scene');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dag.exec
+// ---------------------------------------------------------------------------
+
+describe('dag.exec tool', () => {
+  it('returns the ops unchanged in a tool result', () => {
+    const ops: import('../../core/dag/types').Op[] = [
+      { type: 'addNode', nodeId: 'test', nodeType: 'BoxMesh', params: {} },
+    ];
+    const result = dagExecTool.handler(
+      { description: 'add test cube', ops },
+      { dagState: emptyDagState() },
+    );
+    expect(result.ops).toEqual(ops);
+    expect(result.text).toContain('add test cube');
+  });
+
+  it('rejects empty ops array via zod', () => {
+    const parsed = dagExecTool.paramSchema.safeParse({
+      description: 'empty',
+      ops: [],
+    });
+    expect(parsed.success).toBe(false);
   });
 });

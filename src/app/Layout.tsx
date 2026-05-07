@@ -137,7 +137,9 @@ export function Layout() {
       <div
         style={{
           gridArea: 'drawer',
-          display: mode === 'pro' ? 'none' : 'block',
+          display: mode === 'pro' ? 'none' : 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
         }}
       >
         <RightDrawer />

@@ -123,6 +123,10 @@ export function boot(): Promise<void> {
       void import('./stores/selectionStore').then((m) => {
         w.__basher_selection = m.useSelectionStore;
       });
+      // Agent session store — used by E2E to verify chat UI layout.
+      void import('../agent/session/store').then((m) => {
+        w.__basher_agent_session = m.useAgentSessionStore;
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
