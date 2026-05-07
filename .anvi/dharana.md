@@ -109,7 +109,44 @@
 
 ### Project-specific axes (created through blind spot detection)
 
-> None yet. Will accumulate as catalogues grow.
+#### Axis: Convention boundary (units / coordinate / format)
+
+**ORIGIN:** H20 (rotation units mismatch, 2026-05-07) — silent unit
+boundary between user-facing storage (degrees) and engine-layer
+consumption (THREE radians). The bug was invisible until the agent's
+first non-zero degree input. No existing catalogue axis surfaced it
+because the mismatch wasn't a flow bug or a state bug — it was a
+*convention* bug.
+
+**WHY this axis exists:** Basher straddles three convention zones:
+1. **THREE.js / glTF runtime** — engine-mandated (radians, +Z forward,
+   xyzw quaternions, vertical FOV).
+2. **DCC user mental models** — Blender / Maya / Houdini / C4D / 3ds Max
+   conventions, which the agent's prompts and the human's typing both
+   inherit.
+3. **Game-engine conventions** — Unity / Unreal / Godot, where Basher's
+   eventual export targets live (P7 PlayCanvas, plus Unity/Unreal
+   future).
+
+These three diverge on roughly 20 named decisions (rotation units,
+position units, axis up, color space, time representation, FOV
+direction, Euler order, quaternion order, etc.). Each silent boundary
+is a candidate H-class bug.
+
+**HOW to apply:** before introducing ANY new value-typed field on a
+node, agent tool, or persisted format, check `.anvi/dcc-reference.md`.
+The doc lists every convention question with the canonical answer
+across the five DCCs + three engines + glTF + THREE. The check
+prevents recurring H20-class bugs by making the convention boundary
+explicit at design time, not at first-bug time.
+
+**Detection signal that this axis is active:** any time the question
+"which units?" / "which order?" / "which format?" comes up. Default
+answer: consult dcc-reference.md FIRST, then decide. If the doc doesn't
+cover the question, add a section to it before picking a side.
+
+**Cross-refs:** `.anvi/dcc-reference.md` (the lookup), H20 (first
+catalogued instance).
 
 ### Deferred decisions (seeds — re-evaluate at named trigger)
 

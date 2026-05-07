@@ -94,6 +94,42 @@
 **REF:** `src/agent/tools/types.ts:21`; `src/agent/orchestrator.ts:245-256`; `src/app/AgentChat.tsx:34`.
 **Why it matters:** Without selection context, "rotate selected to 45°" acts on all matching nodes or all nodes in the scene. The LLM has no way to know which node the user is pointing at.
 
+### V12: Every convention boundary is declared in `.anvi/dcc-reference.md`
+
+**Span:** every value-typed field on a node param schema, every agent tool
+arg, every persisted-format field. Whenever the field's interpretation
+depends on a convention (units, axis order, time representation, color
+space, etc.), that convention MUST be declared explicitly — the canonical
+declaration lives in `.anvi/dcc-reference.md`.
+
+**Enforcement:** code review. New `paramSchema` field with a value type
+that has a convention question (rotation, FOV, intensity, color, time,
+etc.) requires either (a) a Cross-refs line pointing at the relevant
+dcc-reference.md section, or (b) a new section added to that doc with
+the industry-standard table BEFORE the field lands. The agent's system
+prompt declares the conventions verbatim so the LLM emits matching
+values.
+
+**Status:** ALIGNED for the conventions captured today (rotation,
+position, color space, color storage, coord system, time, Euler order,
+material model, tonemap). TBD for conventions that will land with P3+
+(quaternion serialization, animation interpolation, IK solver,
+skinning weights, render output color space, frame rate default).
+
+**REF:** `.anvi/dcc-reference.md` (the lookup table); H20 (first bug
+that motivated the invariant); dharana §3 axis "Convention boundary
+(units / coordinate / format)" (the lens this invariant is enforced
+through).
+
+**Why it matters:** without this invariant, every new field is a
+candidate silent-unit-boundary bug. H20 was invisible for the entire
+P0-P2.6 lifespan because no test exercised non-zero degree input;
+similarly subtle bugs are queued for FOV (vertical/horizontal),
+intensity (lumens/unitless), color (linear/sRGB), Euler order. Making
+the convention explicit at design time converts an empirical-discovery
+class into a deductive-lookup class — Lokayata-on-design instead of
+Lokayata-on-bug.
+
 ### V9: Materials are data, not code (in v0.5)
 
 **Span:** `src/nodes/MaterialOverride.ts` + any node exposing material parameters.

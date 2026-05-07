@@ -761,6 +761,14 @@ The agent's system prompt declares this convention so the LLM emits
 agent wrote degrees, renderer treated as radians, visual was at
 116.6° instead of 90°).
 
+**For every other "which convention?" decision** (FOV, color space,
+coordinate system, time, frame rate, material model, light intensity,
+tonemap, animation interpolation, IK solver, etc.), consult
+`.anvi/dcc-reference.md` — a 20-section catalogue with industry-standard
+tables across Blender / Houdini / Cinema 4D / 3ds Max / Maya / Unity /
+Unreal / Godot / glTF. The doc is the canonical lookup before picking
+any new units boundary or default value.
+
 ---
 
 ## 9. References

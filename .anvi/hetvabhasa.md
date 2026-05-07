@@ -292,6 +292,12 @@ HSL color values, units of light intensity (lumens vs unitless). The
 class is **silent unit boundary**: the value is correct in some unit,
 just not the unit the consumer expected.
 
+**Cross-refs:** `.anvi/dcc-reference.md` §1 (rotation units) and §2 (position
+units) for the canonical industry-standard table. Future
+units/convention bugs should consult that doc BEFORE picking a side
+— it covers Blender / Houdini / Cinema 4D / 3ds Max / Maya / Unity /
+Unreal / Godot / glTF for every decision Basher faces.
+
 ### H8: Playwright pixel-diff snapshots are platform-suffixed by default
 
 **Symptom:** Local CI run on macOS green; GitHub Actions Ubuntu runner fails test #7 with `A snapshot doesn't exist at .../postfx-beauty-chromium-linux.png, writing actual.`
