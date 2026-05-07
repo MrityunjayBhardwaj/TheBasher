@@ -34,8 +34,11 @@
 **HOW:** Tool handlers return `Op[]`; never call `dagStore.setState`. Diff system applies to forked DAG; user accepts → ops flow through real Op dispatcher.
 **REF:** THESIS.md §18-20
 **Silent-failure modes:** agent applies tool that bypasses Diff; agent applies invalid op (zod validation skipped); user rejects but state already mutated.
-**Status:** EXERCISED (P2.5). 4 tools registered (`character.walkTo`, `camera.snapshot`, `library.import`, `mesh.add`). Tool registry + fork engine + diff store + ghost overlay + accept/reject bar all shipped. V7 ALIGNED. K3 cataloged with file:line REFs.
-**Observation targets:** every agent turn → diff store shows pending → accept lands single dispatchAtomic entry; reject clears with zero state changes.
+**Status:** EXERCISED (P2.5 v2, 2026-05-07). 6 tools registered: 2 universals (`dag.inspect`, `dag.exec`) + 4 macros (`character.walkTo`, `camera.snapshot`, `library.import`, `mesh.add`). Multi-turn loop (max 3 rounds): inspect → results fed back → exec. `ToolResult { ops, text }` replaces raw `Op[]` (read-only→text, mutation→ops). Selection context: `selectedNodeIds` flows from SelectionStore → ToolContext → system prompt (V11 ALIGNED). Tool registry + fork engine + diff store + ghost overlay + accept/reject bar all shipped. V7 ALIGNED. K3 cataloged with file:line REFs.
+**Observation targets:**
+- every agent turn → diff store shows pending → accept lands single dispatchAtomic entry; reject clears with zero state changes.
+- **Selection context check (P2.5 v2):** before any agent turn that targets "selected" / "this" / pronouns, verify the API request body's system prompt contains a `Selected nodes:` block listing the current `selectionStore.selectedNodeIds`. If the block is absent or stale, the LLM will fall through to all-nodes or wrong-node behavior — symptom looks like "agent rotates everything" or "agent ignores selection." See H19 for the stale-snapshot mechanism that produced this class of bug.
+- **Multi-turn drift check:** in the follow-up message after `dag.inspect`, verify the original user request appears verbatim (not the literal string `"the user's request"`). If verbatim text is missing, H19's stale-snapshot pattern is active in `runAgentTurn`.
 
 ### Boundary B4: Node evaluator ↔ time/randomness (purity)
 
@@ -302,3 +305,31 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization still sound after the CI-fix train.** The repeat-rate at the test/observation boundary (5 of 16 entries) is the highest-density cluster — but the underlying mechanisms are distinct. If a third async-seed-race entry lands, that's the trigger to consolidate into a vyapti ("every test that depends on async-seeded state must wait on a seed-availability signal").
 
   **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-07 — post-P2.5 v2 (multi-turn agent loop + selection context):
+
+- **B3 (Agent ↔ DAG) now exercised end-to-end with multi-turn.** Surface widened from 4 macros → 6 tools (added universals `dag.inspect` + `dag.exec`). Orchestrator runs up to 3 rounds: inspect → results fed back → exec. `ToolResult { ops, text }` separates read-only return (text) from mutation return (ops). `selectedNodeIds` now flows ToolContext-deep into the system prompt (id, type, current params for every selected node).
+
+- **V11 added (ALIGNED):** Agent tool context must carry selection state. Span: `src/agent/tools/types.ts` (ToolContext shape) + `src/agent/orchestrator.ts:180` (dispatch) + `:247-256` (system prompt builder) + `src/app/AgentChat.tsx:34` (read at send time). No multi-module entanglement — single concern (selection wiring through one path), four sites that mirror the Op-emit chain.
+
+- **H19 added** to hetvabhasa: Zustand `getState()` snapshot stale after `set()` — user message lost. Sister to H10 (same mechanism in test code). The orchestrator captured `sessionStore = useAgentSessionStore.getState()` at function start, then called `addMessage(...)` which `set()`s a NEW state object; subsequent reads of the captured `sessionStore.session.messages` saw the pre-`addMessage` snapshot, so the user's current message was never in the API request body. Real fix: read fresh at every access (`useAgentSessionStore.getState().session.messages`) and use the `message` param directly in follow-up prompt construction. **The single observation that diagnosed this:** logging the API request body and seeing the `messages: []` array missing the user turn. Without that observation, the symptom ("agent rotates everything") points at prompt tuning or LLM behavior — both wrong frames.
+
+- **B3 observation targets extended** with two project-specific checks (above):
+  1. Selection context check — verify `Selected nodes:` block in system prompt before pronoun/selection turns.
+  2. Multi-turn drift check — verify original user request appears verbatim in the follow-up after `dag.inspect`.
+
+- **Known gaps (NOT bugs, deferred to P3):**
+  - Multi-turn reliability: follow-up message doesn't restate selection IDs (system prompt has it, but worth verifying under model variance).
+  - `dag.inspect` output appended as plain text, not structured `tool_result` — works for Gemma 4, suboptimal for stricter models.
+  - No session persistence (localStorage chat history).
+  - No settings UI (API key / model / base URL).
+  - Server EPERM after bad `pkill -f node` — operational, not architectural.
+
+- **Fatality test (post-P2.5 v2, 2026-05-07):**
+  1. Hetvabhasa clustering: 17 entries (added H19). H10 + H19 share the Zustand stale-snapshot mechanism but at different surfaces (test code vs. orchestrator) — two cataloged occurrences. Third occurrence triggers consolidation into a vyapti ("any closure capturing `getState()` across `set()` boundaries must re-read"). Watch for it.
+  2. Vyapti span: V11 added (ALIGNED). 4-site span all within the agent surface (types + orchestrator + AgentChat) + ReadOnly contract from selectionStore — single concern, complementary sites, no module entanglement. V1-V10 unchanged.
+  3. Krama crossing: K3 (agent tool dispatch) extended with the multi-turn loop — same atomic shape, just iterated up to 3× per turn. No new lifecycle crosses 3+ module boundaries.
+
+  **Verdict: organization still sound after P2.5 v2.** B3's silent-failure mode list now has empirical content (was speculative pre-P2.5). Selection-context wiring through ToolContext is the right cut — placing it on the dispatcher closure instead of forcing each tool to import the selection store would have created a per-tool span that V11 explicitly avoids.
+
+  **Next update trigger:** P3 — agent reliability tuning + persistence + settings UI + new macro tools (node.delete, material.setColor, animation.play).
