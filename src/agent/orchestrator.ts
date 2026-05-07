@@ -32,8 +32,10 @@ import { getTool, listTools } from './tools/registry';
 import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
 import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
+import { ClosurePreservationError } from '../agent/closure/expand';
+import type { ClosureSpec } from './closure/types';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
-import type { Op } from '../core/dag/types';
+import type { Op, NodeId } from '../core/dag/types';
 
 const MAX_ROUNDS = 4;
 const DEFAULT_TURN_TOKEN_BUDGET = 30_000;
@@ -276,12 +278,40 @@ export async function runAgentTurn(
       if (roundOps.length > 0) {
         mutationToolCallCount += roundMutationToolNames.length;
         const description = roundMutationToolNames.join(', ');
+        // V13 closure-preservation: if the user has a selection, scope
+        // mutations to that selection's parent + children chain. No
+        // selection → no spec → vacuous gate (Wave A's conservative
+        // path; Wave C upgrades to Mutator-declared closures).
+        const closureSpec = inferClosureSpec(selectedNodeIds);
         try {
           // F8: createFork can throw on op validation (unknown node, cycle,
           // type mismatch). Without try/catch the orchestrator never sets
           // streaming=false and the UI hangs.
-          useDiffStore.getState().propose(currentDagState, roundOps, description, roundOpSources);
+          useDiffStore
+            .getState()
+            .propose(currentDagState, roundOps, description, roundOpSources, closureSpec);
         } catch (proposeErr) {
+          if (proposeErr instanceof ClosurePreservationError) {
+            // F6: thread the structured rejection back to the LLM as a
+            // follow-up user message. The assistant{tool_calls} +
+            // role:'tool' pairing already pushed in this round stays
+            // intact — we just add context for round N+1. The model can
+            // retry with ops scoped to the closure roots, dag.inspect to
+            // explore, or surface to the user.
+            const rootList = closureSpec!.rootSelectors.join(', ');
+            const closureList = [...proposeErr.closure.nodes].join(', ');
+            const retryMsg =
+              `DIFF_REJECTED_BY_CLOSURE_GATE: op targeted node "${proposeErr.target}" ` +
+              `outside the declared closure (roots: [${rootList}]; reachable: [${closureList}]). ` +
+              `Retry with ops that only touch the listed closure nodes, OR call dag.inspect to ` +
+              `find a different scope, OR explain to the user why the requested change is out of scope.`;
+            messages.push({ role: 'user', content: retryMsg });
+            sessionStore.appendToLastAssistant(`\n\n[Closure gate: ${proposeErr.message}]`);
+            // Do NOT break — let the loop run another round so the LLM
+            // can react. mutationToolCallCount stays incremented for
+            // observability (the model did try to mutate).
+            continue;
+          }
           const msg = `Diff proposal failed: ${(proposeErr as Error).message}`;
           sessionStore.appendToLastAssistant(`\n\n[${msg}]`);
           error = msg;
@@ -494,4 +524,23 @@ function anchorHistory(
   const head = filtered[0];
   const tail = filtered.slice(-(cap - 1));
   return [head, ...tail];
+}
+
+/**
+ * Wave A's conservative closure inference: when the user has a selection,
+ * scope mutations to selection ∪ parents ∪ children. No selection → no
+ * spec → vacuous gate (additive prompts like "add a red cube" still work
+ * unchanged). Wave C will replace this with Mutator-declared closures
+ * derived from each mutator's contract.
+ *
+ * REF: P2.5.2 PLAN §5 Wave A.4; vyapti V13.
+ */
+function inferClosureSpec(
+  selectedNodeIds: ReadonlySet<NodeId>,
+): ClosureSpec | undefined {
+  if (selectedNodeIds.size === 0) return undefined;
+  return {
+    rootSelectors: [...selectedNodeIds],
+    followedEdges: ['parent', 'children'],
+  };
 }

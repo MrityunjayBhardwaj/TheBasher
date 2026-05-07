@@ -15,6 +15,13 @@ import type { DagState } from '../../core/dag/state';
 import type { InverseOp, Op } from '../../core/dag/types';
 import type { OpSource } from '../../core/dag/store';
 import { cloneState, createFork } from './forkedDag';
+import {
+  ClosurePreservationError,
+  expandClosure,
+  isFreshAddNode,
+  opTargetNodeId,
+} from '../closure/expand';
+import type { ClosureSet, ClosureSpec } from '../closure/types';
 
 export type DiffStatus = 'idle' | 'pending' | 'previewing' | 'applied' | 'rejected';
 
@@ -33,6 +40,13 @@ export interface PendingDiff {
    * subset of the proposed ops.
    */
   opSources?: string[];
+  /**
+   * The closure expanded from the spec passed to propose(). Present when
+   * the caller declared a closure; absent for unscoped proposals (e.g.
+   * raw dag.exec without a selection-derived scope) — Wave A's
+   * conservative inference path.
+   */
+  closure?: ClosureSet;
   /** Human-readable description (becomes undo entry title if accepted). */
   description: string;
   /** Per-op acceptance. All true by default. */
@@ -44,12 +58,21 @@ export interface PendingDiff {
 export interface DiffStore {
   status: DiffStatus;
   pendingDiff: PendingDiff | null;
-  /** Fork the DAG and set pending. Returns the PendingDiff. */
+  /**
+   * Fork the DAG and set pending. Returns the PendingDiff.
+   *
+   * When `closureSpec` is provided, the closure-preservation gate
+   * (vyapti V13) runs BEFORE createFork: every op must target a node
+   * inside the expanded closure, OR introduce a fresh node id.
+   * Violation throws ClosurePreservationError; the fork is never
+   * created and store state is untouched (V1 hard rule).
+   */
   propose: (
     state: DagState,
     ops: Op[],
     description: string,
     opSources?: string[],
+    closureSpec?: ClosureSpec,
   ) => PendingDiff;
   /** Toggle acceptance of a single op by index. */
   toggleOp: (index: number) => void;
@@ -69,7 +92,33 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
   status: 'idle',
   pendingDiff: null,
 
-  propose(state, ops, description, opSources) {
+  propose(state, ops, description, opSources, closureSpec) {
+    // V13 closure-preservation gate. Runs BEFORE createFork so a
+    // rejection leaves zero state changes. The gate is vacuous when
+    // closureSpec is omitted — preserves backward compat for callers
+    // that haven't migrated yet (P-7 mitigation).
+    let closure: ClosureSet | undefined;
+    if (closureSpec) {
+      closure = expandClosure(closureSpec, state);
+      // Track ids introduced earlier in this same diff via fresh
+      // addNode so subsequent ops referencing them pass the gate.
+      const introducedIds = new Set<string>();
+      for (const op of ops) {
+        if (op.type === 'addNode' && isFreshAddNode(op, state)) {
+          introducedIds.add(op.nodeId);
+          continue;
+        }
+        const target = opTargetNodeId(op);
+        if (
+          target !== null &&
+          !closure.nodes.has(target) &&
+          !introducedIds.has(target)
+        ) {
+          throw new ClosurePreservationError(target, closure);
+        }
+      }
+    }
+
     const { fork, inverseOps } = createFork(state, ops);
     const diff: PendingDiff = {
       originalState: cloneState(state),
@@ -77,6 +126,7 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
       ops,
       inverseOps,
       opSources,
+      closure,
       description,
       selected: ops.map(() => true),
       createdAt: Date.now(),

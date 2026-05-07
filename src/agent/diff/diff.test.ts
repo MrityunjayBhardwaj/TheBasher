@@ -13,6 +13,9 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { createFork } from './forkedDag';
 import { useDiffStore, acceptSelectedOps, rejectDiff } from './store';
+import { ClosurePreservationError } from '../closure/expand';
+import type { ClosureSpec } from '../closure/types';
+import type { Op } from '../../core/dag/types';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -224,5 +227,138 @@ describe('useDiffStore', () => {
     useDiffStore.getState().reset();
     expect(useDiffStore.getState().status).toBe('idle');
     expect(useDiffStore.getState().pendingDiff).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V13 closure-preservation gate (Wave A)
+// ---------------------------------------------------------------------------
+
+describe('useDiffStore.propose — closure-preservation gate', () => {
+  function buildScene(): DagState {
+    // Adds a sibling to the baseline so closure constraints have something
+    // to reject against.
+    let s = buildBaselineDag();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'sibling',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'sibling', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    return s;
+  }
+
+  it('omitting closureSpec keeps the gate vacuous (existing callers unchanged)', () => {
+    const state = buildScene();
+    // Without a spec the gate must NOT fire — preserves P0/P1/P2 callers
+    // that pre-date Wave A.
+    const ops: Op[] = [
+      { type: 'setParam', nodeId: 'sibling', paramPath: 'position', value: [9, 0, 0] },
+    ];
+    const diff = useDiffStore.getState().propose(state, ops, 'edit sibling');
+    expect(diff.closure).toBeUndefined();
+    expect(useDiffStore.getState().status).toBe('pending');
+  });
+
+  it('closure spec rejects ops outside the closure with ClosurePreservationError', () => {
+    const state = buildScene();
+    // User has `box` selected → closure = {box, scene, render} via
+    // parent ∘ children. `sibling` is outside.
+    const spec: ClosureSpec = {
+      rootSelectors: ['box'],
+      followedEdges: ['parent', 'children'],
+    };
+    const ops: Op[] = [
+      { type: 'setParam', nodeId: 'sibling', paramPath: 'position', value: [9, 0, 0] },
+    ];
+    expect(() =>
+      useDiffStore.getState().propose(state, ops, 'edit sibling', undefined, spec),
+    ).toThrow(ClosurePreservationError);
+  });
+
+  it('rejection is pre-fork: store status stays idle, no pending diff', () => {
+    const state = buildScene();
+    const beforeStatus = useDiffStore.getState().status;
+    const spec: ClosureSpec = {
+      rootSelectors: ['box'],
+      followedEdges: ['parent', 'children'],
+    };
+    expect(() =>
+      useDiffStore.getState().propose(
+        state,
+        [{ type: 'setParam', nodeId: 'sibling', paramPath: 'position', value: [9, 0, 0] }],
+        'oob',
+        undefined,
+        spec,
+      ),
+    ).toThrow(ClosurePreservationError);
+    expect(useDiffStore.getState().status).toBe(beforeStatus);
+    expect(useDiffStore.getState().pendingDiff).toBeNull();
+  });
+
+  it('in-closure ops pass and the closure is preserved on the PendingDiff', () => {
+    const state = buildScene();
+    const spec: ClosureSpec = {
+      rootSelectors: ['box'],
+      followedEdges: ['parent', 'children'],
+    };
+    const ops: Op[] = [
+      { type: 'setParam', nodeId: 'box', paramPath: 'rotation', value: [45, 0, 0] },
+    ];
+    const diff = useDiffStore.getState().propose(state, ops, 'rotate box', undefined, spec);
+    expect(diff.closure).toBeDefined();
+    expect(diff.closure!.nodes.has('box')).toBe(true);
+    expect(diff.closure!.nodes.has('scene')).toBe(true);
+  });
+
+  it('fresh addNode of a new id is allowed even when closure is narrow', () => {
+    const state = buildScene();
+    const spec: ClosureSpec = {
+      rootSelectors: ['box'],
+      followedEdges: ['parent', 'children'],
+    };
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: 'newCube',
+        nodeType: 'BoxMesh',
+        params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+      },
+      // Wiring the new node into scene.children is fine: scene IS in
+      // closure (box's parent), and connect's target is scene.
+      {
+        type: 'connect',
+        from: { node: 'newCube', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      },
+    ];
+    const diff = useDiffStore.getState().propose(state, ops, 'add', undefined, spec);
+    expect(diff.ops).toHaveLength(2);
+  });
+
+  it('subsequent ops referencing a freshly-introduced id are allowed', () => {
+    const state = buildScene();
+    const spec: ClosureSpec = {
+      rootSelectors: ['box'],
+      followedEdges: ['parent', 'children'],
+    };
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: 'newCube',
+        nodeType: 'BoxMesh',
+        params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+      },
+      // setParam on the freshly-added id — must pass the gate even though
+      // newCube isn't in the original closure expansion.
+      { type: 'setParam', nodeId: 'newCube', paramPath: 'rotation', value: [10, 0, 0] },
+    ];
+    const diff = useDiffStore.getState().propose(state, ops, 'add+rotate', undefined, spec);
+    expect(diff.ops).toHaveLength(2);
   });
 });
