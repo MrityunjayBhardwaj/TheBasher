@@ -92,6 +92,25 @@ model-reported.
   the result was 'match' (or 'ambiguous'/'no-match' surfaced cleanly).
 - For purely additive prompts: verify Identify did NOT run (P-3
   latency mitigation).
+- For multi-target prompts ("each cube", "all spheres", "the
+  objects"): verify Identify resolves to ALL matching ids with
+  confidence 1.0 (hint auto-promoted to 'multiple-allowed') — added
+  P2.5.3 Wave A.
+- For verb-noun co-reference prompts ("rotate the cube", "color the
+  sphere"): verify Identify runs (the verb-noun heuristic supersedes
+  the dropped bare `\bthe\b` trigger) — P2.5.3 Wave A3.
+- For color-qualified references ("the red cube"): verify family-
+  match accepts off-hex picker colors; pink does NOT match red
+  (P2.5.3 Wave C2/C3).
+
+**Span scope (post-P2.5.3):** Identifier resolution covers (a)
+exact-id, (b) selection, (c) type-aliased nouns (singular + plural),
+(d) generic-primitive aliases (object/thing/everything/nodes),
+(e) quantifier-promoted multi-target intent, (f) color-family fuzzy
+match. Out of scope (defer): semantic-property references ("the tall
+one", "the rotated cube"), spatial references ("the cube on the
+left"), temporal references ("the cube I just added"). These are P5+
+candidates; live-smoke pressure determines order.
 
 ### Boundary B8: Mutator catalog ↔ Op constructor
 

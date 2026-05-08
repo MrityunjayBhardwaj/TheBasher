@@ -504,3 +504,67 @@ candidates if their consumer-tool description references their fields.
 **Cross-refs:** dharana B8 (Mutator catalog ↔ Op constructor — the
 shape-advertising boundary); H21 (sister pattern at the prompt
 boundary). PLAN §5 Wave C.
+
+### H24: Identify resolver coverage assumed singular nouns; multi-target intent fell through silently
+
+**Detection signal:** A user prompt referencing multiple objects via a
+quantifier ("each", "all", "every", "both") or a generic plural noun
+("objects", "things", "everything", "the cubes") returns
+`type: "no-match"` with rationale "no exact id, no selection match,
+no type alias, no color match." The orchestrator's `earlyExit` fires;
+the turn ends; the user has to rephrase.
+
+Sister mode of failure: the alias matches but `hint = 'unique'` (LLM
+default), so multi-candidate resolution returns `'ambiguous'` with
+candidate list — wasting a turn waiting for the user to disambiguate
+something they already disambiguated with the quantifier.
+
+**REF:** `src/agent/identify/identify.ts:288-298` (pre-fix
+`inferNodeTypes` regex matched only singulars + a small set of cubes/
+boxes/balls aliases; no generic-noun aliases; no quantifier handling
+elsewhere in the resolver).
+
+**Source:** P2.5.2 live LLM smoke (2026-05-08). User prompt: "assign
+random color rotation and scale to each of the object" → no-match.
+Filed as #24 + #25, fixed in P2.5.3 Wave A.
+
+**Five-limbed argument:**
+1. **Claim:** A resolver advertised as "the LLM-facing way to point at
+   nodes by description" must accept the natural-language quantifier
+   forms a director uses. Singular-only is an arbitrary scope.
+2. **Reason:** LLMs generate prompts that mirror the user's verbal
+   reference patterns. "Each cube", "all spheres", "the objects" — the
+   resolver's regex shape determines what fraction of natural intent
+   passes through. The fraction was too low.
+3. **Universal principle:** When a resolver consumes natural-language
+   input, its alias / quantifier coverage is a load-bearing surface,
+   not a "nice to have." Coverage gaps don't error — they no-match —
+   so they're invisible until live observation.
+4. **Application:** `inferNodeTypes` gains plural forms (`cubes?`,
+   `spheres?`) AND generic-primitive aliases (object/thing/everything/
+   nodes → all visible primitives). A new `hasMultiTargetIntent`
+   helper auto-promotes `hint` to `multiple-allowed` when quantifiers
+   or generic plurals are detected, so the candidate-count threshold
+   doesn't bounce a legitimately-multiple resolution to ambiguous.
+5. **Conclusion:** "each of the objects" resolves; "all spheres"
+   resolves; "the cubes" resolves — all without further LLM rounds.
+
+**The trap:** filing this as "the LLM should rephrase" or "user
+education." It's a coverage gap in a resolver. The resolver was the
+fix surface, not the prompt.
+
+**The real fix:** plural noun forms + generic-primitive alias map +
+quantifier-aware hint promotion. ~40 LoC in identify.ts; +12 unit
+tests. The verb-noun co-reference cleanup in shouldRunIdentifyRound
+(#15) is a sister fix — same family of "natural-language coverage"
+hardening.
+
+**Sister patterns:** any future natural-language resolver
+(`agent.identify` for animation channels in P3, render-pass aliases
+in P4) carries the same risk. Coverage tests should run on a corpus
+of director-style prompts, not just the single-noun happy path.
+
+**Cross-refs:** dharana B7 (Agent identifier ↔ DAG node-set — span
+scope updated post-fix); vyapti V13 (closure preservation — closures
+rooted on multi-target identifies pass through correctly because each
+selector becomes a closure root). PLAN P2.5.3 §2 Wave A.
