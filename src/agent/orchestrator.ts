@@ -32,6 +32,7 @@ import { getTool, listTools } from './tools/registry';
 import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
 import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
+import { createFork } from './diff/forkedDag';
 import { ClosurePreservationError } from '../agent/closure/expand';
 import type { ClosureSpec } from './closure/types';
 import type { IdentifyResult } from './identify/types';
@@ -145,6 +146,18 @@ export async function runAgentTurn(
     nextRoundToolChoice = { name: 'agent.identify' };
   }
 
+  // Turn-level op accumulators (hoisted out of the round loop). Tools across
+  // multiple rounds compose into a single atomic diff at end of turn — this
+  // is what enables the spawn-with-properties chain (mesh.add round 1 +
+  // mutator.setMaterialColor round 2 = one Cmd+Z entry). The per-tool
+  // effectiveState evolves so later tools in the same round see ops from
+  // earlier ones (closes the gate-1 trap when an LLM batches mesh.add +
+  // proposePlan-targeting-the-fresh-id in parallel).
+  const turnOps: Op[] = [];
+  const turnOpSources: string[] = [];
+  const turnMutationToolNames: string[] = [];
+  let turnMutatorClosureSpec: ClosureSpec | undefined;
+
   try {
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       if (signal?.aborted) break;
@@ -242,19 +255,17 @@ export async function runAgentTurn(
       // messages that we'll append to `messages` for the next round.
       const completedToolCalls: AssistantToolCall[] = [];
       const toolResultMessages: ChatMessage[] = [];
-      const roundOps: Op[] = [];
-      const roundOpSources: string[] = [];
-      const roundMutationToolNames: string[] = [];
-      // Wave C: when agent.proposePlan emits ops, the Mutator's
-      // declared closure spec (carried in the JSON result) overrides
-      // Wave A's selection-inferred spec for THIS round. Multi-mutator
-      // rounds union the roots; the gate runs once over the merged ops.
-      let mutatorClosureSpec: ClosureSpec | undefined;
 
       // F2: re-read DAG state JUST before tool execution. If the user
       // dispatched an op while the LLM was thinking, tools see the truth.
       const currentDagState = useDagStore.getState().state;
-      const ctx: ToolContext = { dagState: currentDagState, selectedNodeIds };
+      // Speculative state — currentDagState + every op already accumulated
+      // this turn. This lets a later tool's gate-1 (node_existence) check
+      // see fresh ids introduced by earlier tools in the same turn (e.g.
+      // proposePlan targeting a sphere mesh.add just spawned). Evolves as
+      // each tool within this round produces ops.
+      let effectiveState = createFork(currentDagState, turnOps).fork;
+      const ctx: ToolContext = { dagState: effectiveState, selectedNodeIds };
 
       // Iterate by accumulator index (insertion order).
       const entries = Array.from(toolCallAccumulators.entries()).sort((a, b) => a[0] - b[0]);
@@ -272,6 +283,9 @@ export async function runAgentTurn(
 
         const toolDef = getTool(acc.name);
         const toolStart = performance.now();
+        // Refresh ctx.dagState from the evolving speculative state so each
+        // tool sees ops that previous tools in this round already produced.
+        ctx.dagState = effectiveState;
         const result = await executeToolCall(acc, toolDef, ctx, mode);
         const toolDuration = performance.now() - toolStart;
         const resultMessage = result.text ?? `OK (${result.ops.length} ops)`;
@@ -300,10 +314,18 @@ export async function runAgentTurn(
 
         if (result.ops.length > 0) {
           for (const op of result.ops) {
-            roundOps.push(op);
-            roundOpSources.push(`agent:${acc.name}`);
+            turnOps.push(op);
+            turnOpSources.push(`agent:${acc.name}`);
           }
-          roundMutationToolNames.push(acc.name);
+          turnMutationToolNames.push(acc.name);
+
+          // Evolve the speculative state so the next tool in this round
+          // (and any subsequent rounds) sees the fresh ops as already-
+          // applied. Without this, a parallel-call batch like
+          // [mesh.add(Sphere), proposePlan(setMaterialColor target=newId)]
+          // fails gate-1 because the new id doesn't exist in the round's
+          // initial DAG snapshot.
+          effectiveState = createFork(effectiveState, result.ops).fork;
 
           // Wave C: capture the Mutator-declared closure when
           // agent.proposePlan succeeds. The validator already ran the
@@ -314,8 +336,8 @@ export async function runAgentTurn(
           if (acc.name === 'agent.proposePlan') {
             const spec = parseProposePlanClosureSpec(result.text);
             if (spec) {
-              mutatorClosureSpec = mutatorClosureSpec
-                ? unionClosureSpecs(mutatorClosureSpec, spec)
+              turnMutatorClosureSpec = turnMutatorClosureSpec
+                ? unionClosureSpecs(turnMutatorClosureSpec, spec)
                 : spec;
             }
           }
@@ -378,69 +400,52 @@ export async function runAgentTurn(
       // exiting now never leaves a malformed conversation.
       if (earlyExit) break;
 
-      // If mutation ops were produced → propose them as a diff and end the
-      // turn. The user accepts/rejects via DiffBar.
-      if (roundOps.length > 0) {
-        mutationToolCallCount += roundMutationToolNames.length;
-        const description = roundMutationToolNames.join(', ');
-        // V13 closure-preservation. Precedence:
-        //   1. Mutator-declared closure (Wave C) — exact, contract-driven.
-        //   2. Selection / Identify-resolved roots (Wave A + B) — conservative fallback.
-        //   3. None → vacuous gate (additive prompts).
-        const closureSpec = mutatorClosureSpec ?? inferClosureSpec(identifiedSelectors);
-        try {
-          // F8: createFork can throw on op validation (unknown node, cycle,
-          // type mismatch). Without try/catch the orchestrator never sets
-          // streaming=false and the UI hangs.
-          useDiffStore
-            .getState()
-            .propose(currentDagState, roundOps, description, roundOpSources, closureSpec);
-        } catch (proposeErr) {
-          if (proposeErr instanceof ClosurePreservationError) {
-            // F6: thread the structured rejection back to the LLM as a
-            // follow-up user message. The assistant{tool_calls} +
-            // role:'tool' pairing already pushed in this round stays
-            // intact — we just add context for round N+1. The model can
-            // retry with ops scoped to the closure roots, dag.inspect to
-            // explore, or surface to the user.
-            const rootList = closureSpec!.rootSelectors.join(', ');
-            const closureList = [...proposeErr.closure.nodes].join(', ');
-            const retryMsg =
-              `DIFF_REJECTED_BY_CLOSURE_GATE: op targeted node "${proposeErr.target}" ` +
-              `outside the declared closure (roots: [${rootList}]; reachable: [${closureList}]). ` +
-              `Retry with ops that only touch the listed closure nodes, OR call dag.inspect to ` +
-              `find a different scope, OR explain to the user why the requested change is out of scope.`;
-            messages.push({ role: 'user', content: retryMsg });
-            sessionStore.appendToLastAssistant(`\n\n[Closure gate: ${proposeErr.message}]`);
-            // Do NOT break — let the loop run another round so the LLM
-            // can react. mutationToolCallCount stays incremented for
-            // observability (the model did try to mutate).
-            continue;
-          }
-          // F6: non-Closure errors from propose() (createFork validation —
-          // unknown node, cycle, type mismatch) are also routed back to
-          // the LLM as structured retry feedback. Without this branch,
-          // the user saw "Diff proposal failed" with no path forward and
-          // the LLM never got a chance to fix the plan. Bounded by
-          // MAX_ROUNDS so we can't loop forever.
-          const errMsg = (proposeErr as Error).message;
-          const retryMsg =
-            `DIFF_PROPOSAL_FAILED: createFork rejected the ops with: "${errMsg}". ` +
-            `Common causes: op references an unknown node, introduces a cycle, ` +
-            `or a setParam value mismatches the target's paramSchema. Inspect ` +
-            `the DAG with dag.inspect, refine the plan, OR explain to the user ` +
-            `why the requested change can't be applied.`;
-          messages.push({ role: 'user', content: retryMsg });
-          sessionStore.appendToLastAssistant(`\n\n[Diff proposal failed: ${errMsg}]`);
-          // Loop another round so the LLM can react. mutationToolCallCount
-          // stays incremented for observability.
-          continue;
-        }
-        break;
-      }
+      // Tool ops accumulate into turnOps across rounds. The diff is
+      // proposed ONCE at the end of the turn so chained calls
+      // (mesh.add round 1 + proposePlan round 2) land as one Cmd+Z entry.
+      // Loop continues until the LLM emits text without tool calls, hits
+      // MAX_ROUNDS, or signals earlyExit (Identify ambiguous/no-match).
+    }
 
-      // Only read-only tools were called this round. Loop for another
-      // round so the LLM can act on the inspection results.
+    // After the round loop: propose all accumulated ops as ONE atomic
+    // diff. This is what makes the compose pattern (e.g. mesh.add +
+    // mutator.setMaterialColor across rounds) land as a single Cmd+Z
+    // entry instead of two pending diffs that would have stomped each
+    // other (the diff store is single-pending).
+    if (turnOps.length > 0) {
+      mutationToolCallCount += turnMutationToolNames.length;
+      const description = turnMutationToolNames.join(', ');
+      // V13 closure-preservation. Precedence:
+      //   1. Mutator-declared closure (Wave C) — exact, contract-driven.
+      //   2. Selection / Identify-resolved roots (Wave A + B) — fallback.
+      //   3. None → vacuous gate (additive prompts).
+      const closureSpec = turnMutatorClosureSpec ?? inferClosureSpec(identifiedSelectors);
+      // F2: re-read at propose time — state may have changed since the
+      // last round's read.
+      const baseState = useDagStore.getState().state;
+      try {
+        useDiffStore
+          .getState()
+          .propose(baseState, turnOps, description, turnOpSources, closureSpec);
+      } catch (proposeErr) {
+        // We're past the round loop — no more rounds available for retry.
+        // validatePlan's gate-3 (in-tool, per Mutator dispatch) is the
+        // primary closure defense and CAN feed retry feedback to the LLM
+        // mid-loop. This propose-time check is belt-and-suspenders for
+        // raw dag.exec ops; if it fires, surface to the user.
+        if (proposeErr instanceof ClosurePreservationError) {
+          const rootList = closureSpec!.rootSelectors.join(', ');
+          sessionStore.appendToLastAssistant(
+            `\n\n[Closure gate (end-of-turn): op targeted "${proposeErr.target}" ` +
+              `outside roots [${rootList}]. Plan rejected to prevent mutation outside intent.]`,
+          );
+          error = `Closure violation: ${proposeErr.target} outside [${rootList}]`;
+        } else {
+          const errMsg = (proposeErr as Error).message;
+          sessionStore.appendToLastAssistant(`\n\n[Diff proposal failed: ${errMsg}]`);
+          error = errMsg;
+        }
+      }
     }
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
