@@ -207,3 +207,53 @@ test('P3#5 mute toggle on layer row dispatches a setParam Op (V1 holds)', async 
   });
   expect(muted).toBe(true);
 });
+
+test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pending', async ({ page }) => {
+  // Stage a pending diff carrying a KeyframeChannelVec3 addNode with two
+  // keyframes spanning t=0 → t=2. The DiffBar's time-range indicator
+  // should surface "0 → 2s" so the user sees where the change lands in time.
+  await page.waitForFunction(() => {
+    const w = window as unknown as { __basher_diff?: unknown };
+    return Boolean(w.__basher_diff);
+  });
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      __basher_dag: { getState: () => { state: unknown } };
+      __basher_diff: {
+        getState: () => {
+          propose: (
+            state: unknown,
+            ops: unknown[],
+            description: string,
+            opSources?: string[],
+            closureSpec?: unknown,
+            warnings?: string[],
+          ) => unknown;
+        };
+      };
+    };
+    const ops = [
+      {
+        type: 'addNode',
+        nodeId: 'ch_test',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          name: 'pos',
+          target: 'box',
+          paramPath: 'position',
+          keyframes: [
+            { time: 0, value: [0, 0, 0], easing: 'cubic' },
+            { time: 2, value: [0, 5, 0], easing: 'cubic' },
+          ],
+        },
+      },
+    ];
+    const state = w.__basher_dag.getState().state;
+    w.__basher_diff.getState().propose(state, ops, 'test bounce', [
+      'agent:mutator.timeline.addChannel',
+    ]);
+  });
+  await expect(page.getByTestId('diffbar-time-range')).toBeVisible();
+  await expect(page.getByTestId('diffbar-time-range')).toContainText('0');
+  await expect(page.getByTestId('diffbar-time-range')).toContainText('2');
+});

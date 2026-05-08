@@ -236,6 +236,98 @@ runs in the next round after \`mesh.add\`'s newNodeId is visible. That's
   the new id doesn't exist yet.`,
 };
 
+const ANIMATION: StrategyResource = {
+  topic: 'animation',
+  description:
+    'How to animate a node — wrap with AnimationLayer, add a typed channel, append keyframes.',
+  body: `# Animation (P3 — timeline = nodes)
+
+Animation is data, not code. Every keyframe is a node; every channel is
+a node; the timeline drawer renders projections of the DAG. The agent
+authors animation by composing Mutators in the same shape as any other
+edit.
+
+## The three-Mutator sequence
+
+To animate \`<targetId>.<paramPath>\` from value v0 (at time t0) to v1
+(at time t1):
+
+1. **Wrap the target in an AnimationLayer** (skip if it's already
+   wrapped — \`dag.inspect\` to confirm):
+   \`\`\`json
+   { "mutator": "mutator.timeline.addLayer",
+     "spec": { "targetSelectors": ["<targetId>"], "layerIds": ["<targetId>_layer"] } }
+   \`\`\`
+
+2. **Add a typed channel + initial keyframe** (creates the channel and
+   wires it to the layer's animation socket + the project TimeSource):
+   \`\`\`json
+   { "mutator": "mutator.timeline.addChannel",
+     "spec": {
+       "layerId": "<targetId>_layer",
+       "target": "<targetId>",
+       "paramPath": "position",
+       "valueType": "vec3",
+       "channelId": "<targetId>_position_channel",
+       "initialKeyframe": { "time": 0, "value": [0, 0, 0] }
+     } }
+   \`\`\`
+
+3. **Append additional keyframes** (call once per sample):
+   \`\`\`json
+   { "mutator": "mutator.timeline.keyframe",
+     "spec": {
+       "channelId": "<targetId>_position_channel",
+       "time": 1,
+       "value": [0, 2, 0]
+     } }
+   \`\`\`
+
+Re-keying the same time replaces the existing sample — no need for a
+"removeKeyframe" Mutator.
+
+## Picking valueType
+
+| paramPath example                    | valueType |
+|--------------------------------------|-----------|
+| \`position\`, \`rotation\`, \`scale\`, \`size\` | \`vec3\`    |
+| \`intensity\`, \`fov\`, \`opacity\`        | \`number\`  |
+| \`material.color\`                     | \`color\`   |
+| (rare; quaternion rigs)              | \`quat\`    |
+
+## Easing defaults (no need to override unless asked)
+
+- \`number\` → \`linear\` (predictable scrubbing on scalars)
+- \`vec3\` / \`quat\` / \`color\` → \`cubic\` (smoothstep — natural spatial feel)
+
+## "Bounce N times over D seconds"
+
+A bounce is N up-down pairs over [0, D]. For a 3-bounce, 2-second loop
+on the cube's Y position from ground (0) to peak (h):
+
+- t=0    → [0, 0, 0]
+- t=D/6  → [0, h, 0]    // up 1
+- t=D/3  → [0, 0, 0]    // down 1
+- t=D/2  → [0, h, 0]    // up 2
+- t=2D/3 → [0, 0, 0]
+- t=5D/6 → [0, h, 0]
+- t=D    → [0, 0, 0]
+
+Emit one keyframe Mutator call per sample. Cubic easing makes the bounce
+look elastic; linear gives the cartoon stair-step look.
+
+## What NOT to do
+
+- Don't dispatch \`setParam\` directly on the target's position — that
+  changes the static value, not the animation. Use a channel.
+- Don't widen \`mesh.add\` with animation params — V14 says property
+  changes go through Mutators, not the spawn tool.
+- Don't create a second AnimationLayer wrapping an already-wrapped
+  target — addLayer's gate-4 rejects with a pointer to addChannel.
+- Don't call keyframe before addChannel exists — gate-4 rejects with
+  "channelId not in DAG".`,
+};
+
 export function registerAllStrategies(): void {
   registerStrategy(UNITS);
   registerStrategy(MATERIALS);
@@ -243,4 +335,5 @@ export function registerAllStrategies(): void {
   registerStrategy(CAMERAS);
   registerStrategy(ASSET_CHOICE);
   registerStrategy(SPAWN_WITH_PROPERTIES);
+  registerStrategy(ANIMATION);
 }

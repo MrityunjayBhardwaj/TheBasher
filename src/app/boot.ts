@@ -131,6 +131,11 @@ export function boot(): Promise<void> {
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;
       });
+      // Diff store — P3 Wave D e2e drives propose() to verify the DiffBar
+      // surface (time-range indicator, scope, warnings) without an LLM round.
+      void import('../agent/diff').then((m) => {
+        w.__basher_diff = m.useDiffStore;
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
