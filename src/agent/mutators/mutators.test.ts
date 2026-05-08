@@ -88,10 +88,10 @@ function buildScene(): DagState {
 // ---------------------------------------------------------------------------
 
 describe('mutator catalog', () => {
-  it('registerAllMutators registers six starter mutators', () => {
+  it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(6);
+    expect(mutators).toHaveLength(10);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.deleteNode',
@@ -99,6 +99,10 @@ describe('mutator catalog', () => {
       'mutator.rotate',
       'mutator.scale',
       'mutator.setMaterialColor',
+      'mutator.shot.create',
+      'mutator.timeline.addChannel',
+      'mutator.timeline.addLayer',
+      'mutator.timeline.keyframe',
       'mutator.translate',
     ]);
   });
@@ -557,7 +561,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(6);
+    expect(parsed.mutators).toHaveLength(10);
   });
 });
 
@@ -624,5 +628,352 @@ describe('agent.proposePlan tool', () => {
     const parsed = JSON.parse(r.text!) as { ok: boolean; gate: number };
     expect(parsed.ok).toBe(false);
     expect(parsed.gate).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P3 Wave B — animation Mutators (issue #34)
+// ---------------------------------------------------------------------------
+
+import { addLayerMutator, addChannelMutator, keyframeMutator, shotCreateMutator } from './index';
+import { applyOp } from '../../core/dag';
+
+function buildSceneWithTime() {
+  let s = buildScene();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'time',
+    nodeType: 'TimeSource',
+    params: {},
+  }).next;
+  return s;
+}
+
+describe('mutator.timeline.addLayer', () => {
+  it('emits addNode + disconnect + connect chain that wraps the target', () => {
+    const state = buildSceneWithTime();
+    const r = validatePlan(
+      addLayerMutator,
+      { targetSelectors: ['box'], layerName: 'BoxLayer', layerIds: ['box_layer'] },
+      state,
+      'wrap box',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const types = r.ops.map((o) => o.type);
+    // addNode AnimationLayer + disconnect (box → scene) + connect (layer → scene)
+    // + connect (box → layer.target)
+    expect(types).toContain('addNode');
+    expect(types).toContain('disconnect');
+    // 1 disconnect + 2 connects (consumer rewire + target wire)
+    expect(types.filter((t) => t === 'connect').length).toBeGreaterThanOrEqual(2);
+    expect(types.filter((t) => t === 'disconnect').length).toBe(1);
+    const addNodeOp = r.ops.find((o) => o.type === 'addNode');
+    if (addNodeOp?.type === 'addNode') {
+      expect(addNodeOp.nodeType).toBe('AnimationLayer');
+      expect(addNodeOp.nodeId).toBe('box_layer');
+    }
+  });
+
+  it('twice-call is deterministic for the same spec', () => {
+    const state = buildSceneWithTime();
+    const a = validatePlan(
+      addLayerMutator,
+      { targetSelectors: ['box'], layerName: 'L', layerIds: ['box_layer'] },
+      state,
+      'wrap',
+    );
+    const b = validatePlan(
+      addLayerMutator,
+      { targetSelectors: ['box'], layerName: 'L', layerIds: ['box_layer'] },
+      state,
+      'wrap',
+    );
+    expect(a).toEqual(b);
+  });
+
+  it('rejects re-wrapping an existing AnimationLayer (gate 4)', () => {
+    let state = buildSceneWithTime();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'wrapper',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    const r = validatePlan(
+      addLayerMutator,
+      { targetSelectors: ['wrapper'] },
+      state,
+      'rewrap',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+describe('mutator.timeline.addChannel', () => {
+  function stateWithLayer() {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box_layer',
+      nodeType: 'AnimationLayer',
+      params: { name: 'L' },
+    }).next;
+    return s;
+  }
+
+  it('creates a KeyframeChannelVec3 wired to layer + time', () => {
+    const state = stateWithLayer();
+    const r = validatePlan(
+      addChannelMutator,
+      {
+        layerId: 'box_layer',
+        target: 'box',
+        paramPath: 'position',
+        valueType: 'vec3',
+        channelId: 'box_pos_channel',
+        initialKeyframe: { time: 0, value: [0, 0, 0], easing: 'cubic' },
+      },
+      state,
+      'add channel',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(3);
+    const addNodeOp = r.ops[0];
+    expect(addNodeOp.type).toBe('addNode');
+    if (addNodeOp.type === 'addNode') {
+      expect(addNodeOp.nodeType).toBe('KeyframeChannelVec3');
+      expect(addNodeOp.nodeId).toBe('box_pos_channel');
+    }
+    // Connects: time → channel, channel → layer.animation
+    const connects = r.ops.filter((o) => o.type === 'connect');
+    expect(connects).toHaveLength(2);
+  });
+
+  it.each([
+    ['number', 'KeyframeChannelNumber'],
+    ['vec3', 'KeyframeChannelVec3'],
+    ['quat', 'KeyframeChannelQuat'],
+    ['color', 'KeyframeChannelColor'],
+  ])('valueType=%s → nodeType=%s', (valueType, nodeType) => {
+    const state = stateWithLayer();
+    const validValue: Record<string, unknown> = {
+      number: 1,
+      vec3: [0, 0, 0],
+      quat: [0, 0, 0, 1],
+      color: '#ff0000',
+    };
+    const r = validatePlan(
+      addChannelMutator,
+      {
+        layerId: 'box_layer',
+        target: 'box',
+        paramPath: 'p',
+        valueType,
+        initialKeyframe: { time: 0, value: validValue[valueType] },
+      },
+      state,
+      't',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.ops[0].type === 'addNode') {
+      expect(r.ops[0].nodeType).toBe(nodeType);
+    }
+  });
+
+  it('rejects when layerId is not an AnimationLayer (gate 4)', () => {
+    const state = stateWithLayer();
+    const r = validatePlan(
+      addChannelMutator,
+      { layerId: 'box', target: 'box', paramPath: 'p', valueType: 'number' },
+      state,
+      'wrong layer',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects mismatched initialKeyframe value shape (gate 4)', () => {
+    const state = stateWithLayer();
+    const r = validatePlan(
+      addChannelMutator,
+      {
+        layerId: 'box_layer',
+        target: 'box',
+        paramPath: 'p',
+        valueType: 'vec3',
+        initialKeyframe: { time: 0, value: 1 }, // number, not vec3
+      },
+      state,
+      'shape mismatch',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects when no TimeSource exists (gate 4)', () => {
+    let s = buildScene(); // scene without TimeSource
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box_layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    const r = validatePlan(
+      addChannelMutator,
+      { layerId: 'box_layer', target: 'box', paramPath: 'p', valueType: 'number' },
+      s,
+      'no time',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+describe('mutator.timeline.keyframe', () => {
+  function stateWithChannel() {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box_layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [{ time: 0, value: [0, 0, 0], easing: 'cubic' }],
+      },
+    }).next;
+    return s;
+  }
+
+  it('appends a new keyframe and sorts by time', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0] },
+      state,
+      'kf',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.paramPath).toBe('keyframes');
+    const keyframes = op.value as Array<{ time: number }>;
+    expect(keyframes).toHaveLength(2);
+    expect(keyframes[0].time).toBe(0);
+    expect(keyframes[1].time).toBe(1);
+  });
+
+  it('replaces the sample at the same time', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 0, value: [99, 99, 99] },
+      state,
+      're-key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    const keyframes = op.value as Array<{ time: number; value: unknown }>;
+    expect(keyframes).toHaveLength(1); // not 2
+    expect(keyframes[0].value).toEqual([99, 99, 99]);
+  });
+
+  it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'box', time: 0, value: 1 },
+      state,
+      'wrong type',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects mismatched value shape (gate 4)', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 0.5, value: 1 }, // channel is vec3
+      state,
+      'shape',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+describe('mutator.shot.create', () => {
+  function stateWithCamera() {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 45, near: 0.1, far: 100, position: [0, 0, 5], lookAt: [0, 0, 0] },
+    }).next;
+    return s;
+  }
+
+  it('emits addNode Shot + 2 connects', () => {
+    const state = stateWithCamera();
+    const r = validatePlan(
+      shotCreateMutator,
+      {
+        cameraId: 'cam',
+        sceneId: 'scene',
+        name: 'Opening',
+        startTime: 0,
+        endTime: 4,
+        shotId: 'shot_opening',
+      },
+      state,
+      's',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(3);
+    const addOp = r.ops[0];
+    if (addOp.type !== 'addNode') throw new Error('expected addNode');
+    expect(addOp.nodeId).toBe('shot_opening');
+    expect(addOp.nodeType).toBe('Shot');
+  });
+
+  it('rejects endTime < startTime (gate 4)', () => {
+    const state = stateWithCamera();
+    const r = validatePlan(
+      shotCreateMutator,
+      { cameraId: 'cam', sceneId: 'scene', startTime: 5, endTime: 1 },
+      state,
+      's',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects when cameraId points at a non-Camera node (gate 4)', () => {
+    const state = stateWithCamera();
+    const r = validatePlan(
+      shotCreateMutator,
+      { cameraId: 'box', sceneId: 'scene' },
+      state,
+      's',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
   });
 });

@@ -55,7 +55,10 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
      *  with kind 'animation'. */
     animation: { type: 'KeyframeChannel', cardinality: 'list' },
   },
-  outputs: { out: { type: 'AnimationLayer', cardinality: 'single' } },
+  // Output socket type 'Mesh' — AnimationLayer is transparent in scene
+  // composition, mirroring Transform's Mesh→Mesh wrap. The 'AnimationLayer'
+  // SocketTypeName is reserved for future layer-mixer nodes.
+  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
   evaluate(params, inputs: ResolvedInputs) {
     const target = (inputs.target as SceneChild | undefined) ?? null;
     const channelInput = inputs.animation;
