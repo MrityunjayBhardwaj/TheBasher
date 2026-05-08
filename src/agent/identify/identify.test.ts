@@ -222,6 +222,123 @@ describe('identify — match strategies', () => {
 // shouldRunIdentifyRound heuristic (P-3 mitigation)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Wave A — Identify-v2 (#24 quantifiers + #25 generic nouns)
+// ---------------------------------------------------------------------------
+
+describe('identify — quantifiers (#24)', () => {
+  it('"each cube" → match with all cubes (multi-target)', () => {
+    const state = buildScene();
+    const r = identify({ query: 'each cube' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toHaveLength(3);
+      expect(new Set(r.selectors)).toEqual(new Set(['redCube', 'greenCube', 'blueCube']));
+    }
+  });
+
+  it('"all spheres" → match with the sphere', () => {
+    const state = buildScene();
+    const r = identify({ query: 'all spheres' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toEqual(['sphere1']);
+    }
+  });
+
+  it('"every cube" → match with all cubes', () => {
+    const state = buildScene();
+    const r = identify({ query: 'every cube' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toHaveLength(3);
+    }
+  });
+
+  it('"both cubes" with 2 cubes → match (plural-after-the without "the")', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cube1',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cube2',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0] },
+    }).next;
+    const r = identify({ query: 'both cubes' }, s);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toHaveLength(2);
+  });
+
+  it('"the cubes" (bare plural) → match with all cubes', () => {
+    const state = buildScene();
+    const r = identify({ query: 'the cubes' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toHaveLength(3);
+  });
+
+  it('"ball" alone (no quantifier) does NOT trigger multi-target promotion', () => {
+    // "ball" matches the sphere alias but isn't a quantifier — singular
+    // resolution. Only one sphere exists so this is unambiguous either
+    // way; the test pins the behavior.
+    const state = buildScene();
+    const r = identify({ query: 'ball' }, state);
+    expect(r.type).toBe('match');
+  });
+});
+
+describe('identify — generic-noun aliases (#25)', () => {
+  it('"each of the objects" resolves to all primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'each of the objects' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      // Scene is excluded; cubes + sphere are visible primitives.
+      expect(new Set(r.selectors)).toEqual(
+        new Set(['redCube', 'greenCube', 'blueCube', 'sphere1']),
+      );
+    }
+  });
+
+  it('"every thing" → all visible primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'every thing' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('"everything" (single word) → all visible primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'everything' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('"all of them" → all visible primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'all of them' }, state);
+    expect(r.type).toBe('match');
+  });
+
+  it('"all nodes" → all visible primitives (pro-mode synonym)', () => {
+    const state = buildScene();
+    const r = identify({ query: 'all nodes' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('exact id "redCube" still wins over generic-noun alias', () => {
+    const state = buildScene();
+    const r = identify({ query: 'redCube' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toEqual(['redCube']);
+  });
+});
+
 describe('shouldRunIdentifyRound', () => {
   const empty = new Set<string>();
   const oneSelected = new Set(['box1']);

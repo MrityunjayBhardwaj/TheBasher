@@ -82,7 +82,12 @@ export function identify(
 ): IdentifyResult {
   const raw = args.query.trim();
   const q = raw.toLowerCase();
-  const hint = args.hint ?? 'unique';
+  // #24: Quantifiers (each/all/every/both) and generic-plural nouns
+  // ("the cubes") signal multi-target intent. Promote hint to
+  // 'multiple-allowed' so the candidate-count threshold doesn't bounce
+  // a legitimately-multiple resolution to ambiguous.
+  const explicitMulti = hasMultiTargetIntent(q);
+  const hint = explicitMulti ? 'multiple-allowed' : (args.hint ?? 'unique');
   const typeFilter = args.filter?.types?.map((t) => t) ?? null;
 
   // 1. Exact-id strategy.
@@ -270,6 +275,26 @@ function isSelectionPhrase(q: string): boolean {
  * fires. Order: longest match wins (e.g. "directional light" before
  * "light").
  */
+// Generic-primitive type set — what "object", "thing", "everything"
+// expand to. Lights count as primitives (they're scene-visible nodes
+// the user manipulates); cameras and empties (Group/Transform) count
+// too. Aggregators (Scene) and authoring nodes (MaterialOverride,
+// Scatter) are intentionally excluded — those aren't user-visible
+// "things" the prompt phrase refers to.
+const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
+  'BoxMesh',
+  'SphereMesh',
+  'DirectionalLight',
+  'PointLight',
+  'SpotLight',
+  'AreaLight',
+  'AmbientLight',
+  'PerspectiveCamera',
+  'OrthographicCamera',
+  'Group',
+  'Transform',
+];
+
 function inferNodeTypes(q: string): NodeTypeId[] | null {
   const matches: NodeTypeId[] = [];
   // Specific lights first — checked before the generic "light" rule.
@@ -285,16 +310,56 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
     return ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight', 'AmbientLight'];
   }
 
-  if (/\b(cube|box|boxmesh)\b/.test(q)) return ['BoxMesh'];
-  if (/\b(sphere|ball|spheremesh)\b/.test(q)) return ['SphereMesh'];
-  if (/\b(camera|cameras)\b/.test(q)) return ['PerspectiveCamera', 'OrthographicCamera'];
+  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxMesh'];
+  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereMesh'];
+  // Specific cameras before the generic "camera" rule (parallels lights).
   if (/\bperspective\s+camera\b/.test(q)) return ['PerspectiveCamera'];
   if (/\borthographic\s+camera\b/.test(q)) return ['OrthographicCamera'];
+  if (/\b(camera|cameras)\b/.test(q)) return ['PerspectiveCamera', 'OrthographicCamera'];
   if (/\bcharacter(s)?\b/.test(q)) return ['Character'];
   if (/\bgroup(s)?\b/.test(q)) return ['Group'];
   if (/\btransform(s)?\b/.test(q)) return ['Transform'];
 
+  // #25: Generic-noun aliases. "object/thing/everything" → all visible
+  // primitives. The Mutator's gate-4 precondition narrows further per
+  // verb — e.g. "rotate the objects" rejects nodes lacking a rotation
+  // param via the precondition path. So Identify can be permissive
+  // here and let the validator do the verb-specific filtering.
+  if (/\b(object|objects|thing|things)\b/.test(q)) return [...ALL_PRIMITIVE_TYPES];
+  if (/\beverything\b|\ball\s+of\s+them\b/.test(q)) return [...ALL_PRIMITIVE_TYPES];
+  // "node" / "nodes" is a pro-mode term — same expansion.
+  if (/\b(node|nodes)\b/.test(q)) return [...ALL_PRIMITIVE_TYPES];
+
   return null;
+}
+
+/**
+ * Detect quantifier or plural-noun cues that signal multi-target intent.
+ * Used to promote `hint` to 'multiple-allowed' so the candidate-count
+ * confidence derivation doesn't reject a legitimately-multiple
+ * resolution as ambiguous (#24).
+ *
+ * Examples that match: "each cube", "all spheres", "every light",
+ * "both cameras", "the cubes" (bare plural after "the").
+ *
+ * Examples that don't: "ball" (no \\bplural marker), "called" (no
+ * standalone quantifier), "things" alone (it WOULD match — that's
+ * intentional; "things" implies plural).
+ */
+function hasMultiTargetIntent(q: string): boolean {
+  // Explicit quantifiers — singular-target prompt does NOT use these.
+  if (/\b(each|all|every|both)\b/.test(q)) return true;
+  // Generic-plural cues — "everything", "all of them", and bare
+  // generic plurals ("objects", "things", "nodes") all imply plural.
+  if (/\b(everything|all\s+of\s+them)\b/.test(q)) return true;
+  if (/\b(objects|things|nodes)\b/.test(q)) return true;
+  // "the X{plural}" with a known type noun — "the cubes", "the spheres".
+  // Plural marker = trailing "s" on a known noun. Match against the
+  // type-noun list to avoid misfiring on irrelevant plurals.
+  if (/\bthe\s+(cubes|spheres|balls|lights|cameras|characters|groups)\b/.test(q)) {
+    return true;
+  }
+  return false;
 }
 
 const COLOR_WORDS: Record<string, string> = {
