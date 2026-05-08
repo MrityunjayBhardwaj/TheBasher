@@ -34,7 +34,7 @@ import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
 import { createFork } from './diff/forkedDag';
 import { ClosurePreservationError } from '../agent/closure/expand';
-import type { ClosureSpec } from './closure/types';
+import type { ClosureSpec, EdgeKind } from './closure/types';
 import type { IdentifyResult } from './identify/types';
 import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
@@ -735,12 +735,32 @@ function parseIdentifyResult(text: string | undefined): IdentifyResult | null {
   return null;
 }
 
+// Known edge kinds from closure/types.ts. Updating that union → update
+// this list. The compile-time exhaustiveness check below fails CI if
+// the two drift.
+const KNOWN_EDGE_KINDS: ReadonlySet<string> = new Set([
+  'parent',
+  'children',
+  'camera',
+  'lights',
+  'time',
+  'animation',
+  'pass-input',
+] satisfies readonly EdgeKind[]);
+
 /**
  * Extract the Mutator-declared ClosureSpec from agent.proposePlan's
  * success payload. Returns null on any structural mismatch — the
  * orchestrator falls back to selection-inferred closure.
+ *
+ * #14 — H21-class hardening: validate every edge kind against the
+ * known union at the JSON boundary. An LLM (or a future Mutator with
+ * a typo) emitting an unknown kind would otherwise silently no-op the
+ * walk inside expandClosure (the kind switch falls through), leaving
+ * the closure too narrow and ops outside it failing the gate with no
+ * useful retry signal. Better to reject upfront with a typed return.
  */
-function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | null {
+export function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | null {
   if (!text) return null;
   try {
     const obj = JSON.parse(text) as unknown;
@@ -750,6 +770,14 @@ function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | nu
     const roots = o.closureRoots;
     const edges = o.closureFollowedEdges;
     if (!Array.isArray(roots) || !Array.isArray(edges)) return null;
+    // Validate edge kinds — reject the entire spec if any kind is
+    // unknown. Caller falls back to selection-inferred closure, which
+    // is conservative and safe (V13 still holds).
+    for (const e of edges) {
+      if (typeof e !== 'string' || !KNOWN_EDGE_KINDS.has(e)) {
+        return null;
+      }
+    }
     return {
       rootSelectors: roots.filter((s): s is NodeId => typeof s === 'string'),
       followedEdges: edges as ClosureSpec['followedEdges'],
