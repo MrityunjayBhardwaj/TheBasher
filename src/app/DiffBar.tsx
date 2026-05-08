@@ -11,6 +11,7 @@
 import { useState } from 'react';
 import { useDiffStore, acceptSelectedOps } from '../agent/diff';
 import { useDagStore } from '../core/dag/store';
+import type { Op } from '../core/dag/types';
 
 export function DiffBar() {
   const status = useDiffStore((s) => s.status);
@@ -30,6 +31,11 @@ export function DiffBar() {
   const closureNodeCount = pendingDiff.closure?.nodes.size ?? 0;
   const closureRoots = pendingDiff.closure?.spec.rootSelectors ?? [];
   const warnings = pendingDiff.warnings ?? [];
+  // Wave D — time-range indicator. Animation Mutators emit ops that carry
+  // explicit time values (keyframes / Shot bounds). Surfacing the range
+  // lets the user see at a glance "this diff lands keyframes between
+  // t=0 and t=2" before accepting.
+  const timeRange = extractTimeRange(pendingDiff.ops);
 
   const handleApply = () => {
     setAccepting(true);
@@ -41,7 +47,8 @@ export function DiffBar() {
     }
   };
 
-  const hasMeta = sourceCounts.length > 1 || closureNodeCount > 0 || warnings.length > 0;
+  const hasMeta =
+    sourceCounts.length > 1 || closureNodeCount > 0 || warnings.length > 0 || timeRange !== null;
 
   return (
     <div
@@ -117,6 +124,14 @@ export function DiffBar() {
               )}
             </span>
           )}
+          {timeRange && (
+            <span data-testid="diffbar-time-range">
+              <span style={{ color: '#666' }}>Time:</span>{' '}
+              <span style={{ color: '#bbc' }}>
+                {formatTimeRange(timeRange)}
+              </span>
+            </span>
+          )}
           {warnings.length > 0 && (
             <span data-testid="diffbar-warnings" style={{ color: '#d4a554' }}>
               ⚠ {warnings.join(' · ')}
@@ -140,6 +155,69 @@ function countBySource(opSources: string[] | undefined, total: number): SourceCo
   return Array.from(counts.entries())
     .map(([source, count]) => ({ source, count }))
     .sort((a, b) => b.count - a.count);
+}
+
+interface TimeRange {
+  min: number;
+  max: number;
+}
+
+const CHANNEL_NODE_TYPES = new Set([
+  'KeyframeChannelNumber',
+  'KeyframeChannelVec3',
+  'KeyframeChannelQuat',
+  'KeyframeChannelColor',
+]);
+
+/**
+ * Walk the pending Op chain looking for explicit time values. Sources:
+ * - addNode of a KeyframeChannel* with seeded keyframes → keyframe times
+ * - addNode of a Shot                                  → startTime/endTime
+ * - setParam where paramPath is 'keyframes'           → element times
+ * - setParam where paramPath is 'time' (single keyframe field) → that scalar
+ *
+ * Returns null when no temporal data is found (the row stays hidden).
+ */
+function extractTimeRange(ops: Op[]): TimeRange | null {
+  let min = Infinity;
+  let max = -Infinity;
+  const consume = (t: unknown) => {
+    if (typeof t !== 'number' || !Number.isFinite(t)) return;
+    if (t < min) min = t;
+    if (t > max) max = t;
+  };
+
+  for (const op of ops) {
+    if (op.type === 'addNode') {
+      const params = (op.params ?? {}) as Record<string, unknown>;
+      if (CHANNEL_NODE_TYPES.has(op.nodeType)) {
+        const kfs = (params.keyframes as Array<{ time?: unknown }> | undefined) ?? [];
+        for (const k of kfs) consume(k.time);
+      } else if (op.nodeType === 'Shot') {
+        consume(params.startTime);
+        consume(params.endTime);
+      }
+    } else if (op.type === 'setParam') {
+      if (op.paramPath === 'keyframes' && Array.isArray(op.value)) {
+        for (const k of op.value as Array<{ time?: unknown }>) consume(k?.time);
+      } else if (op.paramPath === 'time') {
+        consume(op.value);
+      }
+    }
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  return { min, max };
+}
+
+function formatTimeRange({ min, max }: TimeRange): string {
+  if (Math.abs(max - min) < 1e-6) return `t=${formatSeconds(min)}`;
+  return `${formatSeconds(min)} → ${formatSeconds(max)}s`;
+}
+
+function formatSeconds(n: number): string {
+  // Trim trailing zeros: 1 → "1", 0.5 → "0.5", 1.250 → "1.25".
+  return Number.isInteger(n) ? `${n}` : `${parseFloat(n.toFixed(3))}`;
 }
 
 const btnStyle: React.CSSProperties = {

@@ -19,12 +19,13 @@ beforeEach(() => {
 });
 
 describe('strategy catalog', () => {
-  it('registerAllStrategies registers six starter resources', () => {
+  it('registerAllStrategies registers all starter resources', () => {
     registerAllStrategies();
     const all = listStrategies();
-    expect(all).toHaveLength(6);
+    expect(all).toHaveLength(7);
     const topics = all.map((s) => s.topic).sort();
     expect(topics).toEqual([
+      'animation',
       'assetChoice',
       'cameras',
       'lighting',
@@ -52,7 +53,7 @@ describe('strategy catalog', () => {
   it('listStrategyMetadata drops the body', () => {
     registerAllStrategies();
     const meta = listStrategyMetadata();
-    expect(meta).toHaveLength(6);
+    expect(meta).toHaveLength(7);
     for (const m of meta) {
       expect(m).toHaveProperty('topic');
       expect(m).toHaveProperty('description');
@@ -67,7 +68,7 @@ describe('agent.listStrategies tool', () => {
     const r = listStrategiesTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { strategies: { topic: string }[] };
-    expect(parsed.strategies).toHaveLength(6);
+    expect(parsed.strategies).toHaveLength(7);
   });
 });
 

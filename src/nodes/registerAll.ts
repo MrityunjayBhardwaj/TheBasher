@@ -5,12 +5,18 @@ import { getNodeType, registerNodeType } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
+import { AnimationLayerNode } from './AnimationLayer';
 import { AreaLightNode } from './AreaLight';
 import { BoxMeshNode } from './BoxMesh';
 import { CharacterNode } from './Character';
+import { CutNode } from './Cut';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
 import { GroupNode } from './Group';
+import { KeyframeChannelColorNode } from './KeyframeChannelColor';
+import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
+import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
+import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
 import { NavmeshNode } from './Navmesh';
@@ -21,6 +27,7 @@ import { PosedSkeletonNode } from './PosedSkeleton';
 import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
 import { SceneNode } from './Scene';
+import { ShotNode } from './Shot';
 import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
@@ -56,6 +63,14 @@ const ALL: NodeDefinition[] = [
   WalkPathNode as unknown as NodeDefinition,
   LocomotionStateNode as unknown as NodeDefinition,
   CharacterNode as unknown as NodeDefinition,
+  // P3 — Timeline = animation nodes
+  KeyframeChannelNumberNode as unknown as NodeDefinition,
+  KeyframeChannelVec3Node as unknown as NodeDefinition,
+  KeyframeChannelQuatNode as unknown as NodeDefinition,
+  KeyframeChannelColorNode as unknown as NodeDefinition,
+  AnimationLayerNode as unknown as NodeDefinition,
+  ShotNode as unknown as NodeDefinition,
+  CutNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

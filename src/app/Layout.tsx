@@ -15,7 +15,7 @@ import { NodeList } from './NodeList';
 import { NPanel } from './NPanel';
 import { RightDrawer } from './RightDrawer';
 import { SceneTree } from './SceneTree';
-import { Timebar } from './Timebar';
+import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TransformToolbar } from './TransformToolbar';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
@@ -146,7 +146,7 @@ export function Layout() {
       </div>
 
       <div style={{ gridArea: 'timeline' }} data-testid="timeline-slot">
-        <Timebar />
+        <TimelineDrawer />
       </div>
     </div>
   );

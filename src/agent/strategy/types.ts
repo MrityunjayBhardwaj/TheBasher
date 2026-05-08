@@ -14,7 +14,9 @@ export type StrategyTopic =
   | 'lighting'
   | 'cameras'
   | 'assetChoice'
-  | 'spawnWithProperties';
+  | 'spawnWithProperties'
+  // P3 Wave D — timeline + animation conventions.
+  | 'animation';
 
 export interface StrategyResource {
   topic: StrategyTopic;

@@ -67,7 +67,12 @@ export type SocketTypeName =
   | 'AnimationClip'
   | 'Navmesh'
   | 'WalkPath'
-  | 'LocomotionState';
+  | 'LocomotionState'
+  // P3 — Timeline = animation nodes (THESIS §42)
+  | 'KeyframeChannel'
+  | 'AnimationLayer'
+  | 'Shot'
+  | 'Cut';
 
 export type Cardinality = 'single' | 'list';
 

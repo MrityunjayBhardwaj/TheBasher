@@ -29,6 +29,10 @@ import { scaleMutator } from './builders/scale';
 import { setMaterialColorMutator } from './builders/setMaterialColor';
 import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
+import { addLayerMutator } from './builders/addLayer';
+import { addChannelMutator } from './builders/addChannel';
+import { keyframeMutator } from './builders/keyframe';
+import { shotCreateMutator } from './builders/shotCreate';
 
 export {
   rotateMutator,
@@ -37,6 +41,10 @@ export {
   setMaterialColorMutator,
   duplicateMutator,
   deleteNodeMutator,
+  addLayerMutator,
+  addChannelMutator,
+  keyframeMutator,
+  shotCreateMutator,
 };
 
 export function registerAllMutators(): void {
@@ -46,4 +54,9 @@ export function registerAllMutators(): void {
   registerMutator(setMaterialColorMutator);
   registerMutator(duplicateMutator);
   registerMutator(deleteNodeMutator);
+  // P3 Wave B — animation Mutators (THESIS §42, issue #34)
+  registerMutator(addLayerMutator);
+  registerMutator(addChannelMutator);
+  registerMutator(keyframeMutator);
+  registerMutator(shotCreateMutator);
 }

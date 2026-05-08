@@ -663,3 +663,82 @@ agent.identify + agent.proposePlan + agent.listStrategies +
 agent.getStrategy tools added (registry now 11). H19/H20/H21
 mechanism class structurally closed by V13 + Wave B Identify stage +
 Wave C Mutator catalog.
+
+**Updated:** 2026-05-09 — post-P3 (Timeline = animation nodes):
+
+- **B7 (Agent identifier ↔ DAG node-set) span scope extended** to
+  include animation references: channel ids by paramPath (e.g.
+  `<targetId>_position_channel` is the deterministic id addChannel
+  emits), AnimationLayer ids by wrapped target, and
+  natural-language keyframe references ("the bouncing keyframe", "every
+  channel on the cube") which the agent.identify resolver already
+  passes through via the type-alias / generic-noun branches added in
+  P2.5.3. The animation surface adds no new identifier-resolution
+  failure mode; H21 / H24's mitigations cover it directly.
+
+- **B8 (Mutator catalog ↔ Op constructor) extended.** Catalog grows
+  6 → 10. Four new Mutators land: `mutator.timeline.addLayer`,
+  `mutator.timeline.addChannel`, `mutator.timeline.keyframe`,
+  `mutator.shot.create`. V14 (non-redundancy) holds — each new
+  signature is unique vs the existing six, mechanically asserted
+  in `mutators.test.ts` "V14 contract signature" test. Closure
+  spec for addChannel walks `'animation'` so layer's existing
+  channels sit alongside the layer root in scope (gate 1
+  contract_edges); keeps future "diff against existing channels"
+  preconditions cheap.
+
+- **H22 (per-edge-kind BFS isolation) holds under live socket.**
+  P3 Wave A is the first time the `'animation'` edge kind has a
+  real socket on a registered node type (`AnimationLayer.inputs.animation`,
+  cardinality:list). Closure tests in `expand.test.ts` confirm:
+  rooted at layerA with `followedEdges:['animation']`, walker
+  reaches chA only — sibling layerB's chB does NOT leak; walker
+  doesn't free-mix into 'children' (boxA stays out of scope).
+  Per-kind BFS rooted-at-rootSelectors discipline preserved.
+
+- **New strategy resource `animation` (V15 lazy)** lays out the
+  three-Mutator sequence (addLayer → addChannel → keyframe ×N)
+  for the LLM. STRATEGY_TOPICS exhaustive check enforces drift —
+  adding a topic without updating the zod enum fails tsc.
+
+- **AnimationLayer evaluator patches channel values into a deep-
+  cloned target at paramPath.** Number/Vec3 weight-blend toward
+  the static value; Quat/Color snap at the half-weight mark
+  (slerp/HSL-lerp partial blending deferred until weight<1 is
+  authored). `target` output retypes 'AnimationLayer' → 'Mesh'
+  so the layer inserts transparently in scene chains, mirroring
+  Transform's wrap.
+
+- **DiffBar gains a time-range indicator.** Walks pending op chain
+  for explicit time values (KeyframeChannel keyframes, Shot
+  bounds, setParam keyframes/time). Hidden when no temporal data
+  present — non-animation diffs unaffected.
+
+- **Fatality test (post-P3, 2026-05-09):**
+  1. Hetvabhasa clustering: 24 entries, no new H from P3 work.
+     The animation surface didn't surface a new failure class —
+     P2.5.2's structural answers (V13/V14, gate-validator) caught
+     every wiring mismatch in dev (e.g. addChannel's
+     contract_edges declaration vs followedEdges; resolved at
+     test time, not in production). No B-boundary newly clusters
+     3+ patterns.
+  2. Vyapti span: V13 + V14 + V15 ALIGNED status verified —
+     animation Mutators all declare buildClosureSpec, gate 3
+     accepts on closure-rooted ops, V14 non-redundancy mechanical
+     guard passes. No invariant span widened.
+  3. Krama crossing: animation playback adds no new lifecycle
+     beyond K3's atomic Mutator dispatch (single round → ops →
+     V13 gate → propose → accept → dispatchAtomic). The
+     channel-application step lives entirely inside
+     AnimationLayer.evaluate — single-module concern, no crossing.
+
+  **Verdict: organization remains sound after P3.** The
+  animation surface integrates cleanly through the existing
+  Mutator + closure machinery. The dopesheet/curve editor are
+  pure projections of the DAG — V8 file-rooted holds (dispatch
+  stays in `src/app/timeline/`, never `src/timeline/`).
+
+  **Next update trigger:** P3.1 (BVH + FBX + Mixamo retargeting).
+  Expect a new bone-name-resolution boundary class — sister to
+  H21 at the rig boundary. Promote to a new dharana boundary B9
+  if a second name-mismatch bug surfaces.

@@ -19,6 +19,7 @@ const STRATEGY_TOPICS = [
   'cameras',
   'assetChoice',
   'spawnWithProperties',
+  'animation',
 ] as const satisfies readonly StrategyTopic[];
 
 // Compile-time check: STRATEGY_TOPICS covers every StrategyTopic.

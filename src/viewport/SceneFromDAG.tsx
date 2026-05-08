@@ -376,6 +376,9 @@ function MeshChild({ value, override }: MeshChildProps) {
       return <ScatterR value={value} override={override} />;
     case 'Character':
       return <CharacterR value={value} />;
+    case 'AnimationLayer':
+      // P3 Wave A — passthrough renderer. Channel application lands in Wave C.
+      return value.target ? <MeshChild value={value.target} override={override} /> : null;
   }
 }
 

@@ -530,11 +530,20 @@ Each phase is end-to-end demoable on its own. No phase exists only to enable the
 
 ### 42. P3 — Timeline = animation nodes (1 week)
 
-- Node types: `KeyframeChannel<T>`, `Curve<T>`, `AnimationLayer`, `Shot`, `Cut`.
-- Animation layers with bone masks from day one (Reze pattern).
+- Node types: `KeyframeChannel<T>` (separate per T: number, vec3, quat, color), `Curve<T>`, `AnimationLayer`, `Shot`, `Cut`.
+- Animation layers with bone masks from day one (Reze pattern). Layers carry mute + solo for fast iteration.
 - Dopesheet UI: projection of all `KeyframeChannel` nodes for selected target.
 - Curve editor: projection of one channel; bezier handle editing emits `setParam` Ops.
+- Bone-group preset catalog (named bone-mask presets) — editor sugar over `AnimationLayer.boneMask`.
 - Behaviors via `pmndrs/timeline` are macros emitting keyframe nodes.
+
+### 42.1. P3.1 — Animation import + retargeting (3-4 days, decimal phase after P3 base)
+
+- Loaders: BVH + FBX + Mixamo-flavored FBX. Drop-zone accepts `.bvh` / `.fbx` alongside existing `.glb` / `.gltf`. three's `BVHLoader` + `FBXLoader` (both MIT, no FBX SDK).
+- All loaders converge on the existing `AnimationClip` node (P2). Optional `Skeleton` + `SkinnedMesh` emitted when present.
+- Retargeting: new `BoneNameMap` node + `mutator.animation.retarget` — uses `THREE.SkeletonUtils.retargetClip`. Pre-built maps for Mixamo ↔ glTF / Reze / Rigify. Bone-name resolution is exact, never fuzzy (sister boundary class to natural-language identification at B7).
+- License: Mixamo content has Adobe ToS; library surfaces source attribution at import.
+- Splits from P3 base because the 1-week budget is tight and retargeting deserves its own focused review surface.
 
 ### 43. P4 — Render graph = render nodes (1 week)
 
