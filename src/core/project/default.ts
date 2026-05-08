@@ -1,7 +1,13 @@
 // The minimum viable Basher project — THESIS.md App. C, P0 deliverable.
-// Four authored nodes (camera, light, box, scene aggregator) plus the
-// RenderOutput sink. Boot Basher with this DAG → see a cube → edit camera
-// position → see new angle → save → reload → identical state.
+// Five authored nodes (camera, light, box, time root, scene aggregator)
+// plus the RenderOutput sink. Boot Basher with this DAG → see a cube →
+// edit camera position → see new angle → save → reload → identical state.
+//
+// `n_time` is the canonical project clock. THESIS §49 makes Time a
+// first-class type; making it part of the seed honors the contract every
+// time-consuming Mutator (addChannel, future render-clock) relies on.
+// Leaf node, no consumers in the seed — animation channels wire to it
+// when they exist.
 
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
@@ -33,6 +39,7 @@ const DEFAULT_OPS: Op[] = [
       material: { name: 'default', color: '#5af07a' },
     },
   },
+  { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },
   { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
   {
     type: 'addNode',

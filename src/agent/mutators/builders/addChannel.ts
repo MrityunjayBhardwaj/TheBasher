@@ -117,7 +117,9 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
     if (!findTimeSource(state)) {
       return {
         ok: false,
-        reason: 'No TimeSource node in DAG. Animation channels need a TimeSource — P2 seeds one by default.',
+        reason:
+          'No TimeSource node in DAG. Default projects seed `n_time`; this project has been mutated to remove it. ' +
+          'Add one via `dag.exec` (`addNode` with nodeType "TimeSource") before re-trying.',
       };
     }
     if (spec.initialKeyframe && !shapeOk(spec.valueType, spec.initialKeyframe.value)) {
