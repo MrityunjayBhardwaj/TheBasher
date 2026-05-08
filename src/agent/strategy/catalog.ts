@@ -187,10 +187,60 @@ the user asks for something stylized.
    external generation isn't wired and offer the closest library asset.`,
 };
 
+const SPAWN_WITH_PROPERTIES: StrategyResource = {
+  topic: 'spawnWithProperties',
+  description:
+    'How to spawn a primitive with non-default properties (color, material, ' +
+    'rotation, etc.) — chain mesh.add + the relevant Mutator.',
+  body: `# Spawning with properties (compose pattern)
+
+\`mesh.add\` spawns a primitive with **neutral defaults**. It does NOT
+accept color, material, rotation, or other property qualifiers. The
+boundary is intentional: per V14 (Mutator non-redundancy), property
+changes go through Mutators — not through ever-growing surface params on
+the spawn tool.
+
+## When the user names a property
+
+Examples that all need the compose pattern:
+- "add a red sphere"
+- "add a tilted cube" (rotation)
+- "add a small box" (scale)
+- "add a metallic sphere" (material — when materials Mutator lands)
+
+## The chain
+
+1. Call \`mesh.add({ kind, position })\` — the result text is JSON
+   carrying \`newNodeId\` (the freshly spawned node's id). Read it.
+2. Call \`agent.proposePlan\` with the matching Mutator and the
+   \`newNodeId\` in \`targetSelectors\`. Common pairings:
+   - color → \`mutator.setMaterialColor\` (\`color: "#rrggbb"\`)
+   - rotation → \`mutator.rotate\` (\`axis, deltaDeg\`)
+   - scale → \`mutator.scale\` (\`factor\`)
+
+Both ops land in the same diff (atomic Cmd+Z).
+
+## Issue both calls in the same round when possible
+
+Tool calls within a single LLM round run in parallel for read-only
+tools, but \`mesh.add\` is mutating — so \`agent.proposePlan\` typically
+runs in the next round after \`mesh.add\`'s newNodeId is visible. That's
+2 rounds for "add a red sphere" — comfortably inside the per-turn cap.
+
+## What NOT to do
+
+- Don't try to pass \`color\` to \`mesh.add\` — it will be ignored
+  silently (the schema rejects unknown fields).
+- Don't ask the user "what color?" if they already named it — they did.
+- Don't dispatch a setMaterialColor Mutator before mesh.add returns —
+  the new id doesn't exist yet.`,
+};
+
 export function registerAllStrategies(): void {
   registerStrategy(UNITS);
   registerStrategy(MATERIALS);
   registerStrategy(LIGHTING);
   registerStrategy(CAMERAS);
   registerStrategy(ASSET_CHOICE);
+  registerStrategy(SPAWN_WITH_PROPERTIES);
 }

@@ -39,7 +39,13 @@ import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
 import type { Op, NodeId } from '../core/dag/types';
 
-const MAX_ROUNDS = 4;
+// Bumped 4 → 8 (2026-05-08, post-PR-#9 live smoke). Single user intents
+// often legitimately require 2 identifies + listMutators + proposePlan +
+// a setMaterialColor chain (5+ tool calls). At 4 rounds the orchestrator
+// silently capped before retry, requiring the user to type "continue."
+// 8 covers the realistic compose patterns; bound stays so a confused
+// model can't loop forever.
+const MAX_ROUNDS = 8;
 const DEFAULT_TURN_TOKEN_BUDGET = 30_000;
 const PARAMS_PREVIEW_LIMIT = 240;
 /** Cap on prior session messages threaded into the LLM context. Anchored:
@@ -548,7 +554,8 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
 - Positions/sizes in METERS, rotations in DEGREES, colors as "#rrggbb" hex.
 - setParam paramPath supports dot paths: "material.color", "position", "rotation".
 - Scene children use list connections: connect { from: {node: childId, socket: "out"}, to: {node: sceneId, socket: "children"} }
-- For deeper guidance on units, materials, lighting, cameras, asset choice: agent.listStrategies / agent.getStrategy({ topic }).`;
+- mesh.add spawns primitives with NEUTRAL DEFAULTS — color/material/rotation/scale qualifiers go through Mutators in a follow-up agent.proposePlan call. Call agent.getStrategy({ topic: "spawnWithProperties" }) when the user names a property in an "add" prompt.
+- For deeper guidance on units, materials, lighting, cameras, asset choice, spawn-with-properties: agent.listStrategies / agent.getStrategy({ topic }).`;
 
   return [
     `You are Basher's AI agent — a director-first assistant for procedural 3D scene authoring.`,

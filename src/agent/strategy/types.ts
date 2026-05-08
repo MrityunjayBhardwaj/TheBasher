@@ -13,7 +13,8 @@ export type StrategyTopic =
   | 'materials'
   | 'lighting'
   | 'cameras'
-  | 'assetChoice';
+  | 'assetChoice'
+  | 'spawnWithProperties';
 
 export interface StrategyResource {
   topic: StrategyTopic;

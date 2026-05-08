@@ -51,6 +51,16 @@ export const meshAddTool: ToolDefinition<MeshAddArgs> = {
     if (!result) {
       throw new Error('mesh.add: no Scene output found in the DAG');
     }
-    return { ops: result.ops, text: `Added ${args.kind} at [${args.position}]` };
+    // Surface newNodeId so chained Mutators (e.g. setMaterialColor) can
+    // target it without a follow-up dag.inspect. JSON-shaped so the LLM
+    // parses unambiguously — see strategy 'spawnWithProperties'.
+    return {
+      ops: result.ops,
+      text: JSON.stringify({
+        kind: args.kind,
+        newNodeId: result.newNodeId,
+        position: args.position,
+      }),
+    };
   },
 };
