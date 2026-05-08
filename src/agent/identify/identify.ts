@@ -353,10 +353,14 @@ function hasMultiTargetIntent(q: string): boolean {
   // generic plurals ("objects", "things", "nodes") all imply plural.
   if (/\b(everything|all\s+of\s+them)\b/.test(q)) return true;
   if (/\b(objects|things|nodes)\b/.test(q)) return true;
-  // "the X{plural}" with a known type noun — "the cubes", "the spheres".
-  // Plural marker = trailing "s" on a known noun. Match against the
-  // type-noun list to avoid misfiring on irrelevant plurals.
-  if (/\bthe\s+(cubes|spheres|balls|lights|cameras|characters|groups)\b/.test(q)) {
+  // "the X{plural}" with a known type noun — "the cubes", "the spheres",
+  // "the boxes". Plural marker = trailing "s" on a known noun. Match
+  // against the type-noun list to avoid misfiring on irrelevant plurals.
+  if (
+    /\bthe\s+(cubes|boxes|spheres|balls|lights|cameras|characters|groups|objects|things|nodes)\b/.test(
+      q,
+    )
+  ) {
     return true;
   }
   return false;
