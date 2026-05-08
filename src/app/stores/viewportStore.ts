@@ -47,6 +47,8 @@ export interface ViewportStore {
   axisWidgetVisible: boolean;
   /** Editor shading mode — see ShadingMode for semantics. */
   shading: ShadingMode;
+  /** Whether the timeline drawer (dopesheet + curve editor) is expanded. */
+  timelineDrawerOpen: boolean;
 
   setPivot(pivot: Pivot): void;
   setSnapStep(step: number): void;
@@ -54,9 +56,11 @@ export interface ViewportStore {
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
   setShading(shading: ShadingMode): void;
+  setTimelineDrawerOpen(open: boolean): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
   toggleSnapEnabled(): void;
+  toggleTimelineDrawer(): void;
 }
 
 export const useViewportStore = create<ViewportStore>((set, get) => ({
@@ -68,6 +72,10 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // Default 'studio' so a fresh seed scene with one DirectionalLight still
   // looks lit. Production renders (P4) read 'rendered' to match.
   shading: 'studio',
+  // Default closed — preserves the existing acceptance baselines. Users
+  // open the drawer when they want to author keyframes; pixel-diff tests
+  // run with the drawer closed so the canvas DIV dimensions don't shift.
+  timelineDrawerOpen: false,
 
   setPivot: (pivot) => set({ pivot }),
   setSnapStep: (snapStep) => set({ snapStep: Math.max(0, snapStep) }),
@@ -75,9 +83,11 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
   setShading: (shading) => set({ shading }),
+  setTimelineDrawerOpen: (timelineDrawerOpen) => set({ timelineDrawerOpen }),
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
+  toggleTimelineDrawer: () => set({ timelineDrawerOpen: !get().timelineDrawerOpen }),
 }));
 
 /** Round `value` to the nearest multiple of `step`. Returns `value` unchanged

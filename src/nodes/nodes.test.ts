@@ -1245,3 +1245,122 @@ describe('P3 — Shot + Cut (editorial)', () => {
     expect(v.to?.name).toBe('b');
   });
 });
+
+describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
+  function buildAnimatedBoxState(channelValue: [number, number, number] = [0, 5, 0]) {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box',
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'default', color: '#ff0000' },
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 1, value: channelValue, easing: 'linear' },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'ch', socket: 'time' },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: { name: 'L', weight: 1, mute: false, solo: false, boneMask: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'layer', socket: 'target' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'ch', socket: 'out' },
+      to: { node: 'layer', socket: 'animation' },
+    }).next;
+    return s;
+  }
+
+  it('patches the wrapped target.position at t=1 (full channel)', () => {
+    const state = buildAnimatedBoxState([0, 5, 0]);
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
+    expect(v.target?.kind).toBe('BoxMesh');
+    if (v.target?.kind === 'BoxMesh') {
+      expect(v.target.position).toEqual([0, 5, 0]);
+    }
+  });
+
+  it('blends toward original at weight=0.5 (half-strength channel)', () => {
+    let state = buildAnimatedBoxState([0, 10, 0]);
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'layer',
+      paramPath: 'weight',
+      value: 0.5,
+    }).next;
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
+    if (v.target?.kind === 'BoxMesh') {
+      // Original [0,0,0], channel [0,10,0], weight 0.5 → [0,5,0]
+      expect(v.target.position[1]).toBeCloseTo(5, 6);
+    }
+  });
+
+  it('mute=true leaves the static target unchanged (channel ignored)', () => {
+    let state = buildAnimatedBoxState([0, 99, 0]);
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'layer',
+      paramPath: 'mute',
+      value: true,
+    }).next;
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
+    if (v.target?.kind === 'BoxMesh') {
+      expect(v.target.position).toEqual([0, 0, 0]);
+    }
+  });
+
+  it('twice-eval bit-exact when patched (channel application is pure)', () => {
+    const state = buildAnimatedBoxState([1, 2, 3]);
+    const a = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
+    const b = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
+    expect(a).toEqual(b);
+  });
+
+  it('empty paramPath is a no-op — target unchanged', () => {
+    let state = buildAnimatedBoxState([0, 5, 0]);
+    // Mutate the channel's paramPath via setParam — empty string sentinel.
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'ch',
+      paramPath: 'paramPath',
+      value: '',
+    }).next;
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
+    if (v.target?.kind === 'BoxMesh') {
+      expect(v.target.position).toEqual([0, 0, 0]);
+    }
+  });
+});
