@@ -136,6 +136,20 @@ export function boot(): Promise<void> {
       void import('../agent/diff').then((m) => {
         w.__basher_diff = m.useDiffStore;
       });
+      // P3.1 Wave A — BVH import demo seam. Pasting `await
+      // window.__basher_importBvh(text)` in the console builds + dispatches
+      // the import chain. Library UI integration lands in Wave B.
+      void import('../core/import/bvhImportChain').then((m) => {
+        w.__basher_importBvh = (text: string, name?: string) => {
+          const dag = useDagStore.getState();
+          const { ops, skeletonId, clipId } = m.buildBvhImportOps(
+            { text, name },
+            dag.state,
+          );
+          dag.dispatchAtomic(ops, 'user', `import bvh: ${name ?? 'imported'}`);
+          return { skeletonId, clipId };
+        };
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
