@@ -339,6 +339,80 @@ describe('identify — generic-noun aliases (#25)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Wave C — color polish (#16 deterministic inferColor + #18 family match)
+// ---------------------------------------------------------------------------
+
+describe('identify — color resolution (#16 + #18)', () => {
+  function buildColorScene(): DagState {
+    let s = emptyDagState();
+    // Pure red, off-red (picker-sampled), pink, light gray.
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'pureRed', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#ff0000' } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'offRed', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [1, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#fa0a0a' } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'pink', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#ffaaaa' } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'lightGray', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#cccccc' } },
+    }).next;
+    return s;
+  }
+
+  it('"red cube" matches both #ff0000 AND a slightly-off #fa0a0a (#18 fuzzy)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'the red cube', hint: 'multiple-allowed' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toContain('pureRed');
+      expect(r.selectors).toContain('offRed');
+      // Pink (#ffaaaa) is high-lightness; should NOT match "red".
+      expect(r.selectors).not.toContain('pink');
+    }
+  });
+
+  it('"red and green cube" → red wins (first-mentioned, deterministic, #16)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'the red and green cube' }, state);
+    // No green node exists; "red" wins by position so the resolver
+    // narrows by red. pureRed + offRed are red-family.
+    expect(r.type).not.toBe('no-match');
+    if (r.type === 'match' || r.type === 'ambiguous') {
+      const ids = r.type === 'match' ? r.selectors : r.candidates.map((c) => c.id);
+      expect(ids.some((id) => id === 'pureRed' || id === 'offRed')).toBe(true);
+    }
+  });
+
+  it('"green and red cube" → green wins (first-mentioned beats red)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'the green and red cube' }, state);
+    // No green-family node — should be no-match (since hadColor && hadType
+    // && colorMatched empty → no-match per identify.ts:155-158).
+    expect(r.type).toBe('no-match');
+  });
+
+  it('exact #ff0000 matches the pure red node (explicit hex passes through)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'cube #ff0000', hint: 'multiple-allowed' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      // Family match still pulls offRed too; that's intentional under #18.
+      expect(r.selectors).toContain('pureRed');
+    }
+  });
+});
+
 describe('shouldRunIdentifyRound', () => {
   const empty = new Set<string>();
   const oneSelected = new Set(['box1']);
