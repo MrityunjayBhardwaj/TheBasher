@@ -5,18 +5,24 @@
 // failures land as structured tool results the LLM can react to —
 // not as fork-time exceptions surfaced to the user.
 //
-//   Gate 1: every nodeId referenced by ops exists in the DAG, OR is a
-//           fresh addNode introducing a new id (or a setParam/connect
-//           against an id introduced earlier in the same plan).
-//   Gate 2: every setParam value parses against the target node's
-//           paramSchema (sub-paths supported by following dotted path
-//           and replacing the leaf).
-//   Gate 3: closure preservation (Wave A reuse). Every op targets a
-//           node inside the Mutator's declared closure — vyapti V13.
-//   Gate 4: Mutator preconditions — shape-only checks against the
-//           expanded closure (P-5: not semantic state).
-//   Gate 5: adapter-fidelity stub. Always passes today; lights up at
-//           P7 (PlayCanvas export).
+// Each rejection carries TWO discriminators: a numeric `gate` (1-5,
+// stable for backward compat) and a string `label` (stable across
+// releases, unique per check — see types.ts).
+//
+// Runtime order (intentional — not 1→5):
+//   1. contract_edges    (gate 1): contract.requiredEdges ⊆ buildClosureSpec output
+//   2. expand closure
+//   3. precondition      (gate 4): Mutator.preconditions() shape-only check
+//   4. contract_scope    (gate 4): closure contains every required node type
+//   5. build ops         (build exceptions → gate 5 'build_exception')
+//   6. node_existence    (gate 1): per-op
+//   7. param_schema      (gate 2): per-op setParam round-trip
+//   8. closure_preservation (gate 3): per-op
+//   9. adapter_fidelity  (gate 5): P7 stub, always passes
+//
+// Why not strict 1→5? Cheap structural checks (contract_edges) and
+// shape preconditions run BEFORE build to fail fast. Per-op gates 1/2/3
+// can only run on the produced ops, so they come after build.
 //
 // REF: P2.5.2 PLAN §5 Wave C step 3; vyapti V13/V14.
 
@@ -29,6 +35,7 @@ import type {
   MutatorPlan,
   MutatorRejection,
   MutatorValidationResult,
+  RejectionLabel,
 } from './types';
 
 /**
@@ -45,19 +52,56 @@ export function validatePlan<S>(
   // Spec shape is validated at the tool boundary via mutator.spec.parse.
   // Mutator builders here can assume `spec` is well-typed.
 
-  // Expand the closure FIRST — preconditions + closure gate both consume it.
   const closureSpec = mutator.buildClosureSpec(spec);
-  const closure = expandClosure(closureSpec, state);
 
-  // Gate 4: preconditions. Run before build to fail fast on obvious
-  // shape problems ("walkTo with no Navmesh") without burning a build.
-  const pc = mutator.preconditions(spec, closure, state);
-  if (!pc.ok) {
-    return rejection(mutator.name, 4, pc.reason);
+  // Gate 1 — contract_edges: the closure spec the Mutator declares must
+  // cover every edge kind the contract advertised. Without this, a
+  // contract that says "I walk parent" can be silently violated by a
+  // buildClosureSpec that omits 'parent' — the closure scope is wrong
+  // before any op is built.
+  const speccedKinds = new Set(closureSpec.followedEdges);
+  for (const required of mutator.contract.requiredEdges ?? []) {
+    if (!speccedKinds.has(required)) {
+      return rejection(
+        mutator.name,
+        1,
+        'contract_edges',
+        `Mutator contract requires edge kind "${required}" but buildClosureSpec ` +
+          `did not include it (declared: [${[...speccedKinds].join(', ') || '<none>'}]).`,
+      );
+    }
   }
 
-  // Build the ops. Wrap in try/catch so a build() exception lands as a
-  // gate-5 failure rather than crashing the orchestrator (F8-aligned).
+  const closure = expandClosure(closureSpec, state);
+
+  // Gate 4 — precondition: shape-only check. Runs before build to fail
+  // fast on obvious shape problems ("walkTo with no Navmesh") without
+  // burning a build.
+  const pc = mutator.preconditions(spec, closure, state);
+  if (!pc.ok) {
+    return rejection(mutator.name, 4, 'precondition', pc.reason);
+  }
+
+  // Gate 4 — contract_scope: if the contract demanded specific node types,
+  // the closure must contain at least one of each. Runs before build so
+  // error messages naming "missing Navmesh" land instead of generic
+  // closure_preservation errors when the type itself is the problem.
+  for (const requiredType of mutator.contract.requiredNodeTypes) {
+    const found = [...closure.nodes].some(
+      (id) => state.nodes[id] && state.nodes[id].type === requiredType,
+    );
+    if (!found) {
+      return rejection(
+        mutator.name,
+        4,
+        'contract_scope',
+        `Mutator requires a node of type "${requiredType}" inside the closure; none found.`,
+      );
+    }
+  }
+
+  // Gate 5 — build_exception path: build() throws → structured rejection
+  // rather than orchestrator crash (F8-aligned).
   let ops: Op[];
   try {
     ops = mutator.build(spec, closure, state);
@@ -65,11 +109,13 @@ export function validatePlan<S>(
     return rejection(
       mutator.name,
       5,
+      'build_exception',
       `Mutator build failed: ${(err as Error).message}`,
     );
   }
 
-  // Gate 1: node existence + fresh-introduction tracking.
+  // Gate 1 — node_existence: every op target either exists or was
+  // introduced earlier in this plan via fresh addNode.
   const introducedIds = new Set<NodeId>();
   for (const op of ops) {
     if (op.type === 'addNode' && isFreshAddNode(op, state)) {
@@ -83,14 +129,14 @@ export function validatePlan<S>(
       return rejection(
         mutator.name,
         1,
+        'node_existence',
         `Op references node "${target}" that does not exist and is not introduced earlier in this plan.`,
       );
     }
   }
 
-  // Gate 2: setParam values match the target's paramSchema. Construct
-  // a candidate params object by deep-setting the dotted path and
-  // re-parsing through the node-type's schema.
+  // Gate 2 — param_schema: every setParam value parses against the
+  // target's paramSchema after dotted-path application.
   for (const op of ops) {
     if (op.type !== 'setParam') continue;
     if (introducedIds.has(op.nodeId)) {
@@ -104,7 +150,8 @@ export function validatePlan<S>(
       return rejection(
         mutator.name,
         2,
-        `setParam target "${op.nodeId}" not in DAG (gate 1 should have caught this).`,
+        'param_schema',
+        `setParam target "${op.nodeId}" not in DAG (node_existence should have caught this).`,
       );
     }
     const def = getNodeType(node.type);
@@ -115,12 +162,13 @@ export function validatePlan<S>(
       return rejection(
         mutator.name,
         2,
+        'param_schema',
         `setParam "${op.paramPath}" on ${op.nodeId} (${node.type}) failed schema validation: ${parse.error.message}`,
       );
     }
   }
 
-  // Gate 3: closure preservation. Every op target must lie inside the
+  // Gate 3 — closure_preservation: every op target must lie inside the
   // Mutator-declared closure, OR be a fresh addNode, OR refer to an id
   // introduced earlier in this plan.
   for (const op of ops) {
@@ -132,31 +180,15 @@ export function validatePlan<S>(
     return rejection(
       mutator.name,
       3,
+      'closure_preservation',
       `Op targets node "${target}" outside the declared closure ` +
         `(roots: [${closureSpec.rootSelectors.join(', ')}]; ${closure.nodes.size} reachable).`,
     );
   }
 
-  // Gate 5: adapter fidelity. Stub today. Lights up at P7 — Mutators
-  // that produce IR PlayCanvas can't emit get rejected here.
-  // No-op pass.
-
-  // Required-types check: if the contract demanded specific node types,
-  // the closure must contain at least one of each. Done last so error
-  // messages naming "missing Navmesh" land instead of generic gate-3
-  // closure errors when the type itself is the problem.
-  for (const requiredType of mutator.contract.requiredNodeTypes) {
-    const found = [...closure.nodes].some(
-      (id) => state.nodes[id] && state.nodes[id].type === requiredType,
-    );
-    if (!found) {
-      return rejection(
-        mutator.name,
-        4,
-        `Mutator requires a node of type "${requiredType}" inside the closure; none found.`,
-      );
-    }
-  }
+  // Gate 5 — adapter_fidelity: stub today. Lights up at P7 (PlayCanvas
+  // export) — Mutators that produce IR the adapter can't emit get
+  // rejected here. No-op pass.
 
   const warnings: string[] = [];
   if (mutator.contract.lossy) {
@@ -179,9 +211,10 @@ export function validatePlan<S>(
 function rejection(
   mutator: string,
   gate: 1 | 2 | 3 | 4 | 5,
+  label: RejectionLabel,
   reason: string,
 ): MutatorRejection {
-  return { ok: false, mutator, gate, reason };
+  return { ok: false, mutator, gate, label, reason };
 }
 
 /**

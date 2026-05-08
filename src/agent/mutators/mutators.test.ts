@@ -441,7 +441,69 @@ describe('validatePlan — five gates', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.gate).toBe(5);
+      expect(result.label).toBe('build_exception');
       expect(result.reason).toMatch(/boom/);
+    }
+  });
+
+  it('gate 1 contract_edges: rejects when buildClosureSpec drops a required edge', () => {
+    const state = buildScene();
+    // Forge a Mutator whose contract requires 'parent' but whose
+    // buildClosureSpec returns no edges — that's a contract violation
+    // the LLM cannot cause (Mutators are statically defined) but the
+    // gate guards against drift between contract and spec.
+    const fakeMutator = {
+      ...rotateMutator,
+      contract: { ...rotateMutator.contract, requiredEdges: ['parent' as const, 'children' as const] },
+      buildClosureSpec: () => ({
+        rootSelectors: ['box'],
+        followedEdges: ['parent' as const], // missing 'children'
+      }),
+    };
+    const result = validatePlan(
+      fakeMutator,
+      { targetSelectors: ['box'], axis: 'x', deltaDeg: 0 },
+      state,
+      'forge',
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.gate).toBe(1);
+      expect(result.label).toBe('contract_edges');
+      expect(result.reason).toMatch(/children/);
+    }
+  });
+
+  it('rejection labels disambiguate the two gate-4 paths', () => {
+    const state = buildScene();
+    // contract_scope path: requiredNodeTypes missing in closure.
+    const missingType = {
+      ...rotateMutator,
+      contract: { ...rotateMutator.contract, requiredNodeTypes: ['Navmesh'] },
+    };
+    const a = validatePlan(
+      missingType,
+      { targetSelectors: ['box'], axis: 'x', deltaDeg: 0 },
+      state,
+      'forge',
+    );
+    expect(a.ok).toBe(false);
+    if (!a.ok) {
+      expect(a.gate).toBe(4);
+      expect(a.label).toBe('contract_scope');
+    }
+
+    // precondition path: scene has no rotation param.
+    const b = validatePlan(
+      rotateMutator,
+      { targetSelectors: ['scene'], axis: 'x', deltaDeg: 0 },
+      state,
+      'forge',
+    );
+    expect(b.ok).toBe(false);
+    if (!b.ok) {
+      expect(b.gate).toBe(4);
+      expect(b.label).toBe('precondition');
     }
   });
 });

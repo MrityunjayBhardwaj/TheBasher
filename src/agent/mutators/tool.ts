@@ -75,6 +75,7 @@ export const proposePlanTool: ToolDefinition<ProposePlanArgs> = {
         ok: false,
         mutator: args.mutator,
         gate: 1,
+        label: 'node_existence',
         reason: `Unknown mutator "${args.mutator}". Call agent.listMutators to see registered names.`,
       };
       return { ops: [], text: JSON.stringify(result) };
@@ -86,6 +87,7 @@ export const proposePlanTool: ToolDefinition<ProposePlanArgs> = {
         ok: false,
         mutator: args.mutator,
         gate: 2,
+        label: 'param_schema',
         reason: `Mutator spec failed schema validation: ${specParse.error.message}`,
       };
       return { ops: [], text: JSON.stringify(result) };
