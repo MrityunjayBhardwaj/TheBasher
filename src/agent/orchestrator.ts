@@ -411,9 +411,24 @@ export async function runAgentTurn(
             // observability (the model did try to mutate).
             continue;
           }
-          const msg = `Diff proposal failed: ${(proposeErr as Error).message}`;
-          sessionStore.appendToLastAssistant(`\n\n[${msg}]`);
-          error = msg;
+          // F6: non-Closure errors from propose() (createFork validation —
+          // unknown node, cycle, type mismatch) are also routed back to
+          // the LLM as structured retry feedback. Without this branch,
+          // the user saw "Diff proposal failed" with no path forward and
+          // the LLM never got a chance to fix the plan. Bounded by
+          // MAX_ROUNDS so we can't loop forever.
+          const errMsg = (proposeErr as Error).message;
+          const retryMsg =
+            `DIFF_PROPOSAL_FAILED: createFork rejected the ops with: "${errMsg}". ` +
+            `Common causes: op references an unknown node, introduces a cycle, ` +
+            `or a setParam value mismatches the target's paramSchema. Inspect ` +
+            `the DAG with dag.inspect, refine the plan, OR explain to the user ` +
+            `why the requested change can't be applied.`;
+          messages.push({ role: 'user', content: retryMsg });
+          sessionStore.appendToLastAssistant(`\n\n[Diff proposal failed: ${errMsg}]`);
+          // Loop another round so the LLM can react. mutationToolCallCount
+          // stays incremented for observability.
+          continue;
         }
         break;
       }
