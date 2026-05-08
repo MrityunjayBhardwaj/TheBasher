@@ -49,6 +49,29 @@ export function CurveEditor({ duration }: { duration: number }) {
   const samples = sampleTracks(tracks, duration);
   const yRange = computeRange(samples);
 
+  if (tracks.length === 0) {
+    // Quat / Color channels — slerp + HSL-lerp curves don't render as a
+    // 1D-y trace. Surface the metadata so the user sees the channel is
+    // selected; full visualization lands when the curve editor grows
+    // a quaternion-arc / color-strip projection.
+    return (
+      <div
+        data-testid="curve-editor"
+        className="flex h-full flex-col items-center justify-center gap-1 text-xs text-mute"
+      >
+        <span>
+          {node.type.replace('KeyframeChannel', '')} — {params.paramPath ?? '(no path)'}
+        </span>
+        <span className="text-[10px]">
+          Curve preview not yet implemented for {node.type === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
+        </span>
+        <span className="text-[10px]">
+          {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}; values shown in dopesheet.
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div data-testid="curve-editor" className="relative h-full w-full bg-bg">
       <div className="absolute left-2 top-1 text-[10px] text-mute">
