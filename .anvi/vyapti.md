@@ -137,26 +137,39 @@ when a closure is declared.
 **Span:** `src/agent/mutators/builders/*.ts` (every Mutator
 definition).
 
-**Enforcement:** code review. Every new Mutator must justify why it's
-not a parameterization of an existing one. Concrete checks:
+**Enforcement (mechanical):** an automated test asserts no two
+registered Mutators share the same `(requiredEdges, requiredNodeTypes,
+preserves)` contract signature. A signature collision fails CI with the
+two colliding names — no review pass needed to catch the easy case.
+Test: `src/agent/mutators/mutators.test.ts` — "V14: no two Mutators
+share the same contract signature."
+
+**Enforcement (review-layer, semantic):** the mechanical test catches
+contract clones but not deeper semantic redundancy (two Mutators emit
+the same Op-shape on a probe scene). Code review still applies:
 - Could `setBoxColor` be folded into the existing
   `mutator.setMaterialColor` by widening its precondition? Yes →
   reject the new entry.
 - Could `rotateAroundPivot` be a parameter on `mutator.rotate` (e.g.
   optional `pivot: vec3`)? Yes → extend, don't fork.
-- Are two Mutators only differing in their requiredNodeTypes? Probably
-  the same Mutator with a richer contract.
 
 The catalog lives in one barrel file (`src/agent/mutators/index.ts`)
 so adding one is visible in any diff. Monthly catalogue audit if the
-catalog passes 20 entries in v0.5.
+catalog passes 20 entries in v0.5. A follow-up issue tracks the
+Op-shape probe test.
 
-**Status:** ALIGNED (P2.5.2 Wave C, 2026-05-08). Six starter Mutators
-ship with no redundancy: rotate, translate, scale, setMaterialColor,
-duplicate, deleteNode. Each covers a distinct Op-shape pattern.
+**Status:** ALIGNED (P2.5.2 Wave C, 2026-05-08; mechanical guard added
+2026-05-08 post-PR-#9 review). Six starter Mutators ship with unique
+contract signatures: rotate (preserves position+scale+material+children),
+translate (preserves rotation+scale+material+children), scale (preserves
+position+rotation+material), setMaterialColor (preserves
+position+rotation+scale+children), duplicate (preserves
+rotation+scale+material), deleteNode (preserves nothing). Each covers
+a distinct Op-shape pattern.
 
 **REF:** P2.5.2 PLAN §2 P-4; `src/agent/mutators/index.ts:1` (the
-single visible catalog).
+single visible catalog); `src/agent/mutators/mutators.test.ts` (the
+mechanical guard).
 
 **Why it matters:** Mutator-thinking is contagious — every new noun
 the LLM emits ("setLightColor", "setBoxColor") is a candidate Mutator

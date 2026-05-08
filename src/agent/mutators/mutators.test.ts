@@ -113,6 +113,32 @@ describe('mutator catalog', () => {
   it('getMutator returns undefined for missing names', () => {
     expect(getMutator('nonexistent')).toBeUndefined();
   });
+
+  it('V14: no two Mutators share the same contract signature', () => {
+    // Mechanical guard for vyapti V14 (Mutator non-redundancy). Two
+    // Mutators with identical (requiredEdges, requiredNodeTypes,
+    // preserves) tuples are almost always candidates for parameterization
+    // rather than fork. This converts V14 from "code review" to
+    // observable enforcement at registration time.
+    //
+    // A future deeper check would assert no two Mutators emit the same
+    // Op-shape on a probe scene; deferred — see follow-up issue.
+    registerAllMutators();
+    const seen = new Map<string, string>();
+    for (const m of listMutators()) {
+      const sig = JSON.stringify({
+        requiredEdges: [...m.contract.requiredEdges].sort(),
+        requiredNodeTypes: [...m.contract.requiredNodeTypes].sort(),
+        preserves: [...m.contract.preserves].sort(),
+      });
+      const prior = seen.get(sig);
+      expect(
+        prior,
+        `Mutators "${m.name}" and "${prior}" share the same contract signature ${sig}`,
+      ).toBeUndefined();
+      seen.set(sig, m.name);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
