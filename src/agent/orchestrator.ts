@@ -763,10 +763,13 @@ function parseIdentifyResult(text: string | undefined): IdentifyResult | null {
   return null;
 }
 
-// Known edge kinds from closure/types.ts. Updating that union → update
-// this list. The compile-time exhaustiveness check below fails CI if
-// the two drift.
-const KNOWN_EDGE_KINDS: ReadonlySet<string> = new Set([
+// Known edge kinds from closure/types.ts. Two-way drift protection:
+// `as const satisfies readonly EdgeKind[]` asserts every literal is a
+// valid EdgeKind (catches typos in the list); the `_CheckExhaustive`
+// type below asserts every EdgeKind appears in the list (catches the
+// case where EdgeKind grows but the list is forgotten). Same pattern
+// as STRATEGY_TOPICS in strategy/tool.ts.
+const KNOWN_EDGE_KINDS_LIST = [
   'parent',
   'children',
   'camera',
@@ -774,7 +777,16 @@ const KNOWN_EDGE_KINDS: ReadonlySet<string> = new Set([
   'time',
   'animation',
   'pass-input',
-] satisfies readonly EdgeKind[]);
+] as const satisfies readonly EdgeKind[];
+
+// Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind
+// grows without an update here.
+type _CheckExhaustive =
+  Exclude<EdgeKind, (typeof KNOWN_EDGE_KINDS_LIST)[number]> extends never ? true : never;
+const _checkExhaustive: _CheckExhaustive = true;
+void _checkExhaustive;
+
+const KNOWN_EDGE_KINDS: ReadonlySet<string> = new Set(KNOWN_EDGE_KINDS_LIST);
 
 /**
  * Extract the Mutator-declared ClosureSpec from agent.proposePlan's

@@ -281,6 +281,16 @@ describe('identify — quantifiers (#24)', () => {
     if (r.type === 'match') expect(r.selectors).toHaveLength(3);
   });
 
+  it('"the boxes" (synonym plural-after-the) → match with all cubes', () => {
+    // Review #28 gap: pre-fix the regex omitted "boxes" from the
+    // "the X{plural}" branch — bare plural fell through to default
+    // 'unique' hint and 3+ candidates returned 'ambiguous'.
+    const state = buildScene();
+    const r = identify({ query: 'rotate the boxes' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toHaveLength(3);
+  });
+
   it('"ball" alone (no quantifier) does NOT trigger multi-target promotion', () => {
     // "ball" matches the sphere alias but isn't a quantifier — singular
     // resolution. Only one sphere exists so this is unambiguous either
