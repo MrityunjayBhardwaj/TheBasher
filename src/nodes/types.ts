@@ -13,6 +13,9 @@
 
 export type Vec3 = readonly [number, number, number];
 
+/** Quaternion stored as xyzw (THREE convention). */
+export type Quat = readonly [number, number, number, number];
+
 // ---------------------------------------------------------------------------
 // Cameras (socket type: 'Camera')
 // ---------------------------------------------------------------------------
@@ -282,7 +285,130 @@ export type SceneChild =
   | GroupValue
   | MaterialOverrideValue
   | ScatterValue
-  | CharacterValue;
+  | CharacterValue
+  | AnimationLayerValue;
+
+// ---------------------------------------------------------------------------
+// P3 — Animation channels + layers + shots (THESIS §42)
+//
+// KeyframeChannel<T>: separate node types per T (Number / Vec3 / Quat / Color)
+// for clean V2 pure-flag handling, but all output the same 'KeyframeChannel'
+// socket type so AnimationLayer can accept any of them in a list socket. The
+// `valueType` discriminator on the value lets consumers switch on the variant.
+//
+// AnimationLayer: aggregator. Filters channels by mute / solo / boneMask,
+// scales by weight, and wraps a single `target` SceneChild whose params are
+// patched by active channels at evaluator time.
+//
+// Shot / Cut: editorial layer. Shot ties a time range to a camera + scene.
+// Cut sequences two shots with an optional transition.
+// ---------------------------------------------------------------------------
+
+export type Easing = 'linear' | 'cubic';
+
+/** Bezier handle expressed as an offset from the keyframe (time, value). */
+export interface BezierHandle<T> {
+  readonly time: number;
+  readonly value: T;
+}
+
+export interface KeyframeNumber {
+  readonly time: number;
+  readonly value: number;
+  readonly easing: Easing;
+  readonly inHandle?: BezierHandle<number>;
+  readonly outHandle?: BezierHandle<number>;
+}
+
+export interface KeyframeVec3 {
+  readonly time: number;
+  readonly value: Vec3;
+  readonly easing: Easing;
+  readonly inHandle?: BezierHandle<Vec3>;
+  readonly outHandle?: BezierHandle<Vec3>;
+}
+
+export interface KeyframeQuat {
+  readonly time: number;
+  readonly value: Quat;
+  readonly easing: Easing;
+  // Quaternion handles are deferred — slerp interpolation only in v0.5.
+}
+
+export interface KeyframeColor {
+  readonly time: number;
+  /** Hex color string, e.g. '#ff8800'. HSL-lerp interpolation. */
+  readonly value: string;
+  readonly easing: Easing;
+}
+
+export type KeyframeValueType = 'number' | 'vec3' | 'quat' | 'color';
+
+interface KeyframeChannelValueBase {
+  readonly kind: 'KeyframeChannel';
+  /** Display name for the dopesheet row. */
+  readonly name: string;
+  /** Target node id whose params this channel writes through. */
+  readonly target: string;
+  /** Path within target.params — e.g. 'position', 'material.color'. */
+  readonly paramPath: string;
+}
+
+export interface KeyframeChannelNumberValue extends KeyframeChannelValueBase {
+  readonly valueType: 'number';
+  readonly value: number;
+}
+
+export interface KeyframeChannelVec3Value extends KeyframeChannelValueBase {
+  readonly valueType: 'vec3';
+  readonly value: Vec3;
+}
+
+export interface KeyframeChannelQuatValue extends KeyframeChannelValueBase {
+  readonly valueType: 'quat';
+  readonly value: Quat;
+}
+
+export interface KeyframeChannelColorValue extends KeyframeChannelValueBase {
+  readonly valueType: 'color';
+  readonly value: string;
+}
+
+export type KeyframeChannelValue =
+  | KeyframeChannelNumberValue
+  | KeyframeChannelVec3Value
+  | KeyframeChannelQuatValue
+  | KeyframeChannelColorValue;
+
+export interface AnimationLayerValue {
+  readonly kind: 'AnimationLayer';
+  readonly name: string;
+  /** Channels passing the mute/solo gate (post-filter). */
+  readonly active: readonly KeyframeChannelValue[];
+  readonly weight: number;
+  readonly boneMask: readonly string[];
+  readonly mute: boolean;
+  readonly solo: boolean;
+  /** Wrapped target — null when unwired. Layer is transparent in scene. */
+  readonly target: SceneChild | null;
+}
+
+export interface ShotValue {
+  readonly kind: 'Shot';
+  readonly name: string;
+  readonly startTime: number;
+  readonly endTime: number;
+  readonly camera: CameraValue | null;
+  readonly scene: SceneValue | null;
+}
+
+export interface CutValue {
+  readonly kind: 'Cut';
+  readonly from: ShotValue | null;
+  readonly to: ShotValue | null;
+  /** Transition length in frames. 0 = hard cut. */
+  readonly transitionFrame: number;
+}
 
 // ---------------------------------------------------------------------------
 // Scene (socket type: 'Scene')

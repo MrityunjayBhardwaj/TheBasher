@@ -13,13 +13,20 @@ import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
 import type {
   AnimationClipValue,
+  AnimationLayerValue,
   CharacterValue,
+  CutValue,
   GroupValue,
+  KeyframeChannelColorValue,
+  KeyframeChannelNumberValue,
+  KeyframeChannelQuatValue,
+  KeyframeChannelVec3Value,
   MaterialOverrideValue,
   PosedSkeletonValue,
   RenderOutputValue,
   ScatterValue,
   SceneValue,
+  ShotValue,
   SkeletonValue,
   TimeValue,
   TransformValue,
@@ -29,12 +36,18 @@ import type {
 const ALL_TYPES = [
   'AmbientLight',
   'AnimationClip',
+  'AnimationLayer',
   'AreaLight',
   'BoxMesh',
   'Character',
+  'Cut',
   'DirectionalLight',
   'GltfAsset',
   'Group',
+  'KeyframeChannelColor',
+  'KeyframeChannelNumber',
+  'KeyframeChannelQuat',
+  'KeyframeChannelVec3',
   'LocomotionState',
   'MaterialOverride',
   'Navmesh',
@@ -45,6 +58,7 @@ const ALL_TYPES = [
   'RenderOutput',
   'Scatter',
   'Scene',
+  'Shot',
   'Skeleton',
   'SphereMesh',
   'SpotLight',
@@ -862,5 +876,372 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
     const hashA_before = evaluate(state, 'char_a', { ctx }).hash;
     const hashA_after = evaluate(next, 'char_a', { ctx }).hash;
     expect(hashA_after).not.toBe(hashA_before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P3 — Timeline = animation nodes (THESIS §42)
+//
+// Each KeyframeChannel<T> is a pure consumer of a Time socket — same (params,
+// time) → same value. AnimationLayer aggregates channels and mutes them at
+// the gate. Shot/Cut are editorial wrappers (data forwarders).
+// ---------------------------------------------------------------------------
+
+function buildChannelState(nodeType: string, params: unknown) {
+  let state = emptyDagState();
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'time',
+    nodeType: 'TimeSource',
+    params: {},
+  }).next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'ch',
+    nodeType,
+    params,
+  }).next;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: 'time', socket: 'out' },
+    to: { node: 'ch', socket: 'time' },
+  }).next;
+  return state;
+}
+
+describe('P3 — KeyframeChannelNumber (pure, time-aware)', () => {
+  const params = {
+    name: 'intensity',
+    target: 'light',
+    paramPath: 'intensity',
+    keyframes: [
+      { time: 0, value: 0, easing: 'linear' as const },
+      { time: 1, value: 10, easing: 'linear' as const },
+    ],
+  };
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildChannelState('KeyframeChannelNumber', params);
+    const a = evalAt<KeyframeChannelNumberValue>(state, 'ch', t);
+    const b = evalAt<KeyframeChannelNumberValue>(state, 'ch', t);
+    expect(a).toEqual(b);
+  });
+
+  it('linear interp: at t=0.5 value is exactly 5', () => {
+    const state = buildChannelState('KeyframeChannelNumber', params);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.5);
+    expect(v.value).toBeCloseTo(5, 6);
+    expect(v.valueType).toBe('number');
+    expect(v.target).toBe('light');
+    expect(v.paramPath).toBe('intensity');
+  });
+
+  it('cubic easing: at t=0.5 smoothstep(0.5)=0.5 still hits midpoint', () => {
+    const cubic = {
+      ...params,
+      keyframes: [
+        { time: 0, value: 0, easing: 'cubic' as const },
+        { time: 1, value: 10, easing: 'cubic' as const },
+      ],
+    };
+    const state = buildChannelState('KeyframeChannelNumber', cubic);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.5);
+    expect(v.value).toBeCloseTo(5, 6);
+    // off-midpoint — cubic ≠ linear
+    const v2 = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.25);
+    expect(v2.value).toBeCloseTo(0.25 * 0.25 * (3 - 2 * 0.25) * 10, 6);
+  });
+
+  it('out-of-range clamps to first/last keyframe', () => {
+    const state = buildChannelState('KeyframeChannelNumber', params);
+    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', -1).value).toBe(0);
+    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 5).value).toBe(10);
+  });
+
+  it('empty channel returns 0', () => {
+    const state = buildChannelState('KeyframeChannelNumber', { ...params, keyframes: [] });
+    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0).value).toBe(0);
+  });
+
+  it('keyframes inserted out-of-time-order still interpolate correctly', () => {
+    const state = buildChannelState('KeyframeChannelNumber', {
+      ...params,
+      keyframes: [
+        { time: 1, value: 10, easing: 'linear' as const },
+        { time: 0, value: 0, easing: 'linear' as const },
+      ],
+    });
+    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.5).value).toBeCloseTo(5, 6);
+  });
+});
+
+describe('P3 — KeyframeChannelVec3 (pure, time-aware)', () => {
+  const params = {
+    name: 'pos',
+    target: 'box',
+    paramPath: 'position',
+    keyframes: [
+      { time: 0, value: [0, 0, 0] as const, easing: 'linear' as const },
+      { time: 1, value: [10, 20, 30] as const, easing: 'linear' as const },
+    ],
+  };
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildChannelState('KeyframeChannelVec3', params);
+    const a = evalAt<KeyframeChannelVec3Value>(state, 'ch', t);
+    const b = evalAt<KeyframeChannelVec3Value>(state, 'ch', t);
+    expect(a).toEqual(b);
+  });
+
+  it('per-component lerp at t=0.5 → [5, 10, 15]', () => {
+    const state = buildChannelState('KeyframeChannelVec3', params);
+    const v = evalAt<KeyframeChannelVec3Value>(state, 'ch', 0.5);
+    expect(v.valueType).toBe('vec3');
+    expect(v.value[0]).toBeCloseTo(5, 6);
+    expect(v.value[1]).toBeCloseTo(10, 6);
+    expect(v.value[2]).toBeCloseTo(15, 6);
+  });
+});
+
+describe('P3 — KeyframeChannelQuat (pure, time-aware)', () => {
+  // Identity → 90° around Y as quaternion (sin(45°)=0.7071, cos(45°)=0.7071).
+  const q0 = [0, 0, 0, 1] as const;
+  const q1 = [0, Math.sin(Math.PI / 4), 0, Math.cos(Math.PI / 4)] as const;
+  const params = {
+    name: 'rot',
+    target: 'box',
+    paramPath: 'rotation',
+    keyframes: [
+      { time: 0, value: q0, easing: 'linear' as const },
+      { time: 1, value: q1, easing: 'linear' as const },
+    ],
+  };
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildChannelState('KeyframeChannelQuat', params);
+    const a = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
+    const b = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
+    expect(a).toEqual(b);
+  });
+
+  it('slerp result stays unit-length (V2 invariant for quaternion math)', () => {
+    const state = buildChannelState('KeyframeChannelQuat', params);
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      const v = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
+      const len = Math.sqrt(
+        v.value[0] ** 2 + v.value[1] ** 2 + v.value[2] ** 2 + v.value[3] ** 2,
+      );
+      expect(len).toBeCloseTo(1, 5);
+    }
+  });
+});
+
+describe('P3 — KeyframeChannelColor (pure, time-aware)', () => {
+  const params = {
+    name: 'col',
+    target: 'mat',
+    paramPath: 'color',
+    keyframes: [
+      { time: 0, value: '#ff0000', easing: 'linear' as const },
+      { time: 1, value: '#0000ff', easing: 'linear' as const },
+    ],
+  };
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildChannelState('KeyframeChannelColor', params);
+    const a = evalAt<KeyframeChannelColorValue>(state, 'ch', t);
+    const b = evalAt<KeyframeChannelColorValue>(state, 'ch', t);
+    expect(a).toEqual(b);
+  });
+
+  it('hex output is 7-char #rrggbb at every sample', () => {
+    const state = buildChannelState('KeyframeChannelColor', params);
+    for (const t of [0, 0.5, 1]) {
+      const v = evalAt<KeyframeChannelColorValue>(state, 'ch', t);
+      expect(v.value).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('endpoints round-trip exactly', () => {
+    const state = buildChannelState('KeyframeChannelColor', params);
+    expect(evalAt<KeyframeChannelColorValue>(state, 'ch', 0).value).toBe('#ff0000');
+    expect(evalAt<KeyframeChannelColorValue>(state, 'ch', 1).value).toBe('#0000ff');
+  });
+});
+
+describe('P3 — AnimationLayer (pure aggregator)', () => {
+  function buildLayer(layerParams: unknown, channelCount = 1) {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    for (let i = 0; i < channelCount; i++) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: `ch${i}`,
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: `ch${i}`,
+          target: 'box',
+          paramPath: 'foo',
+          keyframes: [
+            { time: 0, value: i, easing: 'linear' },
+            { time: 1, value: i + 1, easing: 'linear' },
+          ],
+        },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'time', socket: 'out' },
+        to: { node: `ch${i}`, socket: 'time' },
+      }).next;
+    }
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: layerParams,
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'layer', socket: 'target' },
+    }).next;
+    for (let i = 0; i < channelCount; i++) {
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: `ch${i}`, socket: 'out' },
+        to: { node: 'layer', socket: 'animation' },
+      }).next;
+    }
+    return state;
+  }
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildLayer({ name: 'L', weight: 1, mute: false, solo: false, boneMask: [] }, 2);
+    const a = evalAt<AnimationLayerValue>(state, 'layer', t);
+    const b = evalAt<AnimationLayerValue>(state, 'layer', t);
+    expect(a).toEqual(b);
+  });
+
+  it('passes channels through when mute=false', () => {
+    const state = buildLayer({ name: 'L', weight: 1, mute: false, solo: false, boneMask: [] }, 2);
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
+    expect(v.active).toHaveLength(2);
+    expect(v.target?.kind).toBe('BoxMesh');
+  });
+
+  it('mute=true → active is empty (channel inputs ignored)', () => {
+    const state = buildLayer({ name: 'L', weight: 1, mute: true, solo: false, boneMask: [] }, 2);
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
+    expect(v.active).toHaveLength(0);
+    // Target still passes through so the renderer still draws the wrapped mesh.
+    expect(v.target?.kind).toBe('BoxMesh');
+    expect(v.mute).toBe(true);
+  });
+
+  it('boneMask + solo pass through to the value verbatim (Wave C consumes them)', () => {
+    const state = buildLayer(
+      { name: 'L', weight: 0.5, mute: false, solo: true, boneMask: ['arm.l', 'arm.r'] },
+      1,
+    );
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    expect(v.weight).toBe(0.5);
+    expect(v.solo).toBe(true);
+    expect(v.boneMask).toEqual(['arm.l', 'arm.r']);
+  });
+});
+
+describe('P3 — Shot + Cut (editorial)', () => {
+  function buildShot(name: string, nodeId: string) {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 45, near: 0.1, far: 100, position: [0, 0, 5], lookAt: [0, 0, 0] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'scene',
+      nodeType: 'Scene',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: nodeId,
+      nodeType: 'Shot',
+      params: { name, startTime: 0, endTime: 2 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: nodeId, socket: 'camera' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: nodeId, socket: 'scene' },
+    }).next;
+    return state;
+  }
+
+  it('Shot forwards camera + scene at twice-eval', () => {
+    const state = buildShot('s1', 'shot');
+    const a = evaluate(state, 'shot').value as ShotValue;
+    const b = evaluate(state, 'shot').value as ShotValue;
+    expect(a).toEqual(b);
+    expect(a.name).toBe('s1');
+    expect(a.camera?.kind).toBe('PerspectiveCamera');
+    expect(a.scene?.kind).toBe('Scene');
+  });
+
+  it('Cut wires two Shots with transitionFrame stored verbatim', () => {
+    let state = buildShot('a', 'shotA');
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'shotB',
+      nodeType: 'Shot',
+      params: { name: 'b', startTime: 2, endTime: 4 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'shotB', socket: 'camera' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: 'shotB', socket: 'scene' },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'cut',
+      nodeType: 'Cut',
+      params: { transitionFrame: 12 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'shotA', socket: 'out' },
+      to: { node: 'cut', socket: 'from' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'shotB', socket: 'out' },
+      to: { node: 'cut', socket: 'to' },
+    }).next;
+    const v = evaluate(state, 'cut').value as CutValue;
+    expect(v.transitionFrame).toBe(12);
+    expect(v.from?.name).toBe('a');
+    expect(v.to?.name).toBe('b');
   });
 });
