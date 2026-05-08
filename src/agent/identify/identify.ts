@@ -82,7 +82,12 @@ export function identify(
 ): IdentifyResult {
   const raw = args.query.trim();
   const q = raw.toLowerCase();
-  const hint = args.hint ?? 'unique';
+  // #24: Quantifiers (each/all/every/both) and generic-plural nouns
+  // ("the cubes") signal multi-target intent. Promote hint to
+  // 'multiple-allowed' so the candidate-count threshold doesn't bounce
+  // a legitimately-multiple resolution to ambiguous.
+  const explicitMulti = hasMultiTargetIntent(q);
+  const hint = explicitMulti ? 'multiple-allowed' : (args.hint ?? 'unique');
   const typeFilter = args.filter?.types?.map((t) => t) ?? null;
 
   // 1. Exact-id strategy.
@@ -141,7 +146,7 @@ export function identify(
   const hadColor = colorHex !== null;
   const colorMatched = colorHex
     ? (typeMatched.length > 0 ? typeMatched : Object.values(state.nodes).map(toCandidate))
-        .filter((c) => nodeColorHex(state.nodes[c.id]) === colorHex)
+        .filter((c) => colorsInSameFamily(nodeColorHex(state.nodes[c.id]), colorHex))
     : null;
 
   // Conjunction logic: when the query supplies BOTH a color and a type,
@@ -270,6 +275,26 @@ function isSelectionPhrase(q: string): boolean {
  * fires. Order: longest match wins (e.g. "directional light" before
  * "light").
  */
+// Generic-primitive type set — what "object", "thing", "everything"
+// expand to. Lights count as primitives (they're scene-visible nodes
+// the user manipulates); cameras and empties (Group/Transform) count
+// too. Aggregators (Scene) and authoring nodes (MaterialOverride,
+// Scatter) are intentionally excluded — those aren't user-visible
+// "things" the prompt phrase refers to.
+const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
+  'BoxMesh',
+  'SphereMesh',
+  'DirectionalLight',
+  'PointLight',
+  'SpotLight',
+  'AreaLight',
+  'AmbientLight',
+  'PerspectiveCamera',
+  'OrthographicCamera',
+  'Group',
+  'Transform',
+];
+
 function inferNodeTypes(q: string): NodeTypeId[] | null {
   const matches: NodeTypeId[] = [];
   // Specific lights first — checked before the generic "light" rule.
@@ -285,16 +310,56 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
     return ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight', 'AmbientLight'];
   }
 
-  if (/\b(cube|box|boxmesh)\b/.test(q)) return ['BoxMesh'];
-  if (/\b(sphere|ball|spheremesh)\b/.test(q)) return ['SphereMesh'];
-  if (/\b(camera|cameras)\b/.test(q)) return ['PerspectiveCamera', 'OrthographicCamera'];
+  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxMesh'];
+  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereMesh'];
+  // Specific cameras before the generic "camera" rule (parallels lights).
   if (/\bperspective\s+camera\b/.test(q)) return ['PerspectiveCamera'];
   if (/\borthographic\s+camera\b/.test(q)) return ['OrthographicCamera'];
+  if (/\b(camera|cameras)\b/.test(q)) return ['PerspectiveCamera', 'OrthographicCamera'];
   if (/\bcharacter(s)?\b/.test(q)) return ['Character'];
   if (/\bgroup(s)?\b/.test(q)) return ['Group'];
   if (/\btransform(s)?\b/.test(q)) return ['Transform'];
 
+  // #25: Generic-noun aliases. "object/thing/everything" → all visible
+  // primitives. The Mutator's gate-4 precondition narrows further per
+  // verb — e.g. "rotate the objects" rejects nodes lacking a rotation
+  // param via the precondition path. So Identify can be permissive
+  // here and let the validator do the verb-specific filtering.
+  if (/\b(object|objects|thing|things)\b/.test(q)) return [...ALL_PRIMITIVE_TYPES];
+  if (/\beverything\b|\ball\s+of\s+them\b/.test(q)) return [...ALL_PRIMITIVE_TYPES];
+  // "node" / "nodes" is a pro-mode term — same expansion.
+  if (/\b(node|nodes)\b/.test(q)) return [...ALL_PRIMITIVE_TYPES];
+
   return null;
+}
+
+/**
+ * Detect quantifier or plural-noun cues that signal multi-target intent.
+ * Used to promote `hint` to 'multiple-allowed' so the candidate-count
+ * confidence derivation doesn't reject a legitimately-multiple
+ * resolution as ambiguous (#24).
+ *
+ * Examples that match: "each cube", "all spheres", "every light",
+ * "both cameras", "the cubes" (bare plural after "the").
+ *
+ * Examples that don't: "ball" (no \\bplural marker), "called" (no
+ * standalone quantifier), "things" alone (it WOULD match — that's
+ * intentional; "things" implies plural).
+ */
+function hasMultiTargetIntent(q: string): boolean {
+  // Explicit quantifiers — singular-target prompt does NOT use these.
+  if (/\b(each|all|every|both)\b/.test(q)) return true;
+  // Generic-plural cues — "everything", "all of them", and bare
+  // generic plurals ("objects", "things", "nodes") all imply plural.
+  if (/\b(everything|all\s+of\s+them)\b/.test(q)) return true;
+  if (/\b(objects|things|nodes)\b/.test(q)) return true;
+  // "the X{plural}" with a known type noun — "the cubes", "the spheres".
+  // Plural marker = trailing "s" on a known noun. Match against the
+  // type-noun list to avoid misfiring on irrelevant plurals.
+  if (/\bthe\s+(cubes|spheres|balls|lights|cameras|characters|groups)\b/.test(q)) {
+    return true;
+  }
+  return false;
 }
 
 const COLOR_WORDS: Record<string, string> = {
@@ -313,20 +378,84 @@ const COLOR_WORDS: Record<string, string> = {
 /**
  * Map a color word in the query to a hex string. Recognises explicit
  * `#rrggbb` patterns too.
+ *
+ * #16 — Deterministic resolution: when multiple color words match the
+ * query (e.g. "red and green cube"), pick the FIRST occurrence by
+ * position. Object.entries iteration order is engine-dependent for
+ * non-integer string keys; relying on it for resolution makes the
+ * answer engine-deterministic but not spec-deterministic. Match-index
+ * tie-break is intuitive (first-mentioned wins) AND spec-stable.
  */
 function inferColor(q: string): string | null {
   const explicit = q.match(/#([0-9a-f]{6})\b/);
   if (explicit) return `#${explicit[1].toLowerCase()}`;
+  let bestIdx = -1;
+  let bestHex: string | null = null;
   for (const [word, hex] of Object.entries(COLOR_WORDS)) {
-    if (new RegExp(`\\b${word}\\b`).test(q)) {
-      // Match at the family level: "red sphere" matches both "#ff0000"
-      // and any node whose color falls in the red family. We keep it
-      // strict for v0.5 — exact hex match. Family-level fuzzy match can
-      // land in Wave C if Mutator preconditions need it.
-      return hex;
+    const m = new RegExp(`\\b${word}\\b`).exec(q);
+    if (m && (bestIdx === -1 || m.index < bestIdx)) {
+      bestIdx = m.index;
+      bestHex = hex;
     }
   }
-  return null;
+  return bestHex;
+}
+
+/**
+ * Convert `#rrggbb` to HSL. Returns null on malformed input. Hue in
+ * [0, 360), saturation + lightness in [0, 1].
+ */
+function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
+  const m = hex.match(/^#([0-9a-f]{6})$/i);
+  if (!m) return null;
+  const r = parseInt(m[1].slice(0, 2), 16) / 255;
+  const g = parseInt(m[1].slice(2, 4), 16) / 255;
+  const b = parseInt(m[1].slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+  else if (max === g) h = ((b - r) / d + 2) * 60;
+  else h = ((r - g) / d + 4) * 60;
+  return { h, s, l };
+}
+
+/** Minimum modular hue distance in [0, 180]. */
+function hueDistance(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+/**
+ * #18 — Color-family match: do two hex colors belong to the same named
+ * family ("red", "blue", etc.)?
+ *
+ * Replaces strict hex equality so picker-sampled colors that drifted
+ * a few digits (#ff0001 vs #ff0000) still match "red". Heuristic:
+ *
+ * - Grayscale band (low saturation OR extreme lightness): compare on
+ *   lightness; coloured-vs-grayscale is always different family.
+ * - Both colored: hue distance ≤ 25° AND lightness within 0.4.
+ *
+ * Tuned for the 10 starter COLOR_WORDS entries; thresholds favor false
+ * negatives over false positives (better to ask the user than to mis-
+ * select). Refine when the catalogue or eval surface demands.
+ */
+function colorsInSameFamily(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return false;
+  if (a === b) return true; // exact hit shortcut
+  const A = hexToHsl(a);
+  const B = hexToHsl(b);
+  if (!A || !B) return a === b;
+  const aGray = A.s < 0.15 || A.l < 0.1 || A.l > 0.9;
+  const bGray = B.s < 0.15 || B.l < 0.1 || B.l > 0.9;
+  if (aGray !== bGray) return false;
+  if (aGray) return Math.abs(A.l - B.l) < 0.2;
+  return hueDistance(A.h, B.h) <= 25 && Math.abs(A.l - B.l) < 0.3;
 }
 
 function nodeColorHex(node: Node | undefined): string | null {

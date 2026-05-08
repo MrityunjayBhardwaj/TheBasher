@@ -34,7 +34,7 @@ import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
 import { createFork } from './diff/forkedDag';
 import { ClosurePreservationError } from '../agent/closure/expand';
-import type { ClosureSpec } from './closure/types';
+import type { ClosureSpec, EdgeKind } from './closure/types';
 import type { IdentifyResult } from './identify/types';
 import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
@@ -157,6 +157,11 @@ export async function runAgentTurn(
   const turnOpSources: string[] = [];
   const turnMutationToolNames: string[] = [];
   let turnMutatorClosureSpec: ClosureSpec | undefined;
+  // Mutator-emitted warnings (lossy aspects, deferrals) accumulate
+  // per-turn and surface on the PendingDiff so DiffBar shows them
+  // before the user accepts. Each entry is prefixed with the source
+  // tool/Mutator so multi-Mutator turns stay legible.
+  const turnWarnings: string[] = [];
 
   try {
     for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -340,6 +345,15 @@ export async function runAgentTurn(
                 ? unionClosureSpecs(turnMutatorClosureSpec, spec)
                 : spec;
             }
+            // Wave C1 — capture warnings + intent for DiffBar display.
+            // Each entry is prefixed with the Mutator name so multi-
+            // Mutator turns stay legible.
+            const meta = parseProposePlanMeta(result.text);
+            if (meta) {
+              for (const w of meta.warnings) {
+                turnWarnings.push(`${meta.mutator}: ${w}`);
+              }
+            }
           }
         }
 
@@ -426,7 +440,7 @@ export async function runAgentTurn(
       try {
         useDiffStore
           .getState()
-          .propose(baseState, turnOps, description, turnOpSources, closureSpec);
+          .propose(baseState, turnOps, description, turnOpSources, closureSpec, turnWarnings);
       } catch (proposeErr) {
         // We're past the round loop — no more rounds available for retry.
         // validatePlan's gate-3 (in-tool, per Mutator dispatch) is the
@@ -475,6 +489,19 @@ async function executeToolCall(
   // LLM-facing tool message. The LLM can retry with corrections instead of
   // looping on the same broken call.
   if (!toolDef) {
+    // B2 — H23-class hint: when the LLM tries "mutator.X" as a top-level
+    // tool, it's pattern-matching the listMutators output as if every
+    // entry were a callable tool. Surface the corrective shape inline
+    // so the next round is the LLM's last mistake, not a third one.
+    if (acc.name.startsWith('mutator.')) {
+      return {
+        ops: [],
+        text:
+          `ERROR: unknown tool "${acc.name}". Mutators are NOT callable tools. ` +
+          `Use agent.proposePlan({ mutator: "${acc.name}", intent: "...", spec: {...} }) ` +
+          `instead. Call agent.listMutators to see the spec shape (specExample field).`,
+      };
+    }
     return { ops: [], text: `ERROR: unknown tool "${acc.name}"` };
   }
 
@@ -571,7 +598,8 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
     ``,
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
-    `- Prefer agent.proposePlan with a Mutator (mutator.rotate, mutator.translate, mutator.scale, mutator.setMaterialColor, mutator.duplicate, mutator.deleteNode) over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, reason } you can react to. Call agent.listMutators to see the registered catalog and contracts.`,
+    `- Prefer agent.proposePlan with a Mutator over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, label, reason } you can react to. Call agent.listMutators to see the registered catalog and contracts.`,
+    `- IMPORTANT: Mutators are NOT tools. The names returned by agent.listMutators ("mutator.rotate", "mutator.duplicate", etc.) are VALUES for the \`mutator\` argument of agent.proposePlan — not callable tool names. Do NOT call "mutator.rotate" or "mutator.duplicate" directly; they will fail with "unknown tool". Always: agent.proposePlan({ mutator: "mutator.X", intent: "...", spec: { ... } }).`,
     `- Use dag.inspect when you need to discover node ids or types you don't already know.`,
     `- Use dag.exec only for ops the Mutator catalog does not cover (raw addNode/connect/disconnect for node types not yet wrapped, custom multi-step plans). Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,
     `- The Context block lists "Anchors" — the project's named outputs (scene, render) resolved to their concrete node ids (e.g. "n_scene"). Use those exact ids when wiring connections. NEVER use the literal string "scene" or "render" as a node id; that's the placeholder NAME, not a real id.`,
@@ -689,12 +717,27 @@ export function shouldRunIdentifyRound(
   selectedNodeIds: ReadonlySet<NodeId>,
 ): boolean {
   const m = message.trim().toLowerCase();
-  // Pure additive — skip.
+  // Pure additive — skip. The verb produces a new node from scratch;
+  // resolving "missing thing" wastes a round.
   if (/^(add|make|create|spawn|insert)\s/.test(m)) return false;
-  // Selective references — run.
-  if (/\b(this|that|it|the|selected|chosen)\b/.test(m)) return true;
-  // Explicit identifier markers — run.
+  // Selective references — pronouns or explicit selection words.
+  // Dropped bare `\bthe\b`: it triggered on additive prompts that snuck
+  // past line 693 ("place the camera on the wall"). Verb-noun
+  // co-reference below covers the legitimate "the X" cases.
+  if (/\b(this|that|it|selected|chosen)\b/.test(m)) return true;
+  // Explicit identifier markers.
   if (/\b(named|called|with id)\b/.test(m)) return true;
+  // Verb-noun co-reference: a mutation verb followed by a known
+  // type-noun. "rotate the cube", "color the sphere red", "delete every
+  // light". The verb list MUST be mutating (not additive — those
+  // already exited at line 693). The noun list mirrors inferNodeTypes
+  // aliases (singular + plural + generic primitives).
+  const VERB =
+    '(?:rotate|translate|scale|color|paint|delete|remove|duplicate|move|resize|rename|hide|show|change|set|put|highlight)';
+  const NOUN =
+    '(?:cubes?|box(?:es)?|spheres?|balls?|lights?|cameras?|characters?|groups?|transforms?|objects?|things?|nodes?)';
+  const verbNounRe = new RegExp(`\\b${VERB}\\b[^.?!]{0,40}\\b${NOUN}\\b`);
+  if (verbNounRe.test(m)) return true;
   // Default: run when there's a selection, skip otherwise.
   return selectedNodeIds.size > 0;
 }
@@ -720,12 +763,57 @@ function parseIdentifyResult(text: string | undefined): IdentifyResult | null {
   return null;
 }
 
+// Known edge kinds from closure/types.ts. Updating that union → update
+// this list. The compile-time exhaustiveness check below fails CI if
+// the two drift.
+const KNOWN_EDGE_KINDS: ReadonlySet<string> = new Set([
+  'parent',
+  'children',
+  'camera',
+  'lights',
+  'time',
+  'animation',
+  'pass-input',
+] satisfies readonly EdgeKind[]);
+
 /**
  * Extract the Mutator-declared ClosureSpec from agent.proposePlan's
  * success payload. Returns null on any structural mismatch — the
  * orchestrator falls back to selection-inferred closure.
+ *
+ * #14 — H21-class hardening: validate every edge kind against the
+ * known union at the JSON boundary. An LLM (or a future Mutator with
+ * a typo) emitting an unknown kind would otherwise silently no-op the
+ * walk inside expandClosure (the kind switch falls through), leaving
+ * the closure too narrow and ops outside it failing the gate with no
+ * useful retry signal. Better to reject upfront with a typed return.
  */
-function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | null {
+/**
+ * Extract Mutator metadata (name + intent + warnings) from
+ * agent.proposePlan's success payload. Used by Wave C1 to surface
+ * warnings on DiffBar before the user accepts.
+ */
+export function parseProposePlanMeta(
+  text: string | undefined,
+): { mutator: string; intent: string; warnings: string[] } | null {
+  if (!text) return null;
+  try {
+    const obj = JSON.parse(text) as unknown;
+    if (!obj || typeof obj !== 'object') return null;
+    const o = obj as Record<string, unknown>;
+    if (o.ok !== true) return null;
+    const mutator = typeof o.mutator === 'string' ? o.mutator : 'mutator.unknown';
+    const intent = typeof o.intent === 'string' ? o.intent : '';
+    const warnings = Array.isArray(o.warnings)
+      ? o.warnings.filter((w): w is string => typeof w === 'string')
+      : [];
+    return { mutator, intent, warnings };
+  } catch {
+    return null;
+  }
+}
+
+export function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | null {
   if (!text) return null;
   try {
     const obj = JSON.parse(text) as unknown;
@@ -735,6 +823,14 @@ function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | nu
     const roots = o.closureRoots;
     const edges = o.closureFollowedEdges;
     if (!Array.isArray(roots) || !Array.isArray(edges)) return null;
+    // Validate edge kinds — reject the entire spec if any kind is
+    // unknown. Caller falls back to selection-inferred closure, which
+    // is conservative and safe (V13 still holds).
+    for (const e of edges) {
+      if (typeof e !== 'string' || !KNOWN_EDGE_KINDS.has(e)) {
+        return null;
+      }
+    }
     return {
       rootSelectors: roots.filter((s): s is NodeId => typeof s === 'string'),
       followedEdges: edges as ClosureSpec['followedEdges'],

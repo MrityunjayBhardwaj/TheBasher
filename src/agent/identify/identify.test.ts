@@ -222,6 +222,197 @@ describe('identify — match strategies', () => {
 // shouldRunIdentifyRound heuristic (P-3 mitigation)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Wave A — Identify-v2 (#24 quantifiers + #25 generic nouns)
+// ---------------------------------------------------------------------------
+
+describe('identify — quantifiers (#24)', () => {
+  it('"each cube" → match with all cubes (multi-target)', () => {
+    const state = buildScene();
+    const r = identify({ query: 'each cube' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toHaveLength(3);
+      expect(new Set(r.selectors)).toEqual(new Set(['redCube', 'greenCube', 'blueCube']));
+    }
+  });
+
+  it('"all spheres" → match with the sphere', () => {
+    const state = buildScene();
+    const r = identify({ query: 'all spheres' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toEqual(['sphere1']);
+    }
+  });
+
+  it('"every cube" → match with all cubes', () => {
+    const state = buildScene();
+    const r = identify({ query: 'every cube' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toHaveLength(3);
+    }
+  });
+
+  it('"both cubes" with 2 cubes → match (plural-after-the without "the")', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cube1',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cube2',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0] },
+    }).next;
+    const r = identify({ query: 'both cubes' }, s);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toHaveLength(2);
+  });
+
+  it('"the cubes" (bare plural) → match with all cubes', () => {
+    const state = buildScene();
+    const r = identify({ query: 'the cubes' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toHaveLength(3);
+  });
+
+  it('"ball" alone (no quantifier) does NOT trigger multi-target promotion', () => {
+    // "ball" matches the sphere alias but isn't a quantifier — singular
+    // resolution. Only one sphere exists so this is unambiguous either
+    // way; the test pins the behavior.
+    const state = buildScene();
+    const r = identify({ query: 'ball' }, state);
+    expect(r.type).toBe('match');
+  });
+});
+
+describe('identify — generic-noun aliases (#25)', () => {
+  it('"each of the objects" resolves to all primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'each of the objects' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      // Scene is excluded; cubes + sphere are visible primitives.
+      expect(new Set(r.selectors)).toEqual(
+        new Set(['redCube', 'greenCube', 'blueCube', 'sphere1']),
+      );
+    }
+  });
+
+  it('"every thing" → all visible primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'every thing' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('"everything" (single word) → all visible primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'everything' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('"all of them" → all visible primitives', () => {
+    const state = buildScene();
+    const r = identify({ query: 'all of them' }, state);
+    expect(r.type).toBe('match');
+  });
+
+  it('"all nodes" → all visible primitives (pro-mode synonym)', () => {
+    const state = buildScene();
+    const r = identify({ query: 'all nodes' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('exact id "redCube" still wins over generic-noun alias', () => {
+    const state = buildScene();
+    const r = identify({ query: 'redCube' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toEqual(['redCube']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave C — color polish (#16 deterministic inferColor + #18 family match)
+// ---------------------------------------------------------------------------
+
+describe('identify — color resolution (#16 + #18)', () => {
+  function buildColorScene(): DagState {
+    let s = emptyDagState();
+    // Pure red, off-red (picker-sampled), pink, light gray.
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'pureRed', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#ff0000' } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'offRed', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [1, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#fa0a0a' } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'pink', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#ffaaaa' } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'lightGray', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: '#cccccc' } },
+    }).next;
+    return s;
+  }
+
+  it('"red cube" matches both #ff0000 AND a slightly-off #fa0a0a (#18 fuzzy)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'the red cube', hint: 'multiple-allowed' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(r.selectors).toContain('pureRed');
+      expect(r.selectors).toContain('offRed');
+      // Pink (#ffaaaa) is high-lightness; should NOT match "red".
+      expect(r.selectors).not.toContain('pink');
+    }
+  });
+
+  it('"red and green cube" → red wins (first-mentioned, deterministic, #16)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'the red and green cube' }, state);
+    // No green node exists; "red" wins by position so the resolver
+    // narrows by red. pureRed + offRed are red-family.
+    expect(r.type).not.toBe('no-match');
+    if (r.type === 'match' || r.type === 'ambiguous') {
+      const ids = r.type === 'match' ? r.selectors : r.candidates.map((c) => c.id);
+      expect(ids.some((id) => id === 'pureRed' || id === 'offRed')).toBe(true);
+    }
+  });
+
+  it('"green and red cube" → green wins (first-mentioned beats red)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'the green and red cube' }, state);
+    // No green-family node — should be no-match (since hadColor && hadType
+    // && colorMatched empty → no-match per identify.ts:155-158).
+    expect(r.type).toBe('no-match');
+  });
+
+  it('exact #ff0000 matches the pure red node (explicit hex passes through)', () => {
+    const state = buildColorScene();
+    const r = identify({ query: 'cube #ff0000', hint: 'multiple-allowed' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      // Family match still pulls offRed too; that's intentional under #18.
+      expect(r.selectors).toContain('pureRed');
+    }
+  });
+});
+
 describe('shouldRunIdentifyRound', () => {
   const empty = new Set<string>();
   const oneSelected = new Set(['box1']);
@@ -256,5 +447,37 @@ describe('shouldRunIdentifyRound', () => {
 
   it('default with selection present → true', () => {
     expect(shouldRunIdentifyRound('rotate stuff', oneSelected)).toBe(true);
+  });
+
+  // #15 — verb-noun co-reference (replaces bare \bthe\b trigger)
+  it('"delete the cube" → true (delete + cube)', () => {
+    expect(shouldRunIdentifyRound('delete the cube', empty)).toBe(true);
+  });
+
+  it('"color the sphere red" → true (color + sphere)', () => {
+    expect(shouldRunIdentifyRound('color the sphere red', empty)).toBe(true);
+  });
+
+  it('"duplicate every cube" → true (duplicate + cube)', () => {
+    expect(shouldRunIdentifyRound('duplicate every cube', empty)).toBe(true);
+  });
+
+  it('"the cube is broken" → false (no mutation verb, no selection)', () => {
+    expect(shouldRunIdentifyRound('the cube is broken', empty)).toBe(false);
+  });
+
+  it('"is there a sphere?" → false (no verb, no selection, no markers)', () => {
+    expect(shouldRunIdentifyRound('is there a sphere?', empty)).toBe(false);
+  });
+
+  it('"create the missing light" → false (additive prefix wins)', () => {
+    expect(shouldRunIdentifyRound('create the missing light', empty)).toBe(false);
+  });
+
+  it('"place the camera on the wall" → false (no mutation verb in list, no selection)', () => {
+    // "place" is intentionally NOT in the verb list — it's ambiguous
+    // between additive ("place a camera") and mutating ("move the
+    // camera to here"). The user can use a more explicit verb.
+    expect(shouldRunIdentifyRound('place the camera on the wall', empty)).toBe(false);
   });
 });
