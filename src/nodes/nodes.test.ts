@@ -85,7 +85,7 @@ describe('default node registration', () => {
 });
 
 describe('default project', () => {
-  it('builds the THESIS App. C 5-node DAG', () => {
+  it('builds the THESIS App. C DAG with the canonical n_time clock', () => {
     const state = buildDefaultDagState();
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
@@ -93,9 +93,20 @@ describe('default project', () => {
       'n_light',
       'n_render',
       'n_scene',
+      'n_time',
     ]);
     expect(state.outputs.scene).toEqual({ node: 'n_scene', socket: 'out' });
     expect(state.outputs.render).toEqual({ node: 'n_render', socket: 'out' });
+  });
+
+  it('seeds n_time as the canonical TimeSource (THESIS §49 — Time is first-class)', () => {
+    // Locks the deductive contract every time-consuming Mutator relies on
+    // (addChannel preconditions, future render-clock mutators). Removing
+    // n_time without this test passing means the precondition assertion
+    // "Default projects seed `n_time`" has become a lie.
+    const state = buildDefaultDagState();
+    expect(state.nodes.n_time).toBeDefined();
+    expect(state.nodes.n_time.type).toBe('TimeSource');
   });
 
   it('topoSort produces dependencies-first order from n_render', () => {
