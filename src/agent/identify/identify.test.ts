@@ -374,4 +374,36 @@ describe('shouldRunIdentifyRound', () => {
   it('default with selection present → true', () => {
     expect(shouldRunIdentifyRound('rotate stuff', oneSelected)).toBe(true);
   });
+
+  // #15 — verb-noun co-reference (replaces bare \bthe\b trigger)
+  it('"delete the cube" → true (delete + cube)', () => {
+    expect(shouldRunIdentifyRound('delete the cube', empty)).toBe(true);
+  });
+
+  it('"color the sphere red" → true (color + sphere)', () => {
+    expect(shouldRunIdentifyRound('color the sphere red', empty)).toBe(true);
+  });
+
+  it('"duplicate every cube" → true (duplicate + cube)', () => {
+    expect(shouldRunIdentifyRound('duplicate every cube', empty)).toBe(true);
+  });
+
+  it('"the cube is broken" → false (no mutation verb, no selection)', () => {
+    expect(shouldRunIdentifyRound('the cube is broken', empty)).toBe(false);
+  });
+
+  it('"is there a sphere?" → false (no verb, no selection, no markers)', () => {
+    expect(shouldRunIdentifyRound('is there a sphere?', empty)).toBe(false);
+  });
+
+  it('"create the missing light" → false (additive prefix wins)', () => {
+    expect(shouldRunIdentifyRound('create the missing light', empty)).toBe(false);
+  });
+
+  it('"place the camera on the wall" → false (no mutation verb in list, no selection)', () => {
+    // "place" is intentionally NOT in the verb list — it's ambiguous
+    // between additive ("place a camera") and mutating ("move the
+    // camera to here"). The user can use a more explicit verb.
+    expect(shouldRunIdentifyRound('place the camera on the wall', empty)).toBe(false);
+  });
 });

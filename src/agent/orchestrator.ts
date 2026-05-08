@@ -689,12 +689,27 @@ export function shouldRunIdentifyRound(
   selectedNodeIds: ReadonlySet<NodeId>,
 ): boolean {
   const m = message.trim().toLowerCase();
-  // Pure additive — skip.
+  // Pure additive — skip. The verb produces a new node from scratch;
+  // resolving "missing thing" wastes a round.
   if (/^(add|make|create|spawn|insert)\s/.test(m)) return false;
-  // Selective references — run.
-  if (/\b(this|that|it|the|selected|chosen)\b/.test(m)) return true;
-  // Explicit identifier markers — run.
+  // Selective references — pronouns or explicit selection words.
+  // Dropped bare `\bthe\b`: it triggered on additive prompts that snuck
+  // past line 693 ("place the camera on the wall"). Verb-noun
+  // co-reference below covers the legitimate "the X" cases.
+  if (/\b(this|that|it|selected|chosen)\b/.test(m)) return true;
+  // Explicit identifier markers.
   if (/\b(named|called|with id)\b/.test(m)) return true;
+  // Verb-noun co-reference: a mutation verb followed by a known
+  // type-noun. "rotate the cube", "color the sphere red", "delete every
+  // light". The verb list MUST be mutating (not additive — those
+  // already exited at line 693). The noun list mirrors inferNodeTypes
+  // aliases (singular + plural + generic primitives).
+  const VERB =
+    '(?:rotate|translate|scale|color|paint|delete|remove|duplicate|move|resize|rename|hide|show|change|set|put|highlight)';
+  const NOUN =
+    '(?:cubes?|box(?:es)?|spheres?|balls?|lights?|cameras?|characters?|groups?|transforms?|objects?|things?|nodes?)';
+  const verbNounRe = new RegExp(`\\b${VERB}\\b[^.?!]{0,40}\\b${NOUN}\\b`);
+  if (verbNounRe.test(m)) return true;
   // Default: run when there's a selection, skip otherwise.
   return selectedNodeIds.size > 0;
 }
