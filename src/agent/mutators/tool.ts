@@ -32,9 +32,12 @@ const listMutatorsSchema = z.object({}).default({});
 export const listMutatorsTool: ToolDefinition<Record<string, never>> = {
   name: 'agent.listMutators',
   description:
-    'List the registered Mutators with their contracts (required edges, ' +
-    'required node types, what they preserve / lose). Read-only. Call this ' +
-    'BEFORE proposing a plan to pick the right Mutator for the intent.',
+    'List Mutator catalog entries — name, description, contract, specExample. ' +
+    'IMPORTANT: the returned names ("mutator.rotate", "mutator.duplicate", ' +
+    'etc.) are VALUES for the `mutator` arg of agent.proposePlan, NOT callable ' +
+    'tool names. Do not call "mutator.X" directly; use agent.proposePlan({ ' +
+    'mutator: "mutator.X", spec: {...} }) instead. Read-only; call BEFORE ' +
+    'proposing a plan to pick the right Mutator and copy its specExample shape.',
   paramSchema: listMutatorsSchema as unknown as z.ZodType<Record<string, never>, z.ZodTypeDef, unknown>,
   handler(_args, _ctx: ToolContext): ToolResult {
     return {

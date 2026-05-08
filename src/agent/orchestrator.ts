@@ -475,6 +475,19 @@ async function executeToolCall(
   // LLM-facing tool message. The LLM can retry with corrections instead of
   // looping on the same broken call.
   if (!toolDef) {
+    // B2 — H23-class hint: when the LLM tries "mutator.X" as a top-level
+    // tool, it's pattern-matching the listMutators output as if every
+    // entry were a callable tool. Surface the corrective shape inline
+    // so the next round is the LLM's last mistake, not a third one.
+    if (acc.name.startsWith('mutator.')) {
+      return {
+        ops: [],
+        text:
+          `ERROR: unknown tool "${acc.name}". Mutators are NOT callable tools. ` +
+          `Use agent.proposePlan({ mutator: "${acc.name}", intent: "...", spec: {...} }) ` +
+          `instead. Call agent.listMutators to see the spec shape (specExample field).`,
+      };
+    }
     return { ops: [], text: `ERROR: unknown tool "${acc.name}"` };
   }
 
@@ -571,7 +584,8 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
     ``,
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
-    `- Prefer agent.proposePlan with a Mutator (mutator.rotate, mutator.translate, mutator.scale, mutator.setMaterialColor, mutator.duplicate, mutator.deleteNode) over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, reason } you can react to. Call agent.listMutators to see the registered catalog and contracts.`,
+    `- Prefer agent.proposePlan with a Mutator over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, label, reason } you can react to. Call agent.listMutators to see the registered catalog and contracts.`,
+    `- IMPORTANT: Mutators are NOT tools. The names returned by agent.listMutators ("mutator.rotate", "mutator.duplicate", etc.) are VALUES for the \`mutator\` argument of agent.proposePlan — not callable tool names. Do NOT call "mutator.rotate" or "mutator.duplicate" directly; they will fail with "unknown tool". Always: agent.proposePlan({ mutator: "mutator.X", intent: "...", spec: { ... } }).`,
     `- Use dag.inspect when you need to discover node ids or types you don't already know.`,
     `- Use dag.exec only for ops the Mutator catalog does not cover (raw addNode/connect/disconnect for node types not yet wrapped, custom multi-step plans). Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,
     `- The Context block lists "Anchors" — the project's named outputs (scene, render) resolved to their concrete node ids (e.g. "n_scene"). Use those exact ids when wiring connections. NEVER use the literal string "scene" or "render" as a node id; that's the placeholder NAME, not a real id.`,
