@@ -27,6 +27,7 @@ export const rotateMutator: MutatorDefinition<RotateSpec> = {
     'Rotate one or more nodes by a delta in degrees around a single axis. ' +
     'Adds the delta to the current rotation; preserves position, scale, material.',
   spec: RotateSpec,
+  specExample: { targetSelectors: ['node_id'], axis: 'y', deltaDeg: 45 },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],

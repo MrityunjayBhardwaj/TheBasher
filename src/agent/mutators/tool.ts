@@ -54,7 +54,13 @@ const proposePlanSchema = z.object({
     .string()
     .min(1)
     .describe('Human-readable intent — surfaces in the diff bar + telemetry.'),
-  spec: z.unknown().describe('Mutator-specific spec — see agent.listMutators for shapes.'),
+  spec: z
+    .unknown()
+    .describe(
+      'Mutator-specific spec object. Call agent.listMutators FIRST and copy ' +
+        'the matching `specExample` field shape — substitute real node ids ' +
+        'into `targetSelectors` and adjust value fields as needed.',
+    ),
 });
 
 export type ProposePlanArgs = z.infer<typeof proposePlanSchema>;

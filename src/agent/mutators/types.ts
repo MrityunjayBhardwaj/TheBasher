@@ -77,6 +77,17 @@ export interface MutatorDefinition<Spec = unknown> {
   description: string;
   /** Zod schema for the spec arg. Validated by gate 2 + at the tool boundary. */
   spec: z.ZodType<Spec, z.ZodTypeDef, unknown>;
+  /**
+   * A canonical, valid spec the LLM can copy-and-substitute. Surfaced by
+   * agent.listMutators so the LLM sees concrete field names + types
+   * before calling agent.proposePlan. Without this, the LLM has to guess
+   * field names from the description and rounds get burned on gate-2
+   * rejections.
+   *
+   * Use placeholder ids like "node_id" — the example must parse through
+   * `spec` (a registration-time test asserts this).
+   */
+  specExample: Spec;
   contract: MutatorContract;
   /**
    * Build the closure expansion spec for this mutator's spec. The

@@ -31,6 +31,7 @@ export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
     'Position is offset by `offset` (default [1,0,0]). Preserves rotation, ' +
     'scale, material; does NOT deep-clone animation channels.',
   spec: DuplicateSpec,
+  specExample: { targetSelectors: ['node_id'], offset: [1, 0, 0] },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],

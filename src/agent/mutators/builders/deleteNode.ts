@@ -22,6 +22,7 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     'Delete one or more nodes. Auto-disconnects every consumer edge first ' +
     '(removeNode requires zero consumers). Atomic — Cmd+Z reverts everything.',
   spec: DeleteNodeSpec,
+  specExample: { targetSelectors: ['node_id'] },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],

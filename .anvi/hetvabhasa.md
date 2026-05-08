@@ -442,3 +442,65 @@ path".
 **Cross-refs:** vyapti V13 (closure preservation — V13's enforcement
 hinges on H22's avoidance); dharana B7 (Agent identifier ↔ DAG
 node-set — closure roots come from this seam). PLAN §5 Wave A.
+
+### H23: Tool surface advertises information the receiver doesn't expose
+
+**Detection signal:** A tool's parameter description points the LLM at
+another tool's output for shape/format/example info, but the named
+output drops or never carried that info. Live-smoke symptom: gate-2
+(param_schema) rejection on the FIRST call to the dependent tool, with
+the LLM emitting plausible-but-wrong field names.
+
+**REF:** `src/agent/mutators/tool.ts:57` (proposePlan's spec
+description "see agent.listMutators for shapes"); `src/agent/mutators/catalog.ts:30-45`
+(listMutatorMetadata pre-fix dropped the spec shape despite the
+doc-comment claim).
+
+**Source:** P2.5.2 Wave C live smoke (2026-05-08). User prompt: "take
+the pink sphere and move it away from the cube." The LLM resolved
+both anchors via agent.identify (B7 worked), called agent.listMutators
+(it received only name + description + contract), then called
+agent.proposePlan with `mutator.translate` and a malformed spec
+missing `targetSelectors`. Gate 2 caught it cleanly — but the rejection
+was the FIRST signal the LLM had that the spec shape was undefined.
+
+**Five-limbed argument:**
+1. **Claim:** When tool A's parameter description points the LLM at tool
+   B's output for X, tool B must actually return X. Otherwise the
+   advertised contract is a fiction the gate has to enforce after the
+   fact.
+2. **Reason:** LLMs treat tool descriptions as authoritative. They don't
+   probe to verify the claim — they construct calls assuming the docs
+   are accurate. A missing field in the receiver shows up as guessing.
+3. **Universal principle:** Same family as H21 (agent invents node IDs
+   from system-prompt placeholders). Both are surface-receiver
+   mismatches: the surface promises something, the receiver doesn't
+   carry it. H21 was at the prompt-context boundary; H23 is at the
+   tool-self-description boundary.
+4. **Application:** every tool whose description references another
+   tool's output must be paired with a registration-time test that
+   inspects that other tool's actual return shape and asserts the
+   referenced fields are present.
+5. **Conclusion:** the bug class is mechanically eliminable. Failure to
+   add the test means the next tool added with cross-tool references
+   re-reproduces H23.
+
+**The trap:** filing this as "model didn't read the description carefully
+enough" or "needs prompt engineering." The model reads descriptions as
+expected; the description was wrong. Fixing the model is hopeless;
+fixing the surface is one-line.
+
+**The real fix:** every Mutator now carries a `specExample` field
+(`MutatorDefinition.specExample`); listMutators emits it; a test
+asserts every specExample parses through its own zod schema. The
+proposePlan tool description tells the LLM to copy the matching
+specExample.
+
+**Sister patterns:** any future LLM-facing tool whose description
+points at another tool's output. Inspection tools (dag.inspect),
+catalogue tools (agent.listStrategies), introspection tools — all
+candidates if their consumer-tool description references their fields.
+
+**Cross-refs:** dharana B8 (Mutator catalog ↔ Op constructor — the
+shape-advertising boundary); H21 (sister pattern at the prompt
+boundary). PLAN §5 Wave C.

@@ -21,6 +21,7 @@ export const translateMutator: MutatorDefinition<TranslateSpec> = {
     'Translate one or more nodes by a delta in meters. ' +
     'Adds the delta to the current position; preserves rotation, scale, material.',
   spec: TranslateSpec,
+  specExample: { targetSelectors: ['node_id'], delta: [1, 0, 0] },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],

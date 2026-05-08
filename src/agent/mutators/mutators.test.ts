@@ -114,6 +114,19 @@ describe('mutator catalog', () => {
     expect(getMutator('nonexistent')).toBeUndefined();
   });
 
+  it('every Mutator carries a specExample that parses through its own spec schema', () => {
+    // #23 fix: agent.listMutators returns specExample so the LLM can
+    // copy field names instead of guessing. This test guards drift —
+    // a Mutator whose specExample stops parsing through its own zod
+    // schema (param renamed, type changed) fails CI immediately.
+    registerAllMutators();
+    for (const m of listMutators()) {
+      const parse = m.spec.safeParse(m.specExample);
+      expect(parse.success, `Mutator "${m.name}" specExample failed its own spec.parse: ` +
+        (parse.success ? '' : parse.error.message)).toBe(true);
+    }
+  });
+
   it('V14: no two Mutators share the same contract signature', () => {
     // Mechanical guard for vyapti V14 (Mutator non-redundancy). Two
     // Mutators with identical (requiredEdges, requiredNodeTypes,

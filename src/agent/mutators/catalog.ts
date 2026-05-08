@@ -28,12 +28,16 @@ export function listMutators(): MutatorDefinition[] {
 /**
  * Compact metadata view for the LLM-facing `agent.listMutators` tool.
  * Drops handlers + zod internals — keeps name, description, contract,
- * and a string summary of the spec arg shape.
+ * and a canonical specExample the LLM copies before calling
+ * agent.proposePlan. Without specExample the LLM has to guess field
+ * names from `description` and burns rounds on gate-2 rejections (#23).
  */
 export interface MutatorMetadata {
   name: string;
   description: string;
   contract: MutatorDefinition['contract'];
+  /** Valid sample spec for agent.proposePlan. Every field name + type the LLM needs. */
+  specExample: unknown;
 }
 
 export function listMutatorMetadata(): MutatorMetadata[] {
@@ -41,6 +45,7 @@ export function listMutatorMetadata(): MutatorMetadata[] {
     name: m.name,
     description: m.description,
     contract: m.contract,
+    specExample: m.specExample,
   }));
 }
 

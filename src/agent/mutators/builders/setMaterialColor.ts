@@ -27,6 +27,7 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
     'this writes material.color. For lights (DirectionalLight, PointLight, etc.) ' +
     'this writes color directly. Preserves all other material/light properties.',
   spec: SetMaterialColorSpec,
+  specExample: { targetSelectors: ['node_id'], color: '#ff0000' },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],
