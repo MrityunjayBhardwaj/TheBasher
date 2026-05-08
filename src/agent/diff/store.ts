@@ -93,13 +93,23 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
   pendingDiff: null,
 
   propose(state, ops, description, opSources, closureSpec) {
-    // V13 closure-preservation gate. Runs BEFORE createFork so a
-    // rejection leaves zero state changes. The gate is vacuous when
-    // closureSpec is omitted — preserves backward compat for callers
-    // that haven't migrated yet (P-7 mitigation).
+    // Build the fork FIRST. V1 still holds (fork is a clone, no real
+    // state mutation). The fork is needed to expand closures rooted on
+    // ids introduced by ops in this same batch (e.g. spawnWithProperties
+    // chain: mesh.add spawns mesh_xyz, mutator.setMaterialColor's
+    // closure roots on mesh_xyz). Without applying ops first, the closure
+    // expander can't see the new id and walks an empty subgraph —
+    // every connect-to-scene op then fails the gate.
+    const { fork, inverseOps } = createFork(state, ops);
+
+    // V13 closure-preservation gate. Runs after the fork is built but
+    // BEFORE we set state — rejection still leaves zero real changes.
+    // The gate is vacuous when closureSpec is omitted (P-7 mitigation).
     let closure: ClosureSet | undefined;
     if (closureSpec) {
-      closure = expandClosure(closureSpec, state);
+      // Expand against the fork: closure roots must resolve, and the
+      // walker needs the post-batch graph to find consumers/producers.
+      closure = expandClosure(closureSpec, fork);
       // Track ids introduced earlier in this same diff via fresh
       // addNode so subsequent ops referencing them pass the gate.
       const introducedIds = new Set<string>();
@@ -118,8 +128,6 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
         }
       }
     }
-
-    const { fork, inverseOps } = createFork(state, ops);
     const diff: PendingDiff = {
       originalState: cloneState(state),
       forkState: fork,

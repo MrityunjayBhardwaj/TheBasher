@@ -361,4 +361,42 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
     const diff = useDiffStore.getState().propose(state, ops, 'add+rotate', undefined, spec);
     expect(diff.ops).toHaveLength(2);
   });
+
+  it('closure rooted on a fresh-add id resolves via post-fork expansion (spawnWithProperties chain)', () => {
+    // Live-smoke regression: spawn a sphere via mesh.add, then a Mutator
+    // (e.g. setMaterialColor) authors a closure rooted on the FRESH id.
+    // At propose time, the closure root doesn't exist in `state` yet —
+    // it only exists in the post-fork. Pre-fix, expandClosure(spec, state)
+    // returned an empty closure and the connect-to-scene op failed the
+    // gate. Post-fix, expansion runs against the post-fork state.
+    const state = buildScene();
+    const newSphereId = 'newSphere';
+    const ops: Op[] = [
+      // mesh.add — spawn the sphere into scene.children.
+      {
+        type: 'addNode',
+        nodeId: newSphereId,
+        nodeType: 'SphereMesh',
+        params: { radius: 1, position: [0, 0, 0] },
+      },
+      {
+        type: 'connect',
+        from: { node: newSphereId, socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      },
+      // mutator.setMaterialColor — target the fresh id, closure roots on it.
+      // The closure walker needs the connect-to-scene to be applied so the
+      // parent walk from newSphereId reaches scene; otherwise scene is
+      // outside closure and the connect op above would fail the gate.
+      { type: 'setParam', nodeId: newSphereId, paramPath: 'material.color', value: '#ffc0cb' },
+    ];
+    const spec: ClosureSpec = {
+      rootSelectors: [newSphereId],
+      followedEdges: ['parent'],
+    };
+    const diff = useDiffStore.getState().propose(state, ops, 'spawn+color', undefined, spec);
+    expect(diff.ops).toHaveLength(3);
+    expect(diff.closure?.nodes.has(newSphereId)).toBe(true);
+    expect(diff.closure?.nodes.has('scene')).toBe(true);
+  });
 });

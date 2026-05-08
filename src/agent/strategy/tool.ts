@@ -6,6 +6,27 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from '../tools/types';
 import { getStrategy, listStrategyMetadata } from './catalog';
+import type { StrategyTopic } from './types';
+
+// Single source of truth for the topic enum. Derived from StrategyTopic
+// so adding a new topic to types.ts auto-extends the zod schema (and
+// every consumer that reads it). Without this, types.ts and tool.ts
+// drift — H23 class.
+const STRATEGY_TOPICS = [
+  'units',
+  'materials',
+  'lighting',
+  'cameras',
+  'assetChoice',
+  'spawnWithProperties',
+] as const satisfies readonly StrategyTopic[];
+
+// Compile-time check: STRATEGY_TOPICS covers every StrategyTopic.
+type _CheckExhaustive = Exclude<StrategyTopic, typeof STRATEGY_TOPICS[number]> extends never
+  ? true
+  : never;
+const _checkExhaustive: _CheckExhaustive = true;
+void _checkExhaustive;
 
 // ---------------------------------------------------------------------------
 // agent.listStrategies
@@ -17,7 +38,7 @@ export const listStrategiesTool: ToolDefinition<Record<string, never>> = {
   name: 'agent.listStrategies',
   description:
     'List the registered strategy resources (workflow guidance topics: ' +
-    'units, materials, lighting, cameras, assetChoice). Read-only metadata; ' +
+    `${STRATEGY_TOPICS.join(', ')}). Read-only metadata; ` +
     'use agent.getStrategy({ topic }) to fetch the body.',
   paramSchema: listStrategiesSchema as unknown as z.ZodType<
     Record<string, never>,
@@ -38,7 +59,7 @@ export const listStrategiesTool: ToolDefinition<Record<string, never>> = {
 
 const getStrategySchema = z.object({
   topic: z
-    .enum(['units', 'materials', 'lighting', 'cameras', 'assetChoice'])
+    .enum(STRATEGY_TOPICS)
     .describe('Strategy topic. Call agent.listStrategies if unsure.'),
 });
 
