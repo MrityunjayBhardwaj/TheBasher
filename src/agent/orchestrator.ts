@@ -157,6 +157,11 @@ export async function runAgentTurn(
   const turnOpSources: string[] = [];
   const turnMutationToolNames: string[] = [];
   let turnMutatorClosureSpec: ClosureSpec | undefined;
+  // Mutator-emitted warnings (lossy aspects, deferrals) accumulate
+  // per-turn and surface on the PendingDiff so DiffBar shows them
+  // before the user accepts. Each entry is prefixed with the source
+  // tool/Mutator so multi-Mutator turns stay legible.
+  const turnWarnings: string[] = [];
 
   try {
     for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -340,6 +345,15 @@ export async function runAgentTurn(
                 ? unionClosureSpecs(turnMutatorClosureSpec, spec)
                 : spec;
             }
+            // Wave C1 — capture warnings + intent for DiffBar display.
+            // Each entry is prefixed with the Mutator name so multi-
+            // Mutator turns stay legible.
+            const meta = parseProposePlanMeta(result.text);
+            if (meta) {
+              for (const w of meta.warnings) {
+                turnWarnings.push(`${meta.mutator}: ${w}`);
+              }
+            }
           }
         }
 
@@ -426,7 +440,7 @@ export async function runAgentTurn(
       try {
         useDiffStore
           .getState()
-          .propose(baseState, turnOps, description, turnOpSources, closureSpec);
+          .propose(baseState, turnOps, description, turnOpSources, closureSpec, turnWarnings);
       } catch (proposeErr) {
         // We're past the round loop — no more rounds available for retry.
         // validatePlan's gate-3 (in-tool, per Mutator dispatch) is the
@@ -774,6 +788,31 @@ const KNOWN_EDGE_KINDS: ReadonlySet<string> = new Set([
  * the closure too narrow and ops outside it failing the gate with no
  * useful retry signal. Better to reject upfront with a typed return.
  */
+/**
+ * Extract Mutator metadata (name + intent + warnings) from
+ * agent.proposePlan's success payload. Used by Wave C1 to surface
+ * warnings on DiffBar before the user accepts.
+ */
+export function parseProposePlanMeta(
+  text: string | undefined,
+): { mutator: string; intent: string; warnings: string[] } | null {
+  if (!text) return null;
+  try {
+    const obj = JSON.parse(text) as unknown;
+    if (!obj || typeof obj !== 'object') return null;
+    const o = obj as Record<string, unknown>;
+    if (o.ok !== true) return null;
+    const mutator = typeof o.mutator === 'string' ? o.mutator : 'mutator.unknown';
+    const intent = typeof o.intent === 'string' ? o.intent : '';
+    const warnings = Array.isArray(o.warnings)
+      ? o.warnings.filter((w): w is string => typeof w === 'string')
+      : [];
+    return { mutator, intent, warnings };
+  } catch {
+    return null;
+  }
+}
+
 export function parseProposePlanClosureSpec(text: string | undefined): ClosureSpec | null {
   if (!text) return null;
   try {

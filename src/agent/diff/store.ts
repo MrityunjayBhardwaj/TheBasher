@@ -51,6 +51,12 @@ export interface PendingDiff {
   description: string;
   /** Per-op acceptance. All true by default. */
   selected: boolean[];
+  /**
+   * Mutator-emitted warnings (lossy aspects, deferrals) accumulated
+   * across the turn. Surfaced by DiffBar so the user sees them BEFORE
+   * accepting. Empty / undefined when no Mutator dispatched.
+   */
+  warnings?: string[];
   /** Timestamp of creation. */
   createdAt: number;
 }
@@ -73,6 +79,7 @@ export interface DiffStore {
     description: string,
     opSources?: string[],
     closureSpec?: ClosureSpec,
+    warnings?: string[],
   ) => PendingDiff;
   /** Toggle acceptance of a single op by index. */
   toggleOp: (index: number) => void;
@@ -92,7 +99,7 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
   status: 'idle',
   pendingDiff: null,
 
-  propose(state, ops, description, opSources, closureSpec) {
+  propose(state, ops, description, opSources, closureSpec, warnings) {
     // Build the fork FIRST. V1 still holds (fork is a clone, no real
     // state mutation). The fork is needed to expand closures rooted on
     // ids introduced by ops in this same batch (e.g. spawnWithProperties
@@ -137,6 +144,7 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
       closure,
       description,
       selected: ops.map(() => true),
+      warnings: warnings && warnings.length > 0 ? warnings : undefined,
       createdAt: Date.now(),
     };
     set({ status: 'pending', pendingDiff: diff });
