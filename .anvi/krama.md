@@ -84,7 +84,7 @@
 - Step 7 → one undo entry per op instead of per diff: undo becomes painful (hit it 30 times to revert one agent action).
 - Skipping validation (step 2): malformed agent output corrupts forked DAG; reject still leaves zombie state if forked DAG leaks.
 
-**REF:** THESIS.md §19
+**REF:** THESIS.md §19; `src/agent/diff/forkedDag.ts:1` (createFork); `src/agent/diff/store.ts:1` (useDiffStore + acceptSelectedOps); `src/app/DiffBar.tsx:1` (accept/reject UI); `src/viewport/DiffOverlay.tsx:1` (ghost render)
 **Why it matters:** the Diff-first contract is the trust contract with the user. Break it once and the agent is disabled.
 
 ### K4: Render job lifecycle (P4)

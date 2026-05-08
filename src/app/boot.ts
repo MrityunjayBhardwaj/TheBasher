@@ -25,6 +25,9 @@ import {
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
+import { registerAllTools } from '../agent/tools';
+import { registerAllMutators } from '../agent/mutators';
+import { registerAllStrategies } from '../agent/strategy';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
 import { useTimeStore } from './stores/timeStore';
 
@@ -71,6 +74,9 @@ export function boot(): Promise<void> {
   if (bootPromise) return bootPromise;
   bootPromise = (async () => {
     registerAllNodes();
+    registerAllTools();
+    registerAllMutators();
+    registerAllStrategies();
     const storage = await getStorage();
 
     // K1 step 2.5 — seed bundled sample assets into OPFS on first boot.
@@ -120,6 +126,10 @@ export function boot(): Promise<void> {
       });
       void import('./stores/selectionStore').then((m) => {
         w.__basher_selection = m.useSelectionStore;
+      });
+      // Agent session store — used by E2E to verify chat UI layout.
+      void import('../agent/session/store').then((m) => {
+        w.__basher_agent_session = m.useAgentSessionStore;
       });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.

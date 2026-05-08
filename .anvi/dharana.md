@@ -34,7 +34,11 @@
 **HOW:** Tool handlers return `Op[]`; never call `dagStore.setState`. Diff system applies to forked DAG; user accepts → ops flow through real Op dispatcher.
 **REF:** THESIS.md §18-20
 **Silent-failure modes:** agent applies tool that bypasses Diff; agent applies invalid op (zod validation skipped); user rejects but state already mutated.
-**Observation targets:** every agent turn → activity log shows source='agent'; reject path → confirm zero state changes.
+**Status:** EXERCISED (P2.5 v2, 2026-05-07). 6 tools registered: 2 universals (`dag.inspect`, `dag.exec`) + 4 macros (`character.walkTo`, `camera.snapshot`, `library.import`, `mesh.add`). Multi-turn loop (max 3 rounds): inspect → results fed back → exec. `ToolResult { ops, text }` replaces raw `Op[]` (read-only→text, mutation→ops). Selection context: `selectedNodeIds` flows from SelectionStore → ToolContext → system prompt (V11 ALIGNED). Tool registry + fork engine + diff store + ghost overlay + accept/reject bar all shipped. V7 ALIGNED. K3 cataloged with file:line REFs.
+**Observation targets:**
+- every agent turn → diff store shows pending → accept lands single dispatchAtomic entry; reject clears with zero state changes.
+- **Selection context check (P2.5 v2):** before any agent turn that targets "selected" / "this" / pronouns, verify the API request body's system prompt contains a `Selected nodes:` block listing the current `selectionStore.selectedNodeIds`. If the block is absent or stale, the LLM will fall through to all-nodes or wrong-node behavior — symptom looks like "agent rotates everything" or "agent ignores selection." See H19 for the stale-snapshot mechanism that produced this class of bug.
+- **Multi-turn drift check:** in the follow-up message after `dag.inspect`, verify the original user request appears verbatim (not the literal string `"the user's request"`). If verbatim text is missing, H19's stale-snapshot pattern is active in `runAgentTurn`.
 
 ### Boundary B4: Node evaluator ↔ time/randomness (purity)
 
@@ -44,6 +48,95 @@
 **REF:** THESIS.md §48-49, §51 (Caching correctness)
 **Silent-failure modes:** drag a slider → cache returns stale; render frame ≠ viewport frame at same time; agent reproduces a scene differently.
 **Observation targets:** twice-eval test in CI; visual diff between render-frame-N and viewport-at-time-T.
+
+### Boundary B7: Agent identifier ↔ DAG node-set
+
+**ORIGIN:** H21 (2026-05-08, agent invented "scene" as a literal node
+id) + P2.5.2 PLAN §5 Wave B. The class bug is "agent picks the wrong
+target" or "agent invents an id from a prompt placeholder" — both sit
+at the seam where natural-language references meet concrete node ids.
+
+**WHY:** Without a first-class identifier stage, every prompt-vs-real-id
+mismatch is a variant of H21. Selection context helps when one node is
+selected, but "the cube" with three cubes has no commit point where
+ambiguity surfaces. The model picks silently; the closure gate (B3, V13)
+catches the symptom but not the class.
+
+**HOW:** `agent.identify` runs on round 1 when the heuristic
+`shouldRunIdentifyRound(message, selection)` fires (selective
+references, explicit identifier markers, or selection present).
+Three branches: 'match' commits selectors as turn-local identifiedSelectors
+(threaded into closure-spec inference); 'ambiguous' surfaces candidates
+to the user and ends the turn; 'no-match' surfaces rationale and ends.
+Confidence is derived from candidate count (P-6 mitigation), NOT
+model-reported.
+
+**REF:** P2.5.2 PLAN §5 Wave B; `src/agent/identify/identify.ts:1`;
+`src/agent/identify/confidence.ts:1`;
+`src/agent/orchestrator.ts` (`shouldRunIdentifyRound`,
+`parseIdentifyResult`, three-branch dispatch); H21 in
+`.anvi/hetvabhasa.md`.
+
+**Silent-failure modes:**
+- Heuristic false-negative: a prompt that references existing nodes
+  slips past the heuristic; closure gate (B3) catches the resulting
+  out-of-scope op. Telemetry tracks per-turn round counts to spot
+  drift.
+- LLM emits its own confidence in a freeform format (the P-6 risk).
+  Mitigated by deriving confidence from candidate count locally; the
+  model's self-reported number is ignored.
+
+**Observation targets:**
+- For prompts that reference existing nodes: verify round 1 emitted
+  a `tool_choice: { name: 'agent.identify' }` request body and that
+  the result was 'match' (or 'ambiguous'/'no-match' surfaced cleanly).
+- For purely additive prompts: verify Identify did NOT run (P-3
+  latency mitigation).
+
+### Boundary B8: Mutator catalog ↔ Op constructor
+
+**ORIGIN:** P2.5.2 PLAN §5 Wave C. B3's hetvabhasa cluster (H19/H20/H21)
+shared the same structural gap: every common operation was hand-built
+by the LLM each time, with no contract for closure / preconditions /
+preserved aspects. The Mutator catalog is the bridge between LLM intent
+and the Op vocabulary — Mutators are the consumers of closure +
+identifier.
+
+**WHY:** Without a Mutator catalog, dag.exec is the only mutation
+surface for the LLM. That conflates "compose any Op chain" with
+"perform a known semantic operation". The gap is where bugs at H19's
+caliber live: the LLM emits valid ops that target the wrong node,
+miss a unit conversion, or violate the schema; Wave A's closure gate
+catches the symptom but not the class.
+
+**HOW:** Each `MutatorDefinition` declares spec (zod-validated arg
+shape), contract (requiredEdges, requiredNodeTypes, preserves, lossy),
+buildClosureSpec, preconditions (shape-only — P-5), and build (Spec +
+ClosureSet + DagState → Op[]). The five-gate validator runs on every
+plan: existence, schema, closure, preconditions, adapter (P7 stub).
+agent.proposePlan is the LLM-facing surface; `dag.exec` stays as raw
+escape (mode-gated to copilot/sandbox).
+
+**REF:** P2.5.2 PLAN §5 Wave C; `src/agent/mutators/types.ts:1`;
+`src/agent/mutators/validate.ts:1`; `src/agent/mutators/tool.ts:1`;
+six starter Mutators in `src/agent/mutators/builders/`.
+
+**Silent-failure modes:**
+- Mutator preconditions misalign with reality (P-5 risk).
+  Shape-only checks; semantic state ("Navmesh has obstacles configured")
+  belongs in build — not in preconditions.
+- Catalog drift (P-4). Vyapti V14 is the structural answer: every new
+  Mutator must justify non-redundancy at code review.
+- Gate 5 (adapter fidelity) stays a stub forever (PLAN R11). Tracked;
+  activates at P7 PlayCanvas export.
+
+**Observation targets:**
+- For every agent.proposePlan call: verify the JSON return either has
+  `ok: true` with closureRoots + warnings, or `ok: false, gate, reason`.
+- For "make character walk to (5,0,3)" without a Navmesh: verify gate 4
+  fires before any LLM round 2 — the precondition rejects, the
+  structured failure threads back via F6, the LLM either retries or
+  surfaces to the user.
 
 ### Boundary B5: Web build ↔ Blender live-link
 
@@ -90,6 +183,27 @@
 **Span:** Every `package.json` dependency.
 **REF:** THESIS.md §35; memory/feedback_license.md
 
+### V13: Closure preservation
+
+**Status:** ALIGNED (P2.5.2 Wave A + Wave C, 2026-05-08)
+**Span:** `src/agent/closure/`, `src/agent/diff/store.ts`,
+`src/agent/orchestrator.ts`, every Mutator's buildClosureSpec,
+`src/agent/mutators/validate.ts` (gate 3).
+**REF:** vyapti.md V13.
+
+### V14: Mutator non-redundancy
+
+**Status:** ALIGNED (P2.5.2 Wave C, 2026-05-08) — code-review enforced
+**Span:** `src/agent/mutators/builders/*.ts`.
+**REF:** vyapti.md V14.
+
+### V15: Workflow strategy fetched lazily, not inlined in system prompt
+
+**Status:** ALIGNED (P2.5.2 Wave D, 2026-05-08)
+**Span:** `src/agent/orchestrator.ts` (`buildStaticSystemPrompt`),
+`src/agent/strategy/` (catalog + tool).
+**REF:** vyapti.md V15.
+
 ---
 
 ## 3. LENS CONFIGURATION
@@ -105,7 +219,79 @@
 
 ### Project-specific axes (created through blind spot detection)
 
-> None yet. Will accumulate as catalogues grow.
+#### Axis: DCC-LLM bridge reference
+
+**ORIGIN:** 2026-05-08, blender-mcp adoption analysis. The question
+"should we adopt X from [DCC-LLM bridge]?" recurs as the ecosystem
+matures (blender-mcp at 21K stars; Houdini-MCP, C4D-MCP, Maya-LLM
+likely to land soon). Each bridge is a reference implementation
+mining ground for ideas, not an architectural template.
+
+**WHY this axis exists:** these bridges optimize for *Blender's API
+surface* (vast, unbounded — they need `execute_blender_code`).
+Basher's DAG vocabulary is *bounded* — we have V1 (op-as-only-mutation
+path) + V7 (handlers return Op[]) + diff-first preview. Adopting
+their patterns naively imports their compromises. We need a deliberate
+filter: take ideas that align with V1/V7; reject ones that violate
+them.
+
+**HOW to apply:** when surveying a DCC-LLM bridge (or any LLM-tool
+integration), separate ideas into three buckets:
+1. **Adopt** — vision/screenshot tools, asset-catalog integrations,
+   AI-3D-generation, telemetry, strategy-as-resource patterns.
+2. **Defer** — MCP-server-as-additional-surface (v0.6 scope when
+   external IDE drive becomes a real ask).
+3. **Reject** — arbitrary code execution, direct setState bypasses,
+   any pattern that puts the agent on a parallel mutation path.
+
+**Detection signal:** any time research surfaces a popular LLM-tool
+bridge. Default action: 30-minute survey, ranked recommendation,
+reject-list with reasoning. blender-mcp is the canonical first
+worked example.
+
+**Cross-refs:** P2.5.2 PLAN.md (the survey + adoption decisions);
+post-blender-mcp commits `a710a9f` (strategy + telemetry) and the
+rejected list in PLAN.md §10 (external assets → P3, AI gen → P5,
+vision tool → optional pull-forward, MCP server → v0.6+).
+
+#### Axis: Convention boundary (units / coordinate / format)
+
+**ORIGIN:** H20 (rotation units mismatch, 2026-05-07) — silent unit
+boundary between user-facing storage (degrees) and engine-layer
+consumption (THREE radians). The bug was invisible until the agent's
+first non-zero degree input. No existing catalogue axis surfaced it
+because the mismatch wasn't a flow bug or a state bug — it was a
+*convention* bug.
+
+**WHY this axis exists:** Basher straddles three convention zones:
+1. **THREE.js / glTF runtime** — engine-mandated (radians, +Z forward,
+   xyzw quaternions, vertical FOV).
+2. **DCC user mental models** — Blender / Maya / Houdini / C4D / 3ds Max
+   conventions, which the agent's prompts and the human's typing both
+   inherit.
+3. **Game-engine conventions** — Unity / Unreal / Godot, where Basher's
+   eventual export targets live (P7 PlayCanvas, plus Unity/Unreal
+   future).
+
+These three diverge on roughly 20 named decisions (rotation units,
+position units, axis up, color space, time representation, FOV
+direction, Euler order, quaternion order, etc.). Each silent boundary
+is a candidate H-class bug.
+
+**HOW to apply:** before introducing ANY new value-typed field on a
+node, agent tool, or persisted format, check `.anvi/dcc-reference.md`.
+The doc lists every convention question with the canonical answer
+across the five DCCs + three engines + glTF + THREE. The check
+prevents recurring H20-class bugs by making the convention boundary
+explicit at design time, not at first-bug time.
+
+**Detection signal that this axis is active:** any time the question
+"which units?" / "which order?" / "which format?" comes up. Default
+answer: consult dcc-reference.md FIRST, then decide. If the doc doesn't
+cover the question, add a section to it before picking a side.
+
+**Cross-refs:** `.anvi/dcc-reference.md` (the lookup), H20 (first
+catalogued instance).
 
 ### Deferred decisions (seeds — re-evaluate at named trigger)
 
@@ -301,3 +487,160 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   **Verdict: organization still sound after the CI-fix train.** The repeat-rate at the test/observation boundary (5 of 16 entries) is the highest-density cluster — but the underlying mechanisms are distinct. If a third async-seed-race entry lands, that's the trigger to consolidate into a vyapti ("every test that depends on async-seeded state must wait on a seed-availability signal").
 
   **Next update trigger:** unchanged — P2.5 (AI Agent on DAG).
+
+**Updated:** 2026-05-08 — post-P2.5.1 correctness train + P2.5.2 plan committed (NOT executed):
+
+- **P2.5.1 shipped (commits 1ae2c92 → de84341 → a266e03):** orchestrator
+  rewrite + 8 correctness fixes (F1-F8 from AGENT.md analysis), Tailwind
+  AgentChat refactor, AGENT.md doc, H20 (rotation units → degrees in DAG,
+  radians at THREE seam), dcc-reference.md (20-section convention lookup
+  + V12 invariant), H21 (anchor placeholder bug + Anchors block in
+  per-turn context). Wire format now OpenAI-spec-correct (assistant
+  {tool_calls} → role:'tool' with tool_call_id) — testable on Claude /
+  GPT-4o via OpenRouter.
+- **B3 (Agent ↔ DAG)** observation targets extended for selection
+  context check + multi-turn drift check.
+- **B4 (Node evaluator ↔ time/randomness)** unchanged — V2 + V3 still
+  ALIGNED post-rewrite (rotation conversion lives in viewport, not in
+  evaluator; purity preserved).
+- **New axes activated:** convention boundary (post-H20 + dcc-reference);
+  DCC-LLM bridge reference (post-blender-mcp survey, 2026-05-08).
+- **P2.5.2 plan committed (62d58f1 + a710a9f):** four-wave pipeline
+  hardening (closure preservation + Identify stage + Mutator catalog +
+  catalogue/strategy/telemetry). 36-46h scope. NOT executed yet — picks
+  up in next session via `.planning/p2.5.2-agent-pipeline/PLAN.md`.
+
+- **Fatality test (post-P2.5.1, 2026-05-08):**
+  1. Hetvabhasa clustering: 19 entries (added H19, H20, H21 since P2.5).
+     Three new entries cluster at the agent boundary (B3) — three
+     occurrences within one milestone is the consolidation trigger.
+     **Verdict:** consolidate B3's hetvabhasa cluster into a vyapti
+     once Wave C lands ("every agent edit goes through a Mutator with
+     declared closure + preconditions"). Already specified in PLAN.md
+     as V13 + V14.
+  2. Vyapti span: V11 (selection wiring), V12 (convention declared) ALIGNED.
+     V13/V14/V15 planned, NOT YET IMPLEMENTED — Wave A-D will land them.
+  3. Krama crossing: K3 (agent tool dispatch) extended with multi-turn
+     loop in P2.5 v2; will extend further with Identify stage in Wave B.
+     No new lifecycle crossings 3+ module boundaries.
+
+  **Verdict: organization remains sound after P2.5.1.** B3's
+  three-pattern cluster is a *cluster of similar mechanisms*, not a
+  structural fatality — closure preservation + Mutator preconditions
+  (P2.5.2 plan) is the right structural answer. No restructuring;
+  invariant tightening.
+
+  **Next update trigger:** Wave A completion (closure expansion +
+  preservation gate ships) → V13 flips to ALIGNED.
+
+**Updated:** 2026-05-07 — post-P2.5 v2 (multi-turn agent loop + selection context):
+
+- **B3 (Agent ↔ DAG) now exercised end-to-end with multi-turn.** Surface widened from 4 macros → 6 tools (added universals `dag.inspect` + `dag.exec`). Orchestrator runs up to 3 rounds: inspect → results fed back → exec. `ToolResult { ops, text }` separates read-only return (text) from mutation return (ops). `selectedNodeIds` now flows ToolContext-deep into the system prompt (id, type, current params for every selected node).
+
+- **V11 added (ALIGNED):** Agent tool context must carry selection state. Span: `src/agent/tools/types.ts` (ToolContext shape) + `src/agent/orchestrator.ts:180` (dispatch) + `:247-256` (system prompt builder) + `src/app/AgentChat.tsx:34` (read at send time). No multi-module entanglement — single concern (selection wiring through one path), four sites that mirror the Op-emit chain.
+
+- **H19 added** to hetvabhasa: Zustand `getState()` snapshot stale after `set()` — user message lost. Sister to H10 (same mechanism in test code). The orchestrator captured `sessionStore = useAgentSessionStore.getState()` at function start, then called `addMessage(...)` which `set()`s a NEW state object; subsequent reads of the captured `sessionStore.session.messages` saw the pre-`addMessage` snapshot, so the user's current message was never in the API request body. Real fix: read fresh at every access (`useAgentSessionStore.getState().session.messages`) and use the `message` param directly in follow-up prompt construction. **The single observation that diagnosed this:** logging the API request body and seeing the `messages: []` array missing the user turn. Without that observation, the symptom ("agent rotates everything") points at prompt tuning or LLM behavior — both wrong frames.
+
+- **B3 observation targets extended** with two project-specific checks (above):
+  1. Selection context check — verify `Selected nodes:` block in system prompt before pronoun/selection turns.
+  2. Multi-turn drift check — verify original user request appears verbatim in the follow-up after `dag.inspect`.
+
+- **Known gaps (NOT bugs, deferred to P3):**
+  - Multi-turn reliability: follow-up message doesn't restate selection IDs (system prompt has it, but worth verifying under model variance).
+  - `dag.inspect` output appended as plain text, not structured `tool_result` — works for Gemma 4, suboptimal for stricter models.
+  - No session persistence (localStorage chat history).
+  - No settings UI (API key / model / base URL).
+  - Server EPERM after bad `pkill -f node` — operational, not architectural.
+
+- **Fatality test (post-P2.5 v2, 2026-05-07):**
+  1. Hetvabhasa clustering: 17 entries (added H19). H10 + H19 share the Zustand stale-snapshot mechanism but at different surfaces (test code vs. orchestrator) — two cataloged occurrences. Third occurrence triggers consolidation into a vyapti ("any closure capturing `getState()` across `set()` boundaries must re-read"). Watch for it.
+  2. Vyapti span: V11 added (ALIGNED). 4-site span all within the agent surface (types + orchestrator + AgentChat) + ReadOnly contract from selectionStore — single concern, complementary sites, no module entanglement. V1-V10 unchanged.
+  3. Krama crossing: K3 (agent tool dispatch) extended with the multi-turn loop — same atomic shape, just iterated up to 3× per turn. No new lifecycle crosses 3+ module boundaries.
+
+  **Verdict: organization still sound after P2.5 v2.** B3's silent-failure mode list now has empirical content (was speculative pre-P2.5). Selection-context wiring through ToolContext is the right cut — placing it on the dispatcher closure instead of forcing each tool to import the selection store would have created a per-tool span that V11 explicitly avoids.
+
+  **Next update trigger:** P3 — agent reliability tuning + persistence + settings UI + new macro tools (node.delete, material.setColor, animation.play).
+
+**Updated:** 2026-05-08 — post-P2.5.2 (Waves A+B+C+D shipped):
+
+- **Wave A** — closure expansion + preservation gate. `src/agent/closure/`
+  + `src/agent/diff/store.ts` propose-time gate. V13 flips to ALIGNED.
+  Per-edge-kind BFS with shared visited-set + maxDepth 256 (P-1 cycle
+  mitigation). Each declared kind runs its own per-root BFS — no
+  free-mixing of 'parent' and 'children' (the early bug that would have
+  leaked siblings into the closure was caught in unit tests before
+  shipping). Orchestrator infers closure from selection or
+  identifiedSelectors; falls vacuous when no roots → additive prompts
+  unchanged.
+- **Wave B** — two-stage Identify → Plan. `src/agent/identify/`. New
+  boundary B7 (Agent identifier ↔ DAG node-set). Pure local resolver
+  (no LLM round needed — model just constructs the query). Confidence
+  derived from candidate count (P-6). Heuristic
+  shouldRunIdentifyRound skips Identify on additive prompts (P-3).
+  Three branches: match → identifiedSelectors threaded into closure
+  inference; ambiguous → candidate list to user; no-match → rationale.
+- **Wave C** — Mutator catalog with five-gate validator. Six starter
+  Mutators (rotate, translate, scale, setMaterialColor, duplicate,
+  deleteNode). New boundary B8 (Mutator catalog ↔ Op constructor). V14
+  flips to ALIGNED (code-review). Mutator-declared closure overrides
+  Wave A's selection-inferred fallback; gate 3 reuses Wave A's gate.
+  agent.proposePlan returns ops or {ok:false, gate, reason} the LLM
+  reacts to.
+- **Wave D** — strategy resources + telemetry. `src/agent/strategy/`
+  + `src/agent/telemetry/`. V15 flips to ALIGNED. System prompt's
+  inline paramTips (units + materials) lifted into the strategy
+  catalog; prompt keeps a one-line pointer. Telemetry recorder is
+  opt-in localStorage by default; killswitch via env or localStorage;
+  no PII (tool name + outcome + duration only); allowlist of known
+  tool names blocks accidental leak through.
+
+- **Hetvabhasa update:** no new H entries surfaced during execution —
+  the planning was thorough enough that the only genuine bug
+  discovered (the 'parent'/'children' free-mixing in BFS) was caught
+  by the test suite before commit. Catalogued as a comment in
+  `src/agent/closure/expand.ts:41` rather than as a hetvabhasa entry
+  — single-occurrence near-misses caught in test go to memory not
+  catalogue (per dharana promotion criteria).
+
+- **Fatality test (post-P2.5.2, 2026-05-08):**
+  1. Hetvabhasa clustering: 19 entries (no new). H19/H20/H21 cluster
+     at B3 — Wave A/B/C consolidate the cluster into V13 (gate) +
+     V14 (catalog) + B7 (identifier seam) + B8 (mutator seam). The
+     cluster's *mechanism* is now structurally addressed; future
+     B3-class bugs land at gate-rejection time with structured
+     failures, not as silent symptoms.
+  2. Vyapti span: V13 + V14 + V15 added. V13 spans
+     `src/agent/closure/` + `src/agent/diff/store.ts` +
+     `src/agent/orchestrator.ts` + every Mutator's buildClosureSpec.
+     V14 spans `src/agent/mutators/builders/` (code-review-only —
+     no module entanglement). V15 spans
+     `src/agent/orchestrator.ts:buildStaticSystemPrompt` +
+     `src/agent/strategy/`. Each invariant has a single-concern
+     enforcement site; no cross-module entanglement.
+  3. Krama crossing: K3 (agent tool dispatch) extended with the
+     conditional Identify pre-stage. Same atomic shape, just one
+     more round when the heuristic fires. No new lifecycle crosses
+     3+ module boundaries.
+
+  **Verdict: organization remains sound after P2.5.2.** B3's
+  three-pattern hetvabhasa cluster (H19/H20/H21) is now closed by
+  three structural invariants (V13 + V14 + V11) — the *cluster
+  mechanism* is mechanically rejected at the gate. The DCC-LLM
+  bridge axis (added pre-P2.5.2) has its first worked example: the
+  blender-mcp survey's strategy-resource pattern + opt-in telemetry
+  pattern were adopted; arbitrary code execution + direct setState
+  bypasses were rejected.
+
+  **Next update trigger:** P3 (timeline / animation nodes) —
+  KeyframeChannel<T> Mutators land. Closure follows new edge kind
+  'animation'. New strategy resource: animation. Telemetry tracks
+  animation-Mutator usage.
+
+**Provenance:** Updated 2026-05-08 — post-P2.5.2: V13 + V14 + V15
+added; B7 + B8 boundaries added; DCC-LLM bridge axis activated with
+the blender-mcp survey as the first worked example; strategy-resource
++ opt-in telemetry patterns adopted; six starter Mutators registered;
+agent.identify + agent.proposePlan + agent.listStrategies +
+agent.getStrategy tools added (registry now 11). H19/H20/H21
+mechanism class structurally closed by V13 + Wave B Identify stage +
+Wave C Mutator catalog.

@@ -65,10 +65,10 @@
 
 ### V7: Agent tool handlers return `Op[]`; do not mutate state directly
 
-**Span:** Every agent tool definition.
-**Enforcement:** Tool handler signature is `(args) => Op[] | Promise<Op[]>`. No exceptions.
-**Status:** NOT YET IMPLEMENTED (P2.5)
-**REF:** THESIS.md §18, §20
+**Span:** Every agent tool definition (`src/agent/tools/*.ts`).
+**Enforcement:** Tool handler signature is `(args, ctx: ToolContext) => Op[] | Promise<Op[]>`. No exceptions.
+**Status:** ALIGNED (P2.5). Four tools shipped with Vitest twice-call tests proving pure output. Diff system enforces the Op-only return path — accept feeds through dispatchAtomic; reject discards fork.
+**REF:** THESIS.md §18, §20; `src/agent/tools/types.ts:10`; `src/agent/tools/registry.ts:15`; `src/agent/diff/forkedDag.ts:1`; `src/agent/diff/store.ts:113`
 **Why it matters:** agent edits via the same path as the user; one undo system; one diff system; one audit log.
 
 ### V8: Viewport never mutates DAG; viewport renders evaluated DAG output
@@ -85,6 +85,168 @@
 **Status:** ALIGNED for v0.5 — every persisted-schema field added post-release follows this rule. Two occurrences cataloged: `rotation: vec3` on positional lights (P2.6.3) and `scale: vec3` on positional lights (P2.6.4). Both pair an evaluator-level `?? default` with consumer-side `?? default` in helpers + renderer.
 **REF:** hetvabhasa H14; `src/nodes/{DirectionalLight,PointLight,SpotLight,AreaLight}.ts` (evaluator default); `src/viewport/{LightHelpers,SceneFromDAG}.tsx` (consumer default); `src/nodes/lightRotation.test.ts` + `src/nodes/lightScale.test.ts` (regression coverage). v0.6 plan: add `paramSchema.parse()` re-validation inside `hydrate()` at the project-load seam — eliminates the need for evaluator-level guards going forward (they remain harmless redundancy).
 **Why it matters:** the bug class this prevents is silent on dev fixtures and only fires for real users with persisted projects from before the field landed — the worst possible failure mode (canary tests pass; users crash on app open). The two-layer guard converts a load-time crash into a benign default + UI behavior the user can correct via the gizmo. The rule's _generality_ matters more than the specific rotation/scale cases — every future schema addition triggers the same trap unless the convention is actively maintained.
+
+### V11: Agent tool context must carry selection state
+
+**Span:** `ToolContext` interface (`src/agent/tools/types.ts`), orchestrator tool call dispatch (`src/agent/orchestrator.ts:180`), system prompt builder (`src/agent/orchestrator.ts:247-256`), AgentChat message sender (`src/app/AgentChat.tsx:34`).
+**Enforcement:** `ToolContext` has `selectedNodeIds: ReadonlySet<string>`. Orchestrator passes it to every handler. System prompt includes a `Selected nodes:` block with id, type, and current params. AgentChat reads from `useSelectionStore.getState().selectedNodeIds` at send time.
+**Status:** ALIGNED (P2.5 v2).
+**REF:** `src/agent/tools/types.ts:21`; `src/agent/orchestrator.ts:245-256`; `src/app/AgentChat.tsx:34`.
+**Why it matters:** Without selection context, "rotate selected to 45°" acts on all matching nodes or all nodes in the scene. The LLM has no way to know which node the user is pointing at.
+
+### V13: Agent mutations preserve the declared closure
+
+**Span:** `src/agent/closure/` (expand + types) + `src/agent/diff/store.ts`
+(propose-time gate) + `src/agent/orchestrator.ts` (closure inference and
+F6 retry threading) + every `src/agent/mutators/builders/*.ts`
+(buildClosureSpec) + `src/agent/mutators/validate.ts` (gate 3).
+
+**Enforcement:** `useDiffStore.propose` accepts an optional
+`closureSpec`. When provided, `expandClosure(spec, state)` resolves the
+roots into a node set and the gate rejects any op whose target lies
+outside (V13 acceptance #2: "rotate selected can NEVER produce ops
+that mutate any other node"). Fresh addNode introducing a new id is
+allowed; ids introduced earlier in the same diff propagate. Mutator
+plans declare their own closure via `MutatorDefinition.buildClosureSpec`
+— the orchestrator passes that to propose, overriding the
+selection-inferred fallback.
+
+Each declared edge kind runs its own per-root BFS. Mixing 'parent' and
+'children' produces a UNION ("ancestors and descendants of root"), not
+a free-mixing walk that would leak siblings under a shared parent.
+
+**Status:** ALIGNED (P2.5.2 Wave A + Wave C, 2026-05-08).
+**REF:** P2.5.2 PLAN §5; `src/agent/closure/expand.ts:1`;
+`src/agent/diff/store.ts:95` (gate); `src/agent/mutators/validate.ts:1`
+(gate 3); `src/agent/orchestrator.ts` (`inferClosureSpec`,
+`mutatorClosureSpec` precedence). Twice-call determinism + cycle-safety
++ maxDepth tested in `src/agent/closure/expand.test.ts`. Integration
+proven by `src/agent/diff/diff.test.ts` ("propose with closure rejects
+out-of-closure ops").
+
+**Why it matters:** without this gate, ops from fuzzy LLM output land
+on the wrong node and the user only catches it visually after accept.
+With the gate, the orchestrator threads the structured rejection back
+to the LLM as a follow-up message and the LLM either retries within
+scope, dag.inspects for context, or surfaces to the user. The bug
+class — agent mutating outside intent — becomes mechanically impossible
+when a closure is declared.
+
+### V14: Mutator non-redundancy
+
+**Span:** `src/agent/mutators/builders/*.ts` (every Mutator
+definition).
+
+**Enforcement (mechanical):** an automated test asserts no two
+registered Mutators share the same `(requiredEdges, requiredNodeTypes,
+preserves)` contract signature. A signature collision fails CI with the
+two colliding names — no review pass needed to catch the easy case.
+Test: `src/agent/mutators/mutators.test.ts` — "V14: no two Mutators
+share the same contract signature."
+
+**Enforcement (review-layer, semantic):** the mechanical test catches
+contract clones but not deeper semantic redundancy (two Mutators emit
+the same Op-shape on a probe scene). Code review still applies:
+- Could `setBoxColor` be folded into the existing
+  `mutator.setMaterialColor` by widening its precondition? Yes →
+  reject the new entry.
+- Could `rotateAroundPivot` be a parameter on `mutator.rotate` (e.g.
+  optional `pivot: vec3`)? Yes → extend, don't fork.
+
+The catalog lives in one barrel file (`src/agent/mutators/index.ts`)
+so adding one is visible in any diff. Monthly catalogue audit if the
+catalog passes 20 entries in v0.5. A follow-up issue tracks the
+Op-shape probe test.
+
+**Status:** ALIGNED (P2.5.2 Wave C, 2026-05-08; mechanical guard added
+2026-05-08 post-PR-#9 review). Six starter Mutators ship with unique
+contract signatures: rotate (preserves position+scale+material+children),
+translate (preserves rotation+scale+material+children), scale (preserves
+position+rotation+material), setMaterialColor (preserves
+position+rotation+scale+children), duplicate (preserves
+rotation+scale+material), deleteNode (preserves nothing). Each covers
+a distinct Op-shape pattern.
+
+**REF:** P2.5.2 PLAN §2 P-4; `src/agent/mutators/index.ts:1` (the
+single visible catalog); `src/agent/mutators/mutators.test.ts` (the
+mechanical guard).
+
+**Why it matters:** Mutator-thinking is contagious — every new noun
+the LLM emits ("setLightColor", "setBoxColor") is a candidate Mutator
+unless the catalog actively resists. Without V14, the catalog grows
+into a per-node-type per-property surface (50+ entries) instead of
+staying at the semantic-operation layer (~10 entries). The five-gate
+validator works equally well at either size — but the LLM's decision
+quality drops sharply once "which Mutator?" becomes a search problem.
+
+### V15: Workflow strategy is fetched lazily, not inlined in the system prompt
+
+**Span:** `src/agent/orchestrator.ts` (`buildStaticSystemPrompt` —
+keeps only rules + tool catalogue + Op shape examples + a one-line
+quick-conventions summary) + `src/agent/strategy/` (the catalog +
+`agent.getStrategy({ topic })` tool).
+
+**Enforcement:** code review. Any new "tip / preference / workflow
+hint / how-to" content goes to a strategy resource via
+`registerStrategy(...)`, not into the inline system prompt. The
+prompt's role is rules + Op shape — non-negotiable on every round.
+The strategy catalog's role is contextual guidance — fetched only
+when the topic is relevant.
+
+**Status:** ALIGNED (P2.5.2 Wave D, 2026-05-08). Five starter
+resources land: units, materials, lighting, cameras, assetChoice.
+The orchestrator's old `paramTips` block (Common node params + Units
+convention) was lifted into the units + materials + lighting
+resources; the prompt keeps only a one-line pointer.
+
+**REF:** `src/agent/strategy/catalog.ts:1` (the registry +
+starter resources); `src/agent/strategy/tool.ts:1` (the LLM-facing
+tool); `src/agent/orchestrator.ts` (`paramTips` slimmed to one line +
+strategy pointer).
+
+**Why it matters:** the system prompt is the most expensive context
+window — re-sent every round of every turn. Moving 500-1000 tokens
+of contextual workflow guidance to lazy resources cuts each round's
+prompt cost without losing accessibility (the LLM can still pull the
+exact body when relevant). Privacy posture (V15-adjacent): the
+strategy catalog is local + deterministic — no external service
+holds the workflow library.
+
+### V12: Every convention boundary is declared in `.anvi/dcc-reference.md`
+
+**Span:** every value-typed field on a node param schema, every agent tool
+arg, every persisted-format field. Whenever the field's interpretation
+depends on a convention (units, axis order, time representation, color
+space, etc.), that convention MUST be declared explicitly — the canonical
+declaration lives in `.anvi/dcc-reference.md`.
+
+**Enforcement:** code review. New `paramSchema` field with a value type
+that has a convention question (rotation, FOV, intensity, color, time,
+etc.) requires either (a) a Cross-refs line pointing at the relevant
+dcc-reference.md section, or (b) a new section added to that doc with
+the industry-standard table BEFORE the field lands. The agent's system
+prompt declares the conventions verbatim so the LLM emits matching
+values.
+
+**Status:** ALIGNED for the conventions captured today (rotation,
+position, color space, color storage, coord system, time, Euler order,
+material model, tonemap). TBD for conventions that will land with P3+
+(quaternion serialization, animation interpolation, IK solver,
+skinning weights, render output color space, frame rate default).
+
+**REF:** `.anvi/dcc-reference.md` (the lookup table); H20 (first bug
+that motivated the invariant); dharana §3 axis "Convention boundary
+(units / coordinate / format)" (the lens this invariant is enforced
+through).
+
+**Why it matters:** without this invariant, every new field is a
+candidate silent-unit-boundary bug. H20 was invisible for the entire
+P0-P2.6 lifespan because no test exercised non-zero degree input;
+similarly subtle bugs are queued for FOV (vertical/horizontal),
+intensity (lumens/unitless), color (linear/sRGB), Euler order. Making
+the convention explicit at design time converts an empirical-discovery
+class into a deductive-lookup class — Lokayata-on-design instead of
+Lokayata-on-bug.
 
 ### V9: Materials are data, not code (in v0.5)
 

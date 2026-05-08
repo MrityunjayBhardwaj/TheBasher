@@ -197,6 +197,183 @@ await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
 **Meta-pattern (worth its own entry the next time it bites):** CI test reliability often depends on incidental wall-clock slack from slow upstream tests. Speeding up the suite — even via legitimate fixes like landing a missing snapshot baseline — exposes pre-existing races that the slowness was silently masking. When fixing a single CI failure makes a _different_ unrelated test newly fail, the second failure is rarely a new bug; it's a latent race becoming observable. Hunt for the missing-await rather than blaming the speedup.
 **REF:** PR #6 CI investigation (2026-05-07); `tests/e2e/p1-acceptance.spec.ts:258` (P1#4 fix in `e022d62`); trace evidence in run `25461120030`. Sister entries: H6 (overlay text in pixel diff), H8 (per-platform snapshots), H13 (layout-shift baseline) — same test/observation cluster, different mechanisms.
 
+### H19: Zustand `getState()` snapshot stale after `set()` — user message lost
+
+**Symptom:** Agent responds to a message with "I inspected the DAG" but the response doesn't reference the user's actual request. Follow-up prompt falls back to `"the user's request"` (literal string). Agent then acts on the DAG inspect results with no direction, adding random objects.
+
+**Trap:** Suspect the LLM isn't following instructions, model doesn't support tool calling, or prompt needs tuning. Adding more rules to the system prompt doesn't fix it — the model never received the user message at all.
+
+**Root cause:** `runAgentTurn` captures `sessionStore = useAgentSessionStore.getState()` at function start. Then `sessionStore.addMessage(...)` calls Zustand's `set()` which creates a NEW state object internally, but the local variable still points to the OLD snapshot. When `buildMessages` passes `sessionStore.session.messages` to construct the LLM messages array, it has the pre-`addMessage` state — empty or previous-turn messages only. The current user message is never included in the API request.
+
+**Real fix:** Read the store fresh at every access point. Instead of `buildMessages(..., sessionStore.session.messages)`, use `buildMessages(..., useAgentSessionStore.getState().session.messages)`. Also use the `message` param (always the current turn's instruction) instead of `.find()` in the follow-up prompt construction.
+
+**Detection signal:** Any Zustand store with `getState()` captured in a closure before `set()` is called. Check whether the captured state includes the mutation. If the API request body sent to the LLM is missing the user's latest message, this pattern is active.
+
+**REF:** P2.5 v2 (2026-05-07); `src/agent/orchestrator.ts:57` (stale snapshot), `:76` (fresh read), `types.ts` at `useAgentSessionStore`.
+
+**Why:** Zustand `set()` does NOT mutate the existing state object — it creates a new one. Any closure holding the old reference sees pre-mutation data. This is correct Zustand behavior, not a bug, but easy to miss because the local variable name suggests it's the live store. Sister entry: H10 (same mechanism in test code via `dag = w.__basher_dag.getState()` cached across dispatches).
+
+### H20: Rotation units mismatch — DAG stores raw numbers, THREE Euler reads as radians
+
+**Symptom:** Agent (or human) types "rotate 45 degrees on X". `dag.inspect`
+shows `rotation: [90, 0, 0]` after three increments. Visually the cube
+sits at ~116° (past 90°, top-edge tilting toward camera). User says "the
+visual doesn't match the data."
+
+**Trap:** Suspect the LLM's math — did it accidentally add wrong? Check
+the increments: 45 + 20 + 25 = 90. The data is correct. Suspect
+floating-point drift in setParam? No — 90 stored exactly. Suspect a
+THREE quirk? Tinker with euler order, gizmo mode, axis basis. None of
+that fires. The bug isn't in the math or the gizmo — it's at the units
+boundary nobody declared.
+
+**Root cause:** `params.rotation` is a `vec3` of raw numbers. THREE.js's
+`<mesh rotation={[x,y,z]}>` interprets those numbers as **radians** via
+`THREE.Euler`. The codebase had no conversion step anywhere — `grep -rn
+degToRad` returned zero hits. The gizmo round-tripped in radians (so
+gizmo-only edits worked), but the agent and the human both think in
+degrees ("rotate 45 deg"), so any value entered as degrees gets
+rendered as that-many-radians: 90 stored = 90 rad ≈ 5157° ≈ 116.6°
+visual (mod 360).
+
+**Real fix:** adopt the universal DCC/game-engine convention — degrees
+in DAG params, radians at the THREE seam. Single helper module
+`src/viewport/rotation.ts` exporting `degVec3ToRad` / `radVec3ToDeg`.
+Convert at five sites:
+1. `SceneFromDAG.tsx` — every `<mesh|group rotation={...}>` for BoxMesh,
+   SphereMesh, Transform.
+2. `SceneFromDAG.tsx` — directional light Euler for direction
+   computation.
+3. `LightHelpers.tsx` — directional light helper Euler + light-gizmo
+   quaternion construction.
+4. `DiffOverlay.tsx` — ghost rendering mirrors SceneFromDAG.
+5. `Gizmo.tsx` — when reading stored params into the proxy
+   group (deg → rad), and when writing the proxy back into params
+   (rad → deg). Round-trip is exact (`radToDeg(degToRad(x)) ≈ x` to
+   float precision).
+
+Scatter `inst.rotation` is procedurally generated in radians by
+`ScatterNode` (yaw uniform in [0, 2π)) — leave as radians. Bone rotation
+in skeletal pose is also internal radians from animation clips —
+leave. Character `heading` is computed via `atan2` in `walkTo` —
+radians, leave.
+
+Update agent system prompt to declare the convention explicitly:
+"Rotations are in DEGREES (X, Y, Z Euler in degrees, like Blender /
+Unity / Unreal). 90 means a quarter-turn."
+
+**Detection signal:** stored rotation `[X, 0, 0]` produces a visual
+roughly at `X * 180/π mod 360` instead of `X mod 360`. The off-by-
+57.3× ratio is the radian-vs-degree fingerprint. For small values the
+mismatch is invisible (0.1 rad = 5.7°, both look like ~zero rotation),
+which is why the bug stayed hidden through P0-P2.6 — gizmo edits land
+small radian values that look fine.
+
+**Why nobody caught it earlier:** the gizmo round-trips in radians
+internally. Inspector displays raw numbers (no unit label). The seed
+scene uses `[0,0,0]` (unit-invariant). Acceptance pixel-diff tests use
+`[0,0,0]`. The bug only appeared the moment a non-zero rotation was
+entered as a degree value — which happened the first time the agent
+was asked "rotate 45 degrees."
+
+**REF:** P2.5 + agent integration (2026-05-07);
+`src/viewport/rotation.ts` (helpers); `src/viewport/SceneFromDAG.tsx`
+(BoxMesh/SphereMesh/Transform/DirLight conversion sites);
+`src/viewport/LightHelpers.tsx` (helper Euler);
+`src/viewport/DiffOverlay.tsx` (ghost render); `src/app/Gizmo.tsx:129,174`
+(read/write conversion); `src/agent/orchestrator.ts` (system prompt
+declares units convention).
+
+**Sister patterns:** any other field where a raw number's interpretation
+depends on the consumer's convention. Watch for: angles in animation
+clips, FOV in cameras (THREE PerspectiveCamera takes degrees on the
+constructor but the `.fov` property is also degrees — fine, consistent),
+HSL color values, units of light intensity (lumens vs unitless). The
+class is **silent unit boundary**: the value is correct in some unit,
+just not the unit the consumer expected.
+
+**Cross-refs:** `.anvi/dcc-reference.md` §1 (rotation units) and §2 (position
+units) for the canonical industry-standard table. Future
+units/convention bugs should consult that doc BEFORE picking a side
+— it covers Blender / Houdini / Cinema 4D / 3ds Max / Maya / Unity /
+Unreal / Godot / glTF for every decision Basher faces.
+
+### H21: Agent invents node IDs from system-prompt placeholders
+
+**Symptom:** Agent calls `dag.exec` with ops referencing `node: "scene"`.
+DiffBar shows "Diff proposal failed: Node not found: scene". The DAG's
+actual scene aggregator is `n_scene` (or whatever id the seed / user's
+project picked). The agent never called `dag.inspect`, so it had no way
+to know.
+
+**Trap:** Suspect the LLM is hallucinating, suspect zod validation, suspect
+a missing tool call. None of those — the model did exactly what the
+system prompt taught it: copied the example verbatim. The model is
+disciplined; the *prompt* is wrong.
+
+**Root cause:** The agent system prompt's op-shape examples used
+`"scene"` as a literal placeholder for the scene aggregator's node id:
+
+```
+{"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"scene","socket":"children"}}
+```
+
+A model with no other signal will copy that string verbatim. The
+*Selection* block in the per-turn context gave the model selected node
+ids, but the scene-root anchor isn't selected — it's reachable only
+via `outputs.scene.node`, which the prompt never surfaced.
+
+This is a class bug, not a one-off — every project-level named output
+(scene, render, future ground/postFx pseudo-anchors) has the same gap.
+
+**Real fix:** two layers, one cause.
+
+1. **Make the placeholder syntactically distinct.** Replace literal
+   `"scene"` in op examples with `<sceneId>` and add an explicit rule:
+   "tokens like `<sceneId>` are PLACEHOLDERS; read the actual id from
+   the Context block's Anchors section."
+2. **Inject an Anchors block into the per-turn context** that resolves
+   each named output to its concrete `(nodeId, type, socket)` triple.
+   The model now sees:
+
+   ```
+   Anchors (project named outputs):
+     - scene → n_scene (Scene), socket "out"
+     - render → n_render (RenderOutput), socket "out"
+   ```
+
+   Combined, the model has both the hint (placeholder syntax) and the
+   answer (resolved id) up front. No `dag.inspect` round-trip needed
+   for the common case.
+
+**Detection signal:** any "Node not found: <name>" error where `<name>`
+matches a project-output key (`outputs[name]` exists in the DAG). The
+mismatch is **placeholder-as-id** — the model used the output key as
+the node id directly.
+
+**Why nobody caught it earlier:** the original P2.5 macro tools
+(`mesh.add`, `library.import`, `camera.snapshot`, `character.walkTo`)
+all read `outputs.scene` server-side and constructed the connect op
+with the resolved node id — the macros hid the gap. The new universal
+`dag.exec` tool (P2.5 v2) lets the agent author connections directly,
+exposing the prompt's literal `"scene"` to be copied. The bug appeared
+on the first dag.exec that needed to wire a child to the scene.
+
+**REF:** P2.5 v2 + agent integration (2026-05-08);
+`src/agent/orchestrator.ts` (`buildContextBlock` Anchors block,
+`buildStaticSystemPrompt` placeholder syntax + rule);
+`src/core/project/default.ts:36` (seed Scene node id is `n_scene`);
+`src/core/dag/ops.ts` (applyOp throws "Node not found: <id>"). Sister
+class to **anchor / placeholder confusion** more generally — every
+DAG that exposes named outputs has the same trap if the prompt
+collapses placeholder names with real ids.
+
+**Cross-refs:** `.anvi/dcc-reference.md` doesn't apply here (this isn't
+a units/format convention, it's a name-resolution boundary). Future
+related entries should track: (1) other named outputs added (P4
+render/passes), (2) any case where a tool surface conflates a "concept
+name" with a concrete id.
+
 ### H8: Playwright pixel-diff snapshots are platform-suffixed by default
 
 **Symptom:** Local CI run on macOS green; GitHub Actions Ubuntu runner fails test #7 with `A snapshot doesn't exist at .../postfx-beauty-chromium-linux.png, writing actual.`
@@ -205,3 +382,125 @@ await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
 **Real fix:** commit a Linux baseline alongside the macOS one. Generate it by (a) running Playwright in the official Docker image locally, OR (b) downloading the failed CI run's artifact (Playwright attaches the actual rendered PNG) and committing that as the baseline. Both baselines live in `tests/e2e/acceptance.spec.ts-snapshots/`.
 **Detection signal:** "snapshot doesn't exist" error naming a path with a different platform suffix than what's committed.
 **REF:** P0 CI fix (2026-05-05); `tests/e2e/acceptance.spec.ts-snapshots/postfx-beauty-chromium-{darwin,linux}.png`.
+
+### H22: BFS over multi-direction edge kinds free-mixes traversals, leaks siblings
+
+**Symptom:** Closure preservation gate accepts ops that target siblings
+of the selected node, defeating PLAN §0 acceptance #2 ("rotate selected
+can NEVER produce ops that mutate any other node"). Manifests as the
+diff-store integration test "closure spec rejects ops outside the
+closure" failing — the propose call doesn't throw despite the op
+targeting an out-of-scope node.
+
+**Trap:** Suspect the gate logic in `propose`. Tinker with the
+introducedIds tracker. Suspect the check order. None of these are the
+problem — the gate is fine; the input ClosureSet was wrong because
+the BFS over-expanded.
+
+**Root cause:** A naive BFS that processes the frontier in arrival
+order and visits ALL declared edge kinds at each node free-mixes
+direction semantics. For root `box` with edges `['parent', 'children']`,
+the walk goes box → parent → scene (✓) and then from scene → children
+→ sibling (✗). The intent is "ancestors of root + descendants of
+root", a UNION of two per-direction subgraphs. Combining mid-walk
+turns it into "everything reachable by any path under any kind",
+which leaks every sibling under a shared parent.
+
+**Real fix:** run one BFS per declared edge kind, each rooted only at
+`spec.rootSelectors`. Within a per-kind BFS, traversal continues only
+along that kind. Share a `visited` set across BFSes for membership
+(so the closure is a union), but use per-kind `seenInKind` sets to
+prevent within-kind loops. Mixing directions requires explicit
+declaration in the spec — never an emergent property of the walker.
+
+**Detection signal:** any closure containing a node that's a sibling
+of root (under a shared parent) when the spec only declares
+`['parent', 'children']`. Quick test: build a scene with two children
+under one Scene, root a closure at child A with edges `['parent',
+'children']`, assert child B is NOT in `closure.nodes`.
+
+**REF:** P2.5.2 Wave A (2026-05-08); `src/agent/closure/expand.ts`
+(`expandClosure`, `walkKind` — the per-kind BFS isolation is the
+fix); `src/agent/closure/expand.test.ts` ("['parent','children'] from
+a leaf does NOT reach a sibling" — the regression).
+
+**Why it stayed hidden until tests:** for the seed scene + an
+empty-closure test the over-expansion didn't matter (no out-of-scope
+ops were emitted to challenge it). The bug only fired when a sibling
+sat under the same parent AND the test asserted rejection. This is
+why the diff-store integration tests were essential — closure
+expansion correctness is observable only at the gate, not at the
+walker output in isolation.
+
+**Sister patterns:** any future per-direction graph operation that
+declares multiple edge kinds. Specifically watch for: P3 animation
+edges (`'animation'`), P4 render-pass edges (`'pass-input'`). When
+those land, every walker that consumes them must run per-kind BFSes
+unless the spec semantics are explicitly "free-mix any reachable
+path".
+
+**Cross-refs:** vyapti V13 (closure preservation — V13's enforcement
+hinges on H22's avoidance); dharana B7 (Agent identifier ↔ DAG
+node-set — closure roots come from this seam). PLAN §5 Wave A.
+
+### H23: Tool surface advertises information the receiver doesn't expose
+
+**Detection signal:** A tool's parameter description points the LLM at
+another tool's output for shape/format/example info, but the named
+output drops or never carried that info. Live-smoke symptom: gate-2
+(param_schema) rejection on the FIRST call to the dependent tool, with
+the LLM emitting plausible-but-wrong field names.
+
+**REF:** `src/agent/mutators/tool.ts:57` (proposePlan's spec
+description "see agent.listMutators for shapes"); `src/agent/mutators/catalog.ts:30-45`
+(listMutatorMetadata pre-fix dropped the spec shape despite the
+doc-comment claim).
+
+**Source:** P2.5.2 Wave C live smoke (2026-05-08). User prompt: "take
+the pink sphere and move it away from the cube." The LLM resolved
+both anchors via agent.identify (B7 worked), called agent.listMutators
+(it received only name + description + contract), then called
+agent.proposePlan with `mutator.translate` and a malformed spec
+missing `targetSelectors`. Gate 2 caught it cleanly — but the rejection
+was the FIRST signal the LLM had that the spec shape was undefined.
+
+**Five-limbed argument:**
+1. **Claim:** When tool A's parameter description points the LLM at tool
+   B's output for X, tool B must actually return X. Otherwise the
+   advertised contract is a fiction the gate has to enforce after the
+   fact.
+2. **Reason:** LLMs treat tool descriptions as authoritative. They don't
+   probe to verify the claim — they construct calls assuming the docs
+   are accurate. A missing field in the receiver shows up as guessing.
+3. **Universal principle:** Same family as H21 (agent invents node IDs
+   from system-prompt placeholders). Both are surface-receiver
+   mismatches: the surface promises something, the receiver doesn't
+   carry it. H21 was at the prompt-context boundary; H23 is at the
+   tool-self-description boundary.
+4. **Application:** every tool whose description references another
+   tool's output must be paired with a registration-time test that
+   inspects that other tool's actual return shape and asserts the
+   referenced fields are present.
+5. **Conclusion:** the bug class is mechanically eliminable. Failure to
+   add the test means the next tool added with cross-tool references
+   re-reproduces H23.
+
+**The trap:** filing this as "model didn't read the description carefully
+enough" or "needs prompt engineering." The model reads descriptions as
+expected; the description was wrong. Fixing the model is hopeless;
+fixing the surface is one-line.
+
+**The real fix:** every Mutator now carries a `specExample` field
+(`MutatorDefinition.specExample`); listMutators emits it; a test
+asserts every specExample parses through its own zod schema. The
+proposePlan tool description tells the LLM to copy the matching
+specExample.
+
+**Sister patterns:** any future LLM-facing tool whose description
+points at another tool's output. Inspection tools (dag.inspect),
+catalogue tools (agent.listStrategies), introspection tools — all
+candidates if their consumer-tool description references their fields.
+
+**Cross-refs:** dharana B8 (Mutator catalog ↔ Op constructor — the
+shape-advertising boundary); H21 (sister pattern at the prompt
+boundary). PLAN §5 Wave C.
