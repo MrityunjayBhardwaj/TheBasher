@@ -32,14 +32,26 @@ import type { ImageValue, PromptValue } from '../nodes/types';
  * implementation from src/agent/strategy/presets/<id>; Wave A's tests
  * inject a stub. Async to leave room for storage reads (loading raw
  * pass bytes from disk before submission).
+ *
+ * `prevFrameStylizedPath` is the OPFS path of the previous frame's
+ * stylized output for temporal coherence (ControlNet img2img on N-1).
+ * `null` means there is no previous frame in this run — the compiler
+ * substitutes a zero/black image. dryRun always passes null
+ * (frameStart probe has no antecedent).
  */
+export interface CompileWorkflowArgs {
+  readonly presetId: string;
+  readonly prompt: PromptValue;
+  readonly passes: readonly ImageValue[];
+  readonly frame: number;
+  readonly prevFrameStylizedPath?: string | null;
+}
+
 export interface CompileWorkflowFn {
-  (args: {
-    presetId: string;
-    prompt: PromptValue;
-    passes: readonly ImageValue[];
-    frame: number;
-  }): Promise<{ workflowJson: ComfyWorkflowJson; inputs: ComfyInputs }>;
+  (args: CompileWorkflowArgs): Promise<{
+    workflowJson: ComfyWorkflowJson;
+    inputs: ComfyInputs;
+  }>;
 }
 
 export interface DryRunDeps {
@@ -131,6 +143,9 @@ export async function dryRun(
     prompt,
     passes,
     frame: probeFrame,
+    // dryRun is always frame 0 of a new run — no antecedent stylized
+    // output to feed ControlNet. Compiler substitutes a zero image.
+    prevFrameStylizedPath: null,
   });
 
   const now = deps.now ?? (() => Date.now());
