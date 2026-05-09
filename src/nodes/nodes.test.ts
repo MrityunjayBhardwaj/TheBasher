@@ -18,6 +18,7 @@ import type {
   CutValue,
   GroupValue,
   ImageValue,
+  PromptValue,
   KeyframeChannelColorValue,
   KeyframeChannelNumberValue,
   KeyframeChannelQuatValue,
@@ -59,6 +60,7 @@ const ALL_TYPES = [
   'PerspectiveCamera',
   'PointLight',
   'PosedSkeleton',
+  'Prompt',
   'RenderJob',
   'RenderOutput',
   'Scatter',
@@ -1524,5 +1526,77 @@ describe('P4 — IDPass (pure metadata)', () => {
     const beauty = evalAt<ImageValue>(beautyState, 'pass', 0);
     const id = evalAt<ImageValue>(idState, 'pass', 0);
     expect(beauty.sourceHash).not.toBe(id.sourceHash);
+  });
+});
+
+describe('P5 — Prompt (pure data node)', () => {
+  function buildPromptState(params: Partial<PromptValue> = {}) {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: {
+        text: params.text ?? 'a stylized cube',
+        negative: params.negative ?? '',
+        tags: params.tags ?? [],
+      },
+    }).next;
+    return s;
+  }
+
+  it('twice-eval bit-exact', () => {
+    const state = buildPromptState({ text: 'test', tags: ['cinematic'] });
+    const a = evaluate(state, 'p').value as PromptValue;
+    const b = evaluate(state, 'p').value as PromptValue;
+    expect(a).toEqual(b);
+    expect(a).toEqual({
+      kind: 'Prompt',
+      text: 'test',
+      negative: '',
+      tags: ['cinematic'],
+    });
+  });
+
+  it('returns params verbatim with defaults applied (V10 — fields absent → empty defaults)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: { text: 'minimal' },
+    }).next;
+    const v = evaluate(s, 'p').value as PromptValue;
+    expect(v).toEqual({
+      kind: 'Prompt',
+      text: 'minimal',
+      negative: '',
+      tags: [],
+    });
+  });
+
+  it('hydrate-seam load with missing schema fields produces defaults (H14 mitigation)', () => {
+    // Mimic a project saved before `negative` and `tags` existed: only
+    // `text` is present in params. The evaluator's `?? default` keeps
+    // the value shape stable for downstream consumers.
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: { text: 'legacy' },
+    }).next;
+    // Force-mutate the stored params to simulate a hydrate that bypassed
+    // zod's .default() (the H14 trap shape).
+    const next = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        p: { ...s.nodes.p, params: { text: 'legacy' } as Record<string, unknown> },
+      },
+    };
+    const v = evaluate(next, 'p').value as PromptValue;
+    expect(v.negative).toBe('');
+    expect(v.tags).toEqual([]);
   });
 });

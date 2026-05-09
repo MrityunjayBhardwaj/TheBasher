@@ -27,6 +27,7 @@ import { OrthographicCameraNode } from './OrthographicCamera';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PointLightNode } from './PointLight';
 import { PosedSkeletonNode } from './PosedSkeleton';
+import { PromptNode } from './Prompt';
 import { RenderJobNode } from './RenderJob';
 import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
@@ -80,6 +81,8 @@ const ALL: NodeDefinition[] = [
   BeautyPassNode as unknown as NodeDefinition,
   IDPassNode as unknown as NodeDefinition,
   RenderJobNode as unknown as NodeDefinition,
+  // P5 — AI Render Bridge (THESIS §28, §44)
+  PromptNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

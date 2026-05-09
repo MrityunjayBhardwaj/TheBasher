@@ -468,6 +468,23 @@ export const DEFAULT_IMAGE_DESCRIPTOR: ImageDescriptor = {
 };
 
 // ---------------------------------------------------------------------------
+// P5 — AI Render Bridge (THESIS §28, §44)
+//
+// `Prompt` is a pure data node — same shape as BoneNameMap (no inputs,
+// params verbatim out). Carries the user's stylization intent for the
+// ComfyUIWorkflow node to consume. `negative` and `tags` ship now to keep
+// the schema additions ahead of the H14 trap (every later schema add is a
+// load-time crash candidate without `?? default` consumers).
+// ---------------------------------------------------------------------------
+
+export interface PromptValue {
+  readonly kind: 'Prompt';
+  readonly text: string;
+  readonly negative: string;
+  readonly tags: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
 // JobResult — RenderJob's output (a metadata record describing the dispatch)
 //
 // JobResult is what the RenderJob evaluator returns. It does NOT contain the

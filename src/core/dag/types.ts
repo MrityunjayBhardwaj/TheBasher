@@ -76,7 +76,9 @@ export type SocketTypeName =
   // P3.1 — Animation import + retargeting (THESIS §42.1)
   | 'BoneNameMap'
   // P4 — Render graph = render nodes (THESIS §43)
-  | 'JobResult';
+  | 'JobResult'
+  // P5 — AI Render Bridge (THESIS §28, §44)
+  | 'Prompt';
 
 export type Cardinality = 'single' | 'list';
 
