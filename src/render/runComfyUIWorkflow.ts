@@ -148,6 +148,7 @@ export async function runComfyUIWorkflow(
       passes,
       frame,
       prevFrameStylizedPath,
+      workflowOutputPath: outputPath,
     });
 
     let result;

@@ -45,6 +45,14 @@ export interface CompileWorkflowArgs {
   readonly passes: readonly ImageValue[];
   readonly frame: number;
   readonly prevFrameStylizedPath?: string | null;
+  /**
+   * The workflow node's `outputPath` param value (e.g.
+   * `'renders/job1/stylized_stylizedRealism'`). Presets use this to
+   * derive the sibling raw-pass directory — raw passes from the same
+   * job live at `${parentDir}/${passKind}_${pad4(frame)}.png`. The
+   * Mutator authors both paths so they share the `${jobId}` prefix.
+   */
+  readonly workflowOutputPath: string;
 }
 
 export interface CompileWorkflowFn {
@@ -146,6 +154,7 @@ export async function dryRun(
     // dryRun is always frame 0 of a new run — no antecedent stylized
     // output to feed ControlNet. Compiler substitutes a zero image.
     prevFrameStylizedPath: null,
+    workflowOutputPath: outputPath,
   });
 
   const now = deps.now ?? (() => Date.now());
