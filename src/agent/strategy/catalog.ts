@@ -404,6 +404,116 @@ this".
   ("renders/job") collides if the project ever grows a second job.`,
 };
 
+// ---------------------------------------------------------------------------
+// P5 Wave C — aiRender strategy resource (THESIS §28, §44).
+// ---------------------------------------------------------------------------
+
+const AI_RENDER: StrategyResource = {
+  topic: 'aiRender',
+  description:
+    'AI render bridge — ComfyUI-mediated stylization presets, temporal coherence, cost preview, resume-on-failure.',
+  body: `# aiRender — AI render bridge (P5)
+
+The AI render bridge composes a stylization step on top of a RenderJob's
+raw passes. ComfyUI runs locally; Basher feeds it raw frames + a prompt,
+and reads stylized frames back. Temporal coherence is preserved by
+conditioning each frame on the previous frame's stylized output.
+
+## When to suggest the AI render bridge
+
+- User says "stylize", "make it look like \${style}", "AI render", "anime",
+  "concept art", "cinematic look".
+- User has an existing RenderJob and wants the output stylized.
+- User has a Beauty render and wants to know "what would this look like
+  with stylized realism / anime / concept paint" — the dryRun probe is
+  cheap; offer it.
+
+Skip the AI bridge when:
+- The user just wants raw renders (Beauty pass alone). RenderJob is enough.
+- The user mentions specific shaders / materials / lighting tweaks —
+  that's the rendering strategy resource, not aiRender.
+- The user wants something the registered presets don't cover (e.g.
+  3D-mesh-to-2D-line-art-only). Surface the gap; v0.6 adds meta-prompt
+  preset authoring.
+
+## Available presets (v0.5)
+
+| presetId           | Required passes                | Demo case                             |
+| ------------------ | ------------------------------ | ------------------------------------- |
+| \`stylizedRealism\`  | Beauty + Depth + Normal        | Photoreal cube, golden hour           |
+
+v0.6 adds anime + conceptPaint via meta-prompt authoring (THESIS §28).
+Don't promise them in v0.5.
+
+## How to wire an AI render pass
+
+The agent's job is to compose three steps in order:
+
+1. **Ensure the upstream RenderJob has the preset's required passes
+   wired.** For \`stylizedRealism\`: Beauty + Depth + Normal must each
+   land on the job's pass-input list. Use \`mutator.render.addPass\` for
+   each missing pass kind.
+2. **Add the AI pass.** \`mutator.render.addAIPass({ jobId, presetId,
+   promptText, promptNegative? })\` adds a Prompt + ComfyUIWorkflow chain
+   onto the job. The Mutator's preconditions reject if a required pass
+   isn't already wired (the rejection diagnostic names the missing
+   passes — call addPass for each, then retry).
+3. **Optional: cost preview.** Call \`agent.render.dryRunWorkflow({
+   workflowNodeId })\` to probe one frame and extrapolate. Useful for
+   long renders. The probe writes the result to the canonical D-04
+   path so the eventual full run cache-hits frame 0.
+
+## Temporal coherence
+
+Each frame N>0 is conditioned on frame N-1's stylized output via
+ControlNet img2img on the prev-frame image. First frame uses a 1×1 black
+zero-image. The execute layer (\`runComfyUIWorkflow\`) walks frames in
+order — re-running with \`lastGoodFrame\` populated continues from the
+next frame. Resume is automatic; the agent doesn't need to specify it.
+
+## Cost preview
+
+\`agent.render.dryRunWorkflow\` submits frame \`frameStart\` through
+the configured ComfyUI capability, times it, and extrapolates. Returns
+\`{ frames, estimatedSeconds, samplePath }\`. Surface the estimate AND
+the sample path to the user — the sample frame is a real ComfyUI
+output, not a mock.
+
+## Failure modes
+
+- **ComfyUI not running:** capability rejects; the agent should surface
+  a clear error pointing at the ComfyUI server URL (default
+  \`http://127.0.0.1:8188\`; settings override at \`comfyui.serverUrl\`).
+- **Mid-frame failure:** \`runComfyUIWorkflow\` writes \`lastGoodFrame\`
+  via the caller's setParam dispatch, then surfaces the error. User
+  re-clicks "Render"; the function resumes from \`lastGoodFrame + 1\`.
+- **Required pass not wired:** \`addAIPass\` precondition rejects with
+  the missing-passes list in the diagnostic. Call \`addPass\` for each,
+  retry.
+- **Unknown preset:** schema enum rejects. v0.5 only registers
+  \`stylizedRealism\`.
+
+## Conventions
+
+See \`.anvi/dcc-reference.md\` §21 (stylized render conventions) for the
+authoritative answers on color space (sRGB PNG), frame numbering
+(4-digit zero-pad), codec id (h264 / avc1.42E01F at the seam), prev-
+frame placeholder name (\`prev_frame_image\`).
+
+## Don't
+
+- Don't author a new ComfyUI workflow JSON inline — register it as a
+  preset in \`src/agent/strategy/presets/\`.
+- Don't ship the prompt text as part of the workflow JSON — it's a
+  Prompt node, the user can edit it without re-registering the preset.
+- Don't request the AI render before the raw passes exist on disk — the
+  preset's compile() reads pass bytes from the job's outputPath. Run
+  \`runRenderJob\` first OR explain to the user that the order is "raw
+  render first, then AI stylize."
+- Don't expose the ComfyUI URL in chat unless the user asks. The
+  default works for the standard local install.`,
+};
+
 export function registerAllStrategies(): void {
   registerStrategy(UNITS);
   registerStrategy(MATERIALS);
@@ -413,4 +523,5 @@ export function registerAllStrategies(): void {
   registerStrategy(SPAWN_WITH_PROPERTIES);
   registerStrategy(ANIMATION);
   registerStrategy(RENDERING);
+  registerStrategy(AI_RENDER);
 }

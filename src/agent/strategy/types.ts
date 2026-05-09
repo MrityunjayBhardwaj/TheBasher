@@ -18,7 +18,9 @@ export type StrategyTopic =
   // P3 Wave D — timeline + animation conventions.
   | 'animation'
   // P4 Wave C — render graph + pass dispatch.
-  | 'rendering';
+  | 'rendering'
+  // P5 Wave C — AI render bridge (ComfyUI presets + temporal coherence).
+  | 'aiRender';
 
 export interface StrategyResource {
   topic: StrategyTopic;
