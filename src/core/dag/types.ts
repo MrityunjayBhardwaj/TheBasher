@@ -74,7 +74,9 @@ export type SocketTypeName =
   | 'Shot'
   | 'Cut'
   // P3.1 — Animation import + retargeting (THESIS §42.1)
-  | 'BoneNameMap';
+  | 'BoneNameMap'
+  // P4 — Render graph = render nodes (THESIS §43)
+  | 'JobResult';
 
 export type Cardinality = 'single' | 'list';
 

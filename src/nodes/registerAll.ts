@@ -27,6 +27,7 @@ import { OrthographicCameraNode } from './OrthographicCamera';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PointLightNode } from './PointLight';
 import { PosedSkeletonNode } from './PosedSkeleton';
+import { RenderJobNode } from './RenderJob';
 import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
 import { SceneNode } from './Scene';
@@ -78,6 +79,7 @@ const ALL: NodeDefinition[] = [
   // P4 — Render graph (THESIS §43)
   BeautyPassNode as unknown as NodeDefinition,
   IDPassNode as unknown as NodeDefinition,
+  RenderJobNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

@@ -543,3 +543,126 @@ describe("P4 — 'pass-input' edge kind (Wave A — forward-declared, no live so
     expect(closure.nodes.has('idp')).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// P4 — 'pass-input' edge kind (Wave B — live socket via RenderJob)
+//
+// RenderJob is the first node carrying a 'pass-input' input socket. With
+// two jobs each owning its own pass, a closure rooted at jobA via
+// 'pass-input' must reach passA only — passB is a sibling under no shared
+// parent, but would leak if the per-kind BFS isolation rule (H22) were
+// violated. Sister test to the 'animation' isolation tests above.
+// ---------------------------------------------------------------------------
+
+function buildTwoJobsState(): DagState {
+  let s = emptyDagState();
+  s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'cam',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, position: [0, 0, 5] },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'box',
+    nodeType: 'BoxMesh',
+    params: { size: [1, 1, 1] },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'cam', socket: 'out' },
+    to: { node: 'scene', socket: 'camera' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'box', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  for (const passId of ['passA', 'passB']) {
+    s = applyOp(s, { type: 'addNode', nodeId: passId, nodeType: 'BeautyPass', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: passId, socket: 'scene' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: passId, socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: passId, socket: 'time' },
+    }).next;
+  }
+  for (const jobId of ['jobA', 'jobB']) {
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: jobId,
+      nodeType: 'RenderJob',
+      params: { jobId },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: jobId, socket: 'time' },
+    }).next;
+  }
+  // jobA owns passA; jobB owns passB.
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'passA', socket: 'out' },
+    to: { node: 'jobA', socket: 'pass-input' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'passB', socket: 'out' },
+    to: { node: 'jobB', socket: 'pass-input' },
+  }).next;
+  return s;
+}
+
+describe("P4 — 'pass-input' edge kind (Wave B — H22 live-socket isolation)", () => {
+  it("'pass-input' from jobA reaches passA, NOT the sibling job's pass", () => {
+    const state = buildTwoJobsState();
+    const closure = expandClosure(
+      { rootSelectors: ['jobA'], followedEdges: ['pass-input'] },
+      state,
+    );
+    expect(closure.nodes.has('jobA')).toBe(true);
+    expect(closure.nodes.has('passA')).toBe(true);
+    // The sibling job's pass MUST NOT leak — H22.
+    expect(closure.nodes.has('passB')).toBe(false);
+    expect(closure.nodes.has('jobB')).toBe(false);
+  });
+
+  it("['parent','pass-input'] from passA reaches jobA but does NOT free-mix", () => {
+    const state = buildTwoJobsState();
+    const closure = expandClosure(
+      { rootSelectors: ['passA'], followedEdges: ['parent', 'pass-input'] },
+      state,
+    );
+    expect(closure.nodes.has('passA')).toBe(true);
+    expect(closure.nodes.has('jobA')).toBe(true);
+    // sibling pass + sibling job MUST NOT leak.
+    expect(closure.nodes.has('passB')).toBe(false);
+    expect(closure.nodes.has('jobB')).toBe(false);
+  });
+
+  it("'pass-input' BFS at jobA does not carry over to other input-socket walks", () => {
+    const state = buildTwoJobsState();
+    const closure = expandClosure(
+      { rootSelectors: ['jobA'], followedEdges: ['pass-input'] },
+      state,
+    );
+    // jobA also has a 'time' input. With only 'pass-input' declared, the
+    // time producer must NOT be reached — kinds are independent.
+    expect(closure.nodes.has('time')).toBe(false);
+    // And of course neither sibling's pass nor scene/camera through some
+    // other path.
+    expect(closure.nodes.has('scene')).toBe(false);
+  });
+});

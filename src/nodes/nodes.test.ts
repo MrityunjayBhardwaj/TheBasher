@@ -59,6 +59,7 @@ const ALL_TYPES = [
   'PerspectiveCamera',
   'PointLight',
   'PosedSkeleton',
+  'RenderJob',
   'RenderOutput',
   'Scatter',
   'Scene',

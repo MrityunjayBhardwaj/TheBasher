@@ -468,6 +468,35 @@ export const DEFAULT_IMAGE_DESCRIPTOR: ImageDescriptor = {
 };
 
 // ---------------------------------------------------------------------------
+// JobResult — RenderJob's output (a metadata record describing the dispatch)
+//
+// JobResult is what the RenderJob evaluator returns. It does NOT contain the
+// pixel data — pixels go to disk via StorageCapability at execution time
+// (runRenderJob, src/render/). The value is a deductive contract: which
+// frames will be (or were) rendered, which passes were dispatched, where
+// the bytes land. The agent can describe a render plan from this alone
+// without needing to actually run it.
+// ---------------------------------------------------------------------------
+
+export interface FrameRange {
+  readonly start: number;
+  readonly end: number;
+  readonly fps: number;
+}
+
+export interface JobResultValue {
+  readonly kind: 'JobResult';
+  readonly jobId: string;
+  readonly frames: FrameRange;
+  readonly passKinds: readonly ImagePassKind[];
+  /**
+   * Output path prefix in StorageCapability — frames write to
+   * `${outputPath}/${passKind}_${frame.toString().padStart(4,'0')}.png`.
+   */
+  readonly outputPath: string;
+}
+
+// ---------------------------------------------------------------------------
 // Scene (socket type: 'Scene')
 // ---------------------------------------------------------------------------
 
