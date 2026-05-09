@@ -47,7 +47,7 @@ import type { Op, NodeId } from '../core/dag/types';
 // 8 covers the realistic compose patterns; bound stays so a confused
 // model can't loop forever.
 const MAX_ROUNDS = 8;
-const DEFAULT_TURN_TOKEN_BUDGET = 30_000;
+const DEFAULT_TURN_TOKEN_BUDGET = 150_000;
 const PARAMS_PREVIEW_LIMIT = 240;
 /** Cap on prior session messages threaded into the LLM context. Anchored:
  * always keep the first user message + the most-recent ones up to this cap. */
