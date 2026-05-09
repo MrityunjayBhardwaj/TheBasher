@@ -17,6 +17,7 @@ import type {
   CharacterValue,
   CutValue,
   GroupValue,
+  ImageValue,
   KeyframeChannelColorValue,
   KeyframeChannelNumberValue,
   KeyframeChannelQuatValue,
@@ -38,6 +39,7 @@ const ALL_TYPES = [
   'AnimationClip',
   'AnimationLayer',
   'AreaLight',
+  'BeautyPass',
   'BoneNameMap',
   'BoxMesh',
   'Character',
@@ -45,6 +47,7 @@ const ALL_TYPES = [
   'DirectionalLight',
   'GltfAsset',
   'Group',
+  'IDPass',
   'KeyframeChannelColor',
   'KeyframeChannelNumber',
   'KeyframeChannelQuat',
@@ -1040,9 +1043,7 @@ describe('P3 — KeyframeChannelQuat (pure, time-aware)', () => {
     const state = buildChannelState('KeyframeChannelQuat', params);
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
       const v = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
-      const len = Math.sqrt(
-        v.value[0] ** 2 + v.value[1] ** 2 + v.value[2] ** 2 + v.value[3] ** 2,
-      );
+      const len = Math.sqrt(v.value[0] ** 2 + v.value[1] ** 2 + v.value[2] ** 2 + v.value[3] ** 2);
       expect(len).toBeCloseTo(1, 5);
     }
   });
@@ -1374,5 +1375,153 @@ describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
     if (v.target?.kind === 'BoxMesh') {
       expect(v.target.position).toEqual([0, 0, 0]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P4 — Render graph = render nodes (THESIS §43)
+//
+// BeautyPass + IDPass are pure consumers of (Scene, Camera, Time). The
+// evaluator returns metadata only — descriptor + sourceHash. Same inputs
+// → same hash; different inputs (params, time, scene, camera) → different
+// hash. Wave B's RenderJob uses sourceHash to skip redundant per-frame
+// pixel work.
+// ---------------------------------------------------------------------------
+
+function buildPassState(passType: 'BeautyPass' | 'IDPass') {
+  let state = emptyDagState();
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'time',
+    nodeType: 'TimeSource',
+    params: {},
+  }).next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'cam',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, position: [0, 0, 5] },
+  }).next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'box',
+    nodeType: 'BoxMesh',
+    params: { size: [1, 1, 1] },
+  }).next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'scene',
+    nodeType: 'Scene',
+    params: {},
+  }).next;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: 'cam', socket: 'out' },
+    to: { node: 'scene', socket: 'camera' },
+  }).next;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: 'box', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'pass',
+    nodeType: passType,
+    params: {},
+  }).next;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: 'scene', socket: 'out' },
+    to: { node: 'pass', socket: 'scene' },
+  }).next;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: 'cam', socket: 'out' },
+    to: { node: 'pass', socket: 'camera' },
+  }).next;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: 'time', socket: 'out' },
+    to: { node: 'pass', socket: 'time' },
+  }).next;
+  return state;
+}
+
+describe('P4 — BeautyPass (pure metadata)', () => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPassState('BeautyPass');
+    const a = evalAt<ImageValue>(state, 'pass', t);
+    const b = evalAt<ImageValue>(state, 'pass', t);
+    expect(a).toEqual(b);
+  });
+
+  it('evaluates to an Image with passKind beauty + default 1280x720 rgba8', () => {
+    const state = buildPassState('BeautyPass');
+    const v = evalAt<ImageValue>(state, 'pass', 0);
+    expect(v.kind).toBe('Image');
+    expect(v.passKind).toBe('beauty');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+    expect(v.sourceHash).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('sourceHash flips when time changes', () => {
+    const state = buildPassState('BeautyPass');
+    const a = evalAt<ImageValue>(state, 'pass', 0);
+    const b = evalAt<ImageValue>(state, 'pass', 1);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('sourceHash flips when scene changes (box position mutated)', () => {
+    const state = buildPassState('BeautyPass');
+    const a = evalAt<ImageValue>(state, 'pass', 0);
+    const next = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        box: { ...state.nodes.box, params: { size: [1, 1, 1], position: [5, 0, 0] } },
+      },
+    };
+    const b = evalAt<ImageValue>(next, 'pass', 0);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('sourceHash flips when params (width) change', () => {
+    const stateA = buildPassState('BeautyPass');
+    const stateB = applyOp(stateA, {
+      type: 'setParam',
+      nodeId: 'pass',
+      paramPath: 'width',
+      value: 640,
+    }).next;
+    const a = evalAt<ImageValue>(stateA, 'pass', 0);
+    const b = evalAt<ImageValue>(stateB, 'pass', 0);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+    expect(b.descriptor.width).toBe(640);
+  });
+});
+
+describe('P4 — IDPass (pure metadata)', () => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPassState('IDPass');
+    const a = evalAt<ImageValue>(state, 'pass', t);
+    const b = evalAt<ImageValue>(state, 'pass', t);
+    expect(a).toEqual(b);
+  });
+
+  it('evaluates to an Image with passKind id + default 1280x720 rgba16f', () => {
+    const state = buildPassState('IDPass');
+    const v = evalAt<ImageValue>(state, 'pass', 0);
+    expect(v.kind).toBe('Image');
+    expect(v.passKind).toBe('id');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba16f' });
+  });
+
+  it('sourceHash differs from BeautyPass with same inputs (passKind discriminates)', () => {
+    const beautyState = buildPassState('BeautyPass');
+    const idState = buildPassState('IDPass');
+    const beauty = evalAt<ImageValue>(beautyState, 'pass', 0);
+    const id = evalAt<ImageValue>(idState, 'pass', 0);
+    expect(beauty.sourceHash).not.toBe(id.sourceHash);
   });
 });

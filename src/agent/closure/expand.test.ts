@@ -69,10 +69,7 @@ describe('expandClosure', () => {
 
   it("'parent' edge walks consumer side (box → scene → render)", () => {
     const state = buildBaseline();
-    const closure = expandClosure(
-      { rootSelectors: ['box'], followedEdges: ['parent'] },
-      state,
-    );
+    const closure = expandClosure({ rootSelectors: ['box'], followedEdges: ['parent'] }, state);
     expect(closure.nodes.has('box')).toBe(true);
     expect(closure.nodes.has('scene')).toBe(true);
     expect(closure.nodes.has('render')).toBe(true);
@@ -82,10 +79,7 @@ describe('expandClosure', () => {
 
   it("'children' edge walks producer side (scene → box, sphere)", () => {
     const state = buildBaseline();
-    const closure = expandClosure(
-      { rootSelectors: ['scene'], followedEdges: ['children'] },
-      state,
-    );
+    const closure = expandClosure({ rootSelectors: ['scene'], followedEdges: ['children'] }, state);
     expect(closure.nodes.has('scene')).toBe(true);
     expect(closure.nodes.has('box')).toBe(true);
     expect(closure.nodes.has('sphere')).toBe(true);
@@ -157,9 +151,27 @@ describe('expandClosure', () => {
     const chain: DagState = {
       nodes: {
         a: { id: 'a', type: 'T', version: 1, params: {}, inputs: {} },
-        b: { id: 'b', type: 'T', version: 1, params: {}, inputs: { in: { node: 'a', socket: 'o' } } },
-        c: { id: 'c', type: 'T', version: 1, params: {}, inputs: { in: { node: 'b', socket: 'o' } } },
-        d: { id: 'd', type: 'T', version: 1, params: {}, inputs: { in: { node: 'c', socket: 'o' } } },
+        b: {
+          id: 'b',
+          type: 'T',
+          version: 1,
+          params: {},
+          inputs: { in: { node: 'a', socket: 'o' } },
+        },
+        c: {
+          id: 'c',
+          type: 'T',
+          version: 1,
+          params: {},
+          inputs: { in: { node: 'b', socket: 'o' } },
+        },
+        d: {
+          id: 'd',
+          type: 'T',
+          version: 1,
+          params: {},
+          inputs: { in: { node: 'c', socket: 'o' } },
+        },
       },
       outputs: {},
     };
@@ -190,17 +202,11 @@ describe('expandClosure', () => {
   it('socket-named edge kind walks only matching sockets', () => {
     const state = buildBaseline();
     // 'children' as a socket name (Scene.inputs.children = [box, sphere])
-    const closure = expandClosure(
-      { rootSelectors: ['scene'], followedEdges: ['children'] },
-      state,
-    );
+    const closure = expandClosure({ rootSelectors: ['scene'], followedEdges: ['children'] }, state);
     expect(closure.nodes.has('box')).toBe(true);
     expect(closure.nodes.has('sphere')).toBe(true);
     // 'time' would not match any socket on Scene → no expansion.
-    const timeOnly = expandClosure(
-      { rootSelectors: ['scene'], followedEdges: ['time'] },
-      state,
-    );
+    const timeOnly = expandClosure({ rootSelectors: ['scene'], followedEdges: ['time'] }, state);
     expect([...timeOnly.nodes]).toEqual(['scene']);
   });
 });
@@ -278,10 +284,7 @@ describe('isFreshAddNode', () => {
   it('false for non-addNode ops', () => {
     const state = buildBaseline();
     expect(
-      isFreshAddNode(
-        { type: 'setParam', nodeId: 'box', paramPath: 'x', value: 1 },
-        state,
-      ),
+      isFreshAddNode({ type: 'setParam', nodeId: 'box', paramPath: 'x', value: 1 }, state),
     ).toBe(false);
   });
 });
@@ -425,5 +428,118 @@ describe("P3 — 'animation' edge kind (H22 isolation under real socket)", () =>
     // 'children' walk, not 'animation'. With only 'animation' declared, boxA
     // must NOT be in the closure.
     expect(closure.nodes.has('boxA')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P4 — 'pass-input' edge kind (forward-declared, no live socket in Wave A)
+//
+// 'pass-input' is the new socket-named edge kind P4 makes concrete. In Wave
+// A no node carries a `pass-input` input socket — RenderJob lands in Wave
+// B. The walker must treat 'pass-input' as a no-match fall-through so the
+// kind can sit in EdgeKind without breaking existing closures. The full
+// H22 isolation test (sibling pass leakage) lands in Wave B alongside the
+// live socket.
+//
+// Detection signal: a closure rooted at a BeautyPass/IDPass node with
+// followedEdges=['pass-input'] must contain only the root — pass nodes do
+// NOT consume passes. They produce them.
+// ---------------------------------------------------------------------------
+
+function buildPassBaseline(): DagState {
+  // BeautyPass + IDPass each fed by Time + Camera + Scene. No node has a
+  // 'pass-input' socket — that arrives with RenderJob in Wave B.
+  let s = emptyDagState();
+  s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'cam',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, position: [0, 0, 5] },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'box',
+    nodeType: 'BoxMesh',
+    params: { size: [1, 1, 1] },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'cam', socket: 'out' },
+    to: { node: 'scene', socket: 'camera' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'box', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'beauty', nodeType: 'BeautyPass', params: {} }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'idp', nodeType: 'IDPass', params: {} }).next;
+  for (const passId of ['beauty', 'idp']) {
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: passId, socket: 'scene' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: passId, socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: passId, socket: 'time' },
+    }).next;
+  }
+  return s;
+}
+
+describe("P4 — 'pass-input' edge kind (Wave A — forward-declared, no live socket)", () => {
+  it("'pass-input' from a pass root falls through cleanly (no consumers, no leaks)", () => {
+    const state = buildPassBaseline();
+    const closure = expandClosure(
+      { rootSelectors: ['beauty'], followedEdges: ['pass-input'] },
+      state,
+    );
+    // beauty itself is in the closure (every reachable root is seeded).
+    expect(closure.nodes.has('beauty')).toBe(true);
+    // No node consumes 'pass-input' yet, so the walk terminates immediately.
+    expect(closure.nodes.size).toBe(1);
+    expect(closure.edges).toEqual([]);
+    // Sibling pass MUST NOT leak through any kind-mixing.
+    expect(closure.nodes.has('idp')).toBe(false);
+  });
+
+  it("['parent','pass-input'] from beauty does NOT reach the sibling IDPass", () => {
+    const state = buildPassBaseline();
+    const closure = expandClosure(
+      { rootSelectors: ['beauty'], followedEdges: ['parent', 'pass-input'] },
+      state,
+    );
+    expect(closure.nodes.has('beauty')).toBe(true);
+    // 'parent' walk from beauty has no consumers either (passes are sinks
+    // until RenderJob lands). 'pass-input' has no producers. Closure stays
+    // single-node — H22's per-kind BFS isolation rule holds for the new
+    // edge kind even with mixed kinds declared.
+    expect(closure.nodes.has('idp')).toBe(false);
+    expect(closure.nodes.has('scene')).toBe(false);
+  });
+
+  it("'children' walk from a pass reaches its inputs but skips 'pass-input' kind", () => {
+    const state = buildPassBaseline();
+    // 'children' walks every input socket regardless of name — so scene,
+    // camera, time all show up. This proves 'pass-input' isn't being
+    // confused for 'children'; the kinds are independent.
+    const closure = expandClosure(
+      { rootSelectors: ['beauty'], followedEdges: ['children'] },
+      state,
+    );
+    expect(closure.nodes.has('scene')).toBe(true);
+    expect(closure.nodes.has('cam')).toBe(true);
+    expect(closure.nodes.has('time')).toBe(true);
+    // sibling pass still must not leak.
+    expect(closure.nodes.has('idp')).toBe(false);
   });
 });

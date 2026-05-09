@@ -7,6 +7,7 @@ import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
 import { AnimationLayerNode } from './AnimationLayer';
 import { AreaLightNode } from './AreaLight';
+import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { CharacterNode } from './Character';
@@ -14,6 +15,7 @@ import { CutNode } from './Cut';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
 import { GroupNode } from './Group';
+import { IDPassNode } from './IDPass';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
@@ -73,6 +75,9 @@ const ALL: NodeDefinition[] = [
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,
   BoneNameMapNode as unknown as NodeDefinition,
+  // P4 — Render graph (THESIS §43)
+  BeautyPassNode as unknown as NodeDefinition,
+  IDPassNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,
