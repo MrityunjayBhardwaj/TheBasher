@@ -44,6 +44,7 @@ const ALL_TYPES = [
   'BoneNameMap',
   'BoxMesh',
   'Character',
+  'ComfyUIWorkflow',
   'Cut',
   'DirectionalLight',
   'GltfAsset',
@@ -1598,5 +1599,166 @@ describe('P5 — Prompt (pure data node)', () => {
     const v = evaluate(next, 'p').value as PromptValue;
     expect(v.negative).toBe('');
     expect(v.tags).toEqual([]);
+  });
+});
+
+describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
+  /**
+   * Build a tiny DAG: TimeSource + Prompt + BeautyPass + DepthlikeStub +
+   * ComfyUIWorkflow connected through 'pass-input'. We use BeautyPass for
+   * both pass-input slots so we don't take a dependency on Wave A4's
+   * DepthPass / NormalPass landing first — the sourceHash only cares
+   * about the upstream Image's passKind + sourceHash, both well-defined
+   * for BeautyPass.
+   */
+  function buildComfyState(opts: {
+    promptText?: string;
+    promptNegative?: string;
+    presetId?: 'stylizedRealism';
+    boxPosition?: [number, number, number];
+  } = {}) {
+    const promptText = opts.promptText ?? 'a cinematic cube';
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: opts.boxPosition ?? [0, 0, 0] },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'scene', socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'beauty', nodeType: 'BeautyPass', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: 'beauty', socket: 'scene' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'beauty', socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'beauty', socket: 'time' },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: { text: promptText, negative: opts.promptNegative ?? '', tags: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cw',
+      nodeType: 'ComfyUIWorkflow',
+      params: {
+        presetId: opts.presetId ?? 'stylizedRealism',
+        frameStart: 0,
+        frameEnd: 30,
+        lastGoodFrame: -1,
+        outputPath: 'renders/job1/stylized_stylizedRealism',
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'p', socket: 'out' },
+      to: { node: 'cw', socket: 'prompt' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'beauty', socket: 'out' },
+      to: { node: 'cw', socket: 'pass-input' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'cw', socket: 'time' },
+    }).next;
+    return s;
+  }
+
+  it('twice-eval bit-exact at frame 0', () => {
+    const state = buildComfyState();
+    const a = evaluate(state, 'cw').value as ImageValue;
+    const b = evaluate(state, 'cw').value as ImageValue;
+    expect(a).toEqual(b);
+  });
+
+  it('emits Image with passKind stylized + default 1280x720 rgba8 (D-01)', () => {
+    const state = buildComfyState();
+    const v = evaluate(state, 'cw').value as ImageValue;
+    expect(v.kind).toBe('Image');
+    expect(v.passKind).toBe('stylized');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+    expect(v.sourceHash).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('sourceHash flips when prompt text changes', () => {
+    const a = evaluate(buildComfyState({ promptText: 'a cube' }), 'cw').value as ImageValue;
+    const b = evaluate(buildComfyState({ promptText: 'a sphere' }), 'cw').value as ImageValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('sourceHash flips when upstream pass bytes change (box position mutated)', () => {
+    const a = evaluate(buildComfyState({ boxPosition: [0, 0, 0] }), 'cw').value as ImageValue;
+    const b = evaluate(buildComfyState({ boxPosition: [5, 0, 0] }), 'cw').value as ImageValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('D-04 default outputPath is empty string (Mutator authors the literal at build time)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cw',
+      nodeType: 'ComfyUIWorkflow',
+      params: {},
+    }).next;
+    expect(s.nodes.cw.params.outputPath).toBe('');
+    expect(s.nodes.cw.params.lastGoodFrame).toBe(-1);
+    expect(s.nodes.cw.params.presetId).toBe('stylizedRealism');
+  });
+
+  it('hydrate-seam load with missing width/height fields produces defaults (V10 / H14)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'cw', nodeType: 'ComfyUIWorkflow', params: {} }).next;
+    // Strip width/height as if loaded from a project saved before they
+    // landed. Evaluator's `?? default` rebuilds the descriptor.
+    const next = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        cw: {
+          ...s.nodes.cw,
+          params: {
+            presetId: 'stylizedRealism',
+            frameStart: 0,
+            frameEnd: 30,
+            lastGoodFrame: -1,
+            outputPath: '',
+          } as Record<string, unknown>,
+        },
+      },
+    };
+    const v = evaluate(next, 'cw').value as ImageValue;
+    expect(v.descriptor.width).toBe(1280);
+    expect(v.descriptor.height).toBe(720);
   });
 });

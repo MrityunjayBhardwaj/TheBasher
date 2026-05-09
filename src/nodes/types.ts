@@ -439,7 +439,7 @@ export interface BoneNameMapValue {
 // ---------------------------------------------------------------------------
 
 export type ImageFormat = 'rgba8' | 'r8' | 'r16f' | 'rgba16f';
-export type ImagePassKind = 'beauty' | 'id';
+export type ImagePassKind = 'beauty' | 'id' | 'depth' | 'normal' | 'stylized';
 
 export interface ImageDescriptor {
   readonly width: number;

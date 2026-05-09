@@ -11,6 +11,7 @@ import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { CharacterNode } from './Character';
+import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { CutNode } from './Cut';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
@@ -83,6 +84,7 @@ const ALL: NodeDefinition[] = [
   RenderJobNode as unknown as NodeDefinition,
   // P5 — AI Render Bridge (THESIS §28, §44)
   PromptNode as unknown as NodeDefinition,
+  ComfyUIWorkflowNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,
