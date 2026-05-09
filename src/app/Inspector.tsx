@@ -8,6 +8,7 @@
 import { useDagStore } from '../core/dag/store';
 import type { NodeRef } from '../core/dag/types';
 import { useDragScrub } from './dragScrub';
+import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { useSelectionStore } from './stores/selectionStore';
 
 interface NumericFieldProps {
@@ -222,6 +223,9 @@ export function Inspector() {
               );
             })}
           </div>
+          {node.type === 'ComfyUIWorkflow' ? (
+            <CostPreviewConnector workflowNodeId={node.id} />
+          ) : null}
         </>
       )}
     </aside>
