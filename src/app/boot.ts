@@ -22,6 +22,7 @@ import {
   useProjectStore,
   type ProjectMetadata,
 } from '../core/project';
+import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -33,6 +34,8 @@ import { useTimeStore } from './stores/timeStore';
 
 let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
+let cachedComfyUI: ComfyUICapability | null = null;
+let comfyUIPromise: Promise<ComfyUICapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
@@ -53,6 +56,26 @@ export async function getStorage(): Promise<StorageCapability> {
 export function getBlenderBridge(): BlenderBridgeCapability {
   if (!cachedBridge) cachedBridge = new BrowserBlenderBridge();
   return cachedBridge;
+}
+
+/**
+ * Resolve the ComfyUI capability for this runtime — Http if a server is
+ * reachable at the configured URL, Stub otherwise. Cached: a single resolve
+ * across the whole session, so dryRun + runWorkflow + agent tools share one
+ * instance (their in-flight tracking lives outside the capability).
+ *
+ * The promise guard mirrors `boot()` — concurrent first-time callers await
+ * the same in-flight pickComfyUI() instead of racing two HTTP probes.
+ */
+export function getComfyCapability(): Promise<ComfyUICapability> {
+  if (cachedComfyUI) return Promise.resolve(cachedComfyUI);
+  if (!comfyUIPromise) {
+    comfyUIPromise = pickComfyUI().then((cap) => {
+      cachedComfyUI = cap;
+      return cap;
+    });
+  }
+  return comfyUIPromise;
 }
 
 /**
@@ -178,6 +201,17 @@ export function boot(): Promise<void> {
 /** Test-only: forget the cached boot so the next boot() runs fresh. */
 export function __resetBootForTests(): void {
   bootPromise = null;
+  cachedComfyUI = null;
+  comfyUIPromise = null;
+}
+
+/**
+ * Test-only: inject a ComfyUI capability so component tests can hit a
+ * deterministic stub without going through pickComfyUI's HTTP probe.
+ */
+export function __setComfyCapabilityForTests(cap: ComfyUICapability | null): void {
+  cachedComfyUI = cap;
+  comfyUIPromise = cap ? Promise.resolve(cap) : null;
 }
 
 export async function saveCurrent(): Promise<void> {

@@ -15,6 +15,7 @@ import { useAgentSessionStore, type AgentMode } from '../agent/session/store';
 import { useSelectionStore } from './stores/selectionStore';
 import { runAgentTurn } from '../agent/orchestrator';
 import type { LLMConfig } from '../agent/transport/types';
+import { getComfyCapability, getStorage } from './boot';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
 const DEFAULT_MODEL = 'google/gemma-4-31B-it';
@@ -61,12 +62,22 @@ export function AgentChat() {
     const abort = new AbortController();
     abortRef.current = abort;
 
+    // Resolve capabilities fresh per turn (the underlying getters are
+    // module-level singletons — same instance across the session, but
+    // never captured at component mount where they'd be premature).
+    const [comfyCapability, storage] = await Promise.all([
+      getComfyCapability(),
+      getStorage(),
+    ]);
+
     try {
       await runAgentTurn(config, {
         message: msg,
         mode: session.mode,
         signal: abort.signal,
         selectedNodeIds,
+        comfyCapability,
+        storage,
       });
     } finally {
       setRunning(false);
