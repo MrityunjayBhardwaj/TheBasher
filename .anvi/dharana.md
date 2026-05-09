@@ -742,3 +742,73 @@ Wave C Mutator catalog.
   Expect a new bone-name-resolution boundary class — sister to
   H21 at the rig boundary. Promote to a new dharana boundary B9
   if a second name-mismatch bug surfaces.
+
+**Updated:** 2026-05-09 — post-P3.1 (Animation import + Mixamo retargeting):
+
+- **B7 span scope unchanged.** The agent identifier resolves DAG node
+  ids (project-level); rig bone-name resolution is a separate boundary
+  class — sister class to B7 but distinct (exact-match, not fuzzy;
+  mechanical, not natural-language).
+
+- **B8 (Mutator catalog ↔ Op constructor) extended.** 10 → 11
+  Mutators. New: `mutator.animation.retarget` — first Mutator that
+  reads multi-input state (source clip + source skeleton + target
+  skeleton) and runs an externally-provided algorithm
+  (SkeletonUtils.retargetClip) to produce its Op chain. Closure spec
+  uses 3 root selectors (sourceClip, sourceSkeleton, targetSkeleton);
+  followedEdges = [] since the new clip id is fresh and connect-to-
+  time targets the project TimeSource (always in scope post-#40).
+
+- **New node type `BoneNameMap`** (32 → 33). Pure data node;
+  evaluator returns its params verbatim. Multiple retargets share one
+  map; edits trigger downstream re-evaluation via the cache-key path.
+
+- **Bone-name maps catalog + bone-group preset catalog** added under
+  `src/core/import/`. Pre-built maps for Mixamo ↔ glTF / Reze /
+  Rigify; pre-built bone-mask presets for upperBody / lowerBody /
+  arms / headAndNeck. Both are static lookups — no DAG state.
+
+- **Live-smoke wrinkles caught at test time, not at production:**
+  - THREE.PropertyBinding's track-name regex reserves `[].:/` as
+    delimiters. Mixamo's `mixamorig:Hips` namespace breaks
+    AnimationMixer binding silently — the retargeted clip comes back
+    empty, no error thrown. Fix at the THREE → POJO seam in
+    `threeAdapter.sanitizeBoneName` (`:` → `_`). Bone-name presets
+    use sanitized form. Sister class to H21 (placeholder/anchor
+    confusion at the prompt boundary) — both are
+    "surface advertises something the receiver silently misinterprets."
+    Single occurrence → memory; promote to a hetvabhasa entry on
+    second occurrence (next likely candidate: glTF asset names with
+    spaces).
+  - SkeletonUtils.retargetClip's `options.names` direction is
+    target → source. Public retargetClip() takes the natural
+    source → target; we invert internally. Documented in the API
+    comment so future readers don't relitigate.
+
+- **No new dharana boundary needed for bone-name resolution.** The
+  boundary IS structurally distinct from B7 (rig-side, exact-match)
+  but: zero hetvabhasa cluster yet, sanitization is a one-line
+  defensive fix, the boundary's enforcement is mechanical (the
+  sanitize function runs every import). Promote to B9 when (a) a
+  second name-resolution surface fails, OR (b) glTF asset names hit
+  the same reserved-char issue.
+
+- **Fatality test (post-P3.1, 2026-05-09):**
+  1. Hetvabhasa: 24 entries unchanged. The PropertyBinding /
+     map-direction wrinkles surfaced and were fixed at test time —
+     same pattern as P3 (gate-validator + dev tests catch wiring
+     issues before commit). No B-boundary newly clusters 3+.
+  2. Vyapti span: V13 / V14 / V15 ALIGNED status verified for the
+     new Mutator. retarget's signature is unique vs the existing 10
+     (V14 mechanical guard passes).
+  3. Krama crossing: import surface adds no new lifecycle. Drop /
+     console-import → parse → buildOps → dispatchAtomic — same K3
+     atomic-shape Mutators use.
+
+  **Verdict: organization remains sound after P3.1.** Bone-name
+  resolution is a candidate axis (sister to B7) but doesn't cross
+  the dharana-promotion threshold yet — single observation, single
+  fix, no recurrence.
+
+  **Next update trigger:** P4 (Render graph) or first second
+  occurrence of name-resolution-at-asset-boundary failure.
