@@ -21,7 +21,9 @@ import type { ImagePassKind, ImageValue, JobResultValue } from '../../nodes/type
 
 const SummarizePassSchema = z.object({
   jobId: z.string().min(1).describe('RenderJob node id whose pass tree to inspect'),
-  passKind: z.enum(['beauty', 'id']).describe('Which pass kind to summarize'),
+  passKind: z
+    .enum(['beauty', 'id', 'depth', 'normal'])
+    .describe('Which raw pass kind to summarize. For stylized output use agent.render.summarizeStylized.'),
   frame: z
     .number()
     .int()
