@@ -36,7 +36,6 @@ beforeAll(() => {
 });
 
 // Static import is safe because beforeAll runs before any describe block.
-// eslint-disable-next-line import/first
 import { useChromeStore } from './chromeStore';
 
 const STORAGE_KEY = 'basher.chrome.v1';
