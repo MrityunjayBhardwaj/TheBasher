@@ -32,6 +32,7 @@ import type {
   SkeletonValue,
   TimeValue,
   TransformValue,
+  VideoValue,
   WalkPathValue,
 } from './types';
 
@@ -74,6 +75,7 @@ const ALL_TYPES = [
   'SpotLight',
   'TimeSource',
   'Transform',
+  'VideoStitch',
   'WalkPath',
 ];
 
@@ -1819,5 +1821,119 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
     const v = evaluate(next, 'cw').value as ImageValue;
     expect(v.descriptor.width).toBe(1280);
     expect(v.descriptor.height).toBe(720);
+  });
+});
+
+describe('P5 — VideoStitch (impure metadata, D-01/D-05)', () => {
+  function buildStitchState(opts: { codec?: 'h264'; fps?: number; outputPath?: string } = {}) {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    // Use a Prompt node as a fake stylized-image source — but Prompt
+    // doesn't emit Image. Use BeautyPass instead, which emits Image
+    // and gives us a consistent sourceHash test surface. (For Wave D
+    // metadata-only purposes, the upstream's passKind doesn't matter
+    // — VideoStitch hashes whatever Image arrives.)
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'scene', socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'pass', nodeType: 'BeautyPass', params: {} }).next;
+    for (const wire of [
+      { from: 'scene', to: ['pass', 'scene'] },
+      { from: 'cam', to: ['pass', 'camera'] },
+      { from: 'time', to: ['pass', 'time'] },
+    ] as const) {
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: wire.from, socket: 'out' },
+        to: { node: wire.to[0], socket: wire.to[1] },
+      }).next;
+    }
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'stitch',
+      nodeType: 'VideoStitch',
+      params: {
+        codec: opts.codec ?? 'h264',
+        fps: opts.fps ?? 30,
+        outputPath: opts.outputPath ?? 'renders/job1/final.mp4',
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'pass', socket: 'out' },
+      to: { node: 'stitch', socket: 'pass-input' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'stitch', socket: 'time' },
+    }).next;
+    return s;
+  }
+
+  it('emits Video metadata with codec + fps + frameCount + outputPath + sourceHash', () => {
+    const v = evaluate(buildStitchState(), 'stitch').value as VideoValue;
+    expect(v.kind).toBe('Video');
+    expect(v.codec).toBe('h264');
+    expect(v.fps).toBe(30);
+    expect(v.frameCount).toBe(1);
+    expect(v.outputPath).toBe('renders/job1/final.mp4');
+    expect(v.sourceHash).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('twice-eval bit-exact', () => {
+    const state = buildStitchState();
+    const a = evaluate(state, 'stitch').value as VideoValue;
+    const b = evaluate(state, 'stitch').value as VideoValue;
+    expect(a).toEqual(b);
+  });
+
+  it('sourceHash flips when outputPath changes', () => {
+    const a = evaluate(buildStitchState({ outputPath: 'renders/job1/a.mp4' }), 'stitch').value as VideoValue;
+    const b = evaluate(buildStitchState({ outputPath: 'renders/job1/b.mp4' }), 'stitch').value as VideoValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('sourceHash flips when fps changes', () => {
+    const a = evaluate(buildStitchState({ fps: 24 }), 'stitch').value as VideoValue;
+    const b = evaluate(buildStitchState({ fps: 60 }), 'stitch').value as VideoValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('hydrate-seam load with missing fields produces defaults (V10 / H14)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'stitch', nodeType: 'VideoStitch', params: {} }).next;
+    // Strip fields as if loaded from a project saved before they landed.
+    const next = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        stitch: { ...s.nodes.stitch, params: {} as Record<string, unknown> },
+      },
+    };
+    const v = evaluate(next, 'stitch').value as VideoValue;
+    expect(v.codec).toBe('h264');
+    expect(v.fps).toBe(30);
+    expect(v.outputPath).toBe('');
   });
 });

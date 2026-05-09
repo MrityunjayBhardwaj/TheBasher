@@ -78,7 +78,8 @@ export type SocketTypeName =
   // P4 — Render graph = render nodes (THESIS §43)
   | 'JobResult'
   // P5 — AI Render Bridge (THESIS §28, §44)
-  | 'Prompt';
+  | 'Prompt'
+  | 'Video';
 
 export type Cardinality = 'single' | 'list';
 

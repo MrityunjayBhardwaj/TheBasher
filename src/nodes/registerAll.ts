@@ -41,6 +41,7 @@ import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
 import { TimeSourceNode } from './TimeSource';
 import { TransformNode } from './Transform';
+import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 
 const ALL: NodeDefinition[] = [
@@ -92,6 +93,7 @@ const ALL: NodeDefinition[] = [
   NormalPassNode as unknown as NodeDefinition,
   PromptNode as unknown as NodeDefinition,
   ComfyUIWorkflowNode as unknown as NodeDefinition,
+  VideoStitchNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

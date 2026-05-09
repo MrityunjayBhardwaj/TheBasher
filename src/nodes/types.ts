@@ -485,6 +485,28 @@ export interface PromptValue {
 }
 
 // ---------------------------------------------------------------------------
+// VideoValue — VideoStitch's output (metadata only, mirrors JobResult).
+//
+// Pixel encoding happens at runVideoStitch execution time (Wave D2). The
+// evaluator returns a deductive contract: codec, fps, frame count, output
+// path, content hash. The agent describes a video by sourceHash without
+// loading bytes.
+// ---------------------------------------------------------------------------
+
+export type VideoCodec = 'h264';
+
+export interface VideoValue {
+  readonly kind: 'Video';
+  readonly codec: VideoCodec;
+  readonly fps: number;
+  readonly frameCount: number;
+  /** OPFS path the encoded video is (or will be) at. */
+  readonly outputPath: string;
+  /** Content hash over (codec, fps, outputPath, upstream stylized hashes). */
+  readonly sourceHash: string;
+}
+
+// ---------------------------------------------------------------------------
 // JobResult — RenderJob's output (a metadata record describing the dispatch)
 //
 // JobResult is what the RenderJob evaluator returns. It does NOT contain the
