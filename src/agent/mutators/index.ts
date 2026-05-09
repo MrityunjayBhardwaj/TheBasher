@@ -33,6 +33,7 @@ import { addLayerMutator } from './builders/addLayer';
 import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
 import { shotCreateMutator } from './builders/shotCreate';
+import { retargetMutator } from './builders/retarget';
 
 export {
   rotateMutator,
@@ -45,6 +46,7 @@ export {
   addChannelMutator,
   keyframeMutator,
   shotCreateMutator,
+  retargetMutator,
 };
 
 export function registerAllMutators(): void {
@@ -59,4 +61,6 @@ export function registerAllMutators(): void {
   registerMutator(addChannelMutator);
   registerMutator(keyframeMutator);
   registerMutator(shotCreateMutator);
+  // P3.1 Wave C — animation retargeting
+  registerMutator(retargetMutator);
 }

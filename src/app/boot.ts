@@ -136,6 +136,31 @@ export function boot(): Promise<void> {
       void import('../agent/diff').then((m) => {
         w.__basher_diff = m.useDiffStore;
       });
+      // P3.1 Wave A/B — BVH + FBX import demo seams. Library UI
+      // integration lands in a follow-on wave; meanwhile the agent
+      // (and console) can drive imports via these seams.
+      void import('../core/import/bvhImportChain').then((m) => {
+        w.__basher_importBvh = (text: string, name?: string) => {
+          const dag = useDagStore.getState();
+          const { ops, skeletonId, clipId } = m.buildBvhImportOps(
+            { text, name },
+            dag.state,
+          );
+          dag.dispatchAtomic(ops, 'user', `import bvh: ${name ?? 'imported'}`);
+          return { skeletonId, clipId };
+        };
+      });
+      void import('../core/import/fbxImportChain').then((m) => {
+        w.__basher_importFbx = (data: ArrayBuffer | string, name?: string) => {
+          const dag = useDagStore.getState();
+          const { ops, skeletonId, clipId } = m.buildFbxImportOps(
+            { data, name },
+            dag.state,
+          );
+          dag.dispatchAtomic(ops, 'user', `import fbx: ${name ?? 'imported'}`);
+          return { skeletonId, clipId };
+        };
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
