@@ -29,7 +29,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 
-const PassKind = z.enum(['beauty', 'id']);
+const PassKind = z.enum(['beauty', 'id', 'depth', 'normal']);
 type PassKind = z.infer<typeof PassKind>;
 
 const AddPassSpec = z.object({
@@ -49,6 +49,8 @@ export type AddPassSpec = z.infer<typeof AddPassSpec>;
 const NODE_TYPE_BY_KIND: Record<PassKind, string> = {
   beauty: 'BeautyPass',
   id: 'IDPass',
+  depth: 'DepthPass',
+  normal: 'NormalPass',
 };
 
 function findUnique(state: DagState, type: string): NodeId | null {
@@ -72,12 +74,14 @@ function defaultPassId(jobId: NodeId, passKind: PassKind, used: Set<NodeId>): No
 export const addPassMutator: MutatorDefinition<AddPassSpec> = {
   name: 'mutator.render.addPass',
   description:
-    'Add a render pass node (BeautyPass or IDPass) and wire it into the named ' +
-    "RenderJob's pass-input list. The Mutator auto-resolves the project's " +
-    'Scene + Camera + TimeSource and connects all three into the new pass; ' +
-    'pass sourceHash flips per frame as Time advances. If multiple Scenes or ' +
-    'Cameras exist, pass sceneId / cameraId explicitly. Returns deterministic ' +
-    'passId so the agent can describe the pass with agent.render.summarizePass.',
+    'Add a render pass node (BeautyPass / IDPass / DepthPass / NormalPass) ' +
+    "and wire it into the named RenderJob's pass-input list. The Mutator " +
+    "auto-resolves the project's Scene + Camera + TimeSource and connects " +
+    'all three into the new pass; pass sourceHash flips per frame as Time ' +
+    'advances. Depth + Normal land in P5 to feed ControlNet inputs for ' +
+    'stylized AI rendering. If multiple Scenes or Cameras exist, pass ' +
+    'sceneId / cameraId explicitly. Returns deterministic passId so the ' +
+    'agent can describe the pass with agent.render.summarizePass.',
   spec: AddPassSpec,
   specExample: {
     jobId: 'job',

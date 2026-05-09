@@ -46,6 +46,7 @@ const ALL_TYPES = [
   'Character',
   'ComfyUIWorkflow',
   'Cut',
+  'DepthPass',
   'DirectionalLight',
   'GltfAsset',
   'Group',
@@ -57,6 +58,7 @@ const ALL_TYPES = [
   'LocomotionState',
   'MaterialOverride',
   'Navmesh',
+  'NormalPass',
   'OrthographicCamera',
   'PerspectiveCamera',
   'PointLight',
@@ -1527,6 +1529,63 @@ describe('P4 — IDPass (pure metadata)', () => {
     const beauty = evalAt<ImageValue>(beautyState, 'pass', 0);
     const id = evalAt<ImageValue>(idState, 'pass', 0);
     expect(beauty.sourceHash).not.toBe(id.sourceHash);
+  });
+});
+
+describe('P5 — DepthPass + NormalPass (§43 amendment, D-02)', () => {
+  it.each(TIME_SAMPLES)('DepthPass twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPassState('DepthPass');
+    const a = evalAt<ImageValue>(state, 'pass', t);
+    const b = evalAt<ImageValue>(state, 'pass', t);
+    expect(a).toEqual(b);
+  });
+
+  it.each(TIME_SAMPLES)('NormalPass twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPassState('NormalPass');
+    const a = evalAt<ImageValue>(state, 'pass', t);
+    const b = evalAt<ImageValue>(state, 'pass', t);
+    expect(a).toEqual(b);
+  });
+
+  it('DepthPass evaluates to Image with passKind depth + 1280x720 rgba8', () => {
+    const v = evalAt<ImageValue>(buildPassState('DepthPass'), 'pass', 0);
+    expect(v.passKind).toBe('depth');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+  });
+
+  it('NormalPass evaluates to Image with passKind normal + 1280x720 rgba8', () => {
+    const v = evalAt<ImageValue>(buildPassState('NormalPass'), 'pass', 0);
+    expect(v.passKind).toBe('normal');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+  });
+
+  it('Depth + Normal sourceHashes are distinct from Beauty given same scene/camera/time (passKind discriminates)', () => {
+    const beauty = evalAt<ImageValue>(buildPassState('BeautyPass'), 'pass', 0);
+    const depth = evalAt<ImageValue>(buildPassState('DepthPass'), 'pass', 0);
+    const normal = evalAt<ImageValue>(buildPassState('NormalPass'), 'pass', 0);
+    const hashes = new Set([beauty.sourceHash, depth.sourceHash, normal.sourceHash]);
+    expect(hashes.size).toBe(3);
+  });
+
+  it('DepthPass sourceHash flips when time advances', () => {
+    const state = buildPassState('DepthPass');
+    const a = evalAt<ImageValue>(state, 'pass', 0);
+    const b = evalAt<ImageValue>(state, 'pass', 1);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('NormalPass sourceHash flips when scene mutates', () => {
+    const state = buildPassState('NormalPass');
+    const a = evalAt<ImageValue>(state, 'pass', 0);
+    const next = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        box: { ...state.nodes.box, params: { size: [1, 1, 1], position: [3, 0, 0] } },
+      },
+    };
+    const b = evalAt<ImageValue>(next, 'pass', 0);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
   });
 });
 

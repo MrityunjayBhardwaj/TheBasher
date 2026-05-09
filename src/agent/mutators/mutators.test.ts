@@ -1049,6 +1049,30 @@ describe('mutator.render.addPass', () => {
     }
   });
 
+  it('depth: picks DepthPass node type (P5 §43 amendment, D-02)', () => {
+    const state = buildSceneWithJob();
+    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'depth' }, state, 'add depth');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const addOp = r.ops[0];
+    if (addOp.type === 'addNode') {
+      expect(addOp.nodeType).toBe('DepthPass');
+      expect(addOp.nodeId).toBe('job_depth');
+    }
+  });
+
+  it('normal: picks NormalPass node type (P5 §43 amendment, D-02)', () => {
+    const state = buildSceneWithJob();
+    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'normal' }, state, 'add normal');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const addOp = r.ops[0];
+    if (addOp.type === 'addNode') {
+      expect(addOp.nodeType).toBe('NormalPass');
+      expect(addOp.nodeId).toBe('job_normal');
+    }
+  });
+
   it('twice-call deterministic for same spec', () => {
     const state = buildSceneWithJob();
     const a = validatePlan(

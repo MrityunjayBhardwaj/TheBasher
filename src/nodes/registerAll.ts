@@ -13,6 +13,7 @@ import { BoxMeshNode } from './BoxMesh';
 import { CharacterNode } from './Character';
 import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { CutNode } from './Cut';
+import { DepthPassNode } from './DepthPass';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
 import { GroupNode } from './Group';
@@ -24,6 +25,7 @@ import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
 import { NavmeshNode } from './Navmesh';
+import { NormalPassNode } from './NormalPass';
 import { OrthographicCameraNode } from './OrthographicCamera';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PointLightNode } from './PointLight';
@@ -83,6 +85,11 @@ const ALL: NodeDefinition[] = [
   IDPassNode as unknown as NodeDefinition,
   RenderJobNode as unknown as NodeDefinition,
   // P5 — AI Render Bridge (THESIS §28, §44)
+  // §43 amendment (D-02): Depth + Normal join the registry only because
+  // stylizedRealism's ControlNet inputs demand them. LineArt /
+  // Segmentation / AO / Albedo / Alpha / Motion stay deferred to v0.6.
+  DepthPassNode as unknown as NodeDefinition,
+  NormalPassNode as unknown as NodeDefinition,
   PromptNode as unknown as NodeDefinition,
   ComfyUIWorkflowNode as unknown as NodeDefinition,
   // Aggregators
