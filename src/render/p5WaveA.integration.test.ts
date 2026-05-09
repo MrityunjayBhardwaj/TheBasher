@@ -255,6 +255,61 @@ describe('P5 Wave A — integration', () => {
     expect(closure.nodes.has('beauty2')).toBe(false);
   });
 
+  it('Wave B end-to-end: 30 frames produced at D-04 paths, prev-frame coherence wired, H22 isolation holds', async () => {
+    // This test proves the WHOLE Wave B claim: DAG → runComfyUIWorkflow →
+    // MemoryStorage produces 31 stylized PNGs at the right paths, the
+    // prev-frame plumbing carries frame N-1's path to frame N, and the
+    // sibling RenderJob (job2) does not appear in the closure rooted at cw.
+    const { runComfyUIWorkflow } = await import('./runComfyUIWorkflow');
+    const state = buildWaveAState();
+    const storage = new MemoryStorage();
+    const cap = new StubComfyUICapability();
+    const observed: { frame: number; prev: string | null }[] = [];
+    const compileWorkflow: CompileWorkflowFn = async ({
+      presetId,
+      prompt,
+      passes,
+      frame,
+      prevFrameStylizedPath,
+    }) => {
+      observed.push({ frame, prev: prevFrameStylizedPath ?? null });
+      return {
+        workflowJson: { preset: presetId, frame, prompt: prompt.text },
+        inputs: {
+          images: Object.fromEntries(
+            passes.map((p) => [p.passKind, new TextEncoder().encode(p.sourceHash)]),
+          ),
+          scalars: { frame, prev: prevFrameStylizedPath ?? '__zero__' },
+        },
+      };
+    };
+    const completed: number[] = [];
+    const report = await runComfyUIWorkflow('cw', state, {
+      capability: cap,
+      storage,
+      compileWorkflow,
+      onFrameComplete: (f) => completed.push(f),
+    });
+    // 31 frames — frameStart 0 through frameEnd 30 inclusive.
+    expect(report.framesWritten).toBe(31);
+    expect(report.lastGoodFrame).toBe(30);
+    // Spot-check a few D-04 paths.
+    expect(await storage.exists('renders/job1/stylized_stylizedRealism_0000.png')).toBe(true);
+    expect(await storage.exists('renders/job1/stylized_stylizedRealism_0015.png')).toBe(true);
+    expect(await storage.exists('renders/job1/stylized_stylizedRealism_0030.png')).toBe(true);
+    // Prev-frame plumbing: frame 0 sees null, frame 1+ sees N-1's stylized path.
+    expect(observed[0].prev).toBeNull();
+    expect(observed[1].prev).toBe('renders/job1/stylized_stylizedRealism_0000.png');
+    expect(observed[15].prev).toBe('renders/job1/stylized_stylizedRealism_0014.png');
+    // onFrameComplete fired in order, once per frame.
+    expect(completed).toEqual(Array.from({ length: 31 }, (_, i) => i));
+    // No bytes leaked into renders/job2/* (H22 isolation under live D-01
+    // stylized output reuse — the sibling RenderJob gets no stylized
+    // frames because its closure was never walked).
+    const job2Files = await storage.list('renders/job2');
+    expect(job2Files).toHaveLength(0);
+  });
+
   it('dryRun against StubComfyUI returns a valid extrapolation and writes to D-04 path', async () => {
     const state = buildWaveAState();
     const cap = new StubComfyUICapability();
