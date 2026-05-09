@@ -201,11 +201,14 @@ test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async (
     (c as unknown as { __basherTag: string }).__basherTag = 'before-switch';
   });
   // Cycle through every operational mode — Director triggers the most
-  // invasive grid change (chrome hides), Animate reveals the timeline,
-  // Edit returns to default. If any of them remounts the Canvas, the tag is gone.
+  // invasive grid change (chrome hides), Animate reveals the timeline.
+  // Director hides the chrome (incl. ModeSwitcher) so we exit via Esc
+  // (UI-SPEC §6.2 / acceptance #4). If any transition remounts the Canvas,
+  // the tag is gone.
   await page.getByTestId('mode-switcher').selectOption('animate');
   await page.getByTestId('mode-switcher').selectOption('director');
-  await page.getByTestId('mode-switcher').selectOption('edit');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
   const tag = await page.evaluate(() => {
     const c = document.querySelector('canvas') as HTMLCanvasElement | null;
     return (c as unknown as { __basherTag?: string } | null)?.__basherTag ?? null;

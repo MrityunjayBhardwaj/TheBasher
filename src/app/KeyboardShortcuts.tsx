@@ -26,6 +26,7 @@ import { frameAll, frameSelected } from './character/framing';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore } from './stores/editorStore';
 import { useGizmoStore } from './stores/gizmoStore';
+import { useModeStore } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -137,6 +138,10 @@ export function KeyboardShortcuts() {
           useEditorStore.getState().toggleSpace();
           return;
         case 'Escape':
+          // UI-SPEC §6.2 / acceptance #4: Esc universally returns mode → edit
+          // and clears selection. The mode reset happens before the selection
+          // clear so any subscribers reading both see a coherent post-Esc state.
+          useModeStore.getState().setMode('edit');
           useSelectionStore.getState().clear();
           return;
       }
