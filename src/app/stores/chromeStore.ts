@@ -37,14 +37,35 @@ const DEFAULT_STATE: ChromeState = {
   inspectorCollapsed: false,
 };
 
+// Defensive against test envs where `localStorage` exists but its methods
+// are stubbed weirdly (happy-dom + vitest module-load ordering can land us
+// here before the Storage API is fully attached).
+function safeGetItem(key: string): string | null {
+  try {
+    if (typeof localStorage?.getItem !== 'function') return null;
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetItem(key: string, value: string): void {
+  try {
+    if (typeof localStorage?.setItem !== 'function') return;
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore — storage quota / disabled / SSR */
+  }
+}
+
 function readPersisted(): ChromeState {
-  if (typeof localStorage === 'undefined') return DEFAULT_STATE;
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = safeGetItem(STORAGE_KEY);
   if (!raw) return DEFAULT_STATE;
   try {
     const parsed = JSON.parse(raw) as Partial<ChromeState>;
     return {
-      toolRailCollapsed: typeof parsed.toolRailCollapsed === 'boolean' ? parsed.toolRailCollapsed : false,
+      toolRailCollapsed:
+        typeof parsed.toolRailCollapsed === 'boolean' ? parsed.toolRailCollapsed : false,
       leftSidebarCollapsed:
         typeof parsed.leftSidebarCollapsed === 'boolean' ? parsed.leftSidebarCollapsed : false,
       inspectorCollapsed:
@@ -56,8 +77,7 @@ function readPersisted(): ChromeState {
 }
 
 function writePersisted(state: ChromeState): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  safeSetItem(STORAGE_KEY, JSON.stringify(state));
 }
 
 export const useChromeStore = create<ChromeStore>((set, get) => ({
