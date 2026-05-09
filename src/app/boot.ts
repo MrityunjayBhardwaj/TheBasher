@@ -159,6 +159,23 @@ export function boot(): Promise<void> {
       void import('../agent/diff').then((m) => {
         w.__basher_diff = m.useDiffStore;
       });
+      // P5 Wave C5 — install StubComfyUICapability for e2e tests so the
+      // CostPreview spec doesn't depend on a running ComfyUI server. The
+      // setter swaps the boot cache; subsequent getComfyCapability() calls
+      // resolve to the stub.
+      void import('../core/comfy').then((m) => {
+        w.__basher_useStubComfy = () => {
+          __setComfyCapabilityForTests(new m.StubComfyUICapability());
+        };
+      });
+      // P5 Wave C5 — minimal OPFS write seam so the CostPreview spec can
+      // pre-populate fake raw-pass bytes (beauty/depth/normal) at the
+      // D-04 paths the stylizedRealism preset reads. Production agents
+      // never call this — runRenderJob produces the real bytes.
+      w.__basher_writeOpfsBytes = async (path: string, bytes: Uint8Array) => {
+        const storage = await getStorage();
+        await storage.write(path, bytes);
+      };
       // P3.1 Wave A/B — BVH + FBX import demo seams. Library UI
       // integration lands in a follow-on wave; meanwhile the agent
       // (and console) can drive imports via these seams.
