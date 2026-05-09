@@ -71,12 +71,12 @@
 **REF:** THESIS.md §18, §20; `src/agent/tools/types.ts:10`; `src/agent/tools/registry.ts:15`; `src/agent/diff/forkedDag.ts:1`; `src/agent/diff/store.ts:113`
 **Why it matters:** agent edits via the same path as the user; one undo system; one diff system; one audit log.
 
-### V8: Viewport never mutates DAG; viewport renders evaluated DAG output
+### V8: Viewport + render execution never mutate DAG; both read evaluated DAG output
 
-**Span:** R3F `Canvas` (`src/viewport/Viewport.tsx`) + `SceneFromDAG` (`src/viewport/SceneFromDAG.tsx`).
-**Enforcement:** `SceneFromDAG` calls `evaluate(state, target.node, { cache })` and walks the result. The rule is now **file-rooted, not call-stack-rooted**: no source file under the `src/viewport/` tree contains a `dispatch(...)` call or `useDagStore.setState`. Components imported from `src/app/` that dispatch (e.g. `src/app/Gizmo.tsx` — the TransformControls authoring surface) are allowed even when they render inside the Canvas — the dispatch is defined in their own file's source. Mode switches do not unmount the Canvas — Layout flips slot visibility via `display:none` (K1 step 6).
-**Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG). The P1 Gizmo (`src/app/Gizmo.tsx`) follows the same pattern — file location, not Canvas containment, defines the boundary.
-**REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`; `src/app/Gizmo.tsx:1`
+**Span:** R3F `Canvas` (`src/viewport/Viewport.tsx`) + `SceneFromDAG` (`src/viewport/SceneFromDAG.tsx`); P4 extension: `runRenderJob` + encoders (`src/render/**`).
+**Enforcement:** `SceneFromDAG` calls `evaluate(state, target.node, { cache })` and walks the result. `runRenderJob` walks frames, evaluates the pass subgraph, and writes via `StorageCapability` (V6). The rule is **file-rooted, not call-stack-rooted**: no source file under `src/viewport/` OR `src/render/` contains a `dispatch(...)` call, `useDagStore.setState`, or `applyOp(...)`. Components imported from `src/app/` that dispatch (e.g. `src/app/Gizmo.tsx` — the TransformControls authoring surface) are allowed even when they render inside the Canvas — the dispatch is defined in their own file's source. The `src/render/` extension is mechanically guarded by a textual import-only regex test in `src/render/runRenderJob.test.ts` ("V8 — file-rooted dispatch rule"). Mode switches do not unmount the Canvas — Layout flips slot visibility via `display:none` (K1 step 6).
+**Status:** ALIGNED. Click-to-select handlers in NodeList live in `src/app/`, not `src/viewport/`, and update `selectionStore` (a UI projection, not the DAG). The P1 Gizmo (`src/app/Gizmo.tsx`) follows the same pattern — file location, not Canvas containment, defines the boundary. P4's `src/render/` extension verified clean — runRenderJob reads DagState + writes to storage; no Op emission from this directory.
+**REF:** THESIS.md §11; `src/viewport/SceneFromDAG.tsx:30`; `src/app/Gizmo.tsx:1`; `src/render/runRenderJob.ts:1`; `src/render/runRenderJob.test.ts` (V8 import guard).
 
 ### V10: Persisted-schema fields require defensive defaults at every consumer until the hydrate seam re-validates
 
