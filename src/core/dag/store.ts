@@ -2,10 +2,13 @@
 // `setState` is wrapped so consumers cannot reach in directly — V1.
 //
 // Activity log records every applied op with source ('user' | 'agent' |
-// 'macro') for THESIS.md §15 (drawer Activity tab) and the agent's recent-
-// activity context (§21).
+// 'macro' | 'render') for THESIS.md §15 (drawer Activity tab) and the
+// agent's recent-activity context (§21). 'render' is the V8 file-rooted
+// dispatch source — used by src/app/render/runWorkflow.ts to advance
+// lastGoodFrame after each completed frame in a runComfyUIWorkflow run
+// without bleeding render-side dispatch into src/render/.
 //
-// REF: THESIS.md §50, krama K2.
+// REF: THESIS.md §50, krama K2 + K10.
 
 import { create } from 'zustand';
 import { applyOp, validateOp } from './ops';
@@ -13,7 +16,7 @@ import type { DagState } from './state';
 import { emptyDagState } from './state';
 import type { Diff, InverseOp, Op } from './types';
 
-export type OpSource = 'user' | 'agent' | 'macro';
+export type OpSource = 'user' | 'agent' | 'macro' | 'render';
 
 export interface ActivityEntry {
   id: number;
