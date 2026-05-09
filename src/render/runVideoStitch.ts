@@ -23,7 +23,7 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
 import type { ComfyUIWorkflowParams } from '../nodes/ComfyUIWorkflow';
-import type { ImageValue, VideoCodec, VideoStitchParams, VideoValue } from '../nodes/types';
+import type { ImageValue, VideoCodec, VideoStitchParams } from '../nodes/types';
 import { framePath } from './dryRun';
 
 /**
