@@ -271,3 +271,112 @@ is the cross-link.
 
 **REF:** THESIS.md §11; `src/app/character/cameraFromView.ts:21`; `src/app/character/threeRef.ts:24`; `src/app/character/ThreeBridge.tsx:11`; `src/app/character/cameraFromView.test.ts`.
 **Why it matters:** camera-from-view is the killer move for the director-first thesis — frame a shot via OrbitControls, bake it into the DAG, and renders reproduce the pose deterministically. The same `Op[]` shape will be the agent's `camera.snapshot` tool surface when P2.5 lands.
+
+### K10: AI render workflow lifecycle (P5 — extends K4's compose/execute/describe shape)
+
+**Compose phase (DAG mutation, agent or user authored):**
+
+1. RenderJob node added via `dag.exec` (default project does NOT seed
+   one; user opts in).
+2. For each preset.requiredPass: `mutator.render.addPass({ jobId,
+   passKind })`. addPass auto-resolves Scene + Camera + TimeSource and
+   wires the pass into `jobId.pass-input`. V13 closure preservation +
+   V14 signature uniqueness gates.
+3. `mutator.render.addAIPass({ jobId, presetId, promptText, ... })`
+   adds Prompt + ComfyUIWorkflow + connects existing required passes
+   to the workflow's pass-input list. Workflow's outputPath = `${job.
+   outputPath}/stylized_${sanitize(presetId)}` (D-04 formula).
+4. Optional: `mutator.render.addStitch({ jobId, workflowId, fps?,
+   codec? })` adds VideoStitch consuming the workflow's stylized
+   output. Stitch's outputPath = `${job.outputPath}/final.mp4`.
+5. User accepts the Diff. DAG describes the AI render plan.
+
+**Execute phase (impure side, src/render/):**
+
+6. (Pre-condition) `runRenderJob` produces raw passes at
+   `${job.outputPath}/${passKind}_NNNN.png`. Without raw bytes on disk,
+   the workflow has nothing to feed ComfyUI.
+7. `runComfyUIWorkflow(workflowNodeId, dagState, { capability, storage,
+   compileWorkflow, onFrameComplete })` walks frames
+   [max(frameStart, lastGoodFrame + 1), frameEnd]:
+   a. Build EvalCtx { time: { frame, seconds=frame/30, normalized: 0 } }.
+   b. Resolve Prompt + pass-input nodes via evaluator at this ctx.
+   c. Compute prevFrameStylizedPath: null on first frame, else
+      `framePath(workflowOutputPath, frame - 1)`.
+   d. Call compileWorkflow → { workflowJson, inputs }. The preset's
+      compile factory reads raw pass bytes from the job's parent dir
+      and the prev-frame stylized bytes from prevFrameStylizedPath
+      (or substitutes a 1×1 black ZERO_FRAME_PNG on first frame /
+      missing-path soft-fail).
+   e. `await capability.submit(workflowJson, inputs)` → bytes.
+   f. Write bytes via `storage.write(framePath(workflowOutputPath,
+      frame), bytes)`. V6 capability — no direct fs/opfs.
+   g. `onFrameComplete(frame)` → caller (src/app/render/runWorkflow.ts)
+      dispatches `setParam` Op advancing `lastGoodFrame`. V8 file-
+      rooted: src/render/* never dispatches.
+   h. On capability rejection: throw with `partialReport` attached;
+      caller's wrapping code catches and surfaces error. Resume:
+      next call starts at `lastGoodFrame + 1`.
+8. `runVideoStitch(stitchNodeId, dagState, { storage, encoder })`
+   walks each upstream ComfyUIWorkflow's frame range:
+   a. Read each frame's stylized PNG bytes via `storage.read(
+      framePath(upstream.outputPath, frame))`.
+   b. Pass collected `framesPng[]` to `deps.encoder({ framesPng,
+      codec, fps })` → encoded video bytes.
+   c. Write bytes via `storage.write(stitch.outputPath, videoBytes)`.
+
+**Describe phase (read-only, agent surface):**
+
+9. `agent.render.dryRunWorkflow({ workflowNodeId })` probes one frame
+   through the capability + writes to D-04 path. Returns
+   `{ frames, estimatedSeconds, samplePath, probeJobId }`. Cache
+   parity: subsequent execute reads the probe's bytes by sourceHash
+   identity (THESIS §51).
+10. `agent.render.summarizeStylized({ workflowNodeId, frame })`
+    evaluates the workflow at the frame, returns
+    `{ workflowId, presetId, frame, sourceHash, descriptor,
+       outputPath, bytesPresent, lastGoodFrame }`. Agent describes
+    progress without loading bytes.
+
+**Common violations:**
+
+- Calling capability.submit from inside the workflow node's
+  evaluator → V8 + V2 violation (pure-flag lying). Wave A4 narrowly
+  avoided this by making compileWorkflow + submit live in
+  src/render/, not inside ComfyUIWorkflow.evaluate. Future presets
+  must follow the same split.
+- Reading raw pass bytes via `OpfsStorage` / `node:fs` directly
+  from the preset compile() function → V6 violation. The preset
+  receives a StorageCapability handle via the compile factory closure;
+  reads MUST flow through that handle.
+- Letting prevFrameStylizedPath race a slow disk → soft-fall to
+  ZERO_FRAME_PNG so frame 1 doesn't crash. Documented in the
+  preset's readPrevFrameBytes; reviewers reject any change that
+  hard-fails here without a UX-driven alternative.
+- Dispatching the lastGoodFrame writeback from inside
+  runComfyUIWorkflow.ts → V8 violation. Always callback-driven;
+  caller (src/app/render/runWorkflow.ts) does the dispatch.
+- Wiring a non-ComfyUIWorkflow upstream into VideoStitch.pass-input →
+  v0.5 stitches stylized output only; runVideoStitch rejects with a
+  clear "wire a ComfyUIWorkflow" message.
+- Submitting frame N before runRenderJob produced raw N → preset
+  compile() throws "raw pass not found"; caller surfaces error and
+  the agent's failure handler routes to "produce raw passes first".
+
+**REF:** THESIS §28 (AI render presets), §44 (P5 spec), §49 (Time
+first-class), §51 (caching correctness); vyapti V2/V3/V6/V8/V13/V14;
+hetvabhasa H19 (stale snapshot — runComfyUIWorkflow keeps state
+local), H22 (per-edge BFS isolation under live D-01 stylized output);
+`src/render/runComfyUIWorkflow.ts:1`,
+`src/render/runVideoStitch.ts:1`, `src/render/dryRun.ts:1`,
+`src/agent/strategy/presets/stylizedRealism.ts:1`,
+`src/app/render/runWorkflow.ts:1`.
+
+**Why it matters:** P5 is the seam between "agent describes a
+stylized render" and "frames + MP4 land on disk." Splitting compose
+(DAG mutation, Diff-mediated, user-accepted) from execute (impure,
+capability-mediated, side-effecting) keeps each phase auditable. The
+Diff log shows what the user authorized; storage shows what was
+produced; the sourceHash + framePath formula bridge them. Resume on
+failure works because lastGoodFrame is a regular Op, not a side
+channel.

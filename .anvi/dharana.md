@@ -907,3 +907,140 @@ Wave C Mutator catalog.
   **Next update trigger:** P5 (AI Render Bridge) — ComfyUI wiring
   will exercise the pass-output describable contract. Expect
   pressure to add Depth + Normal passes for ControlNet inputs.
+
+**Updated:** 2026-05-09 — post-P5 (AI Render Bridge — stylizedRealism
+preset, ComfyUI capability, video stitch — all four waves shipped):
+
+- **B9 promoted (render execution layer ↔ DAG).** P4 was the first
+  observation; P5 added two more execution-layer files
+  (`runComfyUIWorkflow.ts` + `runVideoStitch.ts`). Per dharana
+  promotion criteria (single → memory; recurrence → dharana entry),
+  three observations is well past threshold. Promoted with explicit
+  ORIGIN/WHY/HOW/REF.
+
+  **ORIGIN:** P4 introduced `runRenderJob` as the first impure
+  execution-layer file under `src/render/`. P5 added
+  `runComfyUIWorkflow` (stylization frame walk + capability submit +
+  storage write) and `runVideoStitch` (frame read + encode + storage
+  write). All three share: V8 file-rooted (no Op emission), V6
+  capability discipline (storage / comfy / video-encoder), reads of
+  evaluated DagState, side-effecting writes. The boundary class is
+  not "rendering" specifically — it's "impure execution layer that
+  consumes DAG metadata + side-effects through capabilities".
+
+  **WHY:** Without B9 catalogued, future execution-layer additions
+  (PlayCanvas exporter at P7, splat encoder at P6 if it lands) will
+  be added one-off without checking the established discipline:
+  - Read DagState; never write Ops from this directory.
+  - All side effects route through a registered capability (V6).
+  - Writebacks (e.g. lastGoodFrame on ComfyUIWorkflow) are
+    callbacks the caller dispatches — never inline dispatch from
+    the execution file.
+  Each violation reopens H19 (stale snapshot) / V8 (file-rooted)
+  / V1 (op-as-only-mutation) holes that were already closed.
+
+  **HOW:** Mechanical guard — every file under `src/render/**` has
+  a textual import-only regex test in `runRenderJob.test.ts` that
+  fails CI on imports of dispatcher / store mutators / op
+  machinery. Currently guards `runRenderJob.ts`, `stubEncoder.ts`,
+  `dryRun.ts`, `runComfyUIWorkflow.ts`, `runVideoStitch.ts` —
+  five files, one regex. Future src/render/ additions add to this
+  list before ship.
+
+  **REF:** `src/render/runRenderJob.ts:1`,
+  `src/render/runComfyUIWorkflow.ts:1`, `src/render/runVideoStitch.ts:1`,
+  `src/render/runRenderJob.test.ts` ('V8 — file-rooted dispatch rule'
+  describe block). project_p5_plan B1/D2.
+
+  **Silent-failure modes (B9):**
+  - Adding a new src/render/ file without extending the import-only
+    guard → V8 violation lands silently.
+  - Calling `useDagStore.getState()` inside an async loop in
+    src/render/* → H19 stale-snapshot pattern; capture-once at
+    function start instead.
+  - Writing to fs/opfs directly (bypassing StorageCapability) →
+    Tauri swap at v0.6 becomes a rewrite. Reviewer rejects.
+
+  **Observation targets:**
+  - For every new file under `src/render/**`: confirm the V8
+    import-only test names it. Missing entry → fail CI before merge.
+  - For every async loop in src/render/*: confirm state.nodes is
+    read once at function entry, not per-iteration.
+  - For every storage path constructed in src/render/*: confirm it
+    flows through `StorageCapability.write`, never `node:fs` /
+    `OpfsStorage` directly.
+
+- **B10 candidate (ComfyUI ↔ external server boundary)** — single
+  observation, kept in memory not dharana per promotion criteria.
+  Promotion trigger: a second class of LLM/tool-bridge integration
+  appears (e.g. blender-mcp wired through a similar capability) —
+  at that point the WHY of B10 generalizes from "ComfyUI specifically"
+  to "any LLM-tool external server", and the catalogue entry earns
+  its place. Tracked in memory as `project_p5_shipped.md`.
+
+- **V13 (closure preservation) ALIGNED re-verified.** addAIPass +
+  addStitch each declare buildClosureSpec. Gate 3 (closure_
+  preservation) accepts both Mutators' op chains under the rooted
+  closures. V13 status unchanged — the new Mutators integrate
+  cleanly through existing machinery.
+
+- **V14 (Mutator non-redundancy) ALIGNED re-verified.** Mechanical
+  guard now passes 14-of-14 unique signatures (was 12 after P4).
+  addAIPass distinguishes from addPass via `preserves` (drops
+  'material'). addStitch distinguishes via
+  `requiredNodeTypes: ['RenderJob','ComfyUIWorkflow']` (no other
+  Mutator pairs both).
+
+- **V15 (lazy strategy) ALIGNED re-verified.** Strategy resource
+  count 8 → 9 with 'aiRender' added. System prompt's one-line
+  pointer remains the only inline content; preset bodies +
+  workflow guidance live in the registry, fetched via
+  `agent.getStrategy({ topic: 'aiRender' })` only when relevant.
+
+- **V12 (convention boundary) extended.** dcc-reference §21
+  "Stylized render conventions" added with four locked decisions
+  (sRGB PNG output, 4-digit zero-pad frames, 'avc1.42E01F' codec
+  id, 'prev_frame_image' placeholder name). Cross-refs from
+  runComfyUIWorkflow + runVideoStitch + the stylizedRealism
+  preset.
+
+- **D-01 'pass-input' edge kind held under expanded usage.** P5
+  loaded three new node types onto this kind: ComfyUIWorkflow's
+  pass-input (raw passes in), ComfyUIWorkflow's `out` socket
+  (stylized output flowing as Image, consumed by VideoStitch's
+  pass-input), VideoStitch's pass-input. H22 isolation tested
+  under all three — closure rooted at jobId never leaks to
+  sibling jobs / orphan workflow nodes / external stitches.
+
+- **§43 amendment landed (D-02).** DepthPass + NormalPass
+  registered (40 → 42 nodes pre-P5; +5 P5 nodes = 45 wait...
+  let's recount. P4 ended at 36. P5 adds: Prompt (37),
+  ComfyUIWorkflow (38), DepthPass (39), NormalPass (40),
+  VideoStitch (41). **41 node types total post-P5.** §43 deferred
+  set unchanged: LineArt, Segmentation, AO, Albedo, Alpha, Motion
+  remain v0.6+ — only land when a registered preset demands them.
+
+- **Fatality test (post-P5, 2026-05-09):**
+  1. Hetvabhasa clustering: 24 entries (no new H from P5 work —
+     planning was thorough enough that wiring mismatches were
+     caught at test time, not in production). No B-boundary
+     newly clusters 3+ patterns.
+  2. Vyapti span: V13/V14/V15 ALIGNED status verified; new V12
+     section in dcc-reference cross-refs. No invariant span
+     widened.
+  3. Krama crossing: K10 added (AI render workflow lifecycle —
+     extends K4's compose/execute/describe shape with prev-frame
+     coherence + resume + capability submit). Each phase of K10
+     stays atomic-shape; no lifecycle crosses 3+ module
+     boundaries.
+
+  **Verdict: organization remains sound after P5.** B9's
+  promotion is the only structural addition — and it formalizes
+  what was already true rather than introducing a new boundary.
+  The execution layer continues to be a clean V8 file-rooted
+  surface; capabilities (V6) absorb the new external-server
+  concern (Comfy) the same way they absorbed Storage at P0.
+
+  **Next update trigger:** P6 (Splats node) or v0.6 (meta-prompt
+  preset authoring + remaining §43 passes — LineArt, Segmentation,
+  AO, Albedo, Alpha, Motion).
