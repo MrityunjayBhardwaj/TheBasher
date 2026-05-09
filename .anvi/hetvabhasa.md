@@ -568,3 +568,58 @@ of director-style prompts, not just the single-noun happy path.
 scope updated post-fix); vyapti V13 (closure preservation — closures
 rooted on multi-target identifies pass through correctly because each
 selector becomes a closure root). PLAN P2.5.3 §2 Wave A.
+
+### H25: Naming-similarity ≠ functional-similarity (spec-from-memory framing trap)
+
+**Span:** any spec or design document authored before reading the code it describes.
+
+**Symptom:** the spec frames two files as "duplicate / mergeable" because their names rhyme (`Inspector.tsx` + `NPanel.tsx`, `assetStore.ts` + `assetCache.ts`, etc.); the spec proposes a merge / delete that would silently lose load-bearing functionality if executed; the error is only caught when someone actually opens both files.
+
+**Root cause:** the spec was authored from memory of file *names* and the surrounding domain language, not from observation of file *contents*. Domain words ("inspector", "panel", "store", "cache") cluster around boundaries because the boundary is the thing being named — but two files at the same boundary often have orthogonal jobs (one mutates, one displays; one props-edits, one HUD-toggles). Naming similarity is downstream of the same boundary; functional overlap is a separate question.
+
+**The trap:** writing the merge into the locked-decisions table (D-UX-N) and pulling forward into a wave's atomic commit before reading both files. Once "merge X and Y" is locked, the discovery that they aren't duplicates feels like late-breaking noise instead of the actual signal it is.
+
+**The real fix:** before any "merge / delete / replace" decision lands in a spec, open the two files end-to-end. State each file's job in one sentence. Only if the sentences overlap does the merge framing apply. Add a "what each file actually does today" pass to the spec authoring routine, *before* the locked-decision table is populated.
+
+**Five-limbed argument:**
+1. **Claim:** Functional roles must be observed from code, not inferred from filenames.
+2. **Reason:** Filenames cluster at boundaries; functional roles span boundaries. Two files at the same boundary may have non-overlapping jobs.
+3. **Universal principle:** Lokayata at the *spec* level — observation runs alongside specification, not after.
+4. **Application:** P6 spec D-UX-8 framed `Inspector.tsx` (property editor) + `NPanel.tsx` (viewport HUD: gizmo mode, snap, grid/axis toggles) as duplicate inspectors based on name similarity. They have orthogonal roles.
+5. **Conclusion:** Caught at W1 start by reading both files; D-UX-8 corrected mid-wave (NPanel deleted in W7 with functions absorbed into R8, Inspector kept as canonical). One round-trip lost; one decision-table cell rewritten.
+
+**Sister patterns:** any future spec that proposes a merge based on name resemblance — `MaterialOverride.ts` + `MaterialPreset.ts`, `KeyframeChannel*.ts` siblings, `*Store.ts` lookalikes. Read both before locking.
+
+**Cross-refs:** docs/UI-SPEC.md §1 D-UX-8 (corrected); §5.8 Inspector + the NPanel R8-absorption note; vyapti V13 (closure preservation — the misframing was a "two stores of inspector truth" worry that never existed because they weren't both inspectors).
+
+### H26: happy-dom localStorage non-functional at module-load time
+
+**Span:** any zustand store under `src/app/stores/` that reads `localStorage` at module-load time AND has a unit test that imports it directly.
+
+**Symptom:** `TypeError: localStorage.getItem is not a function` at module-load — the test file fails before any test body runs. `(node:NNN) Warning: --localstorage-file was provided without a valid path` appears before the failure.
+
+**Root cause:** vitest's `happy-dom` environment exposes `localStorage` as a globalThis property, but its method bindings are not attached at the moment a `src/app/stores/*.ts` module is imported by the test file. `typeof localStorage === 'undefined'` returns `'object'` (truthy guard misfires); the call to `getItem` then bombs because the slot is a partially-constructed Storage stub.
+
+**The trap:** asserting `typeof localStorage === 'undefined'` is sufficient defense. It isn't — the value is *defined*, but methods aren't.
+
+**The real fix:** defensive helpers that check for *callable* methods, not just defined globals:
+```ts
+function safeGetItem(key: string): string | null {
+  try {
+    if (typeof localStorage?.getItem !== 'function') return null;
+    return localStorage.getItem(key);
+  } catch { return null; }
+}
+```
+And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE importing the store (so the store's module-load-time read sees a working API).
+
+**Five-limbed argument:**
+1. **Claim:** Defensive localStorage access requires method-callable checks, not just defined-global checks.
+2. **Reason:** Test envs supply Storage as a partially-constructed object; `typeof` returns truthy for partial stubs.
+3. **Universal principle:** When the boundary is "browser API in test env", stub completeness is the failure mode, not stub presence.
+4. **Application:** `src/app/stores/chromeStore.ts` originally guarded with `typeof localStorage === 'undefined'`; module load failed in vitest. Fix: `safeGetItem` / `safeSetItem` helpers + in-memory mock in test `beforeAll`.
+5. **Conclusion:** Pattern applies to every future store that touches localStorage at boot — `modeStore` (already shipping), `viewportStore`, future `chromeStore`, `leftSidebarStore`, etc.
+
+**Sister patterns:** sessionStorage, IndexedDB transactions, `navigator.storage.getDirectory()`, `window.matchMedia`, any Web API surfaced through the global. Same defense: callable check + try/catch + in-test mock.
+
+**Cross-refs:** `src/app/stores/chromeStore.ts:30` (safeGetItem / safeSetItem), `src/app/stores/chromeStore.test.ts:5` (beforeAll mock); vitest config `test.environment: 'happy-dom'` in `vitest.config.ts:11`. P6 W1 commit `cc151fa`.

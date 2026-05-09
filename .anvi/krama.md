@@ -380,3 +380,27 @@ Diff log shows what the user authorized; storage shows what was
 produced; the sourceHash + framePath formula bridge them. Resume on
 failure works because lastGoodFrame is a regular Op, not a side
 channel.
+
+### K11: Persisted-store boot lifecycle (mode + chrome stores)
+
+**Span:** any zustand store that reads localStorage at module-load and exposes its persisted state to the rest of the app. Currently: `useModeStore`, `useChromeStore`. Future: `useLeftSidebarStore` (W3), `useInspectorSectionStore` (W4), `useTimelineDockStore` (W5).
+
+**Steps (in strict order):**
+1. **Module-load fires.** zustand `create<T>(...)` invokes the initializer. The initializer's `state` argument expression runs synchronously — anything that throws here aborts module load.
+2. **Defensive Storage probe.** Helpers (`safeGetItem`) check `typeof localStorage?.getItem === 'function'` AND wrap the call in try/catch. Test envs where Storage is partially-stubbed (vitest happy-dom) return `null`; production browsers return the persisted JSON. (See H26.)
+3. **Parse + validate.** Persisted JSON parses inside try/catch; on parse failure → return defaults. Per-field type-narrows (`typeof parsed.toolRailCollapsed === 'boolean'`) reject malformed values without throwing.
+4. **Legacy-value coercion (mode store specifically).** If the persisted value is in the *previous* type's set but not the *current* type's set (e.g. legacy density `'simple' | 'pro'` after the D-UX-5 repurpose), coerce to the safest current default (`'edit'`). Don't preserve the legacy value just because parse succeeded — the *meaning* changed, not just the shape.
+5. **Default fallback.** Anything that didn't match a legitimate current value returns the type's safe default. For `mode`, that's `'edit'` (full chrome, non-modal, no surprises). For `chrome*Collapsed`, that's `false` (everything visible).
+6. **Initial state spread into store.** `...readPersisted()` is the first key in the initializer object literal. The store object's setters / togglers come after, so any setter call before module-load completion would already have the persisted state.
+7. **First setter call writes back.** The setter runs `writePersisted` *after* `set({...})`, so an in-memory update is reflected before any I/O failure could roll it back. For non-persistable values (mode `'run'`, mode `'director'`), the setter skips the write step entirely.
+8. **Reload round-trips.** On reload, step 1 runs again with the value step 7 wrote. For `mode`, only persistable values (`'edit'`, `'animate'`) reach this step; transient modes (`'run'`, `'director'`) reset to last persisted on reload.
+
+**Common violations (each one historically caught):**
+- Reading `localStorage` outside the initializer (e.g. inside a useEffect on mount) — adds a one-frame flash of default state before the persisted value lands. Solution: always read at module-load.
+- Skipping the legacy-coercion step (#4) when changing a Mode/State type signature — old persisted values seep into a type they no longer fit, narrowing assertions break downstream. Solution: every type-shape change requires a coercion clause in `readPersisted`, even if the new set is a strict superset of the old.
+- Writing every value to storage (no PERSISTABLE filter) — transient modes survive reload, surfacing the user back inside Director Cut after a refresh. Solution: explicit `PERSISTABLE` set; setter checks before write.
+- Stomping the entire stored object on a partial setter (`setItem(key, JSON.stringify({ singleField: v }))`) — drops sibling fields. Solution: re-merge with `{ ...get(), [field]: value }` before stringify.
+
+**REF:** `src/app/stores/modeStore.ts:32–47` (readPersisted + setMode + PERSISTABLE filter); `src/app/stores/chromeStore.ts:41–57` (readPersisted + writePersisted re-merge); `src/app/stores/chromeStore.test.ts` (multi-flag persistence test); docs/UI-SPEC.md §7.3 (persistence rules); hetvabhasa H26 (defensive helpers); vyapti V16 (chrome-hiding mode keyboard escape — depends on this lifecycle producing a coherent post-reload state); P6 W1 commits `7657d27`, `515afda`, `a3a283e`, `cc151fa`.
+
+**Why it matters:** every UI projection store that persists has the same boot shape. Codifying the lifecycle catches sister bugs early: when W3 adds `useLeftSidebarStore` (active-tab persistence), W4 adds inspector-section collapse-by-node-type persistence, W5 adds timeline-dock height persistence — each follows K11. The legacy-coercion step (#4) becomes load-bearing for every future type-shape change in any persisted store.

@@ -166,6 +166,20 @@ six starter Mutators in `src/agent/mutators/builders/`.
 **Silent-failure modes:** addon server not running but page assumes it is; CORS misconfig; user picks wrong asset folder.
 **Observation targets:** beacon poll responses logged in dev console; "Blender connected" indicator in chrome.
 
+### Boundary B11: Design spec ↔ source code (UI-SPEC authoring boundary)
+
+**ORIGIN:** P6 W1 (2026-05-10). D-UX-8 was authored from memory of file *names* (Inspector.tsx + NPanel.tsx — sounded like duplicate inspectors) without reading either file. Observation at W1 start revealed they have orthogonal roles. Decision was retracted; spec was patched mid-wave; one round-trip lost.
+
+**WHY:** any spec authored before reading the code it describes inherits the framing errors of its author's memory. Filenames cluster at boundaries, so "naming similarity" is downstream of the same boundary, not evidence of functional overlap. Without an explicit observation step in spec authoring, the most prominent files (those shipped recently, those with rhyming names, those whose role the author hasn't directly used) are the most likely to land with the wrong framing. Spec drift compounds when downstream waves act on a wrong locked decision before someone opens the file.
+
+**HOW:** before any "merge / delete / replace" decision lands in a spec's locked-decisions table, open every file the decision names. Write a one-sentence functional description per file. Only if the descriptions semantically overlap does the merge framing apply. Flag the spec as "observation-grounded" only when every file it touches has been observed end-to-end. The check runs at spec-authoring time, not at wave-execution time.
+
+**REF:** docs/UI-SPEC.md §1 D-UX-8 (corrected mid-W1); §5.8 Inspector / NPanel R8-absorption note; hetvabhasa H25 (the trap pattern); P6 W1 mid-wave correction (this session, 2026-05-10).
+
+**Silent-failure modes:** decision locked from memory, downstream wave acts on it, code break only surfaces when (a) the test exercises the deleted/merged surface, OR (b) a user encounters the broken affordance in production. The closer to (b), the more expensive the recovery.
+
+**Observation targets:** every D-UX entry in a spec carries either a `**REF:**` to file:line that's been opened during authoring, OR a `**TODO: observe**` flag. Spec-checker (anvi-ui-checker) treats unobserved files in a locked decision as a BLOCK verdict.
+
 ---
 
 ## 2. ACTIVE INVARIANT SPANS
