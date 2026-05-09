@@ -533,7 +533,7 @@ export function MenuBar() {
         </Submenu>
         <Divider />
         <Submenu label="Set Mode" testId="menu-view-mode">
-          {(['simple', 'director', 'pro'] as Mode[]).map((m) => (
+          {(['edit', 'run', 'animate', 'director'] as Mode[]).map((m) => (
             <Item
               key={m}
               label={`${m === mode ? '✓ ' : '   '}${m.charAt(0).toUpperCase() + m.slice(1)}`}

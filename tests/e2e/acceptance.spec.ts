@@ -54,23 +54,30 @@ test('#2 default project has the 4-node DAG (5 with RenderOutput) and viewport r
   await expect(page.locator('canvas').first()).toBeVisible();
 });
 
-test('#3 mode toggle reconfigures chrome (NodeList hides in Simple, tree shows in Pro)', async ({
+test('#3 operational mode toggle gates chrome (Director hides chrome; Animate shows timeline)', async ({
   page,
 }) => {
   await page.goto('/');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
+  // Default mode is now 'edit' (D-UX-5: density dropped, full chrome by default).
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
   await expect(page.getByTestId('node-list')).toBeVisible();
-  await expect(page.getByTestId('tree-slot')).toBeHidden();
+  await expect(page.getByTestId('inspector')).toBeVisible();
+  await expect(page.getByTestId('tree-slot')).toBeVisible();
+  // Timeline is mode-gated (D-UX-1) — hidden in Edit.
+  await expect(page.getByTestId('timeline-slot')).toBeHidden();
 
-  await page.getByTestId('mode-switcher').selectOption('simple');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'simple');
+  // Animate mode: timeline becomes visible; rest of chrome stays.
+  await page.getByTestId('mode-switcher').selectOption('animate');
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'animate');
+  await expect(page.getByTestId('timeline-slot')).toBeVisible();
+  await expect(page.getByTestId('inspector')).toBeVisible();
+
+  // Director mode (D-UX-9): chrome hides; viewport takes full window.
+  await page.getByTestId('mode-switcher').selectOption('director');
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
   await expect(page.getByTestId('node-list')).toBeHidden();
   await expect(page.getByTestId('inspector')).toBeHidden();
-
-  await page.getByTestId('mode-switcher').selectOption('pro');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'pro');
-  await expect(page.getByTestId('tree-slot')).toBeVisible();
-  await expect(page.getByTestId('right-drawer')).toBeHidden();
+  await expect(page.getByTestId('tree-slot')).toBeHidden();
 });
 
 test('#4 save → reload restores identical state', async ({ page }) => {
@@ -193,9 +200,12 @@ test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async (
     if (!c) throw new Error('canvas missing');
     (c as unknown as { __basherTag: string }).__basherTag = 'before-switch';
   });
-  await page.getByTestId('mode-switcher').selectOption('simple');
-  await page.getByTestId('mode-switcher').selectOption('pro');
+  // Cycle through every operational mode — Director triggers the most
+  // invasive grid change (chrome hides), Animate reveals the timeline,
+  // Edit returns to default. If any of them remounts the Canvas, the tag is gone.
+  await page.getByTestId('mode-switcher').selectOption('animate');
   await page.getByTestId('mode-switcher').selectOption('director');
+  await page.getByTestId('mode-switcher').selectOption('edit');
   const tag = await page.evaluate(() => {
     const c = document.querySelector('canvas') as HTMLCanvasElement | null;
     return (c as unknown as { __basherTag?: string } | null)?.__basherTag ?? null;

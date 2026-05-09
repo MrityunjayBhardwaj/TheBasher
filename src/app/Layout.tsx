@@ -3,7 +3,13 @@
 // never on mode switch"). The grid template + region visibility shifts via
 // data attributes; the Canvas DOM node stays put.
 //
-// REF: THESIS.md §11, §17, krama K1.
+// Per D-UX-5 (UI-SPEC §3.2): density axis dropped. One canonical layout. The
+// only mode-induced grid change is Director (D-UX-9) — chrome regions collapse
+// to 0 width. Per-panel collapse for the non-Director case will be wired
+// through chromeStore in W2/W3 (R4 ToolRail / R5 LeftSidebar). For W1 the
+// non-Director layout is the previous "pro" density: full chrome visible.
+//
+// REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5.
 
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
@@ -26,6 +32,7 @@ import { useModeStore } from './stores/modeStore';
 export function Layout() {
   const mode = useModeStore((s) => s.mode);
   const space = useEditorStore((s) => s.space);
+  const isDirector = mode === 'director';
   return (
     <div
       data-testid="layout"
@@ -33,12 +40,11 @@ export function Layout() {
       data-space={space}
       className="grid h-full w-full bg-bg text-fg"
       style={{
-        gridTemplateColumns:
-          mode === 'simple'
-            ? '0 0 1fr 0 320px'
-            : mode === 'pro'
-              ? '220px 220px 1fr 320px 320px'
-              : '180px 0 1fr 280px 280px',
+        // Director (D-UX-9) collapses chrome to 0; otherwise full chrome.
+        // Per-panel collapse via chromeStore lands in W2/W3.
+        gridTemplateColumns: isDirector
+          ? '0 0 1fr 0 0'
+          : '180px 220px 1fr 280px 280px',
         gridTemplateRows: 'auto auto auto 1fr auto',
         gridTemplateAreas: `
           "menu menu menu menu menu"
@@ -49,20 +55,20 @@ export function Layout() {
         `,
       }}
     >
-      <div style={{ gridArea: 'menu' }}>
+      <div style={{ gridArea: 'menu', display: isDirector ? 'none' : 'block' }}>
         <MenuBar />
       </div>
-      <div style={{ gridArea: 'chrome' }}>
+      <div style={{ gridArea: 'chrome', display: isDirector ? 'none' : 'block' }}>
         <Chrome />
       </div>
-      <div style={{ gridArea: 'toolbar' }}>
+      <div style={{ gridArea: 'toolbar', display: isDirector ? 'none' : 'block' }}>
         <TransformToolbar />
       </div>
 
       <div
         style={{
           gridArea: 'library',
-          display: mode === 'simple' ? 'none' : 'flex',
+          display: isDirector ? 'none' : 'flex',
           flexDirection: 'column',
           minHeight: 0,
         }}
@@ -74,7 +80,7 @@ export function Layout() {
       <div
         style={{
           gridArea: 'tree',
-          display: mode === 'pro' ? 'block' : 'none',
+          display: isDirector ? 'none' : 'block',
         }}
         data-testid="tree-slot"
       >
@@ -110,7 +116,8 @@ export function Layout() {
           <AssetDropZone>
             <Viewport />
           </AssetDropZone>
-          {/* NPanel is HTML, NOT R3F — overlays the viewport via DOM. */}
+          {/* NPanel is HTML, NOT R3F — overlays the viewport via DOM.
+              Removed in W7 per D-UX-8 (corrected); functions absorbed into R8. */}
           <NPanel />
         </div>
         <div
@@ -128,7 +135,7 @@ export function Layout() {
       <div
         style={{
           gridArea: 'inspector',
-          display: mode === 'simple' ? 'none' : 'block',
+          display: isDirector ? 'none' : 'block',
         }}
       >
         <Inspector />
@@ -137,7 +144,7 @@ export function Layout() {
       <div
         style={{
           gridArea: 'drawer',
-          display: mode === 'pro' ? 'none' : 'flex',
+          display: isDirector ? 'none' : 'flex',
           flexDirection: 'column',
           minHeight: 0,
         }}
@@ -145,7 +152,13 @@ export function Layout() {
         <RightDrawer />
       </div>
 
-      <div style={{ gridArea: 'timeline' }} data-testid="timeline-slot">
+      {/* Timeline is mode-gated (D-UX-1) — visible only in Animate. The
+          subtree stays mounted (V11 Canvas-mounts-once analog: store
+          subscriptions and DOM stay; CSS hides). */}
+      <div
+        style={{ gridArea: 'timeline', display: mode === 'animate' ? 'block' : 'none' }}
+        data-testid="timeline-slot"
+      >
         <TimelineDrawer />
       </div>
     </div>

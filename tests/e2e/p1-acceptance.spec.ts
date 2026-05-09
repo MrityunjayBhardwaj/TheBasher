@@ -308,7 +308,9 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
       'user',
     );
   });
-  await page.getByTestId('mode-switcher').selectOption('pro');
+  // Scene tree is visible by default in Edit mode (D-UX-5: density
+  // dropped, full chrome by default; the legacy 'pro' density forcing
+  // is no longer needed).
   await expect(page.getByTestId('scene-tree')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4r')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4t')).toBeVisible();

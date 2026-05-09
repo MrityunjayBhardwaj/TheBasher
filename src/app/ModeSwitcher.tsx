@@ -1,9 +1,10 @@
 import { useModeStore, type Mode } from './stores/modeStore';
 
 const OPTIONS: { value: Mode; label: string }[] = [
-  { value: 'simple', label: 'Simple' },
+  { value: 'edit', label: 'Edit' },
+  { value: 'run', label: 'Run' },
+  { value: 'animate', label: 'Animate' },
   { value: 'director', label: 'Director' },
-  { value: 'pro', label: 'Pro' },
 ];
 
 export function ModeSwitcher() {
