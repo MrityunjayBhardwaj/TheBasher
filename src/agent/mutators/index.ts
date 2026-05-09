@@ -36,6 +36,7 @@ import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
 import { addAIPassMutator } from './builders/addAIPass';
+import { addStitchMutator } from './builders/addStitch';
 
 export {
   rotateMutator,
@@ -51,6 +52,7 @@ export {
   retargetMutator,
   addPassMutator,
   addAIPassMutator,
+  addStitchMutator,
 };
 
 export function registerAllMutators(): void {
@@ -71,4 +73,6 @@ export function registerAllMutators(): void {
   registerMutator(addPassMutator);
   // P5 Wave C — AI render bridge
   registerMutator(addAIPassMutator);
+  // P5 Wave D — video stitch
+  registerMutator(addStitchMutator);
 }

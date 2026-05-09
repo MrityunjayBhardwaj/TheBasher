@@ -91,7 +91,7 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(13);
+    expect(mutators).toHaveLength(14);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -99,6 +99,7 @@ describe('mutator catalog', () => {
       'mutator.duplicate',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
+      'mutator.render.addStitch',
       'mutator.rotate',
       'mutator.scale',
       'mutator.setMaterialColor',
@@ -570,7 +571,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(13);
+    expect(parsed.mutators).toHaveLength(14);
   });
 });
 
@@ -1367,5 +1368,139 @@ describe('mutator.render.addAIPass', () => {
       // No reserved chars survive in the constructed path.
       expect(params.outputPath).not.toMatch(/[[\].:]/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P5 Wave D — addStitch Mutator (THESIS §28, §44)
+// ---------------------------------------------------------------------------
+
+import { addStitchMutator } from './builders/addStitch';
+
+function buildSceneWithJobAndWorkflow(): DagState {
+  let s = buildSceneWithJobAndPasses();
+  // Add a Prompt + ComfyUIWorkflow as if addAIPass had been called.
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'prompt',
+    nodeType: 'Prompt',
+    params: { text: 'a cube', negative: '', tags: [] },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'cw',
+    nodeType: 'ComfyUIWorkflow',
+    params: {
+      presetId: 'stylizedRealism',
+      frameStart: 0,
+      frameEnd: 4,
+      lastGoodFrame: -1,
+      outputPath: 'renders/job/stylized_stylizedRealism',
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'prompt', socket: 'out' },
+    to: { node: 'cw', socket: 'prompt' },
+  }).next;
+  for (const id of ['beauty', 'depth', 'normal'] as const) {
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: id, socket: 'out' },
+      to: { node: 'cw', socket: 'pass-input' },
+    }).next;
+  }
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'time', socket: 'out' },
+    to: { node: 'cw', socket: 'time' },
+  }).next;
+  return s;
+}
+
+describe('mutator.render.addStitch', () => {
+  it('emits VideoStitch + 2 connect ops; outputPath defaults to ${jobOutputPath}/final.mp4', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'cw' },
+      state,
+      'add stitch',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(3);
+    expect(r.ops[0].type).toBe('addNode');
+    if (r.ops[0].type === 'addNode') {
+      expect(r.ops[0].nodeType).toBe('VideoStitch');
+      const params = r.ops[0].params as {
+        codec: string;
+        fps: number;
+        outputPath: string;
+      };
+      expect(params.codec).toBe('h264');
+      expect(params.outputPath).toBe('renders/job/final.mp4');
+    }
+    const connects = r.ops.slice(1).filter((o) => o.type === 'connect');
+    expect(connects).toHaveLength(2);
+  });
+
+  it('rejects when workflowId is not a ComfyUIWorkflow', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'beauty' },
+      state,
+      'wrong type',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects when jobId is not a RenderJob', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      { jobId: 'box', workflowId: 'cw' },
+      state,
+      'wrong job',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('explicit outputPath overrides default', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      {
+        jobId: 'job',
+        workflowId: 'cw',
+        outputPath: 'renders/custom/movie.mp4',
+      },
+      state,
+      'custom path',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    if (r.ops[0].type === 'addNode') {
+      const params = r.ops[0].params as { outputPath: string };
+      expect(params.outputPath).toBe('renders/custom/movie.mp4');
+    }
+  });
+
+  it('twice-call deterministic for same spec', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const a = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'cw', stitchId: 's' },
+      state,
+      'a',
+    );
+    const b = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'cw', stitchId: 's' },
+      state,
+      'a',
+    );
+    expect(a).toEqual(b);
   });
 });
