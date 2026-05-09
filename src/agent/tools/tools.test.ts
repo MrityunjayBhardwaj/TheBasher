@@ -33,10 +33,10 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('tool registry', () => {
-  it('registers all eleven tools', () => {
+  it('registers all twelve tools', () => {
     registerAllTools();
     const tools = listTools();
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(12);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'agent.getStrategy',
@@ -44,6 +44,7 @@ describe('tool registry', () => {
       'agent.listMutators',
       'agent.listStrategies',
       'agent.proposePlan',
+      'agent.render.summarizePass',
       'camera.snapshot',
       'character.walkTo',
       'dag.exec',
@@ -78,8 +79,12 @@ describe('tool registry', () => {
 
 function buildBaselineCharacter(): DagState {
   let state = emptyDagState();
-  state = applyOp(state, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} })
-    .next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: 'time',
+    nodeType: 'TimeSource',
+    params: {},
+  }).next;
   state = applyOp(state, { type: 'addNode', nodeId: 'sk', nodeType: 'Skeleton', params: {} }).next;
   state = applyOp(state, {
     type: 'addNode',
@@ -162,7 +167,7 @@ describe('character.walkTo tool', () => {
   it('throws for missing navmesh', () => {
     const state = buildBaselineCharacter();
     // Remove the navmesh
-    const { 'nav': _removed, ...rest } = state.nodes;
+    const { nav: _removed, ...rest } = state.nodes;
     void _removed;
     const ctx: ToolContext = { dagState: { ...state, nodes: rest } };
     expect(() =>
@@ -313,14 +318,7 @@ describe('library.import tool', () => {
 
     // Structure: addNode gltf → addNode transform → connect → addNode group → connect → connect
     const types1 = result1.ops.map((o) => o.type);
-    expect(types1).toEqual([
-      'addNode',
-      'addNode',
-      'connect',
-      'addNode',
-      'connect',
-      'connect',
-    ]);
+    expect(types1).toEqual(['addNode', 'addNode', 'connect', 'addNode', 'connect', 'connect']);
 
     // The second result is structurally identical
     const types2 = result2.ops.map((o) => o.type);
@@ -344,9 +342,9 @@ describe('library.import tool', () => {
 
   it('throws when scene output is missing', () => {
     const ctx: ToolContext = { dagState: emptyDagState() };
-    expect(() =>
-      libraryImportTool.handler({ assetRef: 'assets/cube.gltf' }, ctx),
-    ).toThrow('no Scene output');
+    expect(() => libraryImportTool.handler({ assetRef: 'assets/cube.gltf' }, ctx)).toThrow(
+      'no Scene output',
+    );
   });
 });
 
@@ -474,5 +472,139 @@ describe('dag.exec tool', () => {
       ops: [],
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P4 Wave C — agent.render.summarizePass
+// ---------------------------------------------------------------------------
+
+import { renderSummarizePassTool } from './renderSummarizePass';
+
+function buildJobScene(): DagState {
+  let s = emptyDagState();
+  s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'cam',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, position: [0, 0, 5] },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'box',
+    nodeType: 'BoxMesh',
+    params: { size: [1, 1, 1] },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'cam', socket: 'out' },
+    to: { node: 'scene', socket: 'camera' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'box', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'job',
+    nodeType: 'RenderJob',
+    params: { jobId: 'jobA', frameStart: 0, frameEnd: 60, fps: 30, outputPath: 'renders/jobA' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'time', socket: 'out' },
+    to: { node: 'job', socket: 'time' },
+  }).next;
+  for (const [passId, nodeType] of [
+    ['beauty', 'BeautyPass'],
+    ['idp', 'IDPass'],
+  ] as const) {
+    s = applyOp(s, { type: 'addNode', nodeId: passId, nodeType, params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: passId, socket: 'scene' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: passId, socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: passId, socket: 'time' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: passId, socket: 'out' },
+      to: { node: 'job', socket: 'pass-input' },
+    }).next;
+  }
+  return s;
+}
+
+describe('agent.render.summarizePass tool', () => {
+  it('returns descriptor + sourceHash + storage path for a beauty pass at frame 0', () => {
+    const ctx: ToolContext = { dagState: buildJobScene() };
+    const r = renderSummarizePassTool.handler({ jobId: 'job', passKind: 'beauty', frame: 0 }, ctx);
+    expect(r.ops).toHaveLength(0);
+    expect(r.text).toBeTruthy();
+    const summary = JSON.parse(r.text!);
+    expect(summary.jobId).toBe('jobA');
+    expect(summary.passId).toBe('beauty');
+    expect(summary.passKind).toBe('beauty');
+    expect(summary.frame).toBe(0);
+    expect(summary.fps).toBe(30);
+    expect(summary.descriptor.format).toBe('rgba8');
+    expect(summary.outputPath).toBe('renders/jobA/beauty_0000.png');
+    expect(summary.sourceHash).toMatch(/^[0-9a-f]{8}$/);
+    expect(summary.ambiguous).toBe(false);
+  });
+
+  it('sourceHash flips between frames at different times', () => {
+    const ctx: ToolContext = { dagState: buildJobScene() };
+    const f0 = JSON.parse(
+      renderSummarizePassTool.handler({ jobId: 'job', passKind: 'beauty', frame: 0 }, ctx).text!,
+    );
+    const f30 = JSON.parse(
+      renderSummarizePassTool.handler({ jobId: 'job', passKind: 'beauty', frame: 30 }, ctx).text!,
+    );
+    expect(f0.sourceHash).not.toBe(f30.sourceHash);
+    expect(f30.outputPath).toBe('renders/jobA/beauty_0030.png');
+  });
+
+  it('id pass returns rgba16f format', () => {
+    const ctx: ToolContext = { dagState: buildJobScene() };
+    const r = renderSummarizePassTool.handler({ jobId: 'job', passKind: 'id', frame: 0 }, ctx);
+    const summary = JSON.parse(r.text!);
+    expect(summary.passKind).toBe('id');
+    expect(summary.descriptor.format).toBe('rgba16f');
+    expect(summary.outputPath).toBe('renders/jobA/id_0000.png');
+  });
+
+  it('errors when jobId is unknown', () => {
+    const ctx: ToolContext = { dagState: buildJobScene() };
+    const r = renderSummarizePassTool.handler({ jobId: 'nope', passKind: 'beauty', frame: 0 }, ctx);
+    expect(r.text).toContain('not found');
+  });
+
+  it('errors when no pass of the requested kind is connected', () => {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'job',
+      nodeType: 'RenderJob',
+      params: { jobId: 'lonely' },
+    }).next;
+    const r = renderSummarizePassTool.handler(
+      { jobId: 'job', passKind: 'beauty', frame: 0 },
+      { dagState: s },
+    );
+    expect(r.text).toContain('no passes connected');
   });
 });

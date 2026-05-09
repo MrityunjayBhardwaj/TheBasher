@@ -91,12 +91,13 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(11);
+    expect(mutators).toHaveLength(12);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
+      'mutator.render.addPass',
       'mutator.rotate',
       'mutator.scale',
       'mutator.setMaterialColor',
@@ -127,8 +128,11 @@ describe('mutator catalog', () => {
     registerAllMutators();
     for (const m of listMutators()) {
       const parse = m.spec.safeParse(m.specExample);
-      expect(parse.success, `Mutator "${m.name}" specExample failed its own spec.parse: ` +
-        (parse.success ? '' : parse.error.message)).toBe(true);
+      expect(
+        parse.success,
+        `Mutator "${m.name}" specExample failed its own spec.parse: ` +
+          (parse.success ? '' : parse.error.message),
+      ).toBe(true);
     }
   });
 
@@ -186,8 +190,18 @@ describe('rotate mutator', () => {
 
   it('twice-call returns the same Op[] (deterministic)', () => {
     const state = buildScene();
-    const a = validatePlan(rotateMutator, { targetSelectors: ['box'], axis: 'y', deltaDeg: 90 }, state, 'r');
-    const b = validatePlan(rotateMutator, { targetSelectors: ['box'], axis: 'y', deltaDeg: 90 }, state, 'r');
+    const a = validatePlan(
+      rotateMutator,
+      { targetSelectors: ['box'], axis: 'y', deltaDeg: 90 },
+      state,
+      'r',
+    );
+    const b = validatePlan(
+      rotateMutator,
+      { targetSelectors: ['box'], axis: 'y', deltaDeg: 90 },
+      state,
+      'r',
+    );
     expect(a).toEqual(b);
   });
 
@@ -224,12 +238,7 @@ describe('translate mutator', () => {
 describe('scale mutator', () => {
   it('scales BoxMesh size by uniform factor', () => {
     const state = buildScene();
-    const result = validatePlan(
-      scaleMutator,
-      { targetSelectors: ['box'], factor: 2 },
-      state,
-      's',
-    );
+    const result = validatePlan(scaleMutator, { targetSelectors: ['box'], factor: 2 }, state, 's');
     expect(result.ok).toBe(true);
     if (result.ok) {
       const op = result.ops[0];
@@ -350,12 +359,7 @@ describe('duplicate mutator', () => {
 describe('deleteNode mutator', () => {
   it('emits disconnect for each consumer, then removeNode', () => {
     const state = buildScene();
-    const result = validatePlan(
-      deleteNodeMutator,
-      { targetSelectors: ['box'] },
-      state,
-      'del',
-    );
+    const result = validatePlan(deleteNodeMutator, { targetSelectors: ['box'] }, state, 'del');
     expect(result.ok).toBe(true);
     if (result.ok) {
       const disconnects = result.ops.filter((o) => o.type === 'disconnect');
@@ -498,7 +502,10 @@ describe('validatePlan — five gates', () => {
     // gate guards against drift between contract and spec.
     const fakeMutator = {
       ...rotateMutator,
-      contract: { ...rotateMutator.contract, requiredEdges: ['parent' as const, 'children' as const] },
+      contract: {
+        ...rotateMutator.contract,
+        requiredEdges: ['parent' as const, 'children' as const],
+      },
       buildClosureSpec: () => ({
         rootSelectors: ['box'],
         followedEdges: ['parent' as const], // missing 'children'
@@ -562,7 +569,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(11);
+    expect(parsed.mutators).toHaveLength(12);
   });
 });
 
@@ -701,12 +708,7 @@ describe('mutator.timeline.addLayer', () => {
       nodeType: 'AnimationLayer',
       params: {},
     }).next;
-    const r = validatePlan(
-      addLayerMutator,
-      { targetSelectors: ['wrapper'] },
-      state,
-      'rewrap',
-    );
+    const r = validatePlan(addLayerMutator, { targetSelectors: ['wrapper'] }, state, 'rewrap');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
   });
@@ -968,12 +970,130 @@ describe('mutator.shot.create', () => {
 
   it('rejects when cameraId points at a non-Camera node (gate 4)', () => {
     const state = stateWithCamera();
+    const r = validatePlan(shotCreateMutator, { cameraId: 'box', sceneId: 'scene' }, state, 's');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P4 Wave C — render Mutators (THESIS §43)
+// ---------------------------------------------------------------------------
+
+import { addPassMutator } from './builders/addPass';
+
+function buildSceneWithJob(): DagState {
+  let s = buildSceneWithTime();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'cam',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, position: [0, 0, 5] },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'cam', socket: 'out' },
+    to: { node: 'scene', socket: 'camera' },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'job',
+    nodeType: 'RenderJob',
+    params: { jobId: 'job', frameStart: 0, frameEnd: 1, fps: 30 },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'time', socket: 'out' },
+    to: { node: 'job', socket: 'time' },
+  }).next;
+  return s;
+}
+
+describe('mutator.render.addPass', () => {
+  it('beauty: emits addNode + 4 connect ops (scene/camera/time + job)', () => {
+    const state = buildSceneWithJob();
     const r = validatePlan(
-      shotCreateMutator,
-      { cameraId: 'box', sceneId: 'scene' },
+      addPassMutator,
+      { jobId: 'job', passKind: 'beauty', passId: 'job_beauty' },
       state,
-      's',
+      'add beauty',
     );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(5);
+    const addOp = r.ops[0];
+    expect(addOp.type).toBe('addNode');
+    if (addOp.type === 'addNode') {
+      expect(addOp.nodeType).toBe('BeautyPass');
+      expect(addOp.nodeId).toBe('job_beauty');
+    }
+    const connects = r.ops.filter((o) => o.type === 'connect');
+    expect(connects).toHaveLength(4);
+    // Final connect lands on the job's pass-input socket.
+    const tail = connects[connects.length - 1];
+    if (tail.type === 'connect') {
+      expect(tail.to).toEqual({ node: 'job', socket: 'pass-input' });
+      expect(tail.from).toEqual({ node: 'job_beauty', socket: 'out' });
+    }
+  });
+
+  it('id: picks IDPass node type', () => {
+    const state = buildSceneWithJob();
+    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'id' }, state, 'add id');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const addOp = r.ops[0];
+    if (addOp.type === 'addNode') {
+      expect(addOp.nodeType).toBe('IDPass');
+      expect(addOp.nodeId).toBe('job_id');
+    }
+  });
+
+  it('twice-call deterministic for same spec', () => {
+    const state = buildSceneWithJob();
+    const a = validatePlan(
+      addPassMutator,
+      { jobId: 'job', passKind: 'beauty', passId: 'job_beauty' },
+      state,
+      'a',
+    );
+    const b = validatePlan(
+      addPassMutator,
+      { jobId: 'job', passKind: 'beauty', passId: 'job_beauty' },
+      state,
+      'a',
+    );
+    expect(a).toEqual(b);
+  });
+
+  it('rejects when jobId targets a non-RenderJob (gate 4)', () => {
+    const state = buildSceneWithJob();
+    const r = validatePlan(
+      addPassMutator,
+      { jobId: 'box', passKind: 'beauty' },
+      state,
+      'wrong target',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects when no Scene exists (gate 4)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 45, position: [0, 0, 5] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'job',
+      nodeType: 'RenderJob',
+      params: { jobId: 'job' },
+    }).next;
+    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'beauty' }, s, 'no scene');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
   });

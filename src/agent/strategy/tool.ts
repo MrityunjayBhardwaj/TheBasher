@@ -20,12 +20,12 @@ const STRATEGY_TOPICS = [
   'assetChoice',
   'spawnWithProperties',
   'animation',
+  'rendering',
 ] as const satisfies readonly StrategyTopic[];
 
 // Compile-time check: STRATEGY_TOPICS covers every StrategyTopic.
-type _CheckExhaustive = Exclude<StrategyTopic, typeof STRATEGY_TOPICS[number]> extends never
-  ? true
-  : never;
+type _CheckExhaustive =
+  Exclude<StrategyTopic, (typeof STRATEGY_TOPICS)[number]> extends never ? true : never;
 const _checkExhaustive: _CheckExhaustive = true;
 void _checkExhaustive;
 
@@ -59,9 +59,7 @@ export const listStrategiesTool: ToolDefinition<Record<string, never>> = {
 // ---------------------------------------------------------------------------
 
 const getStrategySchema = z.object({
-  topic: z
-    .enum(STRATEGY_TOPICS)
-    .describe('Strategy topic. Call agent.listStrategies if unsure.'),
+  topic: z.enum(STRATEGY_TOPICS).describe('Strategy topic. Call agent.listStrategies if unsure.'),
 });
 
 export type GetStrategyArgs = z.infer<typeof getStrategySchema>;

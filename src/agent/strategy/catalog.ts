@@ -328,6 +328,82 @@ look elastic; linear gives the cartoon stair-step look.
   "channelId not in DAG".`,
 };
 
+const RENDERING: StrategyResource = {
+  topic: 'rendering',
+  description:
+    'How to render frames to disk — RenderJob + addPass composition + per-frame summarize.',
+  body: `# Rendering (P4 — render graph = render nodes)
+
+Rendering is data, not code. Every render job is a node; every pass is a
+node; the per-frame dispatch reads them and writes PNGs through
+StorageCapability. The agent composes a render the same way it composes
+any other edit.
+
+## The two-step sequence
+
+To render \`scene\` from \`camera\` for the next 2 seconds with a beauty +
+id pass:
+
+1. **Add a RenderJob via dag.exec** (no Mutator yet — RenderJob is opt-in
+   and most projects don't seed one):
+   \`\`\`json
+   { "type": "addNode", "nodeId": "job",
+     "nodeType": "RenderJob",
+     "params": {
+       "jobId": "my_job",
+       "frameStart": 0,
+       "frameEnd": 60,
+       "fps": 30,
+       "outputPath": "renders/my_job"
+     } }
+   \`\`\`
+
+2. **Attach passes via mutator.render.addPass** (one Mutator per pass):
+   \`\`\`json
+   { "mutator": "mutator.render.addPass",
+     "spec": { "jobId": "job", "passKind": "beauty" } }
+   \`\`\`
+   \`\`\`json
+   { "mutator": "mutator.render.addPass",
+     "spec": { "jobId": "job", "passKind": "id" } }
+   \`\`\`
+
+The Mutator auto-resolves the project's Scene + Camera + TimeSource and
+wires all three into the new pass. If multiple Scenes / Cameras exist,
+pass \`sceneId\` / \`cameraId\` explicitly.
+
+## Pass kinds (v0.5)
+
+| passKind  | Purpose                              | Format    |
+|-----------|--------------------------------------|-----------|
+| \`beauty\`  | Final composited RGB output         | rgba8     |
+| \`id\`      | Per-object instance ID buffer       | rgba16f   |
+
+Other passes from THESIS §43 (depth, normal, albedo, alpha, motionVector)
+land in P5 / on demand — they're not in v0.5's pass catalog yet.
+
+## Describing a frame
+
+\`agent.render.summarizePass({ jobId, passKind, frame })\` returns the
+pass's sourceHash + descriptor + the storage path it writes to. The
+sourceHash flips when the scene, camera, params, or time change — equal
+hash means equal pixels (V2 / §51 caching). Use this when the user asks
+"is this frame different from frame N" or "what's the cost of rendering
+this".
+
+## What NOT to do
+
+- Don't widen \`mesh.add\` or any spawn tool with render params — V14 says
+  property changes go through Mutators, not the spawn tool.
+- Don't dispatch directly to a pass node's params via setParam to "render
+  it" — the pass evaluator returns metadata; actual frames write through
+  the RenderJob's run side, not via DAG mutation.
+- Don't add a RenderJob to a project that already has one without
+  user confirmation — \`dag.inspect\` first; rendering jobs are sticky.
+- Don't rely on a default \`outputPath\` — pass it explicitly. The default
+  ("renders/job") collides if the project ever grows a second job.`,
+};
+
 export function registerAllStrategies(): void {
   registerStrategy(UNITS);
   registerStrategy(MATERIALS);
@@ -336,4 +412,5 @@ export function registerAllStrategies(): void {
   registerStrategy(ASSET_CHOICE);
   registerStrategy(SPAWN_WITH_PROPERTIES);
   registerStrategy(ANIMATION);
+  registerStrategy(RENDERING);
 }
