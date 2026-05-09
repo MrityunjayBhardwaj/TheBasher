@@ -91,9 +91,10 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(10);
+    expect(mutators).toHaveLength(11);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
+      'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.rotate',
@@ -561,7 +562,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(10);
+    expect(parsed.mutators).toHaveLength(11);
   });
 });
 

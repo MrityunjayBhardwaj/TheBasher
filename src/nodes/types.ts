@@ -411,6 +411,18 @@ export interface CutValue {
 }
 
 // ---------------------------------------------------------------------------
+// P3.1 — Animation import + retargeting (THESIS §42.1)
+// ---------------------------------------------------------------------------
+
+/** Source-bone-name → target-bone-name lookup, plus optional human label. */
+export interface BoneNameMapValue {
+  readonly kind: 'BoneNameMap';
+  readonly name: string;
+  /** Bone-name pairs as a record. */
+  readonly map: Readonly<Record<string, string>>;
+}
+
+// ---------------------------------------------------------------------------
 // Scene (socket type: 'Scene')
 // ---------------------------------------------------------------------------
 

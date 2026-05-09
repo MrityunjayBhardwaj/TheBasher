@@ -7,6 +7,7 @@ import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
 import { AnimationLayerNode } from './AnimationLayer';
 import { AreaLightNode } from './AreaLight';
+import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { CharacterNode } from './Character';
 import { CutNode } from './Cut';
@@ -71,6 +72,7 @@ const ALL: NodeDefinition[] = [
   AnimationLayerNode as unknown as NodeDefinition,
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,
+  BoneNameMapNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

@@ -72,7 +72,9 @@ export type SocketTypeName =
   | 'KeyframeChannel'
   | 'AnimationLayer'
   | 'Shot'
-  | 'Cut';
+  | 'Cut'
+  // P3.1 — Animation import + retargeting (THESIS §42.1)
+  | 'BoneNameMap';
 
 export type Cardinality = 'single' | 'list';
 

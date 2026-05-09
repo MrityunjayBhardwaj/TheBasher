@@ -14,12 +14,39 @@
 //   - Per-bone tracks merged into flat (bone, time, position, rotation)
 //     keyframe entries; bones without a position track inherit bind-pose.
 
-import { Euler, Quaternion, type Bone } from 'three';
+import {
+  AnimationClip,
+  Bone,
+  Euler,
+  QuaternionKeyframeTrack,
+  Quaternion,
+  Skeleton,
+  VectorKeyframeTrack,
+} from 'three';
 import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
+
+/**
+ * Sanitize a bone name for THREE-track-binding safety. THREE reserves
+ * `[].:/` as track-path syntax (PropertyBinding._RESERVED_CHARS_RE);
+ * any of those in a bone name breaks `node.property` lookups during
+ * AnimationMixer binding (and thus SkeletonUtils.retargetClip).
+ *
+ * Mixamo's `mixamorig:Hips` is the canonical case — replace `:` with
+ * `_` so the namespace is visible (`mixamorig_Hips`) but the rest of
+ * the rig pipeline can read it as a plain identifier.
+ *
+ * Round-trip cost: importing then re-exporting a Mixamo FBX would lose
+ * the original namespace separator. Acceptable for v0.5; export is P7.
+ */
+export function sanitizeBoneName(name: string): string {
+  return name.replace(/[[\].:/]/g, '_');
+}
 
 export function bonesToSpec(bones: readonly Bone[]): BoneSpec[] {
   // THREE bones carry parent references. Build a name → index map so we
   // can resolve parent indices in one pass. Root bones have parent = -1.
+  // Index by ORIGINAL name (THREE-side) so parent links stay correct;
+  // sanitize only the value we project into the POJO BoneSpec.
   const indexByName = new Map<string, number>();
   bones.forEach((b, i) => indexByName.set(b.name, i));
 
@@ -28,7 +55,7 @@ export function bonesToSpec(bones: readonly Bone[]): BoneSpec[] {
     const parentIdx =
       parent && (parent as Bone).isBone ? (indexByName.get(parent.name) ?? -1) : -1;
     return {
-      name: bone.name,
+      name: sanitizeBoneName(bone.name),
       parent: parentIdx,
       position: [bone.position.x, bone.position.y, bone.position.z] as const,
       rotation: quaternionToEulerVec3(bone.quaternion),
@@ -118,13 +145,88 @@ export function clipToKeyframes(
 
 function parseTrackName(name: string): { bone: string; property: string } | null {
   const bracket = name.match(/\.bones\[([^\]]+)\]\.(\w+)/);
-  if (bracket) return { bone: bracket[1], property: bracket[2] };
+  if (bracket) return { bone: sanitizeBoneName(bracket[1]), property: bracket[2] };
   const dot = name.match(/^\.?([^.]+)\.(\w+)$/);
-  if (dot) return { bone: dot[1], property: dot[2] };
+  if (dot) return { bone: sanitizeBoneName(dot[1]), property: dot[2] };
   return null;
 }
 
 export function quaternionToEulerVec3(q: Quaternion): Vec3 {
   const e = new Euler().setFromQuaternion(q, 'XYZ');
   return [e.x, e.y, e.z] as const;
+}
+
+// ---------------------------------------------------------------------------
+// Inverse adapters — POJO → THREE. Used by retargeting (Wave C) which
+// needs THREE.Skeleton + THREE.AnimationClip to call SkeletonUtils
+// upstream APIs.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a THREE.Skeleton from a BoneSpec[]. Each Bone gets its bind-pose
+ * position + rotation; parent references are wired by parent index.
+ *
+ * Returns the skeleton + the constructed bones (callers like retargetClip
+ * also want a root Object3D handle for traversal).
+ */
+export function specToThreeSkeleton(specs: readonly BoneSpec[]): {
+  skeleton: Skeleton;
+  bones: Bone[];
+} {
+  const bones: Bone[] = specs.map((s) => {
+    const b = new Bone();
+    b.name = s.name;
+    b.position.set(s.position[0], s.position[1], s.position[2]);
+    b.quaternion.setFromEuler(new Euler(s.rotation[0], s.rotation[1], s.rotation[2], 'XYZ'));
+    return b;
+  });
+  for (let i = 0; i < specs.length; i++) {
+    const parentIdx = specs[i].parent;
+    if (parentIdx >= 0 && parentIdx < bones.length) {
+      bones[parentIdx].add(bones[i]);
+    }
+  }
+  return { skeleton: new Skeleton(bones), bones };
+}
+
+/**
+ * Build a THREE.AnimationClip from our flat keyframe model. Groups
+ * keyframes by bone, emits one VectorKeyframeTrack (.position) and one
+ * QuaternionKeyframeTrack (.quaternion) per bone that has keyframes.
+ */
+export function paramsToThreeClip(
+  name: string,
+  duration: number,
+  keyframes: readonly AnimationKeyframe[],
+  bones: readonly BoneSpec[],
+): AnimationClip {
+  type PerBone = { times: number[]; positions: number[]; quats: number[] };
+  const grouped = new Map<number, PerBone>();
+  // Stable order: by bone, then time.
+  const sortedKfs = [...keyframes].sort((a, b) => a.bone - b.bone || a.time - b.time);
+  for (const kf of sortedKfs) {
+    let entry = grouped.get(kf.bone);
+    if (!entry) {
+      entry = { times: [], positions: [], quats: [] };
+      grouped.set(kf.bone, entry);
+    }
+    entry.times.push(kf.time);
+    entry.positions.push(kf.position[0], kf.position[1], kf.position[2]);
+    const q = new Quaternion().setFromEuler(
+      new Euler(kf.rotation[0], kf.rotation[1], kf.rotation[2], 'XYZ'),
+    );
+    entry.quats.push(q.x, q.y, q.z, q.w);
+  }
+
+  const tracks = [];
+  for (const [boneIdx, entry] of grouped.entries()) {
+    const boneName = bones[boneIdx]?.name ?? `bone_${boneIdx}`;
+    tracks.push(
+      new VectorKeyframeTrack(`${boneName}.position`, entry.times, entry.positions),
+    );
+    tracks.push(
+      new QuaternionKeyframeTrack(`${boneName}.quaternion`, entry.times, entry.quats),
+    );
+  }
+  return new AnimationClip(name, duration > 0 ? duration : -1, tracks);
 }

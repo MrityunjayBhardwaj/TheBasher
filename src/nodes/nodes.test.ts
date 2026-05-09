@@ -38,6 +38,7 @@ const ALL_TYPES = [
   'AnimationClip',
   'AnimationLayer',
   'AreaLight',
+  'BoneNameMap',
   'BoxMesh',
   'Character',
   'Cut',
