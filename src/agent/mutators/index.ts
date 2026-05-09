@@ -35,6 +35,7 @@ import { keyframeMutator } from './builders/keyframe';
 import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
+import { addAIPassMutator } from './builders/addAIPass';
 
 export {
   rotateMutator,
@@ -49,6 +50,7 @@ export {
   shotCreateMutator,
   retargetMutator,
   addPassMutator,
+  addAIPassMutator,
 };
 
 export function registerAllMutators(): void {
@@ -67,4 +69,6 @@ export function registerAllMutators(): void {
   registerMutator(retargetMutator);
   // P4 Wave C — render graph
   registerMutator(addPassMutator);
+  // P5 Wave C — AI render bridge
+  registerMutator(addAIPassMutator);
 }
