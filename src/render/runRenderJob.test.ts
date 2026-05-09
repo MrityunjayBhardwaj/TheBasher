@@ -202,4 +202,9 @@ describe('V8 — file-rooted dispatch rule (src/render/* must not emit Ops)', ()
     const file = readFileSync(path.resolve(__dirname, 'encoders/stubEncoder.ts'), 'utf-8');
     expect(file).not.toMatch(FORBIDDEN_IMPORTS);
   });
+
+  it('dryRun.ts does not import dag store or op machinery (P5 Wave A5)', () => {
+    const file = readFileSync(path.resolve(__dirname, 'dryRun.ts'), 'utf-8');
+    expect(file).not.toMatch(FORBIDDEN_IMPORTS);
+  });
 });
