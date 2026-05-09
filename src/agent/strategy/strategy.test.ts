@@ -22,7 +22,7 @@ describe('strategy catalog', () => {
   it('registerAllStrategies registers all starter resources', () => {
     registerAllStrategies();
     const all = listStrategies();
-    expect(all).toHaveLength(7);
+    expect(all).toHaveLength(8);
     const topics = all.map((s) => s.topic).sort();
     expect(topics).toEqual([
       'animation',
@@ -30,6 +30,7 @@ describe('strategy catalog', () => {
       'cameras',
       'lighting',
       'materials',
+      'rendering',
       'spawnWithProperties',
       'units',
     ]);
@@ -45,15 +46,15 @@ describe('strategy catalog', () => {
 
   it('refuses duplicate registration', () => {
     registerAllStrategies();
-    expect(() =>
-      registerStrategy({ topic: 'units', description: 'x', body: 'x' }),
-    ).toThrow('Strategy already registered: units');
+    expect(() => registerStrategy({ topic: 'units', description: 'x', body: 'x' })).toThrow(
+      'Strategy already registered: units',
+    );
   });
 
   it('listStrategyMetadata drops the body', () => {
     registerAllStrategies();
     const meta = listStrategyMetadata();
-    expect(meta).toHaveLength(7);
+    expect(meta).toHaveLength(8);
     for (const m of meta) {
       expect(m).toHaveProperty('topic');
       expect(m).toHaveProperty('description');
@@ -68,7 +69,7 @@ describe('agent.listStrategies tool', () => {
     const r = listStrategiesTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { strategies: { topic: string }[] };
-    expect(parsed.strategies).toHaveLength(7);
+    expect(parsed.strategies).toHaveLength(8);
   });
 });
 
@@ -82,8 +83,6 @@ describe('agent.getStrategy tool', () => {
 
   it('throws zod error for an unknown topic at parse time', () => {
     registerAllStrategies();
-    expect(() =>
-      getStrategyTool.paramSchema.parse({ topic: 'nonexistent' }),
-    ).toThrow();
+    expect(() => getStrategyTool.paramSchema.parse({ topic: 'nonexistent' })).toThrow();
   });
 });

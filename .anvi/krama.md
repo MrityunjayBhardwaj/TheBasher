@@ -87,27 +87,74 @@
 **REF:** THESIS.md §19; `src/agent/diff/forkedDag.ts:1` (createFork); `src/agent/diff/store.ts:1` (useDiffStore + acceptSelectedOps); `src/app/DiffBar.tsx:1` (accept/reject UI); `src/viewport/DiffOverlay.tsx:1` (ghost render)
 **Why it matters:** the Diff-first contract is the trust contract with the user. Break it once and the agent is disabled.
 
-### K4: Render job lifecycle (P4)
+### K4: Render job lifecycle (P4 — narrowed shipping shape)
 
-**Steps:**
+**Compose phase (DAG mutation, agent or user authored):**
 
-1. User triggers render (UI button OR agent `render.shot` macro).
-2. RenderJob node added to DAG with frame range, fps, output dir, pass list.
-3. Job worker walks frames sequentially.
-4. For each frame: set `Time` input → evaluate `scene` → for each pass: clone scene with material override → render to off-screen target → readback → encode → write file.
-5. Update progress UI per frame.
-6. On completion: finalize manifest; emit "render finished" event.
-7. On failure: persist last-good-frame index; allow resume.
+1. RenderJob node added to DAG via `dag.exec` (no Mutator yet — opt-in;
+   DEFAULT_OPS does not seed one). Params: jobId, frameStart, frameEnd,
+   fps, outputPath.
+2. RenderJob.time wired to project TimeSource (the singleton seeded by
+   PR #40 lock-in).
+3. For each desired pass: `mutator.render.addPass({ jobId, passKind })`.
+   Mutator auto-resolves Scene + Camera + TimeSource and connects them
+   into the new pass; final connect lands on `jobId.'pass-input'`.
+   Diff gates: V13 closure preservation (pass-input edge), V14 unique
+   contract signature.
+4. User accepts the Diff. DAG now describes the render plan.
+
+**Execute phase (impure side, runRenderJob in src/render/):**
+
+5. Caller invokes `runRenderJob(jobNodeId, dagState, { storage,
+   encoder })`. V8 file-rooted: NO Op emission from src/render/.
+6. Read JobResultValue at frame 0 to derive (frames.start..end, fps,
+   outputPath, passKinds[]).
+7. For each frame in [start, end]:
+   a. Build `EvalCtx { time: { frame, seconds=frame/fps, normalized=0 } }`.
+   b. For each pass-input ref: evaluate the pass at this ctx → ImageValue
+      (sourceHash flips per frame because Time threads through V3).
+   c. Resolve Scene + Camera by walking the pass node's input bindings
+      and evaluating each producer at the same ctx.
+   d. Hand (pass, scene, camera, frame, seconds) to the injectable
+      `PassEncoder` → PNG bytes.
+   e. Write via `StorageCapability.write(outputPath/passKind_NNNN.png,
+      bytes)`. V6 capability — no direct fs/opfs.
+8. Return RenderJobReport { jobId, framesWritten, passKinds, outputs[] }.
+
+**Describe phase (read-only, agent surface):**
+
+9. `agent.render.summarizePass({ jobId, passKind, frame })` evaluates
+   the matching pass at the requested frame and returns
+   `{ sourceHash, descriptor, outputPath, ambiguous }`. The agent
+   describes a render result by sourceHash without needing pixels.
 
 **Common violations:**
 
-- Reading "current viewport time" instead of frame-N time → render and viewport diverge.
-- Reusing material override targets across passes → race conditions, wrong colors.
-- Encoding on main thread → frame budget blown, viewport drops to 5fps during render.
-- No resume support → user re-renders 240 frames after one OOM.
+- Reading `ctx.realTime` or `Date.now()` inside a pass evaluator →
+  V2/V3 violation; lint catches via the no-impure-source rule for
+  `src/nodes/**`. RenderJob is the ONLY exception (pure: false), and
+  even RenderJob's evaluator only touches params, not ctx.time.
+- Importing the dispatcher from src/render/ → V8 violation; mechanical
+  textual import-only test in runRenderJob.test.ts fails CI.
+- Adding a pass node socket NOT named exactly `'pass-input'` (the
+  EdgeKind literal). The closure walker matches socket name to kind
+  string — typo → silent fall-through, sibling leak.
+- Reusing the same outputPath across two RenderJobs → frame collisions
+  on disk. Each job needs a unique prefix.
+- Encoding on main thread without yield (Wave B.1 Worker upgrade
+  candidate) — fine for 60-frame demos, blocks UI on long renders.
 
-**REF:** THESIS.md §27, §43
-**Why it matters:** P4 is the production-quality milestone. Users measure trust by render reliability.
+**REF:** THESIS.md §27, §43, §49, §51; vyapti V2/V3/V6/V8/V13/V14;
+hetvabhasa H22 (per-kind BFS isolation, now under live `'pass-input'`);
+`src/render/runRenderJob.ts`; `src/agent/mutators/builders/addPass.ts`;
+`src/agent/tools/renderSummarizePass.ts`.
+
+**Why it matters:** P4 is the seam between "agent describes a render"
+and "frames land on disk." Splitting compose (DAG mutation, Diff-
+mediated, user-accepted) from execute (impure, capability-mediated,
+side-effecting) keeps each phase auditable. The Diff log shows what
+the user authorized; storage shows what was produced; the sourceHash
+is the cross-link.
 
 ### K5: Project save/load lifecycle
 

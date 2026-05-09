@@ -812,3 +812,98 @@ Wave C Mutator catalog.
 
   **Next update trigger:** P4 (Render graph) or first second
   occurrence of name-resolution-at-asset-boundary failure.
+
+**Updated:** 2026-05-09 — post-P4 (Render graph = render nodes, narrowed scope):
+
+- **B7 (Agent identifier ↔ DAG node-set) span unchanged.** addPass's
+  closure spec (rootSelectors=[jobId], followedEdges=['pass-input'])
+  resolves a project-level node id, same exact-match shape as the
+  existing 11 Mutators. No new identifier surface.
+
+- **B8 (Mutator catalog ↔ Op constructor) extended.** 11 → 12 Mutators.
+  New: `mutator.render.addPass` — single Mutator parameterized by
+  passKind ('beauty' | 'id'), discriminated build step picks BeautyPass
+  vs IDPass node type. Closure spec uses 1 root selector (jobId);
+  followedEdges = ['pass-input'] so existing passes on the job sit in
+  scope alongside the root. V14 mechanical signature-uniqueness guard
+  passes (12-of-12 unique signatures).
+
+- **New node types BeautyPass + IDPass + RenderJob** (33 → 36; THESIS
+  §43 narrowed to 3 of 7 listed for v0.5; AO + Depth + Normal + Albedo
+  + Alpha + MotionVector deferred to P5+ on demand). BeautyPass + IDPass
+  are pure: true (Scene + Camera + Time → Image metadata only); RenderJob
+  is pure: false — the only impure node added in P4.
+
+- **New socket types Image + JobResult.** Image is a lazy value
+  (descriptor + sourceHash, no pixels until execution). JobResult is
+  RenderJob's metadata output. Neither is ungrounded — both have
+  ImageValue / JobResultValue POJO definitions with REF to THESIS
+  §43 + §51.
+
+- **B9 candidate: render execution layer ↔ DAG.** runRenderJob lives
+  in src/render/ (V8 file-rooted: no dispatch from this directory).
+  Reads DagState + writes via StorageCapability. The encoder is
+  injectable (PassEncoder) — production wires a real GL renderer;
+  tests + Wave B inject the deterministic `stubEncoder` (1x1 PNG keyed
+  off pass.sourceHash). Boundary not yet promoted: single observation,
+  single fix, no recurrence. Promote on second issue.
+
+- **H22 (per-edge-kind BFS isolation) holds under live 'pass-input'
+  socket.** RenderJob is the first node carrying a `pass-input` input
+  socket (string-keyed because the EdgeKind literal contains a hyphen).
+  Closure tests verify: closure rooted at jobA via 'pass-input' reaches
+  passA only; ['parent','pass-input'] from passA reaches jobA but does
+  NOT free-mix to siblings; 'pass-input' walk does NOT carry over to
+  other input-socket walks. Same isolation rule the 'animation' edge
+  kind locked in at P3.
+
+- **V8 file-rooted dispatch mechanically guarded.** runRenderJob.test.ts
+  contains a textual import-only regex that fails CI if src/render/*
+  ever imports a dispatcher (dagStore / useDagStore / dispatchAtomic /
+  core/dag/ops). Same enforcement style as STRATEGY_TOPICS.
+
+- **Locked decisions (project_p4_prompt):**
+  - PostFx config home: deferred to Wave B revisit (real-time vs
+    render-time coupling will reveal the seam). RenderOutput.params
+    untouched.
+  - Mutator granularity: single addPass with passKind discriminator,
+    not per-kind Mutators. V14 satisfied with one signature.
+  - DEFAULT_OPS unchanged: fresh project does NOT seed a RenderJob.
+    Opt-in via dag.exec or addPass. Lock-in test (PR #40) untouched.
+  - Execution architecture: main-thread synchronous walk in Wave B;
+    Web Worker / OffscreenCanvas is a strategy swap (Wave B.1 / P5)
+    if profiling demands it.
+  - Pass scope: BeautyPass + IDPass only; THESIS §43 strict subset
+    (no amendment). The 5 deferred kinds slot in via the same
+    PassKind enum + node-type registration when P5's AI restyle
+    pipeline demands them.
+
+- **Fatality test (post-P4, 2026-05-09):**
+  1. Hetvabhasa: 24 entries unchanged. The Wave A → Wave B → Wave C
+     train surfaced one wrinkle (RenderJob socket name string-keyed
+     'pass-input' to match EdgeKind literal) — caught at test time,
+     fixed before commit. No new B-boundary clusters 3+.
+  2. Vyapti span: V13 ALIGNED (closure preservation gate enforces);
+     V14 ALIGNED (12-of-12 mechanical signature uniqueness); V15
+     ALIGNED (rendering strategy resource separated, not in system
+     prompt). All re-verified.
+  3. Krama crossing: addPass → runRenderJob is a NEW two-step
+     lifecycle (compose Diff in DAG, then trigger execution that
+     writes via StorageCapability). The split is intentional — the
+     Diff system is for DAG mutation; render execution is a side
+     channel. Boundary count = 2 (DAG → Storage), under the H22
+     fatality threshold.
+
+  **Verdict: organization remains sound after P4.** RenderJob's
+  pure: false marking + the impure execution layer in src/render/
+  match the locked decision; H22 isolation extends cleanly to the
+  new edge kind; no new B-boundary triggers promotion. The
+  not-yet-wired runJob tool (agent → live PNG output) is a
+  Wave B.1 / P5 task — the Mutator + summarizePass surface lets
+  the agent COMPOSE + DESCRIBE renders today; LIVE EXECUTE is a
+  UI/follow-up concern that needs a real GL encoder + ToolContext
+  storage extension.
+
+  **Next update trigger:** P5 (AI Render Bridge) — ComfyUI wiring
+  will exercise the pass-output describable contract. Expect
+  pressure to add Depth + Normal passes for ControlNet inputs.

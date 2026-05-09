@@ -423,6 +423,80 @@ export interface BoneNameMapValue {
 }
 
 // ---------------------------------------------------------------------------
+// P4 — Render graph = render nodes (THESIS §43)
+//
+// `Image` is a lazy value: pre-render it carries only a content-hash + the
+// pixel-buffer descriptor (width / height / format). The actual pixels are
+// produced at RenderJob execution time (Wave B). Keeping the pure-graph
+// value as POJO metadata preserves V2/V3 — pass evaluators stay
+// `pure: true` and the agent can deductively reason about whether a pass
+// result is reusable from the descriptor + sourceHash alone.
+//
+// `passKind` discriminates which renderer-side dispatch the pass routes
+// through at execution time. Wave A ships beauty + id; the field is open
+// so P5+ on-demand passes (depth / normal / albedo / ao / motion) slot in
+// without widening the socket type.
+// ---------------------------------------------------------------------------
+
+export type ImageFormat = 'rgba8' | 'r8' | 'r16f' | 'rgba16f';
+export type ImagePassKind = 'beauty' | 'id';
+
+export interface ImageDescriptor {
+  readonly width: number;
+  readonly height: number;
+  readonly format: ImageFormat;
+}
+
+export interface ImageValue {
+  readonly kind: 'Image';
+  /** Which pass produced this image — drives execution-side dispatch. */
+  readonly passKind: ImagePassKind;
+  readonly descriptor: ImageDescriptor;
+  /**
+   * Stable content hash over (passKind, params, scene, camera, time). Equal
+   * sourceHash means the pass would render identical pixels — the agent
+   * can describe a pass result by this handle (frame N, kind K, hash H).
+   */
+  readonly sourceHash: string;
+}
+
+/** Default Image descriptor for fresh pass nodes. 1280x720 rgba8 (P4 §43). */
+export const DEFAULT_IMAGE_DESCRIPTOR: ImageDescriptor = {
+  width: 1280,
+  height: 720,
+  format: 'rgba8',
+};
+
+// ---------------------------------------------------------------------------
+// JobResult — RenderJob's output (a metadata record describing the dispatch)
+//
+// JobResult is what the RenderJob evaluator returns. It does NOT contain the
+// pixel data — pixels go to disk via StorageCapability at execution time
+// (runRenderJob, src/render/). The value is a deductive contract: which
+// frames will be (or were) rendered, which passes were dispatched, where
+// the bytes land. The agent can describe a render plan from this alone
+// without needing to actually run it.
+// ---------------------------------------------------------------------------
+
+export interface FrameRange {
+  readonly start: number;
+  readonly end: number;
+  readonly fps: number;
+}
+
+export interface JobResultValue {
+  readonly kind: 'JobResult';
+  readonly jobId: string;
+  readonly frames: FrameRange;
+  readonly passKinds: readonly ImagePassKind[];
+  /**
+   * Output path prefix in StorageCapability — frames write to
+   * `${outputPath}/${passKind}_${frame.toString().padStart(4,'0')}.png`.
+   */
+  readonly outputPath: string;
+}
+
+// ---------------------------------------------------------------------------
 // Scene (socket type: 'Scene')
 // ---------------------------------------------------------------------------
 
