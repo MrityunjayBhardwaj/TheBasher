@@ -24,6 +24,7 @@ import {
 import { addPrimitive } from './AddMenu';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { exportDagJson } from './exportDag';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -204,28 +205,7 @@ async function onDelete() {
   await deleteProject(current.id);
 }
 
-function onExportDagJson() {
-  const current = useProjectStore.getState().current;
-  const dag = useDagStore.getState().state;
-  const project = current ?? { id: 'untitled', name: 'Untitled' };
-  const payload = {
-    formatVersion: 1,
-    id: project.id,
-    name: project.name,
-    state: dag,
-    exportedAt: Date.now(),
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${project.name.replace(/\s+/g, '-').toLowerCase() || 'project'}.basher.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Free the blob URL on the next tick — readers will already hold the bytes.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
+// onExportDagJson moved to ./exportDag.ts (P6 W2 — TopToolbar shares the path)
 
 function onExportGltf() {
   // Stub — full glTF export pipeline lands with the render graph (P4).
@@ -350,7 +330,7 @@ export function MenuBar() {
         />
         <Item
           label="Export DAG as JSON"
-          onSelect={onExportDagJson}
+          onSelect={exportDagJson}
           testId="menu-file-export-json"
         />
       </Menu>
