@@ -150,6 +150,15 @@ export function boot(): Promise<void> {
       void import('./stores/selectionStore').then((m) => {
         w.__basher_selection = m.useSelectionStore;
       });
+      // P6 W2.6 — chromeStore exposed so e2e can drive panel collapse
+      // state without depending on the order of click-to-toggle tests.
+      // SceneTree default-collapsed (leftSidebarCollapsed=true) means
+      // tests that need to interact with tree rows must explicitly
+      // expand first; programmatic setLeftSidebarCollapsed(false) is
+      // less brittle than clicking the chevron.
+      void import('./stores/chromeStore').then((m) => {
+        w.__basher_chrome = m.useChromeStore;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;

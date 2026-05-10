@@ -175,16 +175,29 @@ test('P2.1#3 menu bar opens File/Edit/Select/View; items render', async ({ page 
 // stores aren't exposed to E2E directly).
 // ---------------------------------------------------------------------------
 
-test('P2.1#4 View → Toggle Grid flips NPanel grid toggle', async ({ page }) => {
-  // Open NPanel and read the grid button label class.
-  const gridBtn = page.getByTestId('npanel-toggle-grid');
-  const beforeClass = await gridBtn.getAttribute('class');
+test('P2.1#4 View → Toggle Grid flips viewportStore.gridVisible', async ({ page }) => {
+  // P6 W2.6 — NPanel was rebuilt as the canonical Inspector; its
+  // viewport-toggles section (grid / axis show-hide) was deleted in
+  // favor of W7's FloatingViewportToolbar. Until W7 lands, verify the
+  // menu's toggle-grid path via viewportStore directly — the menu
+  // still flips the underlying state; only the UI mirror moved.
+  await page.waitForFunction(() => {
+    type Win = { __basher_viewport?: unknown };
+    return Boolean((window as unknown as Win).__basher_viewport);
+  });
+  const before = await page.evaluate(() => {
+    type Win = { __basher_viewport?: { getState: () => { gridVisible: boolean } } };
+    return (window as unknown as Win).__basher_viewport!.getState().gridVisible;
+  });
 
   await page.getByTestId('menu-view-button').click();
   await page.getByTestId('menu-view-toggle-grid').click();
 
-  const afterClass = await gridBtn.getAttribute('class');
-  expect(afterClass).not.toBe(beforeClass);
+  const after = await page.evaluate(() => {
+    type Win = { __basher_viewport?: { getState: () => { gridVisible: boolean } } };
+    return (window as unknown as Win).__basher_viewport!.getState().gridVisible;
+  });
+  expect(after).not.toBe(before);
 });
 
 // ---------------------------------------------------------------------------
@@ -202,6 +215,17 @@ test('P2.1#5 SceneTree click selects → Inspector renders that node', async ({ 
   const id = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).sort()[0];
+  });
+
+  // P6 W2.6 — SceneTree default-collapsed; expand via dev seam so the
+  // tree row is reachable for the click.
+  await page.waitForFunction(() => {
+    type Win = { __basher_chrome?: unknown };
+    return Boolean((window as unknown as Win).__basher_chrome);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
 
   // Inspector starts on placeholder.

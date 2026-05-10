@@ -31,9 +31,15 @@ export interface ChromeStore extends ChromeState {
   toggleInspector: () => void;
 }
 
+// First-visit defaults. P6 W2.6: leftSidebarCollapsed defaults to true
+// because (a) the SceneTree gets out of the way until the user needs it,
+// (b) the viewport gets ~232 extra pixels of horizontal space on first
+// load, and (c) chromeStore persists the user's last expand/collapse so
+// returning users see what they chose, not the default. The chevron in
+// the collapsed strip is the always-visible expand affordance.
 const DEFAULT_STATE: ChromeState = {
   toolRailCollapsed: false,
-  leftSidebarCollapsed: false,
+  leftSidebarCollapsed: true,
   inspectorCollapsed: false,
 };
 

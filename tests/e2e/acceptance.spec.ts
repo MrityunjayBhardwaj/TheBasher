@@ -49,6 +49,16 @@ test('#2 default project has the 4-node DAG (5 with RenderOutput) and viewport r
   // don't appear as scene-tree rows. Verify their existence via the
   // DAG store directly (P6 W2.5 — flat NodeList was dropped; selection
   // for these nodes routes through __basher_selection in tests).
+  // P6 W2.6 — SceneTree default-collapsed; expand via the chromeStore
+  // dev seam so the tree rows render before we assert visibility.
+  await page.waitForFunction(() => {
+    type Win = { __basher_chrome?: unknown };
+    return Boolean((window as unknown as Win).__basher_chrome);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
+  });
   await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-n_scene')).toBeVisible();
   const dagShape = await page.evaluate(() => {
@@ -137,6 +147,15 @@ test('#5 inspector edit propagates to viewport within 16ms (DAG dispatch latency
   page,
 }) => {
   await page.goto('/');
+  // SceneTree default-collapsed (P6 W2.6) — expand via dev seam.
+  await page.waitForFunction(() => {
+    type Win = { __basher_chrome?: unknown };
+    return Boolean((window as unknown as Win).__basher_chrome);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
+  });
   await page.getByTestId('scene-tree-row-n_box').click();
   // Time the dispatch round-trip: instrumentation reads from useDagStore in
   // Inspector's onChange (synchronous). Actual paint timing on the viewport

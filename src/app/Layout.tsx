@@ -18,7 +18,6 @@
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { DiffBar } from './DiffBar';
-import { Inspector } from './Inspector';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { RightDrawer } from './RightDrawer';
@@ -37,12 +36,18 @@ export function Layout() {
   const mode = useModeStore((s) => s.mode);
   const space = useEditorStore((s) => s.space);
   const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
+  const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
+  const toggleLeftSidebar = useChromeStore((s) => s.toggleLeftSidebar);
   const isDirector = mode === 'director';
   // 5-column grid (P6 W2.5 dropped the dedicated library column; bundled
   // glTF samples are now reachable from TopToolbar's Assets popover):
   //   tree  |  toolRail  |  viewport  |  inspector  |  drawer
   // Director collapses everything but viewport.
   const toolRailWidth = isDirector ? '0' : toolRailCollapsed ? '32px' : '32px';
+  // P6 W2.6 — SceneTree default-collapsed. When collapsed the tree column
+  // shrinks to a 28px chevron strip (toggle stays visible); expanded
+  // returns to the full 260px tree.
+  const treeWidth = isDirector ? '0' : leftSidebarCollapsed ? '28px' : '260px';
   // Note: collapsed and expanded both render at 32px because ToolRail's
   // collapsed view is still a 32px-wide column with just the expand
   // chevron. Per spec §5.4 the user can fully hide via the toggle when
@@ -58,7 +63,7 @@ export function Layout() {
       style={{
         gridTemplateColumns: isDirector
           ? '0 0 1fr 0 0'
-          : `260px ${toolRailWidth} 1fr 280px 280px`,
+          : `${treeWidth} ${toolRailWidth} 1fr 280px 280px`,
         gridTemplateRows: 'auto auto auto 1fr auto',
         gridTemplateAreas: `
           "menu menu menu menu menu"
@@ -92,11 +97,40 @@ export function Layout() {
       <div
         style={{
           gridArea: 'tree',
-          display: isDirector ? 'none' : 'block',
+          display: isDirector ? 'none' : 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          minWidth: 0,
         }}
         data-testid="tree-slot"
+        data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
       >
-        <SceneTree />
+        {leftSidebarCollapsed ? (
+          <button
+            type="button"
+            onClick={toggleLeftSidebar}
+            data-testid="tree-expand-toggle"
+            title="Expand scene tree"
+            className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
+          >
+            ›
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={toggleLeftSidebar}
+              data-testid="tree-expand-toggle"
+              title="Collapse scene tree"
+              className="flex h-7 w-full items-center justify-end px-2 text-fg-dim hover:text-fg"
+            >
+              ‹
+            </button>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <SceneTree />
+            </div>
+          </>
+        )}
       </div>
 
       <div
@@ -128,9 +162,9 @@ export function Layout() {
           <AssetDropZone>
             <Viewport />
           </AssetDropZone>
-          {/* NPanel is HTML, NOT R3F — overlays the viewport via DOM.
-              Removed in W7 per D-UX-8 (corrected); functions absorbed into R8. */}
-          <NPanel />
+          {/* P6 W2.6 — viewport-overlay NPanel removed. NPanel is now
+              the docked Inspector (right column); viewport-side toggles
+              (grid, axis widget) move to W7's FloatingViewportToolbar. */}
         </div>
         <div
           style={{
@@ -150,7 +184,7 @@ export function Layout() {
           display: isDirector ? 'none' : 'block',
         }}
       >
-        <Inspector />
+        <NPanel />
       </div>
 
       <div

@@ -20,7 +20,7 @@ This document is the **design contract** for Basher's UI. Any UI code shipped af
 | **D-UX-5** | **Density axis dropped.** Spline pattern: one canonical layout, all panels always visible, per-panel collapse via small chrome buttons. Existing `useModeStore` keeps its name; `Mode` type becomes operational-only (`edit`/`run`/`animate`/`director`). | "follow exact Spline pattern for base UI" — director directive 2026-05-10 |
 | **D-UX-6** | **Operational mode** is the only mode axis: `edit` / `run` / `animate` / `director` | Spline 4-mode model (Vector→Animate domain substitution) |
 | **D-UX-7** | **Base UI shell follows Spline structurally.** Domain extensions (Agent tab, Animate-as-Reze, Render section) only where THESIS demands. | Director directive 2026-05-10 |
-| **D-UX-8** | **Delete NPanel; Inspector canonical.** Inspector and NPanel are not duplicate inspectors — Inspector is the property editor; NPanel was a viewport HUD (gizmo mode + snap + grid/axis toggles). Per Spline pattern: viewport-state toggles belong in R8 FloatingViewportToolbar, not as a separate overlay. NPanel deleted in W7; its functions absorbed into R8 (transform/snap/grid/axis behind a `⚙` popover). | Resolved O-1 corrected 2026-05-10 after observation |
+| **D-UX-8** | **NPanel canonical Inspector; `Inspector.tsx` deleted.** Original O-1 direction (locked 2026-05-10), reversed mid-W1 to "delete NPanel keep Inspector" after observing the two surfaces had no overlap, then **re-reversed in W2.6** after W2's TopToolbar absorbed NPanel's mode + snap groups (leaving NPanel with nothing unique). NPanel now owns the right-column property editor with all `inspector-*` testids preserved; the viewport-overlay mount is gone. Grid/axis toggles (NPanel's last unique sections) moved to W7's FloatingViewportToolbar where they belong (Spline pattern: viewport-state toggles live near the viewport). | Resolved O-1 → mid-W1 inverted → W2.6 restored (lokayata: spec swung once because NPanel had unique surface area; restored once that area was naturally absorbed elsewhere) |
 | **D-UX-9** | **Director Cut = chrome-hidden viewport.** All panels hide; viewport takes full window; minimal shot title + transport overlay. Full review tool (comments, shot list) deferred. | Resolved O-2 |
 | **D-UX-10** | **Add menu has both entry points** (right-click in viewport + top-toolbar `+`), driven by single `addMenuStore`. | Resolved O-3 |
 | **D-UX-11** | **No shadcn for v0.5.** Plain Tailwind primitives. Revisit at v0.6 if Dialog/Popover proliferate beyond 4–5 instances. | Resolved O-4 |
@@ -429,11 +429,13 @@ Glyph appears as a small badge on the row's relationship icon — never in the r
 
 ### 5.8 R7 Inspector — NPanel canonical (D-UX-8 merge)
 
-**Location:** `src/app/NPanel.tsx` (185 LOC, exists) is **the canonical Inspector**. The grid `inspector` slot mounts the same `<NPanel />` component (no longer a separate `Inspector.tsx`). `Inspector.tsx` (233 LOC) is **deleted** in W1; its sections are folded into NPanel's section catalog, and any imports redirected to NPanel.
+**Location:** `src/app/NPanel.tsx` is **the canonical Inspector**. The grid `inspector` slot mounts the same `<NPanel />` component (no longer a separate `Inspector.tsx`). `Inspector.tsx` was **deleted in W2.6** (the original D-UX-8 plan said W1, but the mid-W1 correction kept Inspector around because NPanel still had unique viewport-toggle content; W2's TopToolbar absorbed those toggles, leaving NPanel with nothing unique → merge unblocked).
 
 **Why merge (D-UX-8):** two stores of inspector truth was a V13 closure violation risk — drift between the docked Inspector and the overlay NPanel was bound to happen as sections grew. One canonical surface, one section registry, one selection-adaptive engine.
 
-**Layout role:** NPanel is a docked panel in R7 (right column). The `<NPanel />` overlay-on-viewport mode (current code) is dropped; if a future floating-inspector affordance is needed, it'll be a single re-mount of the same component into a different layout slot, not a parallel implementation.
+**Layout role:** NPanel is a docked panel in R7 (right column). The viewport-overlay NPanel mount is dropped (W2.6); if a future floating-inspector affordance is needed, it'll be a single re-mount of the same component into a different layout slot, not a parallel implementation. The viewport-toggle sections (grid / axis show-hide) that NPanel previously hosted move to W7's FloatingViewportToolbar — the natural home per Spline pattern.
+
+**testid contract:** the merged NPanel preserves all `inspector-*` testids verbatim (`inspector` root, `inspector-vec-*`, `inspector-input-*`, `inspector-scrub-*`) so the existing P0/P2/P3/P5 e2e suite passes through the merge without migration.
 
 **Section convention:** each Inspector section is a collapsible card.
 

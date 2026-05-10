@@ -6,7 +6,7 @@
 //
 // REF: docs/UI-SPEC.md §3.2 (per-panel collapse), §11 acceptance.
 
-import { afterEach, beforeEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // happy-dom's localStorage is non-functional in this vitest config (the
 // `--localstorage-file` warning at module load is the giveaway). Replace it
@@ -55,7 +55,12 @@ describe('chromeStore', () => {
     localStorage.clear();
   });
 
-  it('defaults to all panels expanded when storage is empty', () => {
+  it('isolation reset state matches the documented test fixture', () => {
+    // The beforeEach hook above resets every flag to false so individual
+    // toggle tests start from a clean slate. The actual first-visit
+    // boot defaults (which differ — leftSidebarCollapsed defaults true
+    // post-W2.6) are exercised in a dedicated test below; this one
+    // verifies the isolation reset itself.
     const s = useChromeStore.getState();
     expect(s.toolRailCollapsed).toBe(false);
     expect(s.leftSidebarCollapsed).toBe(false);
@@ -128,5 +133,19 @@ describe('chromeStore', () => {
     expect(persisted.toolRailCollapsed).toBe(true);
     expect(persisted.leftSidebarCollapsed).toBe(false);
     expect(persisted.inspectorCollapsed).toBe(true);
+  });
+
+  it('first-visit boot defaults: toolRail expanded, leftSidebar collapsed, inspector expanded', async () => {
+    // Re-import the module with empty localStorage so zustand's create()
+    // re-runs against a fresh DEFAULT_STATE. Verifies the documented
+    // first-visit boot shape (P6 W2.6 — leftSidebar default flipped to
+    // true so the SceneTree gets out of the way until the user expands).
+    localStorage.clear();
+    vi.resetModules();
+    const mod = await import('./chromeStore');
+    const fresh = mod.useChromeStore.getState();
+    expect(fresh.toolRailCollapsed).toBe(false);
+    expect(fresh.leftSidebarCollapsed).toBe(true);
+    expect(fresh.inspectorCollapsed).toBe(false);
   });
 });

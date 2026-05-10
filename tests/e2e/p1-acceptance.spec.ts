@@ -322,9 +322,16 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
       'user',
     );
   });
-  // Scene tree is visible by default in Edit mode (D-UX-5: density
-  // dropped, full chrome by default; the legacy 'pro' density forcing
-  // is no longer needed).
+  // P6 W2.6 — SceneTree default-collapsed; expand via the chromeStore
+  // dev seam before asserting tree rows.
+  await page.waitForFunction(() => {
+    type Win = { __basher_chrome?: unknown };
+    return Boolean((window as unknown as Win).__basher_chrome);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
+  });
   await expect(page.getByTestId('scene-tree')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4r')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4t')).toBeVisible();
