@@ -5,11 +5,15 @@
 //
 // Per D-UX-5 (UI-SPEC §3.2): density axis dropped. One canonical layout. The
 // only mode-induced grid change is Director (D-UX-9) — chrome regions collapse
-// to 0 width. Per-panel collapse for the non-Director case will be wired
-// through chromeStore in W2/W3 (R4 ToolRail / R5 LeftSidebar). For W1 the
-// non-Director layout is the previous "pro" density: full chrome visible.
+// to 0 width.
 //
-// REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5.
+// P6 W2 — TopToolbar replaces TransformToolbar's slot (TopToolbar mounts
+// TransformToolbar internally per spec §5.3). New `toolRail` column added
+// to the grid template: 32px expanded, 0 collapsed (chromeStore), 0 in
+// director. This is the first chromeStore consumer.
+//
+// REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5,
+// §5.3, §5.4.
 
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
@@ -22,36 +26,47 @@ import { NPanel } from './NPanel';
 import { RightDrawer } from './RightDrawer';
 import { SceneTree } from './SceneTree';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
-import { TransformToolbar } from './TransformToolbar';
+import { TopToolbar } from './TopToolbar';
+import { ToolRail } from './ToolRail';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import { useModeStore } from './stores/modeStore';
 
 export function Layout() {
   const mode = useModeStore((s) => s.mode);
   const space = useEditorStore((s) => s.space);
+  const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const isDirector = mode === 'director';
+  // 6-column grid (W2 adds toolRail between chrome stack and library):
+  //   library  |  tree  |  toolRail  |  viewport  |  inspector  |  drawer
+  // Director collapses everything but viewport.
+  const toolRailWidth = isDirector ? '0' : toolRailCollapsed ? '32px' : '32px';
+  // Note: collapsed and expanded both render at 32px because ToolRail's
+  // collapsed view is still a 32px-wide column with just the expand
+  // chevron. Per spec §5.4 the user can fully hide via the toggle when
+  // we ship a "collapse to 0" affordance later; the column width tracks
+  // chromeStore so future changes only need to adjust this expression.
   return (
     <div
       data-testid="layout"
       data-mode={mode}
       data-space={space}
+      data-tool-rail-collapsed={toolRailCollapsed ? 'true' : 'false'}
       className="grid h-full w-full bg-bg text-fg"
       style={{
-        // Director (D-UX-9) collapses chrome to 0; otherwise full chrome.
-        // Per-panel collapse via chromeStore lands in W2/W3.
         gridTemplateColumns: isDirector
-          ? '0 0 1fr 0 0'
-          : '180px 220px 1fr 280px 280px',
+          ? '0 0 0 1fr 0 0'
+          : `180px 220px ${toolRailWidth} 1fr 280px 280px`,
         gridTemplateRows: 'auto auto auto 1fr auto',
         gridTemplateAreas: `
-          "menu menu menu menu menu"
-          "chrome chrome chrome chrome chrome"
-          "toolbar toolbar toolbar toolbar toolbar"
-          "library tree viewport inspector drawer"
-          "timeline timeline timeline timeline timeline"
+          "menu menu menu menu menu menu"
+          "chrome chrome chrome chrome chrome chrome"
+          "toolbar toolbar toolbar toolbar toolbar toolbar"
+          "library tree toolRail viewport inspector drawer"
+          "timeline timeline timeline timeline timeline timeline"
         `,
       }}
     >
@@ -62,7 +77,17 @@ export function Layout() {
         <Chrome />
       </div>
       <div style={{ gridArea: 'toolbar', display: isDirector ? 'none' : 'block' }}>
-        <TransformToolbar />
+        <TopToolbar />
+      </div>
+
+      <div
+        style={{
+          gridArea: 'toolRail',
+          display: isDirector ? 'none' : 'block',
+          minHeight: 0,
+        }}
+      >
+        <ToolRail />
       </div>
 
       <div

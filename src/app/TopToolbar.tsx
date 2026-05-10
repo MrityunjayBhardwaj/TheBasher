@@ -144,29 +144,30 @@ function RightCluster(): ReactNode {
 }
 
 export function TopToolbar(): ReactNode {
-  // Three-zone layout: left (auto), center (absolute-centered), right (auto).
-  // Absolute-centering the mode pill keeps it visually centered regardless
-  // of how wide the left/right clusters get; the pill never drifts when
-  // TransformToolbar gains/loses controls.
+  // Three-column flex pattern: left (flex-1, justify-start), center
+  // (no flex, fixed width via content), right (flex-1, justify-end).
+  // The two flex-1 outer columns balance on either side of the center
+  // pill, keeping it centered regardless of left content size — and
+  // critically, no absolute positioning. On narrow viewports left
+  // content scrolls inside its column rather than being overlapped by
+  // an absolute pill (the previous layout caused e2e flake when the
+  // left zone's SpaceGroup got covered by the center pill).
   return (
     <div
       data-testid="top-toolbar"
-      className="relative flex items-center gap-3 border-b border-border bg-bg/95 px-3 py-1 font-mono text-fg"
+      className="flex items-center gap-3 border-b border-border bg-bg/95 px-3 py-1 font-mono text-fg"
     >
-      {/* Left zone: primary actions + TransformToolbar internals (W2 reuse). */}
-      <div className="flex items-center gap-3 min-w-0 overflow-x-auto">
+      {/* Left zone */}
+      <div className="flex flex-1 min-w-0 items-center gap-3 overflow-x-auto">
         <AddButton />
         <TransformToolbar />
       </div>
-      {/* Center zone: 4-button mode pill (D-UX-6). Absolute so it stays
-          centered relative to the toolbar, not relative to left content. */}
-      <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <div className="pointer-events-auto">
-          <ModePill />
-        </div>
+      {/* Center zone — 4-button mode pill (D-UX-6). */}
+      <div className="flex-shrink-0">
+        <ModePill />
       </div>
-      {/* Right zone: viewport + output cluster, pinned right. */}
-      <div className="ml-auto">
+      {/* Right zone */}
+      <div className="flex flex-1 items-center justify-end">
         <RightCluster />
       </div>
     </div>

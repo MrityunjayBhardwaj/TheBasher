@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useProjectStore } from '../core/project/store';
 import { saveCurrent } from './boot';
+import { ComfyStatusIndicator } from './ComfyStatusIndicator';
 import { ModeSwitcher } from './ModeSwitcher';
 import { ProjectsMenu } from './ProjectsMenu';
 
@@ -48,6 +49,10 @@ export function Chrome() {
         )}
         <ProjectsMenu />
         <ModeSwitcher />
+        {/* P6 W2 — temporary home for ComfyStatusIndicator. Spec §5.10
+            puts it on R1 ProjectTabs's right edge; R1 ProjectTabs lands
+            in W3, at which point this mount moves there. */}
+        <ComfyStatusIndicator />
       </div>
     </header>
   );
