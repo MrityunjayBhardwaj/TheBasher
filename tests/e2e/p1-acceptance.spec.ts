@@ -8,7 +8,18 @@
 // behavior — the asset drop helper, the dispatchAtomic call, the
 // migration runner — only the pointer-event simulation is bypassed.
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+/**
+ * Open the bundled-assets popover (P6 W2.5 replacement for the
+ * dedicated Library panel). The asset tiles render only while the
+ * popover is open; tests that need to interact with one click the
+ * Assets trigger button first.
+ */
+async function openAssetsPopover(page: Page): Promise<void> {
+  await page.getByTestId('top-toolbar-assets').click();
+  await expect(page.getByTestId('library-popover')).toBeVisible();
+}
 
 interface DagWindow {
   __basher_dag?: {
@@ -50,7 +61,8 @@ test('P1#1 drag GLB → 6-op chain placed via dispatchAtomic; one Cmd+Z reverts'
   page,
 }) => {
   // Wait for the seeded library to populate (Library reads OPFS async).
-  await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+  await openAssetsPopover(page);
+  await expect(page.getByTestId('library-popover-item-assets/cube.gltf')).toHaveAttribute(
     'data-available',
     'true',
     { timeout: 10_000 },
@@ -138,7 +150,8 @@ test('P1#1 drag GLB → 6-op chain placed via dispatchAtomic; one Cmd+Z reverts'
 test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-trip)', async ({
   page,
 }) => {
-  await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+  await openAssetsPopover(page);
+  await expect(page.getByTestId('library-popover-item-assets/cube.gltf')).toHaveAttribute(
     'data-available',
     'true',
     { timeout: 10_000 },
@@ -265,7 +278,8 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
   // throws "Unexpected end of JSON input" → ErrorBoundary unmounts the
   // tree → the whole page goes black → scene-tree never renders.
   // Mirror P1#1's gate: wait for the library entry before dispatching.
-  await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+  await openAssetsPopover(page);
+  await expect(page.getByTestId('library-popover-item-assets/cube.gltf')).toHaveAttribute(
     'data-available',
     'true',
     { timeout: 10_000 },
@@ -389,7 +403,8 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
   // never exercising the AssetDropZone's drop event handler. This test
   // simulates an HTML5 drag-drop end-to-end so a regression in those five
   // wiring lines (AssetDropZone.tsx onDrop) is caught.
-  await expect(page.getByTestId('library-item-assets/cube.gltf')).toHaveAttribute(
+  await openAssetsPopover(page);
+  await expect(page.getByTestId('library-popover-item-assets/cube.gltf')).toHaveAttribute(
     'data-available',
     'true',
     { timeout: 10_000 },
@@ -405,7 +420,7 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
   // dragTo doesn't preserve the custom MIME type reliably.
   await page.evaluate(() => {
     const item = document.querySelector(
-      '[data-testid="library-item-assets/cube.gltf"]',
+      '[data-testid="library-popover-item-assets/cube.gltf"]',
     ) as HTMLElement | null;
     const zone = document.querySelector('[data-testid="asset-drop-zone"]') as HTMLElement | null;
     if (!item || !zone) throw new Error('library item or drop zone missing');

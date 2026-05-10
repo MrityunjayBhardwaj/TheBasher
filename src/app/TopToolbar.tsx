@@ -26,6 +26,7 @@
 // REF: docs/UI-SPEC.md §5.3, §6.4, §3.4; THESIS.md §11, §17.
 
 import type { ReactNode } from 'react';
+import { useAssetsPopoverStore } from './AssetsPopover';
 import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useModeStore, type Mode } from './stores/modeStore';
@@ -66,6 +67,38 @@ function AddButton(): ReactNode {
     >
       <span aria-hidden>+</span>
       <span>Add</span>
+    </button>
+  );
+}
+
+function AssetsButton(): ReactNode {
+  // Anchor the popover to the bottom-left of this button so the list
+  // appears directly below the trigger. Toggle behavior: clicking again
+  // closes (no anchor change needed; the popover store flips open).
+  const open = useAssetsPopoverStore((s) => s.open);
+  const openAt = useAssetsPopoverStore((s) => s.openAt);
+  const close = useAssetsPopoverStore((s) => s.close);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        if (open) {
+          close();
+          return;
+        }
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        openAt(r.left, r.bottom + 4);
+      }}
+      data-testid="top-toolbar-assets"
+      title="Sample assets"
+      className={`flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-mono uppercase tracking-wide ${
+        open
+          ? 'border-accent bg-accent/15 text-accent'
+          : 'border-border bg-muted/40 text-fg/80 hover:border-accent hover:text-accent'
+      }`}
+    >
+      <span aria-hidden>📦</span>
+      <span>Assets</span>
     </button>
   );
 }
@@ -160,6 +193,7 @@ export function TopToolbar(): ReactNode {
       {/* Left zone */}
       <div className="flex flex-1 min-w-0 items-center gap-3 overflow-x-auto">
         <AddButton />
+        <AssetsButton />
         <TransformToolbar />
       </div>
       {/* Center zone — 4-button mode pill (D-UX-6). */}

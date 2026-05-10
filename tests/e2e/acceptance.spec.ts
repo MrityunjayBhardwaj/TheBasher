@@ -44,12 +44,30 @@ test('#2 default project has the 4-node DAG (5 with RenderOutput) and viewport r
 }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible();
-  // Director mode is default; NodeList is visible.
-  await expect(page.getByTestId('node-list-item-n_camera')).toBeVisible();
-  await expect(page.getByTestId('node-list-item-n_light')).toBeVisible();
-  await expect(page.getByTestId('node-list-item-n_box')).toBeVisible();
-  await expect(page.getByTestId('node-list-item-n_scene')).toBeVisible();
-  await expect(page.getByTestId('node-list-item-n_render')).toBeVisible();
+  // SceneTree projects only the scene hierarchy (THESIS §12) — Camera /
+  // Light / RenderOutput live as parallel `outputs.*` references and
+  // don't appear as scene-tree rows. Verify their existence via the
+  // DAG store directly (P6 W2.5 — flat NodeList was dropped; selection
+  // for these nodes routes through __basher_selection in tests).
+  await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
+  await expect(page.getByTestId('scene-tree-row-n_scene')).toBeVisible();
+  const dagShape = await page.evaluate(() => {
+    type Win = { __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown>; outputs: Record<string, { node: string }> } } } };
+    const w = window as unknown as Win;
+    const s = w.__basher_dag!.getState().state;
+    return {
+      hasCamera: 'n_camera' in s.nodes,
+      hasLight: 'n_light' in s.nodes,
+      hasRender: 'n_render' in s.nodes,
+      sceneOutput: s.outputs.scene?.node,
+      renderOutput: s.outputs.render?.node,
+    };
+  });
+  expect(dagShape.hasCamera).toBe(true);
+  expect(dagShape.hasLight).toBe(true);
+  expect(dagShape.hasRender).toBe(true);
+  expect(dagShape.sceneOutput).toBe('n_scene');
+  expect(dagShape.renderOutput).toBe('n_render');
   // Canvas mounted.
   await expect(page.locator('canvas').first()).toBeVisible();
 });
@@ -60,7 +78,6 @@ test('#3 operational mode toggle gates chrome (Director hides chrome; Animate sh
   await page.goto('/');
   // Default mode is now 'edit' (D-UX-5: density dropped, full chrome by default).
   await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
-  await expect(page.getByTestId('node-list')).toBeVisible();
   await expect(page.getByTestId('inspector')).toBeVisible();
   await expect(page.getByTestId('tree-slot')).toBeVisible();
   // Timeline is mode-gated (D-UX-1) — hidden in Edit.
@@ -73,16 +90,28 @@ test('#3 operational mode toggle gates chrome (Director hides chrome; Animate sh
   await expect(page.getByTestId('inspector')).toBeVisible();
 
   // Director mode (D-UX-9): chrome hides; viewport takes full window.
+  // P6 W2.5: NodeList dropped — tree-slot is the canonical chrome
+  // visibility check (it hides via display:none in director).
   await page.getByTestId('mode-switcher').selectOption('director');
   await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
-  await expect(page.getByTestId('node-list')).toBeHidden();
   await expect(page.getByTestId('inspector')).toBeHidden();
   await expect(page.getByTestId('tree-slot')).toBeHidden();
 });
 
 test('#4 save → reload restores identical state', async ({ page }) => {
   await page.goto('/');
-  await page.getByTestId('node-list-item-n_camera').click();
+  // Camera lives in `outputs.camera`, not under scene's children — it
+  // doesn't appear as a scene-tree row. Select via the dev-only seam.
+  // boot.ts loads __basher_selection via async dynamic import, so wait
+  // for it to land before driving selection.
+  await page.waitForFunction(() => {
+    type Win = { __basher_selection?: unknown };
+    return Boolean((window as unknown as Win).__basher_selection);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
+    (window as unknown as Win).__basher_selection!.getState().select('n_camera');
+  });
   await expect(page.getByTestId('inspector-vec-n_camera-position-x')).toBeVisible();
   // Edit a value, save, reload, confirm it persisted.
   await page.getByTestId('inspector-vec-n_camera-position-x').fill('7.5');
@@ -92,7 +121,14 @@ test('#4 save → reload restores identical state', async ({ page }) => {
 
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();
-  await page.getByTestId('node-list-item-n_camera').click();
+  await page.waitForFunction(() => {
+    type Win = { __basher_selection?: unknown };
+    return Boolean((window as unknown as Win).__basher_selection);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
+    (window as unknown as Win).__basher_selection!.getState().select('n_camera');
+  });
   const xVal = await page.getByTestId('inspector-vec-n_camera-position-x').inputValue();
   expect(parseFloat(xVal)).toBeCloseTo(7.5, 5);
 });
@@ -101,7 +137,7 @@ test('#5 inspector edit propagates to viewport within 16ms (DAG dispatch latency
   page,
 }) => {
   await page.goto('/');
-  await page.getByTestId('node-list-item-n_box').click();
+  await page.getByTestId('scene-tree-row-n_box').click();
   // Time the dispatch round-trip: instrumentation reads from useDagStore in
   // Inspector's onChange (synchronous). Actual paint timing on the viewport
   // is gated by the next rAF; we measure dispatch + state propagation.
@@ -220,7 +256,18 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
   page,
 }) => {
   await page.goto('/');
-  await page.getByTestId('node-list-item-n_camera').click();
+  // n_camera lives in DAG state but not as a scene-tree row (it's
+  // outputs.camera, not under scene's children). Select via the dev
+  // seam — P6 W2.5 dropped the flat NodeList that previously hosted
+  // every node id as a clickable row.
+  await page.waitForFunction(() => {
+    type Win = { __basher_selection?: unknown };
+    return Boolean((window as unknown as Win).__basher_selection);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
+    (window as unknown as Win).__basher_selection!.getState().select('n_camera');
+  });
   const xField = page.getByTestId('inspector-vec-n_camera-position-x');
   await expect(xField).toHaveValue('3');
 
@@ -247,7 +294,14 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
   await page.getByTestId('save-button').click();
   await expect(page.getByTestId('save-status')).toBeVisible();
   await page.reload();
-  await page.getByTestId('node-list-item-n_camera').click();
+  await page.waitForFunction(() => {
+    type Win = { __basher_selection?: unknown };
+    return Boolean((window as unknown as Win).__basher_selection);
+  });
+  await page.evaluate(() => {
+    type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
+    (window as unknown as Win).__basher_selection!.getState().select('n_camera');
+  });
   await expect(page.getByTestId('inspector-vec-n_camera-position-x')).toHaveValue('1.25');
 });
 

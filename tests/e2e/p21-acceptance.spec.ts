@@ -194,8 +194,11 @@ test('P2.1#4 View → Toggle Grid flips NPanel grid toggle', async ({ page }) =>
 // store's public surface continues to land on the Inspector.
 // ---------------------------------------------------------------------------
 
-test('P2.1#5 NodeList click selects → Inspector renders that node', async ({ page }) => {
-  // Pick the first node id from the seed scene.
+test('P2.1#5 SceneTree click selects → Inspector renders that node', async ({ page }) => {
+  // Pick a scene-tree node id (sorted first is n_box, which is the
+  // BoxMesh living under scene's children — guaranteed to render as a
+  // scene-tree row). P6 W2.5 dropped the flat NodeList; the same
+  // selection path now goes through the SceneTree testid.
   const id = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).sort()[0];
@@ -203,7 +206,7 @@ test('P2.1#5 NodeList click selects → Inspector renders that node', async ({ p
 
   // Inspector starts on placeholder.
   await expect(page.getByTestId('inspector')).toContainText('select a node');
-  await page.getByTestId(`node-list-item-${id}`).click();
+  await page.getByTestId(`scene-tree-row-${id}`).click();
   // The Inspector header renders the selected node id once selection lands.
   await expect(page.getByTestId('inspector')).toContainText(id);
 });

@@ -339,12 +339,12 @@ For each component: location, anatomy, states, behavior, what's already shipped 
 
 ### 5.5 R5 LeftSidebar (EXTEND, add Agent tab)
 
-**Location:** new wrapper at `src/app/LeftSidebar.tsx` mounts existing `Library`, `SceneTree`, `AgentChat` as tab contents.
+**Location:** new wrapper at `src/app/LeftSidebar.tsx` (W3) mounts existing `SceneTree` and `AgentChat` as tab contents. Library tab dropped per W2.5 — see §5.5.2.
 
 **Anatomy:**
 ```
 ┌──────────────────────────────────┐
-│ [Scene]  Library   Agent          │  <-- tab strip, height 28
+│ [Scene]   Agent                   │  <-- tab strip, height 28 (2 tabs)
 ├──────────────────────────────────┤
 │  Filters: ◉ All Rot ◉ All Trans   │  <-- only in Animate mode + Scene tab
 ├──────────────────────────────────┤
@@ -356,12 +356,33 @@ For each component: location, anatomy, states, behavior, what's already shipped 
 └──────────────────────────────────┘
 ```
 
-**Tab list:**
+**Tab list (P6 W2.5 — 2 tabs, not 3):**
 - **Scene** — DAG tree, edge-kind aware (see 5.5.1). In Animate mode, each row shows keyframe count badge.
-- **Library** — Mutators / Strategies / Presets / Imported assets. Existing `Library.tsx` 79 LOC.
 - **Agent** — LLM director chat. Existing `AgentChat.tsx` 209 LOC.
 
 **State:** active tab = `text-accent + border-bottom-2 border-accent`. Persist active tab to `localStorage` so it survives reload.
+
+#### 5.5.2 Bundled-asset access (P6 W2.5 — replaces Library tab)
+
+The Library tab was dropped because its sole content was a 3-tile palette of bundled glTF samples (cube/sphere/cone). Three tiles do not justify a permanent left-sidebar tab; AddMenu's procedural primitives (BoxMesh / SphereMesh) cover the same intent more flexibly.
+
+**Replacement surface — AssetsPopover** (`src/app/AssetsPopover.tsx`):
+- Triggered by an "Assets" button in TopToolbar's left zone (next to Add)
+- Click opens a fixed-position popover anchored below the trigger
+- Renders the 3 bundled glTF tiles with HTML5 drag (drag onto viewport → AssetDropZone fires the same drop chain as P1 Wave B; no contract change)
+- Closes on outside-click, Esc, or drag-end
+- e2e tests target `library-popover` (root) + `library-popover-item-{path}` (tile)
+
+**Why this is preferred over a dedicated panel:**
+- Reclaims 180px of permanent screen real estate for SceneTree / viewport
+- One-click reach preserved (AddMenu pattern)
+- HTML5 drag-with-cursor-positional-control preserved (the affordance the panel provided that AddMenu's click-spawn doesn't)
+
+**What's NOT in Library / AssetsPopover:**
+- Mutators — surface in DiffBar (when an Op chain is pending) and (W4 onward) in NPanel sections relevant to selection
+- Strategies — agent-side; no chrome surface in v0.5
+- Presets — render-side; surface in NPanel's Render section (CostPreview, P5 W C5)
+- User-imported assets — appear as nodes in SceneTree after AssetDropZone fires; not surfaced in the bundled-glTF popover
 
 #### 5.5.1 Edge-kind visualization in Scene tree
 
@@ -598,7 +619,7 @@ Mode switches cause: timeline dock slide-in/out (300ms); top-bar mode-segment ac
 Agent tab in R5 has a chat shape:
 ```
 ┌──────────────────────────────────┐
-│ Scene  Library  [Agent]           │
+│ Scene  [Agent]                    │
 ├──────────────────────────────────┤
 │ ▾ history                        │
 │   you:    add a key light       │

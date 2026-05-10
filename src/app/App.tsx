@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AddMenu } from './AddMenu';
+import { AssetsPopover } from './AssetsPopover';
 import { boot } from './boot';
 import { Clock } from './Clock';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
@@ -53,6 +54,7 @@ export function App() {
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />
+      <AssetsPopover />
     </>
   );
 }

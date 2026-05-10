@@ -19,9 +19,7 @@ import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { DiffBar } from './DiffBar';
 import { Inspector } from './Inspector';
-import { Library } from './Library';
 import { MenuBar } from './MenuBar';
-import { NodeList } from './NodeList';
 import { NPanel } from './NPanel';
 import { RightDrawer } from './RightDrawer';
 import { SceneTree } from './SceneTree';
@@ -40,8 +38,9 @@ export function Layout() {
   const space = useEditorStore((s) => s.space);
   const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const isDirector = mode === 'director';
-  // 6-column grid (W2 adds toolRail between chrome stack and library):
-  //   library  |  tree  |  toolRail  |  viewport  |  inspector  |  drawer
+  // 5-column grid (P6 W2.5 dropped the dedicated library column; bundled
+  // glTF samples are now reachable from TopToolbar's Assets popover):
+  //   tree  |  toolRail  |  viewport  |  inspector  |  drawer
   // Director collapses everything but viewport.
   const toolRailWidth = isDirector ? '0' : toolRailCollapsed ? '32px' : '32px';
   // Note: collapsed and expanded both render at 32px because ToolRail's
@@ -58,15 +57,15 @@ export function Layout() {
       className="grid h-full w-full bg-bg text-fg"
       style={{
         gridTemplateColumns: isDirector
-          ? '0 0 0 1fr 0 0'
-          : `180px 220px ${toolRailWidth} 1fr 280px 280px`,
+          ? '0 0 1fr 0 0'
+          : `260px ${toolRailWidth} 1fr 280px 280px`,
         gridTemplateRows: 'auto auto auto 1fr auto',
         gridTemplateAreas: `
-          "menu menu menu menu menu menu"
-          "chrome chrome chrome chrome chrome chrome"
-          "toolbar toolbar toolbar toolbar toolbar toolbar"
-          "library tree toolRail viewport inspector drawer"
-          "timeline timeline timeline timeline timeline timeline"
+          "menu menu menu menu menu"
+          "chrome chrome chrome chrome chrome"
+          "toolbar toolbar toolbar toolbar toolbar"
+          "tree toolRail viewport inspector drawer"
+          "timeline timeline timeline timeline timeline"
         `,
       }}
     >
@@ -88,18 +87,6 @@ export function Layout() {
         }}
       >
         <ToolRail />
-      </div>
-
-      <div
-        style={{
-          gridArea: 'library',
-          display: isDirector ? 'none' : 'flex',
-          flexDirection: 'column',
-          minHeight: 0,
-        }}
-      >
-        <Library />
-        <NodeList />
       </div>
 
       <div
