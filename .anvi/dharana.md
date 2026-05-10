@@ -166,19 +166,25 @@ six starter Mutators in `src/agent/mutators/builders/`.
 **Silent-failure modes:** addon server not running but page assumes it is; CORS misconfig; user picks wrong asset folder.
 **Observation targets:** beacon poll responses logged in dev console; "Blender connected" indicator in chrome.
 
-### Boundary B11: Design spec ↔ source code (UI-SPEC authoring boundary)
+### Boundary B11: Design spec ↔ source code (UI-SPEC authoring + re-validation boundary)
 
-**ORIGIN:** P6 W1 (2026-05-10). D-UX-8 was authored from memory of file *names* (Inspector.tsx + NPanel.tsx — sounded like duplicate inspectors) without reading either file. Observation at W1 start revealed they have orthogonal roles. Decision was retracted; spec was patched mid-wave; one round-trip lost.
+**ORIGIN:** P6 W1 (2026-05-10). D-UX-8 was authored from memory of file *names* (Inspector.tsx + NPanel.tsx — sounded like duplicate inspectors) without reading either file. Observation at W1 start revealed they have orthogonal roles. Decision was retracted; spec was patched mid-wave; one round-trip lost. **Update P6 W2.6 (2026-05-11):** the W1 correction was *itself* reversed two waves later, when W2's TopToolbar absorbed NPanel's mode + snap groups and W7 was already slated to take grid/axis toggles. NPanel ended up with nothing unique left; the merge unblocked itself. User pushed merge forward to W2.6; spec restored to original direction. Two reversals on the same decision in 5 commits.
 
-**WHY:** any spec authored before reading the code it describes inherits the framing errors of its author's memory. Filenames cluster at boundaries, so "naming similarity" is downstream of the same boundary, not evidence of functional overlap. Without an explicit observation step in spec authoring, the most prominent files (those shipped recently, those with rhyming names, those whose role the author hasn't directly used) are the most likely to land with the wrong framing. Spec drift compounds when downstream waves act on a wrong locked decision before someone opens the file.
+**WHY:** the W1 lesson was "don't lock from memory before reading code." The W2.6 lesson is the deeper one: **spec entries asserting surface distinctness decay across waves**. A claim like "X and Y are not duplicates because each has unique sections {Y₁, Y₂, Y₃}" is a *conjunction*; any wave that absorbs Y_i into a third surface erodes the conjunction silently. Without a re-validation cycle, the spec's earlier "they're distinct" verdict reads as authoritative even when the underlying premises have evaporated. Both kinds of drift (initial-authoring memory error, mid-roadmap conjunction decay) silently mislead downstream waves. The boundary's WHY now covers both phases, not just the first.
 
-**HOW:** before any "merge / delete / replace" decision lands in a spec's locked-decisions table, open every file the decision names. Write a one-sentence functional description per file. Only if the descriptions semantically overlap does the merge framing apply. Flag the spec as "observation-grounded" only when every file it touches has been observed end-to-end. The check runs at spec-authoring time, not at wave-execution time.
+**HOW (authoring-time):** before any "merge / delete / replace" decision lands in a spec's locked-decisions table, open every file the decision names. Write a one-sentence functional description per file. Only if the descriptions semantically overlap does the merge framing apply.
 
-**REF:** docs/UI-SPEC.md §1 D-UX-8 (corrected mid-W1); §5.8 Inspector / NPanel R8-absorption note; hetvabhasa H25 (the trap pattern); P6 W1 mid-wave correction (this session, 2026-05-10).
+**HOW (re-validation, NEW W2.6):** every wave plan that touches multi-surface chrome (TopToolbar, ToolRail, FloatingViewportToolbar, NPanel, LeftSidebar tabs, AddMenu/AssetsPopover) runs a *section inventory pass* over any spec entry of the form "X and Y serve different roles":
+1. List each surface's *current* unique sections (from code, not from memory).
+2. Cross-check against the spec's distinctness claim.
+3. If any surface's unique-section count drops to ≤ 1, flag the merge as unblocked and update the spec entry's status, even if the merge isn't yet executed.
+4. Surface candidates to re-validate at every wave: AddMenu / AssetsPopover (creation vs asset import); LeftSidebar Scene tab / Agent tab (DAG view vs LLM chat); future Inspector Render section / external CostPreview mount.
 
-**Silent-failure modes:** decision locked from memory, downstream wave acts on it, code break only surfaces when (a) the test exercises the deleted/merged surface, OR (b) a user encounters the broken affordance in production. The closer to (b), the more expensive the recovery.
+**REF:** docs/UI-SPEC.md §1 D-UX-8 (the swing → restore ledger captures provenance for both reversals); §5.8 NPanel canonical Inspector (W2.6); hetvabhasa H25 (initial-authoring trap); hetvabhasa H27 (re-validation-cycle trap — the W2.6-revealed iteration); P6 W1 commit `5a71e67` + P6 W2.6 commit `c19b43a`.
 
-**Observation targets:** every D-UX entry in a spec carries either a `**REF:**` to file:line that's been opened during authoring, OR a `**TODO: observe**` flag. Spec-checker (anvi-ui-checker) treats unobserved files in a locked decision as a BLOCK verdict.
+**Silent-failure modes:** (a) decision locked from memory at authoring → downstream wave acts on it → code break surfaces only when test exercises the deleted/merged surface OR user encounters broken affordance; (b) decision *was* correct at authoring but adjacent chrome evolved → distinctness claim now false → merge stays scheduled for a far-future wave (or never) while the redundant surface confuses users every session; (c) re-validation pass skipped → next chrome wave inherits the stale claim → cycle repeats.
+
+**Observation targets:** every D-UX entry in a spec carries either a `**REF:**` to file:line that's been opened during authoring, OR a `**TODO: observe**` flag. Spec-checker (anvi-ui-checker) treats unobserved files in a locked decision as a BLOCK verdict. **Additional W2.6 target:** every wave plan touching multi-surface chrome adds a "section inventory" step that re-runs §B11 HOW (re-validation) over distinctness claims, with output recorded in the wave's plan as either "no shifts" or "{D-UX-N} restored / overridden / advanced".
 
 ---
 

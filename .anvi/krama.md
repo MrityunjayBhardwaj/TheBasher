@@ -404,3 +404,29 @@ channel.
 **REF:** `src/app/stores/modeStore.ts:32–47` (readPersisted + setMode + PERSISTABLE filter); `src/app/stores/chromeStore.ts:41–57` (readPersisted + writePersisted re-merge); `src/app/stores/chromeStore.test.ts` (multi-flag persistence test); docs/UI-SPEC.md §7.3 (persistence rules); hetvabhasa H26 (defensive helpers); vyapti V16 (chrome-hiding mode keyboard escape — depends on this lifecycle producing a coherent post-reload state); P6 W1 commits `7657d27`, `515afda`, `a3a283e`, `cc151fa`.
 
 **Why it matters:** every UI projection store that persists has the same boot shape. Codifying the lifecycle catches sister bugs early: when W3 adds `useLeftSidebarStore` (active-tab persistence), W4 adds inspector-section collapse-by-node-type persistence, W5 adds timeline-dock height persistence — each follows K11. The legacy-coercion step (#4) becomes load-bearing for every future type-shape change in any persisted store.
+
+### K12: Test affordance lifecycle — chrome change → dev seam, not chrome restoration
+
+**Span:** any wave that deletes / repurposes / collapses-by-default a chrome surface that e2e tests reach through a `data-testid` click. Currently exercised by W2.5 (Library panel deletion → AssetsPopover behind a button) and W2.6 (SceneTree default-collapsed; Inspector→NPanel merge).
+
+**Steps (when chrome surface evolves and breaks e2e selection paths):**
+1. **Identify the broken e2e path.** Failure is usually one of: `getByTestId(...).click()` times out (element unmounted or hidden behind chrome), `expect(...).toBeVisible()` fails (display:none flipped), or testid-rename collateral (selector points at a deleted ID).
+2. **Classify the breakage.** Three flavors:
+   - **Surface still exists, just unreachable** (collapsed panel) → expand it programmatically before interacting. Don't add a click-the-chevron step inside every test (brittle: ordering-dependent because chromeStore persists across tests).
+   - **Surface deleted, behavior moved to another store** (NPanel grid toggle gone, viewportStore.gridVisible still flips) → verify via the underlying store directly through its `__basher_*` dev seam.
+   - **Surface deleted, no equivalent** (NodeList — flat list of all DAG nodes, no successor) → the test was using chrome as a selection mechanism; route selection through the relevant store's seam (e.g. `__basher_selection.select(id)`).
+3. **Expose the relevant store via dev seam.** In `src/app/boot.ts` under the `import.meta.env.DEV` block, add `void import('./stores/<store>').then((m) => { w.__basher_<name> = m.use<Store>; })`. Production builds tree-shake this branch entirely — zero runtime cost in user binaries.
+4. **Wait for the seam to land in the test.** The dynamic import is async, so tests need `await page.waitForFunction(() => Boolean(w.__basher_<name>))` before dereferencing. Pattern is already established by `__basher_dag` / `__basher_selection` waits in p0/p1/p21 specs.
+5. **Drive the test through the seam.** `await page.evaluate(() => { w.__basher_<name>.getState().<action>(...) })`. Programmatic; immune to chrome shape changes; matches the production code path because both go through the store's setter.
+6. **Update the test comment.** Note that the test no longer depends on the chrome surface (e.g. "P6 W2.6 — SceneTree default-collapsed; expand via dev seam"). Future readers know this isn't accidental store-poking but a deliberate test contract.
+7. **Do NOT restore chrome to make the test pass.** A button "test-only-expand" or `data-testid="invisible-trigger"` is the wrong path — chrome should serve users, not tests.
+
+**Common violations (each historically caught):**
+- Inserting a `getByTestId('chevron').click()` step in every affected test — works first run, breaks on parallel-run order changes because chromeStore persists across tests.
+- Restoring deleted chrome (e.g. re-mounting a hidden NodeList) just so `node-list-item-${id}` selectors work — the Spec is now lying about what the user sees.
+- Not waiting for the dynamic import → flaky-on-cold-cache failures (`Cannot read properties of undefined (reading 'getState')`).
+- Adding `__basher_*` seams in production code paths (not under `import.meta.env.DEV`) — leaks store internals to user runtime.
+
+**REF:** `src/app/boot.ts:144–166` (__basher_editor / __basher_selection / __basher_chrome dev seams); `tests/e2e/acceptance.spec.ts:42–71` (#2 example: tree-row visibility via expanded chromeStore); `tests/e2e/p21-acceptance.spec.ts:178–200` (#4 example: viewportStore.gridVisible direct check after npanel-grid-toggle deletion); `tests/e2e/p6-w2-toolbar.spec.ts` (P6 W2 examples: chromeStore + editorStore via seams). hetvabhasa H27 (parallel-surface evolution drift — K12 is its e2e migration counterpart). P6 W2.5 commit `95291aa`; P6 W2.6 commit `c19b43a`.
+
+**Why it matters:** chrome shape is the most volatile thing in the codebase — every UX wave moves panels around. e2e tests that anchor selection through chrome become collateral every wave. The dev-seam pattern decouples tests from chrome shape: the *contract* (a store action that can be invoked) is stable across waves; the *chrome* that surfaces it is not. K12 is the migration recipe so future waves don't burn an hour rediscovering it. Sister: V11 (agent tools must carry selection state via context — same lesson, different consumer) — both rely on stores being the stable contract while their UI mirrors evolve.
