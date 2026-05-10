@@ -26,9 +26,34 @@ const STORAGE_KEY = 'basher.mode';
 
 const PERSISTABLE: ReadonlySet<Mode> = new Set<Mode>(['edit', 'animate']);
 
+// Defensive against test envs where `localStorage` exists but its methods
+// are stubbed weirdly (happy-dom + vitest module-load ordering — same
+// hetvabhasa H26 that chromeStore guards against). modeStore initially
+// got away with a typeof-undefined check because all P6 W1 tests went
+// through happy-dom's setup phase before this module loaded; W2's
+// ComfyStatusIndicator test pulls modeStore in earlier and trips the
+// uninitialized-Storage path. K11 says every persisted store must use
+// the same safe wrappers — applying that uniformly here.
+function safeGetItem(key: string): string | null {
+  try {
+    if (typeof localStorage?.getItem !== 'function') return null;
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetItem(key: string, value: string): void {
+  try {
+    if (typeof localStorage?.setItem !== 'function') return;
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore — storage quota / disabled / SSR */
+  }
+}
+
 function readPersisted(): Mode {
-  if (typeof localStorage === 'undefined') return 'edit';
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = safeGetItem(STORAGE_KEY);
   if (raw === 'edit' || raw === 'animate') return raw;
   return 'edit';
 }
@@ -41,10 +66,8 @@ export interface ModeStore {
 export const useModeStore = create<ModeStore>((set) => ({
   mode: readPersisted(),
   setMode(mode) {
-    if (typeof localStorage !== 'undefined') {
-      if (PERSISTABLE.has(mode)) {
-        localStorage.setItem(STORAGE_KEY, mode);
-      }
+    if (PERSISTABLE.has(mode)) {
+      safeSetItem(STORAGE_KEY, mode);
     }
     set({ mode });
   },
