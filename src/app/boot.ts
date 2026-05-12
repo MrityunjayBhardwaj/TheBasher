@@ -182,6 +182,13 @@ export function boot(): Promise<void> {
       void import('./stores/leftSidebarStore').then((m) => {
         w.__basher_left_sidebar = m.useLeftSidebarStore;
       });
+      // P6 W4 — inspectorSectionsStore exposed so e2e can verify
+      // per-node-type collapsed-state persistence without depending
+      // on chrome visibility (NPanel's section chevrons live behind
+      // chromeStore.inspectorCollapsed). K12 dev-seam pattern.
+      void import('./stores/inspectorSectionsStore').then((m) => {
+        w.__basher_inspector_sections = m.useInspectorSectionsStore;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;
