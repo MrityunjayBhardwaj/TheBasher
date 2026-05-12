@@ -89,6 +89,20 @@ function getTopLevelChildIds(): string[] {
 export function KeyboardShortcuts() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // V16 — Esc must reach the universal-escape handler even when
+      // focus is in a typing surface (AgentChat textarea, Inspector
+      // numeric input, etc.). Blur the focused element first so the
+      // user's next typing keystroke doesn't continue editing, then
+      // fall through to the Escape case in the main switch.
+      // (Other shortcuts respect the typing-guard below — Delete/
+      // Backspace must NOT bubble out of a textarea, otherwise the
+      // user can't delete characters from the chat input.)
+      if (e.key === 'Escape' && isTypingTarget(e.target)) {
+        if (e.target instanceof HTMLElement) e.target.blur();
+        useModeStore.getState().setMode('edit');
+        useSelectionStore.getState().clear();
+        return;
+      }
       if (isTypingTarget(e.target)) return;
       const cmd = e.metaKey || e.ctrlKey;
 

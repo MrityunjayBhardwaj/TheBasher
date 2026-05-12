@@ -186,6 +186,16 @@ six starter Mutators in `src/agent/mutators/builders/`.
 
 **Observation targets:** every D-UX entry in a spec carries either a `**REF:**` to file:line that's been opened during authoring, OR a `**TODO: observe**` flag. Spec-checker (anvi-ui-checker) treats unobserved files in a locked decision as a BLOCK verdict. **Additional W2.6 target:** every wave plan touching multi-surface chrome adds a "section inventory" step that re-runs §B11 HOW (re-validation) over distinctness claims, with output recorded in the wave's plan as either "no shifts" or "{D-UX-N} restored / overridden / advanced".
 
+**W3 section-inventory pass (2026-05-12):** ran B11 HOW (re-validation) over the surfaces W3 touches:
+
+| Surface pair | Inventory result | Verdict |
+|---|---|---|
+| AddMenu (4 groups: Mesh/Light/Camera/Empty, 11 procedural items) vs AssetsPopover (3 bundled glTF tiles via DRAG_MIME drop chain) | Disjoint: AddMenu spawns procedural primitives via `buildAddPrimitiveOps` + dispatchAtomic; AssetsPopover triggers HTML5 drag onto AssetDropZone. Zero section overlap. | no shifts |
+| LeftSidebar Scene tab (DAG tree, drag-reorder, K6 asset-drop integration) vs Agent tab (LLM transcript, mode selector, tool-call rows) | Orthogonal domains (scene hierarchy vs LLM chat). Zero section overlap. | no shifts |
+| ProjectTabs (R1: always-visible strip with select/close/new/dirty-dot/tooltip + ComfyStatusIndicator host on right edge) vs ProjectsMenu (popover with full CRUD: new/duplicate/rename/delete) | Share one read seam (`listAllProjectMetadata`) but UI affordances disjoint. ProjectTabs = always-visible switch + status; ProjectsMenu = on-demand CRUD. Both surfaces emit `createNewProject`/`deleteProject`/`switchProject` through the same boot helpers — single mutation path. | no shifts |
+
+**Future re-validation triggers:** (a) ProjectsMenu absorbs ComfyStatusIndicator or unsaved-indicator → ProjectTabs may become redundant; (b) Agent tab keyframe badges migrate to timeline dock → Scene tab loses Animate-mode unique section, may merge with Agent; (c) AddMenu absorbs glTF import via virtual entries → AssetsPopover may collapse to the drag surface only. Each future chrome-touching wave runs this inventory afresh.
+
 ---
 
 ## 2. ACTIVE INVARIANT SPANS
