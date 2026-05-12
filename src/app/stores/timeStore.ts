@@ -17,7 +17,7 @@
 
 import { create } from 'zustand';
 
-const FRAMES_PER_SECOND = 60;
+export const FRAMES_PER_SECOND = 60;
 const DEFAULT_DURATION_SECONDS = 10;
 
 export interface TimeStore {
