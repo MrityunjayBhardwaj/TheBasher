@@ -27,6 +27,7 @@ export const CutNode: NodeDefinition<CutParams, CutValue> = {
     to: { type: 'Shot', cardinality: 'single' },
   },
   outputs: { out: { type: 'Cut', cardinality: 'single' } },
+  inspectorSections: ['layout'],
   evaluate(params, inputs: ResolvedInputs) {
     return {
       kind: 'Cut',

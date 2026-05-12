@@ -93,6 +93,7 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
+  inspectorSections: ['render'],
   evaluate(params, inputs: ResolvedInputs): ImageValue {
     const prompt = inputs.prompt as PromptValue | undefined;
     const passes = (inputs['pass-input'] as ImageValue[] | undefined) ?? [];

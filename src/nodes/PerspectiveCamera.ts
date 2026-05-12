@@ -19,6 +19,7 @@ export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, Came
   paramSchema: PerspectiveCameraParams,
   inputs: {},
   outputs: { out: { type: 'Camera', cardinality: 'single' } },
+  inspectorSections: ['transform'],
   evaluate(params) {
     return {
       kind: 'PerspectiveCamera',

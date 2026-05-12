@@ -41,6 +41,7 @@ export const NormalPassNode: NodeDefinition<NormalPassParams, ImageValue> = {
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
+  inspectorSections: ['render'],
   evaluate(params, inputs: ResolvedInputs): ImageValue {
     const scene = inputs.scene as SceneValue | undefined;
     const camera = inputs.camera as CameraValue | undefined;

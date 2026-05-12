@@ -30,6 +30,7 @@ export const PromptNode: NodeDefinition<PromptParams, PromptValue> = {
   paramSchema: PromptParams,
   inputs: {},
   outputs: { out: { type: 'Prompt', cardinality: 'single' } },
+  inspectorSections: ['render'],
   evaluate(params) {
     // V10 guard: defensive defaults at the evaluator. The hydrate seam
     // can land params lacking `negative` / `tags` for projects saved

@@ -18,6 +18,7 @@ export const RenderOutputNode: NodeDefinition<RenderOutputParams, RenderOutputVa
   paramSchema: RenderOutputParams,
   inputs: { scene: { type: 'Scene', cardinality: 'single' } },
   outputs: { out: { type: 'RenderOutput', cardinality: 'single' } },
+  inspectorSections: ['render'],
   evaluate(params, inputs) {
     return {
       kind: 'RenderOutput',

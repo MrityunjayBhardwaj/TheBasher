@@ -105,6 +105,7 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
+  inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs) {
     const skeleton = inputs.skeleton as SkeletonValue | undefined;
     const time = inputs.time as TimeValue | undefined;

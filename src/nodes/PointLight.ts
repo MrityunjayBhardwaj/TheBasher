@@ -28,6 +28,7 @@ export const PointLightNode: NodeDefinition<PointLightParams, PointLightValue> =
   paramSchema: PointLightParams,
   inputs: {},
   outputs: { out: { type: 'Light', cardinality: 'single' } },
+  inspectorSections: ['transform'],
   evaluate(params) {
     // Defensive default for rotation — see DirectionalLight for the why.
     const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);

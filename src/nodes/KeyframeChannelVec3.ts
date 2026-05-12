@@ -74,6 +74,7 @@ export const KeyframeChannelVec3Node: NodeDefinition<
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
+  inspectorSections: ['channel', 'animate'],
   evaluate(params, inputs: ResolvedInputs) {
     const time = inputs.time as TimeValue | undefined;
     const tSeconds = time?.seconds ?? 0;

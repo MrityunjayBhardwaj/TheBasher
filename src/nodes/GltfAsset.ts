@@ -26,6 +26,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
   paramSchema: GltfAssetParams,
   inputs: {},
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params) {
     return { kind: 'GltfAsset', assetRef: params.assetRef };
   },

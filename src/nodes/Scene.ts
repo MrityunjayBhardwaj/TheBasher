@@ -17,6 +17,7 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     children: { type: 'Mesh', cardinality: 'list' },
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
+  inspectorSections: ['layout'],
   evaluate(_params, inputs) {
     return {
       kind: 'Scene',
