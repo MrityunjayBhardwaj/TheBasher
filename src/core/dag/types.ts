@@ -126,6 +126,18 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   evaluate(params: P, inputs: ResolvedInputs, ctx: EvalCtx): O | Record<string, O>;
   /** Optional migration ladder: version N → N+1. */
   migrations?: Record<number, (oldParams: unknown) => unknown>;
+  /**
+   * P6 W4 — Inspector section convention (UI-SPEC §5.8 + §7.2). Lists
+   * the section ids that apply to this node type, in display order.
+   * The first entry is the *primary domain* (expanded by default);
+   * subsequent entries default-collapse per §5.8.
+   *
+   * Loose `string[]` typing here keeps the DAG registry app-agnostic —
+   * SectionId narrowing happens at the Inspector layer
+   * (`src/app/inspectorSections.ts:isSectionId`). Nodes that omit
+   * this field route to the raw-param fallback rendering (D-08 B).
+   */
+  inspectorSections?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
