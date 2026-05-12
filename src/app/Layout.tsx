@@ -18,10 +18,11 @@
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { DiffBar } from './DiffBar';
+import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
+import { ProjectTabs } from './ProjectTabs';
 import { RightDrawer } from './RightDrawer';
-import { SceneTree } from './SceneTree';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TopToolbar } from './TopToolbar';
 import { ToolRail } from './ToolRail';
@@ -37,7 +38,6 @@ export function Layout() {
   const space = useEditorStore((s) => s.space);
   const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
-  const toggleLeftSidebar = useChromeStore((s) => s.toggleLeftSidebar);
   const isDirector = mode === 'director';
   // 5-column grid (P6 W2.5 dropped the dedicated library column; bundled
   // glTF samples are now reachable from TopToolbar's Assets popover):
@@ -64,8 +64,11 @@ export function Layout() {
         gridTemplateColumns: isDirector
           ? '0 0 1fr 0 0'
           : `${treeWidth} ${toolRailWidth} 1fr 280px 280px`,
-        gridTemplateRows: 'auto auto auto 1fr auto',
+        // P6 W3 — projectTabs row added at the top (R1 per §5.1). Director
+        // mode collapses it to 0 alongside the other chrome rows.
+        gridTemplateRows: isDirector ? '0 0 0 0 1fr 0' : '32px auto auto auto 1fr auto',
         gridTemplateAreas: `
+          "projectTabs projectTabs projectTabs projectTabs projectTabs"
           "menu menu menu menu menu"
           "chrome chrome chrome chrome chrome"
           "toolbar toolbar toolbar toolbar toolbar"
@@ -74,6 +77,9 @@ export function Layout() {
         `,
       }}
     >
+      <div style={{ gridArea: 'projectTabs', display: isDirector ? 'none' : 'block' }}>
+        <ProjectTabs />
+      </div>
       <div style={{ gridArea: 'menu', display: isDirector ? 'none' : 'block' }}>
         <MenuBar />
       </div>
@@ -94,6 +100,10 @@ export function Layout() {
         <ToolRail />
       </div>
 
+      {/* P6 W3 — LeftSidebar (R5) replaces the inline SceneTree + chevron
+          pattern from W2.6. Tab strip + collapse chevron are owned by
+          LeftSidebar itself (D-03); Layout's role here is just to
+          allocate the grid slot. */}
       <div
         style={{
           gridArea: 'tree',
@@ -105,32 +115,7 @@ export function Layout() {
         data-testid="tree-slot"
         data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
       >
-        {leftSidebarCollapsed ? (
-          <button
-            type="button"
-            onClick={toggleLeftSidebar}
-            data-testid="tree-expand-toggle"
-            title="Expand scene tree"
-            className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
-          >
-            ›
-          </button>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={toggleLeftSidebar}
-              data-testid="tree-expand-toggle"
-              title="Collapse scene tree"
-              className="flex h-7 w-full items-center justify-end px-2 text-fg-dim hover:text-fg"
-            >
-              ‹
-            </button>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <SceneTree />
-            </div>
-          </>
-        )}
+        <LeftSidebar />
       </div>
 
       <div
