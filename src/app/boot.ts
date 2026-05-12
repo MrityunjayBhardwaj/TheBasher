@@ -189,6 +189,13 @@ export function boot(): Promise<void> {
       void import('./stores/inspectorSectionsStore').then((m) => {
         w.__basher_inspector_sections = m.useInspectorSectionsStore;
       });
+      // P6 W5 — timelineDockStore exposed so e2e can verify active-tab
+      // persistence across reload (D-W5-2) and the no-auto-switch
+      // invariant (D-W5-3) without depending on click coordinates.
+      // K12 dev-seam pattern.
+      void import('./stores/timelineDockStore').then((m) => {
+        w.__basher_timeline_dock = m.useTimelineDockStore;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;
