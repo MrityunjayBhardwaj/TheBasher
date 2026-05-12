@@ -14,6 +14,8 @@
 //   Cmd/Ctrl + Z      — undo
 //   Cmd/Ctrl + Shift + Z OR Cmd/Ctrl + Y — redo
 //   Cmd/Ctrl + S      — save current project (preventDefault — browser save dialog)
+//   Delete / Backspace  — remove primary selected node (V1: dispatchAtomic
+//                       removeNode op; protected against outputs by op validator)
 //   Cmd/Ctrl + A      — select all top-level scene children
 //   Cmd/Ctrl + Shift + C — camera-from-view (snapshot orbit pose into a
 //                       new PerspectiveCamera node)
@@ -25,6 +27,7 @@
 // through the Op dispatcher or hydrate seam.
 
 import { useEffect } from 'react';
+import type { Op } from '../core/dag/types';
 import { useDagStore } from '../core/dag/store';
 import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
@@ -184,6 +187,45 @@ export function KeyboardShortcuts() {
           // Bare 'A' opens the Add menu (UI-SPEC §6.2). Shift+A is
           // handled earlier; this branch is the no-modifier case.
           openAddMenuAtViewportCenter();
+          return;
+        case 'Delete':
+        case 'Backspace':
+          // Remove all selected nodes (Blender's X/Delete). V1 clean:
+          // dispatchAtomic disconnect + removeNode ops. The removeNode
+          // validator rejects deletion if any other node still consumes
+          // an output — so we find and disconnect all consumers first.
+          // Single undo entry reverts the whole delete.
+          {
+            const dag = useDagStore.getState();
+            const sel = useSelectionStore.getState();
+            const ids = [...sel.selectedNodeIds];
+            if (ids.length === 0) return;
+            const dagState = dag.state;
+            const ops: Op[] = [];
+            for (const nodeId of ids) {
+              // Find every consumer that references this node in any input.
+              for (const [consumerId, consumer] of Object.entries(dagState.nodes)) {
+                if (ids.includes(consumerId)) continue; // being deleted too — skip
+                for (const [socketName, binding] of Object.entries(consumer.inputs)) {
+                  const refs = Array.isArray(binding) ? binding : [binding];
+                  for (const ref of refs) {
+                    if (ref.node === nodeId) {
+                      ops.push({
+                        type: 'disconnect',
+                        from: { node: nodeId, socket: ref.socket },
+                        to: { node: consumerId, socket: socketName },
+                      });
+                    }
+                  }
+                }
+              }
+              ops.push({ type: 'removeNode', nodeId });
+            }
+            if (ops.length === 0) return;
+            dag.dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
+            sel.clear();
+            e.preventDefault();
+          }
           return;
         case 'f':
         case 'F':
