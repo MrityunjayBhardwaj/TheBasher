@@ -175,6 +175,13 @@ export function boot(): Promise<void> {
       void import('./stores/chromeStore').then((m) => {
         w.__basher_chrome = m.useChromeStore;
       });
+      // P6 W3 — leftSidebarStore exposed so e2e can drive tab activation
+      // without depending on visible chrome (the tab strip lands in C3;
+      // until then this seam lets the C2 dev-loop verify persistence
+      // round-trips programmatically — same pattern as __basher_chrome).
+      void import('./stores/leftSidebarStore').then((m) => {
+        w.__basher_left_sidebar = m.useLeftSidebarStore;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;
