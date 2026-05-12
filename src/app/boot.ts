@@ -131,6 +131,22 @@ export function boot(): Promise<void> {
       outputs: project.state.outputs,
     });
 
+    // P6 W3 — dirty tracking subscription. Registered AFTER hydrate so the
+    // initial state install does NOT mark the project dirty. Fires on every
+    // subsequent dag-state transition (Op dispatch via K2). hydrate() in
+    // switchProject/createNewProject/duplicateCurrentProject also triggers
+    // this — but those paths call setCurrent() right before, which resets
+    // dirty=false and lastSavedAt=updatedAt; the subscription then re-flips
+    // dirty=true once if the hydrate produced an object-identity change.
+    // To avoid that single false-positive, switchProject/createNewProject/
+    // duplicateCurrentProject reset dirty AFTER hydrate (see those funcs).
+    let prevDagState = useDagStore.getState().state;
+    useDagStore.subscribe((s) => {
+      if (s.state === prevDagState) return;
+      prevDagState = s.state;
+      useProjectStore.getState().markDirty();
+    });
+
     // Test affordance — expose the stores in dev only. Production builds
     // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
     // these to drive scenarios that native HTML5 D&D would make brittle.
@@ -254,6 +270,11 @@ export async function saveCurrent(): Promise<void> {
   });
   await saveProject(storage, project);
   useProjectStore.getState().setCurrent(project);
+  // P6 W3 — setCurrent resets dirty/lastSavedAt from project.updatedAt, which
+  // is consistent here (just-written timestamp). markSaved() is a no-op pair
+  // for clarity at this seam — the explicit name makes the intent visible
+  // to future readers / dharana audits.
+  useProjectStore.getState().markSaved();
 }
 
 /** Tests / dev only — replaces the persisted project with a fresh default. */
@@ -288,6 +309,10 @@ export async function switchProject(projectId: string): Promise<void> {
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
+  // P6 W3 — hydrate triggers the dirty subscription. Re-run setCurrent
+  // semantics (dirty=false, lastSavedAt=project.updatedAt) so the freshly
+  // loaded project doesn't appear unsaved.
+  useProjectStore.getState().setCurrent(project);
 }
 
 /** Create a fresh default project under a new id and switch to it. */
@@ -306,6 +331,8 @@ export async function createNewProject(name: string, id?: string): Promise<strin
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
+  // P6 W3 — clear dirty caused by hydrate (see switchProject).
+  useProjectStore.getState().setCurrent(project);
   return newId;
 }
 
@@ -328,6 +355,8 @@ export async function deleteProject(projectId: string): Promise<void> {
         nodes: seed.state.nodes,
         outputs: seed.state.outputs,
       });
+      // P6 W3 — clear dirty caused by hydrate (see switchProject).
+      useProjectStore.getState().setCurrent(seed);
     }
   }
 }
@@ -347,6 +376,8 @@ export async function duplicateCurrentProject(newName?: string): Promise<string>
     nodes: dup.state.nodes,
     outputs: dup.state.outputs,
   });
+  // P6 W3 — clear dirty caused by hydrate (see switchProject).
+  useProjectStore.getState().setCurrent(dup);
   return newId;
 }
 
