@@ -196,6 +196,16 @@ six starter Mutators in `src/agent/mutators/builders/`.
 
 **Future re-validation triggers:** (a) ProjectsMenu absorbs ComfyStatusIndicator or unsaved-indicator → ProjectTabs may become redundant; (b) Agent tab keyframe badges migrate to timeline dock → Scene tab loses Animate-mode unique section, may merge with Agent; (c) AddMenu absorbs glTF import via virtual entries → AssetsPopover may collapse to the drag surface only. Each future chrome-touching wave runs this inventory afresh.
 
+**W4 section-inventory pass (2026-05-12):** ran B11 HOW over the surfaces W4 touches:
+
+| Surface pair | Inventory result | Verdict |
+|---|---|---|
+| NPanel section cards (Transform/Mesh/Material/Render/Animate/Channel/Layout — 7 declared sections) vs NPanel raw-fallback (flat param renderer for nodes without inspectorSections) | Disjoint by design: sectioned path renders cards per declared section; raw-fallback renders single flat list under `inspector-raw-fallback` testid. The two paths are mutually exclusive per node — selection check is `declared.length === 0`. Raw-fallback is the *escape* path for legacy/glue nodes; never co-renders with sections. | no shifts (intentional |/either) |
+| inspectorSections (per-node-type registry declaration) vs paramToSection (predicate-based param router) | Complementary, not redundant. Registry declares *which sections apply* to a node type; predicate routes *which params land in each section*. Adding a new node type requires registry declaration; adding a new param to an existing section just extends the predicate. No duplication. | no shifts |
+| Section catalog (§5.8: 7 entries) vs §7.2 multi-select sections (`['Transform', 'Metadata']`) | Spec internal: §7.2 references 'Metadata' which is NOT in §5.8's catalog. Locked D-10 A: multi-select uses `['transform', 'layout']` (Layout substitutes for Metadata since Layout is the catalog's "always last; positioning hints" entry). Documented in `MULTI_SELECT_SECTIONS`. | resolved via D-10 |
+
+**W4 re-validation triggers:** (a) new node types added that should fit existing sections but lack inspectorSections — registry-snapshot test would catch silent omission only for the buckets we explicitly probe; (b) new section ids added to the catalog → must update SECTION_IDS + paramToSection predicate + node declarations; (c) §7.2 'Metadata' gets a real home in the catalog → MULTI_SELECT_SECTIONS narrows back to its original spec wording. Each future Inspector-touching wave re-runs the §5.8 catalog vs registry-declared coverage check.
+
 ---
 
 ## 2. ACTIVE INVARIANT SPANS
