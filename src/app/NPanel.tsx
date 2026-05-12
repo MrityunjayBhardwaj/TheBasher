@@ -38,9 +38,18 @@
 // re-render before next frame).
 
 import { useDagStore } from '../core/dag/store';
+import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { useDragScrub } from './dragScrub';
+import {
+  formatSectionLabel,
+  isDefaultCollapsed,
+  isSectionId,
+  paramToSection,
+  type SectionId,
+} from './inspectorSections';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
+import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useSelectionStore } from './stores/selectionStore';
 
 interface NumericFieldProps {
@@ -184,9 +193,104 @@ function isInputBinding(v: unknown): boolean {
   return typeof o.node === 'string' && typeof o.socket === 'string';
 }
 
+/** Render one param row. Dispatches on the value's runtime shape —
+ *  number / vec3 / string / input-binding / complex. Returns null when
+ *  the value is an upstream binding (those render via socket wiring
+ *  in C5+, not the Inspector). */
+function ParamRow({
+  nodeId,
+  paramPath,
+  value,
+}: {
+  nodeId: string;
+  paramPath: string;
+  value: unknown;
+}) {
+  if (typeof value === 'number') {
+    return <NumericField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />;
+  }
+  if (isVec3(value)) {
+    return <VectorField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />;
+  }
+  if (typeof value === 'string') {
+    return (
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
+        <span className="font-mono text-fg/60">{paramPath}</span>
+        <span className="font-mono text-fg/80">{value}</span>
+      </div>
+    );
+  }
+  if (isInputBinding(value)) return null;
+  return (
+    <div className="px-3 py-1.5 text-[11px] text-fg/40">
+      {paramPath}: <span className="text-fg/30">(complex — Pro mode)</span>
+    </div>
+  );
+}
+
+/** A collapsible section card. Header click toggles via
+ *  inspectorSectionsStore; visual collapse combines user choice with
+ *  the §5.8 default rule via resolveCollapsed. */
+function SectionCard({
+  nodeType,
+  sectionId,
+  declaredSections,
+  children,
+}: {
+  nodeType: string;
+  sectionId: SectionId;
+  declaredSections: readonly SectionId[];
+  children: React.ReactNode;
+}) {
+  const userCollapsed = useInspectorSectionsStore((s) =>
+    s.collapsedByNodeType[nodeType]?.[sectionId],
+  );
+  const setCollapsed = useInspectorSectionsStore((s) => s.setCollapsed);
+  const isDefault = isDefaultCollapsed(declaredSections, sectionId);
+  const collapsed = resolveCollapsed(userCollapsed, isDefault);
+  // Visual-state-aware toggle: clicking always flips what the user
+  // currently SEES. The store's toggleCollapsed only sees the persisted
+  // user choice, which is undefined until the user clicks once — so we
+  // resolve visual state here and call setCollapsed with the explicit
+  // inverse. Ensures first click on a default-collapsed section
+  // expands it (the natural UX).
+  const onToggle = () => setCollapsed(nodeType, sectionId, !collapsed);
+  return (
+    <section
+      data-testid={`inspector-section-${sectionId}`}
+      data-collapsed={collapsed || undefined}
+      className="border-b border-border"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        data-testid={`inspector-section-toggle-${sectionId}`}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-wide text-fg/60 hover:bg-muted hover:text-fg"
+      >
+        <span aria-hidden className="text-fg/40">
+          {collapsed ? '▸' : '▾'}
+        </span>
+        <span data-testid={`inspector-section-header-${sectionId}`}>
+          {formatSectionLabel(sectionId)}
+        </span>
+      </button>
+      {collapsed ? null : (
+        <div data-testid={`inspector-section-body-${sectionId}`} className="flex flex-col pb-1">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
+
+  // Resolve the node's declared inspectorSections via the registry
+  // (the source of truth — V14 alignment). Empty array → raw fallback.
+  const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
+  const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
 
   return (
     <aside
@@ -206,50 +310,60 @@ export function NPanel() {
               {node.type} v{node.version}
             </div>
           </div>
-          <div className="flex flex-col py-1">
-            {Object.entries((node.params ?? {}) as Record<string, unknown>).map(([key, value]) => {
-              const path = key;
-              if (typeof value === 'number') {
-                return (
-                  <NumericField
-                    key={path}
-                    nodeId={node.id}
-                    paramPath={path}
-                    label={key}
-                    value={value}
-                  />
-                );
+          {declared.length === 0 ? (
+            // D-08 B raw-fallback path: nodes that intentionally omit
+            // inspectorSections render their params in a flat list.
+            <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
+              {Object.entries((node.params ?? {}) as Record<string, unknown>).map(([key, value]) => (
+                <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+              ))}
+            </div>
+          ) : (
+            (() => {
+              // Group params by section. Params that don't route into
+              // any declared section land in a "raw" bucket rendered
+              // after the declared sections (typed under (complex —
+              // Pro mode) or string display — preserves zero param
+              // hiding while keeping unrouted params visible).
+              const grouped: Map<SectionId, [string, unknown][]> = new Map();
+              const unrouted: [string, unknown][] = [];
+              for (const [key, value] of Object.entries(
+                (node.params ?? {}) as Record<string, unknown>,
+              )) {
+                if (isInputBinding(value)) continue; // socket binding, not param
+                const section = paramToSection(key, declared);
+                if (section === null) {
+                  unrouted.push([key, value]);
+                } else {
+                  if (!grouped.has(section)) grouped.set(section, []);
+                  grouped.get(section)!.push([key, value]);
+                }
               }
-              if (isVec3(value)) {
-                return (
-                  <VectorField
-                    key={path}
-                    nodeId={node.id}
-                    paramPath={path}
-                    label={key}
-                    value={value}
-                  />
-                );
-              }
-              if (typeof value === 'string') {
-                return (
-                  <div
-                    key={path}
-                    className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]"
-                  >
-                    <span className="font-mono text-fg/60">{key}</span>
-                    <span className="font-mono text-fg/80">{value}</span>
-                  </div>
-                );
-              }
-              if (isInputBinding(value)) return null;
               return (
-                <div key={path} className="px-3 py-1.5 text-[11px] text-fg/40">
-                  {key}: <span className="text-fg/30">(complex — Pro mode)</span>
-                </div>
+                <>
+                  {declared.map((sectionId) => (
+                    <SectionCard
+                      key={sectionId}
+                      nodeType={node.type}
+                      sectionId={sectionId}
+                      declaredSections={declared}
+                    >
+                      {(grouped.get(sectionId) ?? []).map(([key, value]) => (
+                        <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+                      ))}
+                    </SectionCard>
+                  ))}
+                  {unrouted.length > 0 ? (
+                    <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
+                      {unrouted.map(([key, value]) => (
+                        <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+                      ))}
+                    </div>
+                  ) : null}
+                </>
               );
-            })}
-          </div>
+            })()
+          )}
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
           ) : null}

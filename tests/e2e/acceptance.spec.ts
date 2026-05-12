@@ -157,6 +157,12 @@ test('#5 inspector edit propagates to viewport within 16ms (DAG dispatch latency
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
   await page.getByTestId('scene-tree-row-n_box').click();
+  // P6 W4 — BoxMesh declares ['mesh', 'transform', 'material']. Mesh is
+  // the primary domain (expanded by default); Transform/Material are
+  // default-collapsed per §5.8. Position lives in Transform, so expand
+  // it before querying inspector-vec-n_box-position-x.
+  await page.getByTestId('inspector-section-toggle-transform').click();
+  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
   // Time the dispatch round-trip: instrumentation reads from useDagStore in
   // Inspector's onChange (synchronous). Actual paint timing on the viewport
   // is gated by the next rAF; we measure dispatch + state propagation.

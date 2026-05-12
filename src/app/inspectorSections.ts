@@ -53,6 +53,96 @@ export function formatSectionLabel(id: SectionId): string {
  *  the closest "foundational positioning hints" substitute. */
 export const MULTI_SELECT_SECTIONS: readonly SectionId[] = ['transform', 'layout'];
 
+/** Route a param path to its owning section. Predicate-based — no
+ *  parallel mapping table to drift from the catalog. Returns null when
+ *  the param doesn't belong to any declared section (renders in raw
+ *  fallback area). Caller passes the node's declared sections so the
+ *  router can degrade gracefully (e.g. a 'material' param on a node
+ *  that doesn't declare 'material' falls through to the raw bucket).
+ */
+export function paramToSection(
+  paramPath: string,
+  declaredSections: readonly SectionId[],
+): SectionId | null {
+  // Transform params — position / rotation / scale.
+  if (
+    declaredSections.includes('transform') &&
+    (paramPath === 'position' || paramPath === 'rotation' || paramPath === 'scale')
+  ) {
+    return 'transform';
+  }
+  // Mesh params — size / radius / segments / topology hints.
+  if (
+    declaredSections.includes('mesh') &&
+    (paramPath === 'size' ||
+      paramPath === 'radius' ||
+      paramPath === 'widthSegments' ||
+      paramPath === 'heightSegments' ||
+      paramPath === 'assetRef')
+  ) {
+    return 'mesh';
+  }
+  // Material params — color / material / opacity / metalness / roughness / emissive.
+  if (
+    declaredSections.includes('material') &&
+    (paramPath === 'material' ||
+      paramPath === 'color' ||
+      paramPath === 'opacity' ||
+      paramPath === 'metalness' ||
+      paramPath === 'roughness' ||
+      paramPath === 'emissive' ||
+      paramPath === 'emissiveIntensity')
+  ) {
+    return 'material';
+  }
+  // Render params — paths, settings, codec, fps, frame ranges, presets.
+  if (
+    declaredSections.includes('render') &&
+    (paramPath === 'outputPath' ||
+      paramPath === 'frameStart' ||
+      paramPath === 'frameEnd' ||
+      paramPath === 'fps' ||
+      paramPath === 'codec' ||
+      paramPath === 'presetId' ||
+      paramPath === 'promptText' ||
+      paramPath === 'settings' ||
+      paramPath === 'jobId')
+  ) {
+    return 'render';
+  }
+  // Animate params — playback / weight / time / clipId.
+  if (
+    declaredSections.includes('animate') &&
+    (paramPath === 'weight' ||
+      paramPath === 'playing' ||
+      paramPath === 'startFrame' ||
+      paramPath === 'endFrame' ||
+      paramPath === 'clipId' ||
+      paramPath === 'targetPath')
+  ) {
+    return 'animate';
+  }
+  // Channel params — interpolation / loop / keyframes themselves.
+  if (
+    declaredSections.includes('channel') &&
+    (paramPath === 'interpolation' ||
+      paramPath === 'loop' ||
+      paramPath === 'keyframes' ||
+      paramPath === 'easing' ||
+      paramPath === 'paramPath')
+  ) {
+    return 'channel';
+  }
+  // Layout params — name / labels / cosmetic positioning.
+  if (
+    declaredSections.includes('layout') &&
+    (paramPath === 'name' || paramPath === 'label' || paramPath === 'notes')
+  ) {
+    return 'layout';
+  }
+  return null;
+}
+
 /** Default-collapsed convention (§5.8). A section is default-collapsed
  *  iff it is NOT the primary domain of the selected node type.
  *
