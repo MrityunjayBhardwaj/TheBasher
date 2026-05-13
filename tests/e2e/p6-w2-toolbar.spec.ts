@@ -52,35 +52,31 @@ test('P6.W2#2 TopToolbar mode pill click sets mode', async ({ page }) => {
   await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
 });
 
+interface EditorWindow {
+  __basher_editor: { getState: () => { activeTool: string } };
+}
+
+function readActiveTool(): string {
+  return (window as unknown as EditorWindow).__basher_editor.getState().activeTool;
+}
+
 test('P6.W2#3 keyboard Q/W/E/R sets editorStore.activeTool', async ({ page }) => {
   // editorStore is exposed in dev via window.__basher_editor.
   await page.keyboard.press('w');
-  await expect
-    .poll(async () => await page.evaluate(() => (window as any).__basher_editor.getState().activeTool))
-    .toBe('translate');
+  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('translate');
   await page.keyboard.press('e');
-  await expect
-    .poll(async () => await page.evaluate(() => (window as any).__basher_editor.getState().activeTool))
-    .toBe('rotate');
+  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('rotate');
   await page.keyboard.press('r');
-  await expect
-    .poll(async () => await page.evaluate(() => (window as any).__basher_editor.getState().activeTool))
-    .toBe('scale');
+  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('scale');
   await page.keyboard.press('q');
-  await expect
-    .poll(async () => await page.evaluate(() => (window as any).__basher_editor.getState().activeTool))
-    .toBe('select');
+  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('select');
 });
 
 test('P6.W2#4 ToolRail click sets activeTool through the same path', async ({ page }) => {
   await page.getByTestId('tool-rail-rotate').click();
-  await expect
-    .poll(async () => await page.evaluate(() => (window as any).__basher_editor.getState().activeTool))
-    .toBe('rotate');
+  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('rotate');
   await page.getByTestId('tool-rail-translate').click();
-  await expect
-    .poll(async () => await page.evaluate(() => (window as any).__basher_editor.getState().activeTool))
-    .toBe('translate');
+  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('translate');
 });
 
 test('P6.W2#5 ToolRail collapse toggles + persists across reload', async ({ page }) => {
