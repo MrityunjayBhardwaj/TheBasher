@@ -18,6 +18,7 @@ import { Gizmo } from '../app/Gizmo';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useViewportStore } from '../app/stores/viewportStore';
+import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
 import { EditorLights } from './EditorLights';
 import { SceneFromDAG } from './SceneFromDAG';
@@ -109,6 +110,7 @@ export function Viewport() {
         </Suspense>
       </Canvas>
       <FpsMeter />
+      <FloatingViewportToolbar />
     </div>
   );
 }
