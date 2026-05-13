@@ -91,7 +91,7 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(14);
+    expect(mutators).toHaveLength(16);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -106,7 +106,9 @@ describe('mutator catalog', () => {
       'mutator.shot.create',
       'mutator.timeline.addChannel',
       'mutator.timeline.addLayer',
+      'mutator.timeline.clearChannel',
       'mutator.timeline.keyframe',
+      'mutator.timeline.simplifyChannel',
       'mutator.translate',
     ]);
   });
@@ -571,7 +573,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(14);
+    expect(parsed.mutators).toHaveLength(16);
   });
 });
 
@@ -645,7 +647,14 @@ describe('agent.proposePlan tool', () => {
 // P3 Wave B — animation Mutators (issue #34)
 // ---------------------------------------------------------------------------
 
-import { addLayerMutator, addChannelMutator, keyframeMutator, shotCreateMutator } from './index';
+import {
+  addLayerMutator,
+  addChannelMutator,
+  keyframeMutator,
+  simplifyChannelMutator,
+  clearChannelMutator,
+  shotCreateMutator,
+} from './index';
 import { applyOp } from '../../core/dag';
 
 function buildSceneWithTime() {
@@ -1502,5 +1511,235 @@ describe('mutator.render.addStitch', () => {
       'a',
     );
     expect(a).toEqual(b);
+  });
+});
+
+describe('mutator.timeline.simplifyChannel', () => {
+  function numberChannelWith(
+    keyframes: Array<{ time: number; value: number; easing?: 'linear' | 'cubic' }>,
+  ): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        keyframes: keyframes.map((k) => ({ time: k.time, value: k.value, easing: k.easing ?? 'linear' })),
+      },
+    }).next;
+    return s;
+  }
+
+  function vec3ChannelWith(
+    keyframes: Array<{ time: number; value: [number, number, number] }>,
+  ): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: keyframes.map((k) => ({ time: k.time, value: k.value, easing: 'cubic' })),
+      },
+    }).next;
+    return s;
+  }
+
+  it('drops collinear interior keyframes on a Number channel', () => {
+    // 5 keyframes on a straight line — RDP should keep endpoints only.
+    const state = numberChannelWith([
+      { time: 0, value: 0 },
+      { time: 0.25, value: 0.25 },
+      { time: 0.5, value: 0.5 },
+      { time: 0.75, value: 0.75 },
+      { time: 1, value: 1 },
+    ]);
+    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 0.01 }, state, 'simplify');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    const keyframes = op.value as Array<{ time: number; value: number }>;
+    expect(keyframes).toHaveLength(2);
+    expect(keyframes[0].time).toBe(0);
+    expect(keyframes[1].time).toBe(1);
+  });
+
+  it('keeps a peak that exceeds tolerance', () => {
+    // V-shape: midpoint deviates from the (0,0)→(1,0) line by 1 unit.
+    const state = numberChannelWith([
+      { time: 0, value: 0 },
+      { time: 0.5, value: 1 },
+      { time: 1, value: 0 },
+    ]);
+    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 0.01 }, state, 'peak');
+    // Peak deviates well beyond tolerance → all 3 kept; nothing to simplify → no ops.
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(0);
+  });
+
+  it('aggressive tolerance flattens everything to endpoints', () => {
+    const state = numberChannelWith([
+      { time: 0, value: 0 },
+      { time: 0.5, value: 1 },
+      { time: 1, value: 0 },
+    ]);
+    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 1 }, state, 'flat');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    const keyframes = op.value as Array<{ time: number }>;
+    expect(keyframes).toHaveLength(2);
+  });
+
+  it('preserves a constant axis on Vec3 (3D distance, not per-axis)', () => {
+    // y is constant; x/z trace a 5-step segment along x with deviation
+    // small enough that RDP simplifies the line.
+    const state = vec3ChannelWith([
+      { time: 0, value: [0, 5, 0] },
+      { time: 0.25, value: [0.25, 5, 0] },
+      { time: 0.5, value: [0.5, 5, 0] },
+      { time: 0.75, value: [0.75, 5, 0] },
+      { time: 1, value: [1, 5, 0] },
+    ]);
+    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 0.01 }, state, 'vec3 line');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    const keyframes = op.value as Array<{ time: number; value: [number, number, number] }>;
+    expect(keyframes).toHaveLength(2);
+    // Both endpoints' y must still be 5.
+    expect(keyframes[0].value[1]).toBe(5);
+    expect(keyframes[1].value[1]).toBe(5);
+  });
+
+  it('returns no-op for Quat / Color channels (skipped in v0.5)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch_q',
+      nodeType: 'KeyframeChannelQuat',
+      params: {
+        name: 'rot',
+        target: 'box',
+        paramPath: 'rotation',
+        keyframes: [
+          { time: 0, value: [0, 0, 0, 1], easing: 'cubic' },
+          { time: 0.5, value: [0, 0.707, 0, 0.707], easing: 'cubic' },
+          { time: 1, value: [0, 1, 0, 0], easing: 'cubic' },
+        ],
+      },
+    }).next;
+    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch_q', tolerance: 0.5 }, s, 'quat');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(0);
+  });
+
+  it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
+    const state = numberChannelWith([{ time: 0, value: 0 }]);
+    const r = validatePlan(simplifyChannelMutator, { channelId: 'box', tolerance: 0.1 }, state, 'wrong type');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+describe('mutator.timeline.clearChannel', () => {
+  function stateWithKeyframes(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        keyframes: [
+          { time: 0, value: 0, easing: 'linear' },
+          { time: 1, value: 1, easing: 'linear' },
+        ],
+      },
+    }).next;
+    return s;
+  }
+
+  it('emits setParam(keyframes, []) and the result is empty', () => {
+    const state = stateWithKeyframes();
+    const r = validatePlan(clearChannelMutator, { channelId: 'ch' }, state, 'clear');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.paramPath).toBe('keyframes');
+    expect(op.value).toEqual([]);
+  });
+
+  it('no-op when channel is already empty', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: { name: 'val', target: 'box', paramPath: 'opacity', keyframes: [] },
+    }).next;
+    const r = validatePlan(clearChannelMutator, { channelId: 'ch' }, s, 'noop');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(0);
+  });
+
+  it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
+    const state = stateWithKeyframes();
+    const r = validatePlan(clearChannelMutator, { channelId: 'box' }, state, 'wrong type');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects when channelId is missing from DAG (gate 4)', () => {
+    const state = stateWithKeyframes();
+    const r = validatePlan(clearChannelMutator, { channelId: 'nonexistent' }, state, 'missing');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
   });
 });

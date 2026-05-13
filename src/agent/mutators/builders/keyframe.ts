@@ -59,7 +59,19 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     requiredEdges: [],
     // Channel must already be a known type — addChannel landed first.
     requiredNodeTypes: [],
-    preserves: ['position', 'rotation', 'scale', 'material', 'children'],
+    // P6 W6 — adds 'animation-shape' + 'keyframe-density' to distinguish
+    // from simplifyChannel + clearChannel under V14. keyframe appends or
+    // replaces a single sample; the existing curve shape is preserved AND
+    // the count of other samples is unchanged.
+    preserves: [
+      'position',
+      'rotation',
+      'scale',
+      'material',
+      'children',
+      'animation-shape',
+      'keyframe-density',
+    ],
   },
   buildClosureSpec(spec): ClosureSpec {
     return {

@@ -45,7 +45,15 @@ export type PreservedAspect =
   | 'scale'
   | 'animation'
   | 'children'
-  | 'material';
+  | 'material'
+  // P6 W6 — channel-targeting Mutator family. These distinguish
+  // keyframe / simplifyChannel / clearChannel under V14 (Mutator
+  // non-redundancy). A Mutator that appends a sample still preserves
+  // BOTH the curve's shape AND the density of existing samples;
+  // simplifyChannel drops density but preserves shape within ε;
+  // clearChannel preserves neither.
+  | 'animation-shape'
+  | 'keyframe-density';
 
 export interface LossyAspect {
   kind: string;
