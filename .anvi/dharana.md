@@ -216,6 +216,19 @@ six starter Mutators in `src/agent/mutators/builders/`.
 
 **W5 re-validation triggers:** (a) future Timebar absorbs Frame/FPS readout → DockHeader's right-side readout becomes redundant (would collapse to tab strip only); (b) keyboard shortcut for tab switching (Tab? Shift+Tab?) lands in W6 → tab-strip click handler becomes one of several entry points to `setActiveTab`; (c) imperative TimelineCanvas (W9) replaces SVG Curve Editor rendering → tab boundary unaffected but pane content swaps; (d) track-ops bottom toolbar lands in W6 → new "actions row" inventory pair vs existing tab strip + Timebar.
 
+**W6 section-inventory pass (2026-05-13):** ran B11 HOW over the surfaces W6 touches:
+
+| Surface pair | Inventory | Verdict |
+|---|---|---|
+| W5 tab strip (28px top of body) vs W6 bottom toolbar (28px at body bottom: `[Key][Delete][Simplify…][Clear]`) | Disjoint visual + functional regions. Top = read-only status (Frame/FPS) + tab navigation. Bottom = Mutator-dispatching action buttons gated on (channelId, keyframeId) selection state. No shared testids; no shared dispatch path. | no shifts |
+| Global `KeyboardShortcuts.tsx` handler vs proposed Animate-only branches (Space/K/`[`/`]`/Delete-override) | Complementary, extends same file with mode-gated `if (editorMode === 'animate')` branches. Keys Space, K, `[`, `]` were previously unused; Delete branch *overrides* existing node-delete only when `activeKeyframeId` is set (early return), preserving edit-mode semantics. | no shifts |
+| Toolbar dispatch path vs Keyboard dispatch path | Single source of truth: both routes funnel through the same pure helpers (`buildKeyframeInsertOp`, `buildKeyframeDeleteOp`) exported from KeyboardShortcuts.tsx. Toolbar Clear and Simplify go through validatePlan + dispatchAtomic (Mutator path) — same five-gate validation as agent calls. V1 (Op-system) preserved. | no shifts |
+| `mutator.timeline.keyframe` (existing) vs `mutator.timeline.simplifyChannel` (new) vs `mutator.timeline.clearChannel` (new) | All three target KeyframeChannel nodes. V14 (Mutator non-redundancy) initially collided — fix: extend `PreservedAspect` with `'animation-shape'` + `'keyframe-density'`. Three distinct contract signatures: keyframe preserves both, simplify preserves shape only (lossy density), clear preserves neither (lossy both). Genuinely distinct semantics, not gamed. | resolved via PreservedAspect extension |
+| SimplifyPopover (new chrome) vs existing popover precedents (AddMenu, AssetsPopover, ProjectsMenu) | Pattern reuse — `bottom-full right-0 absolute` card + click-outside + Esc dismissal. No global modal infra introduced. testids: `simplify-popover`, `…-input`, `…-apply`, `…-cancel`, `…-error`. | no shifts (pattern reuse) |
+| Existing `Tab` keybinding (3D ↔ UV) vs W5-deferred "dock tab-switch keyboard" | Resolved by D-W6-5 = drop entirely. No replacement key worth the discoverability cost. Mouse-only tab switching for v0.5. | resolved: dropped |
+
+**W6 re-validation triggers:** (a) W7 FloatingViewportToolbar adds new buttons in a 4th visual region → re-inventory toolbar regions; (b) Insert blank frame / Cut/Copy/Paste land later → bottom toolbar grows, need to verify §5.9 button order; (c) keyframe drag (W9 imperative) adds a 2nd `activeKeyframeId` setter path → re-validate single source of truth; (d) Quat/Color simplify becomes supported → simplifyChannel's no-op branch shrinks, may invalidate W6#7 spec's implicit Number-only assumption.
+
 ---
 
 ## 2. ACTIVE INVARIANT SPANS

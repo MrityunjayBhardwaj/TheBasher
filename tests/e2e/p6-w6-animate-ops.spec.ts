@@ -1,0 +1,269 @@
+// P6 W6 acceptance — animate-mode keyboard shortcuts + bottom toolbar +
+// SimplifyPopover (UI-SPEC §5.9 + §6.2 + D-W6-1..5).
+//
+// Coverage:
+//   #1 bottom toolbar visible in Animate mode with drawer open; buttons
+//      disabled until a channel / keyframe is selected
+//   #2 K (keyboard) inserts a keyframe at the current frame into the
+//      active channel
+//   #3 Key button (toolbar) mirrors K
+//   #4 clicking a Dopesheet diamond sets activeKeyframeId; Delete key
+//      removes that keyframe; Delete button is disabled when no
+//      keyframe is selected (D-W6-2)
+//   #5 [ / ] seek to previous / next keyframe time on the active channel
+//   #6 Clear button (toolbar) empties the active channel's keyframes
+//   #7 Simplify popover opens, validates tolerance input, dispatches
+//      mutator.timeline.simplifyChannel via the five-gate validator
+//      (D-W6-4)
+//
+// REF: docs/UI-SPEC.md §5.9 bottom toolbar + §6.2 keyboard model;
+// D-W6-1..5 (memory/project_p6_w6_context.md).
+
+import { expect, test } from '@playwright/test';
+
+interface KeyframeShape {
+  time: number;
+  value: unknown;
+  easing: 'linear' | 'cubic';
+}
+
+interface BasherWindow {
+  __basher_dag?: {
+    getState: () => {
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params?: { keyframes?: KeyframeShape[] } & Record<string, unknown>;
+          }
+        >;
+      };
+      dispatch: (op: unknown) => void;
+      dispatchAtomic: (ops: unknown[], source?: string, label?: string) => void;
+    };
+  };
+  __basher_viewport?: { getState: () => { timelineDrawerOpen: boolean } };
+  __basher_time?: { getState: () => { setTime: (s: number) => void; seconds: number } };
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    if (typeof navigator?.storage?.getDirectory === 'function') {
+      const root = await navigator.storage.getDirectory();
+      try {
+        await root.removeEntry('basher', { recursive: true });
+      } catch {
+        /* not present */
+      }
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('basher.timelineDock.v1');
+    }
+  });
+  await page.reload();
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
+  await page.waitForFunction(() => {
+    const w = window as unknown as BasherWindow;
+    return Boolean(w.__basher_dag && w.__basher_viewport && w.__basher_time);
+  });
+  await page.getByTestId('mode-switcher').selectOption('animate');
+  // Seed a layer + Number channel with 3 keyframes so all W6 features
+  // have something to operate on. Channel targets a DirectionalLight's
+  // `intensity` param — DirectionalLight has intensity as a native
+  // number in its paramSchema, so K-insert can read it back at press
+  // time without tripping setParam schema validation (BoxMesh has no
+  // intensity field; targeting box.intensity would fail silently).
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const dag = w.__basher_dag!.getState();
+    if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
+      dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
+    }
+    const timeId =
+      Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'sun',
+          nodeType: 'DirectionalLight',
+          params: {
+            intensity: 7,
+            position: [5, 5, 5],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            color: '#ffffff',
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'layer',
+          nodeType: 'AnimationLayer',
+          params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'ch',
+          nodeType: 'KeyframeChannelNumber',
+          params: {
+            name: 'intensity',
+            target: 'sun',
+            paramPath: 'intensity',
+            keyframes: [
+              { time: 0, value: 0, easing: 'linear' },
+              { time: 0.5, value: 5, easing: 'linear' },
+              { time: 1, value: 10, easing: 'linear' },
+            ],
+          },
+        },
+        {
+          type: 'connect',
+          from: { node: timeId, socket: 'out' },
+          to: { node: 'ch', socket: 'time' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'ch', socket: 'out' },
+          to: { node: 'layer', socket: 'animation' },
+        },
+      ],
+      'user',
+      'seed',
+    );
+  });
+  await page.getByTestId('timeline-drawer-toggle').click();
+});
+
+async function readChannelKeyframes(page: import('@playwright/test').Page): Promise<KeyframeShape[]> {
+  return await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const ch = w.__basher_dag!.getState().state.nodes['ch'];
+    return (ch.params?.keyframes ?? []) as KeyframeShape[];
+  });
+}
+
+test('P6.W6#1 bottom toolbar visible with disabled buttons until selection', async ({ page }) => {
+  await expect(page.getByTestId('timeline-dock-toolbar')).toBeVisible();
+  // No active channel yet — Key/Simplify/Clear disabled.
+  await expect(page.getByTestId('timeline-toolbar-key')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-clear')).toHaveAttribute('data-disabled', 'true');
+  // Delete disabled regardless of channel — needs an active keyframe.
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+  // Click channel row → Key/Simplify/Clear enable; Delete still disabled.
+  await page.getByTestId('channel-row-ch').click();
+  await expect(page.getByTestId('timeline-toolbar-key')).toHaveAttribute('data-disabled', 'false');
+  await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute('data-disabled', 'false');
+  await expect(page.getByTestId('timeline-toolbar-clear')).toHaveAttribute('data-disabled', 'false');
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+});
+
+test('P6.W6#2 K keyboard inserts a keyframe at current time on active channel', async ({ page }) => {
+  await page.getByTestId('channel-row-ch').click();
+  // Move time to 0.25 (between existing keyframes).
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_time!.getState().setTime(0.25);
+  });
+  await page.keyboard.press('k');
+  const keyframes = await readChannelKeyframes(page);
+  // Should now be 4 keyframes (was 3); new one at t=0.25 with the box's
+  // intensity (7). Sort order: 0, 0.25, 0.5, 1.
+  expect(keyframes).toHaveLength(4);
+  expect(keyframes[1].time).toBe(0.25);
+  expect(keyframes[1].value).toBe(7);
+});
+
+test('P6.W6#3 Key button mirrors K keyboard', async ({ page }) => {
+  await page.getByTestId('channel-row-ch').click();
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_time!.getState().setTime(0.75);
+  });
+  await page.getByTestId('timeline-toolbar-key').click();
+  const keyframes = await readChannelKeyframes(page);
+  expect(keyframes).toHaveLength(4);
+  expect(keyframes[2].time).toBe(0.75);
+  expect(keyframes[2].value).toBe(7);
+});
+
+test('P6.W6#4 click diamond selects keyframe; Delete removes it (D-W6-2)', async ({ page }) => {
+  await page.getByTestId('channel-row-ch').click();
+  // Initially Delete is disabled.
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+  // Click the middle diamond (index 1 → time 0.5).
+  await page.getByTestId('keyframe-diamond-ch-1').click();
+  await expect(page.getByTestId('keyframe-diamond-ch-1')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'false');
+  // Press Delete — keyframe at t=0.5 should disappear.
+  await page.keyboard.press('Delete');
+  const keyframes = await readChannelKeyframes(page);
+  expect(keyframes).toHaveLength(2);
+  expect(keyframes.map((k) => k.time)).toEqual([0, 1]);
+  // After delete, Delete becomes disabled again (activeKeyframeId cleared).
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+});
+
+test('P6.W6#5 [ and ] seek to previous / next keyframe time', async ({ page }) => {
+  await page.getByTestId('channel-row-ch').click();
+  // Start at t=0.7 (between 0.5 and 1).
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_time!.getState().setTime(0.7);
+  });
+  // ] → next keyframe = 1.0
+  await page.keyboard.press(']');
+  const tAfterNext = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return w.__basher_time!.getState().seconds;
+  });
+  expect(tAfterNext).toBe(1);
+  // [ → prev keyframe from 1 = 0.5
+  await page.keyboard.press('[');
+  const tAfterPrev = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return w.__basher_time!.getState().seconds;
+  });
+  expect(tAfterPrev).toBe(0.5);
+});
+
+test('P6.W6#6 Clear button empties the active channel via the Mutator', async ({ page }) => {
+  await page.getByTestId('channel-row-ch').click();
+  await page.getByTestId('timeline-toolbar-clear').click();
+  const keyframes = await readChannelKeyframes(page);
+  expect(keyframes).toEqual([]);
+});
+
+test('P6.W6#7 Simplify popover applies mutator.timeline.simplifyChannel', async ({ page }) => {
+  // Seed a linear ramp with 5 collinear samples — aggressive tolerance
+  // should reduce to 2 endpoints.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const dag = w.__basher_dag!.getState();
+    dag.dispatch({
+      type: 'setParam',
+      nodeId: 'ch',
+      paramPath: 'keyframes',
+      value: [
+        { time: 0, value: 0, easing: 'linear' },
+        { time: 0.25, value: 0.25, easing: 'linear' },
+        { time: 0.5, value: 0.5, easing: 'linear' },
+        { time: 0.75, value: 0.75, easing: 'linear' },
+        { time: 1, value: 1, easing: 'linear' },
+      ],
+    });
+  });
+  await page.getByTestId('channel-row-ch').click();
+  await page.getByTestId('timeline-toolbar-simplify').click();
+  await expect(page.getByTestId('simplify-popover')).toBeVisible();
+  // Tolerance 0.01 — collinear interior keyframes drop.
+  await page.getByTestId('simplify-popover-input').fill('0.01');
+  await page.getByTestId('simplify-popover-apply').click();
+  await expect(page.getByTestId('simplify-popover')).toBeHidden();
+  const keyframes = await readChannelKeyframes(page);
+  expect(keyframes).toHaveLength(2);
+  expect(keyframes[0].time).toBe(0);
+  expect(keyframes[1].time).toBe(1);
+});

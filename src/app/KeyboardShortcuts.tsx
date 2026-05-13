@@ -2,7 +2,7 @@
 // always alive (regardless of layout slot focus).
 //
 // Shortcut map (matches Blender's where it makes sense, extends with the
-// UI-SPEC §6.2 model added in P6 W2):
+// UI-SPEC §6.2 model added in P6 W2 + W6):
 //   1 / 2 / 3 / 4     — set mode = edit / run / animate / director (W2)
 //   Q / W / E / R     — set activeTool = select / translate / rotate / scale (W2)
 //   G / R / S         — alias: still switch gizmo mode for muscle memory
@@ -14,21 +14,35 @@
 //   Cmd/Ctrl + Z      — undo
 //   Cmd/Ctrl + Shift + Z OR Cmd/Ctrl + Y — redo
 //   Cmd/Ctrl + S      — save current project (preventDefault — browser save dialog)
-//   Delete / Backspace  — remove primary selected node (V1: dispatchAtomic
-//                       removeNode op; protected against outputs by op validator)
+//   Delete / Backspace  — Animate-mode: when timelineSelection.activeKeyframeId
+//                       is set, remove THAT keyframe (W6 D-W6-2). Otherwise:
+//                       remove primary selected node (existing).
 //   Cmd/Ctrl + A      — select all top-level scene children
 //   Cmd/Ctrl + Shift + C — camera-from-view (snapshot orbit pose into a
 //                       new PerspectiveCamera node)
 //
+// Animate-mode only (P6 W6):
+//   Space             — play / pause toggle
+//   K                 — insert a keyframe at timeStore.seconds into
+//                       timelineSelection.activeChannelId, reading the
+//                       channel's target.paramPath value from the live
+//                       DAG. No-op if no active channel.
+//   [                 — seek to previous keyframe on activeChannelId
+//   ]                 — seek to next keyframe on activeChannelId
+//
 // Skip handling when an `<input>` / `<textarea>` / contenteditable is
 // focused — the user is typing.
 //
-// V1 stays clean: only the undo/redo/save/Cmd+A paths touch the DAG, all
-// through the Op dispatcher or hydrate seam.
+// V1 stays clean: every DAG-touching path goes through dispatchAtomic
+// or the hydrate seam. The W6 K-insert + Delete-override compute the
+// next keyframes array locally (mirroring keyframeMutator's sort +
+// same-time-replace semantics) and emit a single setParam Op.
 
 import { useEffect } from 'react';
 import type { Op } from '../core/dag/types';
 import { useDagStore } from '../core/dag/store';
+import { useTimeStore } from './stores/timeStore';
+import { useTimelineSelection } from '../timeline/timelineSelection';
 import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
@@ -36,6 +50,113 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
+
+interface KeyframeSample {
+  time: number;
+  value: unknown;
+  easing: 'linear' | 'cubic';
+}
+
+const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
+  KeyframeChannelNumber: 'linear',
+  KeyframeChannelVec3: 'cubic',
+  KeyframeChannelQuat: 'cubic',
+  KeyframeChannelColor: 'cubic',
+};
+
+/** Pure helper — append-or-replace a keyframe at `time`. Mirrors
+ *  keyframeMutator.build()'s sort + same-time-replace semantics so the
+ *  K shortcut produces bit-identical results to an agent-issued
+ *  keyframe Mutator at the same channel + time. */
+function nextKeyframesAfterInsert(
+  existing: ReadonlyArray<KeyframeSample>,
+  time: number,
+  value: unknown,
+  easing: 'linear' | 'cubic',
+): KeyframeSample[] {
+  const filtered = existing.filter((k) => k.time !== time);
+  return [...filtered, { time, value, easing }].sort((a, b) => a.time - b.time);
+}
+
+/** Build the setParam Op that K dispatches. Returns null when the
+ *  insert is impossible (no active channel, channel not in DAG, target
+ *  param not readable, etc) — caller treats as no-op. */
+function buildKeyframeInsertOp(): Op | null {
+  const channelId = useTimelineSelection.getState().activeChannelId;
+  if (!channelId) return null;
+  const dagState = useDagStore.getState().state;
+  const channel = dagState.nodes[channelId];
+  if (!channel || !channel.type.startsWith('KeyframeChannel')) return null;
+
+  const cParams = (channel.params ?? {}) as {
+    target?: string;
+    paramPath?: string;
+    keyframes?: KeyframeSample[];
+  };
+  if (!cParams.target || !cParams.paramPath) return null;
+  const target = dagState.nodes[cParams.target];
+  if (!target) return null;
+  const targetParams = (target.params ?? {}) as Record<string, unknown>;
+  const value = targetParams[cParams.paramPath];
+  if (value === undefined) return null;
+
+  const time = useTimeStore.getState().seconds;
+  const easing = DEFAULT_EASING_BY_TYPE[channel.type] ?? 'linear';
+  const next = nextKeyframesAfterInsert(cParams.keyframes ?? [], time, value, easing);
+  return {
+    type: 'setParam',
+    nodeId: channelId,
+    paramPath: 'keyframes',
+    value: next,
+  };
+}
+
+/** Build the setParam Op that Delete dispatches when activeKeyframeId is
+ *  set. Returns null when the ref is dangling (keyframe deleted elsewhere
+ *  since the activeKeyframeId was set). */
+function buildKeyframeDeleteOp(): Op | null {
+  const ref = useTimelineSelection.getState().activeKeyframeId;
+  if (!ref) return null;
+  const dagState = useDagStore.getState().state;
+  const channel = dagState.nodes[ref.channelId];
+  if (!channel || !channel.type.startsWith('KeyframeChannel')) return null;
+  const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
+  const existing = cParams.keyframes ?? [];
+  const next = existing.filter((k) => k.time !== ref.time);
+  if (next.length === existing.length) return null; // ref was dangling
+  return {
+    type: 'setParam',
+    nodeId: ref.channelId,
+    paramPath: 'keyframes',
+    value: next,
+  };
+}
+
+/** [ / ] seek helpers. Returns the time of the previous/next keyframe
+ *  on the active channel relative to current time, or null when there
+ *  isn't one. */
+function findAdjacentKeyframeTime(direction: 'prev' | 'next'): number | null {
+  const channelId = useTimelineSelection.getState().activeChannelId;
+  if (!channelId) return null;
+  const channel = useDagStore.getState().state.nodes[channelId];
+  if (!channel || !channel.type.startsWith('KeyframeChannel')) return null;
+  const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
+  const times = (cParams.keyframes ?? []).map((k) => k.time).sort((a, b) => a - b);
+  if (times.length === 0) return null;
+  const cur = useTimeStore.getState().seconds;
+  if (direction === 'prev') {
+    let candidate: number | null = null;
+    for (const t of times) {
+      if (t < cur) candidate = t;
+      else break;
+    }
+    return candidate;
+  }
+  for (const t of times) if (t > cur) return t;
+  return null;
+}
+
+export { nextKeyframesAfterInsert, buildKeyframeInsertOp, buildKeyframeDeleteOp, findAdjacentKeyframeTime };
 
 // Mode keys 1/2/3/4 → operational mode (UI-SPEC §6.2). Indexed list keeps
 // the binding declarative — adding a fifth mode is one entry, not a new
@@ -181,6 +302,40 @@ export function KeyboardShortcuts() {
         }
       }
 
+      // P6 W6 — Animate-mode shortcuts. Gated so they don't fire in
+      // edit/run/director modes (Space-as-play, K-as-key, [ / ] are
+      // meaningless outside Animate). Matched BEFORE the legacy
+      // switch so K doesn't fall through to anything unintended.
+      if (editorMode === 'animate') {
+        // Space: play/pause toggle. preventDefault so the browser
+        // doesn't scroll when viewport-focused.
+        if (e.key === ' ' || e.code === 'Space') {
+          e.preventDefault();
+          useTimeStore.getState().toggle();
+          return;
+        }
+        // K: insert keyframe at current time into active channel,
+        // reading the target node's live param value.
+        if (e.key === 'k' || e.key === 'K') {
+          const op = buildKeyframeInsertOp();
+          if (op) {
+            useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+          }
+          return;
+        }
+        // [ / ] — seek to previous / next keyframe on active channel.
+        if (e.key === '[') {
+          const t = findAdjacentKeyframeTime('prev');
+          if (t !== null) useTimeStore.getState().setTime(t);
+          return;
+        }
+        if (e.key === ']') {
+          const t = findAdjacentKeyframeTime('next');
+          if (t !== null) useTimeStore.getState().setTime(t);
+          return;
+        }
+      }
+
       switch (e.key) {
         // G / R / S aliases — Blender idiom. Route through setActiveTool
         // so the canonical activeTool stays in sync (no parallel control
@@ -204,6 +359,21 @@ export function KeyboardShortcuts() {
           return;
         case 'Delete':
         case 'Backspace':
+          // P6 W6 — Animate mode override (D-W6-2). When a specific
+          // keyframe is selected (Dopesheet diamond click sets
+          // timelineSelection.activeKeyframeId), Delete removes THAT
+          // keyframe via setParam on the channel's keyframes array.
+          // Falls through to node-delete only when no keyframe is
+          // selected. Edit-mode behavior is unchanged.
+          if (editorMode === 'animate') {
+            const kfOp = buildKeyframeDeleteOp();
+            if (kfOp) {
+              useDagStore.getState().dispatchAtomic([kfOp], 'user', 'delete keyframe');
+              useTimelineSelection.getState().setActiveKeyframe(null);
+              e.preventDefault();
+              return;
+            }
+          }
           // Remove all selected nodes (Blender's X/Delete). V1 clean:
           // dispatchAtomic disconnect + removeNode ops. The removeNode
           // validator rejects deletion if any other node still consumes

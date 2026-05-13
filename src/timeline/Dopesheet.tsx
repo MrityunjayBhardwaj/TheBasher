@@ -45,6 +45,8 @@ export function Dopesheet({ duration }: { duration: number }) {
   const primarySelection = useSelectionStore((s) => s.primaryNodeId);
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
   const setActiveChannel = useTimelineSelection((s) => s.setActiveChannel);
+  const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
+  const setActiveKeyframe = useTimelineSelection((s) => s.setActiveKeyframe);
 
   const layers = collectLayers(nodes);
   const orphanChannels = collectOrphanChannels(nodes, layers);
@@ -69,6 +71,8 @@ export function Dopesheet({ duration }: { duration: number }) {
                 primarySelection={primarySelection}
                 activeChannelId={activeChannelId}
                 setActiveChannel={setActiveChannel}
+                activeKeyframeId={activeKeyframeId}
+                setActiveKeyframe={setActiveKeyframe}
               />
             ))}
             {orphanChannels.length > 0 && (
@@ -83,6 +87,8 @@ export function Dopesheet({ duration }: { duration: number }) {
                     primarySelection={primarySelection}
                     isActive={activeChannelId === c.channelId}
                     onClick={() => setActiveChannel(c.channelId)}
+                    activeKeyframeId={activeKeyframeId}
+                    setActiveKeyframe={setActiveKeyframe}
                   />
                 ))}
               </div>
@@ -134,6 +140,8 @@ function LayerSection({
   primarySelection,
   activeChannelId,
   setActiveChannel,
+  activeKeyframeId,
+  setActiveKeyframe,
 }: {
   layer: LayerGroup;
   duration: number;
@@ -141,6 +149,8 @@ function LayerSection({
   primarySelection: string | null;
   activeChannelId: string | null;
   setActiveChannel: (id: string) => void;
+  activeKeyframeId: { channelId: string; time: number } | null;
+  setActiveKeyframe: (ref: { channelId: string; time: number } | null) => void;
 }) {
   return (
     <div data-testid={`layer-${layer.layerId}`} className="border-b border-line/40">
@@ -159,6 +169,8 @@ function LayerSection({
           primarySelection={primarySelection}
           isActive={activeChannelId === c.channelId}
           onClick={() => setActiveChannel(c.channelId)}
+          activeKeyframeId={activeKeyframeId}
+          setActiveKeyframe={setActiveKeyframe}
         />
       ))}
     </div>
@@ -171,6 +183,8 @@ function ChannelRowView({
   primarySelection,
   isActive,
   onClick,
+  activeKeyframeId,
+  setActiveKeyframe,
 }: {
   channel: ChannelRow;
   duration: number;
@@ -178,6 +192,8 @@ function ChannelRowView({
   primarySelection: string | null;
   isActive: boolean;
   onClick: () => void;
+  activeKeyframeId: { channelId: string; time: number } | null;
+  setActiveKeyframe: (ref: { channelId: string; time: number } | null) => void;
 }) {
   const drivesPrimary = primarySelection !== null && channel.target === primarySelection;
   return (
@@ -191,18 +207,39 @@ function ChannelRowView({
         <span className="truncate">{channel.name || channel.paramPath}</span>
       </div>
       <div className="relative h-full flex-1 border-l border-line">
-        {channel.keyframes.map((k, i) => (
-          <div
-            key={`${k.time}-${i}`}
-            data-testid={`keyframe-diamond-${channel.channelId}-${i}`}
-            className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-fg"
-            style={{
-              left: `${(k.time / Math.max(duration, 0.0001)) * 100}%`,
-              width: 8,
-              height: 8,
-            }}
-          />
-        ))}
+        {channel.keyframes.map((k, i) => {
+          const isKfActive =
+            activeKeyframeId !== null &&
+            activeKeyframeId.channelId === channel.channelId &&
+            activeKeyframeId.time === k.time;
+          return (
+            <div
+              key={`${k.time}-${i}`}
+              data-testid={`keyframe-diamond-${channel.channelId}-${i}`}
+              data-active={isKfActive}
+              className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-45 cursor-pointer ${
+                isKfActive ? 'bg-accent ring-1 ring-accent' : 'bg-fg'
+              }`}
+              style={{
+                left: `${(k.time / Math.max(duration, 0.0001)) * 100}%`,
+                width: 8,
+                height: 8,
+              }}
+              onClick={(e) => {
+                // Click the diamond → select that keyframe AND its parent
+                // channel. Without the parent setActiveChannel call, a
+                // diamond click in an inactive channel would leave the
+                // curve editor pointed at the previously-active channel.
+                // stopPropagation prevents the channel-row onClick from
+                // also firing and clobbering the keyframe selection
+                // (channel-row click is "row only, no keyframe").
+                e.stopPropagation();
+                onClick();
+                setActiveKeyframe({ channelId: channel.channelId, time: k.time });
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );

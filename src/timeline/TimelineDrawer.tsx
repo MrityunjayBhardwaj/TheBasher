@@ -1,6 +1,6 @@
 // TimelineDrawer — Timebar (always visible) + collapsible drawer body
 // hosting Dopesheet and CurveEditor as tabs (P6 W5 — UI-SPEC §5.9;
-// D-UX-2).
+// D-UX-2). Bottom toolbar with track-ops buttons added P6 W6.
 //
 // Drawer open/closed lives in viewportStore (timelineDrawerOpen).
 // Default closed — preserves P0/P2 acceptance pixel-diff baselines.
@@ -12,24 +12,36 @@
 // switch. Selecting a channel row in Dopesheet does NOT auto-switch
 // to Curve Editor (D-W5-3 — explicit tab entry only).
 //
-// W5 ships the tab strip + Frame/FPS readout in the header
-// (UI-SPEC §5.10 distributed status rows 3-4). Track filters + the
-// bottom toolbar (Key/Insert/Delete/Simplify/Clear/Cut/Copy/Paste/
-// transport) land in W6 alongside the animate keyboard model and the
-// anim.simplifyChannel / anim.clearChannel Mutators.
+// W6 adds a 28px bottom toolbar inside the drawer body. Buttons:
+//   [Key] [Delete] [Simplify ▴] [Clear]
+// Each wires to the same handler the corresponding keyboard shortcut
+// uses (Key/Delete share buildKeyframeInsertOp / buildKeyframeDeleteOp
+// from KeyboardShortcuts.tsx; Clear dispatches via the
+// clearChannelMutator; Simplify opens the SimplifyPopover). Track
+// filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
+import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import {
   useTimelineDockStore,
   type TimelineTab,
 } from '../app/stores/timelineDockStore';
+import { useDagStore } from '../core/dag/store';
+import { useTimelineSelection } from './timelineSelection';
+import {
+  buildKeyframeInsertOp,
+  buildKeyframeDeleteOp,
+} from '../app/KeyboardShortcuts';
+import { clearChannelMutator, validatePlan } from '../agent/mutators';
 import { Timebar } from '../app/Timebar';
 import { Dopesheet } from './Dopesheet';
 import { CurveEditor } from './CurveEditor';
+import { SimplifyPopover } from './SimplifyPopover';
 
 const DRAWER_HEIGHT_PX = 240;
 const HEADER_HEIGHT_PX = 28;
+const TOOLBAR_HEIGHT_PX = 28;
 
 export function TimelineDrawer() {
   const open = useViewportStore((s) => s.timelineDrawerOpen);
@@ -72,6 +84,7 @@ export function TimelineDrawer() {
               <CurveEditor duration={duration} />
             </div>
           </div>
+          <DockToolbar />
         </div>
       )}
       <div className="flex items-stretch">
@@ -154,6 +167,117 @@ function TabButton({
       onClick={onClick}
       className={`flex items-center border-r border-line px-3 ${
         active ? 'bg-bg text-fg' : 'text-mute hover:bg-line/40 hover:text-fg'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function DockToolbar() {
+  // Re-render the toolbar whenever the relevant pieces of timelineSelection
+  // change, so the disabled state of each button reflects the live
+  // (channel, keyframe) selection.
+  const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
+  const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
+  const [simplifyOpen, setSimplifyOpen] = useState(false);
+
+  function onKey() {
+    const op = buildKeyframeInsertOp();
+    if (op) {
+      useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+    }
+  }
+
+  function onDelete() {
+    const op = buildKeyframeDeleteOp();
+    if (op) {
+      useDagStore.getState().dispatchAtomic([op], 'user', 'delete keyframe');
+      useTimelineSelection.getState().setActiveKeyframe(null);
+    }
+  }
+
+  function onClear() {
+    if (!activeChannelId) return;
+    const state = useDagStore.getState().state;
+    const plan = validatePlan(
+      clearChannelMutator,
+      { channelId: activeChannelId },
+      state,
+      'clear channel',
+    );
+    if (!plan.ok) return;
+    if (plan.ops.length === 0) return; // already empty
+    useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'clear channel');
+    useTimelineSelection.getState().setActiveKeyframe(null);
+  }
+
+  return (
+    <div
+      data-testid="timeline-dock-toolbar"
+      className="relative flex items-center gap-1 border-t border-line bg-bg-2 px-2 text-xs"
+      style={{ height: TOOLBAR_HEIGHT_PX }}
+    >
+      <ToolbarButton
+        id="key"
+        label="Key"
+        title="Insert a keyframe at the current frame on the active channel (K)"
+        disabled={activeChannelId === null}
+        onClick={onKey}
+      />
+      <ToolbarButton
+        id="delete"
+        label="Delete"
+        title="Delete the selected keyframe (Del)"
+        disabled={activeKeyframeId === null}
+        onClick={onDelete}
+      />
+      <span className="mx-2 h-4 w-px bg-line" />
+      <ToolbarButton
+        id="simplify"
+        label="Simplify…"
+        title="Reduce keyframe density on the active channel within tolerance"
+        disabled={activeChannelId === null}
+        onClick={() => setSimplifyOpen((v) => !v)}
+      />
+      <ToolbarButton
+        id="clear"
+        label="Clear"
+        title="Wipe all keyframes from the active channel"
+        disabled={activeChannelId === null}
+        onClick={onClear}
+      />
+      <div className="flex-1" />
+      <SimplifyPopover open={simplifyOpen} onClose={() => setSimplifyOpen(false)} />
+    </div>
+  );
+}
+
+function ToolbarButton({
+  id,
+  label,
+  title,
+  disabled,
+  onClick,
+}: {
+  id: string;
+  label: string;
+  title: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`timeline-toolbar-${id}`}
+      data-disabled={disabled}
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded px-2 py-1 ${
+        disabled
+          ? 'cursor-not-allowed text-mute'
+          : 'text-fg hover:bg-line'
       }`}
     >
       {label}

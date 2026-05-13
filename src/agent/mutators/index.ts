@@ -32,6 +32,8 @@ import { deleteNodeMutator } from './builders/deleteNode';
 import { addLayerMutator } from './builders/addLayer';
 import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
+import { simplifyChannelMutator } from './builders/simplifyChannel';
+import { clearChannelMutator } from './builders/clearChannel';
 import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
@@ -48,6 +50,8 @@ export {
   addLayerMutator,
   addChannelMutator,
   keyframeMutator,
+  simplifyChannelMutator,
+  clearChannelMutator,
   shotCreateMutator,
   retargetMutator,
   addPassMutator,
@@ -66,6 +70,9 @@ export function registerAllMutators(): void {
   registerMutator(addLayerMutator);
   registerMutator(addChannelMutator);
   registerMutator(keyframeMutator);
+  // P6 W6 — track ops (simplify + clear)
+  registerMutator(simplifyChannelMutator);
+  registerMutator(clearChannelMutator);
   registerMutator(shotCreateMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);
