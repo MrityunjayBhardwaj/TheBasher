@@ -47,6 +47,7 @@ export const RenderJobNode: NodeDefinition<RenderJobParams, JobResultValue> = {
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'JobResult', cardinality: 'single' } },
+  inspectorSections: ['render'],
   evaluate(params, inputs: ResolvedInputs): JobResultValue {
     const passes = (inputs['pass-input'] as ImageValue[] | undefined) ?? [];
     return {

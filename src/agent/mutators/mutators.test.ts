@@ -91,13 +91,15 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(12);
+    expect(mutators).toHaveLength(14);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
+      'mutator.render.addAIPass',
       'mutator.render.addPass',
+      'mutator.render.addStitch',
       'mutator.rotate',
       'mutator.scale',
       'mutator.setMaterialColor',
@@ -569,7 +571,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(12);
+    expect(parsed.mutators).toHaveLength(14);
   });
 });
 
@@ -1049,6 +1051,30 @@ describe('mutator.render.addPass', () => {
     }
   });
 
+  it('depth: picks DepthPass node type (P5 §43 amendment, D-02)', () => {
+    const state = buildSceneWithJob();
+    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'depth' }, state, 'add depth');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const addOp = r.ops[0];
+    if (addOp.type === 'addNode') {
+      expect(addOp.nodeType).toBe('DepthPass');
+      expect(addOp.nodeId).toBe('job_depth');
+    }
+  });
+
+  it('normal: picks NormalPass node type (P5 §43 amendment, D-02)', () => {
+    const state = buildSceneWithJob();
+    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'normal' }, state, 'add normal');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const addOp = r.ops[0];
+    if (addOp.type === 'addNode') {
+      expect(addOp.nodeType).toBe('NormalPass');
+      expect(addOp.nodeId).toBe('job_normal');
+    }
+  });
+
   it('twice-call deterministic for same spec', () => {
     const state = buildSceneWithJob();
     const a = validatePlan(
@@ -1096,5 +1122,385 @@ describe('mutator.render.addPass', () => {
     const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'beauty' }, s, 'no scene');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P5 Wave C — addAIPass Mutator (THESIS §28, §44)
+// ---------------------------------------------------------------------------
+
+import { addAIPassMutator } from './builders/addAIPass';
+
+/**
+ * Build a scene with a RenderJob that already has Beauty + Depth +
+ * Normal passes wired (precondition for addAIPass with stylizedRealism).
+ */
+function buildSceneWithJobAndPasses(): DagState {
+  let s = buildSceneWithJob();
+  // Add three passes via direct ops (mirroring what addPass would emit).
+  for (const [id, nodeType] of [
+    ['beauty', 'BeautyPass'],
+    ['depth', 'DepthPass'],
+    ['normal', 'NormalPass'],
+  ] as const) {
+    s = applyOp(s, { type: 'addNode', nodeId: id, nodeType, params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: id, socket: 'scene' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: id, socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: id, socket: 'time' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: id, socket: 'out' },
+      to: { node: 'job', socket: 'pass-input' },
+    }).next;
+  }
+  return s;
+}
+
+describe('mutator.render.addAIPass', () => {
+  it('emits Prompt + ComfyUIWorkflow + 5 connect ops in order', () => {
+    const state = buildSceneWithJobAndPasses();
+    const r = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'stylizedRealism',
+        promptText: 'cinematic cube',
+      },
+      state,
+      'add stylized',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // 2 addNode + 5 connect (1 prompt → workflow + 3 pass → workflow + 1 time → workflow).
+    expect(r.ops).toHaveLength(7);
+    expect(r.ops[0].type).toBe('addNode');
+    if (r.ops[0].type === 'addNode') {
+      expect(r.ops[0].nodeType).toBe('Prompt');
+    }
+    expect(r.ops[1].type).toBe('addNode');
+    if (r.ops[1].type === 'addNode') {
+      expect(r.ops[1].nodeType).toBe('ComfyUIWorkflow');
+      const params = r.ops[1].params as {
+        presetId: string;
+        outputPath: string;
+        lastGoodFrame: number;
+      };
+      expect(params.presetId).toBe('stylizedRealism');
+      // D-04: outputPath = ${jobOutputPath}/stylized_${sanitize(presetId)}
+      expect(params.outputPath).toBe('renders/job/stylized_stylizedRealism');
+      expect(params.lastGoodFrame).toBe(-1);
+    }
+    const connects = r.ops.slice(2).filter((o) => o.type === 'connect');
+    expect(connects).toHaveLength(5);
+  });
+
+  it('inherits frame range from RenderJob when not explicitly overridden', () => {
+    let s = buildSceneWithJobAndPasses();
+    // Override the RenderJob's frame range.
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'job',
+      paramPath: 'frameStart',
+      value: 5,
+    }).next;
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'job',
+      paramPath: 'frameEnd',
+      value: 25,
+    }).next;
+    const r = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'stylizedRealism',
+        promptText: 'a cube',
+      },
+      s,
+      'inherit range',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const wfOp = r.ops.find(
+      (o) => o.type === 'addNode' && o.nodeType === 'ComfyUIWorkflow',
+    );
+    if (wfOp && wfOp.type === 'addNode') {
+      const params = wfOp.params as { frameStart: number; frameEnd: number };
+      expect(params.frameStart).toBe(5);
+      expect(params.frameEnd).toBe(25);
+    }
+  });
+
+  it('rejects when a required pass is missing on the RenderJob (precondition)', () => {
+    let s = buildSceneWithJob(); // no passes wired
+    // Wire only Beauty + Depth (missing Normal).
+    for (const [id, nodeType] of [
+      ['beauty', 'BeautyPass'],
+      ['depth', 'DepthPass'],
+    ] as const) {
+      s = applyOp(s, { type: 'addNode', nodeId: id, nodeType, params: {} }).next;
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: 'scene', socket: 'out' },
+        to: { node: id, socket: 'scene' },
+      }).next;
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: 'cam', socket: 'out' },
+        to: { node: id, socket: 'camera' },
+      }).next;
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: 'time', socket: 'out' },
+        to: { node: id, socket: 'time' },
+      }).next;
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: 'job', socket: 'pass-input' },
+      }).next;
+    }
+    const r = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'stylizedRealism',
+        promptText: 'a cube',
+      },
+      s,
+      'missing pass',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.gate).toBe(4);
+      expect(r.reason).toMatch(/Missing: \[normal\]/);
+    }
+  });
+
+  it('rejects when jobId targets a non-RenderJob (gate 4)', () => {
+    const state = buildSceneWithJobAndPasses();
+    const r = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'box',
+        presetId: 'stylizedRealism',
+        promptText: 'x',
+      },
+      state,
+      'wrong target',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects when presetId is unknown (zod schema rejection — gate 2)', () => {
+    const state = buildSceneWithJobAndPasses();
+    const r = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'anime', // not registered in v0.5
+        promptText: 'a cube',
+      } as unknown as Parameters<typeof validatePlan>[1],
+      state,
+      'unknown preset',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('twice-call deterministic for same spec', () => {
+    const state = buildSceneWithJobAndPasses();
+    const a = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'stylizedRealism',
+        promptText: 'a cube',
+        promptId: 'p_test',
+        workflowId: 'wf_test',
+      },
+      state,
+      'a',
+    );
+    const b = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'stylizedRealism',
+        promptText: 'a cube',
+        promptId: 'p_test',
+        workflowId: 'wf_test',
+      },
+      state,
+      'a',
+    );
+    expect(a).toEqual(b);
+  });
+
+  it('sanitizes presetId in workflow outputPath (defense-in-depth)', () => {
+    const state = buildSceneWithJobAndPasses();
+    const r = validatePlan(
+      addAIPassMutator,
+      {
+        jobId: 'job',
+        presetId: 'stylizedRealism',
+        promptText: 'a cube',
+      },
+      state,
+      'sanitize',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const wfOp = r.ops.find((o) => o.type === 'addNode' && o.nodeType === 'ComfyUIWorkflow');
+    if (wfOp && wfOp.type === 'addNode') {
+      const params = wfOp.params as { outputPath: string };
+      // No reserved chars survive in the constructed path.
+      expect(params.outputPath).not.toMatch(/[[\].:]/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P5 Wave D — addStitch Mutator (THESIS §28, §44)
+// ---------------------------------------------------------------------------
+
+import { addStitchMutator } from './builders/addStitch';
+
+function buildSceneWithJobAndWorkflow(): DagState {
+  let s = buildSceneWithJobAndPasses();
+  // Add a Prompt + ComfyUIWorkflow as if addAIPass had been called.
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'prompt',
+    nodeType: 'Prompt',
+    params: { text: 'a cube', negative: '', tags: [] },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'cw',
+    nodeType: 'ComfyUIWorkflow',
+    params: {
+      presetId: 'stylizedRealism',
+      frameStart: 0,
+      frameEnd: 4,
+      lastGoodFrame: -1,
+      outputPath: 'renders/job/stylized_stylizedRealism',
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'prompt', socket: 'out' },
+    to: { node: 'cw', socket: 'prompt' },
+  }).next;
+  for (const id of ['beauty', 'depth', 'normal'] as const) {
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: id, socket: 'out' },
+      to: { node: 'cw', socket: 'pass-input' },
+    }).next;
+  }
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'time', socket: 'out' },
+    to: { node: 'cw', socket: 'time' },
+  }).next;
+  return s;
+}
+
+describe('mutator.render.addStitch', () => {
+  it('emits VideoStitch + 2 connect ops; outputPath defaults to ${jobOutputPath}/final.mp4', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'cw' },
+      state,
+      'add stitch',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(3);
+    expect(r.ops[0].type).toBe('addNode');
+    if (r.ops[0].type === 'addNode') {
+      expect(r.ops[0].nodeType).toBe('VideoStitch');
+      const params = r.ops[0].params as {
+        codec: string;
+        fps: number;
+        outputPath: string;
+      };
+      expect(params.codec).toBe('h264');
+      expect(params.outputPath).toBe('renders/job/final.mp4');
+    }
+    const connects = r.ops.slice(1).filter((o) => o.type === 'connect');
+    expect(connects).toHaveLength(2);
+  });
+
+  it('rejects when workflowId is not a ComfyUIWorkflow', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'beauty' },
+      state,
+      'wrong type',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects when jobId is not a RenderJob', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      { jobId: 'box', workflowId: 'cw' },
+      state,
+      'wrong job',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('explicit outputPath overrides default', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const r = validatePlan(
+      addStitchMutator,
+      {
+        jobId: 'job',
+        workflowId: 'cw',
+        outputPath: 'renders/custom/movie.mp4',
+      },
+      state,
+      'custom path',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    if (r.ops[0].type === 'addNode') {
+      const params = r.ops[0].params as { outputPath: string };
+      expect(params.outputPath).toBe('renders/custom/movie.mp4');
+    }
+  });
+
+  it('twice-call deterministic for same spec', () => {
+    const state = buildSceneWithJobAndWorkflow();
+    const a = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'cw', stitchId: 's' },
+      state,
+      'a',
+    );
+    const b = validatePlan(
+      addStitchMutator,
+      { jobId: 'job', workflowId: 'cw', stitchId: 's' },
+      state,
+      'a',
+    );
+    expect(a).toEqual(b);
   });
 });

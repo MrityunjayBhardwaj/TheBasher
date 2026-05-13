@@ -21,6 +21,7 @@ const STRATEGY_TOPICS = [
   'spawnWithProperties',
   'animation',
   'rendering',
+  'aiRender',
 ] as const satisfies readonly StrategyTopic[];
 
 // Compile-time check: STRATEGY_TOPICS covers every StrategyTopic.

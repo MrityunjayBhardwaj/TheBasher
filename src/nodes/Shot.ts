@@ -29,6 +29,7 @@ export const ShotNode: NodeDefinition<ShotParams, ShotValue> = {
     scene: { type: 'Scene', cardinality: 'single' },
   },
   outputs: { out: { type: 'Shot', cardinality: 'single' } },
+  inspectorSections: ['layout'],
   evaluate(params, inputs: ResolvedInputs) {
     return {
       kind: 'Shot',

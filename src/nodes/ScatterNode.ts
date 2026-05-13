@@ -43,6 +43,7 @@ export const ScatterNode: NodeDefinition<ScatterNodeParams, ScatterValue> = {
   paramSchema: ScatterNodeParams,
   inputs: { assets: { type: 'Mesh', cardinality: 'list' } },
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params, inputs) {
     const assets = (inputs.assets as SceneChild[] | undefined) ?? [];
     const count = Math.min(params.density, SCATTER_MAX);

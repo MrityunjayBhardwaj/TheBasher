@@ -28,6 +28,7 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
   paramSchema: MaterialOverrideParams,
   inputs: { target: { type: 'Mesh', cardinality: 'single' } },
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['material'],
   evaluate(params, inputs) {
     return {
       kind: 'MaterialOverride',

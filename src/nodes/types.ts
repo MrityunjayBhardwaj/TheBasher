@@ -439,7 +439,7 @@ export interface BoneNameMapValue {
 // ---------------------------------------------------------------------------
 
 export type ImageFormat = 'rgba8' | 'r8' | 'r16f' | 'rgba16f';
-export type ImagePassKind = 'beauty' | 'id';
+export type ImagePassKind = 'beauty' | 'id' | 'depth' | 'normal' | 'stylized';
 
 export interface ImageDescriptor {
   readonly width: number;
@@ -466,6 +466,45 @@ export const DEFAULT_IMAGE_DESCRIPTOR: ImageDescriptor = {
   height: 720,
   format: 'rgba8',
 };
+
+// ---------------------------------------------------------------------------
+// P5 — AI Render Bridge (THESIS §28, §44)
+//
+// `Prompt` is a pure data node — same shape as BoneNameMap (no inputs,
+// params verbatim out). Carries the user's stylization intent for the
+// ComfyUIWorkflow node to consume. `negative` and `tags` ship now to keep
+// the schema additions ahead of the H14 trap (every later schema add is a
+// load-time crash candidate without `?? default` consumers).
+// ---------------------------------------------------------------------------
+
+export interface PromptValue {
+  readonly kind: 'Prompt';
+  readonly text: string;
+  readonly negative: string;
+  readonly tags: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
+// VideoValue — VideoStitch's output (metadata only, mirrors JobResult).
+//
+// Pixel encoding happens at runVideoStitch execution time (Wave D2). The
+// evaluator returns a deductive contract: codec, fps, frame count, output
+// path, content hash. The agent describes a video by sourceHash without
+// loading bytes.
+// ---------------------------------------------------------------------------
+
+export type VideoCodec = 'h264';
+
+export interface VideoValue {
+  readonly kind: 'Video';
+  readonly codec: VideoCodec;
+  readonly fps: number;
+  readonly frameCount: number;
+  /** OPFS path the encoded video is (or will be) at. */
+  readonly outputPath: string;
+  /** Content hash over (codec, fps, outputPath, upstream stylized hashes). */
+  readonly sourceHash: string;
+}
 
 // ---------------------------------------------------------------------------
 // JobResult — RenderJob's output (a metadata record describing the dispatch)

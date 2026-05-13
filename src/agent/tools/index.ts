@@ -15,6 +15,8 @@ export { identifyTool } from '../identify/identify';
 export { listMutatorsTool, proposePlanTool } from '../mutators/tool';
 export { listStrategiesTool, getStrategyTool } from '../strategy/tool';
 export { renderSummarizePassTool } from './renderSummarizePass';
+export { renderDryRunWorkflowTool } from './renderDryRunWorkflow';
+export { renderSummarizeStylizedTool } from './renderSummarizeStylized';
 
 import { registerTool } from './registry';
 import { characterWalkToTool } from './characterWalkTo';
@@ -27,6 +29,8 @@ import { identifyTool } from '../identify/identify';
 import { listMutatorsTool, proposePlanTool } from '../mutators/tool';
 import { listStrategiesTool, getStrategyTool } from '../strategy/tool';
 import { renderSummarizePassTool } from './renderSummarizePass';
+import { renderDryRunWorkflowTool } from './renderDryRunWorkflow';
+import { renderSummarizeStylizedTool } from './renderSummarizeStylized';
 
 export function registerAllTools(): void {
   registerTool(characterWalkToTool);
@@ -42,6 +46,9 @@ export function registerAllTools(): void {
   registerTool(getStrategyTool);
   // P4 Wave C — render graph
   registerTool(renderSummarizePassTool);
+  // P5 Wave C — AI render bridge
+  registerTool(renderDryRunWorkflowTool);
+  registerTool(renderSummarizeStylizedTool);
   // Mutator + strategy catalogs are registered separately via
   // registerAllMutators() / registerAllStrategies() — keeps registry
   // resets independent in tests; boot wires all three.

@@ -22,6 +22,7 @@ export const OrthographicCameraNode: NodeDefinition<
   paramSchema: OrthographicCameraParams,
   inputs: {},
   outputs: { out: { type: 'Camera', cardinality: 'single' } },
+  inspectorSections: ['transform'],
   evaluate(params) {
     return {
       kind: 'OrthographicCamera',

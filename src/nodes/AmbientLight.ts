@@ -21,6 +21,7 @@ export const AmbientLightNode: NodeDefinition<AmbientLightParams, AmbientLightVa
   paramSchema: AmbientLightParams,
   inputs: {},
   outputs: { out: { type: 'Light', cardinality: 'single' } },
+  inspectorSections: ['transform'],
   evaluate(params) {
     return { kind: 'AmbientLight', intensity: params.intensity, color: params.color };
   },

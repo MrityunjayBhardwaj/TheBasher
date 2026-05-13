@@ -18,6 +18,7 @@ import type {
   CutValue,
   GroupValue,
   ImageValue,
+  PromptValue,
   KeyframeChannelColorValue,
   KeyframeChannelNumberValue,
   KeyframeChannelQuatValue,
@@ -31,6 +32,7 @@ import type {
   SkeletonValue,
   TimeValue,
   TransformValue,
+  VideoValue,
   WalkPathValue,
 } from './types';
 
@@ -43,7 +45,9 @@ const ALL_TYPES = [
   'BoneNameMap',
   'BoxMesh',
   'Character',
+  'ComfyUIWorkflow',
   'Cut',
+  'DepthPass',
   'DirectionalLight',
   'GltfAsset',
   'Group',
@@ -55,10 +59,12 @@ const ALL_TYPES = [
   'LocomotionState',
   'MaterialOverride',
   'Navmesh',
+  'NormalPass',
   'OrthographicCamera',
   'PerspectiveCamera',
   'PointLight',
   'PosedSkeleton',
+  'Prompt',
   'RenderJob',
   'RenderOutput',
   'Scatter',
@@ -69,6 +75,7 @@ const ALL_TYPES = [
   'SpotLight',
   'TimeSource',
   'Transform',
+  'VideoStitch',
   'WalkPath',
 ];
 
@@ -1524,5 +1531,409 @@ describe('P4 — IDPass (pure metadata)', () => {
     const beauty = evalAt<ImageValue>(beautyState, 'pass', 0);
     const id = evalAt<ImageValue>(idState, 'pass', 0);
     expect(beauty.sourceHash).not.toBe(id.sourceHash);
+  });
+});
+
+describe('P5 — DepthPass + NormalPass (§43 amendment, D-02)', () => {
+  it.each(TIME_SAMPLES)('DepthPass twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPassState('DepthPass');
+    const a = evalAt<ImageValue>(state, 'pass', t);
+    const b = evalAt<ImageValue>(state, 'pass', t);
+    expect(a).toEqual(b);
+  });
+
+  it.each(TIME_SAMPLES)('NormalPass twice-eval bit-exact at t=%d', (t) => {
+    const state = buildPassState('NormalPass');
+    const a = evalAt<ImageValue>(state, 'pass', t);
+    const b = evalAt<ImageValue>(state, 'pass', t);
+    expect(a).toEqual(b);
+  });
+
+  it('DepthPass evaluates to Image with passKind depth + 1280x720 rgba8', () => {
+    const v = evalAt<ImageValue>(buildPassState('DepthPass'), 'pass', 0);
+    expect(v.passKind).toBe('depth');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+  });
+
+  it('NormalPass evaluates to Image with passKind normal + 1280x720 rgba8', () => {
+    const v = evalAt<ImageValue>(buildPassState('NormalPass'), 'pass', 0);
+    expect(v.passKind).toBe('normal');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+  });
+
+  it('Depth + Normal sourceHashes are distinct from Beauty given same scene/camera/time (passKind discriminates)', () => {
+    const beauty = evalAt<ImageValue>(buildPassState('BeautyPass'), 'pass', 0);
+    const depth = evalAt<ImageValue>(buildPassState('DepthPass'), 'pass', 0);
+    const normal = evalAt<ImageValue>(buildPassState('NormalPass'), 'pass', 0);
+    const hashes = new Set([beauty.sourceHash, depth.sourceHash, normal.sourceHash]);
+    expect(hashes.size).toBe(3);
+  });
+
+  it('DepthPass sourceHash flips when time advances', () => {
+    const state = buildPassState('DepthPass');
+    const a = evalAt<ImageValue>(state, 'pass', 0);
+    const b = evalAt<ImageValue>(state, 'pass', 1);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('NormalPass sourceHash flips when scene mutates', () => {
+    const state = buildPassState('NormalPass');
+    const a = evalAt<ImageValue>(state, 'pass', 0);
+    const next = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        box: { ...state.nodes.box, params: { size: [1, 1, 1], position: [3, 0, 0] } },
+      },
+    };
+    const b = evalAt<ImageValue>(next, 'pass', 0);
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+});
+
+describe('P5 — Prompt (pure data node)', () => {
+  function buildPromptState(params: Partial<PromptValue> = {}) {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: {
+        text: params.text ?? 'a stylized cube',
+        negative: params.negative ?? '',
+        tags: params.tags ?? [],
+      },
+    }).next;
+    return s;
+  }
+
+  it('twice-eval bit-exact', () => {
+    const state = buildPromptState({ text: 'test', tags: ['cinematic'] });
+    const a = evaluate(state, 'p').value as PromptValue;
+    const b = evaluate(state, 'p').value as PromptValue;
+    expect(a).toEqual(b);
+    expect(a).toEqual({
+      kind: 'Prompt',
+      text: 'test',
+      negative: '',
+      tags: ['cinematic'],
+    });
+  });
+
+  it('returns params verbatim with defaults applied (V10 — fields absent → empty defaults)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: { text: 'minimal' },
+    }).next;
+    const v = evaluate(s, 'p').value as PromptValue;
+    expect(v).toEqual({
+      kind: 'Prompt',
+      text: 'minimal',
+      negative: '',
+      tags: [],
+    });
+  });
+
+  it('hydrate-seam load with missing schema fields produces defaults (H14 mitigation)', () => {
+    // Mimic a project saved before `negative` and `tags` existed: only
+    // `text` is present in params. The evaluator's `?? default` keeps
+    // the value shape stable for downstream consumers.
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: { text: 'legacy' },
+    }).next;
+    // Force-mutate the stored params to simulate a hydrate that bypassed
+    // zod's .default() (the H14 trap shape).
+    const next = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        p: { ...s.nodes.p, params: { text: 'legacy' } as Record<string, unknown> },
+      },
+    };
+    const v = evaluate(next, 'p').value as PromptValue;
+    expect(v.negative).toBe('');
+    expect(v.tags).toEqual([]);
+  });
+});
+
+describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
+  /**
+   * Build a tiny DAG: TimeSource + Prompt + BeautyPass + DepthlikeStub +
+   * ComfyUIWorkflow connected through 'pass-input'. We use BeautyPass for
+   * both pass-input slots so we don't take a dependency on Wave A4's
+   * DepthPass / NormalPass landing first — the sourceHash only cares
+   * about the upstream Image's passKind + sourceHash, both well-defined
+   * for BeautyPass.
+   */
+  function buildComfyState(opts: {
+    promptText?: string;
+    promptNegative?: string;
+    presetId?: 'stylizedRealism';
+    boxPosition?: [number, number, number];
+  } = {}) {
+    const promptText = opts.promptText ?? 'a cinematic cube';
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: opts.boxPosition ?? [0, 0, 0] },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'scene', socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'beauty', nodeType: 'BeautyPass', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'scene', socket: 'out' },
+      to: { node: 'beauty', socket: 'scene' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'beauty', socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'beauty', socket: 'time' },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'p',
+      nodeType: 'Prompt',
+      params: { text: promptText, negative: opts.promptNegative ?? '', tags: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cw',
+      nodeType: 'ComfyUIWorkflow',
+      params: {
+        presetId: opts.presetId ?? 'stylizedRealism',
+        frameStart: 0,
+        frameEnd: 30,
+        lastGoodFrame: -1,
+        outputPath: 'renders/job1/stylized_stylizedRealism',
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'p', socket: 'out' },
+      to: { node: 'cw', socket: 'prompt' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'beauty', socket: 'out' },
+      to: { node: 'cw', socket: 'pass-input' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'cw', socket: 'time' },
+    }).next;
+    return s;
+  }
+
+  it('twice-eval bit-exact at frame 0', () => {
+    const state = buildComfyState();
+    const a = evaluate(state, 'cw').value as ImageValue;
+    const b = evaluate(state, 'cw').value as ImageValue;
+    expect(a).toEqual(b);
+  });
+
+  it('emits Image with passKind stylized + default 1280x720 rgba8 (D-01)', () => {
+    const state = buildComfyState();
+    const v = evaluate(state, 'cw').value as ImageValue;
+    expect(v.kind).toBe('Image');
+    expect(v.passKind).toBe('stylized');
+    expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
+    expect(v.sourceHash).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('sourceHash flips when prompt text changes', () => {
+    const a = evaluate(buildComfyState({ promptText: 'a cube' }), 'cw').value as ImageValue;
+    const b = evaluate(buildComfyState({ promptText: 'a sphere' }), 'cw').value as ImageValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('sourceHash flips when upstream pass bytes change (box position mutated)', () => {
+    const a = evaluate(buildComfyState({ boxPosition: [0, 0, 0] }), 'cw').value as ImageValue;
+    const b = evaluate(buildComfyState({ boxPosition: [5, 0, 0] }), 'cw').value as ImageValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('D-04 default outputPath is empty string (Mutator authors the literal at build time)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cw',
+      nodeType: 'ComfyUIWorkflow',
+      params: {},
+    }).next;
+    expect(s.nodes.cw.params.outputPath).toBe('');
+    expect(s.nodes.cw.params.lastGoodFrame).toBe(-1);
+    expect(s.nodes.cw.params.presetId).toBe('stylizedRealism');
+  });
+
+  it('hydrate-seam load with missing width/height fields produces defaults (V10 / H14)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'cw', nodeType: 'ComfyUIWorkflow', params: {} }).next;
+    // Strip width/height as if loaded from a project saved before they
+    // landed. Evaluator's `?? default` rebuilds the descriptor.
+    const next = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        cw: {
+          ...s.nodes.cw,
+          params: {
+            presetId: 'stylizedRealism',
+            frameStart: 0,
+            frameEnd: 30,
+            lastGoodFrame: -1,
+            outputPath: '',
+          } as Record<string, unknown>,
+        },
+      },
+    };
+    const v = evaluate(next, 'cw').value as ImageValue;
+    expect(v.descriptor.width).toBe(1280);
+    expect(v.descriptor.height).toBe(720);
+  });
+});
+
+describe('P5 — VideoStitch (impure metadata, D-01/D-05)', () => {
+  function buildStitchState(opts: { codec?: 'h264'; fps?: number; outputPath?: string } = {}) {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    // Use a Prompt node as a fake stylized-image source — but Prompt
+    // doesn't emit Image. Use BeautyPass instead, which emits Image
+    // and gives us a consistent sourceHash test surface. (For Wave D
+    // metadata-only purposes, the upstream's passKind doesn't matter
+    // — VideoStitch hashes whatever Image arrives.)
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0] },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'scene', socket: 'camera' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'pass', nodeType: 'BeautyPass', params: {} }).next;
+    for (const wire of [
+      { from: 'scene', to: ['pass', 'scene'] },
+      { from: 'cam', to: ['pass', 'camera'] },
+      { from: 'time', to: ['pass', 'time'] },
+    ] as const) {
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: wire.from, socket: 'out' },
+        to: { node: wire.to[0], socket: wire.to[1] },
+      }).next;
+    }
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'stitch',
+      nodeType: 'VideoStitch',
+      params: {
+        codec: opts.codec ?? 'h264',
+        fps: opts.fps ?? 30,
+        outputPath: opts.outputPath ?? 'renders/job1/final.mp4',
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'pass', socket: 'out' },
+      to: { node: 'stitch', socket: 'pass-input' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'stitch', socket: 'time' },
+    }).next;
+    return s;
+  }
+
+  it('emits Video metadata with codec + fps + frameCount + outputPath + sourceHash', () => {
+    const v = evaluate(buildStitchState(), 'stitch').value as VideoValue;
+    expect(v.kind).toBe('Video');
+    expect(v.codec).toBe('h264');
+    expect(v.fps).toBe(30);
+    expect(v.frameCount).toBe(1);
+    expect(v.outputPath).toBe('renders/job1/final.mp4');
+    expect(v.sourceHash).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('twice-eval bit-exact', () => {
+    const state = buildStitchState();
+    const a = evaluate(state, 'stitch').value as VideoValue;
+    const b = evaluate(state, 'stitch').value as VideoValue;
+    expect(a).toEqual(b);
+  });
+
+  it('sourceHash flips when outputPath changes', () => {
+    const a = evaluate(buildStitchState({ outputPath: 'renders/job1/a.mp4' }), 'stitch').value as VideoValue;
+    const b = evaluate(buildStitchState({ outputPath: 'renders/job1/b.mp4' }), 'stitch').value as VideoValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('sourceHash flips when fps changes', () => {
+    const a = evaluate(buildStitchState({ fps: 24 }), 'stitch').value as VideoValue;
+    const b = evaluate(buildStitchState({ fps: 60 }), 'stitch').value as VideoValue;
+    expect(a.sourceHash).not.toBe(b.sourceHash);
+  });
+
+  it('hydrate-seam load with missing fields produces defaults (V10 / H14)', () => {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'stitch', nodeType: 'VideoStitch', params: {} }).next;
+    // Strip fields as if loaded from a project saved before they landed.
+    const next = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        stitch: { ...s.nodes.stitch, params: {} as Record<string, unknown> },
+      },
+    };
+    const v = evaluate(next, 'stitch').value as VideoValue;
+    expect(v.codec).toBe('h264');
+    expect(v.fps).toBe(30);
+    expect(v.outputPath).toBe('');
   });
 });

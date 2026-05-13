@@ -18,6 +18,7 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   paramSchema: GroupParams,
   inputs: { children: { type: 'Mesh', cardinality: 'list' } },
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['layout'],
   evaluate(_params, inputs) {
     return {
       kind: 'Group',

@@ -152,18 +152,21 @@ function SpaceGroup() {
   );
 }
 
+// As of P6 W2, TransformToolbar is mounted inside TopToolbar's left zone —
+// TopToolbar provides the outer border + bg + padding, so this wrapper just
+// arranges the groups in a horizontal flex. ml-auto on SpaceGroup is kept
+// because some callers (W7's planned FloatingViewportToolbar split) may
+// still want it pushed right inside whatever container they live in.
 export function TransformToolbar() {
   return (
     <div
       data-testid="transform-toolbar"
-      className="flex items-center gap-3 border-b border-border bg-bg/95 px-3 py-1.5 font-mono text-fg"
+      className="flex items-center gap-3 font-mono text-fg"
     >
       <ModeGroup />
       <SnapGroup />
       <ShadingGroup />
-      <div className="ml-auto">
-        <SpaceGroup />
-      </div>
+      <SpaceGroup />
     </div>
   );
 }

@@ -47,6 +47,7 @@
 18. [IK solver default (FABRIK vs CCD vs analytic)](#18-ik-solver-default)
 19. [Render output color space (linear vs sRGB)](#19-render-output-color-space)
 20. [Anti-aliasing (SMAA vs FXAA vs MSAA vs TAA)](#20-anti-aliasing)
+21. [Stylized render conventions (P5)](#21-stylized-render-conventions-p5)
 
 ---
 
@@ -674,6 +675,44 @@ sharpness (gaming compromise). For renders (P4) — supersample at 2x
 and downsample (cleanest, easy to author).
 
 **Cross-refs:** `src/render/PostFx.tsx`.
+
+---
+
+## 21. Stylized render conventions (P5)
+
+**Scenario:** when the AI render bridge produces a stylized frame and
+stitches frames into video, what conventions govern color space, frame
+numbering, codec id, and the prev-frame placeholder name?
+
+**Basher's choice:**
+
+| Decision                  | Value                                           | Rationale |
+| ------------------------- | ----------------------------------------------- | --------- |
+| Stylized output color     | **sRGB PNG (rgba8)**                            | Matches raw passes (Beauty/Depth/Normal). ControlNet's input contract assumes sRGB; emitting linear here would force a per-pass conversion in the encoder. |
+| Frame numbering           | **`frame.toString().padStart(4, '0')` — 4-digit zero-pad** | Matches `framePath` in `runRenderJob.ts` so a beauty + stylized pair sit adjacent (`beauty_0000.png` next to `stylized_stylizedRealism_0000.png`). 4 digits cover up to 9999 frames (333s @ 30fps) — generous for v0.5 demos. |
+| WebCodecs codec id (Wave D) | **`'avc1.42E01F'`** at the seam, **`'h264'`** as user-facing label | `'avc1.42E01F'` = H.264 Baseline 3.1 — broadest player support. Surfacing the `avc1.*` literal in the UI confuses users; `'h264'` is the friendly label. |
+| Container (Wave D)        | **MP4 (H.264 in mp4 container)**                | Universal browser playback; user-shareable without conversion. AV1 / VP9 deferred until WebCodecs encode support stabilizes across browsers. |
+| Prev-frame placeholder    | **`prev_frame_image`**                          | The workflow JSON references this key; the execute layer fills it with frame N-1's stylized output (or a zero/black image on frame 0). The literal name appears in preset workflow JSON files; renaming it requires a coordinated migration of every preset. |
+
+**Status:** DECIDED v0.5. Re-evaluate at v0.6 when meta-prompt-authored
+presets land — they may need additional placeholder names that get
+cataloged here as they appear.
+
+**Cross-refs:** `src/render/runComfyUIWorkflow.ts` (frame numbering
+applied via `framePath`); `src/render/dryRun.ts` (probe writes via
+same formula); `src/agent/strategy/presets/stylizedRealism.ts` (Wave C
+— the workflow JSON references `prev_frame_image`); project_p5_context
+D-04, D-05.
+
+**Failure modes this catalogues:**
+- Renaming the placeholder in code without migrating the preset JSON
+  → the preset substitutes the wrong key → ControlNet receives no
+  prev-frame conditioning → output flickers between frames.
+- Switching to linear color or 16f format without updating ControlNet
+  inputs → ControlNet over- or under-conditions.
+- Padding < 4 digits in frame numbers → file-system sort order
+  differs from frame order (`stylized_10.png` sorts before
+  `stylized_2.png`); stitch order at Wave D's VideoStitch breaks.
 
 ---
 

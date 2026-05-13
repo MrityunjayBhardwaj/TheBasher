@@ -22,6 +22,7 @@ import {
   useProjectStore,
   type ProjectMetadata,
 } from '../core/project';
+import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -33,6 +34,8 @@ import { useTimeStore } from './stores/timeStore';
 
 let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
+let cachedComfyUI: ComfyUICapability | null = null;
+let comfyUIPromise: Promise<ComfyUICapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
@@ -53,6 +56,26 @@ export async function getStorage(): Promise<StorageCapability> {
 export function getBlenderBridge(): BlenderBridgeCapability {
   if (!cachedBridge) cachedBridge = new BrowserBlenderBridge();
   return cachedBridge;
+}
+
+/**
+ * Resolve the ComfyUI capability for this runtime — Http if a server is
+ * reachable at the configured URL, Stub otherwise. Cached: a single resolve
+ * across the whole session, so dryRun + runWorkflow + agent tools share one
+ * instance (their in-flight tracking lives outside the capability).
+ *
+ * The promise guard mirrors `boot()` — concurrent first-time callers await
+ * the same in-flight pickComfyUI() instead of racing two HTTP probes.
+ */
+export function getComfyCapability(): Promise<ComfyUICapability> {
+  if (cachedComfyUI) return Promise.resolve(cachedComfyUI);
+  if (!comfyUIPromise) {
+    comfyUIPromise = pickComfyUI().then((cap) => {
+      cachedComfyUI = cap;
+      return cap;
+    });
+  }
+  return comfyUIPromise;
 }
 
 /**
@@ -108,6 +131,22 @@ export function boot(): Promise<void> {
       outputs: project.state.outputs,
     });
 
+    // P6 W3 — dirty tracking subscription. Registered AFTER hydrate so the
+    // initial state install does NOT mark the project dirty. Fires on every
+    // subsequent dag-state transition (Op dispatch via K2). hydrate() in
+    // switchProject/createNewProject/duplicateCurrentProject also triggers
+    // this — but those paths call setCurrent() right before, which resets
+    // dirty=false and lastSavedAt=updatedAt; the subscription then re-flips
+    // dirty=true once if the hydrate produced an object-identity change.
+    // To avoid that single false-positive, switchProject/createNewProject/
+    // duplicateCurrentProject reset dirty AFTER hydrate (see those funcs).
+    let prevDagState = useDagStore.getState().state;
+    useDagStore.subscribe((s) => {
+      if (s.state === prevDagState) return;
+      prevDagState = s.state;
+      useProjectStore.getState().markDirty();
+    });
+
     // Test affordance — expose the stores in dev only. Production builds
     // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
     // these to drive scenarios that native HTML5 D&D would make brittle.
@@ -127,6 +166,29 @@ export function boot(): Promise<void> {
       void import('./stores/selectionStore').then((m) => {
         w.__basher_selection = m.useSelectionStore;
       });
+      // P6 W2.6 — chromeStore exposed so e2e can drive panel collapse
+      // state without depending on the order of click-to-toggle tests.
+      // SceneTree default-collapsed (leftSidebarCollapsed=true) means
+      // tests that need to interact with tree rows must explicitly
+      // expand first; programmatic setLeftSidebarCollapsed(false) is
+      // less brittle than clicking the chevron.
+      void import('./stores/chromeStore').then((m) => {
+        w.__basher_chrome = m.useChromeStore;
+      });
+      // P6 W3 — leftSidebarStore exposed so e2e can drive tab activation
+      // without depending on visible chrome (the tab strip lands in C3;
+      // until then this seam lets the C2 dev-loop verify persistence
+      // round-trips programmatically — same pattern as __basher_chrome).
+      void import('./stores/leftSidebarStore').then((m) => {
+        w.__basher_left_sidebar = m.useLeftSidebarStore;
+      });
+      // P6 W4 — inspectorSectionsStore exposed so e2e can verify
+      // per-node-type collapsed-state persistence without depending
+      // on chrome visibility (NPanel's section chevrons live behind
+      // chromeStore.inspectorCollapsed). K12 dev-seam pattern.
+      void import('./stores/inspectorSectionsStore').then((m) => {
+        w.__basher_inspector_sections = m.useInspectorSectionsStore;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;
@@ -136,6 +198,23 @@ export function boot(): Promise<void> {
       void import('../agent/diff').then((m) => {
         w.__basher_diff = m.useDiffStore;
       });
+      // P5 Wave C5 — install StubComfyUICapability for e2e tests so the
+      // CostPreview spec doesn't depend on a running ComfyUI server. The
+      // setter swaps the boot cache; subsequent getComfyCapability() calls
+      // resolve to the stub.
+      void import('../core/comfy').then((m) => {
+        w.__basher_useStubComfy = () => {
+          __setComfyCapabilityForTests(new m.StubComfyUICapability());
+        };
+      });
+      // P5 Wave C5 — minimal OPFS write seam so the CostPreview spec can
+      // pre-populate fake raw-pass bytes (beauty/depth/normal) at the
+      // D-04 paths the stylizedRealism preset reads. Production agents
+      // never call this — runRenderJob produces the real bytes.
+      w.__basher_writeOpfsBytes = async (path: string, bytes: Uint8Array) => {
+        const storage = await getStorage();
+        await storage.write(path, bytes);
+      };
       // P3.1 Wave A/B — BVH + FBX import demo seams. Library UI
       // integration lands in a follow-on wave; meanwhile the agent
       // (and console) can drive imports via these seams.
@@ -178,6 +257,17 @@ export function boot(): Promise<void> {
 /** Test-only: forget the cached boot so the next boot() runs fresh. */
 export function __resetBootForTests(): void {
   bootPromise = null;
+  cachedComfyUI = null;
+  comfyUIPromise = null;
+}
+
+/**
+ * Test-only: inject a ComfyUI capability so component tests can hit a
+ * deterministic stub without going through pickComfyUI's HTTP probe.
+ */
+export function __setComfyCapabilityForTests(cap: ComfyUICapability | null): void {
+  cachedComfyUI = cap;
+  comfyUIPromise = cap ? Promise.resolve(cap) : null;
 }
 
 export async function saveCurrent(): Promise<void> {
@@ -194,6 +284,11 @@ export async function saveCurrent(): Promise<void> {
   });
   await saveProject(storage, project);
   useProjectStore.getState().setCurrent(project);
+  // P6 W3 — setCurrent resets dirty/lastSavedAt from project.updatedAt, which
+  // is consistent here (just-written timestamp). markSaved() is a no-op pair
+  // for clarity at this seam — the explicit name makes the intent visible
+  // to future readers / dharana audits.
+  useProjectStore.getState().markSaved();
 }
 
 /** Tests / dev only — replaces the persisted project with a fresh default. */
@@ -228,6 +323,10 @@ export async function switchProject(projectId: string): Promise<void> {
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
+  // P6 W3 — hydrate triggers the dirty subscription. Re-run setCurrent
+  // semantics (dirty=false, lastSavedAt=project.updatedAt) so the freshly
+  // loaded project doesn't appear unsaved.
+  useProjectStore.getState().setCurrent(project);
 }
 
 /** Create a fresh default project under a new id and switch to it. */
@@ -246,6 +345,8 @@ export async function createNewProject(name: string, id?: string): Promise<strin
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
+  // P6 W3 — clear dirty caused by hydrate (see switchProject).
+  useProjectStore.getState().setCurrent(project);
   return newId;
 }
 
@@ -268,6 +369,8 @@ export async function deleteProject(projectId: string): Promise<void> {
         nodes: seed.state.nodes,
         outputs: seed.state.outputs,
       });
+      // P6 W3 — clear dirty caused by hydrate (see switchProject).
+      useProjectStore.getState().setCurrent(seed);
     }
   }
 }
@@ -287,6 +390,8 @@ export async function duplicateCurrentProject(newName?: string): Promise<string>
     nodes: dup.state.nodes,
     outputs: dup.state.outputs,
   });
+  // P6 W3 — clear dirty caused by hydrate (see switchProject).
+  useProjectStore.getState().setCurrent(dup);
   return newId;
 }
 

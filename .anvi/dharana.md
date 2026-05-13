@@ -166,6 +166,46 @@ six starter Mutators in `src/agent/mutators/builders/`.
 **Silent-failure modes:** addon server not running but page assumes it is; CORS misconfig; user picks wrong asset folder.
 **Observation targets:** beacon poll responses logged in dev console; "Blender connected" indicator in chrome.
 
+### Boundary B11: Design spec ↔ source code (UI-SPEC authoring + re-validation boundary)
+
+**ORIGIN:** P6 W1 (2026-05-10). D-UX-8 was authored from memory of file *names* (Inspector.tsx + NPanel.tsx — sounded like duplicate inspectors) without reading either file. Observation at W1 start revealed they have orthogonal roles. Decision was retracted; spec was patched mid-wave; one round-trip lost. **Update P6 W2.6 (2026-05-11):** the W1 correction was *itself* reversed two waves later, when W2's TopToolbar absorbed NPanel's mode + snap groups and W7 was already slated to take grid/axis toggles. NPanel ended up with nothing unique left; the merge unblocked itself. User pushed merge forward to W2.6; spec restored to original direction. Two reversals on the same decision in 5 commits.
+
+**WHY:** the W1 lesson was "don't lock from memory before reading code." The W2.6 lesson is the deeper one: **spec entries asserting surface distinctness decay across waves**. A claim like "X and Y are not duplicates because each has unique sections {Y₁, Y₂, Y₃}" is a *conjunction*; any wave that absorbs Y_i into a third surface erodes the conjunction silently. Without a re-validation cycle, the spec's earlier "they're distinct" verdict reads as authoritative even when the underlying premises have evaporated. Both kinds of drift (initial-authoring memory error, mid-roadmap conjunction decay) silently mislead downstream waves. The boundary's WHY now covers both phases, not just the first.
+
+**HOW (authoring-time):** before any "merge / delete / replace" decision lands in a spec's locked-decisions table, open every file the decision names. Write a one-sentence functional description per file. Only if the descriptions semantically overlap does the merge framing apply.
+
+**HOW (re-validation, NEW W2.6):** every wave plan that touches multi-surface chrome (TopToolbar, ToolRail, FloatingViewportToolbar, NPanel, LeftSidebar tabs, AddMenu/AssetsPopover) runs a *section inventory pass* over any spec entry of the form "X and Y serve different roles":
+1. List each surface's *current* unique sections (from code, not from memory).
+2. Cross-check against the spec's distinctness claim.
+3. If any surface's unique-section count drops to ≤ 1, flag the merge as unblocked and update the spec entry's status, even if the merge isn't yet executed.
+4. Surface candidates to re-validate at every wave: AddMenu / AssetsPopover (creation vs asset import); LeftSidebar Scene tab / Agent tab (DAG view vs LLM chat); future Inspector Render section / external CostPreview mount.
+
+**REF:** docs/UI-SPEC.md §1 D-UX-8 (the swing → restore ledger captures provenance for both reversals); §5.8 NPanel canonical Inspector (W2.6); hetvabhasa H25 (initial-authoring trap); hetvabhasa H27 (re-validation-cycle trap — the W2.6-revealed iteration); P6 W1 commit `5a71e67` + P6 W2.6 commit `c19b43a`.
+
+**Silent-failure modes:** (a) decision locked from memory at authoring → downstream wave acts on it → code break surfaces only when test exercises the deleted/merged surface OR user encounters broken affordance; (b) decision *was* correct at authoring but adjacent chrome evolved → distinctness claim now false → merge stays scheduled for a far-future wave (or never) while the redundant surface confuses users every session; (c) re-validation pass skipped → next chrome wave inherits the stale claim → cycle repeats.
+
+**Observation targets:** every D-UX entry in a spec carries either a `**REF:**` to file:line that's been opened during authoring, OR a `**TODO: observe**` flag. Spec-checker (anvi-ui-checker) treats unobserved files in a locked decision as a BLOCK verdict. **Additional W2.6 target:** every wave plan touching multi-surface chrome adds a "section inventory" step that re-runs §B11 HOW (re-validation) over distinctness claims, with output recorded in the wave's plan as either "no shifts" or "{D-UX-N} restored / overridden / advanced".
+
+**W3 section-inventory pass (2026-05-12):** ran B11 HOW (re-validation) over the surfaces W3 touches:
+
+| Surface pair | Inventory result | Verdict |
+|---|---|---|
+| AddMenu (4 groups: Mesh/Light/Camera/Empty, 11 procedural items) vs AssetsPopover (3 bundled glTF tiles via DRAG_MIME drop chain) | Disjoint: AddMenu spawns procedural primitives via `buildAddPrimitiveOps` + dispatchAtomic; AssetsPopover triggers HTML5 drag onto AssetDropZone. Zero section overlap. | no shifts |
+| LeftSidebar Scene tab (DAG tree, drag-reorder, K6 asset-drop integration) vs Agent tab (LLM transcript, mode selector, tool-call rows) | Orthogonal domains (scene hierarchy vs LLM chat). Zero section overlap. | no shifts |
+| ProjectTabs (R1: always-visible strip with select/close/new/dirty-dot/tooltip + ComfyStatusIndicator host on right edge) vs ProjectsMenu (popover with full CRUD: new/duplicate/rename/delete) | Share one read seam (`listAllProjectMetadata`) but UI affordances disjoint. ProjectTabs = always-visible switch + status; ProjectsMenu = on-demand CRUD. Both surfaces emit `createNewProject`/`deleteProject`/`switchProject` through the same boot helpers — single mutation path. | no shifts |
+
+**Future re-validation triggers:** (a) ProjectsMenu absorbs ComfyStatusIndicator or unsaved-indicator → ProjectTabs may become redundant; (b) Agent tab keyframe badges migrate to timeline dock → Scene tab loses Animate-mode unique section, may merge with Agent; (c) AddMenu absorbs glTF import via virtual entries → AssetsPopover may collapse to the drag surface only. Each future chrome-touching wave runs this inventory afresh.
+
+**W4 section-inventory pass (2026-05-12):** ran B11 HOW over the surfaces W4 touches:
+
+| Surface pair | Inventory result | Verdict |
+|---|---|---|
+| NPanel section cards (Transform/Mesh/Material/Render/Animate/Channel/Layout — 7 declared sections) vs NPanel raw-fallback (flat param renderer for nodes without inspectorSections) | Disjoint by design: sectioned path renders cards per declared section; raw-fallback renders single flat list under `inspector-raw-fallback` testid. The two paths are mutually exclusive per node — selection check is `declared.length === 0`. Raw-fallback is the *escape* path for legacy/glue nodes; never co-renders with sections. | no shifts (intentional |/either) |
+| inspectorSections (per-node-type registry declaration) vs paramToSection (predicate-based param router) | Complementary, not redundant. Registry declares *which sections apply* to a node type; predicate routes *which params land in each section*. Adding a new node type requires registry declaration; adding a new param to an existing section just extends the predicate. No duplication. | no shifts |
+| Section catalog (§5.8: 7 entries) vs §7.2 multi-select sections (`['Transform', 'Metadata']`) | Spec internal: §7.2 references 'Metadata' which is NOT in §5.8's catalog. Locked D-10 A: multi-select uses `['transform', 'layout']` (Layout substitutes for Metadata since Layout is the catalog's "always last; positioning hints" entry). Documented in `MULTI_SELECT_SECTIONS`. | resolved via D-10 |
+
+**W4 re-validation triggers:** (a) new node types added that should fit existing sections but lack inspectorSections — registry-snapshot test would catch silent omission only for the buckets we explicitly probe; (b) new section ids added to the catalog → must update SECTION_IDS + paramToSection predicate + node declarations; (c) §7.2 'Metadata' gets a real home in the catalog → MULTI_SELECT_SECTIONS narrows back to its original spec wording. Each future Inspector-touching wave re-runs the §5.8 catalog vs registry-declared coverage check.
+
 ---
 
 ## 2. ACTIVE INVARIANT SPANS
@@ -907,3 +947,140 @@ Wave C Mutator catalog.
   **Next update trigger:** P5 (AI Render Bridge) — ComfyUI wiring
   will exercise the pass-output describable contract. Expect
   pressure to add Depth + Normal passes for ControlNet inputs.
+
+**Updated:** 2026-05-09 — post-P5 (AI Render Bridge — stylizedRealism
+preset, ComfyUI capability, video stitch — all four waves shipped):
+
+- **B9 promoted (render execution layer ↔ DAG).** P4 was the first
+  observation; P5 added two more execution-layer files
+  (`runComfyUIWorkflow.ts` + `runVideoStitch.ts`). Per dharana
+  promotion criteria (single → memory; recurrence → dharana entry),
+  three observations is well past threshold. Promoted with explicit
+  ORIGIN/WHY/HOW/REF.
+
+  **ORIGIN:** P4 introduced `runRenderJob` as the first impure
+  execution-layer file under `src/render/`. P5 added
+  `runComfyUIWorkflow` (stylization frame walk + capability submit +
+  storage write) and `runVideoStitch` (frame read + encode + storage
+  write). All three share: V8 file-rooted (no Op emission), V6
+  capability discipline (storage / comfy / video-encoder), reads of
+  evaluated DagState, side-effecting writes. The boundary class is
+  not "rendering" specifically — it's "impure execution layer that
+  consumes DAG metadata + side-effects through capabilities".
+
+  **WHY:** Without B9 catalogued, future execution-layer additions
+  (PlayCanvas exporter at P7, splat encoder at P6 if it lands) will
+  be added one-off without checking the established discipline:
+  - Read DagState; never write Ops from this directory.
+  - All side effects route through a registered capability (V6).
+  - Writebacks (e.g. lastGoodFrame on ComfyUIWorkflow) are
+    callbacks the caller dispatches — never inline dispatch from
+    the execution file.
+  Each violation reopens H19 (stale snapshot) / V8 (file-rooted)
+  / V1 (op-as-only-mutation) holes that were already closed.
+
+  **HOW:** Mechanical guard — every file under `src/render/**` has
+  a textual import-only regex test in `runRenderJob.test.ts` that
+  fails CI on imports of dispatcher / store mutators / op
+  machinery. Currently guards `runRenderJob.ts`, `stubEncoder.ts`,
+  `dryRun.ts`, `runComfyUIWorkflow.ts`, `runVideoStitch.ts` —
+  five files, one regex. Future src/render/ additions add to this
+  list before ship.
+
+  **REF:** `src/render/runRenderJob.ts:1`,
+  `src/render/runComfyUIWorkflow.ts:1`, `src/render/runVideoStitch.ts:1`,
+  `src/render/runRenderJob.test.ts` ('V8 — file-rooted dispatch rule'
+  describe block). project_p5_plan B1/D2.
+
+  **Silent-failure modes (B9):**
+  - Adding a new src/render/ file without extending the import-only
+    guard → V8 violation lands silently.
+  - Calling `useDagStore.getState()` inside an async loop in
+    src/render/* → H19 stale-snapshot pattern; capture-once at
+    function start instead.
+  - Writing to fs/opfs directly (bypassing StorageCapability) →
+    Tauri swap at v0.6 becomes a rewrite. Reviewer rejects.
+
+  **Observation targets:**
+  - For every new file under `src/render/**`: confirm the V8
+    import-only test names it. Missing entry → fail CI before merge.
+  - For every async loop in src/render/*: confirm state.nodes is
+    read once at function entry, not per-iteration.
+  - For every storage path constructed in src/render/*: confirm it
+    flows through `StorageCapability.write`, never `node:fs` /
+    `OpfsStorage` directly.
+
+- **B10 candidate (ComfyUI ↔ external server boundary)** — single
+  observation, kept in memory not dharana per promotion criteria.
+  Promotion trigger: a second class of LLM/tool-bridge integration
+  appears (e.g. blender-mcp wired through a similar capability) —
+  at that point the WHY of B10 generalizes from "ComfyUI specifically"
+  to "any LLM-tool external server", and the catalogue entry earns
+  its place. Tracked in memory as `project_p5_shipped.md`.
+
+- **V13 (closure preservation) ALIGNED re-verified.** addAIPass +
+  addStitch each declare buildClosureSpec. Gate 3 (closure_
+  preservation) accepts both Mutators' op chains under the rooted
+  closures. V13 status unchanged — the new Mutators integrate
+  cleanly through existing machinery.
+
+- **V14 (Mutator non-redundancy) ALIGNED re-verified.** Mechanical
+  guard now passes 14-of-14 unique signatures (was 12 after P4).
+  addAIPass distinguishes from addPass via `preserves` (drops
+  'material'). addStitch distinguishes via
+  `requiredNodeTypes: ['RenderJob','ComfyUIWorkflow']` (no other
+  Mutator pairs both).
+
+- **V15 (lazy strategy) ALIGNED re-verified.** Strategy resource
+  count 8 → 9 with 'aiRender' added. System prompt's one-line
+  pointer remains the only inline content; preset bodies +
+  workflow guidance live in the registry, fetched via
+  `agent.getStrategy({ topic: 'aiRender' })` only when relevant.
+
+- **V12 (convention boundary) extended.** dcc-reference §21
+  "Stylized render conventions" added with four locked decisions
+  (sRGB PNG output, 4-digit zero-pad frames, 'avc1.42E01F' codec
+  id, 'prev_frame_image' placeholder name). Cross-refs from
+  runComfyUIWorkflow + runVideoStitch + the stylizedRealism
+  preset.
+
+- **D-01 'pass-input' edge kind held under expanded usage.** P5
+  loaded three new node types onto this kind: ComfyUIWorkflow's
+  pass-input (raw passes in), ComfyUIWorkflow's `out` socket
+  (stylized output flowing as Image, consumed by VideoStitch's
+  pass-input), VideoStitch's pass-input. H22 isolation tested
+  under all three — closure rooted at jobId never leaks to
+  sibling jobs / orphan workflow nodes / external stitches.
+
+- **§43 amendment landed (D-02).** DepthPass + NormalPass
+  registered (40 → 42 nodes pre-P5; +5 P5 nodes = 45 wait...
+  let's recount. P4 ended at 36. P5 adds: Prompt (37),
+  ComfyUIWorkflow (38), DepthPass (39), NormalPass (40),
+  VideoStitch (41). **41 node types total post-P5.** §43 deferred
+  set unchanged: LineArt, Segmentation, AO, Albedo, Alpha, Motion
+  remain v0.6+ — only land when a registered preset demands them.
+
+- **Fatality test (post-P5, 2026-05-09):**
+  1. Hetvabhasa clustering: 24 entries (no new H from P5 work —
+     planning was thorough enough that wiring mismatches were
+     caught at test time, not in production). No B-boundary
+     newly clusters 3+ patterns.
+  2. Vyapti span: V13/V14/V15 ALIGNED status verified; new V12
+     section in dcc-reference cross-refs. No invariant span
+     widened.
+  3. Krama crossing: K10 added (AI render workflow lifecycle —
+     extends K4's compose/execute/describe shape with prev-frame
+     coherence + resume + capability submit). Each phase of K10
+     stays atomic-shape; no lifecycle crosses 3+ module
+     boundaries.
+
+  **Verdict: organization remains sound after P5.** B9's
+  promotion is the only structural addition — and it formalizes
+  what was already true rather than introducing a new boundary.
+  The execution layer continues to be a clean V8 file-rooted
+  surface; capabilities (V6) absorb the new external-server
+  concern (Comfy) the same way they absorbed Storage at P0.
+
+  **Next update trigger:** P6 (Splats node) or v0.6 (meta-prompt
+  preset authoring + remaining §43 passes — LineArt, Segmentation,
+  AO, Albedo, Alpha, Motion).

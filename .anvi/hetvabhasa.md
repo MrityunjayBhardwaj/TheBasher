@@ -568,3 +568,85 @@ of director-style prompts, not just the single-noun happy path.
 scope updated post-fix); vyapti V13 (closure preservation — closures
 rooted on multi-target identifies pass through correctly because each
 selector becomes a closure root). PLAN P2.5.3 §2 Wave A.
+
+### H25: Naming-similarity ≠ functional-similarity (spec-from-memory framing trap)
+
+**Span:** any spec or design document authored before reading the code it describes.
+
+**Symptom:** the spec frames two files as "duplicate / mergeable" because their names rhyme (`Inspector.tsx` + `NPanel.tsx`, `assetStore.ts` + `assetCache.ts`, etc.); the spec proposes a merge / delete that would silently lose load-bearing functionality if executed; the error is only caught when someone actually opens both files.
+
+**Root cause:** the spec was authored from memory of file *names* and the surrounding domain language, not from observation of file *contents*. Domain words ("inspector", "panel", "store", "cache") cluster around boundaries because the boundary is the thing being named — but two files at the same boundary often have orthogonal jobs (one mutates, one displays; one props-edits, one HUD-toggles). Naming similarity is downstream of the same boundary; functional overlap is a separate question.
+
+**The trap:** writing the merge into the locked-decisions table (D-UX-N) and pulling forward into a wave's atomic commit before reading both files. Once "merge X and Y" is locked, the discovery that they aren't duplicates feels like late-breaking noise instead of the actual signal it is.
+
+**The real fix:** before any "merge / delete / replace" decision lands in a spec, open the two files end-to-end. State each file's job in one sentence. Only if the sentences overlap does the merge framing apply. Add a "what each file actually does today" pass to the spec authoring routine, *before* the locked-decision table is populated.
+
+**Five-limbed argument:**
+1. **Claim:** Functional roles must be observed from code, not inferred from filenames.
+2. **Reason:** Filenames cluster at boundaries; functional roles span boundaries. Two files at the same boundary may have non-overlapping jobs.
+3. **Universal principle:** Lokayata at the *spec* level — observation runs alongside specification, not after.
+4. **Application:** P6 spec D-UX-8 framed `Inspector.tsx` (property editor) + `NPanel.tsx` (viewport HUD: gizmo mode, snap, grid/axis toggles) as duplicate inspectors based on name similarity. They have orthogonal roles.
+5. **Conclusion:** Caught at W1 start by reading both files; D-UX-8 corrected mid-wave (NPanel deleted in W7 with functions absorbed into R8, Inspector kept as canonical). One round-trip lost; one decision-table cell rewritten.
+
+**Update 2026-05-11 (W2.6):** the W1 correction was itself reversed two waves later. By W2 the TopToolbar absorbed NPanel's mode + snap groups, leaving only grid/axis toggles unique to NPanel — and those were already slated to move to W7's FloatingViewportToolbar. The "they're not duplicates" claim that was true at W1 (lokayata-validated then) was false at W2.6 (lokayata-disconfirmed by the new chrome shape). The DEEPER lesson under H25: spec re-validation is a *cycle*, not a one-time fix. Every wave that touches adjacent chrome can shift whether two surfaces remain distinct. The sister pattern H27 below captures this directly.
+
+**Sister patterns:** any future spec that proposes a merge based on name resemblance — `MaterialOverride.ts` + `MaterialPreset.ts`, `KeyframeChannel*.ts` siblings, `*Store.ts` lookalikes. Read both before locking. AND: any prior "they're not duplicates" claim should be re-validated after every wave that absorbs chrome (H27).
+
+**Cross-refs:** docs/UI-SPEC.md §1 D-UX-8 (W2.6 restoration entry); §5.8 NPanel canonical Inspector; H27 (parallel-surface evolution drift); vyapti V13.
+
+### H26: happy-dom localStorage non-functional at module-load time
+
+**Span:** any zustand store under `src/app/stores/` that reads `localStorage` at module-load time AND has a unit test that imports it directly.
+
+**Symptom:** `TypeError: localStorage.getItem is not a function` at module-load — the test file fails before any test body runs. `(node:NNN) Warning: --localstorage-file was provided without a valid path` appears before the failure.
+
+**Root cause:** vitest's `happy-dom` environment exposes `localStorage` as a globalThis property, but its method bindings are not attached at the moment a `src/app/stores/*.ts` module is imported by the test file. `typeof localStorage === 'undefined'` returns `'object'` (truthy guard misfires); the call to `getItem` then bombs because the slot is a partially-constructed Storage stub.
+
+**The trap:** asserting `typeof localStorage === 'undefined'` is sufficient defense. It isn't — the value is *defined*, but methods aren't.
+
+**The real fix:** defensive helpers that check for *callable* methods, not just defined globals:
+```ts
+function safeGetItem(key: string): string | null {
+  try {
+    if (typeof localStorage?.getItem !== 'function') return null;
+    return localStorage.getItem(key);
+  } catch { return null; }
+}
+```
+And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE importing the store (so the store's module-load-time read sees a working API).
+
+**Five-limbed argument:**
+1. **Claim:** Defensive localStorage access requires method-callable checks, not just defined-global checks.
+2. **Reason:** Test envs supply Storage as a partially-constructed object; `typeof` returns truthy for partial stubs.
+3. **Universal principle:** When the boundary is "browser API in test env", stub completeness is the failure mode, not stub presence.
+4. **Application:** `src/app/stores/chromeStore.ts` originally guarded with `typeof localStorage === 'undefined'`; module load failed in vitest. Fix: `safeGetItem` / `safeSetItem` helpers + in-memory mock in test `beforeAll`.
+5. **Conclusion:** Pattern applies to every future store that touches localStorage at boot — `modeStore` (W2 retrofit, commit `8b70ac8` — H26 hit when ComfyStatusIndicator's test pulled modeStore in earlier than W1's tests had), `viewportStore`, future `leftSidebarStore`, etc. **Vyapti V18 codifies this as a structural rule.**
+
+**Sister patterns:** sessionStorage, IndexedDB transactions, `navigator.storage.getDirectory()`, `window.matchMedia`, any Web API surfaced through the global. Same defense: callable check + try/catch + in-test mock.
+
+**Cross-refs:** `src/app/stores/chromeStore.ts:30` (safeGetItem / safeSetItem); `src/app/stores/modeStore.ts` (same wrappers, retrofitted P6 W2 commit `8b70ac8`); `src/app/stores/chromeStore.test.ts:5` (beforeAll mock); vyapti V18; vitest config `test.environment: 'happy-dom'` in `vitest.config.ts:11`. P6 W1 commit `cc151fa`.
+
+### H27: Parallel-surface evolution drift — "they're not duplicates" decays as adjacent chrome absorbs sections
+
+**Span:** any spec entry of the form "X and Y are NOT duplicates because each has unique sections" — the claim is true at the moment of authoring but decays whenever a third surface absorbs one of those unique sections.
+
+**Symptom:** spec asserts two surfaces are functionally distinct; at some later wave one surface's sections shrink to zero unique content; the spec entry still claims distinctness; nobody notices until a user asks "why are these the same panel" and an audit reveals the merge has been overdue for N waves.
+
+**Root cause:** specs lock claims at a snapshot; chrome evolution moves sections between surfaces wave-by-wave. The "X has Y, Z, W sections unique to it" claim is conjunctive — when Y, Z, W all migrate elsewhere, the conjunction goes false silently. There's no automatic re-validation; the spec's earlier "they're distinct" verdict reads as authoritative even when the underlying premises have evaporated.
+
+**The trap:** trusting a frozen-in-time "they're not duplicates" claim. A claim that was lokayata-validated against W1's chrome shape is just a memory once W2's chrome ships. H25 caught the *first* iteration of this trap (don't lock from memory before reading code); H27 catches the *recurring* iteration (don't trust prior validation across structural waves).
+
+**The real fix:** every wave that absorbs chrome (TopToolbar absorbing NPanel mode/snap groups; FloatingViewportToolbar absorbing grid/axis toggles; etc.) triggers a re-validation pass over any spec entry of the form "X and Y are distinct because…". Test: list each surface's *current* unique sections; if the count is 0 or 1, the merge is unblocked and the spec entry is stale.
+
+**Five-limbed argument:**
+1. **Claim:** Spec entries asserting surface distinctness must be re-validated after every wave that touches adjacent chrome.
+2. **Reason:** Distinctness claims are conjunctions of "X has unique section Y, Z, W" — chrome evolution can empty the conjunction silently.
+3. **Universal principle:** Lokayata at the spec level is *recurring*, not one-time. The first observation validates the claim at W_N; the same observation must run again at W_(N+k) if any adjacent chrome shifted.
+4. **Application:** D-UX-8 swung once at W1 ("they're not duplicates", true at the time). At W2 TopToolbar absorbed NPanel's mode + snap groups; W7 was already slated to take the grid/axis toggles. By W2.6 NPanel had nothing unique left. The spec entry still read "they're distinct, merge in W7". User pushed merge forward to W2.6 after observing — restoration was the right call once observation re-ran.
+5. **Conclusion:** Add a "section inventory" pass to every wave plan that touches multi-surface chrome. If any surface's unique-section count drops to ≤1, flag it for merge consideration.
+
+**Detection signal:** open both surfaces' files, list each section, cross-check what's unique. When a unique-section list shrinks below ~50% of the surface's total content, the merge is overdue.
+
+**Sister patterns:** any "X and Y serve different roles" spec claim. Examples to re-validate at every chrome-touching wave: AddMenu / AssetsPopover (currently distinct: creation vs asset import); Library tab / SceneTree tab (W2.5 dropped Library tab — re-validation predicted). The pattern also generalizes to non-chrome boundaries: any "module A handles X; module B handles Y" claim with overlapping span.
+
+**Cross-refs:** H25 (parent — the first-iteration trap); UI-SPEC.md §1 D-UX-8 (the swing → restore ledger captures provenance); P6 W2.6 commit `c19b43a` (Inspector → NPanel merge); dharana B11 (Design spec ↔ source code authoring boundary — H27 strengthens its WHY).

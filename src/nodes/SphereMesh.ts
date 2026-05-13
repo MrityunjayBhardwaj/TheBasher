@@ -37,6 +37,7 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
   paramSchema: SphereMeshParams,
   inputs: {},
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params) {
     return {
       kind: 'SphereMesh',

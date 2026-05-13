@@ -23,6 +23,7 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
   paramSchema: BoxMeshParams,
   inputs: {},
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params) {
     return {
       kind: 'BoxMesh',

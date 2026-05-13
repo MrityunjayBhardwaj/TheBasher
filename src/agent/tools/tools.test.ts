@@ -33,10 +33,10 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('tool registry', () => {
-  it('registers all twelve tools', () => {
+  it('registers all fourteen tools', () => {
     registerAllTools();
     const tools = listTools();
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(14);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'agent.getStrategy',
@@ -44,7 +44,9 @@ describe('tool registry', () => {
       'agent.listMutators',
       'agent.listStrategies',
       'agent.proposePlan',
+      'agent.render.dryRunWorkflow',
       'agent.render.summarizePass',
+      'agent.render.summarizeStylized',
       'camera.snapshot',
       'character.walkTo',
       'dag.exec',

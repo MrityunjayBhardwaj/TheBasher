@@ -60,6 +60,7 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
   // composition, mirroring Transform's Mesh→Mesh wrap. The 'AnimationLayer'
   // SocketTypeName is reserved for future layer-mixer nodes.
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs) {
     const target = (inputs.target as SceneChild | undefined) ?? null;
     const channelInput = inputs.animation;

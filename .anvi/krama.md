@@ -271,3 +271,162 @@ is the cross-link.
 
 **REF:** THESIS.md §11; `src/app/character/cameraFromView.ts:21`; `src/app/character/threeRef.ts:24`; `src/app/character/ThreeBridge.tsx:11`; `src/app/character/cameraFromView.test.ts`.
 **Why it matters:** camera-from-view is the killer move for the director-first thesis — frame a shot via OrbitControls, bake it into the DAG, and renders reproduce the pose deterministically. The same `Op[]` shape will be the agent's `camera.snapshot` tool surface when P2.5 lands.
+
+### K10: AI render workflow lifecycle (P5 — extends K4's compose/execute/describe shape)
+
+**Compose phase (DAG mutation, agent or user authored):**
+
+1. RenderJob node added via `dag.exec` (default project does NOT seed
+   one; user opts in).
+2. For each preset.requiredPass: `mutator.render.addPass({ jobId,
+   passKind })`. addPass auto-resolves Scene + Camera + TimeSource and
+   wires the pass into `jobId.pass-input`. V13 closure preservation +
+   V14 signature uniqueness gates.
+3. `mutator.render.addAIPass({ jobId, presetId, promptText, ... })`
+   adds Prompt + ComfyUIWorkflow + connects existing required passes
+   to the workflow's pass-input list. Workflow's outputPath = `${job.
+   outputPath}/stylized_${sanitize(presetId)}` (D-04 formula).
+4. Optional: `mutator.render.addStitch({ jobId, workflowId, fps?,
+   codec? })` adds VideoStitch consuming the workflow's stylized
+   output. Stitch's outputPath = `${job.outputPath}/final.mp4`.
+5. User accepts the Diff. DAG describes the AI render plan.
+
+**Execute phase (impure side, src/render/):**
+
+6. (Pre-condition) `runRenderJob` produces raw passes at
+   `${job.outputPath}/${passKind}_NNNN.png`. Without raw bytes on disk,
+   the workflow has nothing to feed ComfyUI.
+7. `runComfyUIWorkflow(workflowNodeId, dagState, { capability, storage,
+   compileWorkflow, onFrameComplete })` walks frames
+   [max(frameStart, lastGoodFrame + 1), frameEnd]:
+   a. Build EvalCtx { time: { frame, seconds=frame/30, normalized: 0 } }.
+   b. Resolve Prompt + pass-input nodes via evaluator at this ctx.
+   c. Compute prevFrameStylizedPath: null on first frame, else
+      `framePath(workflowOutputPath, frame - 1)`.
+   d. Call compileWorkflow → { workflowJson, inputs }. The preset's
+      compile factory reads raw pass bytes from the job's parent dir
+      and the prev-frame stylized bytes from prevFrameStylizedPath
+      (or substitutes a 1×1 black ZERO_FRAME_PNG on first frame /
+      missing-path soft-fail).
+   e. `await capability.submit(workflowJson, inputs)` → bytes.
+   f. Write bytes via `storage.write(framePath(workflowOutputPath,
+      frame), bytes)`. V6 capability — no direct fs/opfs.
+   g. `onFrameComplete(frame)` → caller (src/app/render/runWorkflow.ts)
+      dispatches `setParam` Op advancing `lastGoodFrame`. V8 file-
+      rooted: src/render/* never dispatches.
+   h. On capability rejection: throw with `partialReport` attached;
+      caller's wrapping code catches and surfaces error. Resume:
+      next call starts at `lastGoodFrame + 1`.
+8. `runVideoStitch(stitchNodeId, dagState, { storage, encoder })`
+   walks each upstream ComfyUIWorkflow's frame range:
+   a. Read each frame's stylized PNG bytes via `storage.read(
+      framePath(upstream.outputPath, frame))`.
+   b. Pass collected `framesPng[]` to `deps.encoder({ framesPng,
+      codec, fps })` → encoded video bytes.
+   c. Write bytes via `storage.write(stitch.outputPath, videoBytes)`.
+
+**Describe phase (read-only, agent surface):**
+
+9. `agent.render.dryRunWorkflow({ workflowNodeId })` probes one frame
+   through the capability + writes to D-04 path. Returns
+   `{ frames, estimatedSeconds, samplePath, probeJobId }`. Cache
+   parity: subsequent execute reads the probe's bytes by sourceHash
+   identity (THESIS §51).
+10. `agent.render.summarizeStylized({ workflowNodeId, frame })`
+    evaluates the workflow at the frame, returns
+    `{ workflowId, presetId, frame, sourceHash, descriptor,
+       outputPath, bytesPresent, lastGoodFrame }`. Agent describes
+    progress without loading bytes.
+
+**Common violations:**
+
+- Calling capability.submit from inside the workflow node's
+  evaluator → V8 + V2 violation (pure-flag lying). Wave A4 narrowly
+  avoided this by making compileWorkflow + submit live in
+  src/render/, not inside ComfyUIWorkflow.evaluate. Future presets
+  must follow the same split.
+- Reading raw pass bytes via `OpfsStorage` / `node:fs` directly
+  from the preset compile() function → V6 violation. The preset
+  receives a StorageCapability handle via the compile factory closure;
+  reads MUST flow through that handle.
+- Letting prevFrameStylizedPath race a slow disk → soft-fall to
+  ZERO_FRAME_PNG so frame 1 doesn't crash. Documented in the
+  preset's readPrevFrameBytes; reviewers reject any change that
+  hard-fails here without a UX-driven alternative.
+- Dispatching the lastGoodFrame writeback from inside
+  runComfyUIWorkflow.ts → V8 violation. Always callback-driven;
+  caller (src/app/render/runWorkflow.ts) does the dispatch.
+- Wiring a non-ComfyUIWorkflow upstream into VideoStitch.pass-input →
+  v0.5 stitches stylized output only; runVideoStitch rejects with a
+  clear "wire a ComfyUIWorkflow" message.
+- Submitting frame N before runRenderJob produced raw N → preset
+  compile() throws "raw pass not found"; caller surfaces error and
+  the agent's failure handler routes to "produce raw passes first".
+
+**REF:** THESIS §28 (AI render presets), §44 (P5 spec), §49 (Time
+first-class), §51 (caching correctness); vyapti V2/V3/V6/V8/V13/V14;
+hetvabhasa H19 (stale snapshot — runComfyUIWorkflow keeps state
+local), H22 (per-edge BFS isolation under live D-01 stylized output);
+`src/render/runComfyUIWorkflow.ts:1`,
+`src/render/runVideoStitch.ts:1`, `src/render/dryRun.ts:1`,
+`src/agent/strategy/presets/stylizedRealism.ts:1`,
+`src/app/render/runWorkflow.ts:1`.
+
+**Why it matters:** P5 is the seam between "agent describes a
+stylized render" and "frames + MP4 land on disk." Splitting compose
+(DAG mutation, Diff-mediated, user-accepted) from execute (impure,
+capability-mediated, side-effecting) keeps each phase auditable. The
+Diff log shows what the user authorized; storage shows what was
+produced; the sourceHash + framePath formula bridge them. Resume on
+failure works because lastGoodFrame is a regular Op, not a side
+channel.
+
+### K11: Persisted-store boot lifecycle (mode + chrome stores)
+
+**Span:** any zustand store that reads localStorage at module-load and exposes its persisted state to the rest of the app. Currently: `useModeStore`, `useChromeStore`. Future: `useLeftSidebarStore` (W3), `useInspectorSectionStore` (W4), `useTimelineDockStore` (W5).
+
+**Steps (in strict order):**
+1. **Module-load fires.** zustand `create<T>(...)` invokes the initializer. The initializer's `state` argument expression runs synchronously — anything that throws here aborts module load.
+2. **Defensive Storage probe.** Helpers (`safeGetItem`) check `typeof localStorage?.getItem === 'function'` AND wrap the call in try/catch. Test envs where Storage is partially-stubbed (vitest happy-dom) return `null`; production browsers return the persisted JSON. (See H26.)
+3. **Parse + validate.** Persisted JSON parses inside try/catch; on parse failure → return defaults. Per-field type-narrows (`typeof parsed.toolRailCollapsed === 'boolean'`) reject malformed values without throwing.
+4. **Legacy-value coercion (mode store specifically).** If the persisted value is in the *previous* type's set but not the *current* type's set (e.g. legacy density `'simple' | 'pro'` after the D-UX-5 repurpose), coerce to the safest current default (`'edit'`). Don't preserve the legacy value just because parse succeeded — the *meaning* changed, not just the shape.
+5. **Default fallback.** Anything that didn't match a legitimate current value returns the type's safe default. For `mode`, that's `'edit'` (full chrome, non-modal, no surprises). For `chrome*Collapsed`, that's `false` (everything visible).
+6. **Initial state spread into store.** `...readPersisted()` is the first key in the initializer object literal. The store object's setters / togglers come after, so any setter call before module-load completion would already have the persisted state.
+7. **First setter call writes back.** The setter runs `writePersisted` *after* `set({...})`, so an in-memory update is reflected before any I/O failure could roll it back. For non-persistable values (mode `'run'`, mode `'director'`), the setter skips the write step entirely.
+8. **Reload round-trips.** On reload, step 1 runs again with the value step 7 wrote. For `mode`, only persistable values (`'edit'`, `'animate'`) reach this step; transient modes (`'run'`, `'director'`) reset to last persisted on reload.
+
+**Common violations (each one historically caught):**
+- Reading `localStorage` outside the initializer (e.g. inside a useEffect on mount) — adds a one-frame flash of default state before the persisted value lands. Solution: always read at module-load.
+- Skipping the legacy-coercion step (#4) when changing a Mode/State type signature — old persisted values seep into a type they no longer fit, narrowing assertions break downstream. Solution: every type-shape change requires a coercion clause in `readPersisted`, even if the new set is a strict superset of the old.
+- Writing every value to storage (no PERSISTABLE filter) — transient modes survive reload, surfacing the user back inside Director Cut after a refresh. Solution: explicit `PERSISTABLE` set; setter checks before write.
+- Stomping the entire stored object on a partial setter (`setItem(key, JSON.stringify({ singleField: v }))`) — drops sibling fields. Solution: re-merge with `{ ...get(), [field]: value }` before stringify.
+
+**REF:** `src/app/stores/modeStore.ts:32–47` (readPersisted + setMode + PERSISTABLE filter); `src/app/stores/chromeStore.ts:41–57` (readPersisted + writePersisted re-merge); `src/app/stores/chromeStore.test.ts` (multi-flag persistence test); docs/UI-SPEC.md §7.3 (persistence rules); hetvabhasa H26 (defensive helpers); vyapti V16 (chrome-hiding mode keyboard escape — depends on this lifecycle producing a coherent post-reload state); P6 W1 commits `7657d27`, `515afda`, `a3a283e`, `cc151fa`.
+
+**Why it matters:** every UI projection store that persists has the same boot shape. Codifying the lifecycle catches sister bugs early: when W3 adds `useLeftSidebarStore` (active-tab persistence), W4 adds inspector-section collapse-by-node-type persistence, W5 adds timeline-dock height persistence — each follows K11. The legacy-coercion step (#4) becomes load-bearing for every future type-shape change in any persisted store.
+
+### K12: Test affordance lifecycle — chrome change → dev seam, not chrome restoration
+
+**Span:** any wave that deletes / repurposes / collapses-by-default a chrome surface that e2e tests reach through a `data-testid` click. Currently exercised by W2.5 (Library panel deletion → AssetsPopover behind a button) and W2.6 (SceneTree default-collapsed; Inspector→NPanel merge).
+
+**Steps (when chrome surface evolves and breaks e2e selection paths):**
+1. **Identify the broken e2e path.** Failure is usually one of: `getByTestId(...).click()` times out (element unmounted or hidden behind chrome), `expect(...).toBeVisible()` fails (display:none flipped), or testid-rename collateral (selector points at a deleted ID).
+2. **Classify the breakage.** Three flavors:
+   - **Surface still exists, just unreachable** (collapsed panel) → expand it programmatically before interacting. Don't add a click-the-chevron step inside every test (brittle: ordering-dependent because chromeStore persists across tests).
+   - **Surface deleted, behavior moved to another store** (NPanel grid toggle gone, viewportStore.gridVisible still flips) → verify via the underlying store directly through its `__basher_*` dev seam.
+   - **Surface deleted, no equivalent** (NodeList — flat list of all DAG nodes, no successor) → the test was using chrome as a selection mechanism; route selection through the relevant store's seam (e.g. `__basher_selection.select(id)`).
+3. **Expose the relevant store via dev seam.** In `src/app/boot.ts` under the `import.meta.env.DEV` block, add `void import('./stores/<store>').then((m) => { w.__basher_<name> = m.use<Store>; })`. Production builds tree-shake this branch entirely — zero runtime cost in user binaries.
+4. **Wait for the seam to land in the test.** The dynamic import is async, so tests need `await page.waitForFunction(() => Boolean(w.__basher_<name>))` before dereferencing. Pattern is already established by `__basher_dag` / `__basher_selection` waits in p0/p1/p21 specs.
+5. **Drive the test through the seam.** `await page.evaluate(() => { w.__basher_<name>.getState().<action>(...) })`. Programmatic; immune to chrome shape changes; matches the production code path because both go through the store's setter.
+6. **Update the test comment.** Note that the test no longer depends on the chrome surface (e.g. "P6 W2.6 — SceneTree default-collapsed; expand via dev seam"). Future readers know this isn't accidental store-poking but a deliberate test contract.
+7. **Do NOT restore chrome to make the test pass.** A button "test-only-expand" or `data-testid="invisible-trigger"` is the wrong path — chrome should serve users, not tests.
+
+**Common violations (each historically caught):**
+- Inserting a `getByTestId('chevron').click()` step in every affected test — works first run, breaks on parallel-run order changes because chromeStore persists across tests.
+- Restoring deleted chrome (e.g. re-mounting a hidden NodeList) just so `node-list-item-${id}` selectors work — the Spec is now lying about what the user sees.
+- Not waiting for the dynamic import → flaky-on-cold-cache failures (`Cannot read properties of undefined (reading 'getState')`).
+- Adding `__basher_*` seams in production code paths (not under `import.meta.env.DEV`) — leaks store internals to user runtime.
+
+**REF:** `src/app/boot.ts:144–166` (__basher_editor / __basher_selection / __basher_chrome dev seams); `tests/e2e/acceptance.spec.ts:42–71` (#2 example: tree-row visibility via expanded chromeStore); `tests/e2e/p21-acceptance.spec.ts:178–200` (#4 example: viewportStore.gridVisible direct check after npanel-grid-toggle deletion); `tests/e2e/p6-w2-toolbar.spec.ts` (P6 W2 examples: chromeStore + editorStore via seams). hetvabhasa H27 (parallel-surface evolution drift — K12 is its e2e migration counterpart). P6 W2.5 commit `95291aa`; P6 W2.6 commit `c19b43a`.
+
+**Why it matters:** chrome shape is the most volatile thing in the codebase — every UX wave moves panels around. e2e tests that anchor selection through chrome become collateral every wave. The dev-seam pattern decouples tests from chrome shape: the *contract* (a store action that can be invoked) is stable across waves; the *chrome* that surfaces it is not. K12 is the migration recipe so future waves don't burn an hour rediscovering it. Sister: V11 (agent tools must carry selection state via context — same lesson, different consumer) — both rely on stores being the stable contract while their UI mirrors evolve.

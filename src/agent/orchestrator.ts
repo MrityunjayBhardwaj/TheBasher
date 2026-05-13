@@ -39,6 +39,8 @@ import type { IdentifyResult } from './identify/types';
 import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
 import type { Op, NodeId } from '../core/dag/types';
+import type { ComfyUICapability } from '../core/comfy';
+import type { StorageCapability } from '../core/storage';
 
 // Bumped 4 → 8 (2026-05-08, post-PR-#9 live smoke). Single user intents
 // often legitimately require 2 identifies + listMutators + proposePlan +
@@ -71,6 +73,20 @@ export interface TurnOptions {
   signal?: AbortSignal;
   /** Node ids currently selected by the user. */
   selectedNodeIds: ReadonlySet<string>;
+  /**
+   * P5: ComfyUI capability for tools that need it (agent.render.dryRun-
+   * Workflow). Caller wires from boot's getComfyCapability(). Undefined
+   * during read-only chat or when ComfyUI tooling is intentionally off
+   * (the dryRun tool then returns a structured "no capability" error
+   * instead of crashing).
+   */
+  comfyCapability?: ComfyUICapability;
+  /**
+   * P5: storage capability for tools that touch OPFS (agent.render.dryRun-
+   * Workflow probe write, agent.render.summarizeStylized read). Caller
+   * wires from boot's getStorage().
+   */
+  storage?: StorageCapability;
 }
 
 /**
@@ -84,7 +100,7 @@ export async function runAgentTurn(
   config: LLMConfig,
   options: TurnOptions,
 ): Promise<TurnResult> {
-  const { message, mode, signal, selectedNodeIds } = options;
+  const { message, mode, signal, selectedNodeIds, comfyCapability, storage } = options;
   const sessionStore = useAgentSessionStore.getState();
 
   // F7: clear any stale pending diff before starting.
@@ -270,7 +286,12 @@ export async function runAgentTurn(
       // proposePlan targeting a sphere mesh.add just spawned). Evolves as
       // each tool within this round produces ops.
       let effectiveState = createFork(currentDagState, turnOps).fork;
-      const ctx: ToolContext = { dagState: effectiveState, selectedNodeIds };
+      const ctx: ToolContext = {
+        dagState: effectiveState,
+        selectedNodeIds,
+        comfyCapability,
+        storage,
+      };
 
       // Iterate by accumulator index (insertion order).
       const entries = Array.from(toolCallAccumulators.entries()).sort((a, b) => a[0] - b[0]);

@@ -3,6 +3,10 @@ import { useProjectStore } from '../core/project/store';
 import { saveCurrent } from './boot';
 import { ModeSwitcher } from './ModeSwitcher';
 import { ProjectsMenu } from './ProjectsMenu';
+// P6 W3 — ComfyStatusIndicator migrated from this Chrome cluster to
+// ProjectTabs's right edge per UI-SPEC §5.10. The temporary W2 mount
+// here is removed; the indicator now lives on R1 alongside the project
+// tabs strip.
 
 export function Chrome() {
   const projectName = useProjectStore((s) => s.current?.name ?? 'Untitled');
