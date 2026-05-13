@@ -48,8 +48,14 @@ test('P3#1 timeline drawer is closed by default (preserves baseline)', async ({ 
 test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor panes', async ({ page }) => {
   await page.getByTestId('timeline-drawer-toggle').click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
+  // P6 W5 (D-W5-1): both panes mount whenever the drawer is open; the
+  // inactive pane is in the DOM but hidden via `display: none` so V8
+  // store subscriptions and scroll state survive a tab switch. Default
+  // active tab is Dopesheet (D-W5-2 default).
   await expect(page.getByTestId('dopesheet-pane')).toBeVisible();
-  await expect(page.getByTestId('curve-editor-pane')).toBeVisible();
+  await expect(page.getByTestId('dopesheet-pane')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('curve-editor-pane')).toHaveCount(1);
+  await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'false');
   // Empty hint visible — no animation channels in the seed scene.
   await expect(page.getByTestId('dopesheet')).toContainText('No animation channels');
 });
@@ -176,10 +182,12 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
     });
   });
   await page.getByTestId('timeline-drawer-toggle').click();
-  // Curve editor shows the placeholder hint until a row is clicked.
-  await expect(page.getByTestId('curve-editor')).toContainText('Select a channel row');
+  // P6 W5 (D-W5-3): channel selection happens in Dopesheet (default tab);
+  // user must explicitly switch to the Curve Editor tab to see the track.
+  // No auto-switch — clicking a channel row only updates activeChannelId.
   await page.getByTestId('channel-row-box_pos_channel').click();
   await expect(page.getByTestId('channel-row-box_pos_channel')).toHaveAttribute('data-active', 'true');
+  await page.getByTestId('timeline-tab-curve').click();
   // KeyframeChannelNumber renders one track.
   await expect(page.getByTestId('curve-track-0')).toBeVisible();
 });

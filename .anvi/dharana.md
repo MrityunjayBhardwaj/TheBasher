@@ -206,6 +206,16 @@ six starter Mutators in `src/agent/mutators/builders/`.
 
 **W4 re-validation triggers:** (a) new node types added that should fit existing sections but lack inspectorSections — registry-snapshot test would catch silent omission only for the buckets we explicitly probe; (b) new section ids added to the catalog → must update SECTION_IDS + paramToSection predicate + node declarations; (c) §7.2 'Metadata' gets a real home in the catalog → MULTI_SELECT_SECTIONS narrows back to its original spec wording. Each future Inspector-touching wave re-runs the §5.8 catalog vs registry-declared coverage check.
 
+**W5 section-inventory pass (2026-05-13):** ran B11 HOW over the surfaces W5 touches:
+
+| Surface pair | Inventory result | Verdict |
+|---|---|---|
+| `src/timeline/Dopesheet.tsx` (collectLayers + LayerRowControls mute/solo + ChannelRowView with per-channel diamond markers across ALL channels + orphan-channels section + DopesheetHeader tick marks every 0.5s + EmptyHint + absolute-`<div>` playhead, ~275 LOC) vs `src/timeline/CurveEditor.tsx` (reads single `activeChannelId` from `timelineSelection` + `expandToTracks` Vec3→3 RGB polylines + `sampleTrack` interpolation @ 30 samples/s with `smoothstep` Bézier easing + `computeRange` Y-padding + circle keyframes + Quat/Color placeholder + SVG `<line>` playhead, ~210 LOC) | Disjoint domains: keyframe geometry across ALL channels grouped by layer vs interpolated continuous curve of ONE channel. Different store subscriptions (`useSelectionStore.primaryNodeId` + `useDagStore.state.nodes` vs `useTimelineSelection.activeChannelId` + same DAG slice). Different render primitives (HTML/CSS layout vs SVG). Different playhead implementations. Zero functional overlap. | no shifts — D-UX-2 split justified at code level |
+| Tab strip header (TabButton + Frame/FPS readout) vs existing Timebar (always-visible scrub bar below the drawer) | Disjoint: tab strip is gated on `timelineDrawerOpen === true` and lives INSIDE the drawer body header. Timebar lives outside the drawer body, always visible, and owns playhead scrub. Both read from `timeStore` but neither dispatches; no shared visual region. | no shifts |
+| `timelineDockStore.activeTab` vs `viewportStore.timelineDrawerOpen` | Complementary, not redundant. `timelineDrawerOpen` answers "is the drawer expanded at all?" (default false, preserves pixel baselines); `activeTab` answers "which pane shows when expanded?". Both persist independently. Closing the drawer does NOT clear the tab choice — when the user re-opens, they return to the tab they left. | no shifts |
+
+**W5 re-validation triggers:** (a) future Timebar absorbs Frame/FPS readout → DockHeader's right-side readout becomes redundant (would collapse to tab strip only); (b) keyboard shortcut for tab switching (Tab? Shift+Tab?) lands in W6 → tab-strip click handler becomes one of several entry points to `setActiveTab`; (c) imperative TimelineCanvas (W9) replaces SVG Curve Editor rendering → tab boundary unaffected but pane content swaps; (d) track-ops bottom toolbar lands in W6 → new "actions row" inventory pair vs existing tab strip + Timebar.
+
 ---
 
 ## 2. ACTIVE INVARIANT SPANS
