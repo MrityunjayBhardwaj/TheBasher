@@ -279,3 +279,19 @@ Lokayata-on-bug.
 **Status:** ALIGNED (P6 W2 — both stores carry the wrappers). `chromeStore.ts:42–59` was authored with the wrappers; `modeStore.ts:25–43` was retrofitted in W2 commit `8b70ac8` after `ComfyStatusIndicator`'s test pulled modeStore in earlier than W1's tests had and tripped the H26 path.
 **REF:** `src/app/stores/chromeStore.ts:42` (safeGetItem / safeSetItem); `src/app/stores/modeStore.ts:25` (W2 retrofit); hetvabhasa H26 (the trap this invariant prevents); krama K11 (persisted-store boot lifecycle — V18 is K11's invariant counterpart).
 **Why it matters:** vitest's happy-dom exposes `localStorage` as a globalThis stub whose method bindings aren't attached at module-load. A store that calls `localStorage.getItem` directly bombs at import time, causing the test file's *suite collection* to fail before any test body runs — which looks identical to a test config bug rather than a happy-dom bug. The wrapper makes the failure mode uniform (silent fallback to defaults at boot, silent ignore on write) and means new persisted stores don't have to rediscover H26 by hitting it.
+
+### V19: Keyboard and UI dispatches for the same conceptual action must go through a shared pure helper
+
+**Status:** ALIGNED (P6 W6 — 2026-05-13)
+
+**Span:** `src/app/KeyboardShortcuts.tsx` + any chrome surface that exposes a UI button (toolbar, menu, popover) for an action already bound to a keyboard shortcut. P6 W6 instantiation: K keyboard + Key toolbar button (insert keyframe); Delete keyboard override + Delete toolbar button (delete keyframe). Future instances will surface as W7+ chrome adds bindings for actions that also need keyboard shortcuts (or vice versa).
+
+**Reason:** The same input intent ("insert a keyframe at the current frame on the active channel") must produce a bit-identical Op shape regardless of entry point. Divergence creates the worst kind of UX bug — "the button does *almost* the same thing as the shortcut, except…" — and the gap is often subtle (different default easing, different rounding, different time semantics). Catching it requires testing both routes, which means writing N×2 specs forever.
+
+**Mechanism:** extract the Op-building logic to a pure named export in the keyboard handler (e.g., `buildKeyframeInsertOp`, `buildKeyframeDeleteOp` in P6 W6 commit `d31c1e1`). Both the keyboard branch and the toolbar button call the same helper; both go through `useDagStore.dispatchAtomic([op], 'user', label)` with the same label so undo entries are uniform.
+
+**Test guard:** for every (keyboard, UI) pair on the same action, the e2e spec for the UI button must run the same observable as the keyboard spec (e.g., W6 #2 and W6 #3 are paired — K-press vs Key-click — both assert the same `keyframes.length === 4` outcome). If only one is tested, divergence creeps in undetected.
+
+**Violation surface:** any UI handler that re-implements logic the keyboard handler already covers. Smell: a toolbar button's onClick lambda that contains its own filter+sort+dispatch instead of calling the keyboard helper. Smell: a keyboard branch that has special-cases the UI never gets.
+
+**REF:** P6 W6 commit `d31c1e1` (pure helpers exported from KeyboardShortcuts.tsx); commit `6939a05` (toolbar buttons reuse the helpers); `tests/e2e/p6-w6-animate-ops.spec.ts` #2 (K keyboard) + #3 (Key button mirrors K). UI-SPEC.md §6.2 (keyboard model) + §5.9 (bottom toolbar).

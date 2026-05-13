@@ -650,3 +650,28 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 **Sister patterns:** any "X and Y serve different roles" spec claim. Examples to re-validate at every chrome-touching wave: AddMenu / AssetsPopover (currently distinct: creation vs asset import); Library tab / SceneTree tab (W2.5 dropped Library tab — re-validation predicted). The pattern also generalizes to non-chrome boundaries: any "module A handles X; module B handles Y" claim with overlapping span.
 
 **Cross-refs:** H25 (parent — the first-iteration trap); UI-SPEC.md §1 D-UX-8 (the swing → restore ledger captures provenance); P6 W2.6 commit `c19b43a` (Inspector → NPanel merge); dharana B11 (Design spec ↔ source code authoring boundary — H27 strengthens its WHY).
+
+### H28: applySetParam silently rejects unknown paramPaths via paramSchema validation
+
+**Span:** every direct `setParam` Op dispatch — e2e test seeds, agent tool builders, UI handlers that bypass the Mutator path, project migrators. The trap surfaces whenever code dispatches `setParam(nodeId, paramPath, value)` for a `paramPath` the node's `paramSchema` doesn't declare.
+
+**Symptom:** in P6 W6 e2e #2/#3 (K-keyboard inserts keyframe), the test seed dispatched `setParam(box, 'intensity', 7)` so K-insert could read the target's live value at press time. The Op did NOT throw to the caller; the resulting DAG still appeared healthy (other ops in the batch survived); but `target.params.intensity` remained `undefined` and K-insert returned `null` (no-op). Test failure on `expect(keyframes).toHaveLength(4)` with 3 actual — the K-press had no effect.
+
+**Trap:** assume Op dispatch is universal — "I can setParam any (node, path, value) triple." Try to debug by inspecting the keyboard handler, the channel state, the target selection. None are wrong. The setParam itself was silently rejected by `applySetParam`'s paramSchema re-validation at `src/core/dag/ops.ts:271`. The Op throws OpError; `dispatchAtomic` may catch + log + skip the bad op rather than propagating; the caller's `try/catch`-free e2e evaluate continues; the test reads stale state.
+
+**Root cause:** **applySetParam re-validates the entire `params` object against `def.paramSchema.safeParse()` after the setAtPath write** (`ops.ts:271`). Unknown paramPaths fail strict zod schemas; the Op throws; the failure path is whatever the dispatcher does on Op failure (in atomic mode: often "skip + continue", which presents as silent rejection upstream).
+
+**Real fix:** for test seeds OR ad-hoc UI setParam paths, **use a node type whose `paramSchema` natively contains the paramPath you need.** In W6's case: seed a `DirectionalLight` (whose schema has `intensity: z.number()`) and target it from the channel, instead of seeding a synthetic `intensity` field on `BoxMesh` (which has no such field). Sister fixes: (a) extend the node's paramSchema if the field is genuinely needed; (b) bypass Ops entirely via the dev seam for test-only state (last resort — violates V1).
+
+**Detection signal:** "I dispatched an Op and the DAG read still shows old state." Or: "the test seed runs without throwing but later assertions on the seeded state fail." Or: e2e log shows OpError in dispatch label "seed" but the test continues. Run the same setParam through `validatePlan` (any Mutator that uses setParam) instead of direct dispatch — the five-gate validator's gate 2 ('param_schema') would surface the rejection with a clear reason.
+
+**Five-limbed argument:**
+1. **Claim:** Direct `setParam` Op dispatch fails silently for paramPaths outside the node's paramSchema.
+2. **Reason:** `applySetParam` re-validates the post-write params object against `def.paramSchema.safeParse()` at `src/core/dag/ops.ts:271`; failure throws OpError; atomic batch dispatchers may swallow + continue.
+3. **Universal principle:** Schema-strict mutation paths require the caller to know the schema OR route through a validator that surfaces rejections. "Set any property" is not a universal Op semantic in this system.
+4. **Application:** W6 e2e seed needed a number-valued target param. BoxMesh has no number-valued param. The setParam(box, 'intensity', 7) Op was rejected. K-insert read undefined → returned null. Fix: swap target to a `DirectionalLight` node whose schema has `intensity: z.number().min(0).max(20)` at `src/nodes/DirectionalLight.ts:6`.
+5. **Conclusion:** When seeding test scenes for animation, render, or any code path that reads `target.params[paramPath]` after a write, pick a node whose schema natively contains the paramPath. The applicability extends to project migrators (don't write fields the schema rejects), agent tools (return Ops the dispatcher can apply), and future UI surfaces that bypass Mutators.
+
+**Sister patterns:** addNode params validation (same paramSchema check at `ops.ts:110`); migration runners writing legacy fields not in the current schema; an agent tool returning an Op whose params shape doesn't match the target node's schema.
+
+**Cross-refs:** `src/core/dag/ops.ts:271` (paramSchema re-validation); `src/core/dag/ops.ts:110` (addNode paramSchema check, sister site); `src/agent/mutators/validate.ts` (gate 2: 'param_schema' surfaces the rejection cleanly through the Mutator path); `tests/e2e/p6-w6-animate-ops.spec.ts` (the seed-with-DirectionalLight fix that mitigates this trap); P6 W6 commit `7eac917`.
