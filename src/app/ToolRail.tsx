@@ -86,7 +86,7 @@ function ToolButton({
   disabled?: boolean;
 }): ReactNode {
   const base =
-    'flex h-8 w-8 items-center justify-center rounded text-base font-mono transition-colors';
+    'flex h-8 w-8 items-center justify-center rounded text-base font-mono transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   let state: string;
   if (disabled) {
     state = 'text-fg-mute cursor-not-allowed';
@@ -127,7 +127,7 @@ export function ToolRail(): ReactNode {
           onClick={toggleCollapsed}
           data-testid="tool-rail-toggle"
           title="Expand tool rail"
-          className="flex h-6 w-6 items-center justify-center rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
+          className="flex h-6 w-6 items-center justify-center rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ›
         </button>

@@ -11,7 +11,7 @@
 //
 // REF: docs/UI-SPEC.md §5.8, §7.2, §7.3; D-06/07/08/09/10 locked W4.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');

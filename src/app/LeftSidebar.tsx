@@ -60,7 +60,7 @@ export function LeftSidebar(): ReactNode {
           onClick={toggle}
           data-testid="left-sidebar-expand-toggle"
           title="Expand left sidebar"
-          className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
+          className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ›
         </button>
@@ -89,7 +89,7 @@ export function LeftSidebar(): ReactNode {
               onClick={() => setActiveTab(t.value)}
               data-testid={`left-sidebar-tab-${t.value}`}
               data-active={active || undefined}
-              className={`flex h-7 items-center px-3 uppercase tracking-wide transition-colors ${
+              className={`flex h-7 items-center px-3 uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
                 active
                   ? 'border-b-2 border-accent text-accent'
                   : 'border-b-2 border-transparent text-fg-dim hover:text-fg'
@@ -105,7 +105,7 @@ export function LeftSidebar(): ReactNode {
           onClick={toggle}
           data-testid="left-sidebar-collapse-toggle"
           title="Collapse left sidebar"
-          className="flex h-7 w-7 items-center justify-center text-fg-dim hover:text-fg"
+          className="flex h-7 w-7 items-center justify-center text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ‹
         </button>

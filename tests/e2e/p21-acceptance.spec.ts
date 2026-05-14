@@ -4,7 +4,7 @@
 // no pixel-diff (H8). Where we'd normally drive a UI gesture, we drive the
 // underlying production code path through __basher_dag (H3 lesson).
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface DagWindow {
   __basher_dag?: {

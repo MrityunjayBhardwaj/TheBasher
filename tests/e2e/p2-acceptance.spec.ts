@@ -10,7 +10,7 @@
 // We build the P2 character chain in-test via __basher_dag dispatch; the
 // production walkTo macro is exercised via UI in P2#2 (click-to-move).
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface DagWindow {
   __basher_dag?: {

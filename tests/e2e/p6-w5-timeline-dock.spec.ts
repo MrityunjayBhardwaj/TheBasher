@@ -12,7 +12,7 @@
 // REF: docs/UI-SPEC.md §5.9 R9 TimelineDock; §5.10 distributed status;
 // D-W5-1..4 (memory/project_p6_w5_context.md); B11 W5 section-inventory.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface BasherWindow {
   __basher_dag?: {

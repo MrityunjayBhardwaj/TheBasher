@@ -97,7 +97,7 @@ function ToolButton({
   children: ReactNode;
 }): ReactNode {
   const base =
-    'flex h-7 w-7 items-center justify-center rounded text-sm font-mono transition-colors';
+    'flex h-7 w-7 items-center justify-center rounded text-sm font-mono transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   const state = active
     ? 'bg-bg-1 text-accent'
     : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
@@ -129,7 +129,7 @@ function Chip({
   children: ReactNode;
 }): ReactNode {
   const base =
-    'rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors';
+    'rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   const state = active
     ? 'bg-accent/25 text-accent'
     : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
@@ -233,7 +233,7 @@ export function FloatingViewportToolbar(): ReactNode {
           if (!Number.isNaN(n)) setSnapStep(n);
         }}
         data-testid="floating-toolbar-snap-step"
-        className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right font-mono text-[10px] text-fg focus:border-accent focus:outline-none"
+        className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right font-mono text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         title="Snap step (world units)"
       />
     </div>

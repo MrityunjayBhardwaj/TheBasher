@@ -93,7 +93,7 @@ export function TimelineDrawer() {
           data-testid="timeline-drawer-toggle"
           aria-label={open ? 'Collapse timeline drawer' : 'Expand timeline drawer'}
           aria-expanded={open}
-          className="flex w-8 items-center justify-center border-r border-line bg-bg-2 text-fg hover:bg-line"
+          className="flex w-8 items-center justify-center border-r border-line bg-bg-2 text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           onClick={toggle}
         >
           {open ? '▾' : '▴'}
@@ -165,7 +165,7 @@ function TabButton({
       data-testid={`timeline-tab-${id}`}
       data-active={active}
       onClick={onClick}
-      className={`flex items-center border-r border-line px-3 ${
+      className={`flex items-center border-r border-line px-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
         active ? 'bg-bg text-fg' : 'text-mute hover:bg-line/40 hover:text-fg'
       }`}
     >
@@ -274,7 +274,7 @@ function ToolbarButton({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded px-2 py-1 ${
+      className={`rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
         disabled
           ? 'cursor-not-allowed text-mute'
           : 'text-fg hover:bg-line'

@@ -4,7 +4,7 @@
 // State-driven assertions — read store snapshots through the dev-only
 // window handles. Pixel-diff would re-fail H13 on every layout shift.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface BasherWindow {
   __basher_dag?: {

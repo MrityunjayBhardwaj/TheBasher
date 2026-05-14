@@ -68,7 +68,7 @@ function Menu({ label, testId, children, open, onOpen, onClose }: MenuProps) {
         type="button"
         onClick={() => (open ? onClose() : onOpen())}
         data-testid={`${testId}-button`}
-        className={`rounded px-2 py-1 text-[11px] uppercase tracking-wide ${
+        className={`rounded px-2 py-1 text-[11px] uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
           open ? 'bg-muted text-accent' : 'text-fg/70 hover:bg-muted/60 hover:text-fg'
         }`}
       >
@@ -102,7 +102,7 @@ function Item({ label, shortcut, onSelect, disabled, testId }: ItemProps) {
       disabled={disabled}
       onClick={() => void onSelect()}
       data-testid={testId}
-      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent"
+      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"
     >
       <span>{label}</span>
       {shortcut ? <span className="font-mono text-[10px] text-fg/40">{shortcut}</span> : null}
@@ -133,7 +133,7 @@ function Submenu({
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted"
+        className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span>{label}</span>
         <span className="font-mono text-[10px] text-fg/40">▸</span>

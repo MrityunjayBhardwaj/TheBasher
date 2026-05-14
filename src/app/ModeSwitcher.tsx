@@ -15,7 +15,7 @@ export function ModeSwitcher() {
       mode
       <select
         data-testid="mode-switcher"
-        className="rounded border border-border bg-muted px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+        className="rounded border border-border bg-muted px-2 py-1 text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         value={mode}
         onChange={(e) => setMode(e.target.value as Mode)}
       >

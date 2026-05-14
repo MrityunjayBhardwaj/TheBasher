@@ -192,7 +192,7 @@ export function ProjectTabs(): ReactNode {
                 onClick={() => onSelect(p.id)}
                 disabled={busy}
                 data-testid={`project-tab-select-${p.id}`}
-                className="flex items-center gap-1 truncate text-left uppercase tracking-wide disabled:opacity-50"
+                className="flex items-center gap-1 truncate text-left uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
               >
                 <span aria-hidden className="text-fg-mute">
                   {isActive ? '⌂' : '⌃'}
@@ -205,7 +205,7 @@ export function ProjectTabs(): ReactNode {
                 disabled={busy}
                 data-testid={`project-tab-close-${p.id}`}
                 title="Close project (deletes from storage)"
-                className="ml-1 text-fg-mute hover:text-warn disabled:opacity-50"
+                className="ml-1 text-fg-mute hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
               >
                 ×
               </button>
@@ -218,7 +218,7 @@ export function ProjectTabs(): ReactNode {
           disabled={busy}
           data-testid="project-tab-new"
           title="New project"
-          className="flex items-center px-3 text-fg-mute hover:text-accent disabled:opacity-50"
+          className="flex items-center px-3 text-fg-mute hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
         >
           +
         </button>
