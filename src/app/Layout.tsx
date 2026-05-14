@@ -18,8 +18,17 @@
 // editorStore.setActiveTool — the only writer to gizmoStore.mode outside
 // editorStore's propagation is now gone (V19 honored).
 //
+// P6 W8 C5 — Skip-link (sr-only until focused) added as first focusable
+// element per D-W8-5. Target: <main id="viewport" tabIndex={-1}> wrapping
+// R6's grid-area div. The link is present in ALL modes (director
+// included) so the first-Tab-from-page-load → viewport invariant holds
+// regardless of which chrome surfaces are visible. The viewport-slot
+// div gains `id="viewport"` + `tabIndex={-1}` so it becomes the
+// programmatically-focusable jump target. role="main" + aria-label
+// make it announce as the page's primary landmark to screen readers.
+//
 // REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5,
-// §5.3, §5.4.
+// §5.3, §5.4, §8.1 (focus order), §8.2 (keyboard-only).
 
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
@@ -83,6 +92,19 @@ export function Layout() {
         `,
       }}
     >
+      {/* P6 W8 C5 — Skip-link (D-W8-5). First focusable element on the
+          page in every mode. sr-only by default; focus-visible promotes
+          it to a visible fixed-position pill. Pressing Enter navigates
+          the URL hash to #viewport, and the matching `id="viewport"`
+          + `tabIndex={-1}` on the <main> below receive programmatic
+          focus. WCAG 2.4.1 (bypass blocks). */}
+      <a
+        href="#viewport"
+        data-testid="skip-link"
+        className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:left-2 focus-visible:top-2 focus-visible:z-50 focus-visible:rounded focus-visible:bg-bg-2 focus-visible:px-3 focus-visible:py-2 focus-visible:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        Skip to viewport
+      </a>
       <div style={{ gridArea: 'projectTabs', display: isDirector ? 'none' : 'block' }}>
         <ProjectTabs />
       </div>
@@ -124,9 +146,13 @@ export function Layout() {
         <LeftSidebar />
       </div>
 
-      <div
+      <main
+        id="viewport"
+        tabIndex={-1}
+        role="main"
+        aria-label="3D viewport main content"
         style={{ gridArea: 'viewport' }}
-        className="relative overflow-hidden"
+        className="relative overflow-hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         data-testid="viewport-slot"
         onContextMenu={(e) => {
           // RMB click (without drag) → Blender-style Add menu. RMB drag
@@ -167,7 +193,7 @@ export function Layout() {
         >
           <UVEditor />
         </div>
-      </div>
+      </main>
 
       <div
         style={{

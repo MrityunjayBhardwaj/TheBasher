@@ -17,3 +17,33 @@ body,
 body {
   overflow: hidden;
 }
+
+/* P6 W8 C5 — Reduced-motion gate (D-W8-7). Scoped to POSITIONAL/SCALE
+   motion and keyframe animations only. WCAG SC 2.3.3 targets
+   vestibular-disorder triggers — pure color/opacity changes don't
+   trigger; positional/scale animation does.
+
+   The three production `transition-colors` instances (TopToolbar mode
+   pill, R8 tool/frame buttons) are INFORMATIONAL feedback and stay
+   under reduced-motion per D-W8-7. The selector below explicitly
+   does NOT touch `transition-colors` — it whitelists only the
+   transform/all/animate Tailwind utility classes.
+
+   Audit at C5 authoring: no positional/scale transitions currently
+   exist in P6 chrome (verified by grep `transition-transform|
+   transition-all|animate-` across src/app + src/viewport + src/timeline
+   → 0 hits). This rule is therefore a defense-in-depth gate — it
+   currently affects nothing in production but will neutralize any
+   future positional motion at the moment it is added, without the
+   author needing to remember to wrap each new class in `motion-safe:`. */
+@media (prefers-reduced-motion: reduce) {
+  .transition-transform,
+  .transition-all,
+  [class*='animate-'] {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
