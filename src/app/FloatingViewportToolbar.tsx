@@ -86,12 +86,14 @@ export function homeFrame(): void {
 function ToolButton({
   active,
   title,
+  ariaLabel,
   testId,
   onClick,
   children,
 }: {
   active: boolean;
   title: string;
+  ariaLabel: string;
   testId: string;
   onClick: () => void;
   children: ReactNode;
@@ -108,6 +110,7 @@ function ToolButton({
       data-testid={testId}
       data-active={active || undefined}
       title={title}
+      aria-label={ariaLabel}
       className={`${base} ${state}`}
     >
       {children}
@@ -118,12 +121,14 @@ function ToolButton({
 function Chip({
   active,
   title,
+  ariaLabel,
   testId,
   onClick,
   children,
 }: {
   active: boolean;
   title: string;
+  ariaLabel: string;
   testId: string;
   onClick: () => void;
   children: ReactNode;
@@ -140,6 +145,7 @@ function Chip({
       data-testid={testId}
       data-active={active || undefined}
       title={title}
+      aria-label={ariaLabel}
       className={`${base} ${state}`}
     >
       {children}
@@ -172,6 +178,9 @@ export function FloatingViewportToolbar(): ReactNode {
   return (
     <div
       data-testid="floating-viewport-toolbar"
+      role="toolbar"
+      aria-orientation="horizontal"
+      aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
       className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-md border border-border-strong bg-bg-2/90 px-2 py-1.5 font-mono text-fg shadow-sm backdrop-blur-sm"
     >
       {TOOLS.map((t) => (
@@ -179,6 +188,7 @@ export function FloatingViewportToolbar(): ReactNode {
           key={t.id}
           active={activeTool === t.id}
           title={`${t.label} (${t.shortcut})`}
+          ariaLabel={`${t.label} tool`}
           testId={t.testId}
           onClick={() => setActiveTool(t.id)}
         >
@@ -189,6 +199,7 @@ export function FloatingViewportToolbar(): ReactNode {
       <ToolButton
         active={false}
         title="Frame selection (F)"
+        ariaLabel="Reset view"
         testId="floating-toolbar-home"
         onClick={homeFrame}
       >
@@ -197,6 +208,7 @@ export function FloatingViewportToolbar(): ReactNode {
       <ToolButton
         active={gridVisible}
         title={gridVisible ? 'Hide grid' : 'Show grid'}
+        ariaLabel={gridVisible ? 'Hide grid' : 'Show grid'}
         testId="floating-toolbar-grid"
         onClick={toggleGridVisible}
       >
@@ -208,6 +220,7 @@ export function FloatingViewportToolbar(): ReactNode {
           key={s.value}
           active={shading === s.value}
           title={`Shading: ${s.label}`}
+          ariaLabel={`${s.label} shading`}
           testId={s.testId}
           onClick={() => setShading(s.value)}
         >
@@ -218,6 +231,7 @@ export function FloatingViewportToolbar(): ReactNode {
       <Chip
         active={snapEnabled}
         title="Toggle translation snap"
+        ariaLabel={snapEnabled ? 'Disable snap' : 'Enable snap'}
         testId="floating-toolbar-snap-toggle"
         onClick={toggleSnapEnabled}
       >
@@ -233,6 +247,7 @@ export function FloatingViewportToolbar(): ReactNode {
           if (!Number.isNaN(n)) setSnapStep(n);
         }}
         data-testid="floating-toolbar-snap-step"
+        aria-label="Snap step value"
         className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right font-mono text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         title="Snap step (world units)"
       />

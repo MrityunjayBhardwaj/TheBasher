@@ -23,6 +23,7 @@
 import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
+import { useModeStore } from '../app/stores/modeStore';
 import {
   useTimelineDockStore,
   type TimelineTab,
@@ -50,11 +51,18 @@ export function TimelineDrawer() {
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
+  const mode = useModeStore((s) => s.mode);
 
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
 
   return (
-    <div data-testid="timeline-drawer" data-open={open} className="flex w-full flex-col">
+    <div
+      data-testid="timeline-drawer"
+      data-open={open}
+      role="region"
+      aria-label={`Timeline — mode ${mode ?? 'unknown'}, frame ${frame}`}
+      className="flex w-full flex-col"
+    >
       {open && (
         <div
           className="flex w-full flex-col border-t border-line"
@@ -120,6 +128,8 @@ function DockHeader({
   return (
     <div
       data-testid="timeline-tab-strip"
+      role="tablist"
+      aria-label="Timeline tabs"
       className="flex items-stretch border-b border-line bg-bg-2 text-xs"
       style={{ height: HEADER_HEIGHT_PX }}
     >

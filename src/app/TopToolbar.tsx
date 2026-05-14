@@ -225,9 +225,13 @@ export function TopToolbar(): ReactNode {
   // (no flex, fixed width via content), right (flex-1, justify-end).
   // The two flex-1 outer columns balance on either side of the center
   // pill, keeping it centered regardless of left content size.
+  const mode = useModeStore((s) => s.mode);
   return (
     <div
       data-testid="top-toolbar"
+      role="toolbar"
+      aria-orientation="horizontal"
+      aria-label={`Toolbar — mode ${mode ?? 'unknown'}`}
       className="flex items-center gap-3 border-b border-border bg-bg/95 px-3 py-1 font-mono text-fg"
     >
       {/* Left zone */}

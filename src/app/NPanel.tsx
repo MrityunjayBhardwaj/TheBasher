@@ -292,9 +292,13 @@ export function NPanel() {
   const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
   const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
 
+  const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
+
   return (
     <aside
       data-testid="inspector"
+      role="region"
+      aria-label={inspectorLabel}
       className="flex h-full flex-col overflow-y-auto border-l border-border bg-muted/40 text-xs"
     >
       <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">

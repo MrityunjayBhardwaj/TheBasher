@@ -66,6 +66,10 @@ function Menu({ label, testId, children, open, onOpen, onClose }: MenuProps) {
     <div ref={ref} className="relative" data-testid={testId}>
       <button
         type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${label} menu`}
         onClick={() => (open ? onClose() : onOpen())}
         data-testid={`${testId}-button`}
         className={`rounded px-2 py-1 text-[11px] uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
@@ -301,6 +305,8 @@ export function MenuBar() {
   return (
     <div
       data-testid="menubar"
+      role="menubar"
+      aria-label="Menu bar"
       className="flex items-center gap-0.5 border-b border-border bg-bg px-2 py-1 font-mono text-fg"
     >
       <Menu
