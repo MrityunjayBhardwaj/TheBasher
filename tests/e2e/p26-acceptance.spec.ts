@@ -51,18 +51,23 @@ test.beforeEach(async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-// P2.6#1 — TransformToolbar mode buttons drive gizmoStore (proves the
-// top-bar surface mirrors the existing G/R/S keyboard handlers).
+// P2.6#1 — Toolbar mode buttons drive gizmoStore (proves the top-bar
+// surface mirrors the existing G/R/S keyboard handlers).
+//
+// P6 W7 (2026-05-14): the original TransformToolbar.ModeGroup was
+// deleted in C2; gizmo tool selection now lives on R8
+// FloatingViewportToolbar (viewport-overlay, bottom-center). Spec
+// rewritten to assert the same behavior against the new surface.
 // ---------------------------------------------------------------------------
 
 test('P2.6#1 toolbar Move/Rotate/Scale buttons drive the gizmo mode', async ({ page }) => {
-  await expect(page.getByTestId('transform-toolbar')).toBeVisible();
-  await page.getByTestId('toolbar-mode-rotate').click();
-  // Active state shows on the button via aria-equivalent classes; assert
-  // the visible class delta to confirm the click landed.
-  await expect(page.getByTestId('toolbar-mode-rotate')).toHaveClass(/text-accent/);
-  await page.getByTestId('toolbar-mode-translate').click();
-  await expect(page.getByTestId('toolbar-mode-translate')).toHaveClass(/text-accent/);
+  await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
+  await page.getByTestId('floating-toolbar-rot').click();
+  // R8 buttons set data-active="true" when their tool matches activeTool;
+  // assert that to confirm the click landed.
+  await expect(page.getByTestId('floating-toolbar-rot')).toHaveAttribute('data-active', 'true');
+  await page.getByTestId('floating-toolbar-move').click();
+  await expect(page.getByTestId('floating-toolbar-move')).toHaveAttribute('data-active', 'true');
 });
 
 // ---------------------------------------------------------------------------
@@ -72,14 +77,16 @@ test('P2.6#1 toolbar Move/Rotate/Scale buttons drive the gizmo mode', async ({ p
 // ---------------------------------------------------------------------------
 
 test('P2.6#2 shading toggle flips viewportStore.shading; DAG is unmutated', async ({ page }) => {
+  // P6 W7: shading group moved from R3 TransformToolbar to R8
+  // FloatingViewportToolbar (D-W7-3).
   // Default is studio.
-  await expect(page.getByTestId('toolbar-shading-studio')).toHaveClass(/text-accent/);
+  await expect(page.getByTestId('floating-toolbar-shading-studio')).toHaveClass(/text-accent/);
   const before = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).length;
   });
-  await page.getByTestId('toolbar-shading-rendered').click();
-  await expect(page.getByTestId('toolbar-shading-rendered')).toHaveClass(/text-accent/);
+  await page.getByTestId('floating-toolbar-shading-rendered').click();
+  await expect(page.getByTestId('floating-toolbar-shading-rendered')).toHaveClass(/text-accent/);
   const shading = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return w.__basher_viewport!.getState().shading;
@@ -266,8 +273,10 @@ test('P2.6#9 gizmo proxy group survives select → deselect → reselect', async
 test('P2.6#10 toolbar wireframe button flips viewportStore.shading to wireframe', async ({
   page,
 }) => {
-  await page.getByTestId('toolbar-shading-wireframe').click();
-  await expect(page.getByTestId('toolbar-shading-wireframe')).toHaveClass(/text-accent/);
+  // P6 W7: shading group moved from R3 TransformToolbar to R8
+  // FloatingViewportToolbar (D-W7-3).
+  await page.getByTestId('floating-toolbar-shading-wireframe').click();
+  await expect(page.getByTestId('floating-toolbar-shading-wireframe')).toHaveClass(/text-accent/);
   const shading = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return w.__basher_viewport!.getState().shading;
