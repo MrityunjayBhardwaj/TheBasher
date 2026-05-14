@@ -675,3 +675,63 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 **Sister patterns:** addNode params validation (same paramSchema check at `ops.ts:110`); migration runners writing legacy fields not in the current schema; an agent tool returning an Op whose params shape doesn't match the target node's schema.
 
 **Cross-refs:** `src/core/dag/ops.ts:271` (paramSchema re-validation); `src/core/dag/ops.ts:110` (addNode paramSchema check, sister site); `src/agent/mutators/validate.ts` (gate 2: 'param_schema' surfaces the rejection cleanly through the Mutator path); `tests/e2e/p6-w6-animate-ops.spec.ts` (the seed-with-DirectionalLight fix that mitigates this trap); P6 W6 commit `7eac917`.
+
+---
+
+### H29: Testid-migration grep gate scoped to the "owning" file misses legacy specs that reference the same testid
+
+**Span:** every chrome wave that deletes or renames a `data-testid` value. Author's mental model: "the testid lives in component X, so I'll grep its tests + the test file named after X." Reality: testids are global identifiers — *any* spec across the entire `tests/e2e/` tree can reference them as setup, side-effect verification, or unrelated coverage.
+
+**Symptom:** P6 W7 C2 deleted `TransformToolbar.tsx` and its `toolbar-shading-*` testids. The C2 grep gate matched testids inside the obviously-related `tests/e2e/p26-acceptance.spec.ts` (P2.6 was where the component originally landed) and migrated 3 specs cleanly. The full e2e suite passed locally because Playwright was run scoped to the migrated specs. A separate top-level acceptance suite at `tests/e2e/acceptance.spec.ts:233` used `toolbar-shading-rendered` as a SETUP step for the PostFx beauty pixel-diff test (#7 PostFx beauty matches reference within 2% pixel diff) — caught only by the post-PR critical-self-review running the full suite, not by the wave's verification gate.
+
+**Trap:** scope the grep to the file you EXPECT to find the testid in. P26's specs were the OWNING reference for this testid family; W7 migrated all 3. The grep `grep -rnE 'toolbar-shading-' tests/e2e/p26-acceptance.spec.ts` is clean. The grep `grep -rnE 'toolbar-shading-' tests/` is NOT clean — `acceptance.spec.ts` references the same name without being "about" the deleted component.
+
+**Root cause:** **testids are project-global names; their consumer set is unbounded.** The migration grep gate must be project-global too. The mental shortcut "I'll check the file where the original testid was introduced" is a false ownership inference — testids have no owners, only authors and consumers. Any wave that exposes a chrome affordance for an effect (shading, snap, mode, selection) becomes a downstream consumer the next wave's migration must find.
+
+**Real fix:** the grep gate for ANY testid deletion or rename must run with **NO file scope** — the regex applied to the entire `tests/` and `src/` tree. For W7 the gate was conceptually right (`grep -rnE 'toolbar-shading-|toolbar-snap-|toolbar-mode-(translate|rotate|scale)|transform-toolbar' src/ tests/`), but it was only run after C4's commit, not at the end of C2. Move the project-wide grep gate to be a HARD verification step at the end of every chrome-deletion commit, before the commit message even gets drafted.
+
+**Detection signal:** "I migrated all the obvious specs and they pass, but a screenshot/integration test from an unrelated phase suddenly fails with `Locator not found: getByTestId('old-name')`." Or: `--reporter=list` on the full suite shows a single failure in a spec whose name has no obvious connection to the changed component. Or: CI fails on a spec the author never opened during the migration. All three are the same signature: a non-obvious consumer.
+
+**Five-limbed argument:**
+1. **Claim:** Scoping a testid-migration grep to the file you mentally associate with the testid will miss legacy specs that consume the testid as setup or side-effect verification.
+2. **Reason:** Testids are project-global names; the original component owns the *production* of the name, but its CONSUMERS can be anywhere — including specs from earlier phases that wired the testid as a "click this before the real test" setup step.
+3. **Universal principle:** When a name is global, the migration gate must be global too. File-scoped greps encode a false ownership relationship onto a flat namespace.
+4. **Application:** W7 C2 deleted `TransformToolbar.tsx`. Grep gate ran inside the `p26-acceptance.spec.ts` file (the "owning" tests). Clean. But `tests/e2e/acceptance.spec.ts:233` used `toolbar-shading-rendered` as a setup step for the PostFx beauty test — completely unrelated to the chrome migration's intent, yet still a hard consumer. The orphaned reference was caught only by post-PR critical self-review (`50eec3b`).
+5. **Conclusion:** Run testid-deletion grep gates with `tests/ src/` as the search root, never a single file. Add the project-wide grep to the wave's verification gate list, BEFORE the deletion commit message gets written. Sister rule applies to type renames, store-key renames, and any other global-name change.
+
+**Sister patterns:** type rename where one re-export survives in an unexpected barrel file; store-action rename where one Storybook story or fixture references the old name; environment variable rename where one bash script or Dockerfile retains the old value. All share the same shape: file-scoped grep makes a false ownership assumption.
+
+**Cross-refs:** `tests/e2e/acceptance.spec.ts:233` (the orphan that survived C2's file-scoped grep); P6 W7 commit `50eec3b` (the self-review fold-in that migrated it); P6 W7 commit `959ae96` (the C2 split that introduced the gap). The grep that catches the case: `grep -rnE 'toolbar-shading-|toolbar-snap-|toolbar-mode-(translate|rotate|scale)|transform-toolbar' src/ tests/` — note the project-wide scope.
+
+---
+
+### H30: Pixel-diff snapshot baselines invalidate when an absolute-positioned overlay is added to a screenshot-targeted container
+
+**Span:** every Playwright `toHaveScreenshot` call on an HTML container element (a `<div>` rather than a `<canvas>` directly) that has or could gain absolute-positioned descendants. Affects acceptance suites that capture editor regions for visual regression — P2.6's PostFx beauty test is the current instance.
+
+**Symptom:** P6 W7 C1 added `<FloatingViewportToolbar />` as an `absolute bottom-4` overlay inside `<div data-testid="viewport" className="relative">`. The `tests/e2e/acceptance.spec.ts#7 PostFx beauty matches reference within 2% pixel diff` test, which captures `page.getByTestId('viewport').toHaveScreenshot('postfx-beauty.png')`, started failing with `Expected an image 660px by 557px, received 660px by 570px. 14765 pixels (ratio 0.04 of all image pixels) are different.` The Canvas-render content was unchanged; only the surrounding chrome region grew (the absolute child extended the element's screenshot extent by ~13px).
+
+**Trap:** assume `position: absolute` children don't change the parent's bounding box (true for CSS *layout* purposes — absolute removes children from normal flow). Therefore assume the screenshot of the parent stays the same. False — Playwright's element-screenshot captures the laid-out bounding rect *including* visible descendants when `overflow: visible` (the default). Absolute children with `bottom-N` painted within the parent's frame ARE captured.
+
+**Root cause:** **Playwright `toHaveScreenshot` on a locator uses the element's full painted bounds, not its CSS content-box.** When an absolute child paints outside the inline content area (which `bottom-4` does — it's positioned relative to the parent's bottom edge, not stacked at the end of inline flow), the screenshot extent grows to include the painted child. The "trap" only fires when (a) the parent's CSS has no explicit `overflow: hidden` AND (b) the absolute child paints a visible region (background, border, content).
+
+**Real fix two options:**
+
+- **Option A — rebaseline.** When the overlay is a *permanent* part of the new editor reality (as R8 is post-W7), the right move is `npx playwright test --update-snapshots` to capture the new ground truth. Verify the rebaseline is intentional in the commit message + body so future readers understand it wasn't just "the test was flaky."
+
+- **Option B — narrow the screenshot target.** When the overlay is incidental to what the test is *about* (e.g., the PostFx beauty test is about the canvas render, not the surrounding chrome), change the target from the wrapper div to the canvas itself: `page.locator('canvas').toHaveScreenshot('postfx-beauty.png')`. This is a one-time baseline migration but produces a more honest test going forward.
+
+W7 used Option A (R8 is permanent; preserve the existing test framing).
+
+**Detection signal:** `toHaveScreenshot` fails with a small dimension delta (~10-50px on one axis) on a test that previously passed, AND a recent commit added an absolute-positioned descendant to the screenshot-targeted element. The fingerprint is dimensional, not content-based — the pixel ratio in the diff will be misleadingly low (~0.04 in the W7 case) because most pixels match; the failure is the framing, not the content.
+
+**Five-limbed argument:**
+1. **Claim:** Adding an absolute-positioned overlay child to a Playwright-screenshot-targeted container breaks the existing baseline by extending the captured extent.
+2. **Reason:** Playwright element-screenshot captures the full painted bounds of the locator including overflowing descendants (default `overflow: visible`); absolute children painted within or near the parent ARE part of those bounds.
+3. **Universal principle:** Element-screenshots are not coupled to CSS layout boxes — they capture paint extent. Any visible painted region inside or extending from the targeted element will appear in the snapshot.
+4. **Application:** P6 W7 C1 added R8 as `absolute bottom-4` inside the viewport div. The PostFx beauty snapshot grew from 660×557 to 660×570; the Canvas content remained correct; only the new chrome region was novel. Fixed in `50eec3b` by rebaselining (Option A — R8 is permanent editor reality).
+5. **Conclusion:** When introducing absolute-positioned chrome inside an element that is currently the target of a pixel-diff snapshot, decide BEFORE committing: rebaseline (overlay is permanent) or retarget the screenshot to a non-affected inner element (overlay is incidental). Run the affected screenshot tests as part of the wave's verification gate so the decision happens at authoring time, not at post-PR review.
+
+**Sister patterns:** floating tooltips that paint over screenshot targets; modal/popover layers that overlay screenshot-captured regions; any portal-rendered child that lands within the captured element's box; CSS shadow elements with significant blur that paint outside the content rect.
+
+**Cross-refs:** `tests/e2e/acceptance.spec.ts:226` (the affected test); `tests/e2e/acceptance.spec.ts-snapshots/postfx-beauty-chromium-darwin.png` (the rebaselined image, 44764B → 48806B); P6 W7 commit `50eec3b` (the rebaseline fold-in). H8 covers platform-suffix snapshot naming; H13 covers layout-shifting features specifically — H30 is the sister case where the shift comes from an OVERLAY rather than a layout change.
