@@ -7,10 +7,16 @@
 // only mode-induced grid change is Director (D-UX-9) — chrome regions collapse
 // to 0 width.
 //
-// P6 W2 — TopToolbar replaces TransformToolbar's slot (TopToolbar mounts
-// TransformToolbar internally per spec §5.3). New `toolRail` column added
-// to the grid template: 32px expanded, 0 collapsed (chromeStore), 0 in
-// director. This is the first chromeStore consumer.
+// P6 W2 — TopToolbar replaces TransformToolbar's old slot. New `toolRail`
+// column added to the grid template: 32px expanded, 0 collapsed
+// (chromeStore), 0 in director. This is the first chromeStore consumer.
+//
+// P6 W7 — TransformToolbar deleted; its gizmo + shading + snap controls
+// migrated to FloatingViewportToolbar (R8, viewport overlay). SpaceGroup
+// inlined directly into TopToolbar.tsx so the workspace toggle (3D ↔ UV)
+// remains a top-bar affordance. R8's tool buttons all route through
+// editorStore.setActiveTool — the only writer to gizmoStore.mode outside
+// editorStore's propagation is now gone (V19 honored).
 //
 // REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5,
 // §5.3, §5.4.

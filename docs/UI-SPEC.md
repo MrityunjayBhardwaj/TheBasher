@@ -411,21 +411,27 @@ Glyph appears as a small badge on the row's relationship icon — never in the r
 - `<AddMenu />` — right-click context (existing)
 - Mode badge — top-right corner: `EDIT` / `RUN N/240` / `ANIMATE 24fps` / `DIRECTOR`. Hidden in `director` mode.
 
-### 5.7 R8 FloatingViewportToolbar (EXTEND existing TransformToolbar concept)
+### 5.7 R8 FloatingViewportToolbar (REPLACES old TransformToolbar surface area)
 
-**Location:** new component at `src/app/FloatingViewportToolbar.tsx`. Lives as overlay inside R6.
+**Location:** `src/app/FloatingViewportToolbar.tsx`. Lives as overlay inside R6 (mounted in Viewport.tsx alongside FpsMeter + ModeBadge).
 
-**Anatomy (already drafted in earlier sketch):**
+**Anatomy (P6 W7, amended 2026-05-14 per D-W7-1/3):**
 ```
-┌───────────────────────────────────────┐
-│  ↖  ✥  ⟲  ⤢  │  ⌂  ⊞  │  ⊙  ◉   │
-│ sel mv rot scl  home grid  persp ortho │
-└───────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  ↖  ✥  ⟲  ⤢  │  ⌂  ⊞  │ studio  wire  rendered  │ snap [0.50]      │
+│ sel mv rot scl  home grid       shading                snap          │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 **Position:** absolute, `bottom-4 left-1/2 -translate-x-1/2`. `bg-bg-2/90 backdrop-blur-sm` + `border-strong` + `rounded-md` + `shadow-sm`.
 
-**Behavior:** click move/rot/scale → setActiveTool (mirrors R4). Click home → orbitControls.target = scene center, distance = bounding box. Click grid → toggle grid in viewportStore. Click persp/ortho → camera projection toggle.
+**Behavior:** click sel/move/rot/scale → `editorStore.setActiveTool` (single dispatcher — same path as R4 ToolRail and keyboard W/E/R per V19; the translate/rotate/scale branches propagate to `gizmoStore.mode` automatically per editorStore.ts:53-58). Click home → `frameSelected()` with fallback to `frameAll()` when no primary selection. Click grid → `viewportStore.toggleGridVisible`. Click shading chip → `viewportStore.setShading`. Click snap → `viewportStore.toggleSnapEnabled`; numeric input → `viewportStore.setSnapStep`.
+
+**Visibility:** rendered in edit / run / animate modes. Returns `null` in director mode (D-UX-9 chrome-hide) — self-gated rather than Layout.tsx-gated because R8 is a viewport overlay, not a grid slot.
+
+**D-W7-1 amendment ledger:** Original spec listed `⊙ ◉ persp ortho` projection toggle. **Dropped in W7** — Basher's procedural-rendering domain has never required ortho projection; the THREE camera-swap + OrbitControls-rebind engineering was non-trivial; spec deferred until a real director use case demands it. R8 ships 6 + 3 + 2 controls (tools / viewport-state / shading + snap).
+
+**D-W7-3 amendment ledger:** Shading + Snap groups migrated from R3 TopToolbar to R8 (viewport-state knobs live near the viewport, Spline pattern). Click-count on lighting-check loop drops 7 → 4; eye-travel on shading toggle drops ~250px → ~30px. SpaceGroup (3D ↔ UV) stays in TopToolbar as a workspace switch at a different conceptual level.
 
 ### 5.8 R7 Inspector — NPanel canonical (D-UX-8 merge)
 
@@ -816,7 +822,7 @@ Estimated wall-time: 7–9 working days for W1–W8 (slightly less than original
 
 Before P6 PR can merge:
 
-1. **All region IDs render** (R1–R9) and are reachable via `data-testid`. R10 not implemented (D-UX-5).
+1. **All region IDs render** (R1–R9) and are reachable via `data-testid`. R10 not implemented (D-UX-5). ✅ closed P6 W7 (R8 testid surface — 11 ids — added in commit a47e16e; e2e P6.W7#1).
 2. **Mode type repurposed** — `useModeStore`'s `Mode` is `'edit' | 'run' | 'animate' | 'director'`; legacy `'simple' | 'director' | 'pro'` values coerce to `'edit'` on first read. No density store exists.
 3. **Mode persistence** — `edit` and `animate` persist across reload; `run` and `director` reset to last persisted on reload.
 4. **`Esc`** universally returns mode → `edit` and clears selection.
@@ -824,7 +830,7 @@ Before P6 PR can merge:
 6. **Timeline dock** shows iff `mode === 'animate'`.
 7. **Curve editor is a tab** in the timeline dock, not a side panel (D-UX-2).
 8. **NPanel is canonical Inspector** (D-UX-8) — `Inspector.tsx` deleted; grid `inspector` slot mounts `<NPanel />`; section ordering matches §5.8 rule for ≥ 4 sample node types (Cube, Light, ComfyUIWorkflow, KeyframeChannelNumber).
-9. **Director mode hides chrome** — R1 R2 R4 R5 R7 R9 hidden; R3 collapsed; R6 full-window; Esc returns (D-UX-9).
+9. **Director mode hides chrome** — R1 R2 R3 R4 R5 R7 R9 hidden; R6 full-window; R8 self-hides; ModeBadge hidden; Esc returns (D-UX-9). ✅ closed P6 W7 (Layout.tsx already gated R1/R2/R3/R4/R5/R7 since W1/W3; R8 self-gate landed in commit a47e16e; ModeBadge gate landed in commit cbda373; e2e P6.W7#8 verifies all surfaces + V11 Canvas DOM identity across Esc round-trip). W7 amended R3 from "collapsed" to "fully hidden" — Esc / mode pill recovery is sufficient; "R3 collapsed to mode pill strip" risk was rejected to keep D-UX-9 strict.
 10. **AddMenu has both entry points** — right-click in viewport AND top-toolbar `+`, both wired through `addMenuStore` (D-UX-10).
 11. **ProjectTabs unsaved indicator** — dot when `dirty`, tooltip with relative `lastSavedAt` on hover (D-UX-12).
 12. **ComfyStatusIndicator** — capability-flag read at boot + 30s probe gated on `mode === 'run'` + hover-probe; never constant polling (D-UX-13).
@@ -889,3 +895,4 @@ All six original open questions resolved 2026-05-10. None block W1.
 |---|---|---|
 | 2026-05-10 | session capture | Initial draft. D-UX-1…D-UX-6 locked. Reference targets confirmed. Acceptance criteria + rollout waves laid down. Open questions O-1…O-6 captured. |
 | 2026-05-10 (rev 2) | session capture | Director directive: "follow exact Spline pattern for base UI". **Density axis dropped** (D-UX-5 redefined). R10 StatusFooter dropped; status info distributed into R1/R3/R6/R9. Spec re-numbered: 9 regions instead of 10. **All 6 open questions resolved** as D-UX-8 through D-UX-13: NPanel canonical (Inspector merge), Director = chrome-hidden, AddMenu both-paths, plain Tailwind, dot+timestamp tooltip, capability-flag + lazy probe. New open questions O-7/O-8 deferred to W1/W2. Rollout W1 simplified (no density refactor). Acceptance criteria expanded from 13 → 17 to cover all locked decisions. |
+| 2026-05-14 | P6 W7 | §5.7 R8 anatomy amended after discuss-phase locked **D-W7-1** (drop persp/ortho — out of domain for procedural video; saves ~½ wave of THREE camera-swap engineering), **D-W7-2** (R8 tool buttons route through `editorStore.setActiveTool` — single dispatcher; V19 honored), **D-W7-3** (Shading + Snap migrate R3 → R8; SpaceGroup stays in TopToolbar). TransformToolbar.tsx deleted; SpaceGroup inlined into TopToolbar. ModeBadge added to R6 top-right per §5.6. §11 #1 + #9 closed (R8 testid surface + Director chrome-hide verified end-to-end via tests/e2e/p6-w7-floating-toolbar.spec.ts). #9's "R3 collapsed" eased to "R3 hidden" — Esc + mode pill recovery sufficient. dharana B11 W7 inventory recorded. |

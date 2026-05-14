@@ -230,7 +230,9 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
   // ONLY DAG-authored lights (P2.6 default is 'studio' for editing UX,
   // which adds editor-only fill rigs — those must NOT be the production
   // render baseline).
-  await page.getByTestId('toolbar-shading-rendered').click();
+  // P6 W7 (2026-05-14): shading group moved from R3 TransformToolbar to
+  // R8 FloatingViewportToolbar per D-W7-3. testid migrated.
+  await page.getByTestId('floating-toolbar-shading-rendered').click();
   // Wait for the canvas to have rendered at least one frame. We check by
   // polling for a non-empty pixel sample.
   await page.waitForFunction(() => {

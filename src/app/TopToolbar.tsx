@@ -1,36 +1,43 @@
-// TopToolbar — R3 per UI-SPEC §5.3. Wraps the existing TransformToolbar in
-// its left segment and adds:
+// TopToolbar — R3 per UI-SPEC §5.3. The top horizontal toolbar across
+// the editor, three-zone flex layout:
 //
-//   center  — 4-button mode pill (Edit / Run / Animate / Director)
-//   right   — zoom % menu (placeholder), Export, Director Cut shortcut
+//   left   — Add menu + Assets popover + space toggle (3D View ↔ UV)
+//   center — 4-button operational-mode pill (Edit / Run / Animate / Director)
+//   right  — zoom % placeholder + Export + Director Cut shortcut
 //
-// REUSE rule: the spec says "Mounts existing TransformToolbar in its left
-// segment". TransformToolbar's existing groups (gizmo mode + snap +
-// shading + space) move here as-is in W2; W7's FloatingViewportToolbar
-// will absorb the gizmo + grid + persp/ortho controls and TransformToolbar
-// will be split apart. For W2, no internal changes to TransformToolbar.
+// History note (P6 W7, 2026-05-14): the original W2 implementation
+// nested TransformToolbar in the left zone, carrying gizmo + snap +
+// shading + space groups. W7's FloatingViewportToolbar (R8) absorbed
+// gizmo + grid + shading + snap (D-W7-3: viewport-state knobs belong
+// near the viewport, Spline pattern). TransformToolbar.tsx was deleted
+// in this wave; SpaceGroup's two buttons are inlined here since
+// wrapping a single group in its own component is shallow per Hickey/
+// Ousterhout. Testids (toolbar-space-view3d / toolbar-space-uv) are
+// preserved verbatim so P2.6 + downstream e2e suites pass through
+// without migration.
 //
 // Mode pill: click sets useModeStore.setMode. Active mode = bg-accent /
-// text-bg, inactive = bg-muted / text-fg-dim. Keyboard 1/2/3/4 cycle the
-// same setMode (wired in KeyboardShortcuts).
+// text-bg, inactive = bg-muted / text-fg-dim. Keyboard 1/2/3/4 cycle
+// the same setMode (wired in KeyboardShortcuts).
 //
-// Export: shares exportDagJson with the File → Export menu item — single
-// source of truth.
+// Export: shares exportDagJson with the File → Export menu item —
+// single source of truth.
 //
-// Director Cut button: a one-click way to enter director mode. Esc returns
-// to edit (per W1's universal-Esc handler).
+// Director Cut button: a one-click way to enter director mode. Esc
+// returns to edit (per W1's universal-Esc handler).
 //
 // V8 file-rooted: this component reads + dispatches only UI projection
 // stores. No DAG mutation.
 //
 // REF: docs/UI-SPEC.md §5.3, §6.4, §3.4; THESIS.md §11, §17.
+// W7 ref: memory/project_p6_w7_plan.md C2.
 
 import type { ReactNode } from 'react';
 import { useAssetsPopoverStore } from './AssetsPopover';
 import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
-import { TransformToolbar } from './TransformToolbar';
 
 interface ModePillEntry {
   readonly value: Mode;
@@ -44,6 +51,17 @@ const MODE_PILL: readonly ModePillEntry[] = [
   { value: 'run', label: 'Run', icon: '▶', key: '2' },
   { value: 'animate', label: 'Animate', icon: '⏱', key: '3' },
   { value: 'director', label: 'Director', icon: '⛶', key: '4' },
+];
+
+interface SpaceEntry {
+  readonly value: SpaceType;
+  readonly label: string;
+  readonly key: string;
+}
+
+const SPACES: readonly SpaceEntry[] = [
+  { value: 'view3d', label: '3D View', key: 'Tab' },
+  { value: 'uv', label: 'UV Editor', key: 'Tab' },
 ];
 
 function openAddMenuAtToolbar(): void {
@@ -100,6 +118,32 @@ function AssetsButton(): ReactNode {
       <span aria-hidden>📦</span>
       <span>Assets</span>
     </button>
+  );
+}
+
+// Inlined ex-TransformToolbar SpaceGroup. Same testids + visual treatment
+// as the W2 implementation so e2e specs that exercised 3D↔UV switching
+// pass through unchanged.
+function SpaceGroup(): ReactNode {
+  const space = useEditorStore((s) => s.space);
+  const setSpace = useEditorStore((s) => s.setSpace);
+  return (
+    <div className="flex items-center gap-0.5 rounded border border-border bg-muted/40 p-0.5">
+      {SPACES.map((s) => (
+        <button
+          key={s.value}
+          type="button"
+          onClick={() => setSpace(s.value)}
+          data-testid={`toolbar-space-${s.value}`}
+          title={`${s.label} (${s.key} to toggle)`}
+          className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide ${
+            space === s.value ? 'bg-accent/25 text-accent' : 'text-fg/60 hover:text-fg'
+          }`}
+        >
+          {s.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -180,11 +224,7 @@ export function TopToolbar(): ReactNode {
   // Three-column flex pattern: left (flex-1, justify-start), center
   // (no flex, fixed width via content), right (flex-1, justify-end).
   // The two flex-1 outer columns balance on either side of the center
-  // pill, keeping it centered regardless of left content size — and
-  // critically, no absolute positioning. On narrow viewports left
-  // content scrolls inside its column rather than being overlapped by
-  // an absolute pill (the previous layout caused e2e flake when the
-  // left zone's SpaceGroup got covered by the center pill).
+  // pill, keeping it centered regardless of left content size.
   return (
     <div
       data-testid="top-toolbar"
@@ -194,7 +234,7 @@ export function TopToolbar(): ReactNode {
       <div className="flex flex-1 min-w-0 items-center gap-3 overflow-x-auto">
         <AddButton />
         <AssetsButton />
-        <TransformToolbar />
+        <SpaceGroup />
       </div>
       {/* Center zone — 4-button mode pill (D-UX-6). */}
       <div className="flex-shrink-0">
