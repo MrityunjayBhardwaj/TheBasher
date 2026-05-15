@@ -63,7 +63,7 @@
 //      D-W9-9, D-W9-10; memory/project_p6_w9_plan.md C3+C4;
 //      checker FLAG-1; stale-closure pre-mortem (plan C4 §139).
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { Node } from '../core/dag/types';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -347,6 +347,28 @@ export function TimelineCanvas({ duration }: { duration: number }) {
 
   const rows = collectChannelRows(nodes);
 
+  // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
+  // contract) is the canvas's visual-correctness surrogate. The JSX used
+  // to hard-code `0` and let the effect overwrite it post-mount; a static
+  // DOM reader (SSR / first-commit / a test reading before effects flush)
+  // saw a false `0`. Derive the real culled total from the SAME cull the
+  // effect uses so the pre-first-paint attribute already matches. NOT a
+  // pixel test (H30 / D-W9-4) — the mirror-attr value IS the contract.
+  const renderedKeyframeTotal = useMemo(
+    () =>
+      rows.reduce(
+        (n, row) =>
+          n +
+          cullVisibleKeyframes(
+            row.keyframes.map((k) => ({ timeSeconds: k.time })),
+            0,
+            durationSeconds,
+          ).length,
+        0,
+      ),
+    [rows, durationSeconds],
+  );
+
   // Measure the host + observe resize (drawer is resizable 200–480px,
   // D-W9-10). useLayoutEffect so the first paint has real dims, not 0x0.
   useLayoutEffect(() => {
@@ -386,17 +408,10 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const total = rows.reduce(
-      (n, row) =>
-        n +
-        cullVisibleKeyframes(
-          row.keyframes.map((k) => ({ timeSeconds: k.time })),
-          0,
-          durationSeconds,
-        ).length,
-      0,
-    );
-    host.dataset.renderedKeyframes = String(total);
+    // Same value as the JSX init (renderedKeyframeTotal) — the effect
+    // re-publishes it on every rows/duration change; the JSX init makes
+    // the pre-first-paint DOM already correct (c-3).
+    host.dataset.renderedKeyframes = String(renderedKeyframeTotal);
     host.dataset.channelCount = String(rows.length);
     host.dataset.frameCount = String(
       Math.max(0, Math.round(durationSeconds * 60)),
@@ -626,7 +641,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       aria-label={`Animation dopesheet — ${rows.length} channels`}
       data-frame-count={Math.max(0, Math.round(durationSeconds * 60))}
       data-channel-count={rows.length}
-      data-rendered-keyframes={0}
+      data-rendered-keyframes={renderedKeyframeTotal}
       className="relative h-full w-full overflow-hidden bg-bg"
     >
       <canvas ref={canvasRef} className="block h-full w-full" />
