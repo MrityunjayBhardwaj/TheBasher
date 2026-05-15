@@ -783,9 +783,10 @@ Audit floor pairs (always PASS, included here for quick reference):
 
 Three rules govern the FAIL-RULE rows that the matrix marks exempt. Each rule encodes a token-misuse pattern that is structurally forbidden, not a per-site judgement.
 
-- **Rule A — `fg-mute` is tertiary/placeholder text only, never on alpha-stacked surfaces.** `fg-mute #525252` against any composited surface above `bg-1` falls below 4.5:1 on small text. Tertiary uses (icon-button glyphs that hover to accent, "last saved Nm ago" labels paired with a full-fg tooltip) are exempt per §8.4.4 (SC 1.4.3 incidental text). New sites must use `fg-dim` or higher.
+- **Rule A — `fg-mute` is tertiary/placeholder text only, never on alpha-stacked surfaces.** `fg-mute #525252` against any composited surface above `bg-1` falls below 4.5:1 on small text. Tertiary uses (icon-button glyphs that hover to accent or warn) are exempt per §8.4.4 (SC 1.4.3 incidental text). New sites must use `fg-dim` or higher.
   - Enforced by: matrix `exempt.kind = 'rule' & exempt.rule = 'A'` annotation; future code review.
-  - Currently exempt sites: R1 ProjectTabs dirty-row label, close ×, add-btn.
+  - Currently exempt sites: R1 ProjectTabs close ×, R1 ProjectTabs add-btn.
+  - The R1 active-tab `⌂`/`⌃` chevron (also `text-fg-mute`) is `aria-hidden` pure decoration and is classified under §8.4.4 SC 1.4.3, not Rule A.
 
 - **Rule B — `fg/40` is decorative grouping/hint only, never body text or interactive label.** `fg/40` over typical chrome bg stacks composites to ~3.2:1 — below 4.5:1 for small text but adequate for grouping hints (keyboard-shortcut suffixes, timestamp metadata, type-tags beside primary names, empty-state placeholders). Body text or any text that gates a user action must use `fg/80` or higher.
   - Enforced by: matrix `exempt.kind = 'rule' & exempt.rule = 'B'` annotation; future code review.
@@ -803,8 +804,8 @@ WCAG 2.1 Success Criterion 1.4.3 exempts the following categories from contrast 
   Sites: R3 mode pill (present-disabled), R3 Present button, R4 ToolRail disabled tool, AssetsPopover entry unavailable.
 - **Pure graphical icons** — non-text content is governed by SC 1.4.11 (3:1 against adjacent colors) only when essential for understanding; decorative chevrons paired with `aria-expanded` / `aria-haspopup` state do not require text-contrast minima.
   Sites: R7 NPanel section header chevron, AddMenu group chevron.
-- **Decorative glyphs** — pure decoration with no semantic content.
-  Sites: Chrome separator (`/` between brand and project name).
+- **Decorative glyphs** — pure decoration with no semantic content (typically `aria-hidden`).
+  Sites: Chrome separator (`/` between brand and project name); R1 ProjectTabs active-tab chevron (`⌂`/`⌃`, `aria-hidden`).
 - **Status indicators** — informational decoration whose state is also conveyed by color/icon/aria.
   Sites: ComfyStatus idle.
 - **Placeholder text in a contrast-compliant input** — when the input itself meets AA (filled text uses `fg`), the placeholder is exempt.

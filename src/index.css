@@ -36,10 +36,20 @@ body {
    currently affects nothing in production but will neutralize any
    future positional motion at the moment it is added, without the
    author needing to remember to wrap each new class in `motion-safe:`. */
+/* Self-review fold-in: the original `[class*='animate-']` matched
+   `animate-none` (the explicit Tailwind opt-out class) which is wrong —
+   `animate-none` exists precisely to neutralize motion, so neutralizing
+   it again is a contradiction. The selector now enumerates the
+   motion-bearing animate utilities Tailwind ships (spin/ping/pulse/bounce).
+   Any future custom keyframes added via `tailwind.config.ts` will need
+   to be appended explicitly. */
 @media (prefers-reduced-motion: reduce) {
   .transition-transform,
   .transition-all,
-  [class*='animate-'] {
+  .animate-spin,
+  .animate-ping,
+  .animate-pulse,
+  .animate-bounce {
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
     animation-duration: 0.01ms !important;

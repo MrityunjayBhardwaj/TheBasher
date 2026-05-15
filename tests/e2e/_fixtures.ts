@@ -11,11 +11,24 @@
 //   capture.
 //
 //   The fix locks the focus-clear at the fixture boundary so no per-spec
-//   maintenance is required. Every screenshot call is wrapped to blur
-//   `document.activeElement` BEFORE Playwright captures pixels.
+//   maintenance is required. Every `page.screenshot(...)` call is wrapped
+//   to blur `document.activeElement` BEFORE Playwright captures pixels.
+//
+// SCOPE OF THE INTERCEPT (self-review correction):
+//   This fixture patches `page.screenshot` ONLY. It does NOT intercept:
+//     - `locator.screenshot()` / `elementHandle.screenshot()`
+//     - `expect(locator).toHaveScreenshot(...)` (locator-targeted matcher)
+//   These go through different Playwright internals and bypass the page
+//   patch. Today the existing pixel-diff suite (postfx-beauty.png +
+//   component snapshots) targets `expect(page).toHaveScreenshot(...)` or
+//   `page.screenshot(...)` exclusively, so the H30 hole is closed for
+//   current specs. If a future spec uses `locator.toHaveScreenshot(...)`
+//   while an element is focused inside the locator's subtree, the H30
+//   trap returns. Tracked as a follow-up issue; the long-term fix is to
+//   also wrap `Locator.prototype.screenshot` or use a custom matcher.
 //
 // Lifecycle (the only async question in the W8 wiring):
-//   1. Spec reaches `expect(loc).toHaveScreenshot(...)` — sync intent
+//   1. Spec reaches `expect(page).toHaveScreenshot(...)` — sync intent
 //   2. Playwright internally calls `page.screenshot(...)` — async
 //   3. This wrapper intercepts → awaits `page.evaluate(blur)` — async
 //   4. Original `page.screenshot` proceeds — async

@@ -79,9 +79,24 @@ export function Viewport() {
     <div
       data-testid="viewport"
       role="region"
-      aria-label={`3D viewport — ${debouncedSummary}`}
+      aria-label="3D viewport"
       className="relative h-full w-full bg-black"
     >
+      {/* SR-only live region for selection-change announcements.
+          Self-review fold-in (D-W8-2 / §8.3): re-rendering an aria-label
+          string does NOT trigger an SR announcement — SRs only re-announce
+          a region's name on focus/structure change. Selection summary is
+          declarative content that the user wants narrated on change, so it
+          belongs inside an aria-live region. Kept sr-only (visual surface
+          unchanged) and polite (announce when SR idle; don't interrupt). */}
+      <span
+        data-testid="viewport-selection-summary"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {debouncedSummary}
+      </span>
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}

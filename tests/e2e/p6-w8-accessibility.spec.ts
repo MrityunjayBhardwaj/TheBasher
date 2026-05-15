@@ -67,14 +67,18 @@ test('P6.W8#1 skip-link is the first focusable element and routes focus to #view
   });
   expect(isFirstTabbable).toBe(true);
 
-  // Activate the link → URL hash → focus the target.
+  // Activate the link → browser hash navigation → focus the target.
+  // Per WHATWG, clicking <a href="#X"> updates location.hash AND moves focus
+  // to the element with id="X" if that element is focusable (tabIndex>=-1).
+  // The target <main id="viewport" tabIndex={-1}> is programmatically focusable.
+  // Self-review fold-in: previous version had a forced `target?.focus()` call
+  // after the click, which made the test tautological (passed regardless of
+  // whether the link itself moved focus). The forced call is gone — if the
+  // browser fails to move focus on hash navigation, this spec fails, which is
+  // the diagnostic signal we want.
   await skipLink.evaluate((el: HTMLElement) => el.click());
-  // The hash navigation is synchronous; focus moves to #viewport because
-  // it's a tabIndex={-1} target.
-  await page.evaluate(() => {
-    const target = document.getElementById('viewport') as HTMLElement | null;
-    target?.focus();
-  });
+  const hash = await page.evaluate(() => window.location.hash);
+  expect(hash).toBe('#viewport');
   const focusedId = await page.evaluate(() => document.activeElement?.id);
   expect(focusedId).toBe('viewport');
 });
@@ -230,9 +234,9 @@ test('P6.W8#4 every chrome region carries its expected role attribute', async ({
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('role', 'region');
 });
 
-// ─── #5 Aria-labels present, non-empty, and selection-reactive on R6 ──
+// ─── #5 Aria-labels present + R6 has an aria-live selection-summary ──
 
-test('P6.W8#5 every chrome region has a non-empty aria-label', async ({ page }) => {
+test('P6.W8#5 every chrome region has a non-empty aria-label + R6 carries an aria-live selection summary', async ({ page }) => {
   const surfaces = [
     'project-tabs',
     'menubar',
@@ -250,6 +254,16 @@ test('P6.W8#5 every chrome region has a non-empty aria-label', async ({ page }) 
     expect(label, `${id} should have aria-label`).not.toBeNull();
     expect(label!.length, `${id} aria-label should be non-empty`).toBeGreaterThan(0);
   }
+  // Self-review fold-in: R6 viewport carries a separate aria-live="polite"
+  // span (not the aria-label) for selection-change announcements. SRs do
+  // not re-announce aria-label changes; live regions DO get re-announced on
+  // content change. Initial state is "no selection" — verify the live
+  // region exists, is polite, and contains the initial text.
+  const summaryLocator = page.getByTestId('viewport-selection-summary');
+  await expect(summaryLocator).toHaveAttribute('aria-live', 'polite');
+  await expect(summaryLocator).toHaveAttribute('aria-atomic', 'true');
+  const initialSummary = await summaryLocator.textContent();
+  expect(initialSummary).toBe('no selection');
 });
 
 // ─── #6 prefers-reduced-motion gate is present (no positional motion ─
