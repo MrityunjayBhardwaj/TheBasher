@@ -43,6 +43,7 @@ import { TopToolbar } from './TopToolbar';
 import { ToolRail } from './ToolRail';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
+import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
@@ -54,6 +55,13 @@ export function Layout() {
   const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const isDirector = mode === 'director';
+  // P6 W10 UIR F-4 — §8.3 R6 = "3D viewport — {selection summary}",
+  // debounced 200ms. The <main> below IS the §8.3 R6 region (role=main,
+  // skip-link target); its label was the static string
+  // "3D viewport main content" — the screen-reader's only handle on 3D
+  // state carried zero selection info. Same source as Viewport's
+  // aria-live span (shared hook, never diverges).
+  const viewportSummary = useSelectionSummary();
   // 5-column grid (P6 W2.5 dropped the dedicated library column; bundled
   // glTF samples are now reachable from TopToolbar's Assets popover):
   //   tree  |  toolRail  |  viewport  |  inspector  |  drawer
@@ -155,7 +163,7 @@ export function Layout() {
         id="viewport"
         tabIndex={-1}
         role="main"
-        aria-label="3D viewport main content"
+        aria-label={`3D viewport — ${viewportSummary}`}
         style={{ gridArea: 'viewport' }}
         className="relative overflow-hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         data-testid="viewport-slot"
