@@ -58,16 +58,17 @@ export function Layout() {
   // glTF samples are now reachable from TopToolbar's Assets popover):
   //   tree  |  toolRail  |  viewport  |  inspector  |  drawer
   // Director collapses everything but viewport.
-  const toolRailWidth = isDirector ? '0' : toolRailCollapsed ? '32px' : '32px';
+  const toolRailWidth = isDirector ? '0' : toolRailCollapsed ? '0' : '32px';
   // P6 W2.6 — SceneTree default-collapsed. When collapsed the tree column
   // shrinks to a 28px chevron strip (toggle stays visible); expanded
   // returns to the full 260px tree.
   const treeWidth = isDirector ? '0' : leftSidebarCollapsed ? '28px' : '260px';
-  // Note: collapsed and expanded both render at 32px because ToolRail's
-  // collapsed view is still a 32px-wide column with just the expand
-  // chevron. Per spec §5.4 the user can fully hide via the toggle when
-  // we ship a "collapse to 0" affordance later; the column width tracks
-  // chromeStore so future changes only need to adjust this expression.
+  // P6 W10 UIR F-3 — §5.4 literally: the rail "collapses to 0". The grid
+  // column goes to genuine 0 width when collapsed (was 32px — the spec
+  // promise was unmet). The re-expand affordance does NOT live inside the
+  // 0-width column (that would orphan it); ToolRail renders it as an
+  // absolutely-positioned edge tab that escapes the collapsed column via
+  // the slot's `overflow: visible`.
   return (
     <div
       data-testid="layout"
@@ -123,6 +124,10 @@ export function Layout() {
           gridArea: 'toolRail',
           display: isDirector ? 'none' : 'block',
           minHeight: 0,
+          // F-3: collapsed rail is a 0-width column; the re-expand edge
+          // tab must escape it, so the slot must not clip overflow.
+          overflow: 'visible',
+          position: 'relative',
         }}
       >
         <ToolRail />

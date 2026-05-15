@@ -119,6 +119,11 @@ export function ToolRail(): ReactNode {
   const setActiveTool = useEditorStore((s) => s.setActiveTool);
 
   if (collapsed) {
+    // P6 W10 UIR F-3 — §5.4 "collapses to 0". The rail occupies zero grid
+    // width (Layout sets the toolRail column to 0). The re-expand control
+    // can't live in a 0-width box (it would be clipped/unreachable), so it
+    // is an absolutely-positioned edge tab that escapes the 0-width column
+    // via the slot's `overflow: visible`. The container itself is w-0.
     return (
       <div
         data-testid="tool-rail"
@@ -126,7 +131,7 @@ export function ToolRail(): ReactNode {
         role="toolbar"
         aria-orientation="vertical"
         aria-label={`Tool rail — ${activeTool ?? 'no tool'}`}
-        className="flex h-full w-8 flex-col items-center border-r border-border bg-bg/95 py-1"
+        className="relative h-full w-0"
       >
         <button
           type="button"
@@ -134,7 +139,7 @@ export function ToolRail(): ReactNode {
           data-testid="tool-rail-toggle"
           title="Expand tool rail"
           aria-label="Expand tool rail"
-          className="flex h-6 w-6 items-center justify-center rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="absolute left-0 top-1 z-10 flex h-6 w-4 items-center justify-center rounded-r border border-l-0 border-border bg-bg/95 text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ›
         </button>
