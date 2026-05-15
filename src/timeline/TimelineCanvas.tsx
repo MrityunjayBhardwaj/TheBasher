@@ -1,46 +1,81 @@
 // TimelineCanvas — canvas-2D replacement for the SVG Dopesheet. STATIC
-// LAYER ONLY (P6 W9 C3).
+// LAYER (P6 W9 C3) + IMPERATIVE rAF PLAYHEAD (P6 W9 C4).
 //
 // WHY this exists: the old Dopesheet (src/timeline/Dopesheet.tsx) renders
 // one absolutely-positioned <div> per keyframe diamond. A realistic scene
 // (8+ channels x 20+ keyframes) puts hundreds of DOM nodes in the timeline
 // and re-lays-them-out on every seconds-subscriber tick during a scrub —
 // the D-W9 perf bottleneck. This component paints the same picture onto a
-// single <canvas>, and (in C4) advances the playhead via an rAF loop that
+// single <canvas>, and (C4) advances the playhead via an rAF loop that
 // touches NO React state, so a 240-frame scrub holds 60fps.
 //
-// C3 SCOPE — the STATIC layer only:
+// C3 SCOPE — the STATIC layer:
 //   - the visible <canvas> + an offscreen cache canvas holding the
 //     rendered rows + grid + diamonds (the D-W9-3 "cached static layer"
-//     C4's rAF strip-restore will drawImage() back from)
+//     C4's rAF strip-restore drawImage()'s back from)
 //   - dpr-capped backing store (D-W9-10, mirrors Viewport.tsx [1,2] cap)
 //   - the React-observable mirror-attr contract (D-W9-4)
-// The rAF playhead loop is C4 — DELIBERATELY ABSENT here. C3 proves the
-// static path in isolation so the diamond/dpr/mirror concerns are settled
-// before the perf-critical hot path lands on top of them.
+//
+// C4 SCOPE — the IMPERATIVE rAF PLAYHEAD (the perf-critical hot path):
+//   - a self-rescheduling requestAnimationFrame loop, started on mount
+//     once the offscreen cache exists, cancelAnimationFrame'd on unmount.
+//   - EACH frame reads `useViewportStore.getState().currentFrameRef.current`
+//     AND `useTimeStore.getState().seconds` via getState() INSIDE the
+//     loop body — NEVER closure-captured (D-W9-3 / context-memo §3
+//     stale-closure mitigation). dims/dpr/offscreen/duration come from
+//     refs the C3 layout/draw effects keep current, never from render
+//     scope. The ONLY things the closure binds are stable refs.
+//   - IDLE STRATEGY (LOCKED — do NOT re-decide; see plan C4 §129):
+//     compute the new playhead x; if it is unchanged from the last drawn
+//     x, EARLY-OUT but KEEP the rAF registered (do NOT cancel/re-arm).
+//     Re-arming would need a wake signal wired from timeStore.play/scrub
+//     — extra cross-store coupling. A single getState() read + compare
+//     per idle frame is cheaper than that coupling and matches Clock.tsx's
+//     own "loop runs even when paused, just no-ops" precedent
+//     (Clock.tsx:9-11, :22-32).
+//   - ON CHANGE: playheadStripRect (C2) at the OLD x → drawImage from the
+//     C3 offscreen cache into that strip (restores the EXACT static pixels
+//     — diamonds included — under the old line; that is the entire point
+//     of the cache) → stroke the playhead line at the NEW x with
+//     PALETTE.PLAYHEAD, DRAWN LAST / on top (D-W9-3). Then write
+//     data-playhead-px = new x and data-frame = currentFrameRef.current.
+//   - NO React render in this path — that is the whole escape-hatch
+//     thesis: static geometry is NOT re-rendered 60x/sec, only the
+//     playhead pixels + two data-attrs move.
 //
 // MOUNT STATUS: TimelineCanvas is intentionally NOT mounted anywhere in
-// C3 — TimelineDrawer still renders <Dopesheet/>. The drawer swap + the
+// C3/C4 — TimelineDrawer still renders <Dopesheet/>. The drawer swap + the
 // Dopesheet delete + e2e + the 240-frame perf benchmark are all C5. The
-// dead-code window is exactly C3 -> C4 -> C5 (one wave, one PR). C3
-// rendering correctness is verified by the C2 pure-geometry suite + this
-// file's React-observable contract test only; pixel correctness is
-// deferred to C5 e2e (mirror-attr asserts) + the manual scrub gate.
+// dead-code window is exactly C3 -> C4 -> C5 (one wave, one PR). C4
+// rAF-loop correctness is verified by C5 e2e (mirror-attr asserts:
+// data-playhead-px monotonic, data-rendered-keyframes constant under
+// scrub) + the C5 240-frame perf gate + the C5 manual scrub gate; jsdom
+// cannot run rAF+canvas meaningfully, so C4 ships NO new test file
+// (asserting it in vitest would be H32-style fake instrumentation).
 //
 // V8 file-rooted: reads useDagStore + useTimelineSelection + useTimeStore
-// for STATIC needs only. Dispatches ZERO Ops — no dispatchAtomic, no
-// dispatch(), no setParam. It is a pure projection, exactly as Dopesheet
-// was (Dopesheet.tsx:7-9).
+// + useViewportStore (the currentFrameRef escape hatch, read-only) for
+// STATIC + playhead needs only. Dispatches ZERO Ops — no dispatchAtomic,
+// no dispatch(), no setParam. It is a pure projection, exactly as
+// Dopesheet was (Dopesheet.tsx:7-9).
 //
-// REF: D-W9-2, D-W9-3 (static half), D-W9-4, D-W9-5, D-W9-7, D-W9-10;
-//      memory/project_p6_w9_plan.md C3; checker FLAG-1.
+// REF: D-W9-2, D-W9-3 (static + hot path), D-W9-4, D-W9-5, D-W9-7,
+//      D-W9-9, D-W9-10; memory/project_p6_w9_plan.md C3+C4;
+//      checker FLAG-1; stale-closure pre-mortem (plan C4 §139).
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { Node } from '../core/dag/types';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useViewportStore } from '../app/stores/viewportStore';
 import { useTimelineSelection } from './timelineSelection';
-import { keyframeToRect, cullVisibleKeyframes } from './timelineCanvasGeometry';
+import {
+  keyframeToRect,
+  cullVisibleKeyframes,
+  secondsToX,
+  playheadStripRect,
+  PLAYHEAD_STRIP_HALF_WIDTH_PX,
+} from './timelineCanvasGeometry';
 
 /**
  * Imperative canvas palette — the exact hex constants the 2D context
@@ -292,6 +327,24 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   const [dims, setDims] = useState<Dims>({ cssW: 0, cssH: 0 });
   const [dpr, setDpr] = useState<number>(() => cappedDpr());
 
+  // ── C4 rAF-loop input refs ────────────────────────────────────────────
+  // The rAF callback (below) must NEVER close over render-scope vars
+  // (the D-W9-3 / context-memo §3 stale-closure trap: a callback created
+  // on first render would forever see the first render's dims/dpr/duration
+  // even after a resize). Every mutable input the loop needs is therefore
+  // routed through a ref these next two effects keep current; the loop
+  // reads `*.current` only. `offscreenRef` (C3, declared above) is the
+  // same pattern — it is the cache the strip-restore drawImage()'s from.
+  // `currentFrameRef`/`seconds` are NOT mirrored here — those are read
+  // straight off the stores via getState() inside the loop (single source
+  // of truth, zero staleness window by construction).
+  const dimsRef = useRef<Dims>(dims);
+  const dprRef = useRef<number>(dpr);
+  const durationRef = useRef<number>(0);
+  // Last playhead x actually drawn — the idle-guard comparand. -1 = never
+  // drawn yet, so the first tick always paints.
+  const lastPlayheadXRef = useRef<number>(-1);
+
   const rows = collectChannelRows(nodes);
 
   // Measure the host + observe resize (drawer is resizable 200–480px,
@@ -348,7 +401,27 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     host.dataset.frameCount = String(
       Math.max(0, Math.round(durationSeconds * 60)),
     );
+    // C4 carry: data-playhead-px / data-frame are written by the rAF loop
+    // (inherently draw-tied — they describe pixel position, not DAG data).
+    // But seed a sane initial value here, on the dims-INDEPENDENT data
+    // path (C3 split this effect out precisely because happy-dom's
+    // getBoundingClientRect is 0x0, so the pixel effect may never run in
+    // tests). `??=` so the rAF loop's later writes are never clobbered by
+    // a re-run of this DAG-keyed effect — only the very first, pre-tick
+    // read sees '0' instead of `null`.
+    host.dataset.playheadPx ??= '0';
+    host.dataset.frame ??= '0';
   }, [rows, durationSeconds]);
+
+  // Keep the rAF-loop input refs current. Runs on every commit (no dep
+  // array) so dims/dpr/duration the loop reads are always the latest
+  // React values WITHOUT the loop closing over them. Cheap: three
+  // pointer writes per commit, no DOM, no store.
+  useEffect(() => {
+    dimsRef.current = dims;
+    dprRef.current = dpr;
+    durationRef.current = durationSeconds;
+  });
 
   // Build + populate the offscreen static cache, then blit it to the
   // visible canvas. Keyed on every input that changes the static picture
@@ -399,7 +472,151 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     visCtx.setTransform(1, 0, 0, 1, 0, 0);
     visCtx.clearRect(0, 0, backingW, backingH);
     visCtx.drawImage(offscreen, 0, 0);
+    // The static layer was just fully repainted (it overwrites the whole
+    // visible canvas, playhead included). Force the next rAF tick to
+    // re-stroke the playhead even if x is unchanged — otherwise the idle
+    // guard would skip and the playhead would stay erased after a DAG /
+    // resize repaint. -1 = "no valid last-drawn x", same sentinel as init.
+    lastPlayheadXRef.current = -1;
   }, [nodes, activeChannelId, durationSeconds, dims, dpr, rows]);
+
+  // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
+  //
+  // The D-W9-3 escape hatch and the actual 60fps fix. Self-reschedules
+  // via requestAnimationFrame; mount-once ([] deps) because it closes
+  // over NOTHING from render scope — every mutable input is read fresh
+  // each tick via getState() (the stores) or `*.current` (the C3-synced
+  // refs). That is the entire stale-closure mitigation: there is no
+  // render-scope variable for the closure to freeze.
+  //
+  // Lifecycle (krama, hot path ≤16.6ms): rAF tick → getState()/ref reads
+  // (no React) → secondsToX (C2 pure) → idle compare → [on change] strip
+  // restore (drawImage from C3 offscreen) → stroke playhead LAST → two
+  // data-attr writes. Unmount → cancelAnimationFrame (leak guard).
+  useEffect(() => {
+    let rafId = 0;
+
+    function tick() {
+      const host = hostRef.current;
+      const visible = canvasRef.current;
+      const offscreen = offscreenRef.current;
+      const { cssW, cssH } = dimsRef.current;
+
+      // Nothing to paint onto / restore from yet (pre-layout, or the C3
+      // effect has not built the offscreen cache). Stay registered — the
+      // cache appears asynchronously after the first layout pass; killing
+      // the loop here would need a re-arm signal we deliberately avoid.
+      if (host && visible && offscreen && cssW > 0 && cssH > 0) {
+        const visCtx = visible.getContext('2d');
+        if (visCtx) {
+          // Mutable inputs — read FRESH every tick. Stores via getState()
+          // (NOT subscribed, NOT closure-captured: the D-W9-3 / §3
+          // stale-closure mitigation, and the single source of truth so
+          // ref↔store cannot diverge here). dpr/duration via the
+          // C3-synced refs, never render scope.
+          const seconds = useTimeStore.getState().seconds;
+          const frame =
+            useViewportStore.getState().currentFrameRef.current;
+          const dprNow = dprRef.current;
+          const durationNow = durationRef.current;
+
+          // C2 owns the math (not re-derived inline — the D-W9-4 win).
+          // Track area excludes the label gutter, exactly as the C3
+          // static layer offsets diamonds by LABEL_GUTTER_PX.
+          const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
+          const newX =
+            LABEL_GUTTER_PX +
+            secondsToX(seconds, durationNow, trackWidth);
+
+          // IDLE GUARD (LOCKED — plan C4 §129): unchanged x → early-out
+          // but STAY registered (do NOT cancel/re-arm). Cheaper than
+          // wiring a wake signal from timeStore.play/scrub; mirrors
+          // Clock.tsx:9-11's "loop runs even when paused, just no-ops".
+          if (newX !== lastPlayheadXRef.current) {
+            const oldX = lastPlayheadXRef.current;
+
+            // Work in BACKING pixels with the identity transform — the
+            // exact convention C3 used to blit offscreen→visible
+            // (visCtx.drawImage(offscreen,0,0) with setTransform identity,
+            // both canvases at cssW*dpr × cssH*dpr). Matching it here
+            // makes the strip-restore a pixel-perfect twin of the cache;
+            // C2 geometry is CSS px, so every coord is *dprNow into
+            // backing space. (Re-derives nothing — C2 still owns the
+            // CSS-px math; this is only the CSS→backing scale C3 also
+            // applies, kept identical so the two paths stay aligned.)
+            visCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+            // 1. Restore the static pixels under the OLD playhead from
+            //    the C3 offscreen cache. This is why the cache exists:
+            //    drawImage copies the EXACT painted pixels back —
+            //    diamonds the old line overlapped included — so the
+            //    playhead never erases the static layer (proven by C5's
+            //    e2e: data-rendered-keyframes constant across a scrub).
+            //    Skip on the first paint (oldX < 0): nothing drawn yet.
+            if (oldX >= 0) {
+              const strip = playheadStripRect(
+                oldX,
+                PLAYHEAD_STRIP_HALF_WIDTH_PX,
+                cssH,
+              );
+              if (strip.w > 0 && strip.h > 0) {
+                // 1:1 backing-px blit: src rect == dst rect, both scaled
+                // CSS→backing by dprNow. The offscreen is the
+                // identity-blitted twin of the visible canvas (C3), so
+                // copying the same backing rect restores the exact
+                // static pixels — diamonds included.
+                const sx = strip.x * dprNow;
+                const sy = strip.y * dprNow;
+                const sw = strip.w * dprNow;
+                const sh = strip.h * dprNow;
+                visCtx.drawImage(
+                  offscreen,
+                  sx,
+                  sy,
+                  sw,
+                  sh,
+                  sx,
+                  sy,
+                  sw,
+                  sh,
+                );
+              }
+            }
+
+            // 2. Stroke the playhead at the NEW x — DRAWN LAST, on top
+            //    of the restored static layer (D-W9-3 "playhead always
+            //    drawn last"). Backing-px space: x scaled by dprNow,
+            //    line width = dprNow so it stays a crisp ~1 CSS px.
+            const bx = newX * dprNow + 0.5;
+            visCtx.strokeStyle = PALETTE.PLAYHEAD;
+            visCtx.lineWidth = dprNow;
+            visCtx.beginPath();
+            visCtx.moveTo(bx, 0);
+            visCtx.lineTo(bx, cssH * dprNow);
+            visCtx.stroke();
+
+            lastPlayheadXRef.current = newX;
+
+            // 3. Publish the mirror attrs. These are draw-tied by nature
+            //    (they describe the playhead's pixel position + the
+            //    escape-hatch frame) so they live in the loop, NOT the
+            //    C3 data effect — which only seeds the pre-tick '0'.
+            if (host) {
+              host.dataset.playheadPx = String(newX);
+              host.dataset.frame = String(frame);
+            }
+          }
+        }
+      }
+
+      rafId = requestAnimationFrame(tick);
+    }
+
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   return (
     <div

@@ -218,8 +218,13 @@ describe('TimelineCanvas host contract', () => {
     expect(host.getAttribute('aria-label')).toBe(
       'Animation dopesheet — 0 channels',
     );
-    // data-playhead-px must NOT exist yet — that is C4.
-    expect(host.hasAttribute('data-playhead-px')).toBe(false);
+    // C4: data-playhead-px / data-frame are written by the rAF loop, but
+    // C3's dims-INDEPENDENT data effect seeds a sane '0' pre-tick (the
+    // happy-dom 0x0 getBoundingClientRect means the pixel effect + the
+    // rAF body may never run in jsdom, so a test reading these pre-tick
+    // must see '0', never null). This is the C4 carry-contract.
+    expect(host.getAttribute('data-playhead-px')).toBe('0');
+    expect(host.getAttribute('data-frame')).toBe('0');
     expect(host.querySelector('canvas')).not.toBeNull();
   });
 
