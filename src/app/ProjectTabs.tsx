@@ -52,6 +52,12 @@ export function ProjectTabs(): ReactNode {
   const current = useProjectStore((s) => s.current);
   const dirty = useProjectStore((s) => s.dirty);
   const lastSavedAt = useProjectStore((s) => s.lastSavedAt);
+  // Defensive defaults at first paint: `current` is `null` until project boot
+  // resolves (Risk A — V10 pattern). `?? 'no project'` keeps the aria-label
+  // semantically valid through the bootstrap window. P6 W8 C4 / D-W8-4.
+  const ariaLabel = `Project tabs — ${current?.name ?? 'no project'}, ${
+    dirty ? 'unsaved changes' : 'all saved'
+  }`;
 
   const [projects, setProjects] = useState<ProjectMetadata[]>([]);
   const [busy, setBusy] = useState(false);
@@ -162,6 +168,8 @@ export function ProjectTabs(): ReactNode {
   return (
     <div
       data-testid="project-tabs"
+      role="tablist"
+      aria-label={ariaLabel}
       className="flex h-8 items-stretch border-b border-border bg-bg-2/80 px-1 font-mono text-[11px] text-fg"
     >
       <div className="flex flex-1 items-stretch overflow-x-auto">
@@ -189,10 +197,13 @@ export function ProjectTabs(): ReactNode {
               ) : null}
               <button
                 type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-label={`Open project ${p.name}`}
                 onClick={() => onSelect(p.id)}
                 disabled={busy}
                 data-testid={`project-tab-select-${p.id}`}
-                className="flex items-center gap-1 truncate text-left uppercase tracking-wide disabled:opacity-50"
+                className="flex items-center gap-1 truncate text-left uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
               >
                 <span aria-hidden className="text-fg-mute">
                   {isActive ? '⌂' : '⌃'}
@@ -205,7 +216,8 @@ export function ProjectTabs(): ReactNode {
                 disabled={busy}
                 data-testid={`project-tab-close-${p.id}`}
                 title="Close project (deletes from storage)"
-                className="ml-1 text-fg-mute hover:text-warn disabled:opacity-50"
+                aria-label={`Close project ${p.name}`}
+                className="ml-1 text-fg-mute hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
               >
                 ×
               </button>
@@ -218,7 +230,8 @@ export function ProjectTabs(): ReactNode {
           disabled={busy}
           data-testid="project-tab-new"
           title="New project"
-          className="flex items-center px-3 text-fg-mute hover:text-accent disabled:opacity-50"
+          aria-label="New project"
+          className="flex items-center px-3 text-fg-mute hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
         >
           +
         </button>

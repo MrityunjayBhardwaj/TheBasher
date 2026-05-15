@@ -8,7 +8,7 @@
 //
 // REF: THESIS.md §15-17 (editor chrome), §21 (context strategy).
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface AgentSessionWindow {
   __basher_agent_session?: {

@@ -735,3 +735,67 @@ W7 used Option A (R8 is permanent; preserve the existing test framing).
 **Sister patterns:** floating tooltips that paint over screenshot targets; modal/popover layers that overlay screenshot-captured regions; any portal-rendered child that lands within the captured element's box; CSS shadow elements with significant blur that paint outside the content rect.
 
 **Cross-refs:** `tests/e2e/acceptance.spec.ts:226` (the affected test); `tests/e2e/acceptance.spec.ts-snapshots/postfx-beauty-chromium-darwin.png` (the rebaselined image, 44764B → 48806B); P6 W7 commit `50eec3b` (the rebaseline fold-in). H8 covers platform-suffix snapshot naming; H13 covers layout-shifting features specifically — H30 is the sister case where the shift comes from an OVERLAY rather than a layout change.
+
+---
+
+### H31: Tailwind content scanner destabilised by class-name regex literals inside test sources
+
+**Span:** every Tailwind v3 project whose `content` glob picks up test files that contain string literals shaped like utility classes (`focus:outline-none`, `text-base`, `bg-bg-2/90`, etc.) inside regex sources or fixture data. The pathological inputs cause PostCSS extraction to throw partway through the candidate scan.
+
+**Symptom:** P6 W8 C3 added `src/a11y/focusRingGate.test.ts` whose body contained the literal substrings `focus:outline-none` and `focus-visible:` as part of a regex meant to detect their presence in chrome `.tsx`. Vitest passed. But `npm run dev` died with `Cannot read properties of undefined (reading 'raws')` deep inside Tailwind's `generateRules.js`, breaking the entire CSS build — HMR stopped working, the editor rendered unstyled until the test file was reverted.
+
+**Trap:** assume Tailwind's content scanner cares only about JSX `className` strings and ignores test files. False — the default content glob `./src/**/*.{ts,tsx}` includes test sources, and the candidate extractor is regex-based (it doesn't AST-parse), so any substring that looks like a Tailwind candidate is fed into the rule-generation pipeline. Most candidates resolve cleanly; pathological ones (regexes constructed from utility-class fragments, certain nested-pseudo combinations) crash deep AST stages.
+
+**Root cause:** **Tailwind v3's content scanner is unsafe under hostile input.** Its candidate extractor (`lib/lib/expandApplyAtRules.js` + `lib/lib/generateRules.js`) constructs PostCSS AST nodes for every captured candidate string. When a candidate hits a malformed parse path (specifically: pseudo-class chains the scanner generates from regex source text), the downstream `raws` field is undefined and the rule generator throws. The test source is "valid" Tailwind input by the scanner's heuristics; the scanner's heuristics are wrong.
+
+**Real fix:** **exclude test sources from Tailwind's content globs** — `'!./src/**/*.test.{ts,tsx}'`. Test files have no CSS contribution; their content is irrelevant to the production bundle. The exclusion costs nothing and isolates the scanner from the only source of hostile candidates that's likely to appear in our codebase. Applied in `tailwind.config.ts` at C3 authoring.
+
+**Detection signal:** dev server fails to start (or HMR fails on next change) with PostCSS error citing `generateRules.js` line numbers; the failure references a `raws` property of `undefined`; the chrome renders unstyled in the browser; the test that triggered it passes cleanly under vitest (vitest doesn't run the Tailwind pipeline). The crash is BUILD-stage, not test-stage — `vitest` + `tsc --noEmit` both pass, the symptom only appears when running the dev server or production build.
+
+**The trap (wrong fix):** rewrite the test's regex to "look less Tailwind-y" — e.g., split `focus:outline-none` into `'focus' + ':' + 'outline-none'` so the substring never appears whole in the file. This works but encodes the wrong invariant. The Tailwind scanner shouldn't see test files at all; the right fix is the content-glob exclusion, not source-level evasion. The split-string form is fine as belt-and-braces (P6 W8 C5's `grepGates.test.ts` uses it), but the primary defense is the glob exclusion.
+
+**Five-limbed argument:**
+1. **Claim:** Including test sources in Tailwind's content globs lets hostile candidate strings reach the rule generator, which can throw on regex-constructed pseudo-class fragments.
+2. **Reason:** Tailwind's candidate extractor is regex-based and AST-unaware; any substring shaped like a utility class is fed into the same code path as real className strings.
+3. **Universal principle:** Build-time scanners that consume source code should be scoped to the files that actually contribute to the build. Tests don't produce CSS; their content should not enter the CSS pipeline.
+4. **Application:** P6 W8 C3 added `focusRingGate.test.ts` containing literal `focus:outline-none` in a regex. Tailwind's scanner consumed it; PostCSS extraction threw. Fix: `'!./src/**/*.test.{ts,tsx}'` added to `tailwind.config.ts` content globs.
+5. **Conclusion:** Always exclude test files from CSS / asset / bundler content globs. The exclusion is cheap and prevents an entire class of "test file unexpectedly breaks the dev build" failures.
+
+**Sister patterns:** ESLint custom rules that scan for "class-like strings" in source code; PostCSS plugins with `glob` config; Stylelint with `--ignore` paths set too narrowly; any tool that AST-parses source for class-name candidates without distinguishing test sources from production.
+
+**Cross-refs:** P6 W8 C3 commit `bc09f72` (production fix in `tailwind.config.ts:7-11`); `src/a11y/focusRingGate.test.ts:12-14` (the comment documenting the split-string defense at source level); H30 (the sister case where a chrome change broke a test baseline — different direction: chrome→test there, test→chrome here).
+
+---
+
+### H32: Test-grep coverage gate false-positives on token-shaped substrings inside source-code comments
+
+**Span:** any vitest spec that greps a project's `src/` tree for class-name patterns (`text-*`, `bg-*`, etc.) and uses raw substring matching. JSX comments, JSDoc bodies, and inline `//` comments containing hyphenated phrases that share a prefix with a Tailwind utility match the grep without being actual class usages.
+
+**Symptom:** P6 W8 C4 strengthened the contrast-matrix coverage assertion (`src/a11y/contrastMatrix.test.ts`) to grep every `text-*` and `bg-*` token across `src/app/`, `src/viewport/`, `src/timeline/` and fail if any token was not covered by a matrix row OR an explicit WHITELIST entry. The first run flagged a phantom class — an inspection traced it to a JSX comment in `ModeBadge.tsx` containing the hyphenated phrase `text-bearing` (used in the comment as English prose: "the text-bearing label"). The substring matched the grep's `\btext-[a-z]+\b` pattern even though no such Tailwind class exists or is rendered anywhere.
+
+**Trap:** raw substring grep over source code can't distinguish syntactic context. The class-pattern regex matches inside string literals, comments, identifiers — anywhere the characters appear. The author's mental model is "I'm looking for className tokens" but the regex sees "any text matching the pattern."
+
+**Root cause:** **regex scans over source text don't have a parser.** To distinguish "this `text-bearing` is a class candidate" from "this `text-bearing` is a comment", you need either (a) AST awareness to filter to JSX attribute values, or (b) a syntactic scope marker like `className="..."` to anchor the match. The bare `\btext-[a-z]+\b` pattern has neither.
+
+**Real fix two options:**
+
+- **Option A — author convention (lightweight, applied in C5):** in source code comments, prefer parenthetical phrasing over hyphenated compounds that share Tailwind class prefixes. "(which holds the label text)" instead of "the text-bearing label". Costs zero engineering effort; prevents future occurrences from the moment the convention is adopted. Documented in this catalogue entry; not enforced by any tool.
+
+- **Option B — test-side fix (heavier, deferred):** scope the grep to JSX `className` attribute contexts only — match `className="[^"]*\btext-[a-z]+"` or wrap matches inside a `className={\`...${var}...\`}` template-literal pattern. This requires either a lightweight JSX parser or a heuristic match that excludes lines beginning with `//` or sitting inside `/* */`. The complexity isn't justified by a single occurrence; revisit if the pattern recurs.
+
+C5 used Option A. The whitelist was NOT widened — that would have been a workaround (papering over a single false positive at the cost of admitting a bogus token into the gate's accepted set, which would shadow real misses).
+
+**Detection signal:** matrix coverage gate fails citing a "class" that the implementation has never rendered; `grep -rn 'text-bearing\|bg-bearing\|...' src/` returns the source line; the source line is inside a `//` or `/* */` comment or a JSX `{/* */}` block. Verify by checking whether the same string appears inside a real `className=` attribute anywhere in the codebase — if not, it's a comment false-positive.
+
+**The trap (wrong fix):** add the bogus class to the gate's WHITELIST. This makes the gate pass but the whitelist now contains an entry that doesn't correspond to any production CSS. Future genuine misses with similar patterns can ride into the whitelist on precedent ("we exempted text-bearing, why not text-floating?"). The right move is to fix the source so the regex doesn't match in the first place, OR to fix the regex so it doesn't see comments.
+
+**Five-limbed argument:**
+1. **Claim:** Raw substring greps over source code that scan for class-name patterns will produce false positives on hyphenated phrases inside comments.
+2. **Reason:** Regex matching has no syntactic awareness; the pattern engine treats source code as a flat character stream.
+3. **Universal principle:** When a code-quality gate runs on raw source, it must either (a) parse to a syntactic level above the gate's concern, or (b) accept a noise floor and document the convention that avoids it.
+4. **Application:** C4's matrix coverage gate matched `text-bearing` in a JSX comment in `ModeBadge.tsx` that had no corresponding class. Resolved at C5 authoring time by rewriting the comment to parenthetical phrasing; H32 documents the pattern so the convention propagates.
+5. **Conclusion:** Prefer parenthetical phrasing in comments over hyphenated compounds sharing Tailwind class prefixes. The convention costs zero and prevents the recurrence of an entire false-positive class. The whitelist remains reserved for legitimate documented exemptions, not pattern-match artefacts.
+
+**Sister patterns:** ESLint custom rules grepping for "magic strings"; ripgrep-based pre-commit hooks that fail on banned patterns; security scanners flagging "secret-like" substrings in comments; any text-scan gate that doesn't parse to AST level.
+
+**Cross-refs:** P6 W8 C4 commit `655fa25` (the matrix coverage strengthening + the C5 source-comment rewrite); `src/viewport/ModeBadge.tsx` (the file that surfaced the false-positive); `src/a11y/contrastMatrix.test.ts` (the gate that produced the false positive). H31 covers the sibling pattern where the regex problem hits the BUILD pipeline (Tailwind scanner) rather than a test gate; both share the same root cause family: text-level pattern matching over source code without AST awareness.

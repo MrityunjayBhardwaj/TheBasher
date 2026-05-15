@@ -53,6 +53,8 @@ export function LeftSidebar(): ReactNode {
       <aside
         data-testid="left-sidebar"
         data-collapsed="true"
+        role="region"
+        aria-label={`Sidebar — ${activeTab ?? 'collapsed'}`}
         className="flex h-full w-full flex-col"
       >
         <button
@@ -60,7 +62,8 @@ export function LeftSidebar(): ReactNode {
           onClick={toggle}
           data-testid="left-sidebar-expand-toggle"
           title="Expand left sidebar"
-          className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
+          aria-label="Expand left sidebar"
+          className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ›
         </button>
@@ -74,10 +77,14 @@ export function LeftSidebar(): ReactNode {
       data-testid="left-sidebar"
       data-collapsed="false"
       data-active-tab={activeTab}
+      role="region"
+      aria-label={`Sidebar — ${activeTab ?? 'no tab'}`}
       className="flex h-full w-full flex-col"
     >
       <header
         data-testid="left-sidebar-tab-strip"
+        role="tablist"
+        aria-label="Sidebar tabs"
         className="flex items-center border-b border-border bg-bg/95 font-mono text-[11px]"
       >
         {TABS.map((t) => {
@@ -86,10 +93,13 @@ export function LeftSidebar(): ReactNode {
             <button
               key={t.value}
               type="button"
+              role="tab"
+              aria-selected={active}
+              aria-label={`${t.label} tab`}
               onClick={() => setActiveTab(t.value)}
               data-testid={`left-sidebar-tab-${t.value}`}
               data-active={active || undefined}
-              className={`flex h-7 items-center px-3 uppercase tracking-wide transition-colors ${
+              className={`flex h-7 items-center px-3 uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
                 active
                   ? 'border-b-2 border-accent text-accent'
                   : 'border-b-2 border-transparent text-fg-dim hover:text-fg'
@@ -105,7 +115,8 @@ export function LeftSidebar(): ReactNode {
           onClick={toggle}
           data-testid="left-sidebar-collapse-toggle"
           title="Collapse left sidebar"
-          className="flex h-7 w-7 items-center justify-center text-fg-dim hover:text-fg"
+          aria-label="Collapse left sidebar"
+          className="flex h-7 w-7 items-center justify-center text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ‹
         </button>

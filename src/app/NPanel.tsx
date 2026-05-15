@@ -83,7 +83,7 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
         step="0.1"
         value={display}
         data-testid={`inspector-input-${nodeId}-${paramPath}`}
-        className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus:border-accent focus:outline-none"
+        className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
@@ -138,7 +138,7 @@ function VectorComponent({
         step="0.1"
         value={display}
         data-testid={`inspector-vec-${nodeId}-${paramPath}-${axisLabel}`}
-        className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus:border-accent focus:outline-none"
+        className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
@@ -265,7 +265,7 @@ function SectionCard({
         type="button"
         onClick={onToggle}
         data-testid={`inspector-section-toggle-${sectionId}`}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-wide text-fg/60 hover:bg-muted hover:text-fg"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-wide text-fg/60 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span aria-hidden className="text-fg/40">
           {collapsed ? '▸' : '▾'}
@@ -292,9 +292,13 @@ export function NPanel() {
   const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
   const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
 
+  const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
+
   return (
     <aside
       data-testid="inspector"
+      role="region"
+      aria-label={inspectorLabel}
       className="flex h-full flex-col overflow-y-auto border-l border-border bg-muted/40 text-xs"
     >
       <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">

@@ -5,7 +5,7 @@
 // The dev server boot is hidden behind webServer in playwright.config.ts;
 // individual tests assume http://localhost:5173 is up.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -73,6 +73,7 @@ function openAddMenuAtRailCenter(): void {
 function ToolButton({
   active,
   title,
+  ariaLabel,
   testId,
   onClick,
   children,
@@ -80,13 +81,14 @@ function ToolButton({
 }: {
   active: boolean;
   title: string;
+  ariaLabel: string;
   testId: string;
   onClick: () => void;
   children: ReactNode;
   disabled?: boolean;
 }): ReactNode {
   const base =
-    'flex h-8 w-8 items-center justify-center rounded text-base font-mono transition-colors';
+    'flex h-8 w-8 items-center justify-center rounded text-base font-mono transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   let state: string;
   if (disabled) {
     state = 'text-fg-mute cursor-not-allowed';
@@ -102,6 +104,7 @@ function ToolButton({
       disabled={disabled}
       data-testid={testId}
       title={title}
+      aria-label={ariaLabel}
       className={`${base} ${state}`}
     >
       {children}
@@ -120,6 +123,9 @@ export function ToolRail(): ReactNode {
       <div
         data-testid="tool-rail"
         data-collapsed="true"
+        role="toolbar"
+        aria-orientation="vertical"
+        aria-label={`Tool rail — ${activeTool ?? 'no tool'}`}
         className="flex h-full w-8 flex-col items-center border-r border-border bg-bg/95 py-1"
       >
         <button
@@ -127,7 +133,8 @@ export function ToolRail(): ReactNode {
           onClick={toggleCollapsed}
           data-testid="tool-rail-toggle"
           title="Expand tool rail"
-          className="flex h-6 w-6 items-center justify-center rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
+          aria-label="Expand tool rail"
+          className="flex h-6 w-6 items-center justify-center rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           ›
         </button>
@@ -139,6 +146,9 @@ export function ToolRail(): ReactNode {
     <div
       data-testid="tool-rail"
       data-collapsed="false"
+      role="toolbar"
+      aria-orientation="vertical"
+      aria-label={`Tool rail — ${activeTool ?? 'no tool'}`}
       className="flex h-full w-8 flex-col items-center gap-1 border-r border-border bg-bg/95 py-1"
     >
       <button
@@ -146,6 +156,7 @@ export function ToolRail(): ReactNode {
         onClick={toggleCollapsed}
         data-testid="tool-rail-toggle"
         title="Collapse tool rail"
+        aria-label="Collapse tool rail"
         className="flex h-6 w-6 items-center justify-center rounded text-fg-dim hover:bg-bg-1 hover:text-fg"
       >
         ‹
@@ -156,6 +167,7 @@ export function ToolRail(): ReactNode {
           key={t.id}
           active={activeTool === t.id}
           title={`${t.label} (${t.shortcut})`}
+          ariaLabel={`${t.label} tool`}
           testId={`tool-rail-${t.id}`}
           onClick={() => setActiveTool(t.id)}
         >
@@ -172,6 +184,7 @@ export function ToolRail(): ReactNode {
               ? `${a.label} (${a.shortcut})`
               : `${a.label} — coming in a later wave`
           }
+          ariaLabel={a.id === 'add' ? 'Add node menu' : `${a.label} action`}
           testId={`tool-rail-${a.id}`}
           onClick={a.id === 'add' ? openAddMenuAtRailCenter : () => {}}
           disabled={!a.enabled}

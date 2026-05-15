@@ -180,7 +180,7 @@ export function AgentChat() {
             disabled={running}
             rows={2}
             data-testid="agent-input"
-            className="flex-1 resize-none rounded border border-border bg-muted px-2 py-1 font-mono text-[11px] text-fg placeholder:text-fg/30 focus:border-accent focus:outline-none disabled:opacity-50"
+            className="flex-1 resize-none rounded border border-border bg-muted px-2 py-1 font-mono text-[11px] text-fg placeholder:text-fg/30 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
           />
           {running ? (
             <button

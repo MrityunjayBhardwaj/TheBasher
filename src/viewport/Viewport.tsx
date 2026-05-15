@@ -10,7 +10,7 @@
 
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Suspense } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
@@ -19,10 +19,22 @@ import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
+import { useDagStore } from '../core/dag/store';
 import { FpsMeter } from '../render/FpsMeter';
 import { EditorLights } from './EditorLights';
 import { ModeBadge } from './ModeBadge';
 import { SceneFromDAG } from './SceneFromDAG';
+
+// Inline debounce — single-caller, Hickey check. Not promoted to a shared
+// hook until a second use-site appears.
+function useDebouncedValue<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
+}
 
 function EditorOrbit() {
   // Disable orbit while a TransformControls handle is being dragged
@@ -45,8 +57,46 @@ export function Viewport() {
   // do not affect the DAG (V8 read-only on this side).
   const gridVisible = useViewportStore((s) => s.gridVisible);
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
+
+  // R6 aria-label: selection summary, debounced 200ms so rapid marquee
+  // selects don't spam SR announcements.
+  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
+  const primaryNode = useDagStore((s) =>
+    primaryNodeId ? s.state.nodes[primaryNodeId] ?? null : null,
+  );
+  const rawSummary = useMemo(() => {
+    if (selectedCount === 0) return 'no selection';
+    if (selectedCount === 1 && primaryNode) {
+      const name = primaryNode.meta?.name ?? primaryNode.id;
+      return `${primaryNode.type} "${name}"`;
+    }
+    return `${selectedCount} nodes selected`;
+  }, [selectedCount, primaryNode]);
+  const debouncedSummary = useDebouncedValue(rawSummary, 200);
+
   return (
-    <div data-testid="viewport" className="relative h-full w-full bg-black">
+    <div
+      data-testid="viewport"
+      role="region"
+      aria-label="3D viewport"
+      className="relative h-full w-full bg-black"
+    >
+      {/* SR-only live region for selection-change announcements.
+          Self-review fold-in (D-W8-2 / §8.3): re-rendering an aria-label
+          string does NOT trigger an SR announcement — SRs only re-announce
+          a region's name on focus/structure change. Selection summary is
+          declarative content that the user wants narrated on change, so it
+          belongs inside an aria-live region. Kept sr-only (visual surface
+          unchanged) and polite (announce when SR idle; don't interrupt). */}
+      <span
+        data-testid="viewport-selection-summary"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {debouncedSummary}
+      </span>
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}

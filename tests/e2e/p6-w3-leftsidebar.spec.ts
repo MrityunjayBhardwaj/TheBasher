@@ -7,7 +7,7 @@
 //
 // REF: docs/UI-SPEC.md §5.1, §5.5, §5.10, §11.
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');

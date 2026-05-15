@@ -11,7 +11,7 @@
 // spec does not depend on a running ComfyUI server. The same flow lights
 // up against the real server in Wave D4 — only the capability swaps.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './_fixtures';
 
 interface StubComfyWindow {
   __basher_useStubComfy?: () => void;

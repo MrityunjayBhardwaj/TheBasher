@@ -81,7 +81,7 @@ function AddButton(): ReactNode {
       onClick={openAddMenuAtToolbar}
       data-testid="top-toolbar-add"
       title="Add primitive (A or Shift+A)"
-      className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent"
+      className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       <span aria-hidden>+</span>
       <span>Add</span>
@@ -109,7 +109,7 @@ function AssetsButton(): ReactNode {
       }}
       data-testid="top-toolbar-assets"
       title="Sample assets"
-      className={`flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-mono uppercase tracking-wide ${
+      className={`flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
         open
           ? 'border-accent bg-accent/15 text-accent'
           : 'border-border bg-muted/40 text-fg/80 hover:border-accent hover:text-accent'
@@ -136,7 +136,7 @@ function SpaceGroup(): ReactNode {
           onClick={() => setSpace(s.value)}
           data-testid={`toolbar-space-${s.value}`}
           title={`${s.label} (${s.key} to toggle)`}
-          className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide ${
+          className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
             space === s.value ? 'bg-accent/25 text-accent' : 'text-fg/60 hover:text-fg'
           }`}
         >
@@ -164,7 +164,7 @@ function ModePill(): ReactNode {
             onClick={() => setMode(m.value)}
             data-testid={`top-toolbar-mode-${m.value}`}
             title={`${m.label} (${m.key})`}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-mono uppercase tracking-wide transition-colors ${
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
               active
                 ? 'bg-accent text-bg'
                 : 'text-fg-dim hover:bg-muted hover:text-fg'
@@ -191,7 +191,7 @@ function RightCluster(): ReactNode {
         disabled
         data-testid="top-toolbar-zoom"
         title="Viewport zoom — coming in a later wave"
-        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/30 px-2 text-[10px] font-mono uppercase tracking-wide text-fg-mute"
+        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/30 px-2 text-[10px] font-mono uppercase tracking-wide text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span>100%</span>
         <span aria-hidden>▾</span>
@@ -201,7 +201,7 @@ function RightCluster(): ReactNode {
         onClick={exportDagJson}
         data-testid="top-toolbar-export"
         title="Export DAG as JSON"
-        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent"
+        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span aria-hidden>⬇</span>
         <span>Export</span>
@@ -211,7 +211,7 @@ function RightCluster(): ReactNode {
         onClick={() => setMode('director')}
         data-testid="top-toolbar-present"
         title="Director Cut — chrome-hidden viewport (Esc returns)"
-        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent"
+        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span aria-hidden>⛚</span>
         <span>Present</span>
@@ -225,9 +225,13 @@ export function TopToolbar(): ReactNode {
   // (no flex, fixed width via content), right (flex-1, justify-end).
   // The two flex-1 outer columns balance on either side of the center
   // pill, keeping it centered regardless of left content size.
+  const mode = useModeStore((s) => s.mode);
   return (
     <div
       data-testid="top-toolbar"
+      role="toolbar"
+      aria-orientation="horizontal"
+      aria-label={`Toolbar — mode ${mode ?? 'unknown'}`}
       className="flex items-center gap-3 border-b border-border bg-bg/95 px-3 py-1 font-mono text-fg"
     >
       {/* Left zone */}

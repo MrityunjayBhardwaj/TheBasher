@@ -5,7 +5,7 @@
 // REF: docs/UI-SPEC.md §5.6; src/viewport/ModeBadge.tsx.
 
 import { describe, expect, it } from 'vitest';
-import { formatBadge } from './ModeBadge';
+import { formatBadge, formatBadgeAria } from './ModeBadge';
 
 const FPS = 60;
 const DURATION = 10; // seconds → 600 frames at 60fps
@@ -38,5 +38,23 @@ describe('formatBadge', () => {
     // Zero/negative duration produces a sane "0/0" rather than NaN.
     expect(formatBadge('run', 0, 0, FPS)).toBe('RUN 0/0');
     expect(formatBadge('run', 0, -1, FPS)).toBe('RUN 0/0');
+  });
+});
+
+describe('formatBadgeAria (C4 — D-W8-6 SR-friendly labels)', () => {
+  it('expands EDIT into "Edit mode"', () => {
+    expect(formatBadgeAria('edit', 0, DURATION, FPS)).toBe('Edit mode');
+  });
+
+  it('expands RUN N/M into "Run mode — frame N of M"', () => {
+    expect(formatBadgeAria('run', 47, DURATION, FPS)).toBe('Run mode — frame 47 of 600');
+  });
+
+  it('expands ANIMATE Nfps into "Animate mode — N fps"', () => {
+    expect(formatBadgeAria('animate', 0, DURATION, FPS)).toBe('Animate mode — 60 fps');
+  });
+
+  it('returns null in director mode (badge hidden, no announcement)', () => {
+    expect(formatBadgeAria('director', 0, DURATION, FPS)).toBeNull();
   });
 });

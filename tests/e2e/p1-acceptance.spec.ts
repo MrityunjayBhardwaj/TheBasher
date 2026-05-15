@@ -8,7 +8,8 @@
 // behavior — the asset drop helper, the dispatchAtomic call, the
 // migration runner — only the pointer-event simulation is bypassed.
 
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 /**
  * Open the bundled-assets popover (P6 W2.5 replacement for the

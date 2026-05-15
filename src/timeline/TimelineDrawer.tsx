@@ -23,6 +23,7 @@
 import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
+import { useModeStore } from '../app/stores/modeStore';
 import {
   useTimelineDockStore,
   type TimelineTab,
@@ -50,11 +51,18 @@ export function TimelineDrawer() {
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
+  const mode = useModeStore((s) => s.mode);
 
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
 
   return (
-    <div data-testid="timeline-drawer" data-open={open} className="flex w-full flex-col">
+    <div
+      data-testid="timeline-drawer"
+      data-open={open}
+      role="region"
+      aria-label={`Timeline — mode ${mode ?? 'unknown'}, frame ${frame}`}
+      className="flex w-full flex-col"
+    >
       {open && (
         <div
           className="flex w-full flex-col border-t border-line"
@@ -93,7 +101,7 @@ export function TimelineDrawer() {
           data-testid="timeline-drawer-toggle"
           aria-label={open ? 'Collapse timeline drawer' : 'Expand timeline drawer'}
           aria-expanded={open}
-          className="flex w-8 items-center justify-center border-r border-line bg-bg-2 text-fg hover:bg-line"
+          className="flex w-8 items-center justify-center border-r border-line bg-bg-2 text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           onClick={toggle}
         >
           {open ? '▾' : '▴'}
@@ -120,6 +128,8 @@ function DockHeader({
   return (
     <div
       data-testid="timeline-tab-strip"
+      role="tablist"
+      aria-label="Timeline tabs"
       className="flex items-stretch border-b border-line bg-bg-2 text-xs"
       style={{ height: HEADER_HEIGHT_PX }}
     >
@@ -165,7 +175,7 @@ function TabButton({
       data-testid={`timeline-tab-${id}`}
       data-active={active}
       onClick={onClick}
-      className={`flex items-center border-r border-line px-3 ${
+      className={`flex items-center border-r border-line px-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
         active ? 'bg-bg text-fg' : 'text-mute hover:bg-line/40 hover:text-fg'
       }`}
     >
@@ -274,7 +284,7 @@ function ToolbarButton({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded px-2 py-1 ${
+      className={`rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
         disabled
           ? 'cursor-not-allowed text-mute'
           : 'text-fg hover:bg-line'

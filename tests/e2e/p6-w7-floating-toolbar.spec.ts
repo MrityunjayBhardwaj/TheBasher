@@ -18,7 +18,7 @@
 // REF: docs/UI-SPEC.md §5.6, §5.7, §11; memory/project_p6_w7_plan.md;
 // vyapti V11 (Canvas mounts once), V19 (single keyboard/UI dispatcher).
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface BasherWindow {
   __basher_editor?: { getState: () => { activeTool: string } };

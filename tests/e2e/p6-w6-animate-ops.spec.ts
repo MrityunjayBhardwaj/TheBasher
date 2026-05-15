@@ -19,7 +19,7 @@
 // REF: docs/UI-SPEC.md §5.9 bottom toolbar + §6.2 keyboard model;
 // D-W6-1..5 (memory/project_p6_w6_context.md).
 
-import { expect, test } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 interface KeyframeShape {
   time: number;

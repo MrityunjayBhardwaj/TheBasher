@@ -4,7 +4,7 @@
 // Toggling opens the drawer; dopesheet + curve editor panes appear; an
 // empty project shows the "no animation channels" hint.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './_fixtures';
 
 interface BasherWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown> } } };

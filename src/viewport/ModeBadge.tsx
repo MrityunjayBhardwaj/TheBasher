@@ -48,12 +48,37 @@ export function formatBadge(
   }
 }
 
+/** Pure formatter — SR-friendly aria-label for the current mode +
+ *  counters. Mirrors formatBadge's mode switch so visible label and
+ *  announced label are derived from the same source. Returns null for
+ *  director mode (badge is hidden). */
+export function formatBadgeAria(
+  mode: Mode,
+  frame: number,
+  durationSeconds: number,
+  fps: number,
+): string | null {
+  switch (mode) {
+    case 'edit':
+      return 'Edit mode';
+    case 'run': {
+      const total = Math.max(0, Math.round(durationSeconds * fps));
+      return `Run mode — frame ${frame} of ${total}`;
+    }
+    case 'animate':
+      return `Animate mode — ${fps} fps`;
+    case 'director':
+      return null;
+  }
+}
+
 export function ModeBadge(): ReactNode {
   const mode = useModeStore((s) => s.mode);
   const frame = useTimeStore((s) => s.frame);
   const durationSeconds = useTimeStore((s) => s.durationSeconds);
 
   const label = formatBadge(mode, frame, durationSeconds, FRAMES_PER_SECOND);
+  const ariaLabel = formatBadgeAria(mode, frame, durationSeconds, FRAMES_PER_SECOND);
   if (label === null) return null;
 
   return (
@@ -62,7 +87,13 @@ export function ModeBadge(): ReactNode {
       data-mode={mode}
       className="pointer-events-none absolute right-2 top-2 z-10 rounded border border-border-strong bg-bg-2/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-fg-dim backdrop-blur-sm"
     >
-      {label}
+      {/* aria-live on the inner span (which holds the label text) so SR
+          engines watch the live element for content changes. Wrapping
+          ensures the announcement fires when the label changes (e.g.
+          mode flips edit → animate, or run frame advances). */}
+      <span aria-label={ariaLabel ?? label} aria-live="polite">
+        {label}
+      </span>
     </div>
   );
 }
