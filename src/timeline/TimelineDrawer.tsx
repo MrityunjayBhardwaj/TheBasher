@@ -1,6 +1,9 @@
 // TimelineDrawer — Timebar (always visible) + collapsible drawer body
-// hosting Dopesheet and CurveEditor as tabs (P6 W5 — UI-SPEC §5.9;
-// D-UX-2). Bottom toolbar with track-ops buttons added P6 W6.
+// hosting the dopesheet view (TimelineCanvas, the canvas-2D surface
+// the SVG Dopesheet was replaced by in P6 W9) and CurveEditor as tabs
+// (P6 W5 — UI-SPEC §5.9; D-UX-2). The "Dopesheet" tab id/label is
+// unchanged — only the rendering technology advanced (D-W9-2). Bottom
+// toolbar with track-ops buttons added P6 W6.
 //
 // Drawer open/closed lives in viewportStore (timelineDrawerOpen).
 // Default closed — preserves P0/P2 acceptance pixel-diff baselines.
@@ -36,7 +39,7 @@ import {
 } from '../app/KeyboardShortcuts';
 import { clearChannelMutator, validatePlan } from '../agent/mutators';
 import { Timebar } from '../app/Timebar';
-import { Dopesheet } from './Dopesheet';
+import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
 import { SimplifyPopover } from './SimplifyPopover';
 
@@ -76,12 +79,12 @@ export function TimelineDrawer() {
           />
           <div className="relative flex-1" style={{ minHeight: 0 }}>
             <div
-              data-testid="dopesheet-pane"
+              data-testid="timeline-canvas-pane"
               data-active={activeTab === 'dopesheet'}
               className="absolute inset-0"
               style={{ display: activeTab === 'dopesheet' ? 'flex' : 'none' }}
             >
-              <Dopesheet duration={duration} />
+              <TimelineCanvas duration={duration} />
             </div>
             <div
               data-testid="curve-editor-pane"

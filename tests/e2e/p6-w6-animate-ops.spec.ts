@@ -45,6 +45,50 @@ interface BasherWindow {
   };
   __basher_viewport?: { getState: () => { timelineDrawerOpen: boolean } };
   __basher_time?: { getState: () => { setTime: (s: number) => void; seconds: number } };
+  // P6 W9: TimelineCanvas paints channel rows + keyframe diamonds onto a
+  // 2D <canvas> (no per-row/per-diamond DOM, D-W9-4 forbids pixel-
+  // clicking). Channel + keyframe selection — exactly what the SVG
+  // row/diamond onClick handlers did (setActiveChannel /
+  // setActiveKeyframe) — routes through this store seam.
+  __basher_timeline_selection?: {
+    getState: () => {
+      setActiveChannel: (id: string | null) => void;
+      setActiveKeyframe: (ref: { channelId: string; time: number } | null) => void;
+      activeKeyframeId: { channelId: string; time: number } | null;
+    };
+  };
+}
+
+/** P6 W9 — select a channel via the timelineSelection seam (replaces a
+ *  `channel-row-{id}` DOM click; the SVG row's onClick called exactly
+ *  this). */
+async function selectChannel(
+  page: import('@playwright/test').Page,
+  channelId: string,
+): Promise<void> {
+  await page.evaluate((id) => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_timeline_selection!.getState().setActiveChannel(id);
+  }, channelId);
+}
+
+/** P6 W9 — select a keyframe via the seam (replaces a
+ *  `keyframe-diamond-{ch}-{i}` click; the SVG diamond's onClick set the
+ *  active channel AND the (channelId,time) keyframe ref — mirror both). */
+async function selectKeyframe(
+  page: import('@playwright/test').Page,
+  channelId: string,
+  time: number,
+): Promise<void> {
+  await page.evaluate(
+    ({ channelId, time }) => {
+      const w = window as unknown as BasherWindow;
+      const sel = w.__basher_timeline_selection!.getState();
+      sel.setActiveChannel(channelId);
+      sel.setActiveKeyframe({ channelId, time });
+    },
+    { channelId, time },
+  );
 }
 
 test.beforeEach(async ({ page }) => {
@@ -66,7 +110,12 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_viewport && w.__basher_time);
+    return Boolean(
+      w.__basher_dag &&
+        w.__basher_viewport &&
+        w.__basher_time &&
+        w.__basher_timeline_selection,
+    );
   });
   await page.getByTestId('mode-switcher').selectOption('animate');
   // Seed a layer + Number channel with 3 keyframes so all W6 features
@@ -153,7 +202,7 @@ test('P6.W6#1 bottom toolbar visible with disabled buttons until selection', asy
   // Delete disabled regardless of channel — needs an active keyframe.
   await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
   // Click channel row → Key/Simplify/Clear enable; Delete still disabled.
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   await expect(page.getByTestId('timeline-toolbar-key')).toHaveAttribute('data-disabled', 'false');
   await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute('data-disabled', 'false');
   await expect(page.getByTestId('timeline-toolbar-clear')).toHaveAttribute('data-disabled', 'false');
@@ -161,7 +210,7 @@ test('P6.W6#1 bottom toolbar visible with disabled buttons until selection', asy
 });
 
 test('P6.W6#2 K keyboard inserts a keyframe at current time on active channel', async ({ page }) => {
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   // Move time to 0.25 (between existing keyframes).
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
@@ -177,7 +226,7 @@ test('P6.W6#2 K keyboard inserts a keyframe at current time on active channel', 
 });
 
 test('P6.W6#3 Key button mirrors K keyboard', async ({ page }) => {
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     w.__basher_time!.getState().setTime(0.75);
@@ -190,12 +239,21 @@ test('P6.W6#3 Key button mirrors K keyboard', async ({ page }) => {
 });
 
 test('P6.W6#4 click diamond selects keyframe; Delete removes it (D-W6-2)', async ({ page }) => {
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   // Initially Delete is disabled.
   await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
-  // Click the middle diamond (index 1 → time 0.5).
-  await page.getByTestId('keyframe-diamond-ch-1').click();
-  await expect(page.getByTestId('keyframe-diamond-ch-1')).toHaveAttribute('data-active', 'true');
+  // P6 W9: select the middle keyframe (seeded at time 0.5) via the
+  // timelineSelection seam — the SVG diamond's onClick set exactly this
+  // (channelId,time) ref; the canvas paints diamonds with no per-diamond
+  // DOM. Assert selection took via the live selection store (the
+  // toolbar's disabled state is downstream of activeKeyframeId, so the
+  // data-disabled flip below is the real D-W6-2 observation).
+  await selectKeyframe(page, 'ch', 0.5);
+  const sel = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return w.__basher_timeline_selection!.getState().activeKeyframeId;
+  });
+  expect(sel).toEqual({ channelId: 'ch', time: 0.5 });
   await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'false');
   // Press Delete — keyframe at t=0.5 should disappear.
   await page.keyboard.press('Delete');
@@ -207,7 +265,7 @@ test('P6.W6#4 click diamond selects keyframe; Delete removes it (D-W6-2)', async
 });
 
 test('P6.W6#5 [ and ] seek to previous / next keyframe time', async ({ page }) => {
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   // Start at t=0.7 (between 0.5 and 1).
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
@@ -230,7 +288,7 @@ test('P6.W6#5 [ and ] seek to previous / next keyframe time', async ({ page }) =
 });
 
 test('P6.W6#6 Clear button empties the active channel via the Mutator', async ({ page }) => {
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   await page.getByTestId('timeline-toolbar-clear').click();
   const keyframes = await readChannelKeyframes(page);
   expect(keyframes).toEqual([]);
@@ -255,7 +313,7 @@ test('P6.W6#7 Simplify popover applies mutator.timeline.simplifyChannel', async 
       ],
     });
   });
-  await page.getByTestId('channel-row-ch').click();
+  await selectChannel(page, 'ch');
   await page.getByTestId('timeline-toolbar-simplify').click();
   await expect(page.getByTestId('simplify-popover')).toBeVisible();
   // Tolerance 0.01 — collinear interior keyframes drop.

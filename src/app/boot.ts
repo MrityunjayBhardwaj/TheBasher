@@ -196,6 +196,17 @@ export function boot(): Promise<void> {
       void import('./stores/timelineDockStore').then((m) => {
         w.__basher_timeline_dock = m.useTimelineDockStore;
       });
+      // P6 W9 — timelineSelection exposed so e2e can drive channel /
+      // keyframe selection programmatically. The old SVG Dopesheet
+      // exposed per-row `channel-row-{id}` + `keyframe-diamond-{id}-{i}`
+      // testids that specs clicked to select; TimelineCanvas paints
+      // those onto a 2D <canvas> (no per-row DOM, D-W9-4 forbids
+      // pixel-diffing), so selection MUST route through this store
+      // seam instead of click coordinates. H29 migration target —
+      // same K12 dev-seam pattern as __basher_timeline_dock.
+      void import('../timeline/timelineSelection').then((m) => {
+        w.__basher_timeline_selection = m.useTimelineSelection;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;
