@@ -80,6 +80,8 @@ function Menu({ label, testId, children, open, onOpen, onClose }: MenuProps) {
       </button>
       {open ? (
         <div
+          role="menu"
+          aria-label={`${label} menu`}
           data-testid={`${testId}-panel`}
           className="absolute left-0 top-full z-40 mt-0.5 w-[260px] overflow-hidden rounded border border-border bg-bg shadow-lg"
           onClick={onClose}
@@ -103,13 +105,18 @@ function Item({ label, shortcut, onSelect, disabled, testId }: ItemProps) {
   return (
     <button
       type="button"
+      role="menuitem"
       disabled={disabled}
       onClick={() => void onSelect()}
       data-testid={testId}
       className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"
     >
       <span>{label}</span>
-      {shortcut ? <span className="font-mono text-[10px] text-fg/40">{shortcut}</span> : null}
+      {shortcut ? (
+        <span aria-hidden className="font-mono text-[10px] text-fg/40">
+          {shortcut}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -132,6 +139,9 @@ function Submenu({
     >
       <button
         type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={open}
         data-testid={testId}
         onClick={(e) => {
           e.stopPropagation();
@@ -140,10 +150,14 @@ function Submenu({
         className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span>{label}</span>
-        <span className="font-mono text-[10px] text-fg/40">▸</span>
+        <span aria-hidden className="font-mono text-[10px] text-fg/40">▸</span>
       </button>
       {open ? (
-        <div className="absolute left-full top-0 z-50 -mt-1 w-[220px] overflow-hidden rounded border border-border bg-bg shadow-lg">
+        <div
+          role="menu"
+          aria-label={label}
+          className="absolute left-full top-0 z-50 -mt-1 w-[220px] overflow-hidden rounded border border-border bg-bg shadow-lg"
+        >
           {children}
         </div>
       ) : null}
