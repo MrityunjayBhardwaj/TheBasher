@@ -11,6 +11,12 @@
 // + src/app/character/GroundClick.tsx. The dispatch surface stays in
 // src/app/, the renderer stays in src/viewport/.
 //
+// `currentFrameRef.current` is written by `timeStore` (the frame chokepoint)
+// and read by `src/timeline/TimelineCanvas.tsx`'s rAF loop — a React-bypass
+// escape hatch so the 60fps playhead does not re-render every seconds-
+// subscriber. Both stores are src/app/stores/* projection stores; neither
+// touches the DAG, so this cross-store mirror is V8-clean. See D-W9-1/9.
+//
 // REF: THESIS.md §11; vyapti V1, V8.
 
 import { create } from 'zustand';
@@ -49,6 +55,21 @@ export interface ViewportStore {
   shading: ShadingMode;
   /** Whether the timeline drawer (dopesheet + curve editor) is expanded. */
   timelineDrawerOpen: boolean;
+  /** React-bypass escape hatch for the 60fps timeline playhead.
+   *
+   *  The OBJECT is created once at store init and is stable for the store's
+   *  entire lifetime — consumers (TimelineCanvas's rAF loop) hold this exact
+   *  reference. ONLY `.current` mutates; the object is NEVER reassigned. A
+   *  reassignment would leave every consumer holding a dead ref that silently
+   *  stops tracking (context memo §3 silent-failure mode).
+   *
+   *  There is intentionally NO setter: `.current` is written by direct field
+   *  write exclusively from `timeStore`'s three frame setters (the single
+   *  chokepoint where `frame` mutates), and read by TimelineCanvas via
+   *  `getState()`. Single-writer is what makes the
+   *  `currentFrameRef.current === useTimeStore.getState().frame`
+   *  invariant hold by construction. See D-W9-1, D-W9-9. */
+  currentFrameRef: { current: number };
 
   setPivot(pivot: Pivot): void;
   setSnapStep(step: number): void;
@@ -76,6 +97,10 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // open the drawer when they want to author keyframes; pixel-diff tests
   // run with the drawer closed so the canvas DIV dimensions don't shift.
   timelineDrawerOpen: false,
+  // Created once here; the object reference is stable for the store lifetime.
+  // `.current` is mutated only by timeStore's frame chokepoint — never
+  // reassign this object. See D-W9-1, D-W9-9.
+  currentFrameRef: { current: 0 },
 
   setPivot: (pivot) => set({ pivot }),
   setSnapStep: (snapStep) => set({ snapStep: Math.max(0, snapStep) }),

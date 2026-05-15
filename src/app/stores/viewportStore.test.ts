@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { maybeSnapVec3, snap, snapVec3, useViewportStore } from './viewportStore';
+import { useTimeStore } from './timeStore';
 
 beforeEach(() => {
   useViewportStore.setState({
@@ -68,5 +69,74 @@ describe('viewportStore — toggles', () => {
   it('setShading accepts wireframe mode', () => {
     useViewportStore.getState().setShading('wireframe');
     expect(useViewportStore.getState().shading).toBe('wireframe');
+  });
+});
+
+// currentFrameRef — the W9 React-bypass escape hatch (D-W9-1, D-W9-9).
+// The ref OBJECT is owned by viewportStore (single init); `.current` is
+// written EXCLUSIVELY by timeStore's three frame setters (the chokepoint).
+// The invariant under test: currentFrameRef.current === timeStore.frame
+// after every frame transition (playback AND scrub AND duration change).
+describe('viewportStore — currentFrameRef escape hatch', () => {
+  beforeEach(() => {
+    // Reset both stores to a known frame-zero baseline. currentFrameRef is
+    // mutated in place (never reassigned) so we zero `.current`, not the
+    // object.
+    useTimeStore.setState({
+      seconds: 0,
+      frame: 0,
+      normalized: 0,
+      durationSeconds: 10,
+      playing: false,
+    });
+    useViewportStore.getState().currentFrameRef.current = 0;
+  });
+
+  it('is initialized to { current: 0 }', () => {
+    expect(useViewportStore.getState().currentFrameRef).toEqual({ current: 0 });
+  });
+
+  it('keeps a stable object identity across store mutations (never reassigned)', () => {
+    const ref = useViewportStore.getState().currentFrameRef;
+    useTimeStore.getState().setTime(1.5);
+    useViewportStore.getState().setSnapStep(0.5);
+    useTimeStore.getState().setDuration(20);
+    expect(useViewportStore.getState().currentFrameRef).toBe(ref);
+  });
+
+  it('sync invariant holds after setTime', () => {
+    useTimeStore.getState().setTime(2.5);
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(
+      useTimeStore.getState().frame,
+    );
+    // 2.5s * 60fps = frame 150 (sanity on the actual value, not just equality).
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(150);
+  });
+
+  it('sync invariant holds after tick() while playing', () => {
+    useTimeStore.getState().play();
+    useTimeStore.getState().tick(0.1);
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(
+      useTimeStore.getState().frame,
+    );
+    expect(useTimeStore.getState().frame).toBeGreaterThan(0);
+  });
+
+  it('sync invariant holds after setDuration', () => {
+    useTimeStore.getState().setTime(8);
+    useTimeStore.getState().setDuration(5); // clamps seconds 8 → 5
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(
+      useTimeStore.getState().frame,
+    );
+    // 5s * 60fps = frame 300 after the duration clamp.
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(300);
+  });
+
+  it('a non-frame mutation (setSnapStep) leaves currentFrameRef.current unchanged', () => {
+    useTimeStore.getState().setTime(1); // .current = 60
+    const before = useViewportStore.getState().currentFrameRef.current;
+    expect(before).toBe(60);
+    useViewportStore.getState().setSnapStep(0.75);
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(before);
   });
 });
