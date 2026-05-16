@@ -2,7 +2,14 @@
 // menu bar / NPanel.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { maybeSnapVec3, snap, snapVec3, useViewportStore } from './viewportStore';
+import {
+  cameraDistanceToZoomPercent,
+  DEFAULT_CAMERA_DISTANCE,
+  maybeSnapVec3,
+  snap,
+  snapVec3,
+  useViewportStore,
+} from './viewportStore';
 import { useTimeStore } from './timeStore';
 
 beforeEach(() => {
@@ -13,6 +20,7 @@ beforeEach(() => {
     gridVisible: true,
     axisWidgetVisible: true,
     shading: 'studio',
+    cameraZoom: 100,
   });
 });
 
@@ -69,6 +77,48 @@ describe('viewportStore — toggles', () => {
   it('setShading accepts wireframe mode', () => {
     useViewportStore.getState().setShading('wireframe');
     expect(useViewportStore.getState().shading).toBe('wireframe');
+  });
+});
+
+// cameraZoom — the c-1 (P6 W10 UIR) real zoom signal. The pure
+// distance→percent derivation is unit-tested here (no THREE / no DOM);
+// the OrbitControls listener that feeds it live distance is e2e-tested
+// in tests/e2e/p6-w10-ui-review.spec.ts. 100% == the R3F default
+// camera distance (5); closer reads higher, farther reads lower.
+describe('viewportStore — camera zoom (UIR c-1)', () => {
+  it('default distance maps to exactly 100%', () => {
+    expect(cameraDistanceToZoomPercent(DEFAULT_CAMERA_DISTANCE)).toBe(100);
+  });
+
+  it('dollying closer reads a higher percentage', () => {
+    // half the default distance → twice the zoom
+    expect(cameraDistanceToZoomPercent(2.5)).toBe(200);
+  });
+
+  it('dollying out reads a lower percentage', () => {
+    // double the default distance → half the zoom
+    expect(cameraDistanceToZoomPercent(10)).toBe(50);
+  });
+
+  it('clamps degenerate distances to a sane 100% (no NaN/Infinity leak)', () => {
+    expect(cameraDistanceToZoomPercent(0)).toBe(100);
+    expect(cameraDistanceToZoomPercent(-3)).toBe(100);
+    expect(cameraDistanceToZoomPercent(Number.NaN)).toBe(100);
+    expect(cameraDistanceToZoomPercent(Number.POSITIVE_INFINITY)).toBe(100);
+  });
+
+  it('never drops below 1% even at extreme dolly-out', () => {
+    expect(cameraDistanceToZoomPercent(100000)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('setCameraZoom stores a rounded, clamped value', () => {
+    expect(useViewportStore.getState().cameraZoom).toBe(100);
+    useViewportStore.getState().setCameraZoom(247.6);
+    expect(useViewportStore.getState().cameraZoom).toBe(248);
+    useViewportStore.getState().setCameraZoom(-5);
+    expect(useViewportStore.getState().cameraZoom).toBe(1);
+    useViewportStore.getState().setCameraZoom(Number.NaN);
+    expect(useViewportStore.getState().cameraZoom).toBe(100);
   });
 });
 

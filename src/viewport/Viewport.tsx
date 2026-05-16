@@ -10,14 +10,15 @@
 
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Suspense } from 'react';
+import { Suspense, useCallback } from 'react';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
-import { useViewportStore } from '../app/stores/viewportStore';
+import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
 import { useSelectionSummary } from '../app/hooks/useSelectionSummary';
 import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
@@ -30,12 +31,38 @@ function EditorOrbit() {
   // (gizmoStore.dragging). Without this, gizmo + orbit fire simultaneously.
   // Reading via subscription so the prop flips at the right frame.
   const dragging = useGizmoStore((s) => s.dragging);
+
+  // c-1 (P6 W10 UIR): the real camera-zoom signal. OrbitControls fires
+  // `onChange` on every dolly/rotate/pan tick; we read the live
+  // camera→target distance and derive a zoom % via the PURE
+  // `cameraDistanceToZoomPercent` helper (no THREE math here — that's
+  // unit-tested in the store). The result lands in `viewportStore`,
+  // which the R3 TopToolbar zoom readout consumes (§5.3 anatomy).
+  //
+  // V8: writing `viewportStore` (a UI-projection store) from
+  // `src/viewport/` is V8-clean — V8's file-rooted ban covers only
+  // `dispatch`/`useDagStore.setState`/`applyOp`; a projection-store
+  // setter is the SAME in-viewport write class as the long-standing
+  // `useSelectionStore.getState().clear()` at onPointerMissed below.
+  // Camera zoom is the editor-session projection class the
+  // viewportStore header explicitly names ("like the camera orbit
+  // pose") — never persisted, never in the DAG.
+  const handleChange = useCallback((e?: { target: OrbitControlsImpl }) => {
+    const controls = e?.target;
+    if (!controls) return;
+    const distance = controls.object.position.distanceTo(controls.target);
+    useViewportStore
+      .getState()
+      .setCameraZoom(cameraDistanceToZoomPercent(distance));
+  }, []);
+
   return (
     <OrbitControls
       makeDefault
       enabled={!dragging}
       enableDamping
       dampingFactor={0.08}
+      onChange={handleChange}
       // Default mouse map: rotate (LMB), zoom (wheel), pan (RMB / two-finger).
     />
   );

@@ -55,6 +55,25 @@ export interface ViewportStore {
   shading: ShadingMode;
   /** Whether the timeline drawer (dopesheet + curve editor) is expanded. */
   timelineDrawerOpen: boolean;
+  /** Viewport camera zoom as a percentage (100 = default framing).
+   *
+   *  This is an editor-session projection exactly like the camera orbit
+   *  pose named in this file's header — it is NOT persisted with the
+   *  project and NEVER enters the DAG (V8). It is derived from the
+   *  OrbitControls camera→target distance: 100% at the R3F default
+   *  camera distance (5 world units from origin), scaling inversely
+   *  (dolly closer → higher %, dolly out → lower %).
+   *
+   *  Written by `setCameraZoom`, called from the OrbitControls
+   *  `onChange`/`onEnd` listener in `src/viewport/Viewport.tsx`. That
+   *  write is V8-clean: `viewportStore` is a UI-projection store, NOT
+   *  the DAG; V8's file-rooted ban covers only `dispatch`/
+   *  `useDagStore.setState`/`applyOp` inside `src/viewport/`. A
+   *  projection-store setter is the SAME class of in-viewport write as
+   *  the long-standing `useSelectionStore.getState().clear()` at
+   *  Viewport.tsx onPointerMissed. Read by R3 TopToolbar's zoom readout
+   *  (§5.3 anatomy). See P6 W10 UIR c-1. */
+  cameraZoom: number;
   /** React-bypass escape hatch for the 60fps timeline playhead.
    *
    *  The OBJECT is created once at store init and is stable for the store's
@@ -78,6 +97,7 @@ export interface ViewportStore {
   setAxisWidgetVisible(visible: boolean): void;
   setShading(shading: ShadingMode): void;
   setTimelineDrawerOpen(open: boolean): void;
+  setCameraZoom(zoom: number): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
   toggleSnapEnabled(): void;
@@ -97,6 +117,10 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // open the drawer when they want to author keyframes; pixel-diff tests
   // run with the drawer closed so the canvas DIV dimensions don't shift.
   timelineDrawerOpen: false,
+  // 100 = the R3F default camera framing (distance 5 from origin). The
+  // OrbitControls onChange listener recomputes this from the live
+  // camera→target distance; nothing persists it.
+  cameraZoom: 100,
   // Created once here; the object reference is stable for the store lifetime.
   // `.current` is mutated only by timeStore's frame chokepoint — never
   // reassign this object. See D-W9-1, D-W9-9.
@@ -109,6 +133,8 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
   setShading: (shading) => set({ shading }),
   setTimelineDrawerOpen: (timelineDrawerOpen) => set({ timelineDrawerOpen }),
+  setCameraZoom: (zoom) =>
+    set({ cameraZoom: Number.isFinite(zoom) ? Math.max(1, Math.round(zoom)) : 100 }),
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
@@ -129,6 +155,20 @@ export function snapVec3(
   step: number,
 ): [number, number, number] {
   return [snap(value[0], step), snap(value[1], step), snap(value[2], step)];
+}
+
+/** R3F's default PerspectiveCamera sits at distance 5 from the origin
+ *  target. We define that framing as 100% zoom. Dollying closer (smaller
+ *  distance) reads as a HIGHER percentage; dollying out reads lower —
+ *  the same mental model as a 2D canvas zoom control (§5.3 anatomy).
+ *
+ *  Pure + unit-testable (no THREE import, no DOM). The OrbitControls
+ *  listener feeds it the live camera→target distance. */
+export const DEFAULT_CAMERA_DISTANCE = 5;
+
+export function cameraDistanceToZoomPercent(distance: number): number {
+  if (!Number.isFinite(distance) || distance <= 0) return 100;
+  return Math.max(1, Math.round((DEFAULT_CAMERA_DISTANCE / distance) * 100));
 }
 
 /** Convenience: read-once helper for non-React callers (Gizmo, GroundClick). */
