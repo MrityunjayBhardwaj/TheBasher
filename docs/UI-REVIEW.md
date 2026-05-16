@@ -29,7 +29,7 @@ Pillars: L=Layout, T=Typography, C=Color, S=Spacing, I=Interaction, A=Accessibil
 |---|---|---|---|---|---|---|---|
 | **R1 ProjectTabs** | 4 | 4 | 4 | 4 | 4 | 4 | tablist/tab/aria-selected correct; dirty-dot `aria-hidden` but state mirrored in tablist aria-label; close-× is `fg-mute` (Rule A exempt) |
 | **R2 MenuBar** | 4 | 4 | 4 | 4 | 4 | 3 | `<details>`-free hand popover; dismiss-on-blur + Esc wired; `role="menuitem"`+`aria-haspopup`; F-2 submenu-aria gap (see carry item) |
-| **R3 TopToolbar** | 4 | 4 | 4 | 4 | 4 | 4 | three-zone flex, mode pill centered; zoom button disabled-advertised (SC 1.4.3 exempt); role="toolbar"+aria-orientation correct |
+| **R3 TopToolbar** | 4 | 4 | 4 | 4 | 4 | 4 | three-zone flex, mode pill centered; zoom button now a **live readout** (UIR c-1 `afd88b6` — real camera-zoom signal, no longer a dead placeholder; stays `disabled` since §5.3 specifies a zoom % *display*, not a zoom-input dropdown — SC 1.4.3 still exempt as a non-interactive status display); role="toolbar"+aria-orientation correct |
 | **R4 ToolRail** | 4 | 4 | 4 | 3 | 4 | 4 | collapsed width is 32px not 0 (F-3, spec-acknowledged); disabled actions `fg-mute`+cursor-not-allowed; toolbar/vertical aria correct |
 | **R5 LeftSidebar** | 4 | 4 | 4 | 4 | 4 | 4 | tablist+tab+aria-selected; both bodies stay mounted (V8 spirit); collapsed strip keeps toggle reachable |
 | **R6 Viewport** | 5 | n/a | n/a | 5 | 4 | 4 | `<main id=viewport tabIndex=-1 role=main>` skip-link target; aria-label static "3D viewport main content" (F-5: not selection-debounced per §8.3) |
@@ -211,19 +211,34 @@ crossing 3+ boundaries) at the UI-SPEC↔source boundary.**
 - **Total findings: 9** (+ 5 named carry items, 2 of which equal F-1/F-2/F-6 and
   D-W7-1/CI-2, counted once below to avoid double-count)
 
-### By proposed verdict
+### By proposed verdict (as audited)
 - **CODE-FIX: 5** — F-1 (CI-4), F-2 (CI-4), F-4, F-5, c-3
-  *(F-1 + F-2 are the W8-submenu-aria carry item CI-4; counted as code-fixes)*
-- **SPEC-AMEND: 4** — F-3 (ToolRail collapse clause), c-1 (zoom placeholder),
-  c-2 (close=delete semantic), CI-5 (D-W7-1 ortho — amendment already in §5.7,
-  confirm-and-close)
-- **DEFER: 2** — F-6 / CI-3 (D-W8-1 bright-scene → user-reported unreadability),
-  CI-1 (FLAG-2 → user A2 manual scrub)
-- **PASS / no-action: 1** — CI-2 (D-W9-7 V8 zero-Ops confirmed compliant)
+- **SPEC-AMEND: 4** — F-3, c-1, c-2, CI-5
+- **DEFER: 2** — F-6 / CI-3, CI-1
+- **PASS / no-action: 1** — CI-2
 
-Per D-W10-1, all CODE-FIX and SPEC-AMEND items are resolved inline in the W10
-fix run before P6 closes (no deferral backlog); the two DEFER items are
-genuinely new-capability/observation-gated and the one PASS needs no action.
+### By TERMINAL verdict (post-A4 user ratification + c-1/c-2 disposition)
+
+The user **rejected all 3 SPEC-AMEND proposals** (F-3, c-1, c-2 → forced
+CODE-FIX) and dispositioned the two mini-checkpoint items (**c-1 = BUILD
+IN W10**, **c-2 = DEFER → v0.6**). Final terminal counts:
+
+- **CODE-FIX (landed): 6** — F-1+F-2 (`81f0c36`), F-3 (`956b48f`),
+  F-4 (`6a8fa8d`), F-5 (`d9fd3fd`), c-3 (`5da9651`), **c-1 (`afd88b6`,
+  built W10 per user disposition)**
+- **DEFER: 3** — F-6 / CI-3 (→ user-reported unreadability),
+  CI-1 / FLAG-2 (→ user A2 manual scrub), **c-2 (→ v0.6, roadmapped §7)**
+- **PASS / no-action: 1** — CI-2 (D-W9-7 V8 zero-Ops confirmed compliant)
+- **SPEC-AMEND confirmed-closed (W7, no W10 action): 1** — CI-5 (D-W7-1
+  ortho — §5.7 amendment already shipped W7, verified + closed)
+- **SPEC-AMEND newly added in W10: 0** — ZERO §1 divergence-ledger entries;
+  the spec stayed the untouched forward contract.
+
+**Zero findings OPEN.** Every F-1..F-6, c-1..c-3, CI-1..CI-5 carries a
+terminal verdict + (SHA | DEFER-target | PASS-stated): see §7 per-finding
+ledger. Per D-W10-1, all CODE-FIX landed inline before P6 closes; the 3
+DEFER items are genuinely new-capability/observation-gated (each with an
+explicit target); the 1 PASS needs no action; CI-5 is confirmed-closed.
 
 ### Surfaces that could NOT be fully assessed
 - **TimelineCanvas pillars 1–4 (Layout/Typography/Color/Spacing):** withheld as
@@ -251,8 +266,8 @@ the code was bent to the spec, never the reverse.
 | **F-3** ToolRail collapse never reaches 0 | CODE-FIX *(SPEC-AMEND rejected by user → forced CODE-FIX)* | `956b48f` — Layout `toolRailWidth` collapsed → `'0'`; collapsed ToolRail is `w-0` with the re-expand control as an absolutely-positioned edge tab escaping via the slot's `overflow:visible` (resolves the auditor's "0-width orphans the expand control" concern in code, not spec) |
 | **F-4** viewport aria-label static | CODE-FIX | `6a8fa8d` — `<main>` aria-label = `3D viewport — ${useSelectionSummary()}` (new shared hook; Viewport's aria-live span consumes the same source — never diverges) |
 | **F-5** ComfyStatusIndicator no aria-live | CODE-FIX | `d9fd3fd` — `aria-live=polite`+`aria-atomic`+stateful `aria-label` on the indicator button |
-| **c-1** zoom-% readout never updates | CODE-FIX *(SPEC-AMEND rejected → forced CODE-FIX)* | **MINI-CHECKPOINT STOP — escalated to user.** Investigation: `viewportStore`/`editorStore` carry zero camera/zoom/distance state; `OrbitControls` (Viewport.tsx:45) has no `ref`/`onChange`/`onEnd`. A real readout requires a new camera-zoom signal pipeline (controls ref + change listener + new store field + writer) absent in v0.5 — **new capability, out of audit-wave scope (plan audit-recursion cap).** NOT built, NOT silently deferred — user decides W10-inline vs P7. **OPEN — awaiting user.** |
-| **c-2** close == delete | CODE-FIX *(SPEC-AMEND rejected → forced CODE-FIX)* | **MINI-CHECKPOINT STOP — escalated to user.** Investigation: `switchProject` already does persist-then-load (save+unload primitives exist), but there is **no open-set vs storage-set distinction** — every project is always a tab; `ProjectTabs` lists all projects from storage. A non-destructive close needs a new "open tabs" session abstraction separate from persisted storage (new project-lifecycle machinery), not a bounded wire-up. **NOT built, NOT silently deferred — user decides W10-inline vs v0.6.** **OPEN — awaiting user.** |
+| **c-1** zoom-% readout never updates | CODE-FIX (built W10) *(SPEC-AMEND rejected → forced CODE-FIX)* | **`afd88b6` — BUILT.** Mini-checkpoint dispositioned by user → BUILD IN W10. Real signal pipeline: `viewportStore.cameraZoom` + pure unit-tested `cameraDistanceToZoomPercent` + `OrbitControls.onChange` writer in `Viewport.tsx` (V8-clean: UI-projection-store write, file-rooted ban covers only DAG dispatch primitives — same in-viewport write class as the long-standing `useSelectionStore.getState().clear()` precedent) + R3 TopToolbar live readout (stays disabled — §5.3 specifies a zoom % *display*, not a zoom-input dropdown; §5.3 NOT amended). Observed: vitest 21/21 (+7), e2e p6-w10-ui-review 2/2 (readout DOM text observed 100%→200%→50%). |
+| **c-2** close == delete | DEFER → v0.6 *(SPEC-AMEND rejected → forced CODE-FIX; CODE-FIX = new-capability → DEFER)* | **DEFER → v0.6.** Mini-checkpoint dispositioned by user → DEFER to v0.6. Rationale: a non-destructive close needs a new open-tabs-vs-storage session abstraction — a project-lifecycle redesign, out of audit-wave scope. Spec §5.1 anatomy stays the forward contract (NOT a SPEC-AMEND, NOT a silent divergence); the v0.5 destructive-close gap is roadmapped to v0.6, tracked in the v0.6 roadmap note below. The `window.confirm` guard at `ProjectTabs.tsx:104-106` remains the v0.5 mitigation until then. |
 | **c-3** canvas attr literal `0` | CODE-FIX | `5da9651` — `data-rendered-keyframes` JSX init derived via `useMemo` from the same `cullVisibleKeyframes` the effect uses; pre-first-paint DOM now matches the contract (mirror-attr, not pixel-tested per H30/D-W9-4) |
 | **F-6 / CI-3** bright-scene contrast | DEFER → user-reported unreadability | No W10 action (new capability: scene-luminance-adaptive chrome tint). Stated, not implied. |
 | **CI-1 / FLAG-2** count-constant ≠ pixels-restored | DEFER → user A2 manual scrub | No W10 code action; observation-gated (jsdom cannot run rAF+canvas). The 1 skipped Playwright spec is this deferral, not a regression. |
@@ -264,10 +279,26 @@ the code was bent to the spec, never the reverse.
 Two findings (c-1, c-2) the user forced from SPEC-AMEND to CODE-FIX were,
 on investigation, **new-capability** rather than corrections to existing
 chrome — exactly the audit-recursion cap the W10 plan installed. Per the
-plan's bounded-exception rule, they were **NOT built and NOT silently
-deferred**: they STOP here for the user's explicit W10-inline-vs-later
-decision. The safeguard firing is the intended outcome, not a failure —
-it prevents a scope balloon disguised as "fix everything inline."
+plan's bounded-exception rule, they STOPPED at a mini-checkpoint for the
+user's explicit W10-inline-vs-later decision. **Disposition (user):**
+**c-1 = BUILD IN W10 NOW** (built, `afd88b6`); **c-2 = DEFER → v0.6**
+(roadmapped below). The safeguard firing was the intended outcome, not a
+failure — it surfaced both as scope decisions instead of letting a scope
+balloon hide inside "fix everything inline." Both are now terminal: c-1
+shipped this wave, c-2 has a tracked v0.6 target (not a silent divergence,
+not a SPEC-AMEND — the spec stays the forward contract).
+
+### v0.6 roadmap items (tracked, not lost)
+
+- **c-2 — non-destructive project close.** v0.5 close-tab IS
+  delete-from-storage (`ProjectTabs.tsx:102-127`, `window.confirm`-guarded).
+  v0.6 introduces an open-tabs session set distinct from the persisted
+  storage set: close removes from the open set, the project stays on disk,
+  a "reopen recent" affordance restores it. Requires new project-lifecycle
+  machinery (open-set state + storage-set listing decoupled). Spec §5.1
+  remains the forward contract; this is the roadmapped path to honoring it
+  non-destructively. **Target: v0.6.** (Carried from W10 c-2 mini-checkpoint
+  disposition.)
 
 ### C2 — §B11 P6 consolidation re-verified post-fix
 
@@ -278,6 +309,26 @@ new `useSelectionSummary` hook is shared infra (not a surface) and
 *unifies* the Viewport + Layout selection-summary source, **strengthening**
 (not shifting) the R6 distinctness. No §5 row required revision; no
 distinctness claim changed → no dharana B11 entry update triggered.
+
+### C3 — §B11 P6 consolidation re-verified post-c-1
+
+§5 re-checked against the c-1 diff (`afd88b6`). c-1 added one
+`viewportStore.cameraZoom` field + a pure derivation helper + an
+`OrbitControls.onChange` writer + a live binding on the *existing* R3
+TopToolbar zoom button. **No distinctness pair shifts:**
+
+- It created **no new chrome surface** — the zoom button already existed
+  in R3 TopToolbar (it was a dead placeholder; now it has a live value).
+  R3 TopToolbar vs deleted TransformToolbar (the only pair touching R3)
+  is unaffected: SpaceGroup stays inlined, no group moved.
+- `viewportStore.cameraZoom` is the same UI-projection class as the
+  existing grid/shading/snap fields — it does not entangle any pair; it
+  is read by exactly one surface (R3 zoom readout) and written by exactly
+  one site (the Viewport.tsx OrbitControls listener), strengthening (not
+  shifting) the single-writer discipline.
+- No Dopesheet/Canvas, NPanel/Inspector, ToolRail/R8, ProjectTabs pair is
+  touched. All six §5 distinctness conjunctions still hold; no §5 row
+  required revision; **no dharana B11 entry update triggered.**
 
 ### C1 — regression gate (verbatim)
 
@@ -292,4 +343,5 @@ distinctness claim changed → no dharana B11 entry update triggered.
 ---
 
 *Generated by `/anvi:ui-review` (W10). §7 = D-W10-1 inline fix run resolution
-ledger; c-1/c-2 OPEN pending user mini-checkpoint decision.*
+ledger. All findings terminal: c-1 BUILT (`afd88b6`, user disposition),
+c-2 DEFER → v0.6 (roadmapped §7). Zero findings OPEN; zero §1 spec edits.*
