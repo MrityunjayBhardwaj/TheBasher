@@ -36,7 +36,7 @@ Pillars: L=Layout, T=Typography, C=Color, S=Spacing, I=Interaction, A=Accessibil
 | **R7 Inspector (NPanel)** | 4 | 4 | 4 | 4 | 4 | 3 | controlled-value contract solid; section chevrons SC 1.4.3 exempt; Vec3 X/Y/Z label `fg/50` large-only exempt (carry-adjacent) |
 | **R8 FloatingViewportToolbar** | 4 | 4 | 3 | 4 | 4 | 3 | self-gates director; full aria; **bright-scene contrast not caught** (D-W8-1 carry); snap `<input>` keyboard-OK |
 | **R9 TimelineDock (Drawer)** | 4 | 4 | 4 | 4 | 4 | 4 | tablist/tab tabs; frame/fps readout in header; toolbar buttons disabled-state mirrors selection |
-| **R9 TimelineCanvas** | P | P | P | P | 4 | 3 | L/T/C/S = **PROVISIONAL — pixel-unobserved, pending user A2 manual scrub** (mirror-attr is code-derived, not pixel obs); I/S-of-interaction OK; `role="img"`+aria-label channel count; per-row DOM gone (e2e via dev seam) |
+| **R9 TimelineCanvas** | ✓ | ✓ | ✓ | ✓ | 4 | 3 | L/T/C/S = **PIXEL-OBSERVED PASS (user A2 manual scrub, 2026-05-17)** — 6ch×24kf seed, playhead swept repeatedly; diamonds intact under/behind the line, no erase trail/smear (strip-restore correct, `PLAYHEAD_STRIP_HALF_WIDTH_PX` adequate). PROVISIONAL lifted. I/S-of-interaction OK; `role="img"`+aria-label channel count; per-row DOM gone (e2e via dev seam) |
 | **ModeBadge (R6 overlay)** | 4 | 4 | 3 | 4 | 4 | 4 | aria-live polite on label span; hidden in director; **bright-scene contrast not caught** (D-W8-1 carry) |
 | **ComfyStatusIndicator (R1 edge)** | 4 | 4 | 3 | 4 | 4 | 3 | idle/stub state SC 1.4.3 exempt; `●` aria-hidden, label text present; no aria-live on state change (F-7) |
 | **AddMenu (R6 ctx + R3 +)** | 4 | 4 | 3 | 4 | 4 | 2 | both entry points wired via addMenuStore; **group chevron `▸` `text-fg/40`, no aria-expanded/aria-hidden** (W8 submenu-aria carry) |
@@ -136,15 +136,17 @@ entry, contrast gate green with documented exemptions).
 Per D-W10-3 / H30 / D-W9-4 / D-W9-8, TimelineCanvas is audited via its
 mirror-attr contract + the FLAG-2 manual scrub, NEVER `toHaveScreenshot`.
 
-- **Pillars 1–4 (Layout, Typography, Color, Spacing): `PROVISIONAL —
-  pixel-unobserved, pending user A2 manual scrub`.** The mirror attrs
-  (`data-rendered-keyframes`, `data-channel-count`, `data-playhead-px`,
-  `data-frame`) and the PALETTE constants are *code-derived*, not pixel
-  observation. The geometry module (`timelineCanvasGeometry.ts`) is pure and
-  unit-testable, the PALETTE tracks the old Dopesheet Tailwind tokens, and the
-  static-layer paint logic reads correct — but a 2D-canvas raster cannot be
-  visually graded without a real browser scrub. These four scores are withheld
-  pending the user's A2 manual scrub (FLAG-2 carry item).
+- **Pillars 1–4 (Layout, Typography, Color, Spacing): `PIXEL-OBSERVED PASS`
+  — PROVISIONAL lifted 2026-05-17 by the user A2 manual scrub.** Originally
+  withheld because the mirror attrs (`data-rendered-keyframes`,
+  `data-channel-count`, `data-playhead-px`, `data-frame`) and PALETTE constants
+  are *code-derived*, not pixel observation, and a 2D-canvas raster cannot be
+  visually graded without a real browser scrub. **Resolution:** a 6ch×24kf
+  scene was seeded and the playhead swept repeatedly; diamonds rendered
+  correctly and remained fully intact under and behind the moving playhead —
+  no erase trail, smear, or clipped edges. The code-by-construction confidence
+  is now confirmed by direct observation. The four pillars pass; the FLAG-2
+  carry item (CI-1) is RESOLVED.
 - **Pillar 5 (Interaction): scored 4.** rAF playhead loop reads stores fresh
   via `getState()` every tick (no stale closure), idle-guard early-outs while
   staying registered (Clock.tsx precedent), strip-restore before stroke,
@@ -166,7 +168,7 @@ mirror-attr contract + the FLAG-2 manual scrub, NEVER `toHaveScreenshot`.
 
 | # | Carry item | Source | Verdict | Rationale |
 |---|---|---|---|---|
-| **CI-1** | **FLAG-2 — count-constant ≠ pixels-restored (pending A2 manual scrub)** | W9 known automated-observation gap (§10 W9 row; TimelineCanvas.tsx:46-54) | **DEFER → user A2 manual scrub** | jsdom cannot run rAF+canvas; asserting pixel-restore in vitest would be H32-style fake instrumentation. Strip-restore code is correct by construction (1:1 backing-px drawImage from offscreen twin) but pixel correctness is *observable only by a real-browser scrub*. Not a code defect; an observation gap. Target: user performs the manual scrub; if a 1px erase trail appears, escalate to CODE-FIX (widen `PLAYHEAD_STRIP_HALF_WIDTH_PX`). |
+| **CI-1** | **FLAG-2 — count-constant ≠ pixels-restored** | W9 known automated-observation gap (§10 W9 row; TimelineCanvas.tsx:46-54) | **RESOLVED — PASS-manual (user A2 scrub, 2026-05-17)** | The observation W9 structurally could not automate is now performed: 6ch×24kf seed, playhead swept repeatedly across the static layer; diamonds remained fully intact under and behind the line — no 1px erase trail, no smear, no clipped edges. Strip-restore (1:1 backing-px drawImage from the offscreen twin) is correct by direct observation, not just by construction; `PLAYHEAD_STRIP_HALF_WIDTH_PX` is adequate. No CODE-FIX needed. The last open observation gap in P6 is closed. |
 | **CI-2** | **D-W9-7 — V8 zero-Ops on the canvas projection** | D-W9-7; TimelineCanvas.tsx:56-60 | **PASS (no fix)** | Verified by source read: TimelineCanvas imports no dispatcher, calls no `dispatchAtomic`/`dispatch`/`setParam`. It reads `useDagStore`/`useTimelineSelection`/`useTimeStore`/`useViewportStore` read-only. The invariant holds. Verdict: confirmed-compliant, no action. |
 | **CI-3** | **D-W8-1 — R8 + ModeBadge bright-scene readability** | D-W8-1 trade-off (§8.4.1 known limitation) | **DEFER → user-reported unreadability** | The opaque-only composite-vs-`bg #0a0a0a` audit is mechanically sound and fully automated; the *trade-off* (R8/ModeBadge sit over the variable GL canvas) is a documented, accepted v0.5 limitation. Fixing requires a new capability (scene-luminance-adaptive chrome tint), not a token tweak. Target: revisit only on user-reported unreadability. |
 | **CI-4** | **W8 submenu-aria — AddMenu / MenuBar nested menu semantics** | W8 known limitation (carried); AddMenu.tsx:141, MenuBar.tsx | **CODE-FIX (W10 fix run)** | This is the only carry item that is a genuine code defect reachable now. AddMenu group chevron `▸` has no `aria-hidden`/`aria-expanded`; nested MenuBar items lack full `menu`/`menuitem` tree depth. Not new-capability — a finite ARIA-attribute addition. Fix inline per D-W10-1. (= F-1 + F-2.) |
@@ -226,8 +228,11 @@ IN W10**, **c-2 = DEFER → v0.6**). Final terminal counts:
 - **CODE-FIX (landed): 6** — F-1+F-2 (`81f0c36`), F-3 (`956b48f`),
   F-4 (`6a8fa8d`), F-5 (`d9fd3fd`), c-3 (`5da9651`), **c-1 (`afd88b6`,
   built W10 per user disposition)**
-- **DEFER: 3** — F-6 / CI-3 (→ user-reported unreadability),
-  CI-1 / FLAG-2 (→ user A2 manual scrub), **c-2 (→ v0.6, roadmapped §7)**
+- **DEFER: 2** — F-6 / CI-3 (→ user-reported unreadability),
+  **c-2 (→ v0.6, roadmapped §7)**
+- **RESOLVED — PASS-manual: 1** — **CI-1 / FLAG-2** (user A2 scrub
+  2026-05-17: diamonds survive playhead passage, no erase trail — the
+  last open observation gap in P6, now closed)
 - **PASS / no-action: 1** — CI-2 (D-W9-7 V8 zero-Ops confirmed compliant)
 - **SPEC-AMEND confirmed-closed (W7, no W10 action): 1** — CI-5 (D-W7-1
   ortho — §5.7 amendment already shipped W7, verified + closed)
