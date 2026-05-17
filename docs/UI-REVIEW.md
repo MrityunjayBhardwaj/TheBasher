@@ -98,6 +98,20 @@ entry, contrast gate green with documented exemptions).
   bridge goes live/offline. Spec §8.4.4 exempts the *idle* visual contrast but
   does not exempt the missing announcement. **Verdict: CODE-FIX**.
 
+- **F-7 — terminal-keyframe edge clip (FLAG-2 escape).**
+  `timelineCanvasGeometry.ts` `keyframeToRect` centered the 8px diamond on
+  `secondsToX(t,dur,widthPx)`, which maps `[0,dur]→[0,widthPx]` with no edge
+  inset: a t=0 keyframe landed at x∈[-4,+4] (half off the left edge / behind
+  the `LABEL_GUTTER_PX` label gutter) and a t=duration keyframe at
+  x∈[widthPx-4,widthPx+4] (half off the right edge). The frame-0 keyframe —
+  the single most common keyframe in any animation — was therefore
+  half-invisible. mirror-attr count=2 while 1 visible — the FLAG-2 count≠pixels
+  gap, demonstrated; fixed via edge-inset geometry + pure-fn vitest.
+  **Verdict: CODE-FIX** — `KEYFRAME_EDGE_INSET_PX` applied only in
+  `keyframeToRect` (maps into `[inset, widthPx-inset]`; `secondsToX`/playhead
+  untouched; zero-guard preserved); proven by D-W9-4 pure-fn vitest asserting
+  t=0 → `rect.x ≥ 0` and t=dur → `rect.x + rect.w ≤ widthPx`.
+
 - **F-6 — ModeBadge / R8 bright-scene readability.**
   `ModeBadge.tsx:88` (`bg-bg-2/90`) and `FloatingViewportToolbar.tsx:184`
   (`bg-bg-2/90`) physically composite over the GL canvas, not over `bg #0a0a0a`.
@@ -205,16 +219,17 @@ crossing 3+ boundaries) at the UI-SPEC↔source boundary.**
 
 ### By severity
 - **BLOCK: 0**
-- **FLAG: 6** (F-1 AddMenu chevron aria, F-2 MenuBar submenu aria, F-3 ToolRail
+- **FLAG: 7** (F-1 AddMenu chevron aria, F-2 MenuBar submenu aria, F-3 ToolRail
   collapse-to-0, F-4 viewport aria-label not selection-bound, F-5 ComfyStatus
-  no aria-live, F-6 bright-scene contrast)
+  no aria-live, F-6 bright-scene contrast, F-7 terminal-keyframe edge clip /
+  FLAG-2 escape)
 - **cosmetic: 3** (c-1 zoom placeholder, c-2 close=delete, c-3 canvas attr
   literal)
-- **Total findings: 9** (+ 5 named carry items, 2 of which equal F-1/F-2/F-6 and
+- **Total findings: 10** (+ 5 named carry items, 2 of which equal F-1/F-2/F-6 and
   D-W7-1/CI-2, counted once below to avoid double-count)
 
 ### By proposed verdict (as audited)
-- **CODE-FIX: 5** — F-1 (CI-4), F-2 (CI-4), F-4, F-5, c-3
+- **CODE-FIX: 6** — F-1 (CI-4), F-2 (CI-4), F-4, F-5, c-3, F-7
 - **SPEC-AMEND: 4** — F-3, c-1, c-2, CI-5
 - **DEFER: 2** — F-6 / CI-3, CI-1
 - **PASS / no-action: 1** — CI-2
@@ -225,9 +240,10 @@ The user **rejected all 3 SPEC-AMEND proposals** (F-3, c-1, c-2 → forced
 CODE-FIX) and dispositioned the two mini-checkpoint items (**c-1 = BUILD
 IN W10**, **c-2 = DEFER → v0.6**). Final terminal counts:
 
-- **CODE-FIX (landed): 6** — F-1+F-2 (`81f0c36`), F-3 (`956b48f`),
+- **CODE-FIX (landed): 7** — F-1+F-2 (`81f0c36`), F-3 (`956b48f`),
   F-4 (`6a8fa8d`), F-5 (`d9fd3fd`), c-3 (`5da9651`), **c-1 (`afd88b6`,
-  built W10 per user disposition)**
+  built W10 per user disposition)**, **F-7 (terminal-keyframe edge inset —
+  see §7 ledger)**
 - **DEFER: 2** — F-6 / CI-3 (→ user-reported unreadability),
   **c-2 (→ v0.6, roadmapped §7)**
 - **RESOLVED — PASS-manual: 1** — **CI-1 / FLAG-2** (user A2 scrub
@@ -274,6 +290,7 @@ the code was bent to the spec, never the reverse.
 | **c-1** zoom-% readout never updates | CODE-FIX (built W10) *(SPEC-AMEND rejected → forced CODE-FIX)* | **`afd88b6` — BUILT.** Mini-checkpoint dispositioned by user → BUILD IN W10. Real signal pipeline: `viewportStore.cameraZoom` + pure unit-tested `cameraDistanceToZoomPercent` + `OrbitControls.onChange` writer in `Viewport.tsx` (V8-clean: UI-projection-store write, file-rooted ban covers only DAG dispatch primitives — same in-viewport write class as the long-standing `useSelectionStore.getState().clear()` precedent) + R3 TopToolbar live readout (stays disabled — §5.3 specifies a zoom % *display*, not a zoom-input dropdown; §5.3 NOT amended). Observed: vitest 21/21 (+7), e2e p6-w10-ui-review 2/2 (readout DOM text observed 100%→200%→50%). |
 | **c-2** close == delete | DEFER → v0.6 *(SPEC-AMEND rejected → forced CODE-FIX; CODE-FIX = new-capability → DEFER)* | **DEFER → v0.6.** Mini-checkpoint dispositioned by user → DEFER to v0.6. Rationale: a non-destructive close needs a new open-tabs-vs-storage session abstraction — a project-lifecycle redesign, out of audit-wave scope. Spec §5.1 anatomy stays the forward contract (NOT a SPEC-AMEND, NOT a silent divergence); the v0.5 destructive-close gap is roadmapped to v0.6, tracked in the v0.6 roadmap note below. The `window.confirm` guard at `ProjectTabs.tsx:104-106` remains the v0.5 mitigation until then. |
 | **c-3** canvas attr literal `0` | CODE-FIX | `5da9651` — `data-rendered-keyframes` JSX init derived via `useMemo` from the same `cullVisibleKeyframes` the effect uses; pre-first-paint DOM now matches the contract (mirror-attr, not pixel-tested per H30/D-W9-4) |
+| **F-7** terminal-keyframe edge clip (FLAG-2 escape) | CODE-FIX | `KEYFRAME_EDGE_INSET_PX` added to `timelineCanvasGeometry.ts`, applied **only** in `keyframeToRect` (`secondsToX`/playhead provably untouched — playhead computes x via `secondsToX` directly at `TimelineCanvas.tsx:544`, not `keyframeToRect`). Effective inset = `max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)` so terminal diamonds of any size are fully on-canvas; zero-guard preserved (`widthPx-2*inset ≤ 0` → un-inset fallback → 0, NaN-free). D-W9-4 pure-fn vitest proves it: t=0 → `rect.x ≥ 0` (flush at 0 for default 8px), t=dur → `rect.x + rect.w ≤ widthPx` (flush at w), interior monotone+proportional, degenerate finite, deterministic. The FLAG-2 count≠pixels gap (data-rendered-keyframes=2 / 1 visible) demonstrated + closed. tsc clean; geometry suite 54/54 (was 39, +15 incl. the new F-7 cases); full vitest 871/871 (≥859 baseline); W9 e2e+perf 5/5 (count/playhead contracts held). |
 | **F-6 / CI-3** bright-scene contrast | DEFER → user-reported unreadability | No W10 action (new capability: scene-luminance-adaptive chrome tint). Stated, not implied. |
 | **CI-1 / FLAG-2** count-constant ≠ pixels-restored | DEFER → user A2 manual scrub | No W10 code action; observation-gated (jsdom cannot run rAF+canvas). The 1 skipped Playwright spec is this deferral, not a regression. |
 | **CI-2** D-W9-7 V8 zero-Ops | PASS / no action | Confirmed compliant by source read; no change. |

@@ -54,6 +54,34 @@ const SPAN_EPSILON = 0.0001;
  */
 export const PLAYHEAD_STRIP_HALF_WIDTH_PX = 2;
 
+/**
+ * Edge inset (CSS px) the keyframe-diamond geometry reserves on EACH side
+ * of the track so a terminal keyframe (t=0 or t=duration) sits flush and
+ * FULLY visible against the canvas edge instead of half-clipped off it.
+ *
+ * WHY (UIR F-7 / FLAG-2 escape): `secondsToX` maps [0,dur]→[0,widthPx];
+ * a diamond centered on that puts t=0 at x∈[-diamond/2,+diamond/2] (half
+ * behind the row-label gutter / off the left edge) and t=dur at
+ * x∈[widthPx-diamond/2, widthPx+diamond/2] (half off the right edge). The
+ * frame-0 keyframe — the single most common keyframe in any animation —
+ * is therefore half-invisible. The W9 e2e passed blind because
+ * `data-rendered-keyframes` counts culled entries (2), not painted pixels
+ * (1 visible) — a concrete escape of the FLAG-2 count≠pixels gap.
+ *
+ * Set to HALF the production diamond box (DIAMOND_PX = 8, TimelineCanvas
+ * .tsx) so a terminal diamond's outer edge lands exactly on the canvas
+ * edge (flush, fully visible, zero wasted margin). `keyframeToRect` takes
+ * `diamondPx` as a parameter though, so it uses `max(this, diamondPx/2)`
+ * as the EFFECTIVE inset — a larger-than-default diamond still cannot
+ * clip off the edge (the invariant "terminal diamond fully visible" holds
+ * for ANY diamond size, not just the default 8px). Applied ONLY in
+ * `keyframeToRect` — `secondsToX` and the playhead path (a 1px line,
+ * visible at x=0 anyway, and a shipped FLAG-2-verified contract) are
+ * deliberately NOT inset, keeping the blast radius to the diamond
+ * geometry alone.
+ */
+export const KEYFRAME_EDGE_INSET_PX = 4;
+
 /** A non-negative, finite pixel rect in CSS px. */
 export interface Rect {
   x: number;
@@ -134,7 +162,24 @@ export function keyframeToRect(
   rowHeightPx: number,
   diamondPx: number,
 ): Rect {
-  const centerX = secondsToX(timeSeconds, durationSeconds, widthPx);
+  // UIR F-7: inset the time→x map by KEYFRAME_EDGE_INSET_PX on EACH side so
+  // a terminal diamond (t=0 / t=dur) lands flush-and-fully-visible against
+  // the canvas edge instead of half-clipped. Map into
+  // [inset, widthPx - inset] instead of [0, widthPx]. Zero-guard: if the
+  // canvas is too narrow to hold both insets (widthPx - 2*inset <= 0), fall
+  // back to the un-inset map (which is itself zero-guarded → 0), preserving
+  // the existing NaN-free degenerate-layout discipline. secondsToX itself
+  // is NOT modified — the inset lives here only, so the playhead path
+  // (secondsToX direct) is provably untouched.
+  // Effective inset = at least half the diamond, so a terminal diamond of
+  // ANY size lands fully on-canvas (not just the default 8px box). For the
+  // production DIAMOND_PX=8 this is exactly KEYFRAME_EDGE_INSET_PX (=4).
+  const inset = Math.max(KEYFRAME_EDGE_INSET_PX, diamondPx / 2);
+  const innerWidth = widthPx - 2 * inset;
+  const centerX =
+    innerWidth > 0
+      ? inset + secondsToX(timeSeconds, durationSeconds, innerWidth)
+      : secondsToX(timeSeconds, durationSeconds, widthPx);
   const rowTop = rowIndex * rowHeightPx;
   const centerY = rowTop + rowHeightPx / 2;
   return {

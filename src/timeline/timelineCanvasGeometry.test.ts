@@ -30,6 +30,7 @@ import {
   cullVisibleKeyframes,
   playheadStripRect,
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
+  KEYFRAME_EDGE_INSET_PX,
 } from './timelineCanvasGeometry';
 
 const isFinitePositiveOrZero = (n: number) =>
@@ -147,22 +148,108 @@ describe('secondsToX — boundary + clamp + zero-guard', () => {
 });
 
 describe('keyframeToRect — diamond box (generalizes Dopesheet 8x8)', () => {
-  it('centers an 8x8 diamond on (secondsToX, row middle)', () => {
-    // time 5 of 10s over 1000px -> centerX 500; row 2 of 24px rows ->
-    // rowTop 48, centerY 60; 8px box -> x 496 y 56 w8 h8
+  it('centers an 8x8 diamond on (inset secondsToX, row middle)', () => {
+    // UIR F-7: inset=4 → innerWidth = 1000-8 = 992; time 5 of 10s over
+    // 992px -> 496, +inset 4 -> centerX 500 (midpoint is symmetric, so
+    // the inset leaves it unchanged); row 2 of 24px rows -> rowTop 48,
+    // centerY 60; 8px box -> x 496 y 56 w8 h8.
     const r = keyframeToRect(5, 2, 10, 1000, 24, 8);
     expect(r).toEqual({ x: 496, y: 56, w: 8, h: 8 });
   });
 
-  it('row 0 keyframe at t=0 -> top-left-ish box centered on row middle', () => {
+  it('row 0 keyframe at t=0 -> box edge-inset, fully on-canvas', () => {
+    // UIR F-7 (the fix): old behavior put this at x:-4 (half off the
+    // left edge / behind the label gutter). With the edge inset the
+    // diamond center is at x=inset=4, so x = 4 - 8/2 = 0 — flush and
+    // fully visible, never negative.
     const r = keyframeToRect(0, 0, 10, 1000, 24, 8);
-    expect(r).toEqual({ x: -4, y: 8, w: 8, h: 8 });
+    expect(r).toEqual({ x: 0, y: 8, w: 8, h: 8 });
   });
 
-  it('shares the seconds-space x with the playhead (secondsToX)', () => {
-    const t = 3.3;
-    const r = keyframeToRect(t, 0, 10, 1000, 24, 8);
-    const playheadX = secondsToX(t, 10, 1000);
+  // ── UIR F-7: terminal keyframes fully visible (the FLAG-2 escape) ────────
+  it('UIR F-7: t=0 keyframe rect is fully on-canvas (rect.x >= 0)', () => {
+    // Sweep several track widths + diamond sizes — the most common
+    // keyframe in any animation (frame 0) must never clip off the left.
+    for (const w of [200, 480, 1000, 1920]) {
+      for (const d of [6, 8, 12]) {
+        const r = keyframeToRect(0, 0, 10, w, 24, d);
+        expect(r.x).toBeGreaterThanOrEqual(0);
+        // and with inset == d/2 it lands flush (left edge exactly at 0)
+        if (KEYFRAME_EDGE_INSET_PX === d / 2) {
+          expect(r.x).toBe(0);
+        }
+      }
+    }
+  });
+
+  it('UIR F-7: t=duration keyframe right edge <= widthPx (fully visible)', () => {
+    for (const w of [200, 480, 1000, 1920]) {
+      for (const d of [6, 8, 12]) {
+        const r = keyframeToRect(10, 0, 10, w, 24, d);
+        expect(r.x + r.w).toBeLessThanOrEqual(w);
+        if (KEYFRAME_EDGE_INSET_PX === d / 2) {
+          // flush against the right edge, zero wasted margin
+          expect(r.x + r.w).toBe(w);
+        }
+      }
+    }
+  });
+
+  it('UIR F-7: interior keyframe center stays monotonic & proportional between the insets', () => {
+    const w = 1000;
+    const inset = KEYFRAME_EDGE_INSET_PX;
+    const cx = (t: number) => {
+      const r = keyframeToRect(t, 0, 10, w, 24, 8);
+      return r.x + r.w / 2;
+    };
+    const c0 = cx(0);
+    const cMid = cx(5);
+    const cEnd = cx(10);
+    // bounded strictly inside [inset, w - inset]
+    expect(c0).toBeCloseTo(inset, 10);
+    expect(cEnd).toBeCloseTo(w - inset, 10);
+    // monotone increasing through the interior
+    expect(cMid).toBeGreaterThan(c0);
+    expect(cEnd).toBeGreaterThan(cMid);
+    // proportional: t=5 of 10s is the exact midpoint of [inset, w-inset]
+    expect(cMid).toBeCloseTo((inset + (w - inset)) / 2, 10);
+    // quarter point is proportionally placed too
+    expect(cx(2.5)).toBeCloseTo(inset + 0.25 * (w - 2 * inset), 10);
+  });
+
+  it('UIR F-7: degenerate widthPx <= 2*inset -> finite, no NaN/Infinity (zero-guard preserved)', () => {
+    for (const w of [0, 1, KEYFRAME_EDGE_INSET_PX, 2 * KEYFRAME_EDGE_INSET_PX]) {
+      const r = keyframeToRect(5, 1, 10, w, 24, 8);
+      expect(Number.isFinite(r.x)).toBe(true);
+      expect(Number.isNaN(r.x)).toBe(false);
+      expect(Number.isFinite(r.y)).toBe(true);
+      expect(Number.isFinite(r.w)).toBe(true);
+      expect(Number.isFinite(r.h)).toBe(true);
+    }
+  });
+
+  it('UIR F-7: deterministic — same args twice -> deep-equal rect', () => {
+    expect(keyframeToRect(0, 0, 10, 1000, 24, 8)).toEqual(
+      keyframeToRect(0, 0, 10, 1000, 24, 8),
+    );
+    expect(keyframeToRect(10, 3, 10, 480, 24, 8)).toEqual(
+      keyframeToRect(10, 3, 10, 480, 24, 8),
+    );
+  });
+
+  it('exports a documented edge-inset constant = half the diamond box', () => {
+    expect(KEYFRAME_EDGE_INSET_PX).toBeGreaterThan(0);
+    expect(Number.isInteger(KEYFRAME_EDGE_INSET_PX)).toBe(true);
+    expect(KEYFRAME_EDGE_INSET_PX).toBe(4); // half the 8px Dopesheet diamond
+  });
+
+  it('shares the seconds-space x with the playhead at the midpoint', () => {
+    // The diamond is intentionally inset relative to the raw secondsToX
+    // map (UIR F-7) so terminal keyframes are not clipped; at the exact
+    // midpoint the inset is symmetric, so a t=mid diamond still sits
+    // under the playhead (secondsToX, un-inset) at that same t.
+    const r = keyframeToRect(5, 0, 10, 1000, 24, 8);
+    const playheadX = secondsToX(5, 10, 1000);
     expect(r.x + r.w / 2).toBeCloseTo(playheadX, 10);
   });
 
