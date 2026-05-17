@@ -25,6 +25,15 @@ interface BasherWindow {
   __basher_timeline_dock?: {
     getState: () => { activeTab: 'dopesheet' | 'curve' };
   };
+  // P6 W9: TimelineCanvas paints channel rows onto a 2D <canvas> (no
+  // per-row DOM, D-W9-4 forbids pixel-clicking), so channel selection
+  // routes through this store seam instead of a `channel-row-*` click.
+  __basher_timeline_selection?: {
+    getState: () => {
+      setActiveChannel: (id: string | null) => void;
+      activeChannelId: string | null;
+    };
+  };
   __basher_time?: {
     getState: () => { setTime: (s: number) => void; setDuration: (s: number) => void };
   };
@@ -49,7 +58,12 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_viewport && w.__basher_timeline_dock);
+    return Boolean(
+      w.__basher_dag &&
+        w.__basher_viewport &&
+        w.__basher_timeline_dock &&
+        w.__basher_timeline_selection,
+    );
   });
   // Switch into Animate so the timeline dock is visible (D-UX-1 gating).
   await page.getByTestId('mode-switcher').selectOption('animate');
@@ -62,8 +76,8 @@ test('P6.W5#1 drawer-open defaults to Dopesheet tab; both panes mount; Curve hid
   await expect(page.getByTestId('timeline-tab-strip')).toBeVisible();
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'false');
-  await expect(page.getByTestId('dopesheet-pane')).toBeVisible();
-  await expect(page.getByTestId('dopesheet-pane')).toHaveAttribute('data-active', 'true');
+  await expect(page.getByTestId('timeline-canvas-pane')).toBeVisible();
+  await expect(page.getByTestId('timeline-canvas-pane')).toHaveAttribute('data-active', 'true');
   // Curve editor in DOM (mount preservation) but hidden.
   await expect(page.getByTestId('curve-editor-pane')).toHaveCount(1);
   await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'false');
@@ -79,8 +93,8 @@ test('P6.W5#2 clicking Curve Editor tab flips visibility; both panes stay mounte
   await expect(page.getByTestId('curve-editor-pane')).toBeVisible();
   await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'true');
   // Dopesheet still mounted (mount preservation invariant), just hidden.
-  await expect(page.getByTestId('dopesheet-pane')).toHaveCount(1);
-  await expect(page.getByTestId('dopesheet-pane')).toHaveAttribute('data-active', 'false');
+  await expect(page.getByTestId('timeline-canvas-pane')).toHaveCount(1);
+  await expect(page.getByTestId('timeline-canvas-pane')).toHaveAttribute('data-active', 'false');
 });
 
 test('P6.W5#3 active tab persists across reload (D-W5-2)', async ({ page }) => {
@@ -176,7 +190,15 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
   });
   await page.getByTestId('timeline-drawer-toggle').click();
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'true');
-  await page.getByTestId('channel-row-box_pos_channel').click();
+  // P6 W9: select the channel via the timelineSelection seam (the
+  // TimelineCanvas paints rows onto a <canvas>; the old DOM
+  // `channel-row-box_pos_channel` click no longer exists). This is
+  // exactly what the SVG row's onClick did — setActiveChannel — so the
+  // D-W5-3 "no auto tab switch" invariant is tested identically.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_timeline_selection!.getState().setActiveChannel('box_pos_channel');
+  });
   // activeChannelId now set, BUT the tab stayed on Dopesheet — D-W5-3.
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'false');

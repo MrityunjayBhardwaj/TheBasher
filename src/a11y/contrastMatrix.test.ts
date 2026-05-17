@@ -74,6 +74,11 @@ import {
   type TextSize,
   withAlpha,
 } from './wcag';
+// P6 W9: the canvas palette is the literal painted contract for R9's
+// TimelineCanvas. Imported (not copied) so this audit checks the real
+// hexes the 2D context fills/strokes with — if a future wave retints a
+// diamond/playhead, this assertion moves with it automatically.
+import { PALETTE } from '../timeline/TimelineCanvas';
 
 // ─── Token table ────────────────────────────────────────────────────────
 //
@@ -302,13 +307,20 @@ const ROWS: Row[] = [
   { site: 'R9 TimelineDrawer tab active — fg on bg', fg: 'fg', bgStack: ['bg'], textSize: 'small' },
   { site: 'R9 TimelineDrawer dock-btn active — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
 
-  // ─── R9 Dopesheet (src/timeline/Dopesheet.tsx) ──────────────────────
-  // L57 panel bg-bg; L108/L156 ruler/layer header bg-bg-2; L203 row
-  // active = bg-accent/10 over bg-2; primary channel text-fg, others
-  // text-mute (undefined — WHITELIST).
-  { site: 'R9 Dopesheet panel — fg on bg', fg: 'fg', bgStack: [], textSize: 'small' },
-  { site: 'R9 Dopesheet ruler — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
-  { site: 'R9 Dopesheet row active primary — fg on accent/10 over bg-2', fg: 'fg', bgStack: ['accent/10', 'bg-2'], textSize: 'small' },
+  // ─── R9 TimelineCanvas (src/timeline/TimelineCanvas.tsx) ────────────
+  // P6 W9: the SVG Dopesheet was replaced by an imperatively-painted
+  // canvas-2D surface (D-W9-2). A 2D <canvas> has NO Tailwind (fg-token,
+  // bg-stack) pairs — every color is a hard hex the 2D context strokes
+  // /fills with. So these rows cannot be Tailwind token-pair rows like
+  // the rest of the matrix; they are REVISED (not migrated) to assert
+  // the exported `PALETTE` hex constants each clear WCAG-AA against the
+  // canvas background hex, computed via the SAME `contrastRatio` helper
+  // wcag.ts already exports (zero new contrast math — V14-style reuse;
+  // the palette literals are imported from TimelineCanvas.tsx so this
+  // file checks the real painted contract, not a copied snapshot).
+  // The assertions live in a dedicated `it()` below the ROWS table
+  // (canvas palette is not a (fg,bg-stack) Row shape). No Dopesheet
+  // ROWS remain — the surface no longer emits Tailwind chrome.
 
   // ─── ModeBadge (src/viewport/ModeBadge.tsx) ─────────────────────────
   // L63 bg-bg-2/90 + text-fg-dim + border-border-strong + uppercase
@@ -423,9 +435,21 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   { pattern: /\bbg-yellow-(\d+)(\/\d+)?\b/, why: 'Tailwind-default yellow (warn chrome); not a design token' },
   { pattern: /\bborder-yellow-(\d+)(\/\d+)?\b/, why: 'Tailwind-default yellow (warn chrome); not a design token' },
   { pattern: /\bbg-black(\/\d+)?\b/, why: 'Tailwind-default black (cost-preview placeholder); not a design token' },
-  // bg-fg appears on dopesheet keyframe markers as decoration over
-  // black panel — non-text, contrast irrelevant.
-  { pattern: /\bbg-fg\b/, why: 'Keyframe marker decoration; non-text UI element' },
+  // bg-fg: the SVG Dopesheet's keyframe-marker token. P6 W9 replaced
+  // that surface with TimelineCanvas (imperative 2D paint, no Tailwind
+  // tokens — see the dedicated palette-contrast `it()` block). The class
+  // no longer appears in src/timeline; kept whitelisted so any future
+  // re-introduction elsewhere is still a non-text decoration, not a gap.
+  { pattern: /\bbg-fg\b/, why: 'Legacy keyframe-marker token; W9 canvas surface emits no Tailwind. Non-text decoration if re-used' },
+  // bg-accent/10: the SVG Dopesheet's active-channel row tint. P6 W9's
+  // TimelineCanvas paints that tint imperatively (PALETTE.ACTIVE_DIAMOND
+  // at globalAlpha 0.1 — see paintStaticLayer) with NO Tailwind class;
+  // the only textual occurrence is the doc-comment that records which
+  // token the canvas paint mirrors. The drift grep is purely textual so
+  // it surfaces the comment; whitelisted because the active-channel
+  // contrast is covered by the dedicated PALETTE-vs-CANVAS_BG `it()`
+  // block (ACTIVE_DIAMOND clears AA), not a Tailwind (fg,bg) pair.
+  { pattern: /\bbg-accent\/10\b/, why: 'W9 TimelineCanvas active-row tint is an imperative globalAlpha paint, not a class; comment-only textual hit. Contrast covered by the PALETTE-vs-CANVAS_BG assertion' },
   // bg-border is a 1px divider line (MenuBar item separator, R8 vertical
   // divider, R4 group separators) — pure decoration, no text. Contrast
   // here is "is the line visible against its container" which is a
@@ -582,6 +606,60 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
       'large-only-decorative': exempt.filter((v) => v.row.exempt!.kind === 'large-only-decorative').length,
     };
     expect(byKind.rule + byKind['sc-1.4.3'] + byKind['large-only-decorative']).toBe(exempt.length);
+  });
+
+  // ─── R9 TimelineCanvas palette (P6 W9 — D-W9-2, D-W8-1) ───────────────
+  // The SVG Dopesheet's three R9 Tailwind rows were revised out (a 2D
+  // canvas has no token pairs). The contrast question is real all the
+  // same: every hex the 2D context paints with must clear WCAG-AA
+  // against the canvas background hex. We reuse wcag.ts `contrastRatio`
+  // (the exact helper the matrix rows use) on the PALETTE literals
+  // imported from TimelineCanvas.tsx — zero new contrast math, and the
+  // assertion tracks the real painted constants (a retint there fails
+  // here automatically). Threshold: 4.5 for LABEL_TEXT (it renders 11px
+  // channel-name text → small-text rule); the diamond / playhead marks
+  // are interactive/affordance graphical objects → 3.0 (aaThreshold
+  // 'ui'), same classification the Tailwind 'ui' rows use.
+  //
+  // ROW_LINE is DELIBERATELY EXCLUDED from the gate, not threshold-
+  // lowered. It is the canvas twin of the SVG Dopesheet's `border-line`
+  // / `bg-border` 1px row-separator — BOTH are already WHITELIST entries
+  // in this same file ("undefined token; resolves to default border" /
+  // "dividers are intentionally subtle; v0.5 keeps subtle dividers").
+  // WCAG 1.4.11 does not require 3:1 for purely decorative boundaries,
+  // and row structure here is independently conveyed by label + diamond
+  // position, not the hairline. Porting the surface must port its
+  // contrast CONTRACT faithfully — inventing a stricter rule for the
+  // canvas than the SVG original carried would be the H27 re-validation
+  // trap. ROW_LINE #2a2a2a vs #0a0a0a = 1.38:1 is the SAME subtle-divider
+  // posture border-border has matrix-wide; documented here, not gated.
+  it('R9 TimelineCanvas palette clears WCAG-AA vs the canvas background', () => {
+    const bg = PALETTE.CANVAS_BG;
+    const checks: { name: string; fg: string; required: number }[] = [
+      // Channel-name labels are real text → small-text 4.5:1.
+      { name: 'LABEL_TEXT', fg: PALETTE.LABEL_TEXT, required: aaThreshold('small') },
+      // Diamonds / playhead are interactive graphical affordances → 3:1
+      // (WCAG 1.4.11 non-text contrast, same as the matrix 'ui' rows).
+      { name: 'DIAMOND', fg: PALETTE.DIAMOND, required: aaThreshold('ui') },
+      { name: 'ACTIVE_DIAMOND', fg: PALETTE.ACTIVE_DIAMOND, required: aaThreshold('ui') },
+      { name: 'PLAYHEAD', fg: PALETTE.PLAYHEAD, required: aaThreshold('ui') },
+      // ROW_LINE excluded — decorative subtle divider, parity with the
+      // whitelisted border-line/bg-border posture (see comment above).
+    ];
+    const failures = checks
+      .map((c) => ({ ...c, ratio: contrastRatio(c.fg, bg) }))
+      .filter((c) => c.ratio < c.required);
+    if (failures.length > 0) {
+      expect.fail(
+        `TimelineCanvas PALETTE vs CANVAS_BG (${bg}) — ${failures.length} mark(s) below AA:\n` +
+          failures
+            .map(
+              (f) =>
+                `  ${f.name} (${f.fg}) = ${f.ratio.toFixed(2)}:1 vs required ${f.required}:1`,
+            )
+            .join('\n'),
+      );
+    }
   });
 });
 

@@ -1,0 +1,650 @@
+// TimelineCanvas — canvas-2D replacement for the SVG Dopesheet. STATIC
+// LAYER (P6 W9 C3) + IMPERATIVE rAF PLAYHEAD (P6 W9 C4).
+//
+// WHY this exists: the old Dopesheet (src/timeline/Dopesheet.tsx) renders
+// one absolutely-positioned <div> per keyframe diamond. A realistic scene
+// (8+ channels x 20+ keyframes) puts hundreds of DOM nodes in the timeline
+// and re-lays-them-out on every seconds-subscriber tick during a scrub —
+// the D-W9 perf bottleneck. This component paints the same picture onto a
+// single <canvas>, and (C4) advances the playhead via an rAF loop that
+// touches NO React state, so a 240-frame scrub holds 60fps.
+//
+// C3 SCOPE — the STATIC layer:
+//   - the visible <canvas> + an offscreen cache canvas holding the
+//     rendered rows + grid + diamonds (the D-W9-3 "cached static layer"
+//     C4's rAF strip-restore drawImage()'s back from)
+//   - dpr-capped backing store (D-W9-10, mirrors Viewport.tsx [1,2] cap)
+//   - the React-observable mirror-attr contract (D-W9-4)
+//
+// C4 SCOPE — the IMPERATIVE rAF PLAYHEAD (the perf-critical hot path):
+//   - a self-rescheduling requestAnimationFrame loop, started on mount
+//     once the offscreen cache exists, cancelAnimationFrame'd on unmount.
+//   - EACH frame reads `useViewportStore.getState().currentFrameRef.current`
+//     AND `useTimeStore.getState().seconds` via getState() INSIDE the
+//     loop body — NEVER closure-captured (D-W9-3 / context-memo §3
+//     stale-closure mitigation). dims/dpr/offscreen/duration come from
+//     refs the C3 layout/draw effects keep current, never from render
+//     scope. The ONLY things the closure binds are stable refs.
+//   - IDLE STRATEGY (LOCKED — do NOT re-decide; see plan C4 §129):
+//     compute the new playhead x; if it is unchanged from the last drawn
+//     x, EARLY-OUT but KEEP the rAF registered (do NOT cancel/re-arm).
+//     Re-arming would need a wake signal wired from timeStore.play/scrub
+//     — extra cross-store coupling. A single getState() read + compare
+//     per idle frame is cheaper than that coupling and matches Clock.tsx's
+//     own "loop runs even when paused, just no-ops" precedent
+//     (Clock.tsx:9-11, :22-32).
+//   - ON CHANGE: playheadStripRect (C2) at the OLD x → drawImage from the
+//     C3 offscreen cache into that strip (restores the EXACT static pixels
+//     — diamonds included — under the old line; that is the entire point
+//     of the cache) → stroke the playhead line at the NEW x with
+//     PALETTE.PLAYHEAD, DRAWN LAST / on top (D-W9-3). Then write
+//     data-playhead-px = new x and data-frame = currentFrameRef.current.
+//   - NO React render in this path — that is the whole escape-hatch
+//     thesis: static geometry is NOT re-rendered 60x/sec, only the
+//     playhead pixels + two data-attrs move.
+//
+// MOUNT STATUS: TimelineCanvas is intentionally NOT mounted anywhere in
+// C3/C4 — TimelineDrawer still renders <Dopesheet/>. The drawer swap + the
+// Dopesheet delete + e2e + the 240-frame perf benchmark are all C5. The
+// dead-code window is exactly C3 -> C4 -> C5 (one wave, one PR). C4
+// rAF-loop correctness is verified by C5 e2e (mirror-attr asserts:
+// data-playhead-px monotonic, data-rendered-keyframes constant under
+// scrub) + the C5 240-frame perf gate + the C5 manual scrub gate; jsdom
+// cannot run rAF+canvas meaningfully, so C4 ships NO new test file
+// (asserting it in vitest would be H32-style fake instrumentation).
+//
+// V8 file-rooted: reads useDagStore + useTimelineSelection + useTimeStore
+// + useViewportStore (the currentFrameRef escape hatch, read-only) for
+// STATIC + playhead needs only. Dispatches ZERO Ops — no dispatchAtomic,
+// no dispatch(), no setParam. It is a pure projection, exactly as
+// Dopesheet was (Dopesheet.tsx:7-9).
+//
+// REF: D-W9-2, D-W9-3 (static + hot path), D-W9-4, D-W9-5, D-W9-7,
+//      D-W9-9, D-W9-10; memory/project_p6_w9_plan.md C3+C4;
+//      checker FLAG-1; stale-closure pre-mortem (plan C4 §139).
+
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useDagStore } from '../core/dag/store';
+import type { Node } from '../core/dag/types';
+import { useTimeStore } from '../app/stores/timeStore';
+import { useViewportStore } from '../app/stores/viewportStore';
+import { useTimelineSelection } from './timelineSelection';
+import {
+  keyframeToRect,
+  cullVisibleKeyframes,
+  secondsToX,
+  playheadStripRect,
+  PLAYHEAD_STRIP_HALF_WIDTH_PX,
+} from './timelineCanvasGeometry';
+
+/**
+ * Imperative canvas palette — the exact hex constants the 2D context
+ * paints with. A 2D canvas has no Tailwind token pairs, so these are the
+ * surface C5's contrast revision (contrastMatrix R9) asserts ≥ WCAG-AA
+ * against CANVAS_BG via the existing wcag.ts helper. Exported so C5
+ * imports the literal contract rather than duplicating the hexes.
+ *
+ * Chosen to track the Dopesheet's Tailwind tokens this canvas replaces:
+ *   - DIAMOND        ← `bg-fg`        (inactive keyframe)
+ *   - ACTIVE_DIAMOND ← `bg-accent`    (selected keyframe / channel ring)
+ *   - PLAYHEAD       ← `bg-accent`    (the C4 playhead line)
+ *   - ROW_LINE       ← `border-line`  (channel row separators + grid)
+ *   - LABEL_TEXT     ← `text-mute`    (channel name labels)
+ *   - CANVAS_BG      ← `bg-bg`        (the surface background)
+ */
+export const PALETTE = {
+  CANVAS_BG: '#0a0a0a',
+  DIAMOND: '#e5e5e5',
+  ACTIVE_DIAMOND: '#7c8cff',
+  PLAYHEAD: '#7c8cff',
+  ROW_LINE: '#2a2a2a',
+  LABEL_TEXT: '#9a9a9a',
+} as const;
+
+/** Row height (CSS px) — mirrors Dopesheet's `h-6` channel rows (24px). */
+const ROW_HEIGHT_PX = 24;
+/** Diamond box (CSS px) — mirrors Dopesheet's 8x8 diamond. */
+const DIAMOND_PX = 8;
+/** Left gutter (CSS px) for channel labels — mirrors Dopesheet's `w-32`. */
+const LABEL_GUTTER_PX = 128;
+
+/** devicePixelRatio capped to [1,2] — copied verbatim from the
+ *  Viewport.tsx convention (it passes `dpr={[1,2]}` to R3F's Canvas;
+ *  D-W9-10). High-DPI gets crisp text/diamonds; we never pay >2x fill. */
+function cappedDpr(): number {
+  const raw =
+    typeof window !== 'undefined' && window.devicePixelRatio
+      ? window.devicePixelRatio
+      : 1;
+  return Math.min(Math.max(raw, 1), 2);
+}
+
+const CHANNEL_TYPES = new Set([
+  'KeyframeChannelNumber',
+  'KeyframeChannelVec3',
+  'KeyframeChannelQuat',
+  'KeyframeChannelColor',
+]);
+
+interface ChannelRow {
+  channelId: string;
+  name: string;
+  keyframes: ReadonlyArray<{ time: number }>;
+}
+
+/**
+ * Flatten the DAG's AnimationLayers + orphan channels into the ordered
+ * channel-row list the canvas paints, one row per channel. This is the
+ * canvas-side equivalent of Dopesheet's collectLayers/collectOrphanChannels
+ * (Dopesheet.tsx:259-311) — same selection rules (layer-wired channels
+ * first, then unwired), reduced to only what the static layer draws
+ * (id + label + keyframe times; mute/solo chrome is C5's drawer concern,
+ * not the canvas). Exported so C5 e2e fixtures + any future agent
+ * automation can assert the row contract without DOM scraping.
+ */
+export function collectChannelRows(
+  nodes: Record<string, Node>,
+): ChannelRow[] {
+  const rows: ChannelRow[] = [];
+  const claimed = new Set<string>();
+
+  const toRow = (node: Node): ChannelRow => {
+    const params = (node.params ?? {}) as {
+      name?: string;
+      paramPath?: string;
+      keyframes?: Array<{ time: number }>;
+    };
+    return {
+      channelId: node.id,
+      name: params.name || params.paramPath || '',
+      keyframes: (params.keyframes ?? [])
+        .slice()
+        .sort((a, b) => a.time - b.time),
+    };
+  };
+
+  // Layer-wired channels first, in layer declaration order.
+  for (const node of Object.values(nodes)) {
+    if (node.type !== 'AnimationLayer') continue;
+    const animation = (node.inputs as Record<string, unknown>).animation;
+    const refs = Array.isArray(animation)
+      ? animation
+      : animation
+        ? [animation]
+        : [];
+    for (const ref of refs) {
+      const channelId = (ref as { node: string }).node;
+      const channelNode = nodes[channelId];
+      if (!channelNode || !CHANNEL_TYPES.has(channelNode.type)) continue;
+      if (claimed.has(channelId)) continue;
+      claimed.add(channelId);
+      rows.push(toRow(channelNode));
+    }
+  }
+  // Then unwired (orphan) channels.
+  for (const node of Object.values(nodes)) {
+    if (!CHANNEL_TYPES.has(node.type)) continue;
+    if (claimed.has(node.id)) continue;
+    claimed.add(node.id);
+    rows.push(toRow(node));
+  }
+  return rows;
+}
+
+interface Dims {
+  cssW: number;
+  cssH: number;
+}
+
+/**
+ * Paint the full static layer (bg + grid + row separators + labels +
+ * diamonds) into `ctx`, which the caller has already `scale(dpr,dpr)`'d
+ * so all coordinates here are CSS px (matches C2 geometry's CSS-px
+ * contract). Returns the number of diamonds actually drawn (= the culled
+ * count = the `data-rendered-keyframes` mirror attr, D-W9-4).
+ *
+ * Exported + context-injected (not store-reading) so it is unit-testable
+ * against a stub 2D context WITHOUT mocking real pixel output — the H32
+ * trap the W9 plan forbids is faking pixel *correctness*; asserting which
+ * draw calls fire + the returned cull count is a real contract, not a
+ * faked render.
+ */
+export function paintStaticLayer(
+  ctx: CanvasRenderingContext2D,
+  rows: ChannelRow[],
+  dims: Dims,
+  durationSeconds: number,
+  activeChannelId: string | null,
+): number {
+  const { cssW, cssH } = dims;
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  // Background.
+  ctx.fillStyle = PALETTE.CANVAS_BG;
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
+
+  // Visible seconds range = the whole track for C3 (no zoom yet; zoom is
+  // a later wave). Culling still runs so the mirror attr is honest and
+  // C5's culling e2e has a real code path to exercise.
+  const visibleStartSec = 0;
+  const visibleEndSec = durationSeconds;
+
+  let rendered = 0;
+  ctx.lineWidth = 1;
+
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    const rowTop = r * ROW_HEIGHT_PX;
+
+    // Active-channel row tint (mirrors Dopesheet's `bg-accent/10`).
+    if (activeChannelId !== null && row.channelId === activeChannelId) {
+      ctx.fillStyle = PALETTE.ACTIVE_DIAMOND;
+      ctx.globalAlpha = 0.1;
+      ctx.fillRect(0, rowTop, cssW, ROW_HEIGHT_PX);
+      ctx.globalAlpha = 1;
+    }
+
+    // Row separator line.
+    ctx.strokeStyle = PALETTE.ROW_LINE;
+    ctx.beginPath();
+    ctx.moveTo(0, rowTop + ROW_HEIGHT_PX + 0.5);
+    ctx.lineTo(cssW, rowTop + ROW_HEIGHT_PX + 0.5);
+    ctx.stroke();
+
+    // Channel label.
+    ctx.fillStyle = PALETTE.LABEL_TEXT;
+    ctx.font = '11px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      row.name,
+      6,
+      rowTop + ROW_HEIGHT_PX / 2,
+      LABEL_GUTTER_PX - 8,
+    );
+
+    // Diamonds — geometry comes from C2 (consumed, NOT re-derived inline;
+    // re-deriving was the D-W9-4 anti-pattern). Cull first so the count
+    // is the honest rendered count.
+    const culled = cullVisibleKeyframes(
+      row.keyframes.map((k) => ({ timeSeconds: k.time })),
+      visibleStartSec,
+      visibleEndSec,
+    );
+    const isActiveRow =
+      activeChannelId !== null && row.channelId === activeChannelId;
+    ctx.fillStyle = isActiveRow
+      ? PALETTE.ACTIVE_DIAMOND
+      : PALETTE.DIAMOND;
+
+    for (const { index } of culled) {
+      const t = row.keyframes[index].time;
+      // C2 keyframeToRect maps time -> CSS-px rect; offset x by the label
+      // gutter so diamonds sit in the track area, not under the labels.
+      const rect = keyframeToRect(
+        t,
+        r,
+        durationSeconds,
+        trackWidth,
+        ROW_HEIGHT_PX,
+        DIAMOND_PX,
+      );
+      const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
+      const cy = rect.y + rect.h / 2;
+      // Rotated (45°) square = diamond, mirroring Dopesheet's
+      // `rotate-45` 8x8 box.
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - DIAMOND_PX / 2);
+      ctx.lineTo(cx + DIAMOND_PX / 2, cy);
+      ctx.lineTo(cx, cy + DIAMOND_PX / 2);
+      ctx.lineTo(cx - DIAMOND_PX / 2, cy);
+      ctx.closePath();
+      ctx.fill();
+      rendered++;
+    }
+  }
+
+  return rendered;
+}
+
+export function TimelineCanvas({ duration }: { duration: number }) {
+  const nodes = useDagStore((s) => s.state.nodes);
+  const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
+  // Read (do not subscribe-render on) durationSeconds as a fallback when
+  // the prop is absent; the prop is the contract Dopesheet had, kept
+  // identical so the C5 drawer swap is a one-line import change.
+  const storeDuration = useTimeStore((s) => s.durationSeconds);
+  const durationSeconds = duration > 0 ? duration : storeDuration;
+
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Offscreen static-layer cache. Owned solely by the diamond effect
+  // (single writer of the static layer). C4's rAF loop will only READ it
+  // via drawImage to restore the static pixels under the moving playhead.
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [dims, setDims] = useState<Dims>({ cssW: 0, cssH: 0 });
+  const [dpr, setDpr] = useState<number>(() => cappedDpr());
+
+  // ── C4 rAF-loop input refs ────────────────────────────────────────────
+  // The rAF callback (below) must NEVER close over render-scope vars
+  // (the D-W9-3 / context-memo §3 stale-closure trap: a callback created
+  // on first render would forever see the first render's dims/dpr/duration
+  // even after a resize). Every mutable input the loop needs is therefore
+  // routed through a ref these next two effects keep current; the loop
+  // reads `*.current` only. `offscreenRef` (C3, declared above) is the
+  // same pattern — it is the cache the strip-restore drawImage()'s from.
+  // `currentFrameRef`/`seconds` are NOT mirrored here — those are read
+  // straight off the stores via getState() inside the loop (single source
+  // of truth, zero staleness window by construction).
+  const dimsRef = useRef<Dims>(dims);
+  const dprRef = useRef<number>(dpr);
+  const durationRef = useRef<number>(0);
+  // Last playhead x actually drawn — the idle-guard comparand. -1 = never
+  // drawn yet, so the first tick always paints.
+  const lastPlayheadXRef = useRef<number>(-1);
+
+  const rows = collectChannelRows(nodes);
+
+  // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
+  // contract) is the canvas's visual-correctness surrogate. The JSX used
+  // to hard-code `0` and let the effect overwrite it post-mount; a static
+  // DOM reader (SSR / first-commit / a test reading before effects flush)
+  // saw a false `0`. Derive the real culled total from the SAME cull the
+  // effect uses so the pre-first-paint attribute already matches. NOT a
+  // pixel test (H30 / D-W9-4) — the mirror-attr value IS the contract.
+  const renderedKeyframeTotal = useMemo(
+    () =>
+      rows.reduce(
+        (n, row) =>
+          n +
+          cullVisibleKeyframes(
+            row.keyframes.map((k) => ({ timeSeconds: k.time })),
+            0,
+            durationSeconds,
+          ).length,
+        0,
+      ),
+    [rows, durationSeconds],
+  );
+
+  // Measure the host + observe resize (drawer is resizable 200–480px,
+  // D-W9-10). useLayoutEffect so the first paint has real dims, not 0x0.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const measure = () => {
+      const rect = host.getBoundingClientRect();
+      const nextDpr = cappedDpr();
+      setDims((prev) =>
+        prev.cssW === rect.width && prev.cssH === rect.height
+          ? prev
+          : { cssW: rect.width, cssH: rect.height },
+      );
+      setDpr((prev) => (prev === nextDpr ? prev : nextDpr));
+    };
+
+    measure();
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure);
+      observer.observe(host);
+    }
+    return () => {
+      observer?.disconnect();
+    };
+  }, []);
+
+  // Mirror attrs (D-W9-4) are the React-observable DATA contract — they
+  // describe the DAG-derived picture, NOT a pixel side-effect, so they
+  // publish independently of canvas dims/dpr (a 0x0 host before its first
+  // layout pass, or a no-2D-context env, must still expose an honest
+  // count). The cull count here equals the painted count because C3 has
+  // no zoom — visible range == [0, duration] — so the data contract and
+  // the pixel contract agree by construction. NOT data-playhead-px (C4).
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    // Same value as the JSX init (renderedKeyframeTotal) — the effect
+    // re-publishes it on every rows/duration change; the JSX init makes
+    // the pre-first-paint DOM already correct (c-3).
+    host.dataset.renderedKeyframes = String(renderedKeyframeTotal);
+    host.dataset.channelCount = String(rows.length);
+    host.dataset.frameCount = String(
+      Math.max(0, Math.round(durationSeconds * 60)),
+    );
+    // C4 carry: data-playhead-px / data-frame are written by the rAF loop
+    // (inherently draw-tied — they describe pixel position, not DAG data).
+    // But seed a sane initial value here, on the dims-INDEPENDENT data
+    // path (C3 split this effect out precisely because happy-dom's
+    // getBoundingClientRect is 0x0, so the pixel effect may never run in
+    // tests). `??=` so the rAF loop's later writes are never clobbered by
+    // a re-run of this DAG-keyed effect — only the very first, pre-tick
+    // read sees '0' instead of `null`.
+    host.dataset.playheadPx ??= '0';
+    host.dataset.frame ??= '0';
+  }, [rows, durationSeconds]);
+
+  // Keep the rAF-loop input refs current. Runs on every commit (no dep
+  // array) so dims/dpr/duration the loop reads are always the latest
+  // React values WITHOUT the loop closing over them. Cheap: three
+  // pointer writes per commit, no DOM, no store.
+  useEffect(() => {
+    dimsRef.current = dims;
+    dprRef.current = dpr;
+    durationRef.current = durationSeconds;
+  });
+
+  // Build + populate the offscreen static cache, then blit it to the
+  // visible canvas. Keyed on every input that changes the static picture
+  // (D-W9-3). dims/dpr are React state in the dep array → this effect
+  // re-runs on resize/dpr change, so the closure can never go stale on
+  // the declarative path (the rAF stale-closure risk is C4's, handled
+  // there via getState()/refs — NOT pre-built here). This effect owns
+  // PIXELS only; the attr contract is the effect above.
+  useEffect(() => {
+    const visible = canvasRef.current;
+    if (!visible) return;
+    if (dims.cssW <= 0 || dims.cssH <= 0) return;
+
+    const backingW = Math.round(dims.cssW * dpr);
+    const backingH = Math.round(dims.cssH * dpr);
+
+    // Visible canvas: backing store at dpr, CSS size unscaled.
+    visible.width = backingW;
+    visible.height = backingH;
+    visible.style.width = `${dims.cssW}px`;
+    visible.style.height = `${dims.cssH}px`;
+
+    // Offscreen cache: same backing dims (C4 drawImage 1:1 restore).
+    let offscreen = offscreenRef.current;
+    if (!offscreen) {
+      offscreen = document.createElement('canvas');
+      offscreenRef.current = offscreen;
+    }
+    offscreen.width = backingW;
+    offscreen.height = backingH;
+
+    const offCtx = offscreen.getContext('2d');
+    const visCtx = visible.getContext('2d');
+    // happy-dom (test env) returns null for getContext('2d'); guard so the
+    // contract test mounts cleanly. Real browsers always return a context.
+    // The mirror-attr data contract is the effect above — it does NOT
+    // depend on a 2D context — so a null context here only skips PIXELS,
+    // never the observable contract.
+    if (!offCtx || !visCtx) return;
+
+    // Draw the static layer into the OFFSCREEN cache (CSS-px coords after
+    // scale), then blit offscreen → visible. C4's rAF loop restores from
+    // this same offscreen, so the static layer must live there first.
+    offCtx.setTransform(1, 0, 0, 1, 0, 0);
+    offCtx.scale(dpr, dpr);
+    paintStaticLayer(offCtx, rows, dims, durationSeconds, activeChannelId);
+
+    visCtx.setTransform(1, 0, 0, 1, 0, 0);
+    visCtx.clearRect(0, 0, backingW, backingH);
+    visCtx.drawImage(offscreen, 0, 0);
+    // The static layer was just fully repainted (it overwrites the whole
+    // visible canvas, playhead included). Force the next rAF tick to
+    // re-stroke the playhead even if x is unchanged — otherwise the idle
+    // guard would skip and the playhead would stay erased after a DAG /
+    // resize repaint. -1 = "no valid last-drawn x", same sentinel as init.
+    lastPlayheadXRef.current = -1;
+  }, [nodes, activeChannelId, durationSeconds, dims, dpr, rows]);
+
+  // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
+  //
+  // The D-W9-3 escape hatch and the actual 60fps fix. Self-reschedules
+  // via requestAnimationFrame; mount-once ([] deps) because it closes
+  // over NOTHING from render scope — every mutable input is read fresh
+  // each tick via getState() (the stores) or `*.current` (the C3-synced
+  // refs). That is the entire stale-closure mitigation: there is no
+  // render-scope variable for the closure to freeze.
+  //
+  // Lifecycle (krama, hot path ≤16.6ms): rAF tick → getState()/ref reads
+  // (no React) → secondsToX (C2 pure) → idle compare → [on change] strip
+  // restore (drawImage from C3 offscreen) → stroke playhead LAST → two
+  // data-attr writes. Unmount → cancelAnimationFrame (leak guard).
+  useEffect(() => {
+    let rafId = 0;
+
+    function tick() {
+      const host = hostRef.current;
+      const visible = canvasRef.current;
+      const offscreen = offscreenRef.current;
+      const { cssW, cssH } = dimsRef.current;
+
+      // Nothing to paint onto / restore from yet (pre-layout, or the C3
+      // effect has not built the offscreen cache). Stay registered — the
+      // cache appears asynchronously after the first layout pass; killing
+      // the loop here would need a re-arm signal we deliberately avoid.
+      if (host && visible && offscreen && cssW > 0 && cssH > 0) {
+        const visCtx = visible.getContext('2d');
+        if (visCtx) {
+          // Mutable inputs — read FRESH every tick. Stores via getState()
+          // (NOT subscribed, NOT closure-captured: the D-W9-3 / §3
+          // stale-closure mitigation, and the single source of truth so
+          // ref↔store cannot diverge here). dpr/duration via the
+          // C3-synced refs, never render scope.
+          const seconds = useTimeStore.getState().seconds;
+          const frame =
+            useViewportStore.getState().currentFrameRef.current;
+          const dprNow = dprRef.current;
+          const durationNow = durationRef.current;
+
+          // C2 owns the math (not re-derived inline — the D-W9-4 win).
+          // Track area excludes the label gutter, exactly as the C3
+          // static layer offsets diamonds by LABEL_GUTTER_PX.
+          const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
+          const newX =
+            LABEL_GUTTER_PX +
+            secondsToX(seconds, durationNow, trackWidth);
+
+          // IDLE GUARD (LOCKED — plan C4 §129): unchanged x → early-out
+          // but STAY registered (do NOT cancel/re-arm). Cheaper than
+          // wiring a wake signal from timeStore.play/scrub; mirrors
+          // Clock.tsx:9-11's "loop runs even when paused, just no-ops".
+          if (newX !== lastPlayheadXRef.current) {
+            const oldX = lastPlayheadXRef.current;
+
+            // Work in BACKING pixels with the identity transform — the
+            // exact convention C3 used to blit offscreen→visible
+            // (visCtx.drawImage(offscreen,0,0) with setTransform identity,
+            // both canvases at cssW*dpr × cssH*dpr). Matching it here
+            // makes the strip-restore a pixel-perfect twin of the cache;
+            // C2 geometry is CSS px, so every coord is *dprNow into
+            // backing space. (Re-derives nothing — C2 still owns the
+            // CSS-px math; this is only the CSS→backing scale C3 also
+            // applies, kept identical so the two paths stay aligned.)
+            visCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+            // 1. Restore the static pixels under the OLD playhead from
+            //    the C3 offscreen cache. This is why the cache exists:
+            //    drawImage copies the EXACT painted pixels back —
+            //    diamonds the old line overlapped included — so the
+            //    playhead never erases the static layer (proven by C5's
+            //    e2e: data-rendered-keyframes constant across a scrub).
+            //    Skip on the first paint (oldX < 0): nothing drawn yet.
+            if (oldX >= 0) {
+              const strip = playheadStripRect(
+                oldX,
+                PLAYHEAD_STRIP_HALF_WIDTH_PX,
+                cssH,
+              );
+              if (strip.w > 0 && strip.h > 0) {
+                // 1:1 backing-px blit: src rect == dst rect, both scaled
+                // CSS→backing by dprNow. The offscreen is the
+                // identity-blitted twin of the visible canvas (C3), so
+                // copying the same backing rect restores the exact
+                // static pixels — diamonds included.
+                const sx = strip.x * dprNow;
+                const sy = strip.y * dprNow;
+                const sw = strip.w * dprNow;
+                const sh = strip.h * dprNow;
+                visCtx.drawImage(
+                  offscreen,
+                  sx,
+                  sy,
+                  sw,
+                  sh,
+                  sx,
+                  sy,
+                  sw,
+                  sh,
+                );
+              }
+            }
+
+            // 2. Stroke the playhead at the NEW x — DRAWN LAST, on top
+            //    of the restored static layer (D-W9-3 "playhead always
+            //    drawn last"). Backing-px space: x scaled by dprNow,
+            //    line width = dprNow so it stays a crisp ~1 CSS px.
+            const bx = newX * dprNow + 0.5;
+            visCtx.strokeStyle = PALETTE.PLAYHEAD;
+            visCtx.lineWidth = dprNow;
+            visCtx.beginPath();
+            visCtx.moveTo(bx, 0);
+            visCtx.lineTo(bx, cssH * dprNow);
+            visCtx.stroke();
+
+            lastPlayheadXRef.current = newX;
+
+            // 3. Publish the mirror attrs. These are draw-tied by nature
+            //    (they describe the playhead's pixel position + the
+            //    escape-hatch frame) so they live in the loop, NOT the
+            //    C3 data effect — which only seeds the pre-tick '0'.
+            if (host) {
+              host.dataset.playheadPx = String(newX);
+              host.dataset.frame = String(frame);
+            }
+          }
+        }
+      }
+
+      rafId = requestAnimationFrame(tick);
+    }
+
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={hostRef}
+      data-testid="timeline-canvas"
+      role="img"
+      aria-label={`Animation dopesheet — ${rows.length} channels`}
+      data-frame-count={Math.max(0, Math.round(durationSeconds * 60))}
+      data-channel-count={rows.length}
+      data-rendered-keyframes={renderedKeyframeTotal}
+      className="relative h-full w-full overflow-hidden bg-bg"
+    >
+      <canvas ref={canvasRef} className="block h-full w-full" />
+    </div>
+  );
+}

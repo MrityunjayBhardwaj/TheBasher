@@ -10,43 +10,59 @@
 
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback } from 'react';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
-import { useViewportStore } from '../app/stores/viewportStore';
+import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
+import { useSelectionSummary } from '../app/hooks/useSelectionSummary';
 import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
-import { useDagStore } from '../core/dag/store';
 import { FpsMeter } from '../render/FpsMeter';
 import { EditorLights } from './EditorLights';
 import { ModeBadge } from './ModeBadge';
 import { SceneFromDAG } from './SceneFromDAG';
-
-// Inline debounce — single-caller, Hickey check. Not promoted to a shared
-// hook until a second use-site appears.
-function useDebouncedValue<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
 
 function EditorOrbit() {
   // Disable orbit while a TransformControls handle is being dragged
   // (gizmoStore.dragging). Without this, gizmo + orbit fire simultaneously.
   // Reading via subscription so the prop flips at the right frame.
   const dragging = useGizmoStore((s) => s.dragging);
+
+  // c-1 (P6 W10 UIR): the real camera-zoom signal. OrbitControls fires
+  // `onChange` on every dolly/rotate/pan tick; we read the live
+  // camera→target distance and derive a zoom % via the PURE
+  // `cameraDistanceToZoomPercent` helper (no THREE math here — that's
+  // unit-tested in the store). The result lands in `viewportStore`,
+  // which the R3 TopToolbar zoom readout consumes (§5.3 anatomy).
+  //
+  // V8: writing `viewportStore` (a UI-projection store) from
+  // `src/viewport/` is V8-clean — V8's file-rooted ban covers only
+  // `dispatch`/`useDagStore.setState`/`applyOp`; a projection-store
+  // setter is the SAME in-viewport write class as the long-standing
+  // `useSelectionStore.getState().clear()` at onPointerMissed below.
+  // Camera zoom is the editor-session projection class the
+  // viewportStore header explicitly names ("like the camera orbit
+  // pose") — never persisted, never in the DAG.
+  const handleChange = useCallback((e?: { target: OrbitControlsImpl }) => {
+    const controls = e?.target;
+    if (!controls) return;
+    const distance = controls.object.position.distanceTo(controls.target);
+    useViewportStore
+      .getState()
+      .setCameraZoom(cameraDistanceToZoomPercent(distance));
+  }, []);
+
   return (
     <OrbitControls
       makeDefault
       enabled={!dragging}
       enableDamping
       dampingFactor={0.08}
+      onChange={handleChange}
       // Default mouse map: rotate (LMB), zoom (wheel), pan (RMB / two-finger).
     />
   );
@@ -59,21 +75,10 @@ export function Viewport() {
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
 
   // R6 aria-label: selection summary, debounced 200ms so rapid marquee
-  // selects don't spam SR announcements.
-  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
-  const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
-  const primaryNode = useDagStore((s) =>
-    primaryNodeId ? s.state.nodes[primaryNodeId] ?? null : null,
-  );
-  const rawSummary = useMemo(() => {
-    if (selectedCount === 0) return 'no selection';
-    if (selectedCount === 1 && primaryNode) {
-      const name = primaryNode.meta?.name ?? primaryNode.id;
-      return `${primaryNode.type} "${name}"`;
-    }
-    return `${selectedCount} nodes selected`;
-  }, [selectedCount, primaryNode]);
-  const debouncedSummary = useDebouncedValue(rawSummary, 200);
+  // selects don't spam SR announcements. P6 W10 UIR F-4 — promoted to the
+  // shared useSelectionSummary hook so the <main> region label (§8.3) and
+  // this aria-live span derive from one source and never diverge.
+  const debouncedSummary = useSelectionSummary();
 
   return (
     <div

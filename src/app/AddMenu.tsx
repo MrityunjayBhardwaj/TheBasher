@@ -122,26 +122,32 @@ export function AddMenu() {
       <header className="border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-wide text-fg/50">
         Add
       </header>
-      <ul className="flex flex-col">
+      <ul role="menu" aria-label="Add primitive" className="flex flex-col">
         {GROUPS.map((g) => (
           <li
             key={g.label}
+            role="none"
             className="relative"
             onMouseEnter={() => setActiveGroup(g.label)}
             onMouseLeave={() => setActiveGroup((cur) => (cur === g.label ? null : cur))}
           >
             <button
               type="button"
+              role="menuitem"
               data-testid={`add-menu-${g.label.toLowerCase()}`}
+              aria-haspopup="menu"
+              aria-expanded={activeGroup === g.label}
               className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] ${
                 activeGroup === g.label ? 'bg-muted text-accent' : 'text-fg/80 hover:bg-muted'
               }`}
             >
               <span>{g.label}</span>
-              <span className="font-mono text-[10px] text-fg/40">▸</span>
+              <span aria-hidden className="font-mono text-[10px] text-fg/40">▸</span>
             </button>
             {activeGroup === g.label ? (
               <div
+                role="menu"
+                aria-label={g.label}
                 data-testid={`add-menu-${g.label.toLowerCase()}-panel`}
                 className="absolute left-full top-0 z-[101] -mt-1 w-[200px] overflow-hidden rounded border border-border bg-bg shadow-lg"
               >
@@ -149,6 +155,7 @@ export function AddMenu() {
                   <button
                     key={item.kind}
                     type="button"
+                    role="menuitem"
                     data-testid={`add-menu-item-${item.kind}`}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted"
                     onClick={() => {

@@ -156,6 +156,9 @@ export function ComfyStatusIndicator({
       }}
       data-testid="comfy-status-indicator"
       data-state={state}
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={`ComfyUI status: ${stateLabel(state)}`}
       title={`ComfyUI: ${stateLabel(state)} (hover to refresh)`}
       className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide ${stateClass(state)}`}
     >

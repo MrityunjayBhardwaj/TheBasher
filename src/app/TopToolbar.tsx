@@ -3,7 +3,7 @@
 //
 //   left   — Add menu + Assets popover + space toggle (3D View ↔ UV)
 //   center — 4-button operational-mode pill (Edit / Run / Animate / Director)
-//   right  — zoom % placeholder + Export + Director Cut shortcut
+//   right  — live viewport zoom % readout + Export + Director Cut shortcut
 //
 // History note (P6 W7, 2026-05-14): the original W2 implementation
 // nested TransformToolbar in the left zone, carrying gizmo + snap +
@@ -38,6 +38,7 @@ import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
+import { useViewportStore } from './stores/viewportStore';
 
 interface ModePillEntry {
   readonly value: Mode;
@@ -181,19 +182,26 @@ function ModePill(): ReactNode {
 
 function RightCluster(): ReactNode {
   const setMode = useModeStore((s) => s.setMode);
+  // c-1 (P6 W10 UIR): live viewport zoom %. The signal is the
+  // OrbitControls camera→target distance, derived in viewportStore by
+  // the Viewport.tsx onChange listener (§5.3 anatomy — the readout is
+  // a real value, no longer a dead 100% placeholder). The control is
+  // still a readout (not a zoom-input dropdown): §5.3 anatomy lists
+  // `[100% ▾]` as the zoom % display; no interactive zoom-input
+  // dropdown is promised by the spec, so the button stays disabled and
+  // the ▾ is decorative.
+  const cameraZoom = useViewportStore((s) => s.cameraZoom);
   return (
     <div className="flex items-center gap-2">
-      {/* Zoom % is a placeholder until a real zoom-control plumbing lands.
-          Kept visible (per spec §5.3 anatomy) but disabled so it advertises
-          the affordance without claiming it works. */}
       <button
         type="button"
         disabled
         data-testid="top-toolbar-zoom"
-        title="Viewport zoom — coming in a later wave"
+        title={`Viewport zoom — ${cameraZoom}%`}
+        aria-label={`Viewport zoom ${cameraZoom} percent`}
         className="flex h-7 items-center gap-1 rounded border border-border bg-muted/30 px-2 text-[10px] font-mono uppercase tracking-wide text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
-        <span>100%</span>
+        <span data-testid="top-toolbar-zoom-value">{cameraZoom}%</span>
         <span aria-hidden>▾</span>
       </button>
       <button
