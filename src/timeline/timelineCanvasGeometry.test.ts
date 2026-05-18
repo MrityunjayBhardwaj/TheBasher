@@ -27,6 +27,7 @@ import {
   frameToX,
   secondsToX,
   keyframeToRect,
+  xToSeconds,
   cullVisibleKeyframes,
   playheadStripRect,
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
@@ -262,6 +263,72 @@ describe('keyframeToRect — diamond box (generalizes Dopesheet 8x8)', () => {
   it('zero-width canvas -> finite rect', () => {
     const r = keyframeToRect(5, 1, 10, 0, 24, 8);
     expect(Number.isFinite(r.x)).toBe(true);
+  });
+});
+
+describe('xToSeconds (D-07 inverse) — exact inverse of keyframeToRect center-x', () => {
+  // The proof xToSeconds is the TRUE inverse: derive x from
+  // keyframeToRect EXACTLY as the canvas does (NOT secondsToX — an
+  // inset-blind inverse would PASS a secondsToX round-trip but FAIL the
+  // t=0 / t=duration edges, which is exactly the F-7/H35 trap D-07 guards).
+  const DUR = 10;
+  const W = 400;
+  const D = 8;
+  // The SAME centerX the canvas computes for time t.
+  const centerXOf = (t: number) => {
+    const r = keyframeToRect(t, 0, DUR, W, 24, D);
+    return r.x + D / 2;
+  };
+
+  it('interior round-trip within 1e-9', () => {
+    for (const t of [0.5, 1.0, 3.333, 7.7, 9.5]) {
+      const back = xToSeconds(centerXOf(t), DUR, W, D);
+      expect(Math.abs(back - t)).toBeLessThan(1e-9);
+    }
+  });
+
+  it('F-7 edges: t=0 and t=duration round-trip within 1e-9', () => {
+    // These are the terminal keyframes the inset exists for; an
+    // inset-blind inverse fails HERE specifically.
+    const back0 = xToSeconds(centerXOf(0), DUR, W, D);
+    expect(Math.abs(back0 - 0)).toBeLessThan(1e-9);
+    const backEnd = xToSeconds(centerXOf(DUR), DUR, W, D);
+    expect(Math.abs(backEnd - DUR)).toBeLessThan(1e-9);
+  });
+
+  it('clamps below the left inset to 0 and past (width - inset) to duration', () => {
+    expect(xToSeconds(-50, DUR, W, D)).toBe(0);
+    expect(xToSeconds(0, DUR, W, D)).toBe(0); // exactly at x=0 (< inset) → 0
+    const past = xToSeconds(W + 100, DUR, W, D);
+    expect(past).toBe(DUR);
+    expect(Number.isNaN(past)).toBe(false);
+  });
+
+  it('degenerate widthPx <= 0 -> 0 (finite, no NaN)', () => {
+    expect(xToSeconds(123, DUR, 0, D)).toBe(0);
+    expect(xToSeconds(123, DUR, -100, D)).toBe(0);
+  });
+
+  it('degenerate widthPx - 2*inset <= 0 -> finite, clean round-trip vs keyframeToRect else-branch', () => {
+    // width 6, diamond 8 → inset 4, innerWidth = 6-8 = -2 ≤ 0; both
+    // keyframeToRect and xToSeconds fall back to the un-inset map.
+    const narrowW = 6;
+    for (const t of [0, 3, 7, 10]) {
+      const r = keyframeToRect(t, 0, DUR, narrowW, 24, D);
+      const cx = r.x + D / 2;
+      const back = xToSeconds(cx, DUR, narrowW, D);
+      expect(Number.isFinite(back)).toBe(true);
+      expect(Number.isNaN(back)).toBe(false);
+      // round-trips against the else-branch (un-inset secondsToX over
+      // widthPx, clamped) within 1e-9
+      const span = Math.max(DUR, 0.0001);
+      const expected = (Math.min(Math.max(cx, 0), narrowW) / narrowW) * span;
+      expect(Math.abs(back - expected)).toBeLessThan(1e-9);
+    }
+  });
+
+  it('deterministic — same args twice -> strictly equal', () => {
+    expect(xToSeconds(123, DUR, W, D)).toBe(xToSeconds(123, DUR, W, D));
   });
 });
 
