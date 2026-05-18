@@ -459,7 +459,15 @@ function colorsInSameFamily(a: string | null, b: string | null): boolean {
   const bGray = B.s < 0.15 || B.l < 0.1 || B.l > 0.9;
   if (aGray !== bGray) return false;
   if (aGray) return Math.abs(A.l - B.l) < 0.2;
-  return hueDistance(A.h, B.h) <= 25 && Math.abs(A.l - B.l) < 0.3;
+  // Saturation bound (#29): hue+lightness alone let desaturated reds in —
+  // brown(#a52a2a, s~0.55) vs red(#ff0000, s 1.0) → Δs 0.45 → REJECTED.
+  // salmon(#fa8072, s~0.93) → Δs 0.07 → still MATCHES (intentional —
+  // salmon is reddish; a user asking for "red" expects salmon included).
+  return (
+    hueDistance(A.h, B.h) <= 25 &&
+    Math.abs(A.l - B.l) < 0.3 &&
+    Math.abs(A.s - B.s) < 0.3
+  );
 }
 
 function nodeColorHex(node: Node | undefined): string | null {
