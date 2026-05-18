@@ -40,6 +40,13 @@
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
+import { useTimeStore } from './stores/timeStore';
+import {
+  dispatchFirstKeyComposite,
+  dispatchMutatorFromUI,
+} from './animate/dispatchMutator';
+import { paramAnimationState } from './animate/paramAnimationState';
+import { useAutoKeyStore } from './stores/autoKeyStore';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -51,6 +58,191 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useSelectionStore } from './stores/selectionStore';
+
+/**
+ * Find the KeyframeChannel* node that animates (nodeId, paramPath) and
+ * return its id plus the exact stored `time` (SECONDS) of any sample on
+ * the current frame. Single source of truth = the DAG (same scan as the
+ * C1 helper). Returns null when no channel exists.
+ */
+function resolveChannel(
+  nodes: Record<string, { id: string; type: string; params?: unknown }>,
+  nodeId: string,
+  paramPath: string,
+  currentFrame: number,
+): { channelId: string; onKeySeconds: number | null } | null {
+  for (const node of Object.values(nodes)) {
+    if (!node.type.startsWith('KeyframeChannel')) continue;
+    const p = (node.params ?? {}) as {
+      target?: unknown;
+      paramPath?: unknown;
+      keyframes?: unknown;
+    };
+    if (p.target !== nodeId || p.paramPath !== paramPath) continue;
+    const kfs = Array.isArray(p.keyframes)
+      ? (p.keyframes as { time: number }[])
+      : [];
+    const onKey = kfs.find((kf) => Math.round(kf.time * 60) === currentFrame);
+    return { channelId: node.id, onKeySeconds: onKey ? onKey.time : null };
+  }
+  return null;
+}
+
+/**
+ * THE single Auto-Key commit chokepoint (Phase 7, Wave D / D4).
+ *
+ * Called by every inspector value-commit handler (NumericField +
+ * VectorComponent, onChange AND onCommit) AFTER the raw `setParam`
+ * dispatch. It is NOT a second DAG path — it is the SAME Wave A seam
+ * (`dispatchMutatorFromUI` / `dispatchFirstKeyComposite`) the diamond
+ * click uses, triggered by an edit instead of a click (RESEARCH
+ * Boundary 5).
+ *
+ * Strictly gated on `useAutoKeyStore.getState().enabled`: when Auto-Key
+ * is OFF this returns IMMEDIATELY, before any seam call, so the inspector
+ * behaviour is BYTE-IDENTICAL to pre-P7 (the caller already did the raw
+ * setParam; nothing else happens). This single function is the only
+ * interception point — the logic is not scattered across handlers (D4
+ * ownership + pre-mortem: gate once, here).
+ *
+ * Channel-exists ⇒ single `keyframe` Mutator at the current SECONDS
+ * (never a frame — the single conversion rule). No channel ⇒ first-key
+ * composite. Both at `useTimeStore.getState().seconds`.
+ */
+function autoKeyCommit(nodeId: string, paramPath: string, value: unknown): void {
+  if (!useAutoKeyStore.getState().enabled) return; // OFF → byte-identical pre-P7
+
+  const seconds = useTimeStore.getState().seconds;
+  const frame = useTimeStore.getState().frame;
+  const dagState = useDagStore.getState().state;
+
+  // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
+  // this (nodeId, paramPath) — the SAME pure scan the diamond uses (C1).
+  const exists =
+    paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
+
+  let result: { ok: true } | { ok: false; reason: string };
+  if (!exists) {
+    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value, seconds });
+  } else {
+    const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
+    if (!resolved) {
+      result = { ok: false, reason: 'Auto-Key: channel not found for animated param.' };
+    } else {
+      result = dispatchMutatorFromUI(
+        'mutator.timeline.keyframe',
+        { channelId: resolved.channelId, time: seconds, value },
+        `Auto-Key ${nodeId}.${paramPath}`,
+      );
+    }
+  }
+  if (!result.ok) {
+    // eslint-disable-next-line no-alert
+    window.alert?.(result.reason);
+  }
+}
+
+/**
+ * The 3-state inspector diamond (D-01 entry point / D-03 viz). Owns NO
+ * state — renders derived `paramAnimationState` and dispatches through
+ * the Wave A seam. Subscribes to `useTimeStore((s) => s.frame)` so it
+ * re-derives on scrub. **Never reads currentFrameRef (V20).**
+ *
+ * - hollow ◇  → 'none'   : click = first-key composite (addLayer+addChannel+keyframe)
+ * - filled ◆  → 'animated' (off-key) : click = single keyframe Mutator
+ * - record ◆  → 'on-key' : click (or Alt-click) = deleteKeyframe Mutator
+ *
+ * Every Mutator call passes `useTimeStore.getState().seconds` (never a
+ * frame int) — the on-key check via C1 is the only place frames are used.
+ */
+function ParamDiamond({
+  nodeId,
+  paramPath,
+  value,
+}: {
+  nodeId: string;
+  paramPath: string;
+  value: unknown;
+}) {
+  const frame = useTimeStore((s) => s.frame);
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dagState = useDagStore((s) => s.state);
+
+  const animState = paramAnimationState(dagState, nodeId, paramPath, frame);
+
+  const glyph = animState === 'none' ? '◇' : '◆';
+  const colorClass =
+    animState === 'on-key'
+      ? 'text-record'
+      : animState === 'animated'
+        ? 'text-accent'
+        : 'text-fg/40 hover:text-accent';
+
+  const onActivate = (alt: boolean) => {
+    const seconds = useTimeStore.getState().seconds;
+    let result: { ok: true } | { ok: false; reason: string };
+
+    if (animState === 'none') {
+      result = dispatchFirstKeyComposite({
+        targetId: nodeId,
+        paramPath,
+        value,
+        seconds,
+      });
+    } else {
+      const resolved = resolveChannel(nodes, nodeId, paramPath, frame);
+      if (!resolved) {
+        // Should not happen (animState !== 'none' ⇒ channel exists) but
+        // never mutate-and-pray — surface the inconsistency.
+        result = { ok: false, reason: 'Channel not found for animated param.' };
+      } else if (animState === 'on-key' || alt) {
+        // Delete the on-key sample. Use the channel's exact stored
+        // SECONDS for the sample on this frame (frame-rounded match).
+        const t =
+          resolved.onKeySeconds ??
+          // Alt-click on an off-key frame: nothing to delete here —
+          // Blender Alt-I is a silent no-op off a key.
+          null;
+        if (t === null) {
+          result = { ok: true };
+        } else {
+          result = dispatchMutatorFromUI(
+            'mutator.timeline.deleteKeyframe',
+            { channelId: resolved.channelId, time: t },
+            `Delete key ${nodeId}.${paramPath}`,
+          );
+        }
+      } else {
+        // 'animated' off-key → add a key at the current seconds.
+        result = dispatchMutatorFromUI(
+          'mutator.timeline.keyframe',
+          { channelId: resolved.channelId, time: seconds, value },
+          `Key ${nodeId}.${paramPath}`,
+        );
+      }
+    }
+
+    if (!result.ok) {
+      // Surface the rejection — never silently swallow (C2 constraint).
+      // eslint-disable-next-line no-alert
+      window.alert?.(result.reason);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      data-testid={`inspector-diamond-${nodeId}-${paramPath}`}
+      data-anim-state={animState}
+      aria-label={`Toggle keyframe for ${paramPath} (${animState})`}
+      title="Click to key/unkey at the playhead. Alt-click to delete a key."
+      className={`select-none px-1 text-[11px] leading-none ${colorClass} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+      onClick={(e) => onActivate(e.altKey)}
+    >
+      {glyph}
+    </button>
+  );
+}
 
 interface NumericFieldProps {
   nodeId: string;
@@ -65,18 +257,22 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
     value,
     onCommit: (next) => {
       dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `scrub ${paramPath}`);
+      autoKeyCommit(nodeId, paramPath, next);
     },
   });
   const display = scrub.isDragging ? scrub.previewValue : value;
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span
-        className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
-        onPointerDown={scrub.onPointerDown}
-        data-testid={`inspector-scrub-${nodeId}-${paramPath}`}
-        title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
-      >
-        {label}
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        <span
+          className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
+          onPointerDown={scrub.onPointerDown}
+          data-testid={`inspector-scrub-${nodeId}-${paramPath}`}
+          title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
+        >
+          {label}
+        </span>
       </span>
       <input
         type="number"
@@ -88,6 +284,7 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: next });
+          autoKeyCommit(nodeId, paramPath, next);
         }}
       />
     </label>
@@ -120,6 +317,7 @@ function VectorComponent({
         'user',
         `scrub ${paramPath}.${axisLabel}`,
       );
+      autoKeyCommit(nodeId, paramPath, newVec);
     },
   });
   const display = scrub.isDragging ? scrub.previewValue : value;
@@ -145,6 +343,7 @@ function VectorComponent({
           const newVec = [...vec] as number[];
           newVec[axisIndex] = next;
           dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
+          autoKeyCommit(nodeId, paramPath, newVec);
         }}
       />
     </label>
@@ -165,7 +364,10 @@ function VectorField({
   const dims = ['x', 'y', 'z'];
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="font-mono text-fg/60">{label}</span>
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        <span className="font-mono text-fg/60">{label}</span>
+      </span>
       <div className="flex gap-1">
         {value.slice(0, 3).map((v, i) => (
           <VectorComponent

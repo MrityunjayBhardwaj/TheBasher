@@ -34,6 +34,7 @@ import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
 import { simplifyChannelMutator } from './builders/simplifyChannel';
 import { clearChannelMutator } from './builders/clearChannel';
+import { deleteKeyframeMutator } from './builders/deleteKeyframe';
 import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
@@ -52,6 +53,7 @@ export {
   keyframeMutator,
   simplifyChannelMutator,
   clearChannelMutator,
+  deleteKeyframeMutator,
   shotCreateMutator,
   retargetMutator,
   addPassMutator,
@@ -73,6 +75,8 @@ export function registerAllMutators(): void {
   // P6 W6 — track ops (simplify + clear)
   registerMutator(simplifyChannelMutator);
   registerMutator(clearChannelMutator);
+  // P7 Wave B — delete-key-at-playhead (Blender Alt-I, D-06)
+  registerMutator(deleteKeyframeMutator);
   registerMutator(shotCreateMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);

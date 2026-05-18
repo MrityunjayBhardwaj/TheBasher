@@ -282,6 +282,17 @@ const ROWS: Row[] = [
     exempt: { kind: 'rule', rule: 'B', note: '"unsupported type" hint shown only for params that NPanel cannot render — Rule B: developer/debug affordance, no user action gated on reading it.' } },
   { site: 'R7 NPanel ParamRow complex hint — fg/30 on muted/40', fg: 'fg/30', bgStack: ['muted/40'], textSize: 'small',
     exempt: { kind: 'rule', rule: 'C', note: '"(complex)" suffix beside the param name — Rule C: fg/30 is decorative-only (separator glyph or tertiary hint). Param name itself is fg/60.' } },
+  // P7 C2 — the 3-state keyframe diamond (◇/◆) adornment on animatable
+  // ParamRow headers (D-01/D-03). Pure graphical glyph; the animation
+  // state is ALSO machine-readable via data-anim-state + aria-label, so
+  // SC 1.4.3 non-text exemption applies (same basis as the collapse
+  // chevron above). Three color states tracked for the record.
+  { site: 'R7 NPanel keyframe diamond — none (fg/40) on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
+    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (hollow ◇ "not animated" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="none" + aria-label on the button.' } },
+  { site: 'R7 NPanel keyframe diamond — animated (accent) on muted/40', fg: 'accent', bgStack: ['muted/40'], textSize: 'small',
+    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (filled ◆ "animated, off-key" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="animated" + aria-label.' } },
+  { site: 'R7 NPanel keyframe diamond — on-key (record) on muted/40', fg: 'record', bgStack: ['muted/40'], textSize: 'small',
+    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (record ◆ "current frame is a key" state, #f04a4a per UI-SPEC.md:200 §5.8). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="on-key" + aria-label.' } },
 
   // ─── R8 FloatingViewportToolbar (src/app/FloatingViewportToolbar.tsx) ─
   // L175 container bg-bg-2/90 over viewport-as-page-bg per D-W8-1;
@@ -441,6 +452,20 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   // no longer appears in src/timeline; kept whitelisted so any future
   // re-introduction elsewhere is still a non-text decoration, not a gap.
   { pattern: /\bbg-fg\b/, why: 'Legacy keyframe-marker token; W9 canvas surface emits no Tailwind. Non-text decoration if re-used' },
+  // P7 D2 Auto-Key (record) indicator decoration (src/app/Timebar.tsx):
+  //   bg-record    — the 8px record DOT (no text on it; pure shape).
+  //   bg-record/15 — the armed-mode header TINT; the text rendered over it
+  //                  is `text-fg/80`, whose contrast against the Timebar
+  //                  surface is already an audited (fg,bg) ROW — the 15%
+  //                  record wash sits behind that pair, it is not itself a
+  //                  text-bearing surface.
+  //   bg-record/25 — the REC toggle BUTTON fill; its label is `text-record`
+  //                  (already audited as a foreground token) over the muted
+  //                  Timebar surface; the 25% wash is decorative emphasis.
+  // All three are non-text decoration realizing the already-specced §5.8
+  // Animate "Record" affordance (UI-SPEC D-UX-14) — same posture as the
+  // bg-accent/10 / bg-fg whitelist precedents above.
+  { pattern: /\bbg-record(\/\d+)?\b/, why: 'P7 Auto-Key record dot + armed-header/toggle tint; non-text decoration (text over it is the audited text-fg/80 / text-record pair). UI-SPEC D-UX-14' },
   // bg-accent/10: the SVG Dopesheet's active-channel row tint. P6 W9's
   // TimelineCanvas paints that tint imperatively (PALETTE.ACTIVE_DIAMOND
   // at globalAlpha 0.1 — see paintStaticLayer) with NO Tailwind class;

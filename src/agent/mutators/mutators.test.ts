@@ -91,7 +91,7 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(16);
+    expect(mutators).toHaveLength(17);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -107,6 +107,7 @@ describe('mutator catalog', () => {
       'mutator.timeline.addChannel',
       'mutator.timeline.addLayer',
       'mutator.timeline.clearChannel',
+      'mutator.timeline.deleteKeyframe',
       'mutator.timeline.keyframe',
       'mutator.timeline.simplifyChannel',
       'mutator.translate',
@@ -573,7 +574,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(16);
+    expect(parsed.mutators).toHaveLength(17);
   });
 });
 
@@ -1741,5 +1742,96 @@ describe('mutator.timeline.clearChannel', () => {
     const r = validatePlan(clearChannelMutator, { channelId: 'nonexistent' }, state, 'missing');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P7 Wave B — deleteKeyframe Mutator (Blender Alt-I, D-06)
+// ---------------------------------------------------------------------------
+
+import { deleteKeyframeMutator } from './index';
+
+describe('mutator.timeline.deleteKeyframe', () => {
+  function stateWith3Samples(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'cubic' },
+          { time: 1, value: [10, 0, 0], easing: 'cubic' },
+          { time: 2, value: [20, 0, 0], easing: 'cubic' },
+        ],
+      },
+    }).next;
+    return s;
+  }
+
+  it('removes the sample at an existing time → 2 samples, one setParam op', () => {
+    const state = stateWith3Samples();
+    const r = validatePlan(deleteKeyframeMutator, { channelId: 'ch', time: 1 }, state, 'del key');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.paramPath).toBe('keyframes');
+    const keyframes = op.value as Array<{ time: number }>;
+    expect(keyframes).toHaveLength(2);
+    expect(keyframes.map((k) => k.time)).toEqual([0, 2]);
+  });
+
+  it('no-op when no sample exists at time (Blender Alt-I parity, D-06)', () => {
+    const state = stateWith3Samples();
+    const r = validatePlan(
+      deleteKeyframeMutator,
+      { channelId: 'ch', time: 1.5 },
+      state,
+      'del non-existent',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(0); // [] — state byte-unchanged, not a hard fail
+  });
+
+  it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
+    const state = stateWith3Samples();
+    const r = validatePlan(deleteKeyframeMutator, { channelId: 'box', time: 0 }, state, 'wrong type');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects when channelId is missing from DAG (gate 4)', () => {
+    const state = stateWith3Samples();
+    const r = validatePlan(
+      deleteKeyframeMutator,
+      { channelId: 'nonexistent', time: 0 },
+      state,
+      'missing',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('is registered inside registerAllMutators() — V14 loop is NOT blind to it', () => {
+    // Proves the gate is non-blind (RESEARCH U1): the V14 collision
+    // loop iterates listMutators() AFTER registerAllMutators(); a
+    // Mutator registered only at a separate boot-time call list would
+    // be invisible to it. Asserting membership here guarantees the V14
+    // assertion below actually exercises deleteKeyframe's signature.
+    registerAllMutators();
+    const names = listMutators().map((m) => m.name);
+    expect(names).toContain('mutator.timeline.deleteKeyframe');
   });
 });

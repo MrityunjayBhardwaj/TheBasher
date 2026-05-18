@@ -53,7 +53,19 @@ export type PreservedAspect =
   // simplifyChannel drops density but preserves shape within ε;
   // clearChannel preserves neither.
   | 'animation-shape'
-  | 'keyframe-density';
+  | 'keyframe-density'
+  // P7 Wave B — deleteKeyframe removes ONE identified sample,
+  // preserving every OTHER sample's identity (its time + value +
+  // easing) unchanged. Distinct from simplifyChannel, which re-fits
+  // the curve and may move/merge samples (it does NOT preserve
+  // per-sample identity), and from 'keyframe-density', which is a
+  // cardinality claim (how many samples), not an identity claim
+  // (which samples, untouched). This member is the deliberate V14
+  // distinctness mechanism for deleteKeyframe (RESEARCH finding #2):
+  // its (requiredEdges, requiredNodeTypes, preserves) signature would
+  // otherwise be byte-identical to simplifyChannel's, since `lossy` is
+  // not part of the V14 signature (mutators.test.ts:155-159).
+  | 'keyframe-identity';
 
 export interface LossyAspect {
   kind: string;
