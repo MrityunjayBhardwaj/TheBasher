@@ -13,6 +13,18 @@
 //     right for Character — Character has no `position` param; position
 //     is a derivation of (path, time, speed). Emitting walkTo on
 //     drag-end matches the click-to-move UX exactly.
+//
+// P7.3 (#68 — gizmo tracks the EVALUATED transform):
+//   The manip branch no longer early-returns from the seeding effect on
+//   the static `node.params`. Like the Character branch, it now evaluates
+//   the render tree (via resolveEvaluatedTransform) and re-seeds the proxy
+//   on every playhead change so the gizmo sits where the cube RENDERS
+//   (the AnimationLayer patched clone), not where it was authored. When
+//   the resolver returns null (selectedId not a rendered scene child / not
+//   a wrapped layer target) the branch falls back ENTIRELY to the static
+//   params — today's behavior, no crash (D-04 per-param-when-null).
+//   `playing` is subscribed (D-03): the gizmo display-follows during
+//   playback and is interactive only when paused.
 //   - Anything without a position param (Scene, Group, MaterialOverride,
 //     Skeleton, etc.): no gizmo (selection is conceptual).
 //
@@ -41,6 +53,7 @@ import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
 type Vec3 = [number, number, number];
 
@@ -108,6 +121,11 @@ export function Gizmo() {
   const seconds = useTimeStore((s) => s.seconds);
   const frame = useTimeStore((s) => s.frame);
   const normalized = useTimeStore((s) => s.normalized);
+  // D-03: reuse the EXISTING play/pause state (no new flag). Subscribed at
+  // component scope (V20 — a React store subscription, NOT a currentFrameRef
+  // read) so the seeding effect re-runs across the play/pause transition
+  // and Wave 4's `enabled={!playing}` re-renders.
+  const playing = useTimeStore((s) => s.playing);
 
   // Some node types don't have a rotation/scale param — when the user
   // is in those modes, fall back to translate so the gizmo still shows.
@@ -126,11 +144,44 @@ export function Gizmo() {
   useEffect(() => {
     if (!groupNode || !selectedId) return;
     if (manip) {
-      groupNode.position.set(...manip.position);
-      // params.rotation is degrees — Object3D.rotation expects radians.
-      if (manip.rotation) groupNode.rotation.set(...degVec3ToRad(manip.rotation));
+      // P7.3 (#68): mirror the Character branch — evaluate the render tree
+      // and seed the proxy to the EVALUATED transform, re-running on every
+      // playhead change. The resolver returns the AnimationLayer patched
+      // clone (the rendered transform) for an animated node; null when the
+      // selection isn't a rendered scene child / wrapped target.
+      //
+      // No proxy double-write: evalT is computed FIRST, then a SINGLE
+      // set() per axis chooses eval-or-static — we never set static then
+      // overwrite (which would flash the stale authored value for a frame).
+      // evalT non-null ⇒ the patched clone IS the rendered transform, so
+      // seeding all three axes from it is correct-by-construction (the
+      // gizmo must sit where the cube renders; patchTarget preserves
+      // un-channelled fields). evalT null ⇒ FULL static fallback — today's
+      // behavior exactly (D-04 per-param-when-null).
+      let evalT: ReturnType<typeof resolveEvaluatedTransform> = null;
+      try {
+        evalT = resolveEvaluatedTransform(useDagStore.getState().state, selectedId, {
+          time: { frame, seconds, normalized },
+        });
+      } catch {
+        evalT = null; // fall back entirely to static (Character-branch shape)
+      }
+
+      // position
+      if (evalT) groupNode.position.set(...evalT.position);
+      else groupNode.position.set(...manip.position);
+
+      // rotation — params/eval rotation are DEGREES; Object3D wants RADIANS.
+      // Per-param: eval rotation when the patched clone carries one, else
+      // the static manip rotation, else identity (byte-identical defaults).
+      if (evalT && evalT.rotation) groupNode.rotation.set(...degVec3ToRad(evalT.rotation));
+      else if (!evalT && manip.rotation) groupNode.rotation.set(...degVec3ToRad(manip.rotation));
       else groupNode.rotation.set(0, 0, 0);
-      if (manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
+
+      // scale — eval scale (explicit or size fallback) when present, else
+      // the static scaleSeed, else identity (byte-identical defaults).
+      if (evalT && evalT.scale) groupNode.scale.set(...evalT.scale);
+      else if (!evalT && manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
       else groupNode.scale.set(1, 1, 1);
       return;
     }
@@ -148,7 +199,7 @@ export function Gizmo() {
         // node missing or eval error — leave gizmo unmounted
       }
     }
-  }, [groupNode, manip, isCharacter, selectedId, seconds, frame, normalized]);
+  }, [groupNode, manip, isCharacter, selectedId, seconds, frame, normalized, playing]);
 
   if (!selectedId) return null;
   if (!isCharacter && !manip) return null;
