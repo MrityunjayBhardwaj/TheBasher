@@ -1868,3 +1868,389 @@ describe('mutator.timeline.removeKeyframes', () => {
     expect(names).not.toContain('mutator.timeline.deleteKeyframe'); // retired
   });
 });
+
+// ---------------------------------------------------------------------------
+// V14 DEEPER NON-REDUNDANCY — Op-shape probe (issue #22)
+//
+// The contract-signature guard above ("V14: no two Mutators share the same
+// contract signature") catches contract clones. It does NOT catch the
+// deeper smell: two Mutators whose contract signatures DIFFER (a tweaked
+// `preserves`, a different `requiredNodeTypes`) but which still emit an
+// IDENTICAL Op-shape on a real probe scene. That is a
+// parameterization-vs-fork case the mechanical signature cannot see — the
+// exact class issue #60 surfaced one level up (clearChannel vs
+// deleteKeyframe were the same destructive op at different scales; the
+// only honest discriminator lived in `lossy`, not in the op stream).
+//
+// This probe runs each registered Mutator through `validatePlan` on a
+// scene topology it actually applies to, reduces `plan.ops` to a
+// structural shape signature (type + paramPath / socket shape / nodeType;
+// ids, values and literals stripped), and asserts no two Mutators share an
+// identical signature.
+//
+// FIRST RUN FINDING (resolved, see `shapeSignature` below): the raw
+// op-shape signature collided keyframe vs simplifyChannel — both emit
+// `[setParam('keyframes', …)]` because a channel's whole keyframes array
+// is one value-typed param. Classified as a legitimate
+// same-shape-different-domain case (their honest discriminator lives in
+// the contract's preserves/lossy, NOT the op vocabulary — unlike #60
+// where BOTH matched). Per the issue's own "accept a per-type signature"
+// caveat, the signature now appends the same honest contract
+// discriminator the contract-signature V14 already uses. A collision
+// here therefore still means a real #60-class finding (op-shape AND
+// discriminator both match).
+//
+// Architecture decision (the issue's "small architecture decision"): NO
+// production `probeSpec` hook on MutatorDefinition — that would touch all
+// 16 builders for a test-only concern. Instead the probe table lives
+// here, reusing the existing scene builders (different Mutators
+// legitimately need different topologies — that is why those builders
+// exist). Two extra local builders (`buildSceneWithChannel`,
+// `buildSceneForRetarget`) cover the channel-family and retarget
+// topologies the 5 render/scene builders do not carry.
+//
+// Completeness guard (the H36 lesson — a probe tuned-to-green or gone
+// blind is worthless): every name in `listMutators()` MUST have a
+// probe-table entry, exactly like the registration-membership guard from
+// #60. A new Mutator added without a probe entry fails CI.
+// ---------------------------------------------------------------------------
+
+import {
+  rotateMutator as _rotateM,
+  translateMutator as _translateM,
+  scaleMutator as _scaleM,
+  setMaterialColorMutator as _setColorM,
+  duplicateMutator as _dupM,
+  deleteNodeMutator as _delM,
+  addLayerMutator as _addLayerM,
+  addChannelMutator as _addChannelM,
+  keyframeMutator as _keyframeM,
+  simplifyChannelMutator as _simplifyM,
+  removeKeyframesMutator as _removeKfM,
+  shotCreateMutator as _shotM,
+  retargetMutator as _retargetM,
+  addPassMutator as _addPassM,
+  addAIPassMutator as _addAIPassM,
+  addStitchMutator as _addStitchM,
+} from './index';
+import type { MutatorDefinition, MutatorValidationResult } from './index';
+import type { Op } from '../../core/dag/types';
+
+describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
+  // A channel scene: collinear KeyframeChannelNumber so simplifyChannel
+  // actually emits a setParam (a flat/no-op channel would emit zero ops
+  // and the probe would compare empty signatures). Has a populated
+  // channel `ch` for keyframe / simplifyChannel / removeKeyframes, plus a
+  // bare AnimationLayer `box_layer` for addChannel.
+  function buildSceneWithChannel(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box_layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        // 5 collinear samples — RDP drops the 3 interior ones, so
+        // simplifyChannel emits a real setParam (not a no-op).
+        keyframes: [
+          { time: 0, value: 0, easing: 'linear' },
+          { time: 0.25, value: 0.25, easing: 'linear' },
+          { time: 0.5, value: 0.5, easing: 'linear' },
+          { time: 0.75, value: 0.75, easing: 'linear' },
+          { time: 1, value: 1, easing: 'linear' },
+        ],
+      },
+    }).next;
+    return s;
+  }
+
+  // retarget needs an AnimationClip + two Skeletons + a TimeSource.
+  // buildSceneWithTime already carries `time`; Skeleton / AnimationClip
+  // default params are valid as-is.
+  function buildSceneForRetarget(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'src_skel',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'tgt_skel',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'src_clip',
+      nodeType: 'AnimationClip',
+      params: {},
+    }).next;
+    return s;
+  }
+
+  // Probe table: every registered Mutator → a builder that yields a scene
+  // it applies to + a real, valid spec resolving against THAT scene's
+  // node ids (adapted from each Mutator's specExample). A probe spec that
+  // gate-rejects is a broken probe → the test fails loudly with the
+  // rejection reason; it is never skipped.
+  interface ProbeEntry {
+    mutator: MutatorDefinition<unknown>;
+    build: () => DagState;
+    spec: unknown;
+  }
+
+  const PROBE_TABLE: Record<string, ProbeEntry> = {
+    'mutator.rotate': {
+      mutator: _rotateM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'], axis: 'y', deltaDeg: 45 },
+    },
+    'mutator.translate': {
+      mutator: _translateM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'], delta: [1, 0, 0] },
+    },
+    'mutator.scale': {
+      mutator: _scaleM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'], factor: 2 },
+    },
+    'mutator.setMaterialColor': {
+      mutator: _setColorM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'], color: '#00ff00' },
+    },
+    'mutator.duplicate': {
+      mutator: _dupM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'], offset: [1, 0, 0] },
+    },
+    'mutator.deleteNode': {
+      mutator: _delM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'] },
+    },
+    'mutator.timeline.addLayer': {
+      mutator: _addLayerM as MutatorDefinition<unknown>,
+      build: buildSceneWithTime,
+      spec: { targetSelectors: ['box'], layerName: 'BoxLayer', layerIds: ['box_layer'] },
+    },
+    'mutator.timeline.addChannel': {
+      mutator: _addChannelM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: {
+        layerId: 'box_layer',
+        target: 'box',
+        paramPath: 'position',
+        valueType: 'vec3',
+        channelId: 'box_pos_channel',
+        initialKeyframe: { time: 0, value: [0, 0, 0], easing: 'cubic' },
+      },
+    },
+    'mutator.timeline.keyframe': {
+      mutator: _keyframeM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', time: 0.5, value: 9 },
+    },
+    'mutator.timeline.simplifyChannel': {
+      mutator: _simplifyM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', tolerance: 0.01 },
+    },
+    'mutator.timeline.removeKeyframes': {
+      mutator: _removeKfM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', scope: { time: 0.5 } },
+    },
+    'mutator.shot.create': {
+      mutator: _shotM as MutatorDefinition<unknown>,
+      build: buildSceneWithJob,
+      spec: {
+        cameraId: 'cam',
+        sceneId: 'scene',
+        name: 'Opening',
+        startTime: 0,
+        endTime: 4,
+        shotId: 'shot_opening',
+      },
+    },
+    'mutator.animation.retarget': {
+      mutator: _retargetM as MutatorDefinition<unknown>,
+      build: buildSceneForRetarget,
+      spec: {
+        sourceClipId: 'src_clip',
+        sourceSkeletonId: 'src_skel',
+        targetSkeletonId: 'tgt_skel',
+        mapPresetId: 'mixamoToGltf',
+        outputClipId: 'src_clip_retargeted',
+      },
+    },
+    'mutator.render.addPass': {
+      mutator: _addPassM as MutatorDefinition<unknown>,
+      build: buildSceneWithJob,
+      spec: { jobId: 'job', passKind: 'beauty', passId: 'job_beauty' },
+    },
+    'mutator.render.addAIPass': {
+      mutator: _addAIPassM as MutatorDefinition<unknown>,
+      build: buildSceneWithJobAndPasses,
+      spec: { jobId: 'job', presetId: 'stylizedRealism', promptText: 'cinematic cube' },
+    },
+    'mutator.render.addStitch': {
+      mutator: _addStitchM as MutatorDefinition<unknown>,
+      build: buildSceneWithJobAndWorkflow,
+      spec: { jobId: 'job', workflowId: 'cw' },
+    },
+  };
+
+  // Reduce one Op to a structural shape token: keep STRUCTURE
+  // (type, paramPath, socket names, nodeType), strip ids / values /
+  // literals. The granularity is deliberate — nodeType + paramPath +
+  // socket shape is what distinguishes a parameterization (same shape,
+  // different scale) from a legitimate distinct op (different domain).
+  function opShape(op: Op): unknown {
+    switch (op.type) {
+      case 'addNode':
+        return { type: 'addNode', nodeType: op.nodeType };
+      case 'removeNode':
+        return { type: 'removeNode' };
+      case 'setParam':
+        return { type: 'setParam', paramPath: op.paramPath };
+      case 'connect':
+        return {
+          type: 'connect',
+          fromSocket: op.from.socket,
+          toSocket: op.to.socket,
+        };
+      case 'disconnect':
+        return {
+          type: 'disconnect',
+          fromSocket: op.from.socket,
+          toSocket: op.to.socket,
+        };
+      default: {
+        // Exhaustiveness: a new Op variant must extend this reducer or
+        // the probe silently goes blind to it (the H36 trap one level
+        // down). Fail loudly instead.
+        const _exhaustive: never = op;
+        throw new Error(`opShape: unhandled Op variant ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+
+  // The probe surfaced a real, expected finding (issue #22): `keyframe`
+  // and `simplifyChannel` emit an IDENTICAL raw op stream
+  // `[setParam('keyframes', …)]`. Classification: this is a LEGITIMATE
+  // same-shape-different-domain case, NOT a true redundancy, and it is
+  // structurally different from the #60 (clearChannel/deleteKeyframe)
+  // collapse:
+  //
+  //   - #60: identical CONTRACT signature (same preserves AND same
+  //     lossy) AND identical op-shape → genuinely the same destructive
+  //     op at two scales → correctly parameterized into one Mutator.
+  //
+  //   - #22 here: the op stream is identical only because a channel's
+  //     entire `keyframes` array is a single value-typed param, so
+  //     EVERY channel edit is one `setParam('keyframes', …)`. The op
+  //     vocabulary physically cannot carry the distinction. But the
+  //     CONTRACT signatures already differ honestly and load-bearingly:
+  //     `keyframe` preserves animation-shape + keyframe-density with no
+  //     lossy (append/replace one sample); `simplifyChannel` drops
+  //     keyframe-density and carries lossy:['keyframe-density'] (RDP
+  //     reduction). Different operations, same mechanical op token.
+  //
+  // Resolution per the issue's OWN caveat ("the test must group by node
+  // type or accept a per-type signature"): the probe signature carries
+  // the op-shape AS PRIMARY signal and APPENDS the same honest
+  // discriminator the contract-signature V14 already uses (sorted
+  // preserves + sorted lossy kinds). This is the inverse of the H36
+  // trap: H36 was REMOVING a real discriminator to go green; here we
+  // ADD the already-established honest discriminator so the deeper
+  // probe stops false-positiving on a pair the shallower check already
+  // separates correctly. The probe stays genuine — two Mutators with
+  // identical op-shape AND identical contract discriminator still
+  // collide here, which IS the real #60-class redundancy finding.
+  function contractDiscriminator(m: MutatorDefinition<unknown>): unknown {
+    return {
+      preserves: [...m.contract.preserves].sort(),
+      lossyKinds: [...(m.contract.lossy ?? []).map((l) => l.kind)].sort(),
+    };
+  }
+
+  function shapeSignature(ops: Op[], m: MutatorDefinition<unknown>): string {
+    return JSON.stringify({
+      ops: ops.map(opShape),
+      contract: contractDiscriminator(m),
+    });
+  }
+
+  it('completeness guard: every registered Mutator has a probe-table entry', () => {
+    // The H36 lesson, applied to the probe itself: a Mutator added
+    // without a probe entry would make this deeper V14 check blind to
+    // it — exactly like the registration-membership guard #60 added for
+    // the contract-signature loop. New Mutator without a probe entry →
+    // CI fails here.
+    registerAllMutators();
+    const registered = listMutators()
+      .map((m) => m.name)
+      .sort();
+    const probed = Object.keys(PROBE_TABLE).sort();
+    expect(probed).toEqual(registered);
+  });
+
+  it('no two Mutators emit an identical Op-shape signature on a probe scene', () => {
+    registerAllMutators();
+    const seen = new Map<string, string>();
+
+    for (const [name, entry] of Object.entries(PROBE_TABLE)) {
+      const scene = entry.build();
+      const result: MutatorValidationResult = validatePlan(
+        entry.mutator,
+        entry.spec,
+        scene,
+        `probe:${name}`,
+      );
+
+      // A probe spec that gate-rejects is a BROKEN probe, not a pass —
+      // fail loudly with the rejection so the table gets fixed, never
+      // skip (skipping is how a probe goes blind).
+      expect(
+        result.ok,
+        `Probe spec for "${name}" was gate-rejected — broken probe, fix the ` +
+          `probe table entry. ` +
+          (result.ok
+            ? ''
+            : `gate ${result.gate} (${result.label}): ${result.reason}`),
+      ).toBe(true);
+      if (!result.ok) continue;
+
+      const sig = shapeSignature(result.ops, entry.mutator);
+      const prior = seen.get(sig);
+      // On collision: BOTH names + the shared signature (mirrors the
+      // contract-signature V14 message style). A collision here means
+      // the two Mutators emit the same op-shape AND carry the same
+      // honest contract discriminator — i.e. the real #60-class
+      // parameterization-vs-fork finding. Do NOT tune the reducer to
+      // hide it; surface it for the orchestrator to classify.
+      expect(
+        prior,
+        `Mutators "${name}" and "${prior}" emit an identical Op-shape ` +
+          `signature AND share the same contract discriminator on their ` +
+          `probe scenes: ${sig}. This is a genuine parameterization-vs-fork ` +
+          `finding (issue #22 / the #60 pattern) — the op stream AND the ` +
+          `honest preserves/lossy discriminator both match. Investigate ` +
+          `(parameterize, like removeKeyframes did) before silencing.`,
+      ).toBeUndefined();
+      seen.set(sig, name);
+    }
+  });
+});
