@@ -41,7 +41,7 @@
 // REF: THESIS.md §11, §15, §40; vyapti V1, V8; krama K7.
 
 import { TransformControls } from '@react-three/drei';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
@@ -50,6 +50,7 @@ import type { Node } from '../core/dag/types';
 import type { CharacterValue } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
+import { useEditorStore } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
@@ -116,14 +117,54 @@ export function Gizmo() {
   }, []);
 
   const isCharacter = node?.type === 'Character';
-  const manip = isCharacter ? null : getManipulable(node);
+  const rawManip = isCharacter ? null : getManipulable(node);
 
-  // Time is needed only for the Character path (evaluate the locomotion
-  // chain). Subscribing here keeps the seeding effect in sync with the
-  // playhead.
+  // Time — drives the Character path AND (P7.3) the manip resolver re-seed.
   const seconds = useTimeStore((s) => s.seconds);
   const frame = useTimeStore((s) => s.frame);
   const normalized = useTimeStore((s) => s.normalized);
+
+  // D-01 (LOCKED, CONTEXT.md:46-54): selecting the box OR its wrapping
+  // AnimationLayer must BOTH show ONE gizmo at the cube's evaluated
+  // transform. An AnimationLayer node has NO `position` param, so
+  // getManipulable(layerNode) returns null — pre-7.3 that meant NO gizmo
+  // for a layer selection (the CONTEXT-documented symptom). To honor the
+  // locked D-01 and the non-deferrable D-06 gate (boundary-pair for box
+  // AND layer), synthesize a manip from the EVALUATED transform when the
+  // raw node has none but the resolver resolves selectedId to a rendered
+  // child. (This supersedes the Task-3-step-4 guard NOTE, which was
+  // internally inconsistent with the LOCKED D-01 — the locked decision +
+  // the phase gate win.) The animated transform param for the P7
+  // box→layer shape is `position` (the #68 symptom); rotation/scale ride
+  // the same resolver. When the resolver returns null (genuinely
+  // non-anchorable selection) we still fall through to NO gizmo — the
+  // Task-3 intent for nodes that don't render via a wrapper.
+  const evalForSelection = useMemo(() => {
+    if (rawManip || isCharacter || !selectedId) return null;
+    try {
+      return resolveEvaluatedTransform(useDagStore.getState().state, selectedId, {
+        time: { frame, seconds, normalized },
+      });
+    } catch {
+      return null;
+    }
+  }, [rawManip, isCharacter, selectedId, frame, seconds, normalized]);
+
+  const manip: Manipulable | null =
+    rawManip ??
+    (evalForSelection
+      ? {
+          position: evalForSelection.position,
+          rotation: evalForSelection.rotation,
+          scale: evalForSelection.scale,
+          // D-01: the wrapped target's animated transform param is
+          // 'position'; scale handle writes 'scale' when the eval value
+          // carries one (BoxMesh-style 'size' is not gizmo-grabbable via
+          // a layer selection — the channel paramPath governs the route).
+          scaleParamPath: evalForSelection.scale ? 'scale' : null,
+          scaleSeed: evalForSelection.scale,
+        }
+      : null);
   // D-03: reuse the EXISTING play/pause state (no new flag). Subscribed at
   // component scope (V20 — a React store subscription, NOT a currentFrameRef
   // read) so the seeding effect re-runs across the play/pause transition
@@ -327,6 +368,30 @@ export function Gizmo() {
         'user',
         `gizmo scale (${manip.scaleParamPath})`,
       );
+  }
+
+  // *** D-06 grab observation seam — dev-guarded, NOT user chrome ***
+  // Pointer-event simulation through THREE's TransformControls is fragile
+  // in headless Chromium (H3 lesson; p26-acceptance.spec.ts:368-370 takes
+  // the same stance). To OBSERVE the real grab path (routeAnimatedGrab —
+  // the D-02 decision under test) without a brittle 3D drag, this seam
+  // moves the proxy to a target then invokes the REAL onObjectChange.
+  // It exercises the actual gizmo code path (NOT a dispatch that bypasses
+  // it), so the boundary-pair test observes the gizmo side honestly.
+  if (import.meta.env.DEV) {
+    const w = window as unknown as Record<string, unknown>;
+    w.__basher_gizmo_grab = (mode: GizmoMode, target: [number, number, number]) => {
+      if (!groupNode) return;
+      // V19: gizmo mode changes flow through editorStore.setActiveTool —
+      // the ONE canonical writer that propagates to gizmoStore.setMode.
+      // The seam must NOT call setMode directly (V19 grep gate + the
+      // shared-dispatcher invariant).
+      useEditorStore.getState().setActiveTool(mode);
+      if (mode === 'translate') groupNode.position.set(...target);
+      else if (mode === 'rotate') groupNode.rotation.set(...degVec3ToRad(target));
+      else groupNode.scale.set(...target);
+      onObjectChange();
+    };
   }
 
   function onDraggingChanged(dragging: boolean) {
