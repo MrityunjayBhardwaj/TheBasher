@@ -282,6 +282,17 @@ const ROWS: Row[] = [
     exempt: { kind: 'rule', rule: 'B', note: '"unsupported type" hint shown only for params that NPanel cannot render — Rule B: developer/debug affordance, no user action gated on reading it.' } },
   { site: 'R7 NPanel ParamRow complex hint — fg/30 on muted/40', fg: 'fg/30', bgStack: ['muted/40'], textSize: 'small',
     exempt: { kind: 'rule', rule: 'C', note: '"(complex)" suffix beside the param name — Rule C: fg/30 is decorative-only (separator glyph or tertiary hint). Param name itself is fg/60.' } },
+  // P7 C2 — the 3-state keyframe diamond (◇/◆) adornment on animatable
+  // ParamRow headers (D-01/D-03). Pure graphical glyph; the animation
+  // state is ALSO machine-readable via data-anim-state + aria-label, so
+  // SC 1.4.3 non-text exemption applies (same basis as the collapse
+  // chevron above). Three color states tracked for the record.
+  { site: 'R7 NPanel keyframe diamond — none (fg/40) on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
+    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (hollow ◇ "not animated" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="none" + aria-label on the button.' } },
+  { site: 'R7 NPanel keyframe diamond — animated (accent) on muted/40', fg: 'accent', bgStack: ['muted/40'], textSize: 'small',
+    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (filled ◆ "animated, off-key" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="animated" + aria-label.' } },
+  { site: 'R7 NPanel keyframe diamond — on-key (record) on muted/40', fg: 'record', bgStack: ['muted/40'], textSize: 'small',
+    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (record ◆ "current frame is a key" state, #f04a4a per UI-SPEC.md:200 §5.8). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="on-key" + aria-label.' } },
 
   // ─── R8 FloatingViewportToolbar (src/app/FloatingViewportToolbar.tsx) ─
   // L175 container bg-bg-2/90 over viewport-as-page-bg per D-W8-1;
