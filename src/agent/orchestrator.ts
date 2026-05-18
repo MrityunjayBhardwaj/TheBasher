@@ -753,8 +753,16 @@ export function shouldRunIdentifyRound(
   // light". The verb list MUST be mutating (not additive — those
   // already exited at line 693). The noun list mirrors inferNodeTypes
   // aliases (singular + plural + generic primitives).
+  //
+  // #30: dropped `change|set|put` — their additive use ("set up a
+  // sphere", "put a light over there", "change tactic and add cubes")
+  // dominates their mutation use and over-triggered Identify (latency).
+  // Genuine mutation intent is still caught by the specific verbs; a
+  // bare "set the rotation to X" no longer auto-triggers Identify
+  // (expressible as "rotate", and a selection still triggers via the
+  // default below) — accepted tradeoff, reversible if it bites.
   const VERB =
-    '(?:rotate|translate|scale|color|paint|delete|remove|duplicate|move|resize|rename|hide|show|change|set|put|highlight)';
+    '(?:rotate|translate|scale|color|paint|delete|remove|duplicate|move|resize|rename|hide|show|highlight)';
   const NOUN =
     '(?:cubes?|box(?:es)?|spheres?|balls?|lights?|cameras?|characters?|groups?|transforms?|objects?|things?|nodes?)';
   const verbNounRe = new RegExp(`\\b${VERB}\\b[^.?!]{0,40}\\b${NOUN}\\b`);
