@@ -73,9 +73,11 @@ import {
   keyframeToRect,
   cullVisibleKeyframes,
   secondsToX,
+  xToSeconds,
   playheadStripRect,
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
 } from './timelineCanvasGeometry';
+import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
 
 /**
  * Imperative canvas palette — the exact hex constants the 2D context
@@ -345,6 +347,26 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // drawn yet, so the first tick always paints.
   const lastPlayheadXRef = useRef<number>(-1);
 
+  // ── P7.1 keyframe drag (D-W9-7) gesture state ─────────────────────────
+  // dragRef is the SOLE source of truth for the in-flight drag gesture
+  // (D-04 ownership): NOT timeStore (playhead projection, V20
+  // single-writer), NOT timelineSelection (durable selection, not a
+  // per-frame gesture), NOT the DAG (touched ONCE, at pointerup). `fromTime`
+  // is the EXACT stored sample float read off the live DAG at pointerdown
+  // (the D-03 discriminator). `canvasLeft` is read ONCE at pointerdown —
+  // calling getBoundingClientRect in the rAF tick is the K13 perf footgun.
+  const dragRef = useRef<null | {
+    channelId: string;
+    rowIndex: number;
+    fromTime: number;
+    pointerClientX: number;
+    canvasLeft: number;
+  }>(null);
+  // The ghost block's OWN idle-guard comparand — a SIBLING of
+  // lastPlayheadXRef, never the playhead's. -1 = no ghost / cleared, so
+  // the next tick after a commit restores cleanly under the stale ghost.
+  const lastGhostXRef = useRef<number>(-1);
+
   const rows = collectChannelRows(nodes);
 
   // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
@@ -493,6 +515,11 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // guard would skip and the playhead would stay erased after a DAG /
     // resize repaint. -1 = "no valid last-drawn x", same sentinel as init.
     lastPlayheadXRef.current = -1;
+    // P7.1: the static layer was just fully repainted (a DAG commit — the
+    // retime landing — or a resize). Any drag ghost pixels were
+    // overwritten by this repaint; reset the ghost idle-guard so the next
+    // tick does not "restore" under a stale ghost x that no longer exists.
+    lastGhostXRef.current = -1;
   }, [nodes, activeChannelId, durationSeconds, dims, dpr, rows]);
 
   // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
@@ -621,6 +648,95 @@ export function TimelineCanvas({ duration }: { duration: number }) {
               host.dataset.frame = String(frame);
             }
           }
+
+          // ── P7.1 LIVE GHOST (D-04 / FLAG-1) ──────────────────────────
+          // A SIBLING block of the playhead idle-guard above — same rAF
+          // tick, but its OWN independent guard. It MUST NOT be nested in
+          // the playhead's `if (newX !== lastPlayheadXRef.current)`: a
+          // PAUSED director dragging a keyframe has a moving cursor but
+          // ZERO playhead delta, so gating the ghost on the playhead
+          // idle-compare would FREEZE it mid-drag (FLAG-1). The ghost runs
+          // on `if (dragRef.current)` + its OWN lastGhostXRef compare,
+          // independent of and in ADDITION to the playhead block, and
+          // AFTER it (W9 "playhead/overlay drawn last" ordering).
+          const drag = dragRef.current;
+          if (drag) {
+            const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
+            // localX: cursor px relative to the track origin. canvasLeft
+            // was read ONCE at pointerdown (NO getBoundingClientRect in
+            // the hot loop — the K13 perf footgun). Pure arithmetic.
+            const localX = Math.max(
+              drag.pointerClientX - drag.canvasLeft - LABEL_GUTTER_PX,
+              0,
+            );
+            const ghostSeconds = xToSeconds(
+              localX,
+              durationNow,
+              trackWidth,
+              DIAMOND_PX,
+            );
+            const ghostX =
+              LABEL_GUTTER_PX +
+              secondsToX(ghostSeconds, durationNow, trackWidth);
+
+            // The ghost's OWN idle guard, keyed to ITS driver (the
+            // cursor), never the playhead's newX. An idle drag (cursor
+            // not moving) adds no per-frame redraw.
+            if (ghostX !== lastGhostXRef.current) {
+              const oldGhostX = lastGhostXRef.current;
+              const rowTop = drag.rowIndex * ROW_HEIGHT_PX;
+              const cy = rowTop + ROW_HEIGHT_PX / 2;
+
+              visCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+              // Restore the static pixels under the LAST ghost position
+              // from the C3 offscreen cache — same drawImage mechanism +
+              // strip rect the playhead uses, so the ghost never smears
+              // the cached static layer (the W9 cache-restore contract).
+              if (oldGhostX >= 0) {
+                const strip = playheadStripRect(
+                  oldGhostX,
+                  PLAYHEAD_STRIP_HALF_WIDTH_PX + DIAMOND_PX,
+                  cssH,
+                );
+                if (strip.w > 0 && strip.h > 0) {
+                  const sx = strip.x * dprNow;
+                  const sy = strip.y * dprNow;
+                  const sw = strip.w * dprNow;
+                  const sh = strip.h * dprNow;
+                  visCtx.drawImage(
+                    offscreen,
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                  );
+                }
+              }
+
+              // Draw the ghost diamond at ghostX on the dragged row,
+              // reusing PALETTE.ACTIVE_DIAMOND (the existing
+              // selected-keyframe color — NO new token; B11 no-shift).
+              // Drawn AFTER the playhead block (W9 overlay-last).
+              const gx = ghostX * dprNow;
+              const gy = cy * dprNow;
+              const gh = (DIAMOND_PX / 2) * dprNow;
+              visCtx.fillStyle = PALETTE.ACTIVE_DIAMOND;
+              visCtx.beginPath();
+              visCtx.moveTo(gx, gy - gh);
+              visCtx.lineTo(gx + gh, gy);
+              visCtx.lineTo(gx, gy + gh);
+              visCtx.lineTo(gx - gh, gy);
+              visCtx.closePath();
+              visCtx.fill();
+
+              lastGhostXRef.current = ghostX;
+            }
+          }
         }
       }
 
@@ -633,6 +749,123 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     };
   }, []);
 
+  // ── P7.1 pointer handlers (D-04, D-06: single keyframe, horizontal) ───
+  // THIN by design (Ousterhout): hit-test via pure geometry, store ONE
+  // ref, call ONE seam fn. NO Mutator/Op/DAG-internal type in this file;
+  // NO setState / DAG write on the move path (V20 — the hot path adds no
+  // React subscription and no second time/frame writer).
+
+  /** localX (track-relative px) → seconds, reused by move+up. */
+  function localXToSeconds(clientX: number, canvasLeft: number): number {
+    const canvas = canvasRef.current;
+    const cssW = canvas ? canvas.clientWidth : 0;
+    const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
+    const localX = Math.max(clientX - canvasLeft - LABEL_GUTTER_PX, 0);
+    return xToSeconds(localX, durationSeconds, trackWidth, DIAMOND_PX);
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const box = canvas.getBoundingClientRect();
+    const px = e.clientX - box.left;
+    const py = e.clientY - box.top;
+    const trackWidth = Math.max(box.width - LABEL_GUTTER_PX, 0);
+
+    // Hit-test every row's every keyframe with the SAME geometry +
+    // gutter offset paintStaticLayer:285-293 uses (do NOT re-derive a
+    // different offset). ±DIAMOND_PX hit-slop so an 8px diamond is
+    // grabbable. First match wins.
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      for (const kf of row.keyframes) {
+        const rect = keyframeToRect(
+          kf.time,
+          r,
+          durationSeconds,
+          trackWidth,
+          ROW_HEIGHT_PX,
+          DIAMOND_PX,
+        );
+        const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
+        const cy = rect.y + rect.h / 2;
+        const slop = DIAMOND_PX;
+        if (
+          Math.abs(px - cx) <= DIAMOND_PX / 2 + slop &&
+          Math.abs(py - cy) <= DIAMOND_PX / 2 + slop
+        ) {
+          // Read the EXACT stored sample time off the LIVE DAG — this
+          // float becomes fromTime, the D-03 discriminator (NOT a
+          // pointerup-recomputed seconds, or removeKeyframes silently
+          // no-ops and the drag duplicates the key).
+          const live = useDagStore.getState().state.nodes[row.channelId];
+          const liveParams = (live?.params ?? {}) as {
+            keyframes?: Array<{ time: number }>;
+          };
+          const liveSample = (liveParams.keyframes ?? []).find(
+            (k) => k.time === kf.time,
+          );
+          if (!liveSample) continue;
+          dragRef.current = {
+            channelId: row.channelId,
+            rowIndex: r,
+            fromTime: liveSample.time,
+            pointerClientX: e.clientX,
+            canvasLeft: box.left, // read ONCE here (perf — D-04)
+          };
+          useTimelineSelection
+            .getState()
+            .setActiveKeyframe({
+              channelId: row.channelId,
+              time: liveSample.time,
+            });
+          canvas.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+    }
+    // Miss: do nothing (existing behavior passes through).
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    // O(1): write the only mutable per-move datum. NO setState, NO DAG,
+    // NO draw — the rAF loop draws the ghost (V20 hot-path discipline).
+    drag.pointerClientX = e.clientX;
+  }
+
+  function endDrag(e: React.PointerEvent<HTMLCanvasElement>, commit: boolean) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    const canvas = canvasRef.current;
+    try {
+      canvas?.releasePointerCapture(e.pointerId);
+    } catch {
+      /* capture may already be gone */
+    }
+    if (commit) {
+      const toTime = localXToSeconds(drag.pointerClientX, drag.canvasLeft);
+      // An unmoved click is a no-op (exact !== — same discipline as the
+      // seam's fromTime match).
+      if (toTime !== drag.fromTime) {
+        // ONE seam call → atomic composite → one undo entry. On
+        // {ok:false} the seam aborted atomically; DAG already unchanged.
+        dispatchRetimeKeyframe({
+          channelId: drag.channelId,
+          fromTime: drag.fromTime,
+          toTime,
+        });
+      }
+    }
+    // Force the next tick to cleanly restore under the now-stale ghost.
+    // The DAG-keyed static repaint (nodes effect) re-paints the diamond
+    // at its committed time and also resets this; setting -1 here covers
+    // the no-commit cancel path where no repaint fires.
+    lastGhostXRef.current = -1;
+  }
+
   return (
     <div
       ref={hostRef}
@@ -644,7 +877,14 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       data-rendered-keyframes={renderedKeyframeTotal}
       className="relative h-full w-full overflow-hidden bg-bg"
     >
-      <canvas ref={canvasRef} className="block h-full w-full" />
+      <canvas
+        ref={canvasRef}
+        className="block h-full w-full touch-none"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={(e) => endDrag(e, true)}
+        onPointerCancel={(e) => endDrag(e, false)}
+      />
     </div>
   );
 }
