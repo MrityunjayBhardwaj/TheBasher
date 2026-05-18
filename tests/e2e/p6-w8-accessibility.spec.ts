@@ -54,6 +54,16 @@ test('P6.W8#1 skip-link is the first focusable element and routes focus to #view
   // Must be first in document order — no other tabbable element appears
   // before it under the layout root. Compare DOM position against all
   // other tabbable elements in the chrome regions.
+  // #58 F5 — DOCUMENTED ASSUMPTION: this walks the WHOLE document, so
+  // it assumes nothing tabbable is injected ABOVE the layout root
+  // (e.g. a browser-extension-injected top bar or a portal'd modal
+  // mounted on document.body before the app). In the app's own DOM the
+  // skip-link IS first; a third-party injection above it would be
+  // outside the app's control and is explicitly out of scope for this
+  // gate. Left as a documented limit per F5's "OR document the
+  // assumption" option (scoping to a layout-root query would not catch
+  // the real risk — a sibling injected outside that root — so the
+  // narrower query would give false confidence, not more).
   const isFirstTabbable = await page.evaluate(() => {
     const link = document.querySelector('[data-testid="skip-link"]');
     if (!link) return false;

@@ -62,6 +62,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+// #58 F2 — import the real Tailwind config so the TOKEN table below is
+// asserted against the single source of truth, not hand-synced.
+import tailwindConfig from '../../tailwind.config';
 import {
   aaThreshold,
   composite,
@@ -846,6 +849,20 @@ function walkTsx(dir: string, out: string[] = []): string[] {
 // by SIZE_OR_ALIGN_RE below. The strategy: capture broadly, then drop
 // the known non-color classes before the audit, so a NEW color token
 // gets flagged but routine layout classes don't.
+//
+// #58 F3 — DOCUMENTED CONSTRAINT: the variant-prefix alternation only
+// covers state variants (hover:/focus:/focus-visible:/active:/
+// disabled:/group-hover:/placeholder:). RESPONSIVE / theme variants
+// (dark: sm: md: lg: xl: 2xl:) are deliberately NOT matched: chrome is
+// a fixed-layout desktop tool and MUST NOT use responsive color
+// variants — a `md:bg-bg-1` would change the audited (fg,bg) pair at a
+// breakpoint the matrix can't model. This is enforced by convention,
+// not regex: a contributor adding a responsive color variant is
+// outside the design contract. If chrome ever legitimately needs one,
+// extend the prefix list AND add a per-breakpoint ROW. Left as a
+// documented limit (not a code change) per F3's "OR document the
+// constraint" option — extending the regex without modelling
+// per-breakpoint backgrounds would give false coverage confidence.
 const CLASS_RE = /\b((?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)?(?:text|bg|border)-[A-Za-z][\w-]*(?:\/\d{1,3})?)\b/g;
 
 // Tailwind text-* classes that are SIZE or ALIGNMENT modifiers, not color.
@@ -1021,5 +1038,102 @@ describe('contrast matrix — coverage (drift gate)', () => {
           lines.join('\n'),
       );
     }
+  });
+});
+
+// ─── Token-source drift gates (#58 F2, F7, F6) ───────────────────────────
+
+describe('contrast matrix — token source drift gates', () => {
+  // #58 F2 — the TOKEN table hardcodes hexes that MUST equal the real
+  // Tailwind config. Previously hand-synced ("Kept in sync by C1.4");
+  // this asserts it mechanically against the imported config object so
+  // a future palette edit in tailwind.config.ts that isn't mirrored
+  // here fails CI instead of silently making the audit measure stale
+  // colors.
+  it('F2: every TOKEN entry matches tailwind.config.ts colors (no hand-sync drift)', () => {
+    const colors = (
+      tailwindConfig.theme?.extend?.colors ?? {}
+    ) as Record<string, unknown>;
+
+    // Flatten the config color map to the same `name → #hex` shape the
+    // TOKEN table uses. Tailwind nests `accent: { DEFAULT, dim }` →
+    // `accent` + `accent-dim`; flat string entries pass through.
+    const flat: Record<string, string> = {};
+    for (const [name, val] of Object.entries(colors)) {
+      if (typeof val === 'string') {
+        flat[name] = val.toLowerCase();
+      } else if (val && typeof val === 'object') {
+        for (const [sub, hex] of Object.entries(val as Record<string, string>)) {
+          flat[sub === 'DEFAULT' ? name : `${name}-${sub}`] = hex.toLowerCase();
+        }
+      }
+    }
+
+    const mismatches: string[] = [];
+    for (const [name, rgb] of Object.entries(TOKEN)) {
+      const configHex = flat[name];
+      if (configHex == null) {
+        mismatches.push(`  ${name}: in TOKEN but absent from tailwind.config.ts`);
+        continue;
+      }
+      const tokenHex = formatHex(rgb);
+      // Normalize config #rgb → #rrggbb for comparison.
+      const want = formatHex(parseHex(configHex));
+      if (tokenHex !== want) {
+        mismatches.push(`  ${name}: TOKEN=${tokenHex} but tailwind.config.ts=${want}`);
+      }
+    }
+    // Also flag config tokens that the matrix forgot to mirror (a new
+    // palette color must get a TOKEN row or it can never be audited).
+    for (const name of Object.keys(flat)) {
+      if (!(name in TOKEN)) {
+        mismatches.push(
+          `  ${name}: in tailwind.config.ts but absent from TOKEN (add it so chrome using it can be audited)`,
+        );
+      }
+    }
+
+    if (mismatches.length > 0) {
+      expect.fail(
+        `F2 token drift: TOKEN and tailwind.config.ts disagree on ${mismatches.length} entr(ies).\n` +
+          `TOKEN must mirror the Tailwind config exactly — fix the hex here or there.\n` +
+          mismatches.join('\n'),
+      );
+    }
+  });
+
+  // #58 F7 — PAGE_BG (the worst-case composite base, D-W8-1) is
+  // `TOKEN.bg`. The real page background is whatever class the <body>
+  // carries. They agree today (#0a0a0a) but nothing asserted they stay
+  // in sync — a future `<body class="bg-bg-1">` would silently make
+  // every composited-bg row wrong. Computed CSS isn't available in the
+  // unit env (no Tailwind build), so assert the structural contract:
+  // the body declares `bg-bg`, and `bg-bg` resolves to PAGE_BG.
+  it('F7: <body> background class stays in sync with PAGE_BG', () => {
+    const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'index.html'), 'utf8');
+    const bodyTag = indexHtml.match(/<body[^>]*>/i)?.[0] ?? '';
+    expect(bodyTag, 'index.html must have a <body> tag').not.toBe('');
+    // The body must paint with the `bg-bg` token (not bg-bg-1/2/etc.).
+    expect(
+      /\bbg-bg\b(?!-)/.test(bodyTag),
+      `<body> must carry the \`bg-bg\` class so the page background equals PAGE_BG. Found: ${bodyTag}`,
+    ).toBe(true);
+    // And `bg-bg` must resolve to the same RGB PAGE_BG composites onto.
+    expect(formatHex(TOKEN.bg)).toBe(formatHex(PAGE_BG));
+    expect(formatHex(PAGE_BG)).toBe('#0a0a0a');
+  });
+
+  // #58 F6 — the issue asks to verify the ContextMenu surface is
+  // audited "if it exists". It does NOT exist in this codebase (no
+  // src/app/ContextMenu.tsx; the right-click surface is AddMenu, which
+  // already has ROWS). This test pins that finding: if a ContextMenu
+  // component is added later it will fail here, prompting ROWS for it.
+  it('F6: no unaudited ContextMenu surface exists (AddMenu is the audited menu)', () => {
+    const candidate = path.join(PROJECT_ROOT, 'src/app/ContextMenu.tsx');
+    expect(
+      fs.existsSync(candidate),
+      'src/app/ContextMenu.tsx now exists — add contrast ROWS for its (fg,bg) pairs ' +
+        'like AddMenu/AssetsPopover have, then update this gate (#58 F6).',
+    ).toBe(false);
   });
 });

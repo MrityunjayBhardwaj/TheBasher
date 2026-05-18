@@ -10,6 +10,11 @@ import { useSelectionStore } from '../stores/selectionStore';
 // derive from one source. A divergent second copy would let the two
 // announce different things — the exact silent drift this consolidation
 // prevents.
+// #58 F8 — React 18 Strict Mode (dev only) mounts effects twice: the
+// effect runs, its cleanup runs, then it runs again. Here that means
+// the first setTimeout is cleared before it fires and a fresh one is
+// scheduled — net behavior is identical (one trailing-edge update),
+// just non-obvious on first read. No bug; documented per F8.
 function useDebouncedValue<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {

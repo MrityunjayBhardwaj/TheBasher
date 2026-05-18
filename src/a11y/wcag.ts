@@ -159,7 +159,23 @@ export function contrastRatio(a: string | RGB, b: string | RGB): number {
  */
 export type TextSize = 'small' | 'large' | 'ui';
 
-/** Return the WCAG AA required ratio for a given text-size class. */
+/**
+ * Return the WCAG AA required ratio for a given text-size class.
+ *
+ * Exhaustive switch with a `never` fallthrough (#58 F1): if `TextSize`
+ * ever widens (e.g. an 'aaa' tier), this stops compiling instead of
+ * silently returning the 3.0 large/ui default for the new member.
+ */
 export function aaThreshold(size: TextSize): number {
-  return size === 'small' ? 4.5 : 3.0;
+  switch (size) {
+    case 'small':
+      return 4.5;
+    case 'large':
+    case 'ui':
+      return 3.0;
+    default: {
+      const _exhaustive: never = size;
+      throw new Error(`aaThreshold: unhandled TextSize ${String(_exhaustive)}`);
+    }
+  }
 }
