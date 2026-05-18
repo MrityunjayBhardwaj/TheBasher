@@ -54,6 +54,16 @@ test('P6.W8#1 skip-link is the first focusable element and routes focus to #view
   // Must be first in document order — no other tabbable element appears
   // before it under the layout root. Compare DOM position against all
   // other tabbable elements in the chrome regions.
+  // #58 F5 — DOCUMENTED ASSUMPTION: this walks the WHOLE document, so
+  // it assumes nothing tabbable is injected ABOVE the layout root
+  // (e.g. a browser-extension-injected top bar or a portal'd modal
+  // mounted on document.body before the app). In the app's own DOM the
+  // skip-link IS first; a third-party injection above it would be
+  // outside the app's control and is explicitly out of scope for this
+  // gate. Left as a documented limit per F5's "OR document the
+  // assumption" option (scoping to a layout-root query would not catch
+  // the real risk — a sibling injected outside that root — so the
+  // narrower query would give false confidence, not more).
   const isFirstTabbable = await page.evaluate(() => {
     const link = document.querySelector('[data-testid="skip-link"]');
     if (!link) return false;
@@ -103,7 +113,12 @@ test('P6.W8#2 every visible region contains at least one tabbable element in edi
   // aria-label and lives in the DOM) but has no tabbable descendants
   // until a node is selected. That's a property of the selection-
   // adaptive Inspector contract (D-UX-8 / §5.8), not a focus-order
-  // bug. The §11 #8 acceptance covers the populated case.
+  // bug. The POPULATED-NPanel tab order — empty here by contract — is
+  // covered by `P6.W8#2b` directly below (#56). (No prior spec
+  // asserted "click node → NPanel populates → ≥1 tabbable in
+  // #inspector"; acceptance.spec.ts #5's `press('Tab')` calls are
+  // commit-on-blur side effects, not tab-order assertions — audited
+  // for #56.)
   const regions = [
     'project-tabs', // R1
     'menubar', // R2
@@ -138,6 +153,87 @@ test('P6.W8#2 every visible region contains at least one tabbable element in edi
     return tabbable[0] === link;
   });
   expect(isFirst).toBe(true);
+});
+
+// ─── #2b Populated NPanel tab order (R7 — #56) ────────────────────────
+
+test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (#56)', async ({
+  page,
+}) => {
+  // #56: P6.W8#2 above excludes R7 because the default no-selection
+  // NPanel is empty by the §5.8 selection-adaptive contract — correct
+  // in isolation, but NO spec exercised the POPULATED case (the audit
+  // found acceptance.spec.ts #5's `press('Tab')` calls are commit-on-
+  // blur side effects, not tab-order assertions). This closes that
+  // gap: select a Cube node (n_box BoxMesh — declares
+  // inspectorSections per P6 W4), wait for the NPanel to actually
+  // populate its sections, and assert the inspector now has tabbable
+  // descendants where it had none.
+
+  // Baseline: no selection → inspector has 0 tabbable descendants
+  // (this is the §5.8 contract P6.W8#2 relies on; assert it here so
+  // the post-click delta is observed, not assumed).
+  await expect(page.getByTestId('inspector')).toBeVisible();
+  const beforeCount = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="inspector"]');
+    if (!root) return -1;
+    return root.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ).length;
+  });
+  expect(beforeCount, 'no-selection NPanel should have 0 tabbable (§5.8 contract)').toBe(0);
+
+  // Expand the LeftSidebar so the SceneTree row is interactable, then
+  // select the Cube (same dev seam + node id the W4 inspector specs
+  // use). n_box is a BoxMesh; P6 W4 declared inspectorSections on it.
+  await page.waitForFunction(
+    () => Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
+  );
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __basher_chrome: { getState: () => { setLeftSidebarCollapsed: (b: boolean) => void } };
+    };
+    w.__basher_chrome.getState().setLeftSidebarCollapsed(false);
+  });
+  await page.getByTestId('scene-tree-row-n_box').click();
+
+  // Wait for the NPanel to actually populate — the Mesh section
+  // (BoxMesh primary domain, expanded by default per §5.8) renders
+  // its body. This is the observation that the panel is live, not a
+  // fixed sleep.
+  await expect(page.getByTestId('inspector-section-mesh')).toBeVisible();
+  await expect(page.getByTestId('inspector-section-body-mesh')).toBeVisible();
+
+  // The acceptance: ≥1 tabbable element inside #inspector AFTER the
+  // click. Section toggle buttons + the Mesh-body number inputs are
+  // all keyboard-reachable; assert the count went from 0 to ≥1.
+  const afterCount = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="inspector"]');
+    if (!root) return -1;
+    return root.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ).length;
+  });
+  expect(
+    afterCount,
+    'populated NPanel must expose ≥1 tabbable element (R7 keyboard reachability, #56)',
+  ).toBeGreaterThanOrEqual(1);
+
+  // Stronger: a real input/button is reachable, not just a tabindex
+  // container. Focus the first tabbable descendant and confirm it
+  // actually lands inside #inspector (keyboard can reach NPanel
+  // controls, not merely that nodes exist).
+  const focusedInsideInspector = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="inspector"]');
+    if (!root) return false;
+    const first = root.querySelector(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) as HTMLElement | null;
+    if (!first) return false;
+    first.focus();
+    return root.contains(document.activeElement);
+  });
+  expect(focusedInsideInspector).toBe(true);
 });
 
 // ─── #3 Focus order in director mode ──────────────────────────────────
