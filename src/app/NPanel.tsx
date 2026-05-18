@@ -46,6 +46,7 @@ import {
   dispatchMutatorFromUI,
 } from './animate/dispatchMutator';
 import { paramAnimationState } from './animate/paramAnimationState';
+import { useAutoKeyStore } from './stores/autoKeyStore';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -85,6 +86,60 @@ function resolveChannel(
     return { channelId: node.id, onKeySeconds: onKey ? onKey.time : null };
   }
   return null;
+}
+
+/**
+ * THE single Auto-Key commit chokepoint (Phase 7, Wave D / D4).
+ *
+ * Called by every inspector value-commit handler (NumericField +
+ * VectorComponent, onChange AND onCommit) AFTER the raw `setParam`
+ * dispatch. It is NOT a second DAG path — it is the SAME Wave A seam
+ * (`dispatchMutatorFromUI` / `dispatchFirstKeyComposite`) the diamond
+ * click uses, triggered by an edit instead of a click (RESEARCH
+ * Boundary 5).
+ *
+ * Strictly gated on `useAutoKeyStore.getState().enabled`: when Auto-Key
+ * is OFF this returns IMMEDIATELY, before any seam call, so the inspector
+ * behaviour is BYTE-IDENTICAL to pre-P7 (the caller already did the raw
+ * setParam; nothing else happens). This single function is the only
+ * interception point — the logic is not scattered across handlers (D4
+ * ownership + pre-mortem: gate once, here).
+ *
+ * Channel-exists ⇒ single `keyframe` Mutator at the current SECONDS
+ * (never a frame — the single conversion rule). No channel ⇒ first-key
+ * composite. Both at `useTimeStore.getState().seconds`.
+ */
+function autoKeyCommit(nodeId: string, paramPath: string, value: unknown): void {
+  if (!useAutoKeyStore.getState().enabled) return; // OFF → byte-identical pre-P7
+
+  const seconds = useTimeStore.getState().seconds;
+  const frame = useTimeStore.getState().frame;
+  const dagState = useDagStore.getState().state;
+
+  // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
+  // this (nodeId, paramPath) — the SAME pure scan the diamond uses (C1).
+  const exists =
+    paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
+
+  let result: { ok: true } | { ok: false; reason: string };
+  if (!exists) {
+    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value, seconds });
+  } else {
+    const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
+    if (!resolved) {
+      result = { ok: false, reason: 'Auto-Key: channel not found for animated param.' };
+    } else {
+      result = dispatchMutatorFromUI(
+        'mutator.timeline.keyframe',
+        { channelId: resolved.channelId, time: seconds, value },
+        `Auto-Key ${nodeId}.${paramPath}`,
+      );
+    }
+  }
+  if (!result.ok) {
+    // eslint-disable-next-line no-alert
+    window.alert?.(result.reason);
+  }
 }
 
 /**
@@ -202,6 +257,7 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
     value,
     onCommit: (next) => {
       dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `scrub ${paramPath}`);
+      autoKeyCommit(nodeId, paramPath, next);
     },
   });
   const display = scrub.isDragging ? scrub.previewValue : value;
@@ -228,6 +284,7 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: next });
+          autoKeyCommit(nodeId, paramPath, next);
         }}
       />
     </label>
@@ -260,6 +317,7 @@ function VectorComponent({
         'user',
         `scrub ${paramPath}.${axisLabel}`,
       );
+      autoKeyCommit(nodeId, paramPath, newVec);
     },
   });
   const display = scrub.isDragging ? scrub.previewValue : value;
@@ -285,6 +343,7 @@ function VectorComponent({
           const newVec = [...vec] as number[];
           newVec[axisIndex] = next;
           dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
+          autoKeyCommit(nodeId, paramPath, newVec);
         }}
       />
     </label>

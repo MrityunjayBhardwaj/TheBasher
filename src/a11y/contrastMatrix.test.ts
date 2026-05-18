@@ -452,6 +452,20 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   // no longer appears in src/timeline; kept whitelisted so any future
   // re-introduction elsewhere is still a non-text decoration, not a gap.
   { pattern: /\bbg-fg\b/, why: 'Legacy keyframe-marker token; W9 canvas surface emits no Tailwind. Non-text decoration if re-used' },
+  // P7 D2 Auto-Key (record) indicator decoration (src/app/Timebar.tsx):
+  //   bg-record    — the 8px record DOT (no text on it; pure shape).
+  //   bg-record/15 — the armed-mode header TINT; the text rendered over it
+  //                  is `text-fg/80`, whose contrast against the Timebar
+  //                  surface is already an audited (fg,bg) ROW — the 15%
+  //                  record wash sits behind that pair, it is not itself a
+  //                  text-bearing surface.
+  //   bg-record/25 — the REC toggle BUTTON fill; its label is `text-record`
+  //                  (already audited as a foreground token) over the muted
+  //                  Timebar surface; the 25% wash is decorative emphasis.
+  // All three are non-text decoration realizing the already-specced §5.8
+  // Animate "Record" affordance (UI-SPEC D-UX-14) — same posture as the
+  // bg-accent/10 / bg-fg whitelist precedents above.
+  { pattern: /\bbg-record(\/\d+)?\b/, why: 'P7 Auto-Key record dot + armed-header/toggle tint; non-text decoration (text over it is the audited text-fg/80 / text-record pair). UI-SPEC D-UX-14' },
   // bg-accent/10: the SVG Dopesheet's active-channel row tint. P6 W9's
   // TimelineCanvas paints that tint imperatively (PALETTE.ACTIVE_DIAMOND
   // at globalAlpha 0.1 — see paintStaticLayer) with NO Tailwind class;
