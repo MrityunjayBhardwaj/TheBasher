@@ -150,7 +150,7 @@ function autoKeyCommit(nodeId: string, paramPath: string, value: unknown): void 
  *
  * - hollow ◇  → 'none'   : click = first-key composite (addLayer+addChannel+keyframe)
  * - filled ◆  → 'animated' (off-key) : click = single keyframe Mutator
- * - record ◆  → 'on-key' : click (or Alt-click) = deleteKeyframe Mutator
+ * - record ◆  → 'on-key' : click (or Alt-click) = removeKeyframes Mutator (scope:{time})
  *
  * Every Mutator call passes `useTimeStore.getState().seconds` (never a
  * frame int) — the on-key check via C1 is the only place frames are used.
@@ -207,8 +207,8 @@ function ParamDiamond({
           result = { ok: true };
         } else {
           result = dispatchMutatorFromUI(
-            'mutator.timeline.deleteKeyframe',
-            { channelId: resolved.channelId, time: t },
+            'mutator.timeline.removeKeyframes',
+            { channelId: resolved.channelId, scope: { time: t } },
             `Delete key ${nodeId}.${paramPath}`,
           );
         }
