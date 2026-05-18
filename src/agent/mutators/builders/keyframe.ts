@@ -60,9 +60,9 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     // Channel must already be a known type — addChannel landed first.
     requiredNodeTypes: [],
     // P6 W6 — adds 'animation-shape' + 'keyframe-density' to distinguish
-    // from simplifyChannel + clearChannel under V14. keyframe appends or
-    // replaces a single sample; the existing curve shape is preserved AND
-    // the count of other samples is unchanged.
+    // from simplifyChannel + removeKeyframes under V14. keyframe appends
+    // or replaces a single sample; the existing curve shape is preserved
+    // AND the count of other samples is unchanged.
     preserves: [
       'position',
       'rotation',

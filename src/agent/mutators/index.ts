@@ -33,8 +33,7 @@ import { addLayerMutator } from './builders/addLayer';
 import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
 import { simplifyChannelMutator } from './builders/simplifyChannel';
-import { clearChannelMutator } from './builders/clearChannel';
-import { deleteKeyframeMutator } from './builders/deleteKeyframe';
+import { removeKeyframesMutator } from './builders/removeKeyframes';
 import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
@@ -52,8 +51,7 @@ export {
   addChannelMutator,
   keyframeMutator,
   simplifyChannelMutator,
-  clearChannelMutator,
-  deleteKeyframeMutator,
+  removeKeyframesMutator,
   shotCreateMutator,
   retargetMutator,
   addPassMutator,
@@ -72,11 +70,11 @@ export function registerAllMutators(): void {
   registerMutator(addLayerMutator);
   registerMutator(addChannelMutator);
   registerMutator(keyframeMutator);
-  // P6 W6 — track ops (simplify + clear)
+  // P6 W6 — RDP simplify; issue #60 / H36 — removeKeyframes parameterizes
+  // the former clearChannel ('all') and deleteKeyframe ({time}) into one
+  // op (Blender Shift-Alt-I + Alt-I share an underlying handler).
   registerMutator(simplifyChannelMutator);
-  registerMutator(clearChannelMutator);
-  // P7 Wave B — delete-key-at-playhead (Blender Alt-I, D-06)
-  registerMutator(deleteKeyframeMutator);
+  registerMutator(removeKeyframesMutator);
   registerMutator(shotCreateMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);

@@ -20,7 +20,8 @@
 // Each wires to the same handler the corresponding keyboard shortcut
 // uses (Key/Delete share buildKeyframeInsertOp / buildKeyframeDeleteOp
 // from KeyboardShortcuts.tsx; Clear dispatches via the
-// clearChannelMutator; Simplify opens the SimplifyPopover). Track
+// removeKeyframesMutator with scope:'all' — issue #60 / H36 parameterized
+// what was formerly clearChannel; Simplify opens the SimplifyPopover). Track
 // filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
 import { useState } from 'react';
@@ -37,7 +38,7 @@ import {
   buildKeyframeInsertOp,
   buildKeyframeDeleteOp,
 } from '../app/KeyboardShortcuts';
-import { clearChannelMutator, validatePlan } from '../agent/mutators';
+import { removeKeyframesMutator, validatePlan } from '../agent/mutators';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
@@ -214,8 +215,8 @@ function DockToolbar() {
     if (!activeChannelId) return;
     const state = useDagStore.getState().state;
     const plan = validatePlan(
-      clearChannelMutator,
-      { channelId: activeChannelId },
+      removeKeyframesMutator,
+      { channelId: activeChannelId, scope: 'all' as const },
       state,
       'clear channel',
     );

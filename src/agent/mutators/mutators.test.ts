@@ -91,7 +91,12 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    expect(mutators).toHaveLength(17);
+    // 16 = the prior 17 with clearChannel + deleteKeyframe collapsed into
+    // one parameterized `removeKeyframes` (issue #60 / hetvabhasa H36 —
+    // V14 caught them as parameterization candidates after `lossy` was
+    // added to the signature; one Mutator with `scope: 'all' | {time}`
+    // replaces the fork).
+    expect(mutators).toHaveLength(16);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -106,9 +111,8 @@ describe('mutator catalog', () => {
       'mutator.shot.create',
       'mutator.timeline.addChannel',
       'mutator.timeline.addLayer',
-      'mutator.timeline.clearChannel',
-      'mutator.timeline.deleteKeyframe',
       'mutator.timeline.keyframe',
+      'mutator.timeline.removeKeyframes',
       'mutator.timeline.simplifyChannel',
       'mutator.translate',
     ]);
@@ -144,9 +148,19 @@ describe('mutator catalog', () => {
   it('V14: no two Mutators share the same contract signature', () => {
     // Mechanical guard for vyapti V14 (Mutator non-redundancy). Two
     // Mutators with identical (requiredEdges, requiredNodeTypes,
-    // preserves) tuples are almost always candidates for parameterization
-    // rather than fork. This converts V14 from "code review" to
-    // observable enforcement at registration time.
+    // preserves, lossy_kinds) tuples are almost always candidates for
+    // parameterization rather than fork. This converts V14 from "code
+    // review" to observable enforcement at registration time.
+    //
+    // SIGNATURE WIDENING (issue #60 / hetvabhasa H36, 2026-05-18): the
+    // signature now includes the sorted set of `lossy[].kind` strings.
+    // Reason: for two Mutators that differ only in what they DESTROY
+    // (e.g. append vs delete a sample), the only honest discriminator
+    // lives in `lossy`. The pre-widening signature read `preserves`
+    // only, so honest delete-class contracts collided and the
+    // mechanically-rewarded escape was a false `preserves` token —
+    // the gate was green by certifying a lie. Widening the gate's
+    // input set is the structural fix; see H36's five-limbed argument.
     //
     // A future deeper check would assert no two Mutators emit the same
     // Op-shape on a probe scene; deferred — see follow-up issue.
@@ -157,6 +171,7 @@ describe('mutator catalog', () => {
         requiredEdges: [...m.contract.requiredEdges].sort(),
         requiredNodeTypes: [...m.contract.requiredNodeTypes].sort(),
         preserves: [...m.contract.preserves].sort(),
+        lossyKinds: [...(m.contract.lossy ?? []).map((l) => l.kind)].sort(),
       });
       const prior = seen.get(sig);
       expect(
@@ -574,7 +589,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(17);
+    expect(parsed.mutators).toHaveLength(16);
   });
 });
 
@@ -653,7 +668,7 @@ import {
   addChannelMutator,
   keyframeMutator,
   simplifyChannelMutator,
-  clearChannelMutator,
+  removeKeyframesMutator,
   shotCreateMutator,
 } from './index';
 import { applyOp } from '../../core/dag';
@@ -1672,8 +1687,18 @@ describe('mutator.timeline.simplifyChannel', () => {
   });
 });
 
-describe('mutator.timeline.clearChannel', () => {
-  function stateWithKeyframes(): DagState {
+// ---------------------------------------------------------------------------
+// mutator.timeline.removeKeyframes — parameterized "remove keyframes by
+// scope": scope:'all' supersedes the pre-P7 clearChannel Mutator (Blender
+// Shift-Alt-I Clear); scope:{time} supersedes the P7-Wave-B deleteKeyframe
+// Mutator (Blender Alt-I delete-at-playhead). Provenance: issue #60 /
+// hetvabhasa H36 — V14's signature was widened to read `lossy[].kind`
+// and caught the two as parameterization candidates of the same
+// destructive op at different scales.
+// ---------------------------------------------------------------------------
+
+describe('mutator.timeline.removeKeyframes', () => {
+  function stateWith2NumberSamples(): DagState {
     let s = buildSceneWithTime();
     s = applyOp(s, {
       type: 'addNode',
@@ -1698,61 +1723,7 @@ describe('mutator.timeline.clearChannel', () => {
     return s;
   }
 
-  it('emits setParam(keyframes, []) and the result is empty', () => {
-    const state = stateWithKeyframes();
-    const r = validatePlan(clearChannelMutator, { channelId: 'ch' }, state, 'clear');
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.ops).toHaveLength(1);
-    const op = r.ops[0];
-    if (op.type !== 'setParam') throw new Error('expected setParam');
-    expect(op.paramPath).toBe('keyframes');
-    expect(op.value).toEqual([]);
-  });
-
-  it('no-op when channel is already empty', () => {
-    let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'ch',
-      nodeType: 'KeyframeChannelNumber',
-      params: { name: 'val', target: 'box', paramPath: 'opacity', keyframes: [] },
-    }).next;
-    const r = validatePlan(clearChannelMutator, { channelId: 'ch' }, s, 'noop');
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.ops).toHaveLength(0);
-  });
-
-  it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
-    const state = stateWithKeyframes();
-    const r = validatePlan(clearChannelMutator, { channelId: 'box' }, state, 'wrong type');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.gate).toBe(4);
-  });
-
-  it('rejects when channelId is missing from DAG (gate 4)', () => {
-    const state = stateWithKeyframes();
-    const r = validatePlan(clearChannelMutator, { channelId: 'nonexistent' }, state, 'missing');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.gate).toBe(4);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// P7 Wave B — deleteKeyframe Mutator (Blender Alt-I, D-06)
-// ---------------------------------------------------------------------------
-
-import { deleteKeyframeMutator } from './index';
-
-describe('mutator.timeline.deleteKeyframe', () => {
-  function stateWith3Samples(): DagState {
+  function stateWith3Vec3Samples(): DagState {
     let s = buildSceneWithTime();
     s = applyOp(s, {
       type: 'addNode',
@@ -1778,9 +1749,60 @@ describe('mutator.timeline.deleteKeyframe', () => {
     return s;
   }
 
-  it('removes the sample at an existing time → 2 samples, one setParam op', () => {
-    const state = stateWith3Samples();
-    const r = validatePlan(deleteKeyframeMutator, { channelId: 'ch', time: 1 }, state, 'del key');
+  // --- scope: 'all' (was clearChannel) ----------------------------------
+
+  it("scope:'all' emits setParam(keyframes, []) on a populated channel", () => {
+    const state = stateWith2NumberSamples();
+    const r = validatePlan(
+      removeKeyframesMutator,
+      { channelId: 'ch', scope: 'all' },
+      state,
+      'clear',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.paramPath).toBe('keyframes');
+    expect(op.value).toEqual([]);
+  });
+
+  it("scope:'all' is a no-op when channel is already empty", () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'layer',
+      nodeType: 'AnimationLayer',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: { name: 'val', target: 'box', paramPath: 'opacity', keyframes: [] },
+    }).next;
+    const r = validatePlan(
+      removeKeyframesMutator,
+      { channelId: 'ch', scope: 'all' },
+      s,
+      'noop',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(0);
+  });
+
+  // --- scope: { time } (was deleteKeyframe) -----------------------------
+
+  it('scope:{time} removes the sample at an existing time → 2 samples, one setParam op', () => {
+    const state = stateWith3Vec3Samples();
+    const r = validatePlan(
+      removeKeyframesMutator,
+      { channelId: 'ch', scope: { time: 1 } },
+      state,
+      'del key',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.ops).toHaveLength(1);
@@ -1792,11 +1814,11 @@ describe('mutator.timeline.deleteKeyframe', () => {
     expect(keyframes.map((k) => k.time)).toEqual([0, 2]);
   });
 
-  it('no-op when no sample exists at time (Blender Alt-I parity, D-06)', () => {
-    const state = stateWith3Samples();
+  it('scope:{time} is a no-op when no sample exists at time (Blender Alt-I parity)', () => {
+    const state = stateWith3Vec3Samples();
     const r = validatePlan(
-      deleteKeyframeMutator,
-      { channelId: 'ch', time: 1.5 },
+      removeKeyframesMutator,
+      { channelId: 'ch', scope: { time: 1.5 } },
       state,
       'del non-existent',
     );
@@ -1805,18 +1827,25 @@ describe('mutator.timeline.deleteKeyframe', () => {
     expect(r.ops).toHaveLength(0); // [] — state byte-unchanged, not a hard fail
   });
 
+  // --- preconditions (gate 4) -------------------------------------------
+
   it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
-    const state = stateWith3Samples();
-    const r = validatePlan(deleteKeyframeMutator, { channelId: 'box', time: 0 }, state, 'wrong type');
+    const state = stateWith3Vec3Samples();
+    const r = validatePlan(
+      removeKeyframesMutator,
+      { channelId: 'box', scope: 'all' },
+      state,
+      'wrong type',
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
   });
 
   it('rejects when channelId is missing from DAG (gate 4)', () => {
-    const state = stateWith3Samples();
+    const state = stateWith3Vec3Samples();
     const r = validatePlan(
-      deleteKeyframeMutator,
-      { channelId: 'nonexistent', time: 0 },
+      removeKeyframesMutator,
+      { channelId: 'nonexistent', scope: 'all' },
       state,
       'missing',
     );
@@ -1824,14 +1853,18 @@ describe('mutator.timeline.deleteKeyframe', () => {
     if (!r.ok) expect(r.gate).toBe(4);
   });
 
+  // --- registration -----------------------------------------------------
+
   it('is registered inside registerAllMutators() — V14 loop is NOT blind to it', () => {
-    // Proves the gate is non-blind (RESEARCH U1): the V14 collision
-    // loop iterates listMutators() AFTER registerAllMutators(); a
-    // Mutator registered only at a separate boot-time call list would
-    // be invisible to it. Asserting membership here guarantees the V14
-    // assertion below actually exercises deleteKeyframe's signature.
+    // The V14 collision loop iterates `listMutators()` AFTER
+    // `registerAllMutators()`; a Mutator registered only at a separate
+    // boot-time call list would be invisible to it. Asserting
+    // membership here guarantees the V14 assertion exercises
+    // removeKeyframes' (now-honest) signature.
     registerAllMutators();
     const names = listMutators().map((m) => m.name);
-    expect(names).toContain('mutator.timeline.deleteKeyframe');
+    expect(names).toContain('mutator.timeline.removeKeyframes');
+    expect(names).not.toContain('mutator.timeline.clearChannel'); // retired
+    expect(names).not.toContain('mutator.timeline.deleteKeyframe'); // retired
   });
 });

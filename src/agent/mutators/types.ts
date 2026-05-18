@@ -47,25 +47,23 @@ export type PreservedAspect =
   | 'children'
   | 'material'
   // P6 W6 — channel-targeting Mutator family. These distinguish
-  // keyframe / simplifyChannel / clearChannel under V14 (Mutator
-  // non-redundancy). A Mutator that appends a sample still preserves
-  // BOTH the curve's shape AND the density of existing samples;
-  // simplifyChannel drops density but preserves shape within ε;
-  // clearChannel preserves neither.
+  // `keyframe` / `simplifyChannel` / `removeKeyframes` under V14
+  // (Mutator non-redundancy). A Mutator that appends a sample still
+  // preserves BOTH the curve's shape AND the density of existing
+  // samples; simplifyChannel drops density but preserves shape within
+  // ε; removeKeyframes preserves neither (it destroys both at either
+  // scope:'all' or scope:{time}).
+  //
+  // Issue #60 / hetvabhasa H36 (2026-05-18) retired the earlier
+  // `'keyframe-identity'` member. It was introduced in P7 Wave B as a
+  // distinctness hack for the `deleteKeyframe` fork, when V14's
+  // signature read `preserves` only. V14 has since been widened to
+  // read `lossy[].kind` too (mutators.test.ts), and `clearChannel`
+  // + `deleteKeyframe` have been parameterized into one
+  // `removeKeyframes` Mutator — the token's distinctness purpose is
+  // gone.
   | 'animation-shape'
-  | 'keyframe-density'
-  // P7 Wave B — deleteKeyframe removes ONE identified sample,
-  // preserving every OTHER sample's identity (its time + value +
-  // easing) unchanged. Distinct from simplifyChannel, which re-fits
-  // the curve and may move/merge samples (it does NOT preserve
-  // per-sample identity), and from 'keyframe-density', which is a
-  // cardinality claim (how many samples), not an identity claim
-  // (which samples, untouched). This member is the deliberate V14
-  // distinctness mechanism for deleteKeyframe (RESEARCH finding #2):
-  // its (requiredEdges, requiredNodeTypes, preserves) signature would
-  // otherwise be byte-identical to simplifyChannel's, since `lossy` is
-  // not part of the V14 signature (mutators.test.ts:155-159).
-  | 'keyframe-identity';
+  | 'keyframe-density';
 
 export interface LossyAspect {
   kind: string;

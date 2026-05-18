@@ -55,7 +55,8 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     // 'animation-shape' kept: RDP preserves curve shape within ε.
     // 'keyframe-density' dropped: simplification REDUCES sample count.
     // Distinguishes from keyframeMutator (which keeps both) and
-    // clearChannelMutator (which keeps neither) under V14.
+    // removeKeyframesMutator (which keeps neither, at either scope)
+    // under V14.
     preserves: [
       'position',
       'rotation',

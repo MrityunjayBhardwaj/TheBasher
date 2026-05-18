@@ -138,11 +138,31 @@ when a closure is declared.
 definition).
 
 **Enforcement (mechanical):** an automated test asserts no two
-registered Mutators share the same `(requiredEdges, requiredNodeTypes,
-preserves)` contract signature. A signature collision fails CI with the
-two colliding names — no review pass needed to catch the easy case.
+registered Mutators share the same
+`(requiredEdges, requiredNodeTypes, preserves, lossy[].kind)` contract
+signature. A signature collision fails CI with the two colliding names
+— no review pass needed to catch the easy case.
 Test: `src/agent/mutators/mutators.test.ts` — "V14: no two Mutators
 share the same contract signature."
+
+**Signature widening (issue #60 / hetvabhasa H36, 2026-05-18):** the
+signature now includes the sorted set of `lossy[].kind` strings. The
+pre-widening signature read `preserves` only; for two Mutators that
+differ ONLY in what they DESTROY (e.g. append vs delete a sample), an
+honest declaration left them colliding because `lossy` was invisible
+to the gate. The mechanically-rewarded escape was a false `preserves`
+token — the gate stayed green by certifying a lie. The first observed
+escape was P7's `deleteKeyframe` (a `'keyframe-identity'` PreservedAspect
+in `preserves` to avoid a `simplifyChannel` collision). H36 catalogues
+the pattern; the resolution widened V14 to read `lossy[].kind`, then
+the now-honest `deleteKeyframe` collided with the now-honest
+`clearChannel` (both destroy `animation-shape` + `keyframe-density` at
+different scales), which V14 correctly flagged as a parameterization
+candidate. They were merged into `removeKeyframes` with
+`scope: 'all' | { time }`. The `'keyframe-identity'` PreservedAspect was
+retired as dead. **Lesson encoded in V14:** if you want to game the
+mechanical gate, the gate's input set is too narrow — widen the gate,
+don't lie in the contract.
 
 **Enforcement (review-layer, semantic):** the mechanical test catches
 contract clones but not deeper semantic redundancy (two Mutators emit
