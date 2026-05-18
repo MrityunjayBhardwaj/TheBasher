@@ -66,18 +66,53 @@ describe('a11y grep gates — P6 W8 C5.4', () => {
     files.push(...walk(SRC, ['.ts', '.tsx']));
 
     const writers: { file: string; line: number; text: string }[] = [];
-    // Two flavours of writer to catch:
-    //   1. `useGizmoStore(...).setMode(` — hook-form direct dispatch
-    //   2. `gizmoStore.setMode(` — imported-singleton direct dispatch
-    //   3. `useGizmoStore.getState().setMode(` — imperative outside React
-    const HOOK_RE = /useGizmoStore\([^)]*\)\.setMode\(/;
+    // Flavours of writer to catch. The first three are direct-call forms;
+    // the last two (A/B) are BINDING forms — they don't call setMode on
+    // the line, they capture a reference to it that is then invoked
+    // elsewhere. #55: the original HOOK_RE only matched the chained
+    // single-line call, so `const { setMode } = useGizmoStore()` and
+    // `const fn = useGizmoStore.getState().setMode` bypassed the gate
+    // even though each introduces a new production writer of the
+    // dispatcher. The V19 invariant is "exactly one production writer";
+    // the gate's coverage must match that assertion, so the binding
+    // site itself counts as a writer introduction.
+    //   1. `useGizmoStore(...).setMode(`         — hook-form call
+    //   2. `gizmoStore.setMode(`                 — singleton call
+    //   3. `useGizmoStore.getState().setMode(`   — imperative call
+    //   A. `const { … setMode … } = useGizmoStore(...)` — destructured
+    //      binding (also matches `setMode: alias` rename + getState()
+    //      destructure: `const { setMode } = useGizmoStore.getState()`)
+    //   B. `… = useGizmoStore.getState().setMode` (no trailing `(`)
+    //      OR `… = useGizmoStore(...).setMode`     — aliased reference
+    // `\((?:[^()]|\([^()]*\))*\)` matches a useGizmoStore(...) arg list
+    // tolerating ONE level of nested parens — i.e. a selector arrow
+    // `useGizmoStore((s) => s.mode)`. A flat `[^)]*` stopped at the
+    // first `)` inside `((s) => …)` and missed selector-form writers.
+    const HOOK_RE = /useGizmoStore\((?:[^()]|\([^()]*\))*\)\.setMode\(/;
     const IMPORT_RE = /\bgizmoStore\.setMode\(/;
     const GETSTATE_RE = /useGizmoStore\.getState\(\)\.setMode\(/;
+    // Pattern A — `setMode` (optionally `setMode: localName`) inside a
+    // destructuring `{ … }` whose initializer is useGizmoStore(...) or
+    // useGizmoStore.getState().
+    const DESTRUCTURE_RE =
+      /\{[^{}]*\bsetMode\b[^{}]*\}\s*=\s*useGizmoStore(\.getState\(\)|\((?:[^()]|\([^()]*\))*\))/;
+    // Pattern B — an alias bound to `.setMode` WITHOUT an immediate call
+    // (the call happens later through the alias). `(?!\s*\()` excludes
+    // the chained-call forms already caught by HOOK_RE / GETSTATE_RE so
+    // a single line isn't double-counted.
+    const ALIAS_RE =
+      /useGizmoStore(?:\.getState\(\)|\((?:[^()]|\([^()]*\))*\))\.setMode\b(?!\s*\()/;
 
     for (const file of files) {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((text, i) => {
-        if (HOOK_RE.test(text) || IMPORT_RE.test(text) || GETSTATE_RE.test(text)) {
+        if (
+          HOOK_RE.test(text) ||
+          IMPORT_RE.test(text) ||
+          GETSTATE_RE.test(text) ||
+          DESTRUCTURE_RE.test(text) ||
+          ALIAS_RE.test(text)
+        ) {
           writers.push({ file, line: i + 1, text: text.trim() });
         }
       });
@@ -96,6 +131,66 @@ describe('a11y grep gates — P6 W8 C5.4', () => {
       );
     }
     expect(writers[0].file).toMatch(/editorStore\.ts$/);
+  });
+
+  it('V19 regex coverage: destructured (A) and aliased (B) writer forms are detected (#55)', () => {
+    // #55: the V19 invariant asserts "exactly one production writer",
+    // but the original HOOK_RE only matched the chained single-line
+    // call. These fixtures pin the WIDENED coverage: a contributor who
+    // introduces Pattern A or B in the future is caught at commit time,
+    // not silently let through (false-confidence gap closed). Zero
+    // current risk — grep confirms no production code uses A/B today,
+    // which is why the gate above still passes green; this gate proves
+    // the regexes would bite if it did.
+    //
+    // Keep these in lock-step with the regexes in the V19 it() above.
+    const HOOK_RE = /useGizmoStore\((?:[^()]|\([^()]*\))*\)\.setMode\(/;
+    const GETSTATE_RE = /useGizmoStore\.getState\(\)\.setMode\(/;
+    const DESTRUCTURE_RE =
+      /\{[^{}]*\bsetMode\b[^{}]*\}\s*=\s*useGizmoStore(\.getState\(\)|\((?:[^()]|\([^()]*\))*\))/;
+    const ALIAS_RE =
+      /useGizmoStore(?:\.getState\(\)|\((?:[^()]|\([^()]*\))*\))\.setMode\b(?!\s*\()/;
+
+    const anyMatch = (line: string) =>
+      HOOK_RE.test(line) ||
+      GETSTATE_RE.test(line) ||
+      DESTRUCTURE_RE.test(line) ||
+      ALIAS_RE.test(line);
+
+    // Pattern A — destructured at hook call (and its variants).
+    const patternA = [
+      "const { setMode } = useGizmoStore();",
+      "const { mode, setMode } = useGizmoStore();",
+      "const { setMode: applyMode } = useGizmoStore();",
+      "const { setMode } = useGizmoStore.getState();",
+      "  const { setMode } = useGizmoStore((s) => s);",
+    ];
+    for (const line of patternA) {
+      expect(anyMatch(line), `Pattern A must be detected: ${line}`).toBe(true);
+    }
+
+    // Pattern B — alias from a chained reference WITHOUT calling it.
+    const patternB = [
+      "const fn = useGizmoStore.getState().setMode;",
+      "const apply = useGizmoStore((s) => s).setMode;",
+      "let handler = useGizmoStore().setMode",
+    ];
+    for (const line of patternB) {
+      expect(anyMatch(line), `Pattern B must be detected: ${line}`).toBe(true);
+    }
+
+    // Negative controls — these MUST NOT match (no false positives that
+    // would make the V19 gate trip on innocent code):
+    const benign = [
+      "const mode = useGizmoStore((s) => s.mode);", // reads mode, not setMode
+      "const { mode } = useGizmoStore();", // destructures mode only
+      "// setMode is the canonical dispatcher", // a comment mentioning it
+      "useGizmoStore.getState().mode;", // reads .mode
+      "const setModeLabel = 'translate';", // unrelated identifier
+    ];
+    for (const line of benign) {
+      expect(anyMatch(line), `Benign line must NOT match: ${line}`).toBe(false);
+    }
   });
 
   it('no bare legacy-focus outline suppression survives in chrome .tsx files (D-W8-2)', () => {
