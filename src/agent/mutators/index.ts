@@ -39,6 +39,7 @@ import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
 import { addAIPassMutator } from './builders/addAIPass';
 import { addStitchMutator } from './builders/addStitch';
+import { randomizeMutator } from './builders/randomize';
 
 export {
   rotateMutator,
@@ -57,6 +58,7 @@ export {
   addPassMutator,
   addAIPassMutator,
   addStitchMutator,
+  randomizeMutator,
 };
 
 export function registerAllMutators(): void {
@@ -84,4 +86,7 @@ export function registerAllMutators(): void {
   registerMutator(addAIPassMutator);
   // P5 Wave D — video stitch
   registerMutator(addStitchMutator);
+  // P7.2 — issue #26 path B: per-target randomization, N × P ops in
+  // one atomic dispatch.
+  registerMutator(randomizeMutator);
 }

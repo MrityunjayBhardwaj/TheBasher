@@ -20,6 +20,7 @@ import { scaleMutator } from './builders/scale';
 import { setMaterialColorMutator } from './builders/setMaterialColor';
 import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
+import { randomizeMutator } from './builders/randomize';
 import { proposePlanTool, listMutatorsTool } from './tool';
 
 beforeEach(() => {
@@ -91,17 +92,18 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 16 = the prior 17 with clearChannel + deleteKeyframe collapsed into
-    // one parameterized `removeKeyframes` (issue #60 / hetvabhasa H36 —
-    // V14 caught them as parameterization candidates after `lossy` was
-    // added to the signature; one Mutator with `scope: 'all' | {time}`
-    // replaces the fork).
-    expect(mutators).toHaveLength(16);
+    // 17 = the 16 prior + `mutator.randomize` (P7.2 / issue #26 path B —
+    // per-target randomization, N × P ops in one atomic dispatch).
+    // The 16 reflects #60 / hetvabhasa H36's earlier collapse of
+    // clearChannel + deleteKeyframe into one parameterized
+    // `removeKeyframes`.
+    expect(mutators).toHaveLength(17);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
+      'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
       'mutator.render.addStitch',
@@ -326,6 +328,326 @@ describe('setMaterialColor mutator', () => {
     expect(() =>
       setMaterialColorMutator.spec.parse({ targetSelectors: ['box'], color: 'red' }),
     ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// randomize mutator — P7.2 / issue #26 path B
+//
+// Per-target randomization across {color, rotation, scale}. ONE call emits
+// N × P ops in one atomic dispatch. Optional `seed` makes the entire
+// sequence byte-identically reproducible via mulberry32.
+//
+// Tests cover D-01..D-10 (CONTEXT.md verbatim):
+//   #1  emits N × P ops in spec order (target-outer × property-inner)
+//   #2  seed determinism — twice-call returns byte-identical Op[]
+//   #3  no seed — twice-call returns DIFFERENT Op[] (seed actually toggles)
+//   #4  hue wrap: h:[350, 10] produces samples in [350,360) ∪ [0,10]
+//   #5  bounds validation (zod / superRefine — D-08)
+//   #6  per-property precondition reject — gate 4 names the (target, property) pair (D-10)
+//   #7  atomic dispatch through agent path — proposePlanTool returns ok with N × P ops (D-07)
+//   #8  D-05 hard scope: 'position' not in PropertyName enum
+// ---------------------------------------------------------------------------
+
+// Local helper: pure hex → HSL (re-parse the sampled hex back into HSL
+// for the hue-wrap assertion. Standard RGB → HSL with no randomness.)
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) throw new Error(`hexToHsl: bad hex ${hex}`);
+  const r = parseInt(m[1], 16) / 255;
+  const g = parseInt(m[2], 16) / 255;
+  const b = parseInt(m[3], 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  return { h, s, l };
+}
+
+// Local helper: scene with `box` (BoxMesh — material+rotation+size all
+// compatible) and `light` (DirectionalLight — has color + rotation +
+// scale vec3, but NO `size` and NO `radius`, so `canScale` returns
+// false → mixed-compatibility scene exercises D-10 gate-4 reject).
+function buildSceneWithLight(): DagState {
+  let s = emptyDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'box',
+    nodeType: 'BoxMesh',
+    params: {
+      size: [1, 1, 1],
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      material: { name: 'default', color: '#ff0000' },
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'light',
+    nodeType: 'DirectionalLight',
+    params: {
+      intensity: 1,
+      position: [5, 5, 5],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: '#ffffff',
+    },
+  }).next;
+  return s;
+}
+
+describe('randomize mutator', () => {
+  // D-01..D-02 default-spec helper — full 3-property spec on box+sibling.
+  function fullSpec(seed?: number) {
+    return {
+      targetSelectors: ['box', 'sibling'],
+      properties: ['color', 'rotation', 'scale'] as const,
+      ranges: {
+        color: { h: [0, 360] as [number, number], s: [0.5, 1] as [number, number], l: [0.4, 0.6] as [number, number] },
+        rotation: { axis: 'random' as const, degRange: [0, 360] as [number, number] },
+        scale: { factor: [0.5, 1.5] as [number, number] },
+      },
+      ...(seed !== undefined ? { seed } : {}),
+    };
+  }
+
+  // ---- #1 spec-order N × P op stream ----
+  it('emits N × P ops in spec order (target-outer × property-inner)', () => {
+    // box + sibling are both BoxMesh (all three properties compatible).
+    // Deliberately NOT including `sphere` — SphereMesh lacks vec3
+    // rotation, so under D-10 the call would gate-4-reject naming
+    // (sphere, rotation), making a 9-op assertion unreachable.
+    const state = buildScene();
+    const result = validatePlan(randomizeMutator, fullSpec(42), state, 'r');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // N × P = 2 × 3 = 6 ops.
+    expect(result.ops).toHaveLength(6);
+    // Spec-order contract: outer = targetSelectors, inner = properties.
+    // First 3 ops target `box` (color → rotation → scale paramPaths),
+    // next 3 target `sibling`.
+    const opPairs = result.ops.map((op) => {
+      if (op.type !== 'setParam') throw new Error('unexpected non-setParam op');
+      return { nodeId: op.nodeId, paramPath: op.paramPath };
+    });
+    expect(opPairs).toEqual([
+      { nodeId: 'box', paramPath: 'material.color' },
+      { nodeId: 'box', paramPath: 'rotation' },
+      { nodeId: 'box', paramPath: 'size' },
+      { nodeId: 'sibling', paramPath: 'material.color' },
+      { nodeId: 'sibling', paramPath: 'rotation' },
+      { nodeId: 'sibling', paramPath: 'size' },
+    ]);
+  });
+
+  // ---- #2 seed determinism — byte-identical ----
+  it('seed determinism — twice-call returns byte-identical Op[]', () => {
+    const state = buildScene();
+    const a = validatePlan(randomizeMutator, fullSpec(42), state, 'r');
+    const b = validatePlan(randomizeMutator, fullSpec(42), state, 'r');
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(JSON.stringify(a.ops)).toBe(JSON.stringify(b.ops));
+  });
+
+  // ---- #3 no seed — DIFFERENT (proves seed actually toggles) ----
+  it('no seed — twice-call returns DIFFERENT Op[] (rules out vacuous determinism)', () => {
+    const state = buildScene();
+    const a = validatePlan(randomizeMutator, fullSpec(), state, 'r');
+    const b = validatePlan(randomizeMutator, fullSpec(), state, 'r');
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    // With wide ranges (h:[0,360], degRange:[0,360], factor:[0.5,1.5])
+    // across 6 ops, collision probability under double-Math.random is
+    // negligibly small. If this ever flakes in CI, prefer "at least one
+    // op differs" over the strict equality form.
+    expect(JSON.stringify(a.ops)).not.toBe(JSON.stringify(b.ops));
+  });
+
+  // ---- #4 hue wrap ----
+  it('hue wrap: h:[350, 10] produces samples in [350,360) ∪ [0,10]', () => {
+    const state = buildScene();
+    let lowBand = 0; // [0, 10]
+    let highBand = 0; // [350, 360)
+    let observedMin = 360;
+    let observedMax = 0;
+    for (let i = 0; i < 50; i++) {
+      const spec = {
+        targetSelectors: ['box'],
+        properties: ['color'] as const,
+        ranges: {
+          color: { h: [350, 10] as [number, number], s: [1, 1] as [number, number], l: [0.5, 0.5] as [number, number] },
+        },
+        seed: 1000 + i,
+      };
+      const r = validatePlan(randomizeMutator, spec, state, 'wrap');
+      expect(r.ok).toBe(true);
+      if (!r.ok) continue;
+      expect(r.ops).toHaveLength(1);
+      const op = r.ops[0];
+      if (op.type !== 'setParam' || typeof op.value !== 'string') continue;
+      const { h } = hexToHsl(op.value);
+      // Round-trip from hex (8-bit per channel) introduces small
+      // rounding; widen the assertion bands by ±2° to absorb it.
+      if (h <= 12) lowBand++;
+      else if (h >= 348) highBand++;
+      observedMin = Math.min(observedMin, h);
+      observedMax = Math.max(observedMax, h);
+      expect(h <= 12 || h >= 348).toBe(true);
+    }
+    // Sanity: 50 samples should cover BOTH bands (wrap actually fires).
+    expect(lowBand).toBeGreaterThan(0);
+    expect(highBand).toBeGreaterThan(0);
+    expect(lowBand + highBand).toBe(50);
+    // Log for the executor's verify observation.
+    void observedMin;
+    void observedMax;
+  });
+
+  // ---- #5 bounds validation (D-08) ----
+  it('bounds validation — zod / superRefine rejects bad specs', () => {
+    const base = {
+      targetSelectors: ['box'],
+      ranges: {
+        color: { h: [0, 360], s: [0, 1], l: [0, 1] },
+        rotation: { axis: 'y', degRange: [0, 90] },
+        scale: { factor: [0.5, 1.5] },
+      },
+    };
+    // empty properties[]
+    expect(
+      randomizeMutator.spec.safeParse({ ...base, properties: [] }).success,
+    ).toBe(false);
+    // duplicate properties
+    expect(
+      randomizeMutator.spec.safeParse({ ...base, properties: ['color', 'color'] }).success,
+    ).toBe(false);
+    // properties=['color'] but ranges.color missing
+    expect(
+      randomizeMutator.spec.safeParse({
+        targetSelectors: ['box'],
+        properties: ['color'],
+        ranges: {},
+      }).success,
+    ).toBe(false);
+    // ranges.color.s: min > max
+    expect(
+      randomizeMutator.spec.safeParse({
+        targetSelectors: ['box'],
+        properties: ['color'],
+        ranges: { color: { h: [0, 360], s: [0.8, 0.2], l: [0, 1] } },
+      }).success,
+    ).toBe(false);
+    // factor [0, 1] — zero not positive
+    expect(
+      randomizeMutator.spec.safeParse({
+        targetSelectors: ['box'],
+        properties: ['scale'],
+        ranges: { scale: { factor: [0, 1] } },
+      }).success,
+    ).toBe(false);
+    // factor [-1, 1] — negative
+    expect(
+      randomizeMutator.spec.safeParse({
+        targetSelectors: ['box'],
+        properties: ['scale'],
+        ranges: { scale: { factor: [-1, 1] } },
+      }).success,
+    ).toBe(false);
+    // factor [2, 1] — min > max
+    expect(
+      randomizeMutator.spec.safeParse({
+        targetSelectors: ['box'],
+        properties: ['scale'],
+        ranges: { scale: { factor: [2, 1] } },
+      }).success,
+    ).toBe(false);
+    // hue [350, 10] MUST parse success (wrap is intended; D-01)
+    expect(
+      randomizeMutator.spec.safeParse({
+        targetSelectors: ['box'],
+        properties: ['color'],
+        ranges: { color: { h: [350, 10], s: [0, 1], l: [0, 1] } },
+      }).success,
+    ).toBe(true);
+  });
+
+  // ---- #6 D-10 per-property precondition reject ----
+  it('per-property precondition rejects the WHOLE call at gate 4 naming the incompatible (target, property) pair', () => {
+    // DirectionalLight has color + rotation but NO size and NO radius →
+    // canScale returns false → 'scale' is the incompatible property
+    // for the `light` target.
+    const state = buildSceneWithLight();
+    const spec = {
+      targetSelectors: ['box', 'light'],
+      properties: ['color', 'rotation', 'scale'] as const,
+      ranges: {
+        color: { h: [0, 360] as [number, number], s: [0.5, 1] as [number, number], l: [0.4, 0.6] as [number, number] },
+        rotation: { axis: 'y' as const, degRange: [0, 90] as [number, number] },
+        scale: { factor: [0.5, 1.5] as [number, number] },
+      },
+      seed: 42,
+    };
+    const result = validatePlan(randomizeMutator, spec, state, 'mixed');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // D-10: gate 4, reason names the incompatible target AND the
+    // property. Zero ops emitted (no silent partial mutation).
+    expect(result.gate).toBe(4);
+    expect(result.label).toBe('precondition');
+    expect(result.reason.includes('light')).toBe(true);
+    expect(result.reason.includes('scale')).toBe(true);
+    // Anti-silent-skip property — the call did NOT emit 4 ops (color +
+    // rotation for box AND light, plus scale for box only). No partial.
+    // MutatorRejection carries no `ops` field; presence confirms reject.
+  });
+
+  // ---- #7 atomic dispatch through agent path (D-07) ----
+  it('atomic dispatch through agent path — proposePlanTool returns ok with N × P ops', () => {
+    // One propose+accept → ONE undo entry (the orchestrator forwards
+    // `result.ops` to useDiffStore.propose with the closureSpec
+    // reconstructed from `closureRoots`/`closureFollowedEdges`). D-07.
+    registerAllMutators();
+    const state = buildScene();
+    const r = proposePlanTool.handler(
+      {
+        mutator: 'mutator.randomize',
+        spec: fullSpec(42),
+        intent: 'randomize the pair',
+      },
+      { dagState: state },
+    );
+    expect(r.ops).toHaveLength(6);
+    const parsed = JSON.parse(r.text!) as {
+      ok: boolean;
+      closureRoots: string[];
+      mutator: string;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.mutator).toBe('mutator.randomize');
+    expect(parsed.closureRoots).toEqual(['box', 'sibling']);
+  });
+
+  // ---- #8 D-05 hard scope: 'position' not in PropertyName ----
+  it('D-05 hard scope: PropertyName enum rejects "position"', () => {
+    // ScatterNode owns position-randomization; randomize.PropertyName
+    // is strictly {color, rotation, scale}.
+    const r = randomizeMutator.spec.safeParse({
+      targetSelectors: ['box'],
+      properties: ['position'],
+      ranges: {},
+    });
+    expect(r.success).toBe(false);
   });
 });
 
@@ -589,7 +911,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(16);
+    expect(parsed.mutators).toHaveLength(17);
   });
 });
 
@@ -1932,6 +2254,7 @@ import {
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
   addStitchMutator as _addStitchM,
+  randomizeMutator as _randomizeM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2109,6 +2432,26 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addStitchM as MutatorDefinition<unknown>,
       build: buildSceneWithJobAndWorkflow,
       spec: { jobId: 'job', workflowId: 'cw' },
+    },
+    // P7.2 — issue #26 path B. `box` + `sibling` are both BoxMesh
+    // (material.color + rotation vec3 + size vec3 → all three properties
+    // compatible per canColor/canRotation/canScale). Deliberately NOT
+    // `sphere` (SphereMesh lacks `rotation` → D-10 gate-4 reject → 0 ops
+    // → probe goes blind, the exact #22-sister of H36). Seed pinned so
+    // the probe sees a deterministic 6-op stream every run.
+    'mutator.randomize': {
+      mutator: _randomizeM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: {
+        targetSelectors: ['box', 'sibling'],
+        properties: ['color', 'rotation', 'scale'],
+        ranges: {
+          color: { h: [0, 360], s: [0.5, 1], l: [0.4, 0.6] },
+          rotation: { axis: 'random', degRange: [0, 360] },
+          scale: { factor: [0.5, 1.5] },
+        },
+        seed: 42,
+      },
     },
   };
 
