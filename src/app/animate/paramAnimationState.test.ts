@@ -117,4 +117,30 @@ describe('paramAnimationState', () => {
     expect(paramAnimationState(s, 'n_box', 'position', 31)).toBe('on-key');
     expect(paramAnimationState(s, 'n_box', 'position', 30)).toBe('animated');
   });
+
+  // P7.1 / D-05 goal-backward proof: a SUB-FRAME-retimed key (the
+  // Task 3/6 retime target t=1.3333, NOT on any 60fps grid line —
+  // 1.3333*60 = 79.998) still reads 'on-key' at its NEAREST playhead
+  // frame thanks to the ±½-frame tolerance, and 'animated' two frames
+  // away. Without D-05 mechanism (b) this would be 'animated' at EVERY
+  // integer frame — the silently-broken P7 diamond D-05 exists to fix.
+  describe('D-05 ±½-frame tolerance (sub-frame-retimed key)', () => {
+    const s = stateWith({
+      target: 'n_box',
+      paramPath: 'rotation',
+      keyframes: [{ time: 1.3333 }],
+    });
+
+    it("frame 80 (1.33333s, Δ≈3.3e-6 ≤ ½-frame) → 'on-key'", () => {
+      expect(paramAnimationState(s, 'n_box', 'rotation', 80)).toBe('on-key');
+    });
+
+    it("frame 82 (1.36667s, Δ≈0.0333 > ½-frame) → 'animated'", () => {
+      expect(paramAnimationState(s, 'n_box', 'rotation', 82)).toBe('animated');
+    });
+
+    it("frame 78 (1.3s, Δ≈0.0333 > ½-frame) → 'animated' (other side)", () => {
+      expect(paramAnimationState(s, 'n_box', 'rotation', 78)).toBe('animated');
+    });
+  });
 });

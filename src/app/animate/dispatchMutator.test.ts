@@ -16,7 +16,11 @@ import {
 } from '../../agent/mutators';
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
-import { dispatchMutatorFromUI, dispatchFirstKeyComposite } from './dispatchMutator';
+import {
+  dispatchMutatorFromUI,
+  dispatchFirstKeyComposite,
+  dispatchRetimeKeyframe,
+} from './dispatchMutator';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -150,6 +154,121 @@ describe('A1 — dispatchMutatorFromUI (single-Mutator seam)', () => {
       followedEdges: [],
     });
     proposeSpy.mockRestore();
+  });
+});
+
+describe('P7.1 — dispatchRetimeKeyframe (2-Mutator atomic composite, D-01/D-03)', () => {
+  /** Seed the channel with a sample at t=1.0, value V, easing 'cubic'. */
+  function seedWithSample(
+    keyframes: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>,
+  ): DagState {
+    let s = buildSceneWithChannel();
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'box_position_channel',
+      paramPath: 'keyframes',
+      value: keyframes,
+    }).next;
+    return s;
+  }
+
+  const V = [1, 2, 3];
+
+  it('retimes preserving value AND easing; old-time sample gone; ONE undo entry', () => {
+    useDagStore
+      .getState()
+      .hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
+
+    const res = dispatchRetimeKeyframe({
+      channelId: 'box_position_channel',
+      fromTime: 1.0,
+      toTime: 1.3333,
+    });
+    expect(res).toEqual({ ok: true });
+
+    const kfs = (
+      useDagStore.getState().state.nodes['box_position_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown; easing: string }>;
+      }
+    ).keyframes;
+    // (b) sample at 1.3333 with SAME value + easing.
+    expect(kfs).toHaveLength(1);
+    expect(kfs[0].time).toBe(1.3333);
+    expect(kfs[0].value).toEqual(V);
+    expect(kfs[0].easing).toBe('cubic'); // D-01: easing survived
+    // (c) NO sample remains at the old time (proves the remove matched).
+    expect(kfs.some((k) => k.time === 1.0)).toBe(false);
+
+    // (a) exactly ONE atomic undo entry; undo restores t=1.0.
+    const stack = useDagStore.getState().undoStack;
+    expect(stack).toHaveLength(1);
+    expect((stack[0] as { __atomic?: true }).__atomic).toBe(true);
+
+    useDagStore.getState().undo();
+    const restored = (
+      useDagStore.getState().state.nodes['box_position_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown; easing: string }>;
+      }
+    ).keyframes;
+    expect(restored).toHaveLength(1);
+    expect(restored[0].time).toBe(1.0);
+    expect(restored[0].value).toEqual(V);
+    expect(restored[0].easing).toBe('cubic');
+  });
+
+  it('collision: retime onto an occupied time overwrites (last-wins, D-03); one undo restores BOTH', () => {
+    useDagStore.getState().hydrate(
+      seedWithSample([
+        { time: 1.0, value: V, easing: 'cubic' },
+        { time: 2.0, value: [9, 9, 9], easing: 'linear' },
+      ]),
+    );
+
+    const res = dispatchRetimeKeyframe({
+      channelId: 'box_position_channel',
+      fromTime: 1.0,
+      toTime: 2.0, // collide onto the existing t=2.0 occupant
+    });
+    expect(res).toEqual({ ok: true });
+
+    const kfs = (
+      useDagStore.getState().state.nodes['box_position_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown; easing: string }>;
+      }
+    ).keyframes;
+    // exactly one sample at toTime — the occupant was overwritten by the
+    // moved key (D-03 last-wins; falls out of keyframe.ts:110's replace).
+    expect(kfs).toHaveLength(1);
+    expect(kfs[0].time).toBe(2.0);
+    expect(kfs[0].value).toEqual(V); // the MOVED key's value won
+    expect(kfs[0].easing).toBe('cubic');
+
+    // ONE atomic undo restores BOTH original samples.
+    expect(useDagStore.getState().undoStack).toHaveLength(1);
+    useDagStore.getState().undo();
+    const restored = (
+      useDagStore.getState().state.nodes['box_position_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown }>;
+      }
+    ).keyframes;
+    expect(restored.map((k) => k.time).sort((a, b) => a - b)).toEqual([1.0, 2.0]);
+  });
+
+  it('no sample at fromTime → { ok:false }, DAG byte-unchanged', () => {
+    useDagStore
+      .getState()
+      .hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
+    const before = JSON.stringify(useDagStore.getState().state);
+
+    const res = dispatchRetimeKeyframe({
+      channelId: 'box_position_channel',
+      fromTime: 5.0, // no sample here
+      toTime: 6.0,
+    });
+    expect(res.ok).toBe(false);
+    expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
   });
 });
 

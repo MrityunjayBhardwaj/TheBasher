@@ -897,3 +897,72 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 **Cross-ref:** [[V14]] (the invariant whose signature was too narrow — widened 2026-05-18 to read `lossy[].kind`; see V14's "Signature widening" note), B1/B2 in `.planning/phases/07-animation-authoring/PLAN.md` (where the literal contract text drove the overlap), VERIFICATION.md C-1 (the verifier finding), `src/agent/mutators/builders/removeKeyframes.ts` (the parameterized successor — `clearChannel` + `deleteKeyframe` collapsed under V14's "parameterize over fork" preference once their honest contracts collided), `src/agent/mutators/types.ts` (the `PreservedAspect` union — `'keyframe-identity'` retired), `src/agent/mutators/mutators.test.ts` (the V14 mechanical assertion + its widened signature). Sister of H32/H35 (test instrument blind to a real defect class by construction — here the gate was blind to `lossy`, so it certified a lie). Provenance: flagged at the P7 Wave B execution checkpoint as an open review item; confirmed a real defect by the adversarial P7 verifier 2026-05-18 (single-pass diagnosis); promoted to numbered entry per the decision model (predicted-then-confirmed).
 
 **RESOLUTION (2026-05-18, issue #60):** V14's signature widened to include `lossy[].kind`. Under the widened gate, honest `deleteKeyframe` collided with honest `clearChannel` (both destroy `animation-shape` + `keyframe-density` at different scales) — V14 correctly flagged the parameterization candidate. The two were merged into `mutator.timeline.removeKeyframes` with `scope: 'all' | { time: number }`. The dishonest `'keyframe-identity'` PreservedAspect was retired as dead. 895/895 vitest, 13/13 e2e regression incl. the P7 motion gate (unchanged: `[0,0,0]→[0,180,0]→[0,360,0]`). The H36 pattern itself remains catalogued — the trap is reachable for any future mechanical gate whose input set is a strict subset of the property it certifies.
+
+---
+
+### H37 — Inverting the wrong forward map: a pixel→value inverse blind to an edge inset (H35-family sibling)
+
+**Span:** any inverse coordinate function whose forward partner applies an edge inset (or any non-identity affine term) that a *sibling* forward function does NOT. P7.1 instantiation: `xToSeconds` must invert `keyframeToRect`'s center-x map (`inset + secondsToX(t,dur,widthPx-2*inset)`, `inset = max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)`), NOT bare `secondsToX` — the diamonds a director grabs are inset (F-7); the playhead is deliberately not. Predicted recurrence: any future hit-test/drop inverse for an inset/padded canvas element (CurveEditor value-drag, splat overlay, a zoomed timeline).
+
+**Symptom:** drag hit-test and drop *seem* to work in the track interior but drift by exactly the inset at the track edges — grabbing or dropping the t=0 or t=duration keyframe (the single most common keyframe in any animation) lands off by `KEYFRAME_EDGE_INSET_PX`. A round-trip vitest written against the *bare* forward map (`secondsToX`) passes for the wrong inverse — the test is blind to the inset by construction (sister of H32/H35).
+
+**Trap (the wrong fix):** invert the simpler/more-visible forward function (`secondsToX`) because it is "the time→x map" — the inset lives one call up in `keyframeToRect` and is easy to not see. Then "fix" the edge drift with a +inset fudge at the call site, which is a second uncatalogued map (the H36 one-honest-discriminator family applied to geometry).
+
+**Real fix:** invert the EXACT forward map the grabbed element uses, including every term (`inset`, `innerWidth`, and the degenerate `innerWidth ≤ 0` else-branch `keyframeToRect` falls back to). Prove it with a tested-pure round-trip whose x is derived from `keyframeToRect` *exactly as the canvas computes it* (NOT `secondsToX`), and whose cases INCLUDE t=0 and t=duration — an inset-blind inverse fails there specifically and only there. Never a pixel-diff (H30 / D-W9-4 / D-W9-8).
+
+**Detection signal:** an inverse function pairs with a forward function whose name suggests it is "the" map, but the element being inverted is positioned by a *wrapper* that adds padding/inset/zoom. Ask: "which exact expression computes the pixel I am inverting — is it the bare map, or the bare map wrapped in an inset/transform? Does my round-trip test derive its input from the wrapper or the bare map?" If the test uses the bare map, it cannot catch an inset-blind inverse.
+
+**Five-limbed argument:**
+1. **Claim:** Inverting `secondsToX` instead of `keyframeToRect`'s inset-aware center-x yields a hit-test/drop that drifts by the inset at the track edges.
+2. **Reason:** the diamond's pixel is `inset + secondsToX(t,dur,widthPx-2*inset)`; the inverse of `secondsToX` alone omits the `inset` shift and the `widthPx-2*inset` rescale, so the error is zero only at the inset's symmetric midpoint and maximal at t=0 / t=dur.
+3. **Universal principle:** an inverse is correct only against the exact forward expression that produced the value; inverting a sub-expression of the true forward map is correct only where the omitted terms vanish.
+4. **Application:** P7.1 `xToSeconds` mirrors `keyframeToRect:177-182` term-for-term incl. the `innerWidth ≤ 0` fallback; the round-trip vitest derives x via `keyframeToRect` and asserts t=0 & t=duration < 1e-9 (an inset-blind inverse fails exactly these).
+5. **Conclusion:** the bounds-faithful round-trip in the tested-pure layer (not a pixel-diff, not a secondsToX round-trip) is the only sound proof the inverse is the true inverse.
+
+**Cross-ref:** [[H35]] (parent — count/coord map blind to edge insets; this is the *inverse-direction* sibling), F-7 / `KEYFRAME_EDGE_INSET_PX` (the forward inset this undoes), [[H36]] (the "+inset fudge at call site" would be the second-discriminator trap), D-07 (the locked decision), `src/timeline/timelineCanvasGeometry.ts` (`xToSeconds`, `keyframeToRect`), `src/timeline/timelineCanvasGeometry.test.ts` (the `xToSeconds (D-07 inverse)` block — t=0/t=dur edge cases). Provenance: predicted in CONTEXT D-07 pre-mortem; built correctly first pass with the edge round-trip as the guard; catalogued per the framework mandate (a >0-attempt-prevented pattern — the test design is what prevented the attempt).
+
+---
+
+### H38 — Composite retime drops `easing`: the channel's per-type default silently overwrites it
+
+**Span:** any composite that removes-then-re-adds a record through a builder that *defaults* an omitted field. P7.1 instantiation: `dispatchRetimeKeyframe` = `removeKeyframes({scope:{time:fromTime}})` + `keyframe({time:toTime,value,easing})`; `keyframe.ts:105` falls `easing` through to a per-channel-type default (`linear`/`cubic`) when omitted. Predicted recurrence: any "move/duplicate X" built as remove+add where X carries fields the add-builder defaults (easing, tangents, interpolation mode, per-key metadata).
+
+**Symptom:** the keyframe retimes to the right time with the right value, but its easing silently reverts to the channel default — a `cubic`-eased key dragged on a Number channel comes back `linear`. No error; the interpolation just changes. Surfaces only when a consumer inspects easing or the curve shape visibly differs after a drag.
+
+**Trap (the wrong fix):** pass only `{channelId, time, value}` to the `keyframe` builder (the obvious "move it to the new time with its value" shape) and let easing default — the happy-path test that only asserts time+value is green, so the loss is invisible.
+
+**Real fix:** capture EVERY defaulted field of the original record from the live DAG *before* the remove, and pass each explicitly into the re-add spec. Assert the field survives the round trip in the verify (the dispatch vitest asserts `easing` preserved; the e2e asserts it through the evaluated path).
+
+**Detection signal:** a composite reads a record, removes it, re-adds it via a builder; the re-add spec omits a field the builder is documented to default. Ask: "what does the add-builder do with every field I did NOT pass? Is any of them present on the original record?" If yes and omitted → silent overwrite.
+
+**Five-limbed argument:**
+1. **Claim:** Omitting `easing` from the retime's `keyframe` spec silently changes the keyframe's interpolation to the channel default.
+2. **Reason:** `keyframe.ts:105` is `spec.easing ?? DEFAULT_EASING_BY_TYPE[type]`; an undefined spec field is indistinguishable from "use the default", so the original easing is lost the moment it is not threaded through.
+3. **Universal principle:** a remove+re-add is value-preserving only if every field the source carried is explicitly carried into the re-add — defaulted fields are dropped unless named.
+4. **Application:** `dispatchRetimeKeyframe` reads `value` AND `easing` from the matched sample before `removeKeyframes` and passes both into the `keyframe` spec; the dispatch test asserts `easing:'cubic'` survives a retime, the e2e asserts `easing:'linear'` survives through `__basher_evaluate`.
+5. **Conclusion:** capture-pre-remove + explicit pass-through is the structural defense; a test that asserts only time+value cannot catch this — the verify must assert the defaulted field too.
+
+**Cross-ref:** D-01 (the locked decision naming this as the pre-mortem defect), [[K13]] drag-lifecycle extension (step "capture value+easing at pointerdown — MUST precede the remove"), `src/app/animate/dispatchMutator.ts` (`dispatchRetimeKeyframe`), `src/agent/mutators/builders/keyframe.ts:105` (the defaulting line), `src/app/animate/dispatchMutator.test.ts` (the value+easing-preserved assertion). Sister of H37 in the same phase (both are "the obvious shape silently loses information the structure must preserve"). Provenance: predicted in CONTEXT/D-01 pre-mortem; defended by design first pass; catalogued per mandate.
+
+---
+
+### H39 — A transient overlay gated on ANOTHER overlay's idle-compare freezes when that other overlay is idle (FLAG-1)
+
+**Span:** any imperative canvas with ≥2 independently-driven overlays sharing one rAF loop, where overlay B's redraw is nested inside overlay A's "did A change?" idle-guard. P7.1 instantiation: the drag ghost (driven by the cursor) nested inside the playhead's `if (newX !== lastPlayheadXRef.current)` (driven by time) — a PAUSED director scrubbing a key has a moving cursor but ZERO playhead delta, so the ghost freezes mid-drag. Predicted recurrence: any future canvas overlay added to K13's loop (splat handles, selection marquee, snap guides) gated on the playhead's or another overlay's change-compare.
+
+**Symptom:** the ghost (or second overlay) tracks fine *while the playhead is also moving* (playing back), but FREEZES the instant playback is paused — exactly when a director is most likely to be precisely placing a key. Looks like the drag "stopped working" with no error; resumes if playback restarts.
+
+**Trap (the wrong fix):** nest the new overlay's draw inside the existing idle-guard because "it's the same rAF tick and the guard is already there" — it couples overlay B's liveness to overlay A's driver. A worse second workaround: force the playhead to redraw every tick (kills the K13 idle early-out → perf regression) to "unfreeze" the ghost.
+
+**Real fix:** each imperative overlay owns its OWN change-gate keyed to ITS OWN driver, as a SIBLING block in the shared loop — not nested in any other overlay's guard. The ghost block is `if (dragRef.current) { … if (ghostX !== lastGhostXRef.current) { … } }`, a sibling AFTER (W9 overlay-last ordering) the playhead's `if (newX !== lastPlayheadXRef.current)`, never inside it. Verify by performing the gesture with the other driver IDLE (drag with playback PAUSED) — observe the overlay still tracks.
+
+**Detection signal:** a new per-frame draw is added inside an existing `if (somethingChanged)` block whose `somethingChanged` is driven by a DIFFERENT input than the new draw. Ask: "what makes THIS overlay need a redraw, and is that the same signal as the guard I'm nesting under? Can my driver change while the guard's driver is static?" If yes → the overlay freezes whenever the guard's driver is idle.
+
+**Five-limbed argument:**
+1. **Claim:** Nesting the ghost redraw in the playhead idle-guard freezes the ghost whenever the playhead is static.
+2. **Reason:** the guard body runs only when `newX !== lastPlayheadXRef`; a paused playhead has constant `newX`, so the body (and the nested ghost) never executes even though the cursor — the ghost's actual driver — is moving.
+3. **Universal principle:** a redraw must be gated on a change-compare of its OWN driver; gating it on an unrelated driver's compare makes its liveness a hostage to that driver's activity.
+4. **Application:** P7.1's ghost is a sibling block gated on `dragRef` + its own `lastGhostXRef`; the Task 4 verify drags with playback PAUSED and observes the ghost tracking + the retime committing (proved in the live browser AND the e2e).
+5. **Conclusion:** sibling-block + own-driver change-gate is the structural fix; the proof must exercise the gesture with the other overlay's driver IDLE, or the freeze is invisible.
+
+**Cross-ref:** [[K13]] (the shared-rAF-loop lifecycle this extends — the drag-lifecycle steps added there), FLAG-1 (the checker-predicted gap this concretises — CONTEXT/PLAN pre-mortem #6), [[V20]] (the ghost reads `dragRef` not a store — no second writer/subscription on the hot path), D-04 (the locked decision), `src/timeline/TimelineCanvas.tsx` (the sibling ghost block + the playhead idle-guard it sits after). Sister of the K13 "rAF cancel/re-arm on play/pause" violation (both are "coupling an overlay's liveness to the wrong signal"). Provenance: predicted as FLAG-1 in CONTEXT/PLAN; defended by the sibling-block design first pass; verified by a paused-playhead live drag (the first observation harness's coordinate bug was fixed, then the FLAG-1 behavior observed correct); catalogued per mandate.
