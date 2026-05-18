@@ -16,7 +16,7 @@ import {
 } from '../../agent/mutators';
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
-import { dispatchMutatorFromUI } from './dispatchMutator';
+import { dispatchMutatorFromUI, dispatchFirstKeyComposite } from './dispatchMutator';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -150,5 +150,98 @@ describe('A1 — dispatchMutatorFromUI (single-Mutator seam)', () => {
       followedEdges: [],
     });
     proposeSpy.mockRestore();
+  });
+});
+
+describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
+  it('first key: layer + channel + sample land atomically with deterministic ids', () => {
+    useDagStore.getState().hydrate(buildScene());
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
+
+    const res = dispatchFirstKeyComposite({
+      targetId: 'box',
+      paramPath: 'position',
+      value: [0, 0, 0],
+      seconds: 0,
+    });
+
+    expect(res).toEqual({ ok: true });
+
+    const nodes = useDagStore.getState().state.nodes;
+    // Deterministic ids match addLayer.ts:131 / addChannel.ts:181.
+    expect(nodes['box_layer']).toBeDefined();
+    expect(nodes['box_layer'].type).toBe('AnimationLayer');
+    expect(nodes['box_position_channel']).toBeDefined();
+    expect(nodes['box_position_channel'].type).toBe('KeyframeChannelVec3');
+
+    const kfs = (
+      nodes['box_position_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown }>;
+      }
+    ).keyframes;
+    expect(kfs).toHaveLength(1);
+    expect(kfs[0]).toMatchObject({ time: 0, value: [0, 0, 0] });
+
+    // H34 splice: Scene.children now names the layer's .out, NOT raw box.
+    const scene = nodes['scene'];
+    const childRefs = scene.inputs['children'];
+    const refs = Array.isArray(childRefs) ? childRefs : [childRefs];
+    expect(refs.some((r) => r.node === 'box_layer')).toBe(true);
+    expect(refs.some((r) => r.node === 'box')).toBe(false);
+
+    // Exactly one atomic undo entry for the whole composite.
+    const stack = useDagStore.getState().undoStack;
+    expect(stack).toHaveLength(1);
+    expect((stack[0] as { __atomic?: true }).__atomic).toBe(true);
+  });
+
+  it('second key on the same param routes through single keyframe (no duplicate layer)', () => {
+    useDagStore.getState().hydrate(buildScene());
+
+    const first = dispatchFirstKeyComposite({
+      targetId: 'box',
+      paramPath: 'position',
+      value: [0, 0, 0],
+      seconds: 0,
+    });
+    expect(first).toEqual({ ok: true });
+
+    // Second key: the channel exists now → single keyframe Mutator.
+    const second = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { channelId: 'box_position_channel', time: 1, value: [0, 5, 0] },
+      'second key',
+    );
+    expect(second).toEqual({ ok: true });
+
+    const nodes = useDagStore.getState().state.nodes;
+    const layers = Object.values(nodes).filter((n) => n.type === 'AnimationLayer');
+    expect(layers).toHaveLength(1); // no duplicate layer
+
+    const kfs = (
+      nodes['box_position_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown }>;
+      }
+    ).keyframes;
+    expect(kfs).toHaveLength(2);
+    expect(kfs.map((k) => k.time)).toEqual([0, 1]);
+
+    // Two atomic entries total (one composite + one keyframe).
+    expect(useDagStore.getState().undoStack).toHaveLength(2);
+  });
+
+  it('addChannel validates against the FORKED state (closure resolves the fresh layer id)', () => {
+    // If addChannel were validated against the un-forked base, its
+    // closure could not resolve box_layer and validate would reject.
+    // A green composite IS the proof the fork-evolve sequencing is correct.
+    useDagStore.getState().hydrate(buildScene());
+    const res = dispatchFirstKeyComposite({
+      targetId: 'box',
+      paramPath: 'rotation',
+      value: [0, 0, 0],
+      seconds: 0,
+    });
+    expect(res).toEqual({ ok: true });
+    expect(useDagStore.getState().state.nodes['box_rotation_channel']).toBeDefined();
   });
 });
