@@ -54,6 +54,9 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { paramAnimationState } from './animate/paramAnimationState';
+import { autoKeyCommit } from './animate/autoKeyCommit';
+import { useAutoKeyStore } from './stores/autoKeyStore';
 
 type Vec3 = [number, number, number];
 
@@ -204,6 +207,56 @@ export function Gizmo() {
   if (!selectedId) return null;
   if (!isCharacter && !manip) return null;
 
+  // P7.3 (#68 / D-02) — the grab-route decision. Made BEFORE the raw
+  // setParam for EVERY param (H36: re-route INSTEAD of the raw setParam,
+  // never in addition — a double-write would key the channel AND write the
+  // dead source value, producing a snap-back ghost).
+  //
+  //   - un-animated param → false: caller falls through to the EXISTING
+  //     raw setParam dispatch, byte-unchanged (today's behavior, D-02).
+  //   - animated + playing → handled here, returns true (no op — during
+  //     playback the gizmo is display-follow, D-03; belt-and-suspenders
+  //     with Wave 4's enabled={!playing}).
+  //   - animated + paused + Auto-Key OFF → reject with a surfaced reason,
+  //     ZERO ops, returns true. *** NET-NEW BEHAVIOR — DO NOT DELETE
+  //     (FLAG-A): NPanel.tsx:113 returns SILENTLY on Auto-Key OFF; there
+  //     is NO NPanel OFF-path feedback to be redundant with. A silent
+  //     gizmo grab that does nothing is the exact #68-class silent
+  //     failure this phase exists to kill. The window.alert is only the
+  //     browser PRIMITIVE reuse (already at NPanel.tsx:140-141 for the
+  //     ON-path seam failure), not a reuse of any NPanel OFF behavior. ***
+  //   - animated + paused + Auto-Key ON → autoKeyCommit (the shared P7
+  //     seam chokepoint — closure-gated V13, Op-only V1), returns true so
+  //     the raw setParam does NOT also fire.
+  //
+  // Returns true ⇒ the route was handled here (caller must NOT setParam).
+  // Returns false ⇒ un-animated, caller proceeds with the raw setParam.
+  function routeAnimatedGrab(paramPath: string, value: unknown): boolean {
+    if (!selectedId) return false;
+    const state = useDagStore.getState().state;
+    const grabFrame = useTimeStore.getState().frame;
+    const animated =
+      paramAnimationState(state, selectedId, paramPath, grabFrame) !== 'none';
+    if (!animated) return false; // un-animated → raw setParam, byte-identical
+
+    // D-03 paused gate: during playback the gizmo is display-follow only.
+    if (useTimeStore.getState().playing) return true; // handled: no op
+
+    // Auto-Key read LIVE at grab time (never a render closure — staleness
+    // pre-mortem). OFF → reject with a surfaced reason, ZERO ops.
+    if (!useAutoKeyStore.getState().enabled) {
+      // *** NET-NEW — DO NOT DELETE (FLAG-A). NPanel is byte-silent on OFF. ***
+      // eslint-disable-next-line no-alert
+      window.alert?.(`${paramPath} is animated — enable Auto-Key or edit the curve.`);
+      return true; // handled: rejected, zero ops
+    }
+
+    // Auto-Key ON → the SHARED seam chokepoint (one path, two callers).
+    // RETURN true so the raw setParam below does NOT also fire (H36).
+    autoKeyCommit(selectedId, paramPath, value);
+    return true;
+  }
+
   function onObjectChange() {
     // Character: no per-frame dispatch — walkTo fires on drag end only.
     if (isCharacter) return;
@@ -213,6 +266,7 @@ export function Gizmo() {
     const liveMode = useGizmoStore.getState().mode;
     if (liveMode === 'translate') {
       const value = maybeSnapVec3([g.position.x, g.position.y, g.position.z]);
+      if (routeAnimatedGrab('position', value)) return; // D-02: re-route BEFORE setParam
       useDagStore
         .getState()
         .dispatch(
@@ -226,6 +280,7 @@ export function Gizmo() {
       if (!manip.rotation) return; // node has no rotation param — no-op
       // Object3D.rotation is radians — params.rotation is degrees.
       const value: Vec3 = radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
+      if (routeAnimatedGrab('rotation', value)) return; // D-02: re-route BEFORE setParam
       useDagStore
         .getState()
         .dispatch(
@@ -238,6 +293,7 @@ export function Gizmo() {
     // scale
     if (!manip.scaleParamPath) return;
     const value: Vec3 = [g.scale.x, g.scale.y, g.scale.z];
+    if (routeAnimatedGrab(manip.scaleParamPath, value)) return; // D-02: re-route BEFORE setParam
     useDagStore
       .getState()
       .dispatch(
