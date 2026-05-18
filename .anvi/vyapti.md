@@ -187,9 +187,33 @@ position+rotation+scale+children), duplicate (preserves
 rotation+scale+material), deleteNode (preserves nothing). Each covers
 a distinct Op-shape pattern.
 
+**Deeper guard — Op-shape probe (issue #22, 2026-05-18):** a second
+mechanical test builds a probe scene per Mutator, runs `validatePlan`,
+reduces `plan.ops` to a structural Op-shape signature, and asserts no
+two collide. It caught `keyframe` vs `simplifyChannel` both emitting
+`[{setParam, paramPath:'keyframes'}]`. **Key learning encoded:
+Op-shape equivalence is NECESSARY but NOT SUFFICIENT for redundancy
+when the Op vocabulary is coarser than the semantic distinction.** A
+channel's entire `keyframes` array is one value-typed param, so every
+channel edit is mechanically one `setParam('keyframes',…)` — the Op
+stream physically cannot carry the append-vs-refit distinction; the
+honest discriminator lives only in the contract (`keyframe` has no
+`lossy`; `simplifyChannel` declares `lossy:['keyframe-density']`).
+Resolution: the probe signature is `op-shape + contract discriminator`
+(append the honest `preserves`/`lossy` already used by the signature
+guard) so it fires ONLY on a genuine #60-class case (op-shape AND
+contract both identical). This is the **inverse of the H36 trap**:
+H36 = removing a real discriminator to go green; this = adding the
+already-established honest one so the deeper probe stops
+false-positiving. Test-only (a probe table reusing existing scene
+builders + a completeness guard: every registered Mutator must have a
+probe entry or CI fails — the H36 non-blindness lesson applied).
+
 **REF:** P2.5.2 PLAN §2 P-4; `src/agent/mutators/index.ts:1` (the
 single visible catalog); `src/agent/mutators/mutators.test.ts` (the
-mechanical guard).
+mechanical signature guard + the #22 Op-shape probe); issue #22 / #60;
+[[H36]] (the sister trap — gate input set too narrow vs probe too
+sensitive).
 
 **Why it matters:** Mutator-thinking is contagious — every new noun
 the LLM emits ("setLightColor", "setBoxColor") is a candidate Mutator
