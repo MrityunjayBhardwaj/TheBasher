@@ -423,6 +423,52 @@ describe('identify — color resolution (#16 + #18)', () => {
   });
 });
 
+describe('identify — color family saturation bound (#29)', () => {
+  // Probe the red/blue/green family boundary explicitly. Pre-#29 the
+  // gate was hue≤25° AND |Δl|<0.3 only, so desaturated reds (brown)
+  // leaked into "red". #29 adds |Δs|<0.3. Calibration intent: brown
+  // REJECTED, salmon STILL matches (salmon is genuinely reddish).
+  function familyScene(refHex: string, probeId: string, probeHex: string): DagState {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode', nodeId: 'ref', nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: refHex } },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode', nodeId: probeId, nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], position: [1, 0, 0], rotation: [0, 0, 0],
+        material: { name: 'm', color: probeHex } },
+    }).next;
+    return s;
+  }
+  function matches(refHex: string, family: string, probeId: string, probeHex: string): boolean {
+    const r = identify({ query: `the ${family} cube`, hint: 'multiple-allowed' },
+      familyScene(refHex, probeId, probeHex));
+    return r.type === 'match' && r.selectors.includes(probeId);
+  }
+
+  // The bug fix: desaturated red must NOT read as "red".
+  it('brown (#a52a2a) is NOT in the red family (the #29 fix)', () => {
+    expect(matches('#ff0000', 'red', 'brown', '#a52a2a')).toBe(false);
+  });
+  // The calibration constraint: salmon stays reddish (must NOT regress).
+  it('salmon (#fa8072) IS still in the red family (calibration held)', () => {
+    expect(matches('#ff0000', 'red', 'salmon', '#fa8072')).toBe(true);
+  });
+  // Boundary-documentation probes — pin current behavior so a future
+  // family-gate change surfaces as a visible diff (acceptance #29).
+  it('navy (#000080) vs blue — boundary pinned', () => {
+    expect(matches('#0000ff', 'blue', 'navy', '#000080')).toBe(true);
+  });
+  it('light blue (#add8e6) vs blue — boundary pinned', () => {
+    expect(matches('#0000ff', 'blue', 'lightblue', '#add8e6')).toBe(false);
+  });
+  it('dark green (#006400) vs green — boundary pinned', () => {
+    expect(matches('#00ff00', 'green', 'darkgreen', '#006400')).toBe(false);
+  });
+});
+
 describe('shouldRunIdentifyRound', () => {
   const empty = new Set<string>();
   const oneSelected = new Set(['box1']);
@@ -489,5 +535,26 @@ describe('shouldRunIdentifyRound', () => {
     // between additive ("place a camera") and mutating ("move the
     // camera to here"). The user can use a more explicit verb.
     expect(shouldRunIdentifyRound('place the camera on the wall', empty)).toBe(false);
+  });
+
+  // #30 — set/change/put dropped from the verb list (additive use
+  // dominates their mutation use; over-triggered Identify = latency).
+  // These now must NOT trigger:
+  it('"set up a sphere" → false (#30: set dropped, additive)', () => {
+    expect(shouldRunIdentifyRound('set up a sphere', empty)).toBe(false);
+  });
+  it('"put a light over there" → false (#30: put dropped, additive)', () => {
+    expect(shouldRunIdentifyRound('put a light over there', empty)).toBe(false);
+  });
+  it('"change tactic and add cubes" → false (#30: change dropped, additive)', () => {
+    expect(shouldRunIdentifyRound('change tactic and add cubes', empty)).toBe(false);
+  });
+  // …and the change must NOT be a blind loosening — retained verbs
+  // still bite (proves the gate still triggers on genuine mutation):
+  it('"scale the box" → true (retained verb still triggers, #30 control)', () => {
+    expect(shouldRunIdentifyRound('scale the box', empty)).toBe(true);
+  });
+  it('"move the light" → true (retained verb still triggers, #30 control)', () => {
+    expect(shouldRunIdentifyRound('move the light', empty)).toBe(true);
   });
 });
