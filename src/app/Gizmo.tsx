@@ -186,9 +186,9 @@ export function Gizmo() {
       if (evalT && evalT.scale) groupNode.scale.set(...evalT.scale);
       else if (!evalT && manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
       else groupNode.scale.set(1, 1, 1);
-      return;
-    }
-    if (isCharacter) {
+      // NOTE: no early return here — fall through to the FLAG-C tail mirror
+      // so the dev-only proxy attr reflects whichever branch committed.
+    } else if (isCharacter) {
       const dagState = useDagStore.getState().state;
       try {
         const result = evaluate(dagState, selectedId, {
@@ -201,6 +201,32 @@ export function Gizmo() {
       } catch {
         // node missing or eval error — leave gizmo unmounted
       }
+    }
+
+    // *** FLAG-C — test-observation hook, dev-guarded, NOT user chrome ***
+    // The FINAL statement of the seeding effect: AFTER both the
+    // manip/resolver branch AND the Character branch have committed
+    // `groupNode`. Reflects the ACTUAL committed proxy transform
+    // regardless of which branch ran (never a mid-effect intermediate).
+    // The D-06 boundary-pair e2e reads this to observe the GIZMO side of
+    // the boundary (the side P7's E2 never observed — the #68 gap). It is
+    // a data-attr mirror on the proxy group, recorded in the B11 line as
+    // a test-only attr — no UI-SPEC delta, no new chrome surface.
+    if (import.meta.env.DEV) {
+      const p = groupNode.position;
+      const r = groupNode.rotation;
+      const s = groupNode.scale;
+      const el = groupNode as unknown as { userData: Record<string, unknown> };
+      el.userData.__basher_gizmo = {
+        position: [p.x, p.y, p.z],
+        // radians on the Object3D — report degrees to match params/eval.
+        rotation: radVec3ToDeg([r.x, r.y, r.z]),
+        scale: [s.x, s.y, s.z],
+      };
+      const w = window as unknown as Record<string, unknown>;
+      w.__basher_gizmo = () =>
+        (groupNode as unknown as { userData: Record<string, unknown> }).userData
+          .__basher_gizmo ?? null;
     }
   }, [groupNode, manip, isCharacter, selectedId, seconds, frame, normalized, playing]);
 
@@ -323,6 +349,13 @@ export function Gizmo() {
         <TransformControls
           object={groupNode}
           mode={effectiveMode}
+          // D-03 (visible half): while playing the gizmo still display-
+          // follows (the Wave-2 effect re-seeds on the `playing` dep + every
+          // frame) but cannot be grabbed. Wave-3's onObjectChange
+          // playing-return is the data-integrity half (belt-and-suspenders:
+          // even if a drag slips through, no op fires). `playing` is
+          // subscribed at component scope (Wave 2).
+          enabled={!playing}
           onObjectChange={onObjectChange}
           onMouseDown={() => onDraggingChanged(true)}
           onMouseUp={() => onDraggingChanged(false)}
