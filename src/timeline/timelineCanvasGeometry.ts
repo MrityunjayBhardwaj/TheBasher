@@ -191,6 +191,50 @@ export function keyframeToRect(
 }
 
 /**
+ * Pixel→seconds — the EXACT inverse of `keyframeToRect`'s center-x map
+ * (D-07, Phase 7.1 keyframe drag-to-retime).
+ *
+ * This inverts the DIAMOND center-x mapping, NOT bare `secondsToX`. The
+ * bare map is the playhead path and is deliberately NOT inset (see
+ * KEYFRAME_EDGE_INSET_PX doc); the diamonds a director grabs ARE inset by
+ * `Math.max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)` exactly as
+ * `keyframeToRect:177-182` applies it. An inset-blind inverse would drift
+ * by the inset at the track edges — grabbing/dropping the t=0 or
+ * t=duration key would be off (the F-7 / H35-family trap). So this undoes
+ * the inset identically, INCLUDING `keyframeToRect`'s degenerate
+ * `innerWidth <= 0` else-branch (which used the un-inset
+ * `secondsToX(t,dur,widthPx)`), so the round-trip holds even when the
+ * canvas is too narrow to hold both insets.
+ *
+ * CSS px only. Pure (no DOM, no store, no React, no dpr) — same V8
+ * contract as the rest of this module. Clamps the input x into the valid
+ * band so an out-of-track cursor pins to [0, durationSeconds] (never NaN,
+ * never overshoot).
+ */
+export function xToSeconds(
+  xPx: number,
+  durationSeconds: number,
+  widthPx: number,
+  diamondPx: number,
+): number {
+  if (widthPx <= 0) return 0;
+  const span = Math.max(durationSeconds, SPAN_EPSILON);
+  const inset = Math.max(KEYFRAME_EDGE_INSET_PX, diamondPx / 2);
+  const innerWidth = widthPx - 2 * inset;
+  if (innerWidth <= 0) {
+    // Degenerate fallback mirrors keyframeToRect's else-branch (which
+    // used the un-inset secondsToX(t,dur,widthPx)): invert THAT branch
+    // so the round-trip still holds when the canvas is too narrow.
+    const c = xPx < 0 ? 0 : xPx > widthPx ? widthPx : xPx;
+    return (c / widthPx) * span;
+  }
+  // Invert: centerX = inset + (clamp(t,0,span)/span) * innerWidth
+  const rel = xPx - inset;
+  const clamped = rel < 0 ? 0 : rel > innerWidth ? innerWidth : rel;
+  return (clamped / innerWidth) * span;
+}
+
+/**
  * Cull keyframes to those within the visible seconds range, INCLUSIVE.
  *
  * Returns the INDICES (not the keyframes) of every entry whose
