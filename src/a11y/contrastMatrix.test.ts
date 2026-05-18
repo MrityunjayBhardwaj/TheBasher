@@ -686,6 +686,133 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
       );
     }
   });
+
+  // ─── border-token-gate (SC 1.4.11 non-text contrast, #54) ───────────
+  //
+  // The `classCovered()` border short-circuit used to blanket-pass every
+  // border-* class (the #54 defect). SC 1.4.3 (text contrast) genuinely
+  // does not apply to borders — but SC 1.4.11 (3:1 non-text contrast)
+  // DOES apply to focus/state borders: the `:focus-visible border-accent`
+  // ring is the ONLY visible affordance for the keyboard-focused element,
+  // and the Auto-Key armed `border-record` is the sole still-frame signal
+  // that recording is live. Both must clear 3:1 against the surface they
+  // sit on.
+  //
+  // This gate enumerates every focus/state border token actually used in
+  // production chrome (greps src/app + src/viewport + src/timeline the
+  // same way the coverage gate does), resolves it through TOKEN, and
+  // asserts 3:1 against the WORST-CASE adjacent chrome background. The
+  // worst case for a focus ring is the LIGHTEST opaque chrome surface a
+  // focusable element can sit on (lighter bg ⇒ lower ratio for a bright
+  // accent border) — bg-2 #161616 / muted #1a1a1a / border #262626 are
+  // the realistic envelope; we check against every opaque TOKEN surface
+  // and require the minimum to clear 3:1, which is strictly conservative.
+  //
+  // Decorative/layout hairline borders (border-border, border-line, the
+  // border-fg/N dim dividers) are SC 1.4.11-EXEMPT (purely decorative
+  // boundary; row/panel structure is conveyed by labels + position +
+  // background, not the hairline) — the same posture the bg-border /
+  // border-line WHITELIST entries already document. Width/style-only
+  // utilities carry no color. Auditing 1px layout grid-line separators
+  // is OUT OF SCOPE per #54.
+  it('border-token-gate: every focus/state border token clears SC 1.4.11 3:1 vs adjacent chrome bg', () => {
+    const dirs = ['src/app', 'src/viewport', 'src/timeline'];
+    const files = dirs.flatMap((d) => walkTsx(path.join(PROJECT_ROOT, d)));
+    const BORDER_RE =
+      /\b(?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)?border-[A-Za-z][\w-]*(?:\/\d{1,3})?\b/g;
+
+    // Collect every border-* class in production, classify, and pull out
+    // the focus/state ones for the 3:1 audit. An unknown border token
+    // here is the #54 silent-pass — fail with a clear message.
+    const focusStateUsed = new Map<string, string[]>(); // token → files
+    const unknown = new Map<string, string[]>(); // class → files
+    for (const file of files) {
+      const src = fs.readFileSync(file, 'utf8');
+      const rel = path.relative(PROJECT_ROOT, file);
+      const seen = new Set<string>();
+      for (const m of src.matchAll(BORDER_RE)) {
+        const cls = m[0];
+        if (seen.has(cls)) continue;
+        seen.add(cls);
+        const bare = cls.replace(
+          /^(?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)/,
+          '',
+        );
+        if (BORDER_STRUCTURAL_RE.test(bare)) continue;
+        if (BORDER_DECORATIVE.has(bare)) continue;
+        if (WHITELIST.some((w) => w.pattern.test(bare))) continue;
+        const tok = stripBorderToken(bare);
+        if (BORDER_FOCUS_STATE[tok]) {
+          const arr = focusStateUsed.get(tok) ?? [];
+          if (!arr.includes(rel)) arr.push(rel);
+          focusStateUsed.set(tok, arr);
+        } else {
+          const arr = unknown.get(cls) ?? [];
+          if (!arr.includes(rel)) arr.push(rel);
+          unknown.set(cls, arr);
+        }
+      }
+    }
+
+    if (unknown.size > 0) {
+      expect.fail(
+        `border-token-gate: ${unknown.size} UNKNOWN border token(s) — neither a known ` +
+          `focus/state token, a decorative hairline, a width/style utility, nor whitelisted. ` +
+          `An unknown border token must be classified (decorative → BORDER_DECORATIVE; ` +
+          `focus/state → BORDER_FOCUS_STATE + audited here; default palette → WHITELIST), ` +
+          `not silently passed (#54).\n` +
+          [...unknown.entries()]
+            .sort()
+            .map(([c, f]) => `  ${c}  (used in: ${f.join(', ')})`)
+            .join('\n'),
+      );
+    }
+
+    // Every focus/state token actually present must clear 3:1 against
+    // every opaque chrome surface (the conservative envelope).
+    const OPAQUE_SURFACES: { name: string; rgb: RGB }[] = [
+      { name: 'bg #0a0a0a', rgb: TOKEN.bg },
+      { name: 'bg-1 #111111', rgb: TOKEN['bg-1'] },
+      { name: 'bg-2 #161616', rgb: TOKEN['bg-2'] },
+      { name: 'muted #1a1a1a', rgb: TOKEN.muted },
+      { name: 'border #262626', rgb: TOKEN.border },
+    ];
+    const REQUIRED = aaThreshold('ui'); // 3:1, SC 1.4.11 non-text.
+    const failures: string[] = [];
+    for (const tok of focusStateUsed.keys()) {
+      const tokenKey = BORDER_FOCUS_STATE[tok];
+      const borderRgb = TOKEN[tokenKey];
+      expect(borderRgb, `BORDER_FOCUS_STATE token "${tok}" → "${tokenKey}" must resolve in TOKEN`).toBeTruthy();
+      for (const surf of OPAQUE_SURFACES) {
+        const ratio = contrastRatio(borderRgb, surf.rgb);
+        if (ratio < REQUIRED) {
+          failures.push(
+            `  border-${tok} (${formatHex(borderRgb)}) vs ${surf.name} = ${ratio.toFixed(2)}:1 ` +
+              `< required ${REQUIRED}:1 [SC 1.4.11]`,
+          );
+        }
+      }
+    }
+    if (failures.length > 0) {
+      expect.fail(
+        `border-token-gate: ${failures.length} focus/state border contrast(s) below SC 1.4.11 3:1.\n` +
+          `These borders are affordances (focus ring / record-armed) — a low-contrast ` +
+          `token here means the focused/recording state is invisible. Tweak the token hex ` +
+          `in tailwind.config.ts.\n` +
+          failures.join('\n'),
+      );
+    }
+
+    // Sanity: the gate must actually have walked production and found the
+    // focus/state borders it is meant to protect (a regression that
+    // renamed/removed them should not silently make this gate vacuous).
+    expect(
+      focusStateUsed.size,
+      'border-token-gate found no focus/state border tokens in production — ' +
+        'expected at least border-accent (the :focus-visible ring). The gate ' +
+        'must not pass vacuously.',
+    ).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // ─── Coverage gate (C1.4) ────────────────────────────────────────────────
@@ -775,13 +902,80 @@ function classCovered(cls: string, rowTokensFg: Set<string>, rowTokensBg: Set<st
     return rowTokensBg.has(rest);
   }
   if (bare.startsWith('border-')) {
-    // Borders aren't audited for contrast text rules; whitelist common
-    // border tokens that are pure decoration (border-border, border-accent,
-    // border-border-strong, border-fg/30 used as dim divider) and the
-    // hash matches. If it's none of those, the row coverage is whatever
-    // bg / text says — borders aren't contrast-relevant for AA.
-    return true;
+    // SC 1.4.3 (text contrast) does NOT apply to borders — borders carry
+    // no text. But SC 1.4.11 (non-text contrast, 3:1) DOES apply to
+    // focus/state borders (the :focus-visible ring is the sole affordance
+    // for the focused element). The blanket `return true` here used to
+    // mark EVERY border-* covered without auditing it, so a future
+    // `border-some-low-contrast-100` slipped through silently (#54).
+    //
+    // Fix: a border class is "covered" by this gate only if it is
+    // classifiable — either a width/style-only utility (no color), a
+    // known decorative/layout token, a known focus/state token (audited
+    // for 3:1 by the dedicated `border-token-gate` it() below), or an
+    // explicit WHITELIST entry. An UNKNOWN border token is NOT covered
+    // and surfaces in the coverage gate, exactly like an unknown text-/
+    // bg- token.
+    return borderClassClassified(bare);
   }
+  return false;
+}
+
+// ─── Border token classification (SC 1.4.11, #54) ──────────────────────
+//
+// Every border-* class found in production chrome falls into exactly one
+// bucket. The blanket pass was the #54 defect: it conflated "borders
+// aren't TEXT-contrast relevant" (true, SC 1.4.3) with "borders need no
+// audit at all" (false — SC 1.4.11 requires 3:1 for focus/state borders).
+
+// Width / style-only utilities — no color is applied, so no contrast
+// question exists. (border-b, border-l-2, border-dashed, …)
+const BORDER_STRUCTURAL_RE =
+  /^border(-[xytrbl])?(-0|-2|-4|-8)?$|^border-(solid|dashed|dotted|double|hidden|none)$/;
+
+// Decorative / layout hairline tokens — separators and panel edges that
+// exist purely for visual grouping. SC 1.4.11 exempts purely decorative
+// boundaries (row structure / panel identity is conveyed by other means:
+// labels, position, background). These are intentionally subtle in v0.5
+// (border #262626 vs bg #0a0a0a = 1.45:1) — the SAME posture the
+// bg-border / border-line WHITELIST entries already document. Auditing
+// 1px layout grid-line separators is OUT OF SCOPE per #54.
+const BORDER_DECORATIVE = new Set([
+  'border-border',
+  'border-border-strong',
+  'border-border/40',
+  'border-fg/30',
+  'border-fg/40',
+  'border-line', // undefined token; WHITELIST documents it inherits
+]);
+
+// Focus / state border tokens — these ARE affordances. SC 1.4.11
+// requires 3:1 against the adjacent surface. The dedicated
+// `border-token-gate` it() resolves each token and asserts the ratio;
+// they are listed here so the coverage gate accepts them AND so the
+// audit has an explicit enumeration to walk. Each entry maps the
+// Tailwind token name (after `border-`, variant + /N stripped) to its
+// TOKEN key.
+const BORDER_FOCUS_STATE: Record<string, string> = {
+  accent: 'accent', // :focus-visible ring + active-state border
+  record: 'record', // Auto-Key armed-state border (UI-SPEC §5.8 D-UX-14)
+};
+
+function stripBorderToken(bare: string): string {
+  // 'border-accent/70' → 'accent'; 'border-record' → 'record'.
+  const afterPrefix = bare.slice('border-'.length);
+  const slash = afterPrefix.lastIndexOf('/');
+  return slash === -1 ? afterPrefix : afterPrefix.slice(0, slash);
+}
+
+function borderClassClassified(bare: string): boolean {
+  if (BORDER_STRUCTURAL_RE.test(bare)) return true;
+  if (BORDER_DECORATIVE.has(bare)) return true;
+  if (WHITELIST.some((w) => w.pattern.test(bare))) return true;
+  const tok = stripBorderToken(bare);
+  if (BORDER_FOCUS_STATE[tok]) return true;
+  // Unknown border token — NOT covered. Surfaces in the coverage gate
+  // with a clear message instead of silently passing (#54).
   return false;
 }
 
