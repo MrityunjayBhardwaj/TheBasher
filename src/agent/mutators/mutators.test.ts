@@ -91,17 +91,18 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 16 = the prior 17 with clearChannel + deleteKeyframe collapsed into
-    // one parameterized `removeKeyframes` (issue #60 / hetvabhasa H36 —
-    // V14 caught them as parameterization candidates after `lossy` was
-    // added to the signature; one Mutator with `scope: 'all' | {time}`
-    // replaces the fork).
-    expect(mutators).toHaveLength(16);
+    // 17 = the 16 prior + `mutator.randomize` (P7.2 / issue #26 path B —
+    // per-target randomization, N × P ops in one atomic dispatch).
+    // The 16 reflects #60 / hetvabhasa H36's earlier collapse of
+    // clearChannel + deleteKeyframe into one parameterized
+    // `removeKeyframes`.
+    expect(mutators).toHaveLength(17);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
+      'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
       'mutator.render.addStitch',
@@ -589,7 +590,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(16);
+    expect(parsed.mutators).toHaveLength(17);
   });
 });
 
@@ -1932,6 +1933,7 @@ import {
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
   addStitchMutator as _addStitchM,
+  randomizeMutator as _randomizeM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2109,6 +2111,26 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addStitchM as MutatorDefinition<unknown>,
       build: buildSceneWithJobAndWorkflow,
       spec: { jobId: 'job', workflowId: 'cw' },
+    },
+    // P7.2 — issue #26 path B. `box` + `sibling` are both BoxMesh
+    // (material.color + rotation vec3 + size vec3 → all three properties
+    // compatible per canColor/canRotation/canScale). Deliberately NOT
+    // `sphere` (SphereMesh lacks `rotation` → D-10 gate-4 reject → 0 ops
+    // → probe goes blind, the exact #22-sister of H36). Seed pinned so
+    // the probe sees a deterministic 6-op stream every run.
+    'mutator.randomize': {
+      mutator: _randomizeM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: {
+        targetSelectors: ['box', 'sibling'],
+        properties: ['color', 'rotation', 'scale'],
+        ranges: {
+          color: { h: [0, 360], s: [0.5, 1], l: [0.4, 0.6] },
+          rotation: { axis: 'random', degRange: [0, 360] },
+          scale: { factor: [0.5, 1.5] },
+        },
+        seed: 42,
+      },
     },
   };
 
