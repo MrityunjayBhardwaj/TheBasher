@@ -121,7 +121,11 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     }
 
     // scope: { time }
-    const filtered = existing.filter((k) => k.time !== spec.scope.time);
+    // Hoist out of the closure: `spec.scope` is narrowed to `{ time }` by the
+    // `=== 'all'` early return above, but property narrowing does not survive
+    // into the `.filter` arrow callback (TS2339 otherwise).
+    const scopeTime = spec.scope.time;
+    const filtered = existing.filter((k) => k.time !== scopeTime);
     if (filtered.length === existing.length) return []; // no sample at time → no-op
     return [
       {

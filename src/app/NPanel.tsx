@@ -47,7 +47,6 @@ import {
 } from './animate/dispatchMutator';
 import { paramAnimationState } from './animate/paramAnimationState';
 import { autoKeyCommit, resolveChannel } from './animate/autoKeyCommit';
-import { useAutoKeyStore } from './stores/autoKeyStore';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
