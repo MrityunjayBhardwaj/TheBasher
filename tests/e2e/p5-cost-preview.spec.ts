@@ -195,6 +195,12 @@ test('P5#C5.2 Estimate populates frames + estimated time + sample frame', async 
 });
 
 test('P5#C5.3 Submit runs the workflow and progress bar advances to N/N', async ({ page }) => {
+  // Legitimately slow: OPFS probe-write + per-frame setParam dispatch. ~10s
+  // in isolation, but the internal expects already budget 10s + 15s and the
+  // full e2e suite (workers:1, ~14 min) puts this well over the 30s per-test
+  // cap under CI contention. test.slow() triples the budget to 90s — the
+  // Playwright-idiomatic mechanism for a known-slow (not flaky) test.
+  test.slow();
   await seedWorkflowGraph(page, 2);
   await page.getByTestId('cost-preview-estimate').click();
   await expect(page.getByTestId('cost-preview-frames')).toHaveText('3', { timeout: 10_000 });
