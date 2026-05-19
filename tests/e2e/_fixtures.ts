@@ -69,6 +69,7 @@ export const test = base.extend({
       });
       return originalScreenshot(...args);
     }) as typeof page.screenshot;
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture `use`, not a React Hook
     await use(page);
   },
 });

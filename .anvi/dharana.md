@@ -18,6 +18,15 @@
 **Silent-failure modes:** scene state diverges from DAG; viewport "correct" but save loses changes; undo no-ops.
 **Observation targets:** every gizmo drag → confirm an Op landed in activity log; every store change → confirm it came from `dispatch`.
 
+### Boundary B1.1: Gizmo proxy ↔ evaluated-scene (the #68 boundary-pair)
+
+**ORIGIN:** issue #68 / Phase 7.3 — the transform gizmo seeded from `node.params.position` (static authored source) while the rendered cube is the AnimationLayer's evaluated patched clone; once a param was animated they diverged and the gizmo froze at the authored point for the whole animation. P7's E2 motion gate asserted the EVALUATOR output and NEVER the gizmo proxy — a boundary-pair gap (only the producer side was observed).
+**WHY:** This is the silent-failure that SHIPPED precisely because only one side of the boundary was observed. Without this entry tracked, the next wrapper-stale-surface bug (the open NPanel-live-values sibling, a future viewport HUD/handle) gets diagnosed from scratch and the named "evaluate the node" trap (returns the RAW value, not the patched clone) is re-attempted. Removing this entry reopens the H40 class as an empirical rediscovery instead of a deductive lookup.
+**HOW:** one pure resolver (`resolveEvaluatedTransform`) mirrors the renderer's scene-child index-correspondence + unwraps the AnimationLayer patched clone (Chesterton — the SceneFromDAG mechanism already exists; do not invent a parallel walk). Every surface needing "where it actually renders" consumes that one helper. The reusable diagnostic question: "which side of the producer/consumer boundary did I observe — the evaluator, or the surface?"
+**REF:** issue #68, hetvabhasa [[H40]] (the pattern, cross-ref H22/H34), CONTEXT D-01/D-05/D-06, `src/app/resolveEvaluatedTransform.ts`, `src/app/Gizmo.tsx`, `tests/e2e/p7.3-gizmo-evaluated-transform.spec.ts`.
+**Silent-failure modes:** a viewport surface (gizmo, HUD, handle, label) freezes at the authored `params` value while the rendered object animates/overrides away from it; "evaluate the node" re-introduces the stale value one indirection deeper; a unit test that asserts only "it changed" passes against the wrong source.
+**Observation targets:** **boundary-pair — the gizmo proxy transform == the evaluated render-walk transform at ≥2 distinct playhead times, for box-select AND layer-select** (the assertion whose absence let #68 ship; ORIGIN=#68/Phase 7.3, WHY=only the evaluator side was observed in P7, HOW=`p7.3-gizmo-evaluated-transform.spec.ts` assertion 1). Plus: the resolver runs at playhead-change cadence in the React seeding effect, NOT the W9 rAF loop — re-run the W9 240-frame 60fps gate as the K13 non-regression acceptance (observed p95 9.70ms ≤ 16.6ms, max 17.40ms ≤ 33ms).
+
 ### Boundary B2: Evaluator ↔ Storage (OPFS / future Tauri fs)
 
 **ORIGIN:** THESIS.md §33 (capability interfaces) + §38 (P0 storage requirements).

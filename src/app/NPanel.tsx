@@ -43,7 +43,7 @@ import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { paramAnimationState } from './animate/paramAnimationState';
-import { useAutoKeyStore } from './stores/autoKeyStore';
+import { autoKeyCommit, resolveChannel } from './animate/autoKeyCommit';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -56,85 +56,12 @@ import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useSelectionStore } from './stores/selectionStore';
 
-/**
- * Find the KeyframeChannel* node that animates (nodeId, paramPath) and
- * return its id plus the exact stored `time` (SECONDS) of any sample on
- * the current frame. Single source of truth = the DAG (same scan as the
- * C1 helper). Returns null when no channel exists.
- */
-function resolveChannel(
-  nodes: Record<string, { id: string; type: string; params?: unknown }>,
-  nodeId: string,
-  paramPath: string,
-  currentFrame: number,
-): { channelId: string; onKeySeconds: number | null } | null {
-  for (const node of Object.values(nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
-    const p = (node.params ?? {}) as {
-      target?: unknown;
-      paramPath?: unknown;
-      keyframes?: unknown;
-    };
-    if (p.target !== nodeId || p.paramPath !== paramPath) continue;
-    const kfs = Array.isArray(p.keyframes) ? (p.keyframes as { time: number }[]) : [];
-    const onKey = kfs.find((kf) => Math.round(kf.time * 60) === currentFrame);
-    return { channelId: node.id, onKeySeconds: onKey ? onKey.time : null };
-  }
-  return null;
-}
-
-/**
- * THE single Auto-Key commit chokepoint (Phase 7, Wave D / D4).
- *
- * Called by every inspector value-commit handler (NumericField +
- * VectorComponent, onChange AND onCommit) AFTER the raw `setParam`
- * dispatch. It is NOT a second DAG path — it is the SAME Wave A seam
- * (`dispatchMutatorFromUI` / `dispatchFirstKeyComposite`) the diamond
- * click uses, triggered by an edit instead of a click (RESEARCH
- * Boundary 5).
- *
- * Strictly gated on `useAutoKeyStore.getState().enabled`: when Auto-Key
- * is OFF this returns IMMEDIATELY, before any seam call, so the inspector
- * behaviour is BYTE-IDENTICAL to pre-P7 (the caller already did the raw
- * setParam; nothing else happens). This single function is the only
- * interception point — the logic is not scattered across handlers (D4
- * ownership + pre-mortem: gate once, here).
- *
- * Channel-exists ⇒ single `keyframe` Mutator at the current SECONDS
- * (never a frame — the single conversion rule). No channel ⇒ first-key
- * composite. Both at `useTimeStore.getState().seconds`.
- */
-function autoKeyCommit(nodeId: string, paramPath: string, value: unknown): void {
-  if (!useAutoKeyStore.getState().enabled) return; // OFF → byte-identical pre-P7
-
-  const seconds = useTimeStore.getState().seconds;
-  const frame = useTimeStore.getState().frame;
-  const dagState = useDagStore.getState().state;
-
-  // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
-  // this (nodeId, paramPath) — the SAME pure scan the diamond uses (C1).
-  const exists = paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
-
-  let result: { ok: true } | { ok: false; reason: string };
-  if (!exists) {
-    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value, seconds });
-  } else {
-    const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
-    if (!resolved) {
-      result = { ok: false, reason: 'Auto-Key: channel not found for animated param.' };
-    } else {
-      result = dispatchMutatorFromUI(
-        'mutator.timeline.keyframe',
-        { channelId: resolved.channelId, time: seconds, value },
-        `Auto-Key ${nodeId}.${paramPath}`,
-      );
-    }
-  }
-  if (!result.ok) {
-    // eslint-disable-next-line no-alert
-    window.alert?.(result.reason);
-  }
-}
+// P7.3: `resolveChannel` + `autoKeyCommit` were lifted to the shared
+// `./animate/autoKeyCommit` module (one Auto-Key chokepoint, two callers:
+// this inspector AND the viewport gizmo grab — issue #68 / D-02). The
+// bodies are byte-identical to the prior module-private versions, so
+// NPanel's behavior is unchanged (verified: the NPanel suite stays green).
+// resolveChannel is re-imported because the diamond handler also uses it.
 
 /**
  * The 3-state inspector diamond (D-01 entry point / D-03 viz). Owns NO

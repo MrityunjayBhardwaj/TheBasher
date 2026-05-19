@@ -252,6 +252,13 @@ export function boot(): Promise<void> {
           return { skeletonId, clipId };
         };
       });
+      // P7.3 D-06 — autoKeyStore exposed so the gizmo-grab boundary spec
+      // can drive Auto-Key ON/OFF without depending on the indicator
+      // chrome (the spec asserts the grab re-route, not the toggle UI).
+      // Same K12 dev-seam pattern as the other store exposures.
+      void import('./stores/autoKeyStore').then((m) => {
+        w.__basher_autokey = m.useAutoKeyStore;
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
