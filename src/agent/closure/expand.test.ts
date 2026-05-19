@@ -233,10 +233,7 @@ describe('expandClosure', () => {
       },
       outputs: {},
     };
-    const closure = expandClosure(
-      { rootSelectors: ['tex'], followedEdges: ['parent'] },
-      state,
-    );
+    const closure = expandClosure({ rootSelectors: ['tex'], followedEdges: ['parent'] }, state);
     expect(closure.nodes.has('material')).toBe(true);
     const dupes = closure.edges.filter(
       (e) => e.from === 'tex' && e.to === 'material' && e.kind === 'parent',
@@ -296,10 +293,7 @@ describe('expandClosure', () => {
       },
       outputs: {},
     };
-    const closure = expandClosure(
-      { rootSelectors: ['tex'], followedEdges: ['parent'] },
-      state,
-    );
+    const closure = expandClosure({ rootSelectors: ['tex'], followedEdges: ['parent'] }, state);
     expect(closure.edges).toEqual([
       { from: 'tex', to: 'matA', kind: 'parent' },
       { from: 'tex', to: 'matB', kind: 'parent' },
