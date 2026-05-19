@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
+import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -468,7 +469,15 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // as-is. Both this hook and useGLTF are suspense-driven; the Canvas-root
   // Suspense boundary catches the throws.
   const url = useResolvedAssetUrl(value.assetRef);
-  const gltf = useGLTF(url) as unknown as { scene: THREE.Group };
+  // #80: useDraco='/draco/' points at the SELF-HOSTED decoder (drei's
+  // default is the Google CDN at `Gltf.js:8` — non-deterministic per
+  // THESIS §48, and fails offline / behind a CSP; most real-world `.glb`
+  // exports use Draco mesh compression). `extendLoader` wires KTX2
+  // (Basis Universal texture compression — KHR_texture_basisu, common
+  // in size-optimised exports), which drei does NOT wire by default.
+  // Meshopt is already drei-default-on; nothing to do for it.
+  const extendLoader = useGltfLoaderExtend();
+  const gltf = useGLTF(url, '/draco/', true, extendLoader) as unknown as { scene: THREE.Group };
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
   const shading = useViewportStore((s) => s.shading);
   useEffect(() => {
