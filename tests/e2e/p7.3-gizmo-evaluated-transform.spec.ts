@@ -91,18 +91,99 @@ async function gizmoProxyPosition(
   });
 }
 
-/** Seed an animated cube via the REAL Wave-C diamond → Wave-A composite
- *  seam (NOT a synthetic dispatch): select n_box, click the POSITION
- *  diamond at t=0 (first-key composite = addLayer + addChannel + keyframe;
- *  the composite rewires Scene.children to the layer), scrub to t=2, edit
- *  position via the inspector vec input, click the diamond again → second
- *  key. Result: n_box wrapped in an AnimationLayer with a position channel
- *  [0,0,0]@0 and [4,0,0]@2. */
+/** Seed an animated cube via DIRECT DAG dispatch ops (the
+ *  `tests/e2e/p3-observe.spec.ts:48-110` precedent): addNode
+ *  AnimationLayer, rewire Scene.children box→layer, connect
+ *  box→layer.target, addNode KeyframeChannelVec3 with EXPLICIT keyframes
+ *  [0,0,0]@0 and [4,0,0]@2, connect TimeSource→channel.time and
+ *  channel→layer.animation. Result: n_box wrapped in an AnimationLayer
+ *  with a position channel [0,0,0]@0 and [4,0,0]@2 — IDENTICAL observable
+ *  end-state to the prior diamond+inspector seam, but with ZERO dependence
+ *  on the pre-D-05 inspector silent-dead-write (which D-05 / #77
+ *  intentionally converted to an alert+no-op — the prior seam keyed the
+ *  authored value after an inspector edit; that authored mutation no longer
+ *  reaches the source, so the diamond would have re-keyed [0,0,0]@2 and the
+ *  cube would never move). Restaged correctly; every downstream assertion
+ *  (the moving cube, kfCount, keyframe values) is unchanged. */
 async function seedAnimatedCube(page: import('@playwright/test').Page) {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_selection && w.__basher_dag);
+    return Boolean(w.__basher_selection && w.__basher_dag && w.__basher_evaluate);
   });
+  const ids = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const dagApi = w.__basher_dag!.getState() as unknown as {
+      dispatch: (op: unknown) => void;
+      state: { nodes: Record<string, { type: string }> };
+    };
+    const dispatch = (op: unknown) => dagApi.dispatch(op);
+    const nodes = () => w.__basher_dag!.getState().state.nodes;
+    const findType = (t: string) =>
+      Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
+
+    const boxId = 'n_box';
+    const sceneId = findType('Scene');
+    if (!sceneId) throw new Error('seedAnimatedCube: no Scene node');
+    if (!Object.values(nodes()).some((n) => n.type === 'TimeSource')) {
+      dispatch({ type: 'addNode', nodeId: 'seed_time', nodeType: 'TimeSource', params: {} });
+    }
+    const timeId = findType('TimeSource');
+    if (!timeId) throw new Error('seedAnimatedCube: no TimeSource after dispatch');
+
+    dispatch({
+      type: 'addNode',
+      nodeId: 'seed_layer',
+      nodeType: 'AnimationLayer',
+      params: { name: 'SeedLayer', mute: false, solo: false, weight: 1, boneMask: [] },
+    });
+    dispatch({
+      type: 'disconnect',
+      from: { node: boxId, socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    });
+    dispatch({
+      type: 'connect',
+      from: { node: 'seed_layer', socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    });
+    dispatch({
+      type: 'connect',
+      from: { node: boxId, socket: 'out' },
+      to: { node: 'seed_layer', socket: 'target' },
+    });
+    dispatch({
+      type: 'addNode',
+      nodeId: 'seed_pos_ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'seed_pos',
+        target: boxId,
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 2, value: [4, 0, 0], easing: 'linear' },
+        ],
+      },
+    });
+    dispatch({
+      type: 'connect',
+      from: { node: timeId, socket: 'out' },
+      to: { node: 'seed_pos_ch', socket: 'time' },
+    });
+    dispatch({
+      type: 'connect',
+      from: { node: 'seed_pos_ch', socket: 'out' },
+      to: { node: 'seed_layer', socket: 'animation' },
+    });
+    const n = nodes();
+    return {
+      layerId: Object.entries(n).find(([, x]) => x.type === 'AnimationLayer')?.[0],
+      chId: Object.entries(n).find(([, x]) => x.type.startsWith('KeyframeChannel'))?.[0],
+    };
+  });
+
+  // Select n_box + open the Transform section (downstream tests read its
+  // diamond / vec testids). The selection drives the inspector render.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     w.__basher_selection!.getState().select('n_box');
@@ -111,52 +192,29 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
   await page.getByTestId('inspector-section-toggle-transform').click();
   await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
 
-  await page.evaluate(() => {
-    (window as unknown as BasherWindow).__basher_time!.getState().setTime(0);
-  });
-  const posDiamond = page.getByTestId('inspector-diamond-n_box-position');
-  await expect(posDiamond).toBeVisible();
-  await expect(posDiamond).toHaveAttribute('data-anim-state', 'none');
-  await posDiamond.click();
-  await expect
-    .poll(async () =>
-      page.evaluate(() => {
-        const w = window as unknown as BasherWindow;
-        return Object.values(w.__basher_dag!.getState().state.nodes).filter((n) =>
-          n.type.startsWith('KeyframeChannel'),
-        ).length;
-      }),
-    )
-    .toBe(1);
-
-  await page.evaluate(() => {
-    (window as unknown as BasherWindow).__basher_time!.getState().setTime(2);
-  });
-  const posX = page.getByTestId('inspector-vec-n_box-position-x');
-  await expect(posX).toBeVisible();
-  await posX.fill('4');
-  await posX.press('Tab');
-  await expect(posDiamond).toHaveAttribute('data-anim-state', 'animated');
-  await posDiamond.click();
-  await expect
-    .poll(async () =>
-      page.evaluate(() => {
-        const w = window as unknown as BasherWindow;
-        const ch = Object.values(w.__basher_dag!.getState().state.nodes).find((n) =>
-          n.type.startsWith('KeyframeChannel'),
-        );
-        return ((ch?.params.keyframes ?? []) as unknown[]).length;
-      }),
-    )
-    .toBe(2);
-  // Resolve the layer + channel ids for later select-by-layer / op asserts.
-  return page.evaluate(() => {
+  // Observe the cube genuinely animates BEFORE returning (the seed is
+  // bug-independent: eval position moves from [0,0,0] at t=0 toward
+  // [4,0,0] at t=2 via the channel — no inspector dead-write involved).
+  const moves = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const layerId = Object.entries(nodes).find(([, n]) => n.type === 'AnimationLayer')?.[0];
-    const chId = Object.entries(nodes).find(([, n]) => n.type.startsWith('KeyframeChannel'))?.[0];
-    return { layerId, chId };
+    const root = w.__basher_dag!.getState().state.outputs.render;
+    if (!root) return null;
+    const at = (s: number) => {
+      const out = w.__basher_evaluate!(root.node, {
+        time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
+      }).value as { scene?: { children: Array<Record<string, unknown>> } };
+      const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
+      const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
+        | { target?: { position?: [number, number, number] } }
+        | undefined;
+      return layer?.target?.position ?? null;
+    };
+    return { t0: at(0), t1: at(1) };
   });
+  expect(moves?.t0?.[0]).toBeCloseTo(0, 4);
+  expect(moves?.t1?.[0]).toBeGreaterThan(0);
+
+  return ids;
 }
 
 test.beforeEach(async ({ page }) => {
