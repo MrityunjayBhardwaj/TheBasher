@@ -1,5 +1,10 @@
 public/assets/*.gltf
 public/assets/*.glb
+# Vendored Draco / Basis (KTX2) decoders — third-party JS+WASM wrappers
+# copied from three-stdlib (`node_modules/three/examples/jsm/libs/...`).
+# Not ours; do not reformat. See #80 / src/viewport/gltfLoaderConfig.ts.
+public/draco/
+public/basis/
 VISOR.md
 
 # Planning working-docs (phase CONTEXT/PLAN/SECTION-INVENTORY etc.) are
