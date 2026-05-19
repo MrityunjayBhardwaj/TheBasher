@@ -9,9 +9,11 @@ import { describe, expect, it } from 'vitest';
 import { paramAnimationState } from './paramAnimationState';
 import type { DagState } from '../../core/dag/state';
 
-function stateWith(
-  channel?: { target: string; paramPath: string; keyframes: { time: number }[] },
-): DagState {
+function stateWith(channel?: {
+  target: string;
+  paramPath: string;
+  keyframes: { time: number }[];
+}): DagState {
   const nodes: DagState['nodes'] = {
     n_box: { id: 'n_box', type: 'BoxMesh', version: 1, params: {} },
   };

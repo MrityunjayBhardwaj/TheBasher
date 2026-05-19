@@ -139,7 +139,9 @@ test('P6.W8#2 every visible region contains at least one tabbable element in edi
       );
       return els.length;
     }, id);
-    expect(tabbableCount, `${id} should have at least one tabbable element`).toBeGreaterThanOrEqual(1);
+    expect(tabbableCount, `${id} should have at least one tabbable element`).toBeGreaterThanOrEqual(
+      1,
+    );
   }
 
   // Skip-link is the first tabbable element overall — sanity check.
@@ -186,8 +188,8 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
   // Expand the LeftSidebar so the SceneTree row is interactable, then
   // select the Cube (same dev seam + node id the W4 inspector specs
   // use). n_box is a BoxMesh; P6 W4 declared inspectorSections on it.
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
   );
   await page.evaluate(() => {
     const w = window as unknown as {
@@ -272,9 +274,7 @@ test('P6.W8#3 director mode removes hidden chrome from the tab order (D-W8-8)', 
 
   for (const id of hiddenRegions) {
     const visibleAndTabbable = await page.evaluate((regionId: string) => {
-      const root = document.querySelector(
-        `[data-testid="${regionId}"]`,
-      ) as HTMLElement | null;
+      const root = document.querySelector(`[data-testid="${regionId}"]`) as HTMLElement | null;
       if (!root) return -1;
       // Walk up: if any ancestor has display:none, no descendants are
       // tabbable.
@@ -300,9 +300,7 @@ test('P6.W8#3 director mode removes hidden chrome from the tab order (D-W8-8)', 
 
 // ─── #4 Role attributes present on every region ───────────────────────
 
-test('P6.W8#4 every chrome region carries its expected role attribute', async ({
-  page,
-}) => {
+test('P6.W8#4 every chrome region carries its expected role attribute', async ({ page }) => {
   // R1 ProjectTabs → role="tablist"
   await expect(page.getByTestId('project-tabs')).toHaveAttribute('role', 'tablist');
   // R2 MenuBar → role="menubar"
@@ -321,10 +319,7 @@ test('P6.W8#4 every chrome region carries its expected role attribute', async ({
   // R7 NPanel inspector → role="region"
   await expect(page.getByTestId('inspector')).toHaveAttribute('role', 'region');
   // R8 FloatingViewportToolbar → role="toolbar"
-  await expect(page.getByTestId('floating-viewport-toolbar')).toHaveAttribute(
-    'role',
-    'toolbar',
-  );
+  await expect(page.getByTestId('floating-viewport-toolbar')).toHaveAttribute('role', 'toolbar');
   // R9 TimelineDrawer → role="region" (the dock); tablist on internal
   // tab strip.
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('role', 'region');
@@ -332,7 +327,9 @@ test('P6.W8#4 every chrome region carries its expected role attribute', async ({
 
 // ─── #5 Aria-labels present + R6 has an aria-live selection-summary ──
 
-test('P6.W8#5 every chrome region has a non-empty aria-label + R6 carries an aria-live selection summary', async ({ page }) => {
+test('P6.W8#5 every chrome region has a non-empty aria-label + R6 carries an aria-live selection summary', async ({
+  page,
+}) => {
   const surfaces = [
     'project-tabs',
     'menubar',

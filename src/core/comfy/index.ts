@@ -23,9 +23,7 @@ export const DEFAULT_COMFYUI_URL = 'http://127.0.0.1:8188';
  * URL defaults to `DEFAULT_COMFYUI_URL`; boot wiring overrides via
  * `settings.get('comfyui.serverUrl')`.
  */
-export async function pickComfyUI(
-  url: string = DEFAULT_COMFYUI_URL,
-): Promise<ComfyUICapability> {
+export async function pickComfyUI(url: string = DEFAULT_COMFYUI_URL): Promise<ComfyUICapability> {
   const http = new HttpComfyUICapability(url);
   if (await http.isAvailable()) return http;
   return new StubComfyUICapability();

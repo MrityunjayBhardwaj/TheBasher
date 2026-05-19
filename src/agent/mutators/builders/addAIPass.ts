@@ -115,7 +115,7 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
   name: 'mutator.render.addAIPass',
   description:
     'Wire a stylized AI render pass (Prompt + ComfyUIWorkflow) into an ' +
-    "existing RenderJob, producing stylized frames via the named preset. " +
+    'existing RenderJob, producing stylized frames via the named preset. ' +
     "The upstream RenderJob must already have the preset's required " +
     'passes wired (call mutator.render.addPass first for each). v0.5 ' +
     'ships one preset (stylizedRealism — Beauty + Depth + Normal → SDXL ' +
@@ -219,9 +219,7 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
       }
     }
     if (!timeId) {
-      throw new Error(
-        'addAIPass.build: missing TimeSource — preconditions should have rejected.',
-      );
+      throw new Error('addAIPass.build: missing TimeSource — preconditions should have rejected.');
     }
 
     const ops: Op[] = [];

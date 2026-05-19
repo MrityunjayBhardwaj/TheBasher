@@ -35,7 +35,7 @@ export const addLayerMutator: MutatorDefinition<AddLayerSpec> = {
     'Wrap one or more SceneChild targets (BoxMesh, Transform, Character, …) ' +
     'in a new AnimationLayer. The layer slots between target and its current ' +
     'consumer; the target keeps rendering identically until channels are ' +
-    'wired into the layer\'s animation socket. Caller may supply layerIds to ' +
+    "wired into the layer's animation socket. Caller may supply layerIds to " +
     'make subsequent addChannel calls deterministic without dag.inspect.',
   spec: AddLayerSpec,
   specExample: {

@@ -129,7 +129,9 @@ test.describe('P7 D2 — Auto-Key indicator is unmissable (footgun mitigation)',
     await expect(page.getByTestId('autokey-toggle')).toHaveAttribute('aria-pressed', 'false');
   });
 
-  test('toggle ON → red dot + tinted header, visible across panel focus changes', async ({ page }) => {
+  test('toggle ON → red dot + tinted header, visible across panel focus changes', async ({
+    page,
+  }) => {
     await page.getByTestId('autokey-toggle').click();
 
     const bar = page.getByTestId('timebar');
@@ -239,10 +241,7 @@ test.describe('P7 D4 — Auto-Key commit-handler interception (single chokepoint
  *  scene.children kinds (to prove the composite addLayer rewired
  *  Scene.children to the layer's .out, NOT the raw box — the direct
  *  disproof of the P3#3 orphan topology). */
-async function evalRenderRoot(
-  page: import('@playwright/test').Page,
-  seconds: number,
-) {
+async function evalRenderRoot(page: import('@playwright/test').Page, seconds: number) {
   return page.evaluate(
     ({ s }) => {
       const w = window as unknown as BasherWindow;
@@ -260,11 +259,8 @@ async function evalRenderRoot(
       };
       // RenderOutput → { kind:'RenderOutput', scene } ; Scene → { children }.
       const scene = out.scene ?? (out as unknown as { children?: unknown[] });
-      const children = (scene as { children: Array<Record<string, unknown>> })
-        .children;
-      const layer = children.find(
-        (c) => (c as { kind?: string }).kind === 'AnimationLayer',
-      ) as
+      const children = (scene as { children: Array<Record<string, unknown>> }).children;
+      const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
         | { kind: string; target?: { rotation?: [number, number, number] } }
         | undefined;
       return {
@@ -309,9 +305,7 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     await expect(rotDiamond).toHaveAttribute('data-anim-state', 'none');
     await rotDiamond.click();
     // The composite landed: exactly one rotation channel, one key @ t=0.
-    await expect
-      .poll(async () => (await channelNodes(page)).length)
-      .toBe(1);
+    await expect.poll(async () => (await channelNodes(page)).length).toBe(1);
     let chs = await channelNodes(page);
     expect(chs[0].target).toBe('n_box');
     expect(chs[0].paramPath).toBe('rotation');
@@ -343,9 +337,7 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
       .toBe(2);
     chs = await channelNodes(page);
     expect(chs).toHaveLength(1); // still ONE channel (same layer/channel)
-    const kfTimes = chs[0].keyframes
-      .map((k) => k.time)
-      .sort((a, b) => a - b);
+    const kfTimes = chs[0].keyframes.map((k) => k.time).sort((a, b) => a - b);
     expect(kfTimes[0]).toBeCloseTo(0, 5);
     expect(kfTimes[1]).toBeCloseTo(2, 5);
 

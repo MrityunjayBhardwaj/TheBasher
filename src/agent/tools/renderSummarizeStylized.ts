@@ -25,12 +25,7 @@ const SummarizeStylizedSchema = z.object({
     .string()
     .min(1)
     .describe('ComfyUIWorkflow node id whose stylized output to summarize'),
-  frame: z
-    .number()
-    .int()
-    .nonnegative()
-    .default(0)
-    .describe('Frame number to summarize; default 0'),
+  frame: z.number().int().nonnegative().default(0).describe('Frame number to summarize; default 0'),
 });
 export type SummarizeStylizedArgs = z.infer<typeof SummarizeStylizedSchema>;
 

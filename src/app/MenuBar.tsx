@@ -150,7 +150,9 @@ function Submenu({
         className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span>{label}</span>
-        <span aria-hidden className="font-mono text-[10px] text-fg/40">▸</span>
+        <span aria-hidden className="font-mono text-[10px] text-fg/40">
+          ▸
+        </span>
       </button>
       {open ? (
         <div
@@ -348,11 +350,7 @@ export function MenuBar() {
           onSelect={onExportGltf}
           testId="menu-file-export-gltf"
         />
-        <Item
-          label="Export DAG as JSON"
-          onSelect={exportDagJson}
-          testId="menu-file-export-json"
-        />
+        <Item label="Export DAG as JSON" onSelect={exportDagJson} testId="menu-file-export-json" />
       </Menu>
 
       <Menu

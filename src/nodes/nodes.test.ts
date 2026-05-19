@@ -1672,12 +1672,14 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
    * about the upstream Image's passKind + sourceHash, both well-defined
    * for BeautyPass.
    */
-  function buildComfyState(opts: {
-    promptText?: string;
-    promptNegative?: string;
-    presetId?: 'stylizedRealism';
-    boxPosition?: [number, number, number];
-  } = {}) {
+  function buildComfyState(
+    opts: {
+      promptText?: string;
+      promptNegative?: string;
+      presetId?: 'stylizedRealism';
+      boxPosition?: [number, number, number];
+    } = {},
+  ) {
     const promptText = opts.promptText ?? 'a cinematic cube';
     let s = emptyDagState();
     s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
@@ -1909,8 +1911,10 @@ describe('P5 — VideoStitch (impure metadata, D-01/D-05)', () => {
   });
 
   it('sourceHash flips when outputPath changes', () => {
-    const a = evaluate(buildStitchState({ outputPath: 'renders/job1/a.mp4' }), 'stitch').value as VideoValue;
-    const b = evaluate(buildStitchState({ outputPath: 'renders/job1/b.mp4' }), 'stitch').value as VideoValue;
+    const a = evaluate(buildStitchState({ outputPath: 'renders/job1/a.mp4' }), 'stitch')
+      .value as VideoValue;
+    const b = evaluate(buildStitchState({ outputPath: 'renders/job1/b.mp4' }), 'stitch')
+      .value as VideoValue;
     expect(a.sourceHash).not.toBe(b.sourceHash);
   });
 

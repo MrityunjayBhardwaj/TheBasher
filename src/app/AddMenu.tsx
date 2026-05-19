@@ -142,7 +142,9 @@ export function AddMenu() {
               }`}
             >
               <span>{g.label}</span>
-              <span aria-hidden className="font-mono text-[10px] text-fg/40">▸</span>
+              <span aria-hidden className="font-mono text-[10px] text-fg/40">
+                ▸
+              </span>
             </button>
             {activeGroup === g.label ? (
               <div

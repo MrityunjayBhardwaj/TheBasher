@@ -85,15 +85,11 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
-    if (
-      !Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')
-    ) {
+    if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
     }
     const timeId =
-      Object.entries(dag.state.nodes).find(
-        ([, n]) => n.type === 'TimeSource',
-      )?.[0] ?? 'time';
+      Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
     const ops: unknown[] = [
       {
         type: 'addNode',
@@ -228,19 +224,14 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
   const undoLenBefore = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_dag!.getState().undoStack.length,
   );
-  await page.evaluate(() =>
-    (window as unknown as BasherWindow).__basher_dag!.getState().undo(),
-  );
+  await page.evaluate(() => (window as unknown as BasherWindow).__basher_dag!.getState().undo());
   const restored = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const ch = w.__basher_dag!.getState().state.nodes['ch'];
     return (ch.params.keyframes ?? []) as { time: number; value: unknown }[];
   });
   // eslint-disable-next-line no-console
-  console.log(
-    '[P7.1] undoStackLen=' + undoLenBefore + ' restored =',
-    JSON.stringify(restored),
-  );
+  console.log('[P7.1] undoStackLen=' + undoLenBefore + ' restored =', JSON.stringify(restored));
   expect(restored.some((k) => Math.abs(k.time - 2.0) < 1e-6)).toBe(true);
   expect(restored.some((k) => k.time === 0)).toBe(true);
   // Re-apply (redo via re-running the eval expectation) — re-do the drag
@@ -262,24 +253,15 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
   const d05 = await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const ch = w.__basher_dag!.getState().state.nodes['ch'];
-    const kf = (ch.params.keyframes as { time: number }[]).find(
-      (k) => k.time !== 0,
-    )!;
+    const kf = (ch.params.keyframes as { time: number }[]).find((k) => k.time !== 0)!;
     const nearestFrame = Math.round(kf.time * 60);
-    const { paramAnimationState } = await import(
-      '/src/app/animate/paramAnimationState.ts'
-    );
+    const { paramAnimationState } = await import('/src/app/animate/paramAnimationState.ts');
     const state = w.__basher_dag!.getState().state;
     return {
       kfTime: kf.time,
       nearestFrame,
       onKey: paramAnimationState(state, 'sun', 'rotation', nearestFrame),
-      twoAway: paramAnimationState(
-        state,
-        'sun',
-        'rotation',
-        nearestFrame + 2,
-      ),
+      twoAway: paramAnimationState(state, 'sun', 'rotation', nearestFrame + 2),
     };
   });
   // eslint-disable-next-line no-console

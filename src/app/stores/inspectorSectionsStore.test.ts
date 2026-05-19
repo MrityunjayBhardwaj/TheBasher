@@ -28,10 +28,7 @@ beforeAll(() => {
   });
 });
 
-import {
-  resolveCollapsed,
-  useInspectorSectionsStore,
-} from './inspectorSectionsStore';
+import { resolveCollapsed, useInspectorSectionsStore } from './inspectorSectionsStore';
 
 const STORAGE_KEY = 'basher.inspectorSections.v1';
 
@@ -51,9 +48,7 @@ describe('inspectorSectionsStore', () => {
 
   it('setCollapsed persists per (nodeType, sectionId)', () => {
     useInspectorSectionsStore.getState().setCollapsed('BoxMesh', 'material', true);
-    expect(
-      useInspectorSectionsStore.getState().collapsedByNodeType.BoxMesh?.material,
-    ).toBe(true);
+    expect(useInspectorSectionsStore.getState().collapsedByNodeType.BoxMesh?.material).toBe(true);
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
     expect(persisted.collapsedByNodeType.BoxMesh.material).toBe(true);
   });
@@ -84,11 +79,13 @@ describe('inspectorSectionsStore', () => {
   });
 
   it('setCollapsed silently ignores invalid section ids', () => {
-    (useInspectorSectionsStore.getState().setCollapsed as (
-      n: string,
-      s: string,
-      c: boolean,
-    ) => void)('BoxMesh', 'metadata', true);
+    (
+      useInspectorSectionsStore.getState().setCollapsed as (
+        n: string,
+        s: string,
+        c: boolean,
+      ) => void
+    )('BoxMesh', 'metadata', true);
     expect(useInspectorSectionsStore.getState().collapsedByNodeType).toEqual({});
   });
 
@@ -96,9 +93,9 @@ describe('inspectorSectionsStore', () => {
     useInspectorSectionsStore.getState().setCollapsed('BoxMesh', 'material', true);
     vi.resetModules();
     const mod = await import('./inspectorSectionsStore');
-    expect(
-      mod.useInspectorSectionsStore.getState().collapsedByNodeType.BoxMesh?.material,
-    ).toBe(true);
+    expect(mod.useInspectorSectionsStore.getState().collapsedByNodeType.BoxMesh?.material).toBe(
+      true,
+    );
   });
 
   it('K11 step 4 — legacy section ids dropped on read', async () => {

@@ -224,7 +224,9 @@ test('P2.1#5 SceneTree click selects → Inspector renders that node', async ({ 
     return Boolean((window as unknown as Win).__basher_chrome);
   });
   await page.evaluate(() => {
-    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    type Win = {
+      __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } };
+    };
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
 

@@ -27,7 +27,8 @@ function getLLMConfig(): LLMConfig {
   const winOverrides = window as unknown as Record<string, string | undefined>;
   return {
     apiKey: winOverrides['__BASHER_LLM_KEY'] ?? env.VITE_BASHER_LLM_KEY ?? '',
-    baseUrl: winOverrides['__BASHER_LLM_BASE_URL'] ?? env.VITE_BASHER_LLM_BASE_URL ?? DEFAULT_BASE_URL,
+    baseUrl:
+      winOverrides['__BASHER_LLM_BASE_URL'] ?? env.VITE_BASHER_LLM_BASE_URL ?? DEFAULT_BASE_URL,
     model: winOverrides['__BASHER_LLM_MODEL'] ?? env.VITE_BASHER_LLM_MODEL ?? DEFAULT_MODEL,
     temperature: 0.7,
     maxTokens: 4096,
@@ -52,9 +53,11 @@ export function AgentChat() {
     const config = getLLMConfig();
 
     if (!config.apiKey) {
-      useAgentSessionStore.getState().setError(
-        'No LLM API key configured. Set VITE_BASHER_LLM_KEY in .env or window.__BASHER_LLM_KEY.',
-      );
+      useAgentSessionStore
+        .getState()
+        .setError(
+          'No LLM API key configured. Set VITE_BASHER_LLM_KEY in .env or window.__BASHER_LLM_KEY.',
+        );
       setRunning(false);
       return;
     }
@@ -65,10 +68,7 @@ export function AgentChat() {
     // Resolve capabilities fresh per turn (the underlying getters are
     // module-level singletons — same instance across the session, but
     // never captured at component mount where they'd be premature).
-    const [comfyCapability, storage] = await Promise.all([
-      getComfyCapability(),
-      getStorage(),
-    ]);
+    const [comfyCapability, storage] = await Promise.all([getComfyCapability(), getStorage()]);
 
     try {
       await runAgentTurn(config, {
@@ -97,7 +97,10 @@ export function AgentChat() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col font-mono text-xs text-fg" data-testid="agent-chat">
+    <div
+      className="flex h-full min-h-0 flex-col font-mono text-xs text-fg"
+      data-testid="agent-chat"
+    >
       {/* Mode selector */}
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
         <span className="mr-1 text-[10px] uppercase tracking-wide text-fg/50">Mode</span>
@@ -126,8 +129,8 @@ export function AgentChat() {
       <div className="flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
         {session.messages.length === 0 && !session.error ? (
           <div className="px-1 py-3 text-[11px] text-fg/40">
-            Ask the agent to inspect, plan, or modify the scene. Selected nodes
-            are surfaced in the agent's context.
+            Ask the agent to inspect, plan, or modify the scene. Selected nodes are surfaced in the
+            agent's context.
           </div>
         ) : null}
         {session.messages.map((msg) => {
@@ -164,7 +167,8 @@ export function AgentChat() {
         >
           Tokens: {session.tokenUsage.total.toLocaleString()}
           <span className="ml-1 text-fg/30">
-            (↑{session.tokenUsage.input.toLocaleString()} ↓{session.tokenUsage.output.toLocaleString()})
+            (↑{session.tokenUsage.input.toLocaleString()} ↓
+            {session.tokenUsage.output.toLocaleString()})
           </span>
         </div>
       ) : null}

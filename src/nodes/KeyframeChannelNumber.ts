@@ -51,12 +51,7 @@ function smoothstep(u: number): number {
   return u * u * (3 - 2 * u);
 }
 
-function interp(
-  aValue: number,
-  bValue: number,
-  u: number,
-  easing: Easing,
-): number {
+function interp(aValue: number, bValue: number, u: number, easing: Easing): number {
   const t = easing === 'cubic' ? smoothstep(u) : u;
   return aValue + (bValue - aValue) * t;
 }

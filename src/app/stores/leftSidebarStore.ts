@@ -50,10 +50,7 @@ const DEFAULT_STATE: LeftSidebarState = {
 // strings) coerces to the default in readPersisted. PERSISTABLE is also
 // checked before setItem writes — narrows the surface for future
 // type-shape changes.
-const PERSISTABLE: ReadonlySet<LeftSidebarTab> = new Set<LeftSidebarTab>([
-  'scene',
-  'agent',
-]);
+const PERSISTABLE: ReadonlySet<LeftSidebarTab> = new Set<LeftSidebarTab>(['scene', 'agent']);
 
 // V18 — defensive Storage access. The plain `typeof localStorage ===
 // 'undefined'` guard misfires in happy-dom (stub is *defined* but methods

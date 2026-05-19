@@ -45,10 +45,7 @@ export function __resetBvhImportCounterForTests(): void {
   counter = 0;
 }
 
-export function buildBvhImportOps(
-  args: BvhImportChainArgs,
-  state: DagState,
-): BvhImportChainResult {
+export function buildBvhImportOps(args: BvhImportChainArgs, state: DagState): BvhImportChainResult {
   const parsed = parseBvh(args.text, args.name ?? 'imported-bvh');
 
   const ids = args.ids ?? {

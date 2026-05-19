@@ -180,32 +180,121 @@ const ROWS: Row[] = [
   // inactive hover→fg via fg-dim default; L197 dirty-dot label fg-mute;
   // L208 close-btn fg-mute, hover→warn; L221 add-tab fg-mute hover→accent;
   // L233 tooltip on bg-2/95.
-  { site: 'R1 ProjectTabs strip — base fg on bg-2/80', fg: 'fg', bgStack: ['bg-2/80'], textSize: 'small' },
-  { site: 'R1 ProjectTabs active tab — fg on bg-1 (opaque, no /N)', fg: 'fg', bgStack: ['bg-1'], textSize: 'small' },
-  { site: 'R1 ProjectTabs inactive tab — fg-dim on bg-2/80', fg: 'fg-dim', bgStack: ['bg-2/80'], textSize: 'small' },
-  { site: 'R1 ProjectTabs inactive hover — fg-dim on bg-1/40 over bg-2/80', fg: 'fg-dim', bgStack: ['bg-1/40', 'bg-2/80'], textSize: 'small' },
-  { site: 'R1 ProjectTabs active-tab decorative glyph — fg-mute on bg-1 (⌂/⌃ chevron)', fg: 'fg-mute', bgStack: ['bg-1'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'L208 renders an aria-hidden ⌂/⌃ glyph (per-tab active/inactive marker) using text-fg-mute. The element carries aria-hidden, so SR skips it entirely; SC 1.4.3 exempts pure decoration from the contrast minimum. The active-tab affordance is the tab button label itself at fg/fg-dim, not this chevron. Self-review fold-in (previous "dirty-dot label / Rule A" classification was a misdescription of L208).' } },
-  { site: 'R1 ProjectTabs close × — fg-mute on bg-2/80', fg: 'fg-mute', bgStack: ['bg-2/80'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'A', note: 'Close × glyph as icon-button — Rule A. Element is aria-labelled "Close tab"; visual hover state lifts to warn-colored. Tab itself is the affordance.' } },
-  { site: 'R1 ProjectTabs add-btn — fg-mute on bg-2/80', fg: 'fg-mute', bgStack: ['bg-2/80'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'A', note: 'Add-tab + glyph as icon-button — Rule A. aria-labelled "New project"; hover lifts to accent.' } },
-  { site: 'R1 ProjectTabs tooltip — fg on bg-2/95', fg: 'fg', bgStack: ['bg-2/95'], textSize: 'small' },
+  {
+    site: 'R1 ProjectTabs strip — base fg on bg-2/80',
+    fg: 'fg',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+  },
+  {
+    site: 'R1 ProjectTabs active tab — fg on bg-1 (opaque, no /N)',
+    fg: 'fg',
+    bgStack: ['bg-1'],
+    textSize: 'small',
+  },
+  {
+    site: 'R1 ProjectTabs inactive tab — fg-dim on bg-2/80',
+    fg: 'fg-dim',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+  },
+  {
+    site: 'R1 ProjectTabs inactive hover — fg-dim on bg-1/40 over bg-2/80',
+    fg: 'fg-dim',
+    bgStack: ['bg-1/40', 'bg-2/80'],
+    textSize: 'small',
+  },
+  {
+    site: 'R1 ProjectTabs active-tab decorative glyph — fg-mute on bg-1 (⌂/⌃ chevron)',
+    fg: 'fg-mute',
+    bgStack: ['bg-1'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'L208 renders an aria-hidden ⌂/⌃ glyph (per-tab active/inactive marker) using text-fg-mute. The element carries aria-hidden, so SR skips it entirely; SC 1.4.3 exempts pure decoration from the contrast minimum. The active-tab affordance is the tab button label itself at fg/fg-dim, not this chevron. Self-review fold-in (previous "dirty-dot label / Rule A" classification was a misdescription of L208).',
+    },
+  },
+  {
+    site: 'R1 ProjectTabs close × — fg-mute on bg-2/80',
+    fg: 'fg-mute',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'A',
+      note: 'Close × glyph as icon-button — Rule A. Element is aria-labelled "Close tab"; visual hover state lifts to warn-colored. Tab itself is the affordance.',
+    },
+  },
+  {
+    site: 'R1 ProjectTabs add-btn — fg-mute on bg-2/80',
+    fg: 'fg-mute',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'A',
+      note: 'Add-tab + glyph as icon-button — Rule A. aria-labelled "New project"; hover lifts to accent.',
+    },
+  },
+  {
+    site: 'R1 ProjectTabs tooltip — fg on bg-2/95',
+    fg: 'fg',
+    bgStack: ['bg-2/95'],
+    textSize: 'small',
+  },
 
   // ─── R2 MenuBar (src/app/MenuBar.tsx) ───────────────────────────────
   // L304 container bg-bg; L72 trigger open = bg-muted + text-accent,
   // closed = fg/70; L105/L136 menu item bg-bg shows fg/80; L108 shortcut
   // fg/40; L437 empty-state fg/40; L80/L142 panel bg-bg shadow.
   { site: 'R2 MenuBar container — fg on bg', fg: 'fg', bgStack: [], textSize: 'small' },
-  { site: 'R2 MenuBar trigger open — accent on muted', fg: 'accent', bgStack: ['muted'], textSize: 'small' },
+  {
+    site: 'R2 MenuBar trigger open — accent on muted',
+    fg: 'accent',
+    bgStack: ['muted'],
+    textSize: 'small',
+  },
   { site: 'R2 MenuBar trigger closed — fg/70 on bg', fg: 'fg/70', bgStack: [], textSize: 'small' },
-  { site: 'R2 MenuBar trigger hover — fg on muted/60 over bg', fg: 'fg', bgStack: ['muted/60'], textSize: 'small' },
-  { site: 'R2 MenuBar item label — fg/80 on bg (menu panel)', fg: 'fg/80', bgStack: [], textSize: 'small' },
-  { site: 'R2 MenuBar item shortcut — fg/40 on bg', fg: 'fg/40', bgStack: [], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: 'Keyboard-shortcut hint (e.g. "⌘S") shown alongside the full menu-item label — Rule B: fg/40 is decorative/grouping hint only. The label itself uses fg/80 and is the primary affordance.' } },
-  { site: 'R2 MenuBar item hover — fg/80 on muted', fg: 'fg/80', bgStack: ['muted'], textSize: 'small' },
-  { site: 'R2 MenuBar empty state — fg/40 on bg', fg: 'fg/40', bgStack: [], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: 'Empty-state placeholder text shown only when a submenu has no items — Rule B: fg/40 is decorative/hint only. State is informational; no actions are gated on reading it.' } },
+  {
+    site: 'R2 MenuBar trigger hover — fg on muted/60 over bg',
+    fg: 'fg',
+    bgStack: ['muted/60'],
+    textSize: 'small',
+  },
+  {
+    site: 'R2 MenuBar item label — fg/80 on bg (menu panel)',
+    fg: 'fg/80',
+    bgStack: [],
+    textSize: 'small',
+  },
+  {
+    site: 'R2 MenuBar item shortcut — fg/40 on bg',
+    fg: 'fg/40',
+    bgStack: [],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: 'Keyboard-shortcut hint (e.g. "⌘S") shown alongside the full menu-item label — Rule B: fg/40 is decorative/grouping hint only. The label itself uses fg/80 and is the primary affordance.',
+    },
+  },
+  {
+    site: 'R2 MenuBar item hover — fg/80 on muted',
+    fg: 'fg/80',
+    bgStack: ['muted'],
+    textSize: 'small',
+  },
+  {
+    site: 'R2 MenuBar empty state — fg/40 on bg',
+    fg: 'fg/40',
+    bgStack: [],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: 'Empty-state placeholder text shown only when a submenu has no items — Rule B: fg/40 is decorative/hint only. State is informational; no actions are gated on reading it.',
+    },
+  },
 
   // ─── R3 TopToolbar (src/app/TopToolbar.tsx) ─────────────────────────
   // L231 container bg-bg/95; L84/L204/L214 button chrome muted/40
@@ -213,47 +302,170 @@ const ROWS: Row[] = [
   // L131/L156 SpaceGroup muted/40; L140 active cell accent/25 + accent;
   // L169 mode pill active bg-accent text-bg; L170 inactive fg-dim;
   // L194 mode pill present-disabled muted/30 text-fg-mute.
-  { site: 'R3 TopToolbar container — fg on bg/95', fg: 'fg', bgStack: ['bg/95'], textSize: 'small' },
-  { site: 'R3 TopToolbar button idle — fg/80 on muted/40', fg: 'fg/80', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R3 TopToolbar button hover — accent on muted/40', fg: 'accent', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R3 TopToolbar mode pill active — bg on accent', fg: 'bg', bgStack: ['accent'], textSize: 'small' },
-  { site: 'R3 TopToolbar mode pill inactive — fg-dim on muted/40', fg: 'fg-dim', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R3 TopToolbar mode pill present-disabled — fg-mute on muted/30', fg: 'fg-mute', bgStack: ['muted/30'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Disabled UI component (mode pill in disabled state when Present is unavailable) — WCAG 2.1 SC 1.4.3 exempts inactive UI components from contrast requirements.' } },
-  { site: 'R3 TopToolbar Present button — fg-mute on muted/30', fg: 'fg-mute', bgStack: ['muted/30'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Disabled UI component (Present button when no presentation is active) — WCAG 2.1 SC 1.4.3 exemption.' } },
-  { site: 'R3 SpaceGroup cell idle — fg/60 on muted/40', fg: 'fg/60', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R3 SpaceGroup cell active — accent on accent/25 over muted/40', fg: 'accent', bgStack: ['accent/25', 'muted/40'], textSize: 'small' },
-  { site: 'R3 TopToolbar active button — accent on accent/15 over muted/40', fg: 'accent', bgStack: ['accent/15', 'muted/40'], textSize: 'small' },
+  {
+    site: 'R3 TopToolbar container — fg on bg/95',
+    fg: 'fg',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 TopToolbar button idle — fg/80 on muted/40',
+    fg: 'fg/80',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 TopToolbar button hover — accent on muted/40',
+    fg: 'accent',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 TopToolbar mode pill active — bg on accent',
+    fg: 'bg',
+    bgStack: ['accent'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 TopToolbar mode pill inactive — fg-dim on muted/40',
+    fg: 'fg-dim',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 TopToolbar mode pill present-disabled — fg-mute on muted/30',
+    fg: 'fg-mute',
+    bgStack: ['muted/30'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Disabled UI component (mode pill in disabled state when Present is unavailable) — WCAG 2.1 SC 1.4.3 exempts inactive UI components from contrast requirements.',
+    },
+  },
+  {
+    site: 'R3 TopToolbar Present button — fg-mute on muted/30',
+    fg: 'fg-mute',
+    bgStack: ['muted/30'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Disabled UI component (Present button when no presentation is active) — WCAG 2.1 SC 1.4.3 exemption.',
+    },
+  },
+  {
+    site: 'R3 SpaceGroup cell idle — fg/60 on muted/40',
+    fg: 'fg/60',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 SpaceGroup cell active — accent on accent/25 over muted/40',
+    fg: 'accent',
+    bgStack: ['accent/25', 'muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R3 TopToolbar active button — accent on accent/15 over muted/40',
+    fg: 'accent',
+    bgStack: ['accent/15', 'muted/40'],
+    textSize: 'small',
+  },
 
   // ─── R4 ToolRail (src/app/ToolRail.tsx) ─────────────────────────────
   // L123/L142 container bg-bg/95; L92 disabled fg-mute; L94 active bg-1
   // text-accent; L96/L130/L149 idle fg-dim hover→fg on bg-1.
   { site: 'R4 ToolRail container — base on bg/95', fg: 'fg', bgStack: ['bg/95'], textSize: 'ui' },
-  { site: 'R4 ToolRail active tool — accent on bg-1', fg: 'accent', bgStack: ['bg-1'], textSize: 'ui' },
-  { site: 'R4 ToolRail idle tool — fg-dim on bg/95', fg: 'fg-dim', bgStack: ['bg/95'], textSize: 'ui' },
+  {
+    site: 'R4 ToolRail active tool — accent on bg-1',
+    fg: 'accent',
+    bgStack: ['bg-1'],
+    textSize: 'ui',
+  },
+  {
+    site: 'R4 ToolRail idle tool — fg-dim on bg/95',
+    fg: 'fg-dim',
+    bgStack: ['bg/95'],
+    textSize: 'ui',
+  },
   { site: 'R4 ToolRail hover tool — fg on bg-1', fg: 'fg', bgStack: ['bg-1'], textSize: 'ui' },
-  { site: 'R4 ToolRail disabled tool — fg-mute on bg/95', fg: 'fg-mute', bgStack: ['bg/95'], textSize: 'ui',
-    exempt: { kind: 'sc-1.4.3', note: 'Disabled tool button (e.g. transform tools while a job is running) — WCAG 2.1 SC 1.4.3 exempts inactive UI components.' } },
+  {
+    site: 'R4 ToolRail disabled tool — fg-mute on bg/95',
+    fg: 'fg-mute',
+    bgStack: ['bg/95'],
+    textSize: 'ui',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Disabled tool button (e.g. transform tools while a job is running) — WCAG 2.1 SC 1.4.3 exempts inactive UI components.',
+    },
+  },
 
   // ─── R5 LeftSidebar (src/app/LeftSidebar.tsx) ───────────────────────
   // L81 tab strip bg-bg/95; L94 active tab text-accent + bottom border-
   // accent; L95 inactive text-fg-dim hover→fg; L63/L108 collapse button.
-  { site: 'R5 LeftSidebar tab active — accent on bg/95', fg: 'accent', bgStack: ['bg/95'], textSize: 'small' },
-  { site: 'R5 LeftSidebar tab inactive — fg-dim on bg/95', fg: 'fg-dim', bgStack: ['bg/95'], textSize: 'small' },
-  { site: 'R5 LeftSidebar tab hover — fg on bg/95', fg: 'fg', bgStack: ['bg/95'], textSize: 'small' },
-  { site: 'R5 LeftSidebar collapse-btn — fg-dim on bg-1', fg: 'fg-dim', bgStack: ['bg-1'], textSize: 'ui' },
+  {
+    site: 'R5 LeftSidebar tab active — accent on bg/95',
+    fg: 'accent',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 LeftSidebar tab inactive — fg-dim on bg/95',
+    fg: 'fg-dim',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 LeftSidebar tab hover — fg on bg/95',
+    fg: 'fg',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 LeftSidebar collapse-btn — fg-dim on bg-1',
+    fg: 'fg-dim',
+    bgStack: ['bg-1'],
+    textSize: 'ui',
+  },
 
   // ─── R5 SceneTree (src/app/SceneTree.tsx) ───────────────────────────
   // L96 panel bg-muted/20 (NOT /40 like NPanel — sibling chrome but
   // dimmer panel surface). L98 header fg/70; L122 selected row
   // bg-accent/15 text-accent; idle text-fg/80 hover muted.
-  { site: 'R5 SceneTree header — fg/70 on muted/20', fg: 'fg/70', bgStack: ['muted/20'], textSize: 'small' },
-  { site: 'R5 SceneTree row idle — fg/80 on muted/20', fg: 'fg/80', bgStack: ['muted/20'], textSize: 'small' },
-  { site: 'R5 SceneTree row hover — fg/80 on muted over muted/20', fg: 'fg/80', bgStack: ['muted', 'muted/20'], textSize: 'small' },
-  { site: 'R5 SceneTree row selected — accent on accent/15 over muted/20', fg: 'accent', bgStack: ['accent/15', 'muted/20'], textSize: 'small' },
-  { site: 'R5 SceneTree row nodeId hint — fg/40 on muted/20', fg: 'fg/40', bgStack: ['muted/20'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: 'Secondary node-id suffix (e.g. ":3") shown next to the primary node name — Rule B: fg/40 is decorative grouping hint only. Primary name is fg/80; node-id is debug/developer affordance.' } },
+  {
+    site: 'R5 SceneTree header — fg/70 on muted/20',
+    fg: 'fg/70',
+    bgStack: ['muted/20'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 SceneTree row idle — fg/80 on muted/20',
+    fg: 'fg/80',
+    bgStack: ['muted/20'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 SceneTree row hover — fg/80 on muted over muted/20',
+    fg: 'fg/80',
+    bgStack: ['muted', 'muted/20'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 SceneTree row selected — accent on accent/15 over muted/20',
+    fg: 'accent',
+    bgStack: ['accent/15', 'muted/20'],
+    textSize: 'small',
+  },
+  {
+    site: 'R5 SceneTree row nodeId hint — fg/40 on muted/20',
+    fg: 'fg/40',
+    bgStack: ['muted/20'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: 'Secondary node-id suffix (e.g. ":3") shown next to the primary node name — Rule B: fg/40 is decorative grouping hint only. Primary name is fg/80; node-id is debug/developer affordance.',
+    },
+  },
 
   // ─── R7 NPanel / Inspector (src/app/NPanel.tsx) ─────────────────────
   // L72/L86 NumberRow on muted/40; L168 row label fg/60; L218 ParamRow
@@ -261,41 +473,177 @@ const ROWS: Row[] = [
   // section header fg/60 hover→fg + bg-muted; L298 panel bg muted/40;
   // L300 header fg/70; L304 empty-state fg/40; L307/L308/L309 node
   // identity card.
-  { site: 'R7 NPanel header — fg/70 on muted/40', fg: 'fg/70', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel empty state — fg/40 on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: 'Empty-state message shown only when no node is selected — Rule B: informational hint, no actions gated on it. Selection ANY node restores full chrome.' } },
-  { site: 'R7 NPanel node id — fg on muted/40', fg: 'fg', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel node type — fg/40 on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: 'Node-type suffix (e.g. "MeshNode") shown beside the primary node-id at fg — Rule B: type label is grouping hint. Primary id is fg.' } },
-  { site: 'R7 NPanel section header collapsed — fg/60 on muted/40', fg: 'fg/60', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel section header hover — fg on muted over muted/40', fg: 'fg', bgStack: ['muted'], textSize: 'small' },
-  { site: 'R7 NPanel section header chevron — fg/40 on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (▸/▾ collapse chevron). SC 1.4.3 exemption: non-text content exempt from contrast minimum. Collapse state is also reflected by aria-expanded on the button.' } },
-  { site: 'R7 NPanel NumberRow label — fg/80 on muted/40', fg: 'fg/80', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel NumberRow drag-handle — fg/60 on muted/40', fg: 'fg/60', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel NumberRow value input — fg on muted (input bg)', fg: 'fg', bgStack: ['muted'], textSize: 'small' },
-  { site: 'R7 NPanel Vec3 channel label — fg/50 on muted/40', fg: 'fg/50', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'large-only-decorative', note: 'Uppercase 10px column-header caption (X/Y/Z/W). 4.46:1 vs 4.5:1 (0.04 short). Classified as decorative section caption per SC 1.4.3 incidental-text — header is a label for the column of inputs below, each of which renders at full fg.' } },
-  { site: 'R7 NPanel Vec3 channel input — fg on muted', fg: 'fg', bgStack: ['muted'], textSize: 'small' },
-  { site: 'R7 NPanel TextRow label — fg/80 on muted/40', fg: 'fg/80', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel TextRow value — fg/60 on muted/40', fg: 'fg/60', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel ParamRow path — fg/60 on muted/40', fg: 'fg/60', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel ParamRow value — fg/80 on muted/40', fg: 'fg/80', bgStack: ['muted/40'], textSize: 'small' },
-  { site: 'R7 NPanel ParamRow unsupported — fg/40 on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: '"unsupported type" hint shown only for params that NPanel cannot render — Rule B: developer/debug affordance, no user action gated on reading it.' } },
-  { site: 'R7 NPanel ParamRow complex hint — fg/30 on muted/40', fg: 'fg/30', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'C', note: '"(complex)" suffix beside the param name — Rule C: fg/30 is decorative-only (separator glyph or tertiary hint). Param name itself is fg/60.' } },
+  {
+    site: 'R7 NPanel header — fg/70 on muted/40',
+    fg: 'fg/70',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel empty state — fg/40 on muted/40',
+    fg: 'fg/40',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: 'Empty-state message shown only when no node is selected — Rule B: informational hint, no actions gated on it. Selection ANY node restores full chrome.',
+    },
+  },
+  {
+    site: 'R7 NPanel node id — fg on muted/40',
+    fg: 'fg',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel node type — fg/40 on muted/40',
+    fg: 'fg/40',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: 'Node-type suffix (e.g. "MeshNode") shown beside the primary node-id at fg — Rule B: type label is grouping hint. Primary id is fg.',
+    },
+  },
+  {
+    site: 'R7 NPanel section header collapsed — fg/60 on muted/40',
+    fg: 'fg/60',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel section header hover — fg on muted over muted/40',
+    fg: 'fg',
+    bgStack: ['muted'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel section header chevron — fg/40 on muted/40',
+    fg: 'fg/40',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Pure graphical icon (▸/▾ collapse chevron). SC 1.4.3 exemption: non-text content exempt from contrast minimum. Collapse state is also reflected by aria-expanded on the button.',
+    },
+  },
+  {
+    site: 'R7 NPanel NumberRow label — fg/80 on muted/40',
+    fg: 'fg/80',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel NumberRow drag-handle — fg/60 on muted/40',
+    fg: 'fg/60',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel NumberRow value input — fg on muted (input bg)',
+    fg: 'fg',
+    bgStack: ['muted'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel Vec3 channel label — fg/50 on muted/40',
+    fg: 'fg/50',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'large-only-decorative',
+      note: 'Uppercase 10px column-header caption (X/Y/Z/W). 4.46:1 vs 4.5:1 (0.04 short). Classified as decorative section caption per SC 1.4.3 incidental-text — header is a label for the column of inputs below, each of which renders at full fg.',
+    },
+  },
+  {
+    site: 'R7 NPanel Vec3 channel input — fg on muted',
+    fg: 'fg',
+    bgStack: ['muted'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel TextRow label — fg/80 on muted/40',
+    fg: 'fg/80',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel TextRow value — fg/60 on muted/40',
+    fg: 'fg/60',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel ParamRow path — fg/60 on muted/40',
+    fg: 'fg/60',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel ParamRow value — fg/80 on muted/40',
+    fg: 'fg/80',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+  },
+  {
+    site: 'R7 NPanel ParamRow unsupported — fg/40 on muted/40',
+    fg: 'fg/40',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: '"unsupported type" hint shown only for params that NPanel cannot render — Rule B: developer/debug affordance, no user action gated on reading it.',
+    },
+  },
+  {
+    site: 'R7 NPanel ParamRow complex hint — fg/30 on muted/40',
+    fg: 'fg/30',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'C',
+      note: '"(complex)" suffix beside the param name — Rule C: fg/30 is decorative-only (separator glyph or tertiary hint). Param name itself is fg/60.',
+    },
+  },
   // P7 C2 — the 3-state keyframe diamond (◇/◆) adornment on animatable
   // ParamRow headers (D-01/D-03). Pure graphical glyph; the animation
   // state is ALSO machine-readable via data-anim-state + aria-label, so
   // SC 1.4.3 non-text exemption applies (same basis as the collapse
   // chevron above). Three color states tracked for the record.
-  { site: 'R7 NPanel keyframe diamond — none (fg/40) on muted/40', fg: 'fg/40', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (hollow ◇ "not animated" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="none" + aria-label on the button.' } },
-  { site: 'R7 NPanel keyframe diamond — animated (accent) on muted/40', fg: 'accent', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (filled ◆ "animated, off-key" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="animated" + aria-label.' } },
-  { site: 'R7 NPanel keyframe diamond — on-key (record) on muted/40', fg: 'record', bgStack: ['muted/40'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (record ◆ "current frame is a key" state, #f04a4a per UI-SPEC.md:200 §5.8). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="on-key" + aria-label.' } },
+  {
+    site: 'R7 NPanel keyframe diamond — none (fg/40) on muted/40',
+    fg: 'fg/40',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Pure graphical icon (hollow ◇ "not animated" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="none" + aria-label on the button.',
+    },
+  },
+  {
+    site: 'R7 NPanel keyframe diamond — animated (accent) on muted/40',
+    fg: 'accent',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Pure graphical icon (filled ◆ "animated, off-key" state). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="animated" + aria-label.',
+    },
+  },
+  {
+    site: 'R7 NPanel keyframe diamond — on-key (record) on muted/40',
+    fg: 'record',
+    bgStack: ['muted/40'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Pure graphical icon (record ◆ "current frame is a key" state, #f04a4a per UI-SPEC.md:200 §5.8). SC 1.4.3 exemption: non-text content. State also exposed via data-anim-state="on-key" + aria-label.',
+    },
+  },
 
   // ─── R8 FloatingViewportToolbar (src/app/FloatingViewportToolbar.tsx) ─
   // L175 container bg-bg-2/90 over viewport-as-page-bg per D-W8-1;
@@ -304,13 +652,48 @@ const ROWS: Row[] = [
   // fg-dim; L236 frame input border-border bg-bg text-fg.
   // D-W8-1 known limitation: bright-scene readability over GL canvas
   // not audited.
-  { site: 'R8 FloatingToolbar container — fg on bg-2/90 (D-W8-1 vs bg only)', fg: 'fg', bgStack: ['bg-2/90'], textSize: 'small' },
-  { site: 'R8 FloatingToolbar tool active — accent on bg-1 over bg-2/90', fg: 'accent', bgStack: ['bg-1', 'bg-2/90'], textSize: 'ui' },
-  { site: 'R8 FloatingToolbar tool idle — fg-dim on bg-2/90', fg: 'fg-dim', bgStack: ['bg-2/90'], textSize: 'ui' },
-  { site: 'R8 FloatingToolbar tool hover — fg on bg-1 over bg-2/90', fg: 'fg', bgStack: ['bg-1', 'bg-2/90'], textSize: 'ui' },
-  { site: 'R8 FloatingToolbar shading active — accent on accent/25 over bg-2/90', fg: 'accent', bgStack: ['accent/25', 'bg-2/90'], textSize: 'small' },
-  { site: 'R8 FloatingToolbar shading idle — fg-dim on bg-2/90', fg: 'fg-dim', bgStack: ['bg-2/90'], textSize: 'small' },
-  { site: 'R8 FloatingToolbar frame input — fg on bg', fg: 'fg', bgStack: ['bg'], textSize: 'small' },
+  {
+    site: 'R8 FloatingToolbar container — fg on bg-2/90 (D-W8-1 vs bg only)',
+    fg: 'fg',
+    bgStack: ['bg-2/90'],
+    textSize: 'small',
+  },
+  {
+    site: 'R8 FloatingToolbar tool active — accent on bg-1 over bg-2/90',
+    fg: 'accent',
+    bgStack: ['bg-1', 'bg-2/90'],
+    textSize: 'ui',
+  },
+  {
+    site: 'R8 FloatingToolbar tool idle — fg-dim on bg-2/90',
+    fg: 'fg-dim',
+    bgStack: ['bg-2/90'],
+    textSize: 'ui',
+  },
+  {
+    site: 'R8 FloatingToolbar tool hover — fg on bg-1 over bg-2/90',
+    fg: 'fg',
+    bgStack: ['bg-1', 'bg-2/90'],
+    textSize: 'ui',
+  },
+  {
+    site: 'R8 FloatingToolbar shading active — accent on accent/25 over bg-2/90',
+    fg: 'accent',
+    bgStack: ['accent/25', 'bg-2/90'],
+    textSize: 'small',
+  },
+  {
+    site: 'R8 FloatingToolbar shading idle — fg-dim on bg-2/90',
+    fg: 'fg-dim',
+    bgStack: ['bg-2/90'],
+    textSize: 'small',
+  },
+  {
+    site: 'R8 FloatingToolbar frame input — fg on bg',
+    fg: 'fg',
+    bgStack: ['bg'],
+    textSize: 'small',
+  },
 
   // ─── R9 TimelineDrawer (src/timeline/TimelineDrawer.tsx) ─────────────
   // L96 toggle bg-bg-2 text-fg; L123/L218 tab strip bg-bg-2; L168/L169
@@ -319,7 +702,12 @@ const ROWS: Row[] = [
   // see WHITELIST below — treated as inherited text color from container.
   { site: 'R9 TimelineDrawer toggle — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
   { site: 'R9 TimelineDrawer tab active — fg on bg', fg: 'fg', bgStack: ['bg'], textSize: 'small' },
-  { site: 'R9 TimelineDrawer dock-btn active — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
+  {
+    site: 'R9 TimelineDrawer dock-btn active — fg on bg-2',
+    fg: 'fg',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
 
   // ─── R9 TimelineCanvas (src/timeline/TimelineCanvas.tsx) ────────────
   // P6 W9: the SVG Dopesheet was replaced by an imperatively-painted
@@ -339,47 +727,136 @@ const ROWS: Row[] = [
   // ─── ModeBadge (src/viewport/ModeBadge.tsx) ─────────────────────────
   // L63 bg-bg-2/90 + text-fg-dim + border-border-strong + uppercase
   // text-[10px]. D-W8-1 known limitation: actually sits over GL canvas.
-  { site: 'ModeBadge — fg-dim on bg-2/90 (D-W8-1 vs bg only)', fg: 'fg-dim', bgStack: ['bg-2/90'], textSize: 'small' },
+  {
+    site: 'ModeBadge — fg-dim on bg-2/90 (D-W8-1 vs bg only)',
+    fg: 'fg-dim',
+    bgStack: ['bg-2/90'],
+    textSize: 'small',
+  },
 
   // ─── ComfyStatusIndicator (src/app/ComfyStatusIndicator.tsx) ────────
   // Three status colors: connected = bg-accent text-bg, idle = bg-bg-1
   // text-fg-mute, error/warn = bg-warn/30 text-warn.
-  { site: 'ComfyStatus connected — bg on accent', fg: 'bg', bgStack: ['accent'], textSize: 'small' },
-  { site: 'ComfyStatus idle — fg-mute on bg-1', fg: 'fg-mute', bgStack: ['bg-1'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Decorative status indicator pill (idle state — Comfy backend not connected). State is also conveyed by aria-label + the green/red/grey dot color independent of label contrast.' } },
-  { site: 'ComfyStatus warn — warn on warn/30', fg: 'warn', bgStack: ['warn/30'], textSize: 'small' },
+  {
+    site: 'ComfyStatus connected — bg on accent',
+    fg: 'bg',
+    bgStack: ['accent'],
+    textSize: 'small',
+  },
+  {
+    site: 'ComfyStatus idle — fg-mute on bg-1',
+    fg: 'fg-mute',
+    bgStack: ['bg-1'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Decorative status indicator pill (idle state — Comfy backend not connected). State is also conveyed by aria-label + the green/red/grey dot color independent of label contrast.',
+    },
+  },
+  {
+    site: 'ComfyStatus warn — warn on warn/30',
+    fg: 'warn',
+    bgStack: ['warn/30'],
+    textSize: 'small',
+  },
 
   // ─── AssetsPopover (src/app/AssetsPopover.tsx) ──────────────────────
   // L110 panel bg-bg-2/95; L113 header fg-dim; L131 entry bg-bg-1/40 +
   // border-border; L133 entry available text-fg/90, hover bg-1;
   // L134/L144 unavailable text-fg-mute.
-  { site: 'AssetsPopover header — fg-dim on bg-2/95', fg: 'fg-dim', bgStack: ['bg-2/95'], textSize: 'small' },
-  { site: 'AssetsPopover entry available — fg/90 on bg-1/40 over bg-2/95', fg: 'fg/90', bgStack: ['bg-1/40', 'bg-2/95'], textSize: 'small' },
-  { site: 'AssetsPopover entry hover — fg/90 on bg-1 over bg-2/95', fg: 'fg/90', bgStack: ['bg-1', 'bg-2/95'], textSize: 'small' },
-  { site: 'AssetsPopover entry unavailable — fg-mute on bg-1/40 over bg-2/95', fg: 'fg-mute', bgStack: ['bg-1/40', 'bg-2/95'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Disabled menu item (asset listed but not yet loaded/available) — WCAG 2.1 SC 1.4.3 exempts inactive UI components.' } },
+  {
+    site: 'AssetsPopover header — fg-dim on bg-2/95',
+    fg: 'fg-dim',
+    bgStack: ['bg-2/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'AssetsPopover entry available — fg/90 on bg-1/40 over bg-2/95',
+    fg: 'fg/90',
+    bgStack: ['bg-1/40', 'bg-2/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'AssetsPopover entry hover — fg/90 on bg-1 over bg-2/95',
+    fg: 'fg/90',
+    bgStack: ['bg-1', 'bg-2/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'AssetsPopover entry unavailable — fg-mute on bg-1/40 over bg-2/95',
+    fg: 'fg-mute',
+    bgStack: ['bg-1/40', 'bg-2/95'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Disabled menu item (asset listed but not yet loaded/available) — WCAG 2.1 SC 1.4.3 exempts inactive UI components.',
+    },
+  },
 
   // ─── AddMenu (src/app/AddMenu.tsx) ──────────────────────────────────
   // L119 panel bg-bg/95; L122 header fg/50; L137 group active = bg-muted
   // text-accent, idle = fg/80; L141 chevron fg/40; L146 submenu bg-bg.
   { site: 'AddMenu panel — fg on bg/95', fg: 'fg', bgStack: ['bg/95'], textSize: 'small' },
-  { site: 'AddMenu header — fg/50 on bg/95', fg: 'fg/50', bgStack: ['bg/95'], textSize: 'small',
-    exempt: { kind: 'large-only-decorative', note: 'Uppercase 10px caption section header ("MESH", "LIGHT", etc.). 4.45:1 vs 4.5:1 (0.05 short). Classified as decorative section caption per SC 1.4.3 incidental-text — header groups the menu items below, each rendered at fg/80.' } },
-  { site: 'AddMenu group active — accent on muted over bg/95', fg: 'accent', bgStack: ['muted', 'bg/95'], textSize: 'small' },
-  { site: 'AddMenu group idle — fg/80 on bg/95', fg: 'fg/80', bgStack: ['bg/95'], textSize: 'small' },
-  { site: 'AddMenu group chevron — fg/40 on bg/95', fg: 'fg/40', bgStack: ['bg/95'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Pure graphical icon (▸ submenu chevron). SC 1.4.3 exemption: non-text content. Submenu state is reflected by aria-haspopup + aria-expanded.' } },
+  {
+    site: 'AddMenu header — fg/50 on bg/95',
+    fg: 'fg/50',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+    exempt: {
+      kind: 'large-only-decorative',
+      note: 'Uppercase 10px caption section header ("MESH", "LIGHT", etc.). 4.45:1 vs 4.5:1 (0.05 short). Classified as decorative section caption per SC 1.4.3 incidental-text — header groups the menu items below, each rendered at fg/80.',
+    },
+  },
+  {
+    site: 'AddMenu group active — accent on muted over bg/95',
+    fg: 'accent',
+    bgStack: ['muted', 'bg/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'AddMenu group idle — fg/80 on bg/95',
+    fg: 'fg/80',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+  },
+  {
+    site: 'AddMenu group chevron — fg/40 on bg/95',
+    fg: 'fg/40',
+    bgStack: ['bg/95'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Pure graphical icon (▸ submenu chevron). SC 1.4.3 exemption: non-text content. Submenu state is reflected by aria-haspopup + aria-expanded.',
+    },
+  },
   { site: 'AddMenu submenu item — fg/80 on bg', fg: 'fg/80', bgStack: [], textSize: 'small' },
 
   // ─── Chrome status bar (src/app/Chrome.tsx) ─────────────────────────
   // L29 bg-bg + text-fg; L32 brand accent; L33 separator fg/30; L34
   // project name fg/80; L49 save status fg/40.
   { site: 'Chrome brand — accent on bg', fg: 'accent', bgStack: [], textSize: 'small' },
-  { site: 'Chrome separator — fg/30 on bg', fg: 'fg/30', bgStack: [], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Decorative "/" glyph separating brand and project name. SC 1.4.3 exemption: pure decoration — no semantic content; the brand+project pair is the readable unit.' } },
+  {
+    site: 'Chrome separator — fg/30 on bg',
+    fg: 'fg/30',
+    bgStack: [],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Decorative "/" glyph separating brand and project name. SC 1.4.3 exemption: pure decoration — no semantic content; the brand+project pair is the readable unit.',
+    },
+  },
   { site: 'Chrome project name — fg/80 on bg', fg: 'fg/80', bgStack: [], textSize: 'small' },
-  { site: 'Chrome save status — fg/40 on bg', fg: 'fg/40', bgStack: [], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: '"Saved 2m ago" timestamp shown after the save status icon — Rule B: timestamp is decorative; the save STATE (saved/dirty) is conveyed by the bullet color + project-name dirty-marker at full fg.' } },
+  {
+    site: 'Chrome save status — fg/40 on bg',
+    fg: 'fg/40',
+    bgStack: [],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: '"Saved 2m ago" timestamp shown after the save status icon — Rule B: timestamp is decorative; the save STATE (saved/dirty) is conveyed by the bullet color + project-name dirty-marker at full fg.',
+    },
+  },
 
   // ─── Timebar (src/app/Timebar.tsx) ──────────────────────────────────
   // L18 bar bg-muted/30 + text-fg/70.
@@ -390,28 +867,75 @@ const ROWS: Row[] = [
   // text-warn; L152 confirm bg-accent text-bg.
   { site: 'SimplifyPopover panel — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
   { site: 'SimplifyPopover input — fg on bg', fg: 'fg', bgStack: [], textSize: 'small' },
-  { site: 'SimplifyPopover error — warn on bg-2', fg: 'warn', bgStack: ['bg-2'], textSize: 'small' },
-  { site: 'SimplifyPopover confirm — bg on accent', fg: 'bg', bgStack: ['accent'], textSize: 'small' },
-  { site: 'SimplifyPopover confirm hover — bg on accent-dim', fg: 'bg', bgStack: ['accent-dim'], textSize: 'small' },
+  {
+    site: 'SimplifyPopover error — warn on bg-2',
+    fg: 'warn',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'SimplifyPopover confirm — bg on accent',
+    fg: 'bg',
+    bgStack: ['accent'],
+    textSize: 'small',
+  },
+  {
+    site: 'SimplifyPopover confirm hover — bg on accent-dim',
+    fg: 'bg',
+    bgStack: ['accent-dim'],
+    textSize: 'small',
+  },
 
   // ─── AgentChat (src/app/AgentChat.tsx) ──────────────────────────────
   // R-side drawer. L146 message body text-fg/85 on muted (the bordered
   // chat bubble bg); L143 timestamp fg/40; L162/L166 status footer
   // fg/40 + fg/30; L183 textarea text-fg on muted placeholder fg/30;
   // L200 send button bg-muted text-fg/80 hover→accent.
-  { site: 'AgentChat message body — fg/85 on muted', fg: 'fg/85', bgStack: ['muted'], textSize: 'small' },
-  { site: 'AgentChat timestamp — fg/40 on muted', fg: 'fg/40', bgStack: ['muted'], textSize: 'small',
-    exempt: { kind: 'rule', rule: 'B', note: 'Message timestamp shown after the message body — Rule B: temporal grouping hint; message body itself is fg/85.' } },
+  {
+    site: 'AgentChat message body — fg/85 on muted',
+    fg: 'fg/85',
+    bgStack: ['muted'],
+    textSize: 'small',
+  },
+  {
+    site: 'AgentChat timestamp — fg/40 on muted',
+    fg: 'fg/40',
+    bgStack: ['muted'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'B',
+      note: 'Message timestamp shown after the message body — Rule B: temporal grouping hint; message body itself is fg/85.',
+    },
+  },
   { site: 'AgentChat textarea — fg on muted', fg: 'fg', bgStack: ['muted'], textSize: 'small' },
-  { site: 'AgentChat textarea placeholder — fg/30 on muted', fg: 'fg/30', bgStack: ['muted'], textSize: 'small',
-    exempt: { kind: 'sc-1.4.3', note: 'Placeholder text in an input — WCAG 2.1 SC 1.4.3 exempts placeholders when the input itself is contrast-compliant (textarea uses fg, audited PASS above).' } },
+  {
+    site: 'AgentChat textarea placeholder — fg/30 on muted',
+    fg: 'fg/30',
+    bgStack: ['muted'],
+    textSize: 'small',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Placeholder text in an input — WCAG 2.1 SC 1.4.3 exempts placeholders when the input itself is contrast-compliant (textarea uses fg, audited PASS above).',
+    },
+  },
 
   // ─── LayerRowControls (src/app/timeline/LayerRowControls.tsx) ───────
   // L37 mute toggle active = bg-warn text-bg (loud); L47 solo toggle
   // active = bg-accent text-bg. text-mute on inactive is undefined and
   // whitelisted (inherits ambient).
-  { site: 'LayerRowControls mute active — bg on warn', fg: 'bg', bgStack: ['warn'], textSize: 'ui' },
-  { site: 'LayerRowControls solo active — bg on accent', fg: 'bg', bgStack: ['accent'], textSize: 'ui' },
+  {
+    site: 'LayerRowControls mute active — bg on warn',
+    fg: 'bg',
+    bgStack: ['warn'],
+    textSize: 'ui',
+  },
+  {
+    site: 'LayerRowControls solo active — bg on accent',
+    fg: 'bg',
+    bgStack: ['accent'],
+    textSize: 'ui',
+  },
 ];
 
 // ─── WHITELIST (intentionally-skipped patterns) ─────────────────────────
@@ -435,26 +959,53 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   // OR rewrite the call sites). The visible contrast in production is
   // whatever the parent container's text-fg setting yields, so the
   // matrix-relevant pair is already covered by the parent surface row.
-  { pattern: /\btext-mute\b/, why: 'undefined token; inherits container fg (cleanup: alias to fg-dim in C2)' },
+  {
+    pattern: /\btext-mute\b/,
+    why: 'undefined token; inherits container fg (cleanup: alias to fg-dim in C2)',
+  },
   { pattern: /\btext-line\b/, why: 'undefined token; inherits container fg (cleanup in C2)' },
   { pattern: /\bbg-line\b/, why: 'undefined token; resolves to nothing (cleanup in C2)' },
-  { pattern: /\bborder-line\b/, why: 'undefined token; resolves to default border (cleanup in C2)' },
+  {
+    pattern: /\bborder-line\b/,
+    why: 'undefined token; resolves to default border (cleanup in C2)',
+  },
   // Tailwind-default red/yellow/black used as raw-state colors in boot
   // error and Comfy status — third-party palette, audited as-published
   // by Tailwind. Not part of the design-token system.
   { pattern: /\btext-red-(\d+)\b/, why: 'Tailwind-default red (error chrome); not a design token' },
-  { pattern: /\bbg-red-(\d+)(\/\d+)?\b/, why: 'Tailwind-default red (error chrome); not a design token' },
-  { pattern: /\bborder-red-(\d+)(\/\d+)?\b/, why: 'Tailwind-default red (error chrome); not a design token' },
-  { pattern: /\btext-yellow-(\d+)\b/, why: 'Tailwind-default yellow (warn chrome); not a design token' },
-  { pattern: /\bbg-yellow-(\d+)(\/\d+)?\b/, why: 'Tailwind-default yellow (warn chrome); not a design token' },
-  { pattern: /\bborder-yellow-(\d+)(\/\d+)?\b/, why: 'Tailwind-default yellow (warn chrome); not a design token' },
-  { pattern: /\bbg-black(\/\d+)?\b/, why: 'Tailwind-default black (cost-preview placeholder); not a design token' },
+  {
+    pattern: /\bbg-red-(\d+)(\/\d+)?\b/,
+    why: 'Tailwind-default red (error chrome); not a design token',
+  },
+  {
+    pattern: /\bborder-red-(\d+)(\/\d+)?\b/,
+    why: 'Tailwind-default red (error chrome); not a design token',
+  },
+  {
+    pattern: /\btext-yellow-(\d+)\b/,
+    why: 'Tailwind-default yellow (warn chrome); not a design token',
+  },
+  {
+    pattern: /\bbg-yellow-(\d+)(\/\d+)?\b/,
+    why: 'Tailwind-default yellow (warn chrome); not a design token',
+  },
+  {
+    pattern: /\bborder-yellow-(\d+)(\/\d+)?\b/,
+    why: 'Tailwind-default yellow (warn chrome); not a design token',
+  },
+  {
+    pattern: /\bbg-black(\/\d+)?\b/,
+    why: 'Tailwind-default black (cost-preview placeholder); not a design token',
+  },
   // bg-fg: the SVG Dopesheet's keyframe-marker token. P6 W9 replaced
   // that surface with TimelineCanvas (imperative 2D paint, no Tailwind
   // tokens — see the dedicated palette-contrast `it()` block). The class
   // no longer appears in src/timeline; kept whitelisted so any future
   // re-introduction elsewhere is still a non-text decoration, not a gap.
-  { pattern: /\bbg-fg\b/, why: 'Legacy keyframe-marker token; W9 canvas surface emits no Tailwind. Non-text decoration if re-used' },
+  {
+    pattern: /\bbg-fg\b/,
+    why: 'Legacy keyframe-marker token; W9 canvas surface emits no Tailwind. Non-text decoration if re-used',
+  },
   // P7 D2 Auto-Key (record) indicator decoration (src/app/Timebar.tsx):
   //   bg-record    — the 8px record DOT (no text on it; pure shape).
   //   bg-record/15 — the armed-mode header TINT; the text rendered over it
@@ -468,7 +1019,10 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   // All three are non-text decoration realizing the already-specced §5.8
   // Animate "Record" affordance (UI-SPEC D-UX-14) — same posture as the
   // bg-accent/10 / bg-fg whitelist precedents above.
-  { pattern: /\bbg-record(\/\d+)?\b/, why: 'P7 Auto-Key record dot + armed-header/toggle tint; non-text decoration (text over it is the audited text-fg/80 / text-record pair). UI-SPEC D-UX-14' },
+  {
+    pattern: /\bbg-record(\/\d+)?\b/,
+    why: 'P7 Auto-Key record dot + armed-header/toggle tint; non-text decoration (text over it is the audited text-fg/80 / text-record pair). UI-SPEC D-UX-14',
+  },
   // bg-accent/10: the SVG Dopesheet's active-channel row tint. P6 W9's
   // TimelineCanvas paints that tint imperatively (PALETTE.ACTIVE_DIAMOND
   // at globalAlpha 0.1 — see paintStaticLayer) with NO Tailwind class;
@@ -477,7 +1031,10 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   // it surfaces the comment; whitelisted because the active-channel
   // contrast is covered by the dedicated PALETTE-vs-CANVAS_BG `it()`
   // block (ACTIVE_DIAMOND clears AA), not a Tailwind (fg,bg) pair.
-  { pattern: /\bbg-accent\/10\b/, why: 'W9 TimelineCanvas active-row tint is an imperative globalAlpha paint, not a class; comment-only textual hit. Contrast covered by the PALETTE-vs-CANVAS_BG assertion' },
+  {
+    pattern: /\bbg-accent\/10\b/,
+    why: 'W9 TimelineCanvas active-row tint is an imperative globalAlpha paint, not a class; comment-only textual hit. Contrast covered by the PALETTE-vs-CANVAS_BG assertion',
+  },
   // bg-border is a 1px divider line (MenuBar item separator, R8 vertical
   // divider, R4 group separators) — pure decoration, no text. Contrast
   // here is "is the line visible against its container" which is a
@@ -485,25 +1042,40 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
   // = 1.45:1 — fails 3:1 — but this is the SAME problem as border-border
   // (the actual border-token usage); flag once at the token level if at
   // all. v0.5: dividers are intentionally subtle; defer to C2 judgement.
-  { pattern: /\bbg-border\b/, why: 'Decorative 1px divider line; non-text. Same hex as border-border; v0.5 keeps subtle dividers' },
+  {
+    pattern: /\bbg-border\b/,
+    why: 'Decorative 1px divider line; non-text. Same hex as border-border; v0.5 keeps subtle dividers',
+  },
   // bg-accent/5 = AssetDropZone hover-overlay glow (4.6% opacity green
   // tint over viewport). Decorative drop affordance; no text on this
   // surface. Visible via border-2 border-dashed border-accent at full
   // opacity, which IS audited (border edge is the affordance).
-  { pattern: /\bbg-accent\/5\b/, why: 'AssetDropZone hover glow; non-text decoration paired with full-opacity dashed border' },
+  {
+    pattern: /\bbg-accent\/5\b/,
+    why: 'AssetDropZone hover glow; non-text decoration paired with full-opacity dashed border',
+  },
   // bg-warn standalone (no /N) is the 1.5×1.5 dirty-dot indicator on
   // ProjectTabs L187 (pure shape, aria-hidden) and the loud
   // LayerRowControls mute toggle (covered as 'LayerRowControls mute
   // active' ROW). The standalone unmodified class itself doesn't carry
   // text — text-bg pairings are captured by the explicit ROWS above.
-  { pattern: /\bbg-warn\b/, why: 'Either the aria-hidden dirty-dot (non-text) or covered by explicit ROW for text-bg pairing' },
+  {
+    pattern: /\bbg-warn\b/,
+    why: 'Either the aria-hidden dirty-dot (non-text) or covered by explicit ROW for text-bg pairing',
+  },
   // bg-muted/20 is SceneTree container surface (covered by explicit
   // R5 SceneTree ROWS above) and ProjectsMenu row hover state
   // (covered as ProjectsMenu hover entry).
-  { pattern: /\bbg-muted\/20\b/, why: 'SceneTree panel surface + ProjectsMenu row-hover; covered by parent-surface ROWS' },
+  {
+    pattern: /\bbg-muted\/20\b/,
+    why: 'SceneTree panel surface + ProjectsMenu row-hover; covered by parent-surface ROWS',
+  },
   // bg-accent-dim variant used only on SimplifyPopover confirm hover —
   // covered by explicit ROW 'SimplifyPopover confirm hover'.
-  { pattern: /\bbg-accent-dim\b/, why: 'SimplifyPopover confirm hover state; covered by explicit ROW' },
+  {
+    pattern: /\bbg-accent-dim\b/,
+    why: 'SimplifyPopover confirm hover state; covered by explicit ROW',
+  },
   // bg-transparent / border-transparent are by design.
   { pattern: /\bbg-transparent\b/, why: 'Intentional transparency' },
   { pattern: /\bborder-transparent\b/, why: 'Intentional transparency' },
@@ -573,14 +1145,12 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
   if (process.env.VERBOSE === '1') {
     // Markdown-ready table; the format pastes directly into UI-SPEC §8.4.
     const lines: string[] = [];
-    lines.push('| Site | fg | bg-stack | composited bg | text-size | required | actual | verdict |');
+    lines.push(
+      '| Site | fg | bg-stack | composited bg | text-size | required | actual | verdict |',
+    );
     lines.push('|---|---|---|---|---|---|---|---|');
     for (const v of verdicts) {
-      const verdict = v.pass
-        ? 'PASS'
-        : v.row.exempt
-          ? exemptLabel(v.row.exempt)
-          : 'FAIL';
+      const verdict = v.pass ? 'PASS' : v.row.exempt ? exemptLabel(v.row.exempt) : 'FAIL';
       lines.push(
         `| ${v.row.site} | \`${v.row.fg}\` | \`${v.row.bgStack.join(' over ') || '(none, opaque bg)'}\` | ${v.bgHex} | ${v.row.textSize} | ${v.required}:1 | ${v.ratio.toFixed(2)}:1 | ${verdict} |`,
       );
@@ -631,7 +1201,8 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
     const byKind = {
       rule: exempt.filter((v) => v.row.exempt!.kind === 'rule').length,
       'sc-1.4.3': exempt.filter((v) => v.row.exempt!.kind === 'sc-1.4.3').length,
-      'large-only-decorative': exempt.filter((v) => v.row.exempt!.kind === 'large-only-decorative').length,
+      'large-only-decorative': exempt.filter((v) => v.row.exempt!.kind === 'large-only-decorative')
+        .length,
     };
     expect(byKind.rule + byKind['sc-1.4.3'] + byKind['large-only-decorative']).toBe(exempt.length);
   });
@@ -682,8 +1253,7 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
         `TimelineCanvas PALETTE vs CANVAS_BG (${bg}) — ${failures.length} mark(s) below AA:\n` +
           failures
             .map(
-              (f) =>
-                `  ${f.name} (${f.fg}) = ${f.ratio.toFixed(2)}:1 vs required ${f.required}:1`,
+              (f) => `  ${f.name} (${f.fg}) = ${f.ratio.toFixed(2)}:1 vs required ${f.required}:1`,
             )
             .join('\n'),
       );
@@ -785,7 +1355,10 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
     for (const tok of focusStateUsed.keys()) {
       const tokenKey = BORDER_FOCUS_STATE[tok];
       const borderRgb = TOKEN[tokenKey];
-      expect(borderRgb, `BORDER_FOCUS_STATE token "${tok}" → "${tokenKey}" must resolve in TOKEN`).toBeTruthy();
+      expect(
+        borderRgb,
+        `BORDER_FOCUS_STATE token "${tok}" → "${tokenKey}" must resolve in TOKEN`,
+      ).toBeTruthy();
       for (const surf of OPAQUE_SURFACES) {
         const ratio = contrastRatio(borderRgb, surf.rgb);
         if (ratio < REQUIRED) {
@@ -863,7 +1436,8 @@ function walkTsx(dir: string, out: string[] = []): string[] {
 // documented limit (not a code change) per F3's "OR document the
 // constraint" option — extending the regex without modelling
 // per-breakpoint backgrounds would give false coverage confidence.
-const CLASS_RE = /\b((?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)?(?:text|bg|border)-[A-Za-z][\w-]*(?:\/\d{1,3})?)\b/g;
+const CLASS_RE =
+  /\b((?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)?(?:text|bg|border)-[A-Za-z][\w-]*(?:\/\d{1,3})?)\b/g;
 
 // Tailwind text-* classes that are SIZE or ALIGNMENT modifiers, not color.
 // These are part of typography/layout, not the contrast audit. Filtered
@@ -906,7 +1480,10 @@ const TYPO_LAYOUT_CLASSES = new Set([
 // `hover:text-mute` is whitelisted because `text-mute` matches).
 function classCovered(cls: string, rowTokensFg: Set<string>, rowTokensBg: Set<string>): boolean {
   // Strip variant prefix for token matching.
-  const bare = cls.replace(/^(?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)/, '');
+  const bare = cls.replace(
+    /^(?:hover:|focus:|focus-visible:|active:|disabled:|group-hover:|placeholder:)/,
+    '',
+  );
   // Size/alignment classes are not contrast-relevant.
   if (TYPO_LAYOUT_CLASSES.has(bare)) return true;
   if (WHITELIST.some((w) => w.pattern.test(bare))) return true;
@@ -1051,9 +1628,7 @@ describe('contrast matrix — token source drift gates', () => {
   // here fails CI instead of silently making the audit measure stale
   // colors.
   it('F2: every TOKEN entry matches tailwind.config.ts colors (no hand-sync drift)', () => {
-    const colors = (
-      tailwindConfig.theme?.extend?.colors ?? {}
-    ) as Record<string, unknown>;
+    const colors = (tailwindConfig.theme?.extend?.colors ?? {}) as Record<string, unknown>;
 
     // Flatten the config color map to the same `name → #hex` shape the
     // TOKEN table uses. Tailwind nests `accent: { DEFAULT, dim }` →

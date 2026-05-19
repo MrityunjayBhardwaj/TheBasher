@@ -156,9 +156,7 @@ describe('viewportStore — currentFrameRef escape hatch', () => {
 
   it('sync invariant holds after setTime', () => {
     useTimeStore.getState().setTime(2.5);
-    expect(useViewportStore.getState().currentFrameRef.current).toBe(
-      useTimeStore.getState().frame,
-    );
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(useTimeStore.getState().frame);
     // 2.5s * 60fps = frame 150 (sanity on the actual value, not just equality).
     expect(useViewportStore.getState().currentFrameRef.current).toBe(150);
   });
@@ -166,18 +164,14 @@ describe('viewportStore — currentFrameRef escape hatch', () => {
   it('sync invariant holds after tick() while playing', () => {
     useTimeStore.getState().play();
     useTimeStore.getState().tick(0.1);
-    expect(useViewportStore.getState().currentFrameRef.current).toBe(
-      useTimeStore.getState().frame,
-    );
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(useTimeStore.getState().frame);
     expect(useTimeStore.getState().frame).toBeGreaterThan(0);
   });
 
   it('sync invariant holds after setDuration', () => {
     useTimeStore.getState().setTime(8);
     useTimeStore.getState().setDuration(5); // clamps seconds 8 → 5
-    expect(useViewportStore.getState().currentFrameRef.current).toBe(
-      useTimeStore.getState().frame,
-    );
+    expect(useViewportStore.getState().currentFrameRef.current).toBe(useTimeStore.getState().frame);
     // 5s * 60fps = frame 300 after the duration clamp.
     expect(useViewportStore.getState().currentFrameRef.current).toBe(300);
   });

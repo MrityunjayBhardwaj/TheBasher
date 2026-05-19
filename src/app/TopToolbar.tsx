@@ -166,9 +166,7 @@ function ModePill(): ReactNode {
             data-testid={`top-toolbar-mode-${m.value}`}
             title={`${m.label} (${m.key})`}
             className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              active
-                ? 'bg-accent text-bg'
-                : 'text-fg-dim hover:bg-muted hover:text-fg'
+              active ? 'bg-accent text-bg' : 'text-fg-dim hover:bg-muted hover:text-fg'
             }`}
           >
             <span aria-hidden>{m.icon}</span>

@@ -64,9 +64,13 @@ function shapeOk(valueType: ValueType, value: unknown): boolean {
     case 'number':
       return typeof value === 'number';
     case 'vec3':
-      return Array.isArray(value) && value.length === 3 && value.every((x) => typeof x === 'number');
+      return (
+        Array.isArray(value) && value.length === 3 && value.every((x) => typeof x === 'number')
+      );
     case 'quat':
-      return Array.isArray(value) && value.length === 4 && value.every((x) => typeof x === 'number');
+      return (
+        Array.isArray(value) && value.length === 4 && value.every((x) => typeof x === 'number')
+      );
     case 'color':
       return typeof value === 'string';
   }
@@ -76,7 +80,7 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
   name: 'mutator.timeline.addChannel',
   description:
     'Create a KeyframeChannel<T> driving (target, paramPath) and wire it ' +
-    'into the named AnimationLayer\'s animation socket. valueType picks ' +
+    "into the named AnimationLayer's animation socket. valueType picks " +
     'the concrete channel node type. Optional initialKeyframe seeds the ' +
     'first sample. Returns deterministic channelId so subsequent ' +
     'mutator.timeline.keyframe calls can reference it directly.',

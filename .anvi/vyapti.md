@@ -120,9 +120,10 @@ a free-mixing walk that would leak siblings under a shared parent.
 `src/agent/diff/store.ts:95` (gate); `src/agent/mutators/validate.ts:1`
 (gate 3); `src/agent/orchestrator.ts` (`inferClosureSpec`,
 `mutatorClosureSpec` precedence). Twice-call determinism + cycle-safety
-+ maxDepth tested in `src/agent/closure/expand.test.ts`. Integration
-proven by `src/agent/diff/diff.test.ts` ("propose with closure rejects
-out-of-closure ops").
+
+- maxDepth tested in `src/agent/closure/expand.test.ts`. Integration
+  proven by `src/agent/diff/diff.test.ts` ("propose with closure rejects
+  out-of-closure ops").
 
 **Why it matters:** without this gate, ops from fuzzy LLM output land
 on the wrong node and the user only catches it visually after accept.
@@ -167,6 +168,7 @@ don't lie in the contract.
 **Enforcement (review-layer, semantic):** the mechanical test catches
 contract clones but not deeper semantic redundancy (two Mutators emit
 the same Op-shape on a probe scene). Code review still applies:
+
 - Could `setBoxColor` be folded into the existing
   `mutator.setMaterialColor` by widening its precondition? Yes →
   reject the new entry.
@@ -319,10 +321,10 @@ Lokayata-on-bug.
 ### V18: Every persisted UI store guards localStorage with safeGet/safeSet wrappers
 
 **Span:** every zustand store under `src/app/stores/` that reads or writes `localStorage` at module-load OR via store actions — currently `chromeStore`, `modeStore`. Future stores (`leftSidebarStore`, etc.) inherit.
-**Enforcement:** each persisted store defines local `safeGetItem(key)` / `safeSetItem(key, val)` helpers that check for *callable* method bindings (`typeof localStorage?.getItem !== 'function'`) wrapped in try/catch. Direct `localStorage.getItem(...)` / `setItem(...)` calls in `src/app/stores/*.ts` are rejected at code review. The wrapper is intra-store (not extracted to a shared util) because each store's failure semantics are subtly different — corrupted JSON falls back to defaults, quota errors silently swallow on write, etc.
+**Enforcement:** each persisted store defines local `safeGetItem(key)` / `safeSetItem(key, val)` helpers that check for _callable_ method bindings (`typeof localStorage?.getItem !== 'function'`) wrapped in try/catch. Direct `localStorage.getItem(...)` / `setItem(...)` calls in `src/app/stores/*.ts` are rejected at code review. The wrapper is intra-store (not extracted to a shared util) because each store's failure semantics are subtly different — corrupted JSON falls back to defaults, quota errors silently swallow on write, etc.
 **Status:** ALIGNED (P6 W2 — both stores carry the wrappers). `chromeStore.ts:42–59` was authored with the wrappers; `modeStore.ts:25–43` was retrofitted in W2 commit `8b70ac8` after `ComfyStatusIndicator`'s test pulled modeStore in earlier than W1's tests had and tripped the H26 path.
 **REF:** `src/app/stores/chromeStore.ts:42` (safeGetItem / safeSetItem); `src/app/stores/modeStore.ts:25` (W2 retrofit); hetvabhasa H26 (the trap this invariant prevents); krama K11 (persisted-store boot lifecycle — V18 is K11's invariant counterpart).
-**Why it matters:** vitest's happy-dom exposes `localStorage` as a globalThis stub whose method bindings aren't attached at module-load. A store that calls `localStorage.getItem` directly bombs at import time, causing the test file's *suite collection* to fail before any test body runs — which looks identical to a test config bug rather than a happy-dom bug. The wrapper makes the failure mode uniform (silent fallback to defaults at boot, silent ignore on write) and means new persisted stores don't have to rediscover H26 by hitting it.
+**Why it matters:** vitest's happy-dom exposes `localStorage` as a globalThis stub whose method bindings aren't attached at module-load. A store that calls `localStorage.getItem` directly bombs at import time, causing the test file's _suite collection_ to fail before any test body runs — which looks identical to a test config bug rather than a happy-dom bug. The wrapper makes the failure mode uniform (silent fallback to defaults at boot, silent ignore on write) and means new persisted stores don't have to rediscover H26 by hitting it.
 
 ### V19: Keyboard and UI dispatches for the same conceptual action must go through a shared pure helper
 
@@ -330,7 +332,7 @@ Lokayata-on-bug.
 
 **Span:** `src/app/KeyboardShortcuts.tsx` + any chrome surface that exposes a UI button (toolbar, menu, popover) for an action already bound to a keyboard shortcut. P6 W6 instantiation: K keyboard + Key toolbar button (insert keyframe); Delete keyboard override + Delete toolbar button (delete keyframe). P6 W7 instantiation: keyboard Q/W/E/R + R4 ToolRail click + R8 FloatingViewportToolbar click all converge on `editorStore.setActiveTool` — single dispatcher; translate/rotate/scale propagate to `gizmoStore.mode` automatically. The asymmetric direct writer at the old `TransformToolbar.ModeGroup` (wrote `gizmoStore.mode` without touching `editorStore.activeTool`) was eliminated in W7 C2. **V19 grep gate:** `grep -rnE 'useGizmoStore\([^)]*setMode\)|gizmoStore\.setMode' src/` should match only `editorStore.ts:56` (the propagation site) — runs on every future chrome PR per dharana B11 W7 re-validation triggers.
 
-**Reason:** The same input intent ("insert a keyframe at the current frame on the active channel") must produce a bit-identical Op shape regardless of entry point. Divergence creates the worst kind of UX bug — "the button does *almost* the same thing as the shortcut, except…" — and the gap is often subtle (different default easing, different rounding, different time semantics). Catching it requires testing both routes, which means writing N×2 specs forever.
+**Reason:** The same input intent ("insert a keyframe at the current frame on the active channel") must produce a bit-identical Op shape regardless of entry point. Divergence creates the worst kind of UX bug — "the button does _almost_ the same thing as the shortcut, except…" — and the gap is often subtle (different default easing, different rounding, different time semantics). Catching it requires testing both routes, which means writing N×2 specs forever.
 
 **Mechanism:** extract the Op-building logic to a pure named export in the keyboard handler (e.g., `buildKeyframeInsertOp`, `buildKeyframeDeleteOp` in P6 W6 commit `d31c1e1`). Both the keyboard branch and the toolbar button call the same helper; both go through `useDagStore.dispatchAtomic([op], 'user', label)` with the same label so undo entries are uniform.
 
@@ -348,12 +350,12 @@ Lokayata-on-bug.
 
 **Span:** any value duplicated outside the React subscription path so a hot loop (rAF / animation / WebGL frame) can read it without forcing re-renders — an "escape hatch". P6 W9 instantiation: `viewportStore.currentFrameRef` ({ current: number }), read by the imperative `TimelineCanvas` rAF playhead loop, written by `timeStore`'s frame chokepoint. Predicted next span: any P7 imperative-canvas overlay (splats) that needs a React-bypass per-frame value.
 
-**Reason:** A mirror copy diverges from its source the instant any mutation path to the source skips the mirror write. The only structure under which divergence is impossible-by-construction (not impossible-if-you-remember) is: one writer, placed at the single point through which every mutation of the source already flows. Place the write at a *consumer* (the rAF owner, an effect, a handler) and it covers only the mutation paths that flow through that consumer — every other path is a silent divergence site with no error (see [[H33]] for the trap, the negative of this rule).
+**Reason:** A mirror copy diverges from its source the instant any mutation path to the source skips the mirror write. The only structure under which divergence is impossible-by-construction (not impossible-if-you-remember) is: one writer, placed at the single point through which every mutation of the source already flows. Place the write at a _consumer_ (the rAF owner, an effect, a handler) and it covers only the mutation paths that flow through that consumer — every other path is a silent divergence site with no error (see [[H33]] for the trap, the negative of this rule).
 
-**Mechanism:** identify the source value's chokepoint — the one place where it is actually computed/assigned. For `timeStore.frame` that is `deriveFrame()` → `set({...frame...})`, invoked from exactly three setters (`setTime`, `setDuration`, `tick`). Add one private `mirrorFrame(frame)` helper called immediately after each `set`. The rAF owner (Clock.tsx) is a consumer and gets zero writes. Consumers only ever *read* the mirror via `getState().<ref>.current`.
+**Mechanism:** identify the source value's chokepoint — the one place where it is actually computed/assigned. For `timeStore.frame` that is `deriveFrame()` → `set({...frame...})`, invoked from exactly three setters (`setTime`, `setDuration`, `tick`). Add one private `mirrorFrame(frame)` helper called immediately after each `set`. The rAF owner (Clock.tsx) is a consumer and gets zero writes. Consumers only ever _read_ the mirror via `getState().<ref>.current`.
 
 **Invariant to assert:** `mirror.current === source` after every state transition that can change the source. W9 evidence: `src/app/stores/viewportStore.test.ts` (15/15) asserts equality after `setTime`, `tick` (while playing), and `setDuration`, plus a negative case (a non-frame mutation leaves the mirror unchanged) and ref-object-identity stability (the `{current}` object is never reassigned — consumers hold the reference).
 
 **Violation surface:** a `useRef`/`{current}` mirror written inside a component effect or an animation loop body; a denormalised store field written at each call site that produces it instead of at the one place it's derived; any "I'll also set X here" scattered across handlers. Smell: the same mirror assignment appears in 2+ files, or appears in a loop/effect while the source has setters elsewhere.
 
-**REF:** P6 W9 C1 commit `a01ce47`; `src/app/stores/viewportStore.ts` (`currentFrameRef` field, init-once, never reassigned); `src/app/stores/timeStore.ts:87-150` (`mirrorFrame` + the 3-setter chokepoint); `src/app/Clock.tsx:29` (the consumer that does NOT write — the grounding correction); `tests/e2e/p6-w9-timeline-canvas.spec.ts` #3 (frame == readout cross-check). Negative pattern: [[H33]]. Sister: V19 (one *dispatcher* for an action across input surfaces — V20 is the read-side analogue: one *writer* for a mirror across mutation paths). Provenance: ORIGIN = W9 plan grounding correction (context memo D-W9-9 named Clock as the dual-writer; source showed Clock calls `tick()` not `setTime()` and scrub/setDuration bypass Clock). WHY without it: escape-hatch playhead silently freezes on the non-playback paths the rAF owner never sees. HOW: chokepoint-single-writer makes the sync invariant hold by construction, testable in isolation.
+**REF:** P6 W9 C1 commit `a01ce47`; `src/app/stores/viewportStore.ts` (`currentFrameRef` field, init-once, never reassigned); `src/app/stores/timeStore.ts:87-150` (`mirrorFrame` + the 3-setter chokepoint); `src/app/Clock.tsx:29` (the consumer that does NOT write — the grounding correction); `tests/e2e/p6-w9-timeline-canvas.spec.ts` #3 (frame == readout cross-check). Negative pattern: [[H33]]. Sister: V19 (one _dispatcher_ for an action across input surfaces — V20 is the read-side analogue: one _writer_ for a mirror across mutation paths). Provenance: ORIGIN = W9 plan grounding correction (context memo D-W9-9 named Clock as the dual-writer; source showed Clock calls `tick()` not `setTime()` and scrub/setDuration bypass Clock). WHY without it: escape-hatch playhead silently freezes on the non-playback paths the rAF owner never sees. HOW: chokepoint-single-writer makes the sync invariant hold by construction, testable in isolation.

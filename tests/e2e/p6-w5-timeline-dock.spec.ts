@@ -60,9 +60,9 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(
       w.__basher_dag &&
-        w.__basher_viewport &&
-        w.__basher_timeline_dock &&
-        w.__basher_timeline_selection,
+      w.__basher_viewport &&
+      w.__basher_timeline_dock &&
+      w.__basher_timeline_selection,
     );
   });
   // Switch into Animate so the timeline dock is visible (D-UX-1 gating).
@@ -210,9 +210,7 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
   expect(activeTab).toBe('dopesheet');
 });
 
-test('P6.W5#6 Curve Editor placeholder is visible after explicit tab switch', async ({
-  page,
-}) => {
+test('P6.W5#6 Curve Editor placeholder is visible after explicit tab switch', async ({ page }) => {
   await page.getByTestId('timeline-drawer-toggle').click();
   await page.getByTestId('timeline-tab-curve').click();
   // No channel selected yet — Curve Editor shows the prompt.

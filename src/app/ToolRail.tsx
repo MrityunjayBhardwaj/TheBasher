@@ -184,11 +184,7 @@ export function ToolRail(): ReactNode {
         <ToolButton
           key={a.id}
           active={false}
-          title={
-            a.enabled
-              ? `${a.label} (${a.shortcut})`
-              : `${a.label} — coming in a later wave`
-          }
+          title={a.enabled ? `${a.label} (${a.shortcut})` : `${a.label} — coming in a later wave`}
           ariaLabel={a.id === 'add' ? 'Add node menu' : `${a.label} action`}
           testId={`tool-rail-${a.id}`}
           onClick={a.id === 'add' ? openAddMenuAtRailCenter : () => {}}

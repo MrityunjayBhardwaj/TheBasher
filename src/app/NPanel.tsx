@@ -41,10 +41,7 @@ import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
-import {
-  dispatchFirstKeyComposite,
-  dispatchMutatorFromUI,
-} from './animate/dispatchMutator';
+import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { paramAnimationState } from './animate/paramAnimationState';
 import { useAutoKeyStore } from './stores/autoKeyStore';
 import { useDragScrub } from './dragScrub';
@@ -79,9 +76,7 @@ function resolveChannel(
       keyframes?: unknown;
     };
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
-    const kfs = Array.isArray(p.keyframes)
-      ? (p.keyframes as { time: number }[])
-      : [];
+    const kfs = Array.isArray(p.keyframes) ? (p.keyframes as { time: number }[]) : [];
     const onKey = kfs.find((kf) => Math.round(kf.time * 60) === currentFrame);
     return { channelId: node.id, onKeySeconds: onKey ? onKey.time : null };
   }
@@ -118,8 +113,7 @@ function autoKeyCommit(nodeId: string, paramPath: string, value: unknown): void 
 
   // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
   // this (nodeId, paramPath) — the SAME pure scan the diamond uses (C1).
-  const exists =
-    paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
+  const exists = paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
 
   let result: { ok: true } | { ok: false; reason: string };
   if (!exists) {
@@ -444,8 +438,8 @@ function SectionCard({
   declaredSections: readonly SectionId[];
   children: React.ReactNode;
 }) {
-  const userCollapsed = useInspectorSectionsStore((s) =>
-    s.collapsedByNodeType[nodeType]?.[sectionId],
+  const userCollapsed = useInspectorSectionsStore(
+    (s) => s.collapsedByNodeType[nodeType]?.[sectionId],
   );
   const setCollapsed = useInspectorSectionsStore((s) => s.setCollapsed);
   const isDefault = isDefaultCollapsed(declaredSections, sectionId);
@@ -520,9 +514,11 @@ export function NPanel() {
             // D-08 B raw-fallback path: nodes that intentionally omit
             // inspectorSections render their params in a flat list.
             <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
-              {Object.entries((node.params ?? {}) as Record<string, unknown>).map(([key, value]) => (
-                <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
-              ))}
+              {Object.entries((node.params ?? {}) as Record<string, unknown>).map(
+                ([key, value]) => (
+                  <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+                ),
+              )}
             </div>
           ) : (
             (() => {

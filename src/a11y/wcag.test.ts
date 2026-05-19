@@ -84,23 +84,24 @@ describe('withAlpha', () => {
 
 describe('composite (alpha-over)', () => {
   it('opaque top fully covers the bottom', () => {
-    expect(
-      composite({ r: 255, g: 0, b: 0, a: 1 }, { r: 0, g: 255, b: 0 }),
-    ).toEqual({ r: 255, g: 0, b: 0 });
+    expect(composite({ r: 255, g: 0, b: 0, a: 1 }, { r: 0, g: 255, b: 0 })).toEqual({
+      r: 255,
+      g: 0,
+      b: 0,
+    });
   });
 
   it('fully-transparent top reveals the bottom unchanged', () => {
-    expect(
-      composite({ r: 255, g: 0, b: 0, a: 0 }, { r: 0, g: 255, b: 0 }),
-    ).toEqual({ r: 0, g: 255, b: 0 });
+    expect(composite({ r: 255, g: 0, b: 0, a: 0 }, { r: 0, g: 255, b: 0 })).toEqual({
+      r: 0,
+      g: 255,
+      b: 0,
+    });
   });
 
   it('50% white over black produces mid-gray (~128,128,128)', () => {
     // 255 * 0.5 + 0 * 0.5 = 127.5 ≈ 128 once rounded.
-    const out = composite(
-      { r: 255, g: 255, b: 255, a: 0.5 },
-      { r: 0, g: 0, b: 0 },
-    );
+    const out = composite({ r: 255, g: 255, b: 255, a: 0.5 }, { r: 0, g: 0, b: 0 });
     expect(out.r).toBeCloseTo(127.5, 1);
     expect(out.g).toBeCloseTo(127.5, 1);
     expect(out.b).toBeCloseTo(127.5, 1);
@@ -112,10 +113,7 @@ describe('composite (alpha-over)', () => {
     //   r = 90*0.15 + 22*0.85   = 32.2
     //   g = 240*0.15 + 22*0.85  = 54.7
     //   b = 122*0.15 + 22*0.85  = 37.0
-    const out = composite(
-      { r: 90, g: 240, b: 122, a: 0.15 },
-      { r: 22, g: 22, b: 22 },
-    );
+    const out = composite({ r: 90, g: 240, b: 122, a: 0.15 }, { r: 22, g: 22, b: 22 });
     expect(out.r).toBeCloseTo(32.2, 1);
     expect(out.g).toBeCloseTo(54.7, 1);
     expect(out.b).toBeCloseTo(37.0, 1);

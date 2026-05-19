@@ -411,7 +411,11 @@ describe('randomize mutator', () => {
       targetSelectors: ['box', 'sibling'],
       properties: ['color', 'rotation', 'scale'] as const,
       ranges: {
-        color: { h: [0, 360] as [number, number], s: [0.5, 1] as [number, number], l: [0.4, 0.6] as [number, number] },
+        color: {
+          h: [0, 360] as [number, number],
+          s: [0.5, 1] as [number, number],
+          l: [0.4, 0.6] as [number, number],
+        },
         rotation: { axis: 'random' as const, degRange: [0, 360] as [number, number] },
         scale: { factor: [0.5, 1.5] as [number, number] },
       },
@@ -486,7 +490,11 @@ describe('randomize mutator', () => {
         targetSelectors: ['box'],
         properties: ['color'] as const,
         ranges: {
-          color: { h: [350, 10] as [number, number], s: [1, 1] as [number, number], l: [0.5, 0.5] as [number, number] },
+          color: {
+            h: [350, 10] as [number, number],
+            s: [1, 1] as [number, number],
+            l: [0.5, 0.5] as [number, number],
+          },
         },
         seed: 1000 + i,
       };
@@ -525,9 +533,7 @@ describe('randomize mutator', () => {
       },
     };
     // empty properties[]
-    expect(
-      randomizeMutator.spec.safeParse({ ...base, properties: [] }).success,
-    ).toBe(false);
+    expect(randomizeMutator.spec.safeParse({ ...base, properties: [] }).success).toBe(false);
     // duplicate properties
     expect(
       randomizeMutator.spec.safeParse({ ...base, properties: ['color', 'color'] }).success,
@@ -592,7 +598,11 @@ describe('randomize mutator', () => {
       targetSelectors: ['box', 'light'],
       properties: ['color', 'rotation', 'scale'] as const,
       ranges: {
-        color: { h: [0, 360] as [number, number], s: [0.5, 1] as [number, number], l: [0.4, 0.6] as [number, number] },
+        color: {
+          h: [0, 360] as [number, number],
+          s: [0.5, 1] as [number, number],
+          l: [0.4, 0.6] as [number, number],
+        },
         rotation: { axis: 'y' as const, degRange: [0, 90] as [number, number] },
         scale: { factor: [0.5, 1.5] as [number, number] },
       },
@@ -1412,7 +1422,12 @@ describe('mutator.render.addPass', () => {
 
   it('normal: picks NormalPass node type (P5 §43 amendment, D-02)', () => {
     const state = buildSceneWithJob();
-    const r = validatePlan(addPassMutator, { jobId: 'job', passKind: 'normal' }, state, 'add normal');
+    const r = validatePlan(
+      addPassMutator,
+      { jobId: 'job', passKind: 'normal' },
+      state,
+      'add normal',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const addOp = r.ops[0];
@@ -1580,9 +1595,7 @@ describe('mutator.render.addAIPass', () => {
     );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const wfOp = r.ops.find(
-      (o) => o.type === 'addNode' && o.nodeType === 'ComfyUIWorkflow',
-    );
+    const wfOp = r.ops.find((o) => o.type === 'addNode' && o.nodeType === 'ComfyUIWorkflow');
     if (wfOp && wfOp.type === 'addNode') {
       const params = wfOp.params as { frameStart: number; frameEnd: number };
       expect(params.frameStart).toBe(5);
@@ -1871,7 +1884,11 @@ describe('mutator.timeline.simplifyChannel', () => {
         name: 'val',
         target: 'box',
         paramPath: 'opacity',
-        keyframes: keyframes.map((k) => ({ time: k.time, value: k.value, easing: k.easing ?? 'linear' })),
+        keyframes: keyframes.map((k) => ({
+          time: k.time,
+          value: k.value,
+          easing: k.easing ?? 'linear',
+        })),
       },
     }).next;
     return s;
@@ -1910,7 +1927,12 @@ describe('mutator.timeline.simplifyChannel', () => {
       { time: 0.75, value: 0.75 },
       { time: 1, value: 1 },
     ]);
-    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 0.01 }, state, 'simplify');
+    const r = validatePlan(
+      simplifyChannelMutator,
+      { channelId: 'ch', tolerance: 0.01 },
+      state,
+      'simplify',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const op = r.ops[0];
@@ -1928,7 +1950,12 @@ describe('mutator.timeline.simplifyChannel', () => {
       { time: 0.5, value: 1 },
       { time: 1, value: 0 },
     ]);
-    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 0.01 }, state, 'peak');
+    const r = validatePlan(
+      simplifyChannelMutator,
+      { channelId: 'ch', tolerance: 0.01 },
+      state,
+      'peak',
+    );
     // Peak deviates well beyond tolerance → all 3 kept; nothing to simplify → no ops.
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -1941,7 +1968,12 @@ describe('mutator.timeline.simplifyChannel', () => {
       { time: 0.5, value: 1 },
       { time: 1, value: 0 },
     ]);
-    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 1 }, state, 'flat');
+    const r = validatePlan(
+      simplifyChannelMutator,
+      { channelId: 'ch', tolerance: 1 },
+      state,
+      'flat',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const op = r.ops[0];
@@ -1960,7 +1992,12 @@ describe('mutator.timeline.simplifyChannel', () => {
       { time: 0.75, value: [0.75, 5, 0] },
       { time: 1, value: [1, 5, 0] },
     ]);
-    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch', tolerance: 0.01 }, state, 'vec3 line');
+    const r = validatePlan(
+      simplifyChannelMutator,
+      { channelId: 'ch', tolerance: 0.01 },
+      state,
+      'vec3 line',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const op = r.ops[0];
@@ -1995,7 +2032,12 @@ describe('mutator.timeline.simplifyChannel', () => {
         ],
       },
     }).next;
-    const r = validatePlan(simplifyChannelMutator, { channelId: 'ch_q', tolerance: 0.5 }, s, 'quat');
+    const r = validatePlan(
+      simplifyChannelMutator,
+      { channelId: 'ch_q', tolerance: 0.5 },
+      s,
+      'quat',
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.ops).toHaveLength(0);
@@ -2003,7 +2045,12 @@ describe('mutator.timeline.simplifyChannel', () => {
 
   it('rejects when channelId is not a KeyframeChannel (gate 4)', () => {
     const state = numberChannelWith([{ time: 0, value: 0 }]);
-    const r = validatePlan(simplifyChannelMutator, { channelId: 'box', tolerance: 0.1 }, state, 'wrong type');
+    const r = validatePlan(
+      simplifyChannelMutator,
+      { channelId: 'box', tolerance: 0.1 },
+      state,
+      'wrong type',
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
   });
@@ -2104,12 +2151,7 @@ describe('mutator.timeline.removeKeyframes', () => {
       nodeType: 'KeyframeChannelNumber',
       params: { name: 'val', target: 'box', paramPath: 'opacity', keyframes: [] },
     }).next;
-    const r = validatePlan(
-      removeKeyframesMutator,
-      { channelId: 'ch', scope: 'all' },
-      s,
-      'noop',
-    );
+    const r = validatePlan(removeKeyframesMutator, { channelId: 'ch', scope: 'all' }, s, 'noop');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.ops).toHaveLength(0);
@@ -2570,9 +2612,7 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         result.ok,
         `Probe spec for "${name}" was gate-rejected — broken probe, fix the ` +
           `probe table entry. ` +
-          (result.ok
-            ? ''
-            : `gate ${result.gate} (${result.label}): ${result.reason}`),
+          (result.ok ? '' : `gate ${result.gate} (${result.label}): ${result.reason}`),
       ).toBe(true);
       if (!result.ok) continue;
 

@@ -52,8 +52,7 @@ export function bonesToSpec(bones: readonly Bone[]): BoneSpec[] {
 
   return bones.map((bone): BoneSpec => {
     const parent = bone.parent;
-    const parentIdx =
-      parent && (parent as Bone).isBone ? (indexByName.get(parent.name) ?? -1) : -1;
+    const parentIdx = parent && (parent as Bone).isBone ? (indexByName.get(parent.name) ?? -1) : -1;
     return {
       name: sanitizeBoneName(bone.name),
       parent: parentIdx,
@@ -71,10 +70,7 @@ export interface ClipShape {
   }>;
 }
 
-export function clipToKeyframes(
-  clip: ClipShape,
-  bones: readonly BoneSpec[],
-): AnimationKeyframe[] {
+export function clipToKeyframes(clip: ClipShape, bones: readonly BoneSpec[]): AnimationKeyframe[] {
   type PerBoneTrack = {
     times: Set<number>;
     positionAt: Map<number, Vec3>;
@@ -101,11 +97,7 @@ export function clipToKeyframes(
     if (parsed.property === 'position') {
       for (let i = 0; i < track.times.length; i++) {
         const t = track.times[i];
-        const v: Vec3 = [
-          track.values[i * 3 + 0],
-          track.values[i * 3 + 1],
-          track.values[i * 3 + 2],
-        ];
+        const v: Vec3 = [track.values[i * 3 + 0], track.values[i * 3 + 1], track.values[i * 3 + 2]];
         const entry = ensureBone(boneIdx);
         entry.times.add(t);
         entry.positionAt.set(t, v);
@@ -221,12 +213,8 @@ export function paramsToThreeClip(
   const tracks = [];
   for (const [boneIdx, entry] of grouped.entries()) {
     const boneName = bones[boneIdx]?.name ?? `bone_${boneIdx}`;
-    tracks.push(
-      new VectorKeyframeTrack(`${boneName}.position`, entry.times, entry.positions),
-    );
-    tracks.push(
-      new QuaternionKeyframeTrack(`${boneName}.quaternion`, entry.times, entry.quats),
-    );
+    tracks.push(new VectorKeyframeTrack(`${boneName}.position`, entry.times, entry.positions));
+    tracks.push(new QuaternionKeyframeTrack(`${boneName}.quaternion`, entry.times, entry.quats));
   }
   return new AnimationClip(name, duration > 0 ? duration : -1, tracks);
 }

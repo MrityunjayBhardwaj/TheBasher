@@ -33,9 +33,18 @@ function imageMeta(passKind: ImageValue['passKind']): ImageValue {
 
 async function seedRawPasses(storage: MemoryStorage, frame: number) {
   const padded = frame.toString().padStart(4, '0');
-  await storage.write(`renders/job1/beauty_${padded}.png`, new TextEncoder().encode(`beauty${frame}`));
-  await storage.write(`renders/job1/depth_${padded}.png`, new TextEncoder().encode(`depth${frame}`));
-  await storage.write(`renders/job1/normal_${padded}.png`, new TextEncoder().encode(`normal${frame}`));
+  await storage.write(
+    `renders/job1/beauty_${padded}.png`,
+    new TextEncoder().encode(`beauty${frame}`),
+  );
+  await storage.write(
+    `renders/job1/depth_${padded}.png`,
+    new TextEncoder().encode(`depth${frame}`),
+  );
+  await storage.write(
+    `renders/job1/normal_${padded}.png`,
+    new TextEncoder().encode(`normal${frame}`),
+  );
 }
 
 describe('stylizedRealism preset', () => {

@@ -122,10 +122,7 @@ async function seedScene(
   );
 }
 
-async function attr(
-  page: import('@playwright/test').Page,
-  name: string,
-): Promise<string | null> {
+async function attr(page: import('@playwright/test').Page, name: string): Promise<string | null> {
   return await page.getByTestId('timeline-canvas').getAttribute(name);
 }
 
@@ -163,9 +160,7 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
   // The rendered-keyframes count after the static layer first paints.
   // The rAF playhead must NOT change it while scrubbing (the whole
   // point of the cached static layer + strip restore — D-W9-3).
-  await expect
-    .poll(async () => attr(page, 'data-rendered-keyframes'))
-    .not.toBe(null);
+  await expect.poll(async () => attr(page, 'data-rendered-keyframes')).not.toBe(null);
   const baselineRendered = await attr(page, 'data-rendered-keyframes');
   expect(Number(baselineRendered)).toBe(24); // 4ch × 6kf, all in [0,4]
 
@@ -183,9 +178,7 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
       .toBeGreaterThanOrEqual(samples.length ? samples[samples.length - 1] : 0);
     samples.push(Number(await attr(page, 'data-playhead-px')));
     // Diamonds must not be erased / re-counted by the playhead pass.
-    expect(Number(await attr(page, 'data-rendered-keyframes'))).toBe(
-      Number(baselineRendered),
-    );
+    expect(Number(await attr(page, 'data-rendered-keyframes'))).toBe(Number(baselineRendered));
   }
   // Strictly increasing overall (0s → 4s moves the playhead right).
   expect(samples[samples.length - 1]).toBeGreaterThan(samples[0]);
@@ -230,16 +223,12 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
       'w9-mid-scrub-dag',
     );
   });
-  await expect
-    .poll(async () => Number(await attr(page, 'data-rendered-keyframes')))
-    .toBe(26); // 24 + 2 new keyframes, all in range
+  await expect.poll(async () => Number(await attr(page, 'data-rendered-keyframes'))).toBe(26); // 24 + 2 new keyframes, all in range
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     w.__basher_time!.getState().setTime(3.5);
   });
-  await expect
-    .poll(async () => Number(await attr(page, 'data-playhead-px')))
-    .toBeGreaterThan(0);
+  await expect.poll(async () => Number(await attr(page, 'data-playhead-px'))).toBeGreaterThan(0);
 });
 
 test('P6.W9#2 culling — keyframes beyond the visible range are not painted (D-W9-6)', async ({
@@ -299,9 +288,7 @@ test('P6.W9#3 ref↔store cross-check — playhead frame == frame readout every 
     // The canvas rAF loop writes data-frame from currentFrameRef.current
     // — the escape-hatch mirror. It must equal timeStore.frame (D-W9-9
     // never-diverge invariant: written at the timeStore chokepoint).
-    await expect
-      .poll(async () => Number(await attr(page, 'data-frame')))
-      .toBe(expectedFrame);
+    await expect.poll(async () => Number(await attr(page, 'data-frame'))).toBe(expectedFrame);
   }
 });
 
@@ -314,9 +301,7 @@ test('P6.W9#4 R3F Canvas does NOT remount across drawer toggles + Dopesheet↔Cu
   // subtree). If the React trees were entangled, the stamp is gone.
   await expect(page.getByTestId('viewport')).toBeVisible();
   const tag = await page.evaluate(() => {
-    const c = document.querySelector(
-      '[data-testid="viewport"] canvas',
-    ) as HTMLCanvasElement | null;
+    const c = document.querySelector('[data-testid="viewport"] canvas') as HTMLCanvasElement | null;
     if (!c) throw new Error('R3F canvas missing');
     (c as unknown as { __basherTag: string }).__basherTag = 'w9-before';
     return (c as unknown as { __basherTag: string }).__basherTag;
@@ -330,22 +315,14 @@ test('P6.W9#4 R3F Canvas does NOT remount across drawer toggles + Dopesheet↔Cu
     await page.getByTestId('timeline-drawer-toggle').click();
     await expect(page.getByTestId('timeline-canvas-pane')).toBeVisible();
     await page.getByTestId('timeline-tab-curve').click();
-    await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute(
-      'data-active',
-      'true',
-    );
+    await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'true');
     await page.getByTestId('timeline-tab-dopesheet').click();
-    await expect(page.getByTestId('timeline-canvas-pane')).toHaveAttribute(
-      'data-active',
-      'true',
-    );
+    await expect(page.getByTestId('timeline-canvas-pane')).toHaveAttribute('data-active', 'true');
     await page.getByTestId('timeline-drawer-toggle').click();
   }
 
   const tagAfter = await page.evaluate(() => {
-    const c = document.querySelector(
-      '[data-testid="viewport"] canvas',
-    ) as HTMLCanvasElement | null;
+    const c = document.querySelector('[data-testid="viewport"] canvas') as HTMLCanvasElement | null;
     return (c as unknown as { __basherTag?: string } | null)?.__basherTag ?? null;
   });
   // Same DOM node → same WebGL context → V8/K1#6 holds. If this fails,

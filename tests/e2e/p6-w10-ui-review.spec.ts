@@ -50,9 +50,7 @@ test('c-1: zoom readout reflects a camera-zoom change (observed, not inferred)',
   // Drive the zoom signal exactly as the OrbitControls onChange listener
   // would (it derives a % from camera distance and calls setCameraZoom).
   await page.evaluate(() => {
-    (window as unknown as BasherWindow).__basher_viewport!
-      .getState()
-      .setCameraZoom(200);
+    (window as unknown as BasherWindow).__basher_viewport!.getState().setCameraZoom(200);
   });
 
   // OBSERVE the DOM text actually update — the binding under test.
@@ -64,9 +62,7 @@ test('c-1: zoom readout reflects a camera-zoom change (observed, not inferred)',
 
   // And back down (dolly-out path).
   await page.evaluate(() => {
-    (window as unknown as BasherWindow).__basher_viewport!
-      .getState()
-      .setCameraZoom(50);
+    (window as unknown as BasherWindow).__basher_viewport!.getState().setCameraZoom(50);
   });
   await expect(value).toHaveText('50%');
 });

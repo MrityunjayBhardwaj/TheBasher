@@ -33,7 +33,7 @@ export function useSelectionSummary(): string {
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
   const primaryNode = useDagStore((s) =>
-    primaryNodeId ? s.state.nodes[primaryNodeId] ?? null : null,
+    primaryNodeId ? (s.state.nodes[primaryNodeId] ?? null) : null,
   );
   const rawSummary = useMemo(() => {
     if (selectedCount === 0) return 'no selection';

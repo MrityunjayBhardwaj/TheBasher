@@ -41,12 +41,8 @@ const SCAN_DIRS = ['app', 'timeline', 'viewport'];
 // don't appear in this file's source as standalone string tokens.
 const PSEUDO_FOCUS = 'focus' + ':';
 const PSEUDO_FOCUS_VISIBLE = 'focus-visible' + ':';
-const BARE_OUTLINE_RE = new RegExp(
-  `(?<!-visible)\\b${PSEUDO_FOCUS}outline-none\\b`,
-);
-const FOCUS_VISIBLE_OUTLINE_RE = new RegExp(
-  `${PSEUDO_FOCUS_VISIBLE}outline-none`,
-);
+const BARE_OUTLINE_RE = new RegExp(`(?<!-visible)\\b${PSEUDO_FOCUS}outline-none\\b`);
+const FOCUS_VISIBLE_OUTLINE_RE = new RegExp(`${PSEUDO_FOCUS_VISIBLE}outline-none`);
 const FOCUS_VISIBLE_RING_RE = new RegExp(`${PSEUDO_FOCUS_VISIBLE}ring`);
 const OPT_OUT_RE = /data-no-focus-ring/;
 
@@ -84,9 +80,7 @@ describe('a11y focus-ring gate (D-W8-2)', () => {
       });
     }
     if (offenders.length > 0) {
-      const detail = offenders
-        .map((o) => `  ${o.file}:${o.line}  ${o.text}`)
-        .join('\n');
+      const detail = offenders.map((o) => `  ${o.file}:${o.line}  ${o.text}`).join('\n');
       throw new Error(
         `Found ${offenders.length} bare legacy-focus outline-suppression occurrence(s). ` +
           `Replace with the focus-visible ring pattern (D-W8-2). Offenders:\n${detail}`,
@@ -115,9 +109,7 @@ describe('a11y focus-ring gate (D-W8-2)', () => {
       });
     }
     if (orphans.length > 0) {
-      const detail = orphans
-        .map((o) => `  ${o.file}:${o.line}  ${o.text}`)
-        .join('\n');
+      const detail = orphans.map((o) => `  ${o.file}:${o.line}  ${o.text}`).join('\n');
       throw new Error(
         `Found ${orphans.length} focus-visible outline-suppression line(s) without a paired ring class. ` +
           `Add the ring utility on the same element, or annotate with data-no-focus-ring if focus ` +

@@ -7,11 +7,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { ComfyUICapability } from '../core/comfy';
-import {
-  bootReadState,
-  probeOnce,
-  type IndicatorState,
-} from './ComfyStatusIndicator';
+import { bootReadState, probeOnce, type IndicatorState } from './ComfyStatusIndicator';
 
 function makeCap(opts: {
   kind: 'http' | 'stub';
@@ -57,20 +53,14 @@ describe('probeOnce', () => {
 
   it('resolves to http when isAvailable returns true', async () => {
     const emit = vi.fn();
-    await probeOnce(
-      makeCap({ kind: 'http', isAvailable: async () => true }),
-      emit,
-    );
+    await probeOnce(makeCap({ kind: 'http', isAvailable: async () => true }), emit);
     const states = emit.mock.calls.map((c) => c[0] as IndicatorState);
     expect(states).toEqual(['probing', 'http']);
   });
 
   it('resolves to stub when isAvailable returns false', async () => {
     const emit = vi.fn();
-    await probeOnce(
-      makeCap({ kind: 'http', isAvailable: async () => false }),
-      emit,
-    );
+    await probeOnce(makeCap({ kind: 'http', isAvailable: async () => false }), emit);
     const states = emit.mock.calls.map((c) => c[0] as IndicatorState);
     expect(states).toEqual(['probing', 'stub']);
   });

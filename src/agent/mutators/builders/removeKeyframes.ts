@@ -115,9 +115,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
 
     if (spec.scope === 'all') {
       if (existing.length === 0) return []; // already empty → no-op
-      return [
-        { type: 'setParam', nodeId: spec.channelId, paramPath: 'keyframes', value: [] },
-      ];
+      return [{ type: 'setParam', nodeId: spec.channelId, paramPath: 'keyframes', value: [] }];
     }
 
     // scope: { time }

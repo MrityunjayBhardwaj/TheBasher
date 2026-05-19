@@ -111,10 +111,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
     return Boolean(
-      w.__basher_dag &&
-        w.__basher_viewport &&
-        w.__basher_time &&
-        w.__basher_timeline_selection,
+      w.__basher_dag && w.__basher_viewport && w.__basher_time && w.__basher_timeline_selection,
     );
   });
   await page.getByTestId('mode-switcher').selectOption('animate');
@@ -185,7 +182,9 @@ test.beforeEach(async ({ page }) => {
   await page.getByTestId('timeline-drawer-toggle').click();
 });
 
-async function readChannelKeyframes(page: import('@playwright/test').Page): Promise<KeyframeShape[]> {
+async function readChannelKeyframes(
+  page: import('@playwright/test').Page,
+): Promise<KeyframeShape[]> {
   return await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const ch = w.__basher_dag!.getState().state.nodes['ch'];
@@ -197,19 +196,36 @@ test('P6.W6#1 bottom toolbar visible with disabled buttons until selection', asy
   await expect(page.getByTestId('timeline-dock-toolbar')).toBeVisible();
   // No active channel yet — Key/Simplify/Clear disabled.
   await expect(page.getByTestId('timeline-toolbar-key')).toHaveAttribute('data-disabled', 'true');
-  await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute(
+    'data-disabled',
+    'true',
+  );
   await expect(page.getByTestId('timeline-toolbar-clear')).toHaveAttribute('data-disabled', 'true');
   // Delete disabled regardless of channel — needs an active keyframe.
-  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute(
+    'data-disabled',
+    'true',
+  );
   // Click channel row → Key/Simplify/Clear enable; Delete still disabled.
   await selectChannel(page, 'ch');
   await expect(page.getByTestId('timeline-toolbar-key')).toHaveAttribute('data-disabled', 'false');
-  await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute('data-disabled', 'false');
-  await expect(page.getByTestId('timeline-toolbar-clear')).toHaveAttribute('data-disabled', 'false');
-  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-simplify')).toHaveAttribute(
+    'data-disabled',
+    'false',
+  );
+  await expect(page.getByTestId('timeline-toolbar-clear')).toHaveAttribute(
+    'data-disabled',
+    'false',
+  );
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute(
+    'data-disabled',
+    'true',
+  );
 });
 
-test('P6.W6#2 K keyboard inserts a keyframe at current time on active channel', async ({ page }) => {
+test('P6.W6#2 K keyboard inserts a keyframe at current time on active channel', async ({
+  page,
+}) => {
   await selectChannel(page, 'ch');
   // Move time to 0.25 (between existing keyframes).
   await page.evaluate(() => {
@@ -241,7 +257,10 @@ test('P6.W6#3 Key button mirrors K keyboard', async ({ page }) => {
 test('P6.W6#4 click diamond selects keyframe; Delete removes it (D-W6-2)', async ({ page }) => {
   await selectChannel(page, 'ch');
   // Initially Delete is disabled.
-  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute(
+    'data-disabled',
+    'true',
+  );
   // P6 W9: select the middle keyframe (seeded at time 0.5) via the
   // timelineSelection seam — the SVG diamond's onClick set exactly this
   // (channelId,time) ref; the canvas paints diamonds with no per-diamond
@@ -254,14 +273,20 @@ test('P6.W6#4 click diamond selects keyframe; Delete removes it (D-W6-2)', async
     return w.__basher_timeline_selection!.getState().activeKeyframeId;
   });
   expect(sel).toEqual({ channelId: 'ch', time: 0.5 });
-  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'false');
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute(
+    'data-disabled',
+    'false',
+  );
   // Press Delete — keyframe at t=0.5 should disappear.
   await page.keyboard.press('Delete');
   const keyframes = await readChannelKeyframes(page);
   expect(keyframes).toHaveLength(2);
   expect(keyframes.map((k) => k.time)).toEqual([0, 1]);
   // After delete, Delete becomes disabled again (activeKeyframeId cleared).
-  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute('data-disabled', 'true');
+  await expect(page.getByTestId('timeline-toolbar-delete')).toHaveAttribute(
+    'data-disabled',
+    'true',
+  );
 });
 
 test('P6.W6#5 [ and ] seek to previous / next keyframe time', async ({ page }) => {

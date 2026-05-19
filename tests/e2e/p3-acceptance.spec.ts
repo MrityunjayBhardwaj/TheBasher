@@ -45,7 +45,9 @@ test('P3#1 timeline drawer is closed by default (preserves baseline)', async ({ 
   await expect(page.getByTestId('curve-editor-pane')).toHaveCount(0);
 });
 
-test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor panes', async ({ page }) => {
+test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor panes', async ({
+  page,
+}) => {
   await page.getByTestId('timeline-drawer-toggle').click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   // P6 W5 (D-W5-1): both panes mount whenever the drawer is open; the
@@ -61,10 +63,7 @@ test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor pan
   // honest DAG-derived count via the data-channel-count mirror attr
   // instead. Empty seed scene → zero animation channels.
   await expect(page.getByTestId('timeline-canvas')).toBeVisible();
-  await expect(page.getByTestId('timeline-canvas')).toHaveAttribute(
-    'data-channel-count',
-    '0',
-  );
+  await expect(page.getByTestId('timeline-canvas')).toHaveAttribute('data-channel-count', '0');
 });
 
 test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', async ({ page }) => {
@@ -75,7 +74,12 @@ test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', asyn
     const w = window as unknown as BasherWindow & {
       __basher_dag: {
         getState: () => {
-          state: { nodes: Record<string, { type: string; inputs: Record<string, { node: string; socket: string }> }> };
+          state: {
+            nodes: Record<
+              string,
+              { type: string; inputs: Record<string, { node: string; socket: string }> }
+            >;
+          };
           dispatch: (op: unknown) => void;
         };
       };
@@ -244,7 +248,9 @@ test.skip('P3#5 mute toggle on layer row dispatches a setParam Op (V1 holds) —
   // rationale and the re-enable condition.
 });
 
-test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pending', async ({ page }) => {
+test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pending', async ({
+  page,
+}) => {
   // Stage a pending diff carrying a KeyframeChannelVec3 addNode with two
   // keyframes spanning t=0 → t=2. The DiffBar's time-range indicator
   // should surface "0 → 2s" so the user sees where the change lands in time.
@@ -285,9 +291,9 @@ test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pendi
       },
     ];
     const state = w.__basher_dag.getState().state;
-    w.__basher_diff.getState().propose(state, ops, 'test bounce', [
-      'agent:mutator.timeline.addChannel',
-    ]);
+    w.__basher_diff
+      .getState()
+      .propose(state, ops, 'test bounce', ['agent:mutator.timeline.addChannel']);
   });
   await expect(page.getByTestId('diffbar-time-range')).toBeVisible();
   await expect(page.getByTestId('diffbar-time-range')).toContainText('0');

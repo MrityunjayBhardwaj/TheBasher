@@ -117,9 +117,7 @@ function proposeAndAccept(
   warnings: string[],
 ): DispatchResult {
   try {
-    useDiffStore
-      .getState()
-      .propose(baseState, ops, intent, opSources, closureSpec, warnings);
+    useDiffStore.getState().propose(baseState, ops, intent, opSources, closureSpec, warnings);
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
@@ -160,9 +158,7 @@ export interface RetimeKeyframeArgs {
  * Any validate `!ok` → abort, mutate nothing (mirrors
  * dispatchFirstKeyComposite's abort discipline; V13 closure gate fires).
  */
-export function dispatchRetimeKeyframe(
-  args: RetimeKeyframeArgs,
-): DispatchResult {
+export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult {
   const { channelId, fromTime, toTime } = args;
   const intent = `Retime keyframe on ${channelId}`;
 
@@ -193,8 +189,7 @@ export function dispatchRetimeKeyframe(
   if (!removeKeyframes || !keyframe) {
     return {
       ok: false,
-      reason:
-        'Timeline Mutators not registered (removeKeyframes / keyframe).',
+      reason: 'Timeline Mutators not registered (removeKeyframes / keyframe).',
     };
   }
 
@@ -245,18 +240,12 @@ export function dispatchRetimeKeyframe(
   // 6 — propose ALL ops as ONE diff with the COMBINED closure (union of
   //     the two Mutators' declared closure specs — reuse the existing
   //     helper, do not invent), then accept → one Cmd+Z entry.
-  const combinedClosure = unionClosureSpecs(
-    rResult.closure.spec,
-    kResult.closure.spec,
-  );
+  const combinedClosure = unionClosureSpecs(rResult.closure.spec, kResult.closure.spec);
   return proposeAndAccept(
     base,
     [...rResult.ops, ...kResult.ops],
     intent,
-    [
-      'user:mutator.timeline.removeKeyframes',
-      'user:mutator.timeline.keyframe',
-    ],
+    ['user:mutator.timeline.removeKeyframes', 'user:mutator.timeline.keyframe'],
     combinedClosure,
     [...rResult.warnings, ...kResult.warnings],
   );
@@ -291,9 +280,7 @@ function safePath(paramPath: string): string {
  * authoritative: a number → scalar, a string → color, a 3-tuple →
  * vec3, a 4-tuple → quat.
  */
-function inferValueType(
-  value: unknown,
-): 'number' | 'vec3' | 'quat' | 'color' | null {
+function inferValueType(value: unknown): 'number' | 'vec3' | 'quat' | 'color' | null {
   if (typeof value === 'number') return 'number';
   if (typeof value === 'string') return 'color';
   if (Array.isArray(value)) {
@@ -325,9 +312,7 @@ function inferValueType(
  * (addLayer.ts:95-123) — that is the H34 orphan fix; it is NOT
  * reimplemented here. Any validate `!ok` → abort, mutate nothing.
  */
-export function dispatchFirstKeyComposite(
-  args: FirstKeyCompositeArgs,
-): DispatchResult {
+export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): DispatchResult {
   const { targetId, paramPath, value, seconds } = args;
   const intent = `Animate ${targetId}.${paramPath}`;
 
@@ -343,8 +328,7 @@ export function dispatchFirstKeyComposite(
   if (!addLayer || !addChannel || !keyframe) {
     return {
       ok: false,
-      reason:
-        'Timeline Mutators not registered (addLayer / addChannel / keyframe).',
+      reason: 'Timeline Mutators not registered (addLayer / addChannel / keyframe).',
     };
   }
 

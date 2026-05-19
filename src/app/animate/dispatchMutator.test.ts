@@ -10,10 +10,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
-import {
-  __resetMutatorRegistryForTests,
-  registerAllMutators,
-} from '../../agent/mutators';
+import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
 import {
@@ -101,8 +98,7 @@ describe('A1 — dispatchMutatorFromUI (single-Mutator seam)', () => {
 
     // OBSERVE the DAG actually shows the new sample.
     const ch = useDagStore.getState().state.nodes['box_position_channel'];
-    const kfs = (ch.params as { keyframes: Array<{ time: number; value: unknown }> })
-      .keyframes;
+    const kfs = (ch.params as { keyframes: Array<{ time: number; value: unknown }> }).keyframes;
     expect(kfs).toHaveLength(1);
     expect(kfs[0]).toMatchObject({ time: 0.5, value: [0, 2, 0] });
 
@@ -175,9 +171,7 @@ describe('P7.1 — dispatchRetimeKeyframe (2-Mutator atomic composite, D-01/D-03
   const V = [1, 2, 3];
 
   it('retimes preserving value AND easing; old-time sample gone; ONE undo entry', () => {
-    useDagStore
-      .getState()
-      .hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
+    useDagStore.getState().hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
     expect(useDagStore.getState().undoStack).toHaveLength(0);
 
     const res = dispatchRetimeKeyframe({
@@ -256,9 +250,7 @@ describe('P7.1 — dispatchRetimeKeyframe (2-Mutator atomic composite, D-01/D-03
   });
 
   it('no sample at fromTime → { ok:false }, DAG byte-unchanged', () => {
-    useDagStore
-      .getState()
-      .hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
+    useDagStore.getState().hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
     const before = JSON.stringify(useDagStore.getState().state);
 
     const res = dispatchRetimeKeyframe({

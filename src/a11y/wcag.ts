@@ -58,7 +58,9 @@ export function parseHex(hex: string): RGBA {
  */
 export function formatHex({ r, g, b }: RGB): string {
   const h = (n: number) =>
-    Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+    Math.max(0, Math.min(255, Math.round(n)))
+      .toString(16)
+      .padStart(2, '0');
   return `#${h(r)}${h(g)}${h(b)}`;
 }
 
@@ -126,11 +128,7 @@ export function srgbToLinear(c: number): number {
  * where R/G/B are linear-light intensities.
  */
 export function relativeLuminance({ r, g, b }: RGB): number {
-  return (
-    0.2126 * srgbToLinear(r) +
-    0.7152 * srgbToLinear(g) +
-    0.0722 * srgbToLinear(b)
-  );
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
 }
 
 /**

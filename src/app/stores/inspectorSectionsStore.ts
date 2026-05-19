@@ -148,9 +148,6 @@ export const useInspectorSectionsStore = create<InspectorSectionsStore>((set, ge
  *  @param userCollapsed  Result of `getUserCollapsed` for this pair.
  *  @param isDefault      Result of `isDefaultCollapsed(sections, id)`.
  */
-export function resolveCollapsed(
-  userCollapsed: boolean | undefined,
-  isDefault: boolean,
-): boolean {
+export function resolveCollapsed(userCollapsed: boolean | undefined, isDefault: boolean): boolean {
   return userCollapsed === undefined ? isDefault : userCollapsed;
 }

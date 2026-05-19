@@ -106,19 +106,19 @@
 **Execute phase (impure side, runRenderJob in src/render/):**
 
 5. Caller invokes `runRenderJob(jobNodeId, dagState, { storage,
-   encoder })`. V8 file-rooted: NO Op emission from src/render/.
+encoder })`. V8 file-rooted: NO Op emission from src/render/.
 6. Read JobResultValue at frame 0 to derive (frames.start..end, fps,
    outputPath, passKinds[]).
 7. For each frame in [start, end]:
    a. Build `EvalCtx { time: { frame, seconds=frame/fps, normalized=0 } }`.
    b. For each pass-input ref: evaluate the pass at this ctx → ImageValue
-      (sourceHash flips per frame because Time threads through V3).
+   (sourceHash flips per frame because Time threads through V3).
    c. Resolve Scene + Camera by walking the pass node's input bindings
-      and evaluating each producer at the same ctx.
+   and evaluating each producer at the same ctx.
    d. Hand (pass, scene, camera, frame, seconds) to the injectable
-      `PassEncoder` → PNG bytes.
+   `PassEncoder` → PNG bytes.
    e. Write via `StorageCapability.write(outputPath/passKind_NNNN.png,
-      bytes)`. V6 capability — no direct fs/opfs.
+bytes)`. V6 capability — no direct fs/opfs.
 8. Return RenderJobReport { jobId, framesWritten, passKinds, outputs[] }.
 
 **Describe phase (read-only, agent surface):**
@@ -279,15 +279,15 @@ is the cross-link.
 1. RenderJob node added via `dag.exec` (default project does NOT seed
    one; user opts in).
 2. For each preset.requiredPass: `mutator.render.addPass({ jobId,
-   passKind })`. addPass auto-resolves Scene + Camera + TimeSource and
+passKind })`. addPass auto-resolves Scene + Camera + TimeSource and
    wires the pass into `jobId.pass-input`. V13 closure preservation +
    V14 signature uniqueness gates.
 3. `mutator.render.addAIPass({ jobId, presetId, promptText, ... })`
    adds Prompt + ComfyUIWorkflow + connects existing required passes
    to the workflow's pass-input list. Workflow's outputPath = `${job.
-   outputPath}/stylized_${sanitize(presetId)}` (D-04 formula).
+outputPath}/stylized_${sanitize(presetId)}` (D-04 formula).
 4. Optional: `mutator.render.addStitch({ jobId, workflowId, fps?,
-   codec? })` adds VideoStitch consuming the workflow's stylized
+codec? })` adds VideoStitch consuming the workflow's stylized
    output. Stitch's outputPath = `${job.outputPath}/final.mp4`.
 5. User accepts the Diff. DAG describes the AI render plan.
 
@@ -297,32 +297,32 @@ is the cross-link.
    `${job.outputPath}/${passKind}_NNNN.png`. Without raw bytes on disk,
    the workflow has nothing to feed ComfyUI.
 7. `runComfyUIWorkflow(workflowNodeId, dagState, { capability, storage,
-   compileWorkflow, onFrameComplete })` walks frames
+compileWorkflow, onFrameComplete })` walks frames
    [max(frameStart, lastGoodFrame + 1), frameEnd]:
    a. Build EvalCtx { time: { frame, seconds=frame/30, normalized: 0 } }.
    b. Resolve Prompt + pass-input nodes via evaluator at this ctx.
    c. Compute prevFrameStylizedPath: null on first frame, else
-      `framePath(workflowOutputPath, frame - 1)`.
+   `framePath(workflowOutputPath, frame - 1)`.
    d. Call compileWorkflow → { workflowJson, inputs }. The preset's
-      compile factory reads raw pass bytes from the job's parent dir
-      and the prev-frame stylized bytes from prevFrameStylizedPath
-      (or substitutes a 1×1 black ZERO_FRAME_PNG on first frame /
-      missing-path soft-fail).
+   compile factory reads raw pass bytes from the job's parent dir
+   and the prev-frame stylized bytes from prevFrameStylizedPath
+   (or substitutes a 1×1 black ZERO_FRAME_PNG on first frame /
+   missing-path soft-fail).
    e. `await capability.submit(workflowJson, inputs)` → bytes.
    f. Write bytes via `storage.write(framePath(workflowOutputPath,
-      frame), bytes)`. V6 capability — no direct fs/opfs.
+   frame), bytes)`. V6 capability — no direct fs/opfs.
    g. `onFrameComplete(frame)` → caller (src/app/render/runWorkflow.ts)
-      dispatches `setParam` Op advancing `lastGoodFrame`. V8 file-
-      rooted: src/render/* never dispatches.
+   dispatches `setParam` Op advancing `lastGoodFrame`. V8 file-
+   rooted: src/render/\* never dispatches.
    h. On capability rejection: throw with `partialReport` attached;
-      caller's wrapping code catches and surfaces error. Resume:
-      next call starts at `lastGoodFrame + 1`.
+   caller's wrapping code catches and surfaces error. Resume:
+   next call starts at `lastGoodFrame + 1`.
 8. `runVideoStitch(stitchNodeId, dagState, { storage, encoder })`
    walks each upstream ComfyUIWorkflow's frame range:
    a. Read each frame's stylized PNG bytes via `storage.read(
-      framePath(upstream.outputPath, frame))`.
+framePath(upstream.outputPath, frame))`.
    b. Pass collected `framesPng[]` to `deps.encoder({ framesPng,
-      codec, fps })` → encoded video bytes.
+codec, fps })` → encoded video bytes.
    c. Write bytes via `storage.write(stitch.outputPath, videoBytes)`.
 
 **Describe phase (read-only, agent surface):**
@@ -335,7 +335,7 @@ is the cross-link.
 10. `agent.render.summarizeStylized({ workflowNodeId, frame })`
     evaluates the workflow at the frame, returns
     `{ workflowId, presetId, frame, sourceHash, descriptor,
-       outputPath, bytesPresent, lastGoodFrame }`. Agent describes
+outputPath, bytesPresent, lastGoodFrame }`. Agent describes
     progress without loading bytes.
 
 **Common violations:**
@@ -386,16 +386,18 @@ channel.
 **Span:** any zustand store that reads localStorage at module-load and exposes its persisted state to the rest of the app. Currently: `useModeStore`, `useChromeStore`. Future: `useLeftSidebarStore` (W3), `useInspectorSectionStore` (W4), `useTimelineDockStore` (W5).
 
 **Steps (in strict order):**
+
 1. **Module-load fires.** zustand `create<T>(...)` invokes the initializer. The initializer's `state` argument expression runs synchronously — anything that throws here aborts module load.
 2. **Defensive Storage probe.** Helpers (`safeGetItem`) check `typeof localStorage?.getItem === 'function'` AND wrap the call in try/catch. Test envs where Storage is partially-stubbed (vitest happy-dom) return `null`; production browsers return the persisted JSON. (See H26.)
 3. **Parse + validate.** Persisted JSON parses inside try/catch; on parse failure → return defaults. Per-field type-narrows (`typeof parsed.toolRailCollapsed === 'boolean'`) reject malformed values without throwing.
-4. **Legacy-value coercion (mode store specifically).** If the persisted value is in the *previous* type's set but not the *current* type's set (e.g. legacy density `'simple' | 'pro'` after the D-UX-5 repurpose), coerce to the safest current default (`'edit'`). Don't preserve the legacy value just because parse succeeded — the *meaning* changed, not just the shape.
+4. **Legacy-value coercion (mode store specifically).** If the persisted value is in the _previous_ type's set but not the _current_ type's set (e.g. legacy density `'simple' | 'pro'` after the D-UX-5 repurpose), coerce to the safest current default (`'edit'`). Don't preserve the legacy value just because parse succeeded — the _meaning_ changed, not just the shape.
 5. **Default fallback.** Anything that didn't match a legitimate current value returns the type's safe default. For `mode`, that's `'edit'` (full chrome, non-modal, no surprises). For `chrome*Collapsed`, that's `false` (everything visible).
 6. **Initial state spread into store.** `...readPersisted()` is the first key in the initializer object literal. The store object's setters / togglers come after, so any setter call before module-load completion would already have the persisted state.
-7. **First setter call writes back.** The setter runs `writePersisted` *after* `set({...})`, so an in-memory update is reflected before any I/O failure could roll it back. For non-persistable values (mode `'run'`, mode `'director'`), the setter skips the write step entirely.
+7. **First setter call writes back.** The setter runs `writePersisted` _after_ `set({...})`, so an in-memory update is reflected before any I/O failure could roll it back. For non-persistable values (mode `'run'`, mode `'director'`), the setter skips the write step entirely.
 8. **Reload round-trips.** On reload, step 1 runs again with the value step 7 wrote. For `mode`, only persistable values (`'edit'`, `'animate'`) reach this step; transient modes (`'run'`, `'director'`) reset to last persisted on reload.
 
 **Common violations (each one historically caught):**
+
 - Reading `localStorage` outside the initializer (e.g. inside a useEffect on mount) — adds a one-frame flash of default state before the persisted value lands. Solution: always read at module-load.
 - Skipping the legacy-coercion step (#4) when changing a Mode/State type signature — old persisted values seep into a type they no longer fit, narrowing assertions break downstream. Solution: every type-shape change requires a coercion clause in `readPersisted`, even if the new set is a strict superset of the old.
 - Writing every value to storage (no PERSISTABLE filter) — transient modes survive reload, surfacing the user back inside Director Cut after a refresh. Solution: explicit `PERSISTABLE` set; setter checks before write.
@@ -410,6 +412,7 @@ channel.
 **Span:** any wave that deletes / repurposes / collapses-by-default a chrome surface that e2e tests reach through a `data-testid` click. Currently exercised by W2.5 (Library panel deletion → AssetsPopover behind a button) and W2.6 (SceneTree default-collapsed; Inspector→NPanel merge).
 
 **Steps (when chrome surface evolves and breaks e2e selection paths):**
+
 1. **Identify the broken e2e path.** Failure is usually one of: `getByTestId(...).click()` times out (element unmounted or hidden behind chrome), `expect(...).toBeVisible()` fails (display:none flipped), or testid-rename collateral (selector points at a deleted ID).
 2. **Classify the breakage.** Three flavors:
    - **Surface still exists, just unreachable** (collapsed panel) → expand it programmatically before interacting. Don't add a click-the-chevron step inside every test (brittle: ordering-dependent because chromeStore persists across tests).
@@ -422,35 +425,39 @@ channel.
 7. **Do NOT restore chrome to make the test pass.** A button "test-only-expand" or `data-testid="invisible-trigger"` is the wrong path — chrome should serve users, not tests.
 
 **Common violations (each historically caught):**
+
 - Inserting a `getByTestId('chevron').click()` step in every affected test — works first run, breaks on parallel-run order changes because chromeStore persists across tests.
 - Restoring deleted chrome (e.g. re-mounting a hidden NodeList) just so `node-list-item-${id}` selectors work — the Spec is now lying about what the user sees.
 - Not waiting for the dynamic import → flaky-on-cold-cache failures (`Cannot read properties of undefined (reading 'getState')`).
 - Adding `__basher_*` seams in production code paths (not under `import.meta.env.DEV`) — leaks store internals to user runtime.
 
-**REF:** `src/app/boot.ts:144–166` (__basher_editor / __basher_selection / __basher_chrome dev seams); `tests/e2e/acceptance.spec.ts:42–71` (#2 example: tree-row visibility via expanded chromeStore); `tests/e2e/p21-acceptance.spec.ts:178–200` (#4 example: viewportStore.gridVisible direct check after npanel-grid-toggle deletion); `tests/e2e/p6-w2-toolbar.spec.ts` (P6 W2 examples: chromeStore + editorStore via seams). hetvabhasa H27 (parallel-surface evolution drift — K12 is its e2e migration counterpart). P6 W2.5 commit `95291aa`; P6 W2.6 commit `c19b43a`.
+**REF:** `src/app/boot.ts:144–166` (**basher_editor / **basher_selection / \_\_basher_chrome dev seams); `tests/e2e/acceptance.spec.ts:42–71` (#2 example: tree-row visibility via expanded chromeStore); `tests/e2e/p21-acceptance.spec.ts:178–200` (#4 example: viewportStore.gridVisible direct check after npanel-grid-toggle deletion); `tests/e2e/p6-w2-toolbar.spec.ts` (P6 W2 examples: chromeStore + editorStore via seams). hetvabhasa H27 (parallel-surface evolution drift — K12 is its e2e migration counterpart). P6 W2.5 commit `95291aa`; P6 W2.6 commit `c19b43a`.
 
-**Why it matters:** chrome shape is the most volatile thing in the codebase — every UX wave moves panels around. e2e tests that anchor selection through chrome become collateral every wave. The dev-seam pattern decouples tests from chrome shape: the *contract* (a store action that can be invoked) is stable across waves; the *chrome* that surfaces it is not. K12 is the migration recipe so future waves don't burn an hour rediscovering it. Sister: V11 (agent tools must carry selection state via context — same lesson, different consumer) — both rely on stores being the stable contract while their UI mirrors evolve.
+**Why it matters:** chrome shape is the most volatile thing in the codebase — every UX wave moves panels around. e2e tests that anchor selection through chrome become collateral every wave. The dev-seam pattern decouples tests from chrome shape: the _contract_ (a store action that can be invoked) is stable across waves; the _chrome_ that surfaces it is not. K12 is the migration recipe so future waves don't burn an hour rediscovering it. Sister: V11 (agent tools must carry selection state via context — same lesson, different consumer) — both rely on stores being the stable contract while their UI mirrors evolve.
 
 ### K13: Imperative-canvas hot-path lifecycle — static-layer cache + React-bypass rAF strip-redraw
 
-**Span:** any surface that renders bounded static geometry plus a value that changes 60×/sec, where re-rendering the static geometry per tick is the perf bottleneck. P6 W9 instantiation: `TimelineCanvas` (channel-row diamonds = static; playhead = per-tick). Predicted recurrence: P7 splats viewport overlay, any future canvas-2D timeline/graph surface. This is the *execution-order* contract; [[V20]] is the data-ownership invariant it depends on, [[H33]] the trap it avoids.
+**Span:** any surface that renders bounded static geometry plus a value that changes 60×/sec, where re-rendering the static geometry per tick is the perf bottleneck. P6 W9 instantiation: `TimelineCanvas` (channel-row diamonds = static; playhead = per-tick). Predicted recurrence: P7 splats viewport overlay, any future canvas-2D timeline/graph surface. This is the _execution-order_ contract; [[V20]] is the data-ownership invariant it depends on, [[H33]] the trap it avoids.
 
 **Steps (mount → steady state → teardown):**
-1. **Mount (sync, owned by the component).** Create the visible `<canvas>` + an offscreen cache canvas at the SAME backing dims. Derive `dpr = min(max(devicePixelRatio,1),2)` (capped — D-W9-10). Scale the *visible* context by dpr so draw code is CSS-px; the offscreen/visible blit is a 1:1 backing-px copy (`drawImage(offscreen,0,0)`), NOT re-dpr-scaled. Build the static layer into the offscreen once. Start the rAF loop only after the offscreen exists. Publish DOM mirror data-attrs (the test contract) in a **dims-independent effect**, not the draw effect — happy-dom `getBoundingClientRect()→0×0` means a dims-gated draw never publishes the contract (W9 C3 observed deviation).
-2. **rAF tick (the hot path, ≤16.6ms — must NOT re-render React).** Read every mutable input via `getState()` / stable `ref.current` *inside the loop body* — never close over render-scope vars (stale-closure trap; effect deps `[]` is correct precisely because nothing render-scoped is captured). Compute new playhead x from C2-style pure geometry. **Idle early-out:** if x unchanged → return early but ALWAYS re-`requestAnimationFrame` (keep the loop registered; do NOT cancel/re-arm — matches Clock.tsx:9-11 "loop runs even when paused, just no-ops"; a getState()+compare is cheaper than wake-signal coupling). On change: `drawImage(offscreen, oldStripRect → same rect)` to restore static pixels under the OLD playhead, then stroke the playhead at the NEW x **last / on top**. Update the playhead mirror attr.
+
+1. **Mount (sync, owned by the component).** Create the visible `<canvas>` + an offscreen cache canvas at the SAME backing dims. Derive `dpr = min(max(devicePixelRatio,1),2)` (capped — D-W9-10). Scale the _visible_ context by dpr so draw code is CSS-px; the offscreen/visible blit is a 1:1 backing-px copy (`drawImage(offscreen,0,0)`), NOT re-dpr-scaled. Build the static layer into the offscreen once. Start the rAF loop only after the offscreen exists. Publish DOM mirror data-attrs (the test contract) in a **dims-independent effect**, not the draw effect — happy-dom `getBoundingClientRect()→0×0` means a dims-gated draw never publishes the contract (W9 C3 observed deviation).
+2. **rAF tick (the hot path, ≤16.6ms — must NOT re-render React).** Read every mutable input via `getState()` / stable `ref.current` _inside the loop body_ — never close over render-scope vars (stale-closure trap; effect deps `[]` is correct precisely because nothing render-scoped is captured). Compute new playhead x from C2-style pure geometry. **Idle early-out:** if x unchanged → return early but ALWAYS re-`requestAnimationFrame` (keep the loop registered; do NOT cancel/re-arm — matches Clock.tsx:9-11 "loop runs even when paused, just no-ops"; a getState()+compare is cheaper than wake-signal coupling). On change: `drawImage(offscreen, oldStripRect → same rect)` to restore static pixels under the OLD playhead, then stroke the playhead at the NEW x **last / on top**. Update the playhead mirror attr.
 3. **DAG/data change (batched via React).** Diamond `useEffect` keyed on the data + dims + dpr: rebuild the offscreen static layer, blit to visible, update count attrs. **Reset the last-playhead-x sentinel to a never-equal value (-1)** so the next rAF tick re-strokes the playhead over the freshly-rebuilt static layer (else the idle early-out suppresses it and the playhead vanishes after any rebuild — W9 C4 wiring).
 4. **Resize (async — ResizeObserver callback).** Recompute dims + dpr → rebuild offscreen + visible backing stores → step 3's rebuild path. The drawer is user-resizable (200–480px); a missed resize → blurry/clipped canvas (silent).
 5. **Idle (paused, no scrub).** Step 2's early-out is the whole mechanism — no separate idle state machine.
 6. **Unmount (leak guard).** `cancelAnimationFrame(rafId)` AND `resizeObserver.disconnect()`. Both, separately owned (rAF in the loop effect, observer in its own effect). A contract test must assert the observer disconnects on unmount.
 
 **Common violations (each historically caught in W9):**
-- **dpr double-scale at strip-restore** (W9 C4 in-gate catch): scaling the visible ctx by dpr AND pre-multiplying offscreen source coords by dpr → the restored strip is offset/wrong-size, smears the static layer. Fix: the offscreen↔visible blit is identity backing-px space; only the *initial* static draw is dpr-scaled (once, in step 1/3). Candidate H-entry if it recurs.
+
+- **dpr double-scale at strip-restore** (W9 C4 in-gate catch): scaling the visible ctx by dpr AND pre-multiplying offscreen source coords by dpr → the restored strip is offset/wrong-size, smears the static layer. Fix: the offscreen↔visible blit is identity backing-px space; only the _initial_ static draw is dpr-scaled (once, in step 1/3). Candidate H-entry if it recurs.
 - Closing over `dims`/`duration`/`rows` in the rAF callback → frozen at first render (the [[H33]]-adjacent stale-closure family applied to geometry, not the mirror value).
 - Forgetting step 3's sentinel reset → playhead disappears after the first DAG edit/resize until the next x-change tick.
 - rAF cancel/re-arm on play/pause for "efficiency" → adds a wake-signal coupling that the cheap early-out makes unnecessary; also a re-arm race if the wake fires before cancel completes.
 - Publishing the test mirror attrs from the dims-gated draw effect → contract reads `null`/`0` under jsdom/happy-dom and in the pre-first-layout frame.
 
-**P7.1 EXTENSION — keyframe drag (D-W9-7) sub-lifecycle on the SAME loop.** The drag adds an *interaction* layer over the K13 hot path; it introduces ZERO new rAF and ZERO new React subscription on the hot path. Steps:
+**P7.1 EXTENSION — keyframe drag (D-W9-7) sub-lifecycle on the SAME loop.** The drag adds an _interaction_ layer over the K13 hot path; it introduces ZERO new rAF and ZERO new React subscription on the hot path. Steps:
+
 - **1d. pointerdown (sync, owned by the canvas pointer handler).** Hit-test the cursor against every keyframe via the SAME `keyframeToRect` + `LABEL_GUTTER_PX` offset the static layer paints with (do NOT re-derive a different offset); on hit, read the EXACT stored sample `time` float off the LIVE DAG (this becomes `fromTime`, the D-03 exact-`===` discriminator — NOT a pointerup-recomputed seconds, or `removeKeyframes` silently no-ops and the drag DUPLICATES the key), read `getBoundingClientRect().left` ONCE into `dragRef.canvasLeft` (per-tick `getBoundingClientRect` is the K13 perf footgun), set `dragRef`, set `timelineSelection.activeKeyframe`, `setPointerCapture`. NO DAG mutation.
 - **2d. pointermove (sync, O(1)).** Write `dragRef.pointerClientX` only. NO setState, NO DAG, NO draw — the rAF loop draws (V20 hot-path discipline; the move handler is off the React render path).
 - **3d. rAF ghost (the FLAG-1-critical step).** The ghost is a SIBLING block in the SAME tick, AFTER the playhead idle-guard (W9 overlay-last ordering), gated on its OWN `if (dragRef.current)` + `if (ghostX !== lastGhostXRef.current)` — **NEVER nested in the playhead's `if (newX !== lastPlayheadXRef.current)`** (a paused director scrubbing a key has a moving cursor but zero playhead delta; nesting freezes the ghost — [[H39]] / FLAG-1). Compute `localX` from `dragRef.pointerClientX − canvasLeft − LABEL_GUTTER_PX` (pure arithmetic — the rect was read once at 1d), `xToSeconds` (the [[H37]]-correct inset-aware inverse), strip-restore the OLD ghost rect from the offscreen cache (same `drawImage` mechanism step 2 uses), draw the ghost diamond in `PALETTE.ACTIVE_DIAMOND` (existing token — B11 no-shift). Inert when not dragging (one null-check per tick — the perf gate proves it: p95 9.60ms, unchanged from W9 baseline).
@@ -460,4 +467,4 @@ channel.
 
 **REF:** P6 W9 commits C3 `28d6a3b` (static layer + offscreen + dims-independent attr effect) + C4 `28350ab` (rAF strip-redraw + idle/stale-closure guards + sentinel reset); P7.1 commits `94eee7c` (pointer/hit-test/ghost layer) + `c9063bf` (`dispatchRetimeKeyframe` composite seam) + `79b8df1`/`f38cdc4` (`xToSeconds` + round-trip); `src/timeline/TimelineCanvas.tsx`; `src/timeline/timelineCanvasGeometry.ts` (the pure geometry the shell is thin over — `playheadStripRect`, `PLAYHEAD_STRIP_HALF_WIDTH_PX`, `xToSeconds`); `tests/e2e/p6-w9-timeline-canvas.spec.ts` (scrub/cull/ref-sync/R3F-no-remount) + `tests/e2e/p6-w9-perf.spec.ts` (the 240-frame ≥60fps Lokayata gate, observed p95≈9.60ms WITH the ghost code present — D-04 non-regression) + `tests/e2e/p7.1-keyframe-retime.spec.ts` (the drag→retime→evaluated-delta goal gate). Depends on [[V20]] (currentFrameRef single-writer; the ghost reads `dragRef`, a plain ref, adding no writer/subscription) and the V8 mount-once rider (the new 2D canvas must not perturb the R3F Canvas — asserted, not assumed). Sister: K1 step 6 (R3F Canvas mounts once — same "don't remount the heavy canvas" family, different canvas).
 
-**Why it matters:** the naive "redraw everything in the rAF tick" is the SVG-dopesheet perf wall W9 exists to remove. The lifecycle's value is the *separation*: static geometry rebuilt only on data/resize (React-batched), the per-tick cost reduced to one `drawImage` strip-restore + one stroke + one attr write, with the source-of-truth value read React-bypass via [[V20]]. Future imperative-canvas surfaces (P7 splats) inherit this recipe instead of rediscovering the dpr/stale-closure/sentinel traps under a perf deadline.
+**Why it matters:** the naive "redraw everything in the rAF tick" is the SVG-dopesheet perf wall W9 exists to remove. The lifecycle's value is the _separation_: static geometry rebuilt only on data/resize (React-batched), the per-tick cost reduced to one `drawImage` strip-restore + one stroke + one attr write, with the source-of-truth value read React-bypass via [[V20]]. Future imperative-canvas surfaces (P7 splats) inherit this recipe instead of rediscovering the dpr/stale-closure/sentinel traps under a perf deadline.

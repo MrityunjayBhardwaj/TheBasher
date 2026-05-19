@@ -115,9 +115,7 @@ const LABEL_GUTTER_PX = 128;
  *  D-W9-10). High-DPI gets crisp text/diamonds; we never pay >2x fill. */
 function cappedDpr(): number {
   const raw =
-    typeof window !== 'undefined' && window.devicePixelRatio
-      ? window.devicePixelRatio
-      : 1;
+    typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
   return Math.min(Math.max(raw, 1), 2);
 }
 
@@ -144,9 +142,7 @@ interface ChannelRow {
  * not the canvas). Exported so C5 e2e fixtures + any future agent
  * automation can assert the row contract without DOM scraping.
  */
-export function collectChannelRows(
-  nodes: Record<string, Node>,
-): ChannelRow[] {
+export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
   const rows: ChannelRow[] = [];
   const claimed = new Set<string>();
 
@@ -159,9 +155,7 @@ export function collectChannelRows(
     return {
       channelId: node.id,
       name: params.name || params.paramPath || '',
-      keyframes: (params.keyframes ?? [])
-        .slice()
-        .sort((a, b) => a.time - b.time),
+      keyframes: (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time),
     };
   };
 
@@ -169,11 +163,7 @@ export function collectChannelRows(
   for (const node of Object.values(nodes)) {
     if (node.type !== 'AnimationLayer') continue;
     const animation = (node.inputs as Record<string, unknown>).animation;
-    const refs = Array.isArray(animation)
-      ? animation
-      : animation
-        ? [animation]
-        : [];
+    const refs = Array.isArray(animation) ? animation : animation ? [animation] : [];
     for (const ref of refs) {
       const channelId = (ref as { node: string }).node;
       const channelNode = nodes[channelId];
@@ -259,12 +249,7 @@ export function paintStaticLayer(
     ctx.fillStyle = PALETTE.LABEL_TEXT;
     ctx.font = '11px sans-serif';
     ctx.textBaseline = 'middle';
-    ctx.fillText(
-      row.name,
-      6,
-      rowTop + ROW_HEIGHT_PX / 2,
-      LABEL_GUTTER_PX - 8,
-    );
+    ctx.fillText(row.name, 6, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 8);
 
     // Diamonds — geometry comes from C2 (consumed, NOT re-derived inline;
     // re-deriving was the D-W9-4 anti-pattern). Cull first so the count
@@ -274,24 +259,14 @@ export function paintStaticLayer(
       visibleStartSec,
       visibleEndSec,
     );
-    const isActiveRow =
-      activeChannelId !== null && row.channelId === activeChannelId;
-    ctx.fillStyle = isActiveRow
-      ? PALETTE.ACTIVE_DIAMOND
-      : PALETTE.DIAMOND;
+    const isActiveRow = activeChannelId !== null && row.channelId === activeChannelId;
+    ctx.fillStyle = isActiveRow ? PALETTE.ACTIVE_DIAMOND : PALETTE.DIAMOND;
 
     for (const { index } of culled) {
       const t = row.keyframes[index].time;
       // C2 keyframeToRect maps time -> CSS-px rect; offset x by the label
       // gutter so diamonds sit in the track area, not under the labels.
-      const rect = keyframeToRect(
-        t,
-        r,
-        durationSeconds,
-        trackWidth,
-        ROW_HEIGHT_PX,
-        DIAMOND_PX,
-      );
+      const rect = keyframeToRect(t, r, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
       const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
       const cy = rect.y + rect.h / 2;
       // Rotated (45°) square = diamond, mirroring Dopesheet's
@@ -435,9 +410,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // the pre-first-paint DOM already correct (c-3).
     host.dataset.renderedKeyframes = String(renderedKeyframeTotal);
     host.dataset.channelCount = String(rows.length);
-    host.dataset.frameCount = String(
-      Math.max(0, Math.round(durationSeconds * 60)),
-    );
+    host.dataset.frameCount = String(Math.max(0, Math.round(durationSeconds * 60)));
     // C4 carry: data-playhead-px / data-frame are written by the rAF loop
     // (inherently draw-tied — they describe pixel position, not DAG data).
     // But seed a sane initial value here, on the dims-INDEPENDENT data
@@ -557,8 +530,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           // ref↔store cannot diverge here). dpr/duration via the
           // C3-synced refs, never render scope.
           const seconds = useTimeStore.getState().seconds;
-          const frame =
-            useViewportStore.getState().currentFrameRef.current;
+          const frame = useViewportStore.getState().currentFrameRef.current;
           const dprNow = dprRef.current;
           const durationNow = durationRef.current;
 
@@ -566,9 +538,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           // Track area excludes the label gutter, exactly as the C3
           // static layer offsets diamonds by LABEL_GUTTER_PX.
           const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
-          const newX =
-            LABEL_GUTTER_PX +
-            secondsToX(seconds, durationNow, trackWidth);
+          const newX = LABEL_GUTTER_PX + secondsToX(seconds, durationNow, trackWidth);
 
           // IDLE GUARD (LOCKED — plan C4 §129): unchanged x → early-out
           // but STAY registered (do NOT cancel/re-arm). Cheaper than
@@ -596,11 +566,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
             //    e2e: data-rendered-keyframes constant across a scrub).
             //    Skip on the first paint (oldX < 0): nothing drawn yet.
             if (oldX >= 0) {
-              const strip = playheadStripRect(
-                oldX,
-                PLAYHEAD_STRIP_HALF_WIDTH_PX,
-                cssH,
-              );
+              const strip = playheadStripRect(oldX, PLAYHEAD_STRIP_HALF_WIDTH_PX, cssH);
               if (strip.w > 0 && strip.h > 0) {
                 // 1:1 backing-px blit: src rect == dst rect, both scaled
                 // CSS→backing by dprNow. The offscreen is the
@@ -611,17 +577,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
                 const sy = strip.y * dprNow;
                 const sw = strip.w * dprNow;
                 const sh = strip.h * dprNow;
-                visCtx.drawImage(
-                  offscreen,
-                  sx,
-                  sy,
-                  sw,
-                  sh,
-                  sx,
-                  sy,
-                  sw,
-                  sh,
-                );
+                visCtx.drawImage(offscreen, sx, sy, sw, sh, sx, sy, sw, sh);
               }
             }
 
@@ -665,19 +621,9 @@ export function TimelineCanvas({ duration }: { duration: number }) {
             // localX: cursor px relative to the track origin. canvasLeft
             // was read ONCE at pointerdown (NO getBoundingClientRect in
             // the hot loop — the K13 perf footgun). Pure arithmetic.
-            const localX = Math.max(
-              drag.pointerClientX - drag.canvasLeft - LABEL_GUTTER_PX,
-              0,
-            );
-            const ghostSeconds = xToSeconds(
-              localX,
-              durationNow,
-              trackWidth,
-              DIAMOND_PX,
-            );
-            const ghostX =
-              LABEL_GUTTER_PX +
-              secondsToX(ghostSeconds, durationNow, trackWidth);
+            const localX = Math.max(drag.pointerClientX - drag.canvasLeft - LABEL_GUTTER_PX, 0);
+            const ghostSeconds = xToSeconds(localX, durationNow, trackWidth, DIAMOND_PX);
+            const ghostX = LABEL_GUTTER_PX + secondsToX(ghostSeconds, durationNow, trackWidth);
 
             // The ghost's OWN idle guard, keyed to ITS driver (the
             // cursor), never the playhead's newX. An idle drag (cursor
@@ -704,17 +650,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
                   const sy = strip.y * dprNow;
                   const sw = strip.w * dprNow;
                   const sh = strip.h * dprNow;
-                  visCtx.drawImage(
-                    offscreen,
-                    sx,
-                    sy,
-                    sw,
-                    sh,
-                    sx,
-                    sy,
-                    sw,
-                    sh,
-                  );
+                  visCtx.drawImage(offscreen, sx, sy, sw, sh, sx, sy, sw, sh);
                 }
               }
 
@@ -802,9 +738,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           const liveParams = (live?.params ?? {}) as {
             keyframes?: Array<{ time: number }>;
           };
-          const liveSample = (liveParams.keyframes ?? []).find(
-            (k) => k.time === kf.time,
-          );
+          const liveSample = (liveParams.keyframes ?? []).find((k) => k.time === kf.time);
           if (!liveSample) continue;
           dragRef.current = {
             channelId: row.channelId,
@@ -813,12 +747,10 @@ export function TimelineCanvas({ duration }: { duration: number }) {
             pointerClientX: e.clientX,
             canvasLeft: box.left, // read ONCE here (perf — D-04)
           };
-          useTimelineSelection
-            .getState()
-            .setActiveKeyframe({
-              channelId: row.channelId,
-              time: liveSample.time,
-            });
+          useTimelineSelection.getState().setActiveKeyframe({
+            channelId: row.channelId,
+            time: liveSample.time,
+          });
           canvas.setPointerCapture(e.pointerId);
           return;
         }

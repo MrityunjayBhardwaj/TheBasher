@@ -32,15 +32,12 @@ export type SimplifyChannelSpec = z.infer<typeof SimplifyChannelSpec>;
 
 type Keyframe<V = unknown> = { time: number; value: V; easing: 'linear' | 'cubic' };
 
-const SIMPLIFIABLE: ReadonlySet<string> = new Set([
-  'KeyframeChannelNumber',
-  'KeyframeChannelVec3',
-]);
+const SIMPLIFIABLE: ReadonlySet<string> = new Set(['KeyframeChannelNumber', 'KeyframeChannelVec3']);
 
 export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
   name: 'mutator.timeline.simplifyChannel',
   description:
-    'Reduce a KeyframeChannel\'s keyframe count by Ramer-Douglas-Peucker. ' +
+    "Reduce a KeyframeChannel's keyframe count by Ramer-Douglas-Peucker. " +
     'Preserves curve shape within tolerance ε. Supports Number + Vec3; ' +
     'Quat / Color channels return a no-op (their distance metrics need a ' +
     'separate implementation pass).',
@@ -57,14 +54,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     // Distinguishes from keyframeMutator (which keeps both) and
     // removeKeyframesMutator (which keeps neither, at either scope)
     // under V14.
-    preserves: [
-      'position',
-      'rotation',
-      'scale',
-      'material',
-      'children',
-      'animation-shape',
-    ],
+    preserves: ['position', 'rotation', 'scale', 'material', 'children', 'animation-shape'],
     lossy: [
       {
         kind: 'keyframe-density',
