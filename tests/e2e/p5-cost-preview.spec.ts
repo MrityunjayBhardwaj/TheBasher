@@ -179,6 +179,11 @@ test('P5#C5.1 selecting a ComfyUIWorkflow node embeds CostPreview in Inspector',
 });
 
 test('P5#C5.2 Estimate populates frames + estimated time + sample frame', async ({ page }) => {
+  // Legitimately slow: OPFS probe-write + dryRun estimate extrapolation.
+  // Same known-slow (not flaky) class as C5.3 below — under the full e2e
+  // suite (workers:1) CI contention pushes this past the 30s per-test cap.
+  // test.slow() triples the budget — the Playwright-idiomatic mechanism.
+  test.slow();
   await seedWorkflowGraph(page, 4);
   await page.getByTestId('cost-preview-estimate').click();
   // dryRun extrapolates frameEnd-frameStart+1 = 5.

@@ -37,13 +37,14 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
+import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { paramAnimationState } from './animate/paramAnimationState';
-import { autoKeyCommit, resolveChannel } from './animate/autoKeyCommit';
+import { autoKeyCommit, resolveChannel, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -55,6 +56,7 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { resolveTransformParam } from './resolveTransformParam';
 
 // P7.3: `resolveChannel` + `autoKeyCommit` were lifted to the shared
 // `./animate/autoKeyCommit` module (one Auto-Key chokepoint, two callers:
@@ -177,11 +179,27 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
   const scrub = useDragScrub({
     value,
     onCommit: (next) => {
+      // P7.4 D-05 (#77): animated param → re-route through the SHARED seam
+      // chokepoint BEFORE the raw setParam (H36 anti-double-write). On true
+      // the seam already keyed — skip BOTH the raw setParam AND the separate
+      // autoKeyCommit. On false (un-animated) the existing path runs
+      // unchanged (matrix rows 1-2: the AutoKey-ON first-key composite).
+      if (routeAnimatedGrab(nodeId, paramPath, next)) return;
       dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `scrub ${paramPath}`);
       autoKeyCommit(nodeId, paramPath, next);
     },
   });
   const display = scrub.isDragging ? scrub.previewValue : value;
+  // P7.4 D-02: read-only-while-playing applies ONLY when this field is
+  // displaying an evaluated value (D-03 scope: transform-only). The helper
+  // returns null for scalars (D-03 whitelist guard), so NumericField never
+  // shows an evaluated value → `evaluated` is always false here, and
+  // `readOnly` is byte-equivalent to today's editable scalar field. The
+  // attribute exists for defensive parity with VectorComponent — if a
+  // future scalar transform param is added (none today), the seam covers it.
+  const playing = useTimeStore((s) => s.playing);
+  const evaluated = false;
+  const readOnly = playing && evaluated;
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
@@ -199,11 +217,16 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
         type="number"
         step="0.1"
         value={display}
+        readOnly={readOnly}
+        data-readonly-while-playing={readOnly || undefined}
         data-testid={`inspector-input-${nodeId}-${paramPath}`}
         className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
+          // P7.4 D-05 (#77): animated → SHARED seam, skip raw setParam +
+          // autoKeyCommit. Un-animated → existing path unchanged.
+          if (routeAnimatedGrab(nodeId, paramPath, next)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: next });
           autoKeyCommit(nodeId, paramPath, next);
         }}
@@ -219,6 +242,7 @@ function VectorComponent({
   axisIndex,
   value,
   vec,
+  readOnly,
 }: {
   nodeId: string;
   paramPath: string;
@@ -226,6 +250,7 @@ function VectorComponent({
   axisIndex: number;
   value: number;
   vec: readonly number[];
+  readOnly?: boolean;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
   const scrub = useDragScrub({
@@ -233,6 +258,11 @@ function VectorComponent({
     onCommit: (next) => {
       const newVec = [...vec] as number[];
       newVec[axisIndex] = next;
+      // P7.4 D-05 (#77) + D-06 (#78): re-route the SAME displayed newVec
+      // (WYSIWYK — write composition unchanged) through the SHARED seam
+      // BEFORE the raw setParam. On true: seam keyed, skip both. On false
+      // (un-animated): existing path unchanged.
+      if (routeAnimatedGrab(nodeId, paramPath, newVec)) return;
       dispatch(
         { type: 'setParam', nodeId, paramPath, value: newVec },
         'user',
@@ -256,6 +286,8 @@ function VectorComponent({
         type="number"
         step="0.1"
         value={display}
+        readOnly={readOnly}
+        data-readonly-while-playing={readOnly || undefined}
         data-testid={`inspector-vec-${nodeId}-${paramPath}-${axisLabel}`}
         className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => {
@@ -263,6 +295,10 @@ function VectorComponent({
           if (Number.isNaN(next)) return;
           const newVec = [...vec] as number[];
           newVec[axisIndex] = next;
+          // P7.4 D-05 (#77) + D-06 (#78): same displayed newVec through the
+          // SHARED seam BEFORE the raw setParam. True → skip both;
+          // false (un-animated) → existing path unchanged.
+          if (routeAnimatedGrab(nodeId, paramPath, newVec)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
           autoKeyCommit(nodeId, paramPath, newVec);
         }}
@@ -283,6 +319,37 @@ function VectorField({
   value: readonly number[];
 }) {
   const dims = ['x', 'y', 'z'];
+  // P7.4 D-01: field-level resolver call (NOT per-axis — one helper call
+  // yields the resolved vec, then each VectorComponent reads its axis
+  // index). Mirrors Gizmo.tsx:142-151 useMemo cadence: dependencies are
+  // [state, selectedId/nodeId, paramPath, frame, seconds, normalized].
+  // The helper returns null for non-transform paramPaths (D-03 whitelist
+  // inside the helper) — un-animated transform params get the authored
+  // Vec3 back via the resolver's patched-clone passthrough, so the
+  // (resolved ?? value) seam is byte-identical to today's display for
+  // anything not actively animated. V20: subscriber form throughout,
+  // never useTimeStore.getState() in the seam.
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const dagState = useDagStore((s) => s.state);
+  const resolved = useMemo(
+    () =>
+      resolveTransformParam(dagState, nodeId, paramPath, {
+        time: { frame, seconds, normalized },
+      }),
+    [dagState, nodeId, paramPath, frame, seconds, normalized],
+  );
+  // Per-param fallback (D-01): resolved Vec3 OR authored value.
+  const effectiveValue: readonly number[] = resolved ?? value;
+  // D-02: read-only while playing IFF this field is showing an evaluated
+  // value. `resolved !== null` means the helper returned a Vec3 (i.e. the
+  // selection is a rendered transform-bearing node + paramPath is in the
+  // D-03 whitelist). Un-animated material vecs, non-transform Vec3 params,
+  // or unrenderable selections → resolved is null → readOnly is false →
+  // editing behavior unchanged from today.
+  const readOnly = playing && resolved !== null;
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
@@ -290,7 +357,7 @@ function VectorField({
         <span className="font-mono text-fg/60">{label}</span>
       </span>
       <div className="flex gap-1">
-        {value.slice(0, 3).map((v, i) => (
+        {effectiveValue.slice(0, 3).map((v, i) => (
           <VectorComponent
             key={dims[i]}
             nodeId={nodeId}
@@ -298,7 +365,8 @@ function VectorField({
             axisLabel={dims[i]}
             axisIndex={i}
             value={v}
-            vec={value}
+            vec={effectiveValue}
+            readOnly={readOnly}
           />
         ))}
       </div>
