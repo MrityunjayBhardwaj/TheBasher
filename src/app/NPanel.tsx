@@ -44,7 +44,7 @@ import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { paramAnimationState } from './animate/paramAnimationState';
-import { autoKeyCommit, resolveChannel } from './animate/autoKeyCommit';
+import { autoKeyCommit, resolveChannel, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -179,6 +179,12 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
   const scrub = useDragScrub({
     value,
     onCommit: (next) => {
+      // P7.4 D-05 (#77): animated param → re-route through the SHARED seam
+      // chokepoint BEFORE the raw setParam (H36 anti-double-write). On true
+      // the seam already keyed — skip BOTH the raw setParam AND the separate
+      // autoKeyCommit. On false (un-animated) the existing path runs
+      // unchanged (matrix rows 1-2: the AutoKey-ON first-key composite).
+      if (routeAnimatedGrab(nodeId, paramPath, next)) return;
       dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `scrub ${paramPath}`);
       autoKeyCommit(nodeId, paramPath, next);
     },
@@ -218,6 +224,9 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
         onChange={(e) => {
           const next = parseFloat(e.target.value);
           if (Number.isNaN(next)) return;
+          // P7.4 D-05 (#77): animated → SHARED seam, skip raw setParam +
+          // autoKeyCommit. Un-animated → existing path unchanged.
+          if (routeAnimatedGrab(nodeId, paramPath, next)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: next });
           autoKeyCommit(nodeId, paramPath, next);
         }}
@@ -249,6 +258,11 @@ function VectorComponent({
     onCommit: (next) => {
       const newVec = [...vec] as number[];
       newVec[axisIndex] = next;
+      // P7.4 D-05 (#77) + D-06 (#78): re-route the SAME displayed newVec
+      // (WYSIWYK — write composition unchanged) through the SHARED seam
+      // BEFORE the raw setParam. On true: seam keyed, skip both. On false
+      // (un-animated): existing path unchanged.
+      if (routeAnimatedGrab(nodeId, paramPath, newVec)) return;
       dispatch(
         { type: 'setParam', nodeId, paramPath, value: newVec },
         'user',
@@ -281,6 +295,10 @@ function VectorComponent({
           if (Number.isNaN(next)) return;
           const newVec = [...vec] as number[];
           newVec[axisIndex] = next;
+          // P7.4 D-05 (#77) + D-06 (#78): same displayed newVec through the
+          // SHARED seam BEFORE the raw setParam. True → skip both;
+          // false (un-animated) → existing path unchanged.
+          if (routeAnimatedGrab(nodeId, paramPath, newVec)) return;
           dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
           autoKeyCommit(nodeId, paramPath, newVec);
         }}
