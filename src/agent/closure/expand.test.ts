@@ -209,6 +209,96 @@ describe('expandClosure', () => {
     const timeOnly = expandClosure({ rootSelectors: ['scene'], followedEdges: ['time'] }, state);
     expect([...timeOnly.nodes]).toEqual(['scene']);
   });
+
+  // #20: a consumer that binds the same producer through two sockets
+  // (think a Texture wired to both `albedo` and `normal` on a Material)
+  // used to emit one ClosureEdge per socket. The closure node-set was
+  // still correct, but `edges` carried redundant (from, to, kind)
+  // entries — wasted space + double-processing for any consumer that
+  // iterates edges.
+  it("'parent' dedupes when one consumer references the same producer via multiple sockets (#20)", () => {
+    const state: DagState = {
+      nodes: {
+        tex: { id: 'tex', type: 'Texture', version: 1, params: {}, inputs: {} },
+        material: {
+          id: 'material',
+          type: 'Material',
+          version: 1,
+          params: {},
+          inputs: {
+            albedo: { node: 'tex', socket: 'out' },
+            normal: { node: 'tex', socket: 'out' },
+          },
+        },
+      },
+      outputs: {},
+    };
+    const closure = expandClosure({ rootSelectors: ['tex'], followedEdges: ['parent'] }, state);
+    expect(closure.nodes.has('material')).toBe(true);
+    const dupes = closure.edges.filter(
+      (e) => e.from === 'tex' && e.to === 'material' && e.kind === 'parent',
+    );
+    expect(dupes).toHaveLength(1);
+  });
+
+  it("'children' dedupes when a node binds to the same producer via multiple sockets (#20)", () => {
+    const state: DagState = {
+      nodes: {
+        tex: { id: 'tex', type: 'Texture', version: 1, params: {}, inputs: {} },
+        material: {
+          id: 'material',
+          type: 'Material',
+          version: 1,
+          params: {},
+          inputs: {
+            albedo: { node: 'tex', socket: 'out' },
+            normal: { node: 'tex', socket: 'out' },
+          },
+        },
+      },
+      outputs: {},
+    };
+    const closure = expandClosure(
+      { rootSelectors: ['material'], followedEdges: ['children'] },
+      state,
+    );
+    expect(closure.nodes.has('tex')).toBe(true);
+    const dupes = closure.edges.filter(
+      (e) => e.from === 'material' && e.to === 'tex' && e.kind === 'children',
+    );
+    expect(dupes).toHaveLength(1);
+  });
+
+  it('distinct (from, to, kind) edges are still preserved when multiple consumers point to one producer (#20)', () => {
+    // Two materials both bind the same texture. `edges` from 'parent'
+    // walk must keep BOTH {tex→matA} and {tex→matB} — they are
+    // semantically distinct paths to the same node.
+    const state: DagState = {
+      nodes: {
+        tex: { id: 'tex', type: 'Texture', version: 1, params: {}, inputs: {} },
+        matA: {
+          id: 'matA',
+          type: 'Material',
+          version: 1,
+          params: {},
+          inputs: { albedo: { node: 'tex', socket: 'out' } },
+        },
+        matB: {
+          id: 'matB',
+          type: 'Material',
+          version: 1,
+          params: {},
+          inputs: { albedo: { node: 'tex', socket: 'out' } },
+        },
+      },
+      outputs: {},
+    };
+    const closure = expandClosure({ rootSelectors: ['tex'], followedEdges: ['parent'] }, state);
+    expect(closure.edges).toEqual([
+      { from: 'tex', to: 'matA', kind: 'parent' },
+      { from: 'tex', to: 'matB', kind: 'parent' },
+    ]);
+  });
 });
 
 describe('opTargetNodeId', () => {

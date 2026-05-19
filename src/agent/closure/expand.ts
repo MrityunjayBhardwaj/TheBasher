@@ -100,6 +100,13 @@ function walkKind(
   // Per-kind visited prevents re-walking inside this BFS while still
   // allowing other kinds' BFS to enter the same node.
   const seenInKind = new Set<NodeId>();
+  // Per-kind edge set keyed by (from, to, kind) suppresses duplicate
+  // pushes when a consumer binds the same producer through multiple
+  // sockets (or symmetrically, when consumersOf records the same
+  // consumer ↔ producer pair under multiple sockets). Distinct edges
+  // like {A→B} and {C→B} remain — only true (from, to, kind) repeats
+  // are dropped. Closes #20.
+  const seenEdges = new Set<string>();
   const frontier: FrontierEntry[] = [];
   for (const root of roots) {
     if (state.nodes[root] && !seenInKind.has(root)) {
@@ -112,7 +119,7 @@ function walkKind(
   while (head < frontier.length) {
     const { id, depth } = frontier[head++];
     if (depth >= maxDepth) continue;
-    visitEdge(state, consumersOf, id, kind, depth, seenInKind, visited, frontier, edges);
+    visitEdge(state, consumersOf, id, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
   }
 }
 
@@ -123,6 +130,7 @@ function visitEdge(
   kind: EdgeKind,
   depth: number,
   seenInKind: Set<NodeId>,
+  seenEdges: Set<string>,
   visited: Set<NodeId>,
   frontier: Array<{ id: NodeId; depth: number }>,
   edges: ClosureEdge[],
@@ -131,7 +139,7 @@ function visitEdge(
     const consumers = consumersOf.get(from);
     if (!consumers) return;
     for (const { consumer } of consumers) {
-      enqueue(consumer, from, kind, depth, seenInKind, visited, frontier, edges);
+      enqueue(consumer, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
     }
     return;
   }
@@ -145,7 +153,7 @@ function visitEdge(
     if (kind !== 'children' && socket !== kind) continue;
     const refs = Array.isArray(binding) ? binding : [binding];
     for (const ref of refs) {
-      enqueue(ref.node, from, kind, depth, seenInKind, visited, frontier, edges);
+      enqueue(ref.node, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
     }
   }
 }
@@ -156,10 +164,14 @@ function enqueue(
   kind: EdgeKind,
   depth: number,
   seenInKind: Set<NodeId>,
+  seenEdges: Set<string>,
   visited: Set<NodeId>,
   frontier: Array<{ id: NodeId; depth: number }>,
   edges: ClosureEdge[],
 ): void {
+  const edgeKey = `${from}${next}${kind}`;
+  if (seenEdges.has(edgeKey)) return;
+  seenEdges.add(edgeKey);
   edges.push({ from, to: next, kind });
   visited.add(next);
   if (seenInKind.has(next)) return;
