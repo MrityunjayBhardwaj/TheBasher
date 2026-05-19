@@ -314,11 +314,20 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     expect(chs[0].keyframes[0].time).toBeCloseTo(0, 5);
     expect(chs[0].keyframes[0].value).toEqual([0, 0, 0]);
 
-    // 3 — Scrub to t=2s, set rotation Y to 360 via the inspector vec
-    //     input (rotation IS a schema'd BoxMesh field — H28-safe; this
-    //     is NOT a non-schema'd setParam). Then click the diamond again
-    //     (now 'animated', off-key at t=2) → single keyframe Mutator via
-    //     the seam with value [0,360,0]@t=2. Still the REAL affordance.
+    // 3 — Enable Auto-Key (the post-#77 REAL affordance for "set a value
+    //     at the playhead and key it" — the autokey-toggle precedent at
+    //     :194-195). Scrub to t=2s, set rotation Y to 360 via the
+    //     inspector vec input (rotation IS a schema'd BoxMesh field —
+    //     H28-safe). On an already-animated param with Auto-Key ON the
+    //     inspector commit routes through routeAnimatedGrab→autoKeyCommit
+    //     (the #77 shared chokepoint) and keys [0,360,0]@t=2 DIRECTLY —
+    //     no dead-write, no separate diamond click. (Pre-#77 the OFF edit
+    //     silently dead-wrote the box and the re-clicked diamond keyed
+    //     that authored value; #77 correctly converts the animated+OFF
+    //     edit to a no-op, so the staging — not the asserted contract —
+    //     moves to Auto-Key ON. Still the REAL affordance.)
+    await page.getByTestId('autokey-toggle').click();
+    await expect(page.getByTestId('timebar')).toHaveAttribute('data-autokey', 'on');
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       w.__basher_time!.getState().setTime(2);
@@ -327,8 +336,12 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     await expect(rotY).toBeVisible();
     await rotY.fill('360');
     await rotY.press('Tab');
-    await expect(rotDiamond).toHaveAttribute('data-anim-state', 'animated');
-    await rotDiamond.click();
+    // With Auto-Key ON the seam keyed [0,360,0] AT the playhead (t=2):
+    // a key now exists at the current frame, so the diamond is 'on-key'
+    // (a key IS here), NOT 'animated' (animated but off-key). 'on-key'
+    // is the strictly stronger proof the REAL affordance keyed via the
+    // #77 chokepoint — exactly the contract this test asserts.
+    await expect(rotDiamond).toHaveAttribute('data-anim-state', 'on-key');
     await expect
       .poll(async () => {
         const c = await channelNodes(page);

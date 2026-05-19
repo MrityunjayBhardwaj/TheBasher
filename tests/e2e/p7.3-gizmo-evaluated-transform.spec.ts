@@ -118,8 +118,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
     };
     const dispatch = (op: unknown) => dagApi.dispatch(op);
     const nodes = () => w.__basher_dag!.getState().state.nodes;
-    const findType = (t: string) =>
-      Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
+    const findType = (t: string) => Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
 
     const boxId = 'n_box';
     const sceneId = findType('Scene');

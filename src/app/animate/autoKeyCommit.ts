@@ -63,11 +63,7 @@ import { useAutoKeyStore } from '../stores/autoKeyStore';
  *                  must NOT separately call autoKeyCommit — the seam keyed).
  * Returns false ⇒ un-animated, caller proceeds with its EXISTING path.
  */
-export function routeAnimatedGrab(
-  selectedId: string,
-  paramPath: string,
-  value: unknown,
-): boolean {
+export function routeAnimatedGrab(selectedId: string, paramPath: string, value: unknown): boolean {
   if (!selectedId) return false;
   const state = useDagStore.getState().state;
   const grabFrame = useTimeStore.getState().frame;

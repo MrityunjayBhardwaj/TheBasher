@@ -122,9 +122,7 @@ async function evalWalkPosition(
         }
         const child = children[i] as { kind?: string };
         if (child && child.kind === 'AnimationLayer' && refNode) {
-          const layerNode = dag.nodes[refNode] as
-            | { inputs?: { target?: unknown } }
-            | undefined;
+          const layerNode = dag.nodes[refNode] as { inputs?: { target?: unknown } } | undefined;
           if (layerNode) {
             const targetRefs = normalizeRefs(layerNode.inputs?.target);
             if (targetRefs.some((r) => r?.node === id)) {
@@ -187,8 +185,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
     };
     const dispatch = (op: unknown) => dagApi.dispatch(op);
     const nodes = () => w.__basher_dag!.getState().state.nodes;
-    const findType = (t: string) =>
-      Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
+    const findType = (t: string) => Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
 
     const boxId = 'n_box';
     const sceneId = findType('Scene');
@@ -361,9 +358,7 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
         .poll(async () => V(await inspectorDisplayedPosition(page, 'n_box')))
         .toBe(V(evalPosBox));
       const displayed = await inspectorDisplayedPosition(page, 'n_box');
-      console.log(
-        `[P7.4 D-06 box] t=${t} eval=${V(evalPosBox)} displayed=${V(displayed)}`,
-      );
+      console.log(`[P7.4 D-06 box] t=${t} eval=${V(evalPosBox)} displayed=${V(displayed)}`);
       // The assertion whose absence let #69 stay open: BOTH sides equal.
       expect(displayed[0]).toBeCloseTo(evalPosBox![0], 3);
       expect(displayed[1]).toBeCloseTo(evalPosBox![1], 3);
@@ -408,9 +403,7 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
     await page.evaluate(() => {
       (window as unknown as BasherWindow).__basher_time!.getState().play();
     });
-    await expect
-      .poll(async () => posX.getAttribute('data-readonly-while-playing'))
-      .toBe('true');
+    await expect.poll(async () => posX.getAttribute('data-readonly-while-playing')).toBe('true');
     // Two independent observations of the readonly state:
     //   (a) the React-level seam: data-readonly-while-playing="true"
     //   (b) the DOM-level seam: the `readonly` attribute is present
@@ -431,7 +424,9 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
       fillThrew = true;
     }
     expect(fillThrew).toBe(true);
-    console.log(`[P7.4 D-02 playing] readonly attr present + fill rejected by Playwright readonly-gate`);
+    console.log(
+      `[P7.4 D-02 playing] readonly attr present + fill rejected by Playwright readonly-gate`,
+    );
 
     // Pause → the readonly attribute is gone; editing routes through
     // autoKeyCommit (the unchanged write path — D-02 explicit no-touch).
@@ -613,8 +608,7 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
       };
       const dispatch = (op: unknown) => dagApi.dispatch(op);
       const nodes = () => w.__basher_dag!.getState().state.nodes;
-      const findType = (t: string) =>
-        Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
+      const findType = (t: string) => Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
       const boxId = 'n_box';
       const sceneId = findType('Scene')!;
       if (!Object.values(nodes()).some((n) => n.type === 'TimeSource')) {
@@ -670,9 +664,7 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
         to: { node: 'd6_layer', socket: 'animation' },
       });
       return {
-        chId: Object.entries(nodes()).find(([, n]) =>
-          n.type.startsWith('KeyframeChannel'),
-        )?.[0],
+        chId: Object.entries(nodes()).find(([, n]) => n.type.startsWith('KeyframeChannel'))?.[0],
       };
     });
     expect(chId).toBeTruthy();
@@ -700,11 +692,10 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
           const out = w.__basher_evaluate!(root.node, {
             time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
           }).value as { scene?: { children: Array<Record<string, unknown>> } };
-          const children = (out.scene as { children: Array<Record<string, unknown>> })
-            .children;
-          const layer = children.find(
-            (c) => (c as { kind?: string }).kind === 'AnimationLayer',
-          ) as { target?: { position?: [number, number, number] } } | undefined;
+          const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
+          const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
+            | { target?: { position?: [number, number, number] } }
+            | undefined;
           const p = layer?.target?.position ?? null;
           return p ? ([p[1], p[2]] as [number, number]) : null;
         },
