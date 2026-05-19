@@ -11,6 +11,15 @@ name: Update Playwright Snapshots
 # change and was only caught once e2e actually ran in CI — see #74).
 # Dispatch this whenever a deliberate visual change makes a snapshot
 # diff expected.
+#
+# IMPORTANT — dispatch on a FEATURE BRANCH, never on `main`.
+# `main` is a protected branch with 5 required status checks (#72); the
+# commit step's `git push origin HEAD:<ref>` is rejected by GH006 when
+# <ref> is `main` (the bot is not an admin, and the just-made commit has
+# no passing checks yet). Dispatch on a branch off main → it pushes there
+# freely → open a PR → e2e runs against the new baseline and goes green →
+# merge the PR. (Verified 2026-05-19: a dispatch-on-main run failed
+# exactly this way.)
 
 on:
   workflow_dispatch:
