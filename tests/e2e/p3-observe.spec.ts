@@ -16,7 +16,11 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(async () => {
     if (typeof navigator?.storage?.getDirectory === 'function') {
       const root = await navigator.storage.getDirectory();
-      try { await root.removeEntry('basher', { recursive: true }); } catch {}
+      try {
+        await root.removeEntry('basher', { recursive: true });
+      } catch {
+        /* OPFS entry absent on first run — nothing to clear */
+      }
     }
   });
   await page.reload();
