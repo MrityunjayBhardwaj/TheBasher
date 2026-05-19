@@ -1,3 +1,9 @@
 public/assets/*.gltf
 public/assets/*.glb
 VISOR.md
+
+# Planning working-docs (phase CONTEXT/PLAN/SECTION-INVENTORY etc.) are
+# working state, not shipped code — durable records live in memory. Not
+# prettier-gated. (One tracked file slipped in via P7.4 W4 6ef2efa;
+# this keeps it + all future .planning out of `prettier --check .`.)
+.planning/
