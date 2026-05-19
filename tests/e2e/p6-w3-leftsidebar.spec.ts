@@ -31,8 +31,8 @@ test.beforeEach(async ({ page }) => {
   // Wait for the chromeStore dev seam to land so we can drive
   // collapse state programmatically (the SceneTree default-collapsed
   // pattern from W2.6).
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
   );
   // Expand the left sidebar so the tab strip is reachable in tests
   // that exercise tabs. Collapse-specific test re-collapses as needed.
@@ -48,8 +48,8 @@ test.beforeEach(async ({ page }) => {
 
 test('P6.W3#1 LeftSidebar default activeTab = scene (D-01)', async ({ page }) => {
   // Wait for the dev seam.
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_left_sidebar?: unknown }).__basher_left_sidebar),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_left_sidebar?: unknown }).__basher_left_sidebar),
   );
   const tab = await page.evaluate(() => {
     const w = window as unknown as {
@@ -74,8 +74,8 @@ test('P6.W3#2 tab switch routes through leftSidebarStore + survives reload', asy
 
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_left_sidebar?: unknown }).__basher_left_sidebar),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_left_sidebar?: unknown }).__basher_left_sidebar),
   );
   // Re-expand chrome so the tab strip is visible after the reload-time
   // collapse default. The persisted activeTab survives independently.
@@ -107,7 +107,9 @@ test('P6.W3#3 LeftSidebar collapse chevron lives in the tab strip (D-03)', async
   await expect(page.getByTestId('left-sidebar-tab-strip')).toBeVisible();
 });
 
-test('P6.W3#4 ComfyStatusIndicator migrated from Chrome to ProjectTabs right edge', async ({ page }) => {
+test('P6.W3#4 ComfyStatusIndicator migrated from Chrome to ProjectTabs right edge', async ({
+  page,
+}) => {
   // Lives inside ProjectTabs (R1)…
   const inProjectTabs = await page.evaluate(() => {
     const indicator = document.querySelector('[data-testid="comfy-status-indicator"]');
@@ -124,7 +126,9 @@ test('P6.W3#4 ComfyStatusIndicator migrated from Chrome to ProjectTabs right edg
   expect(inChrome).toBe(false);
 });
 
-test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears after save', async ({ page }) => {
+test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears after save', async ({
+  page,
+}) => {
   // Wait for the boot subscription to be registered (dirty starts false).
   await page.waitForFunction(() => {
     const w = window as unknown as {
@@ -142,11 +146,7 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
       __basher_dag: {
         getState: () => {
           state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
-          dispatchAtomic: (
-            ops: unknown[],
-            source: string,
-            description: string,
-          ) => void;
+          dispatchAtomic: (ops: unknown[], source: string, description: string) => void;
         };
       };
     };
@@ -154,9 +154,7 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
     // Find a BoxMesh from the seed.
     const node = Object.values(dag.state.nodes).find((n) => n.type === 'BoxMesh');
     if (!node) throw new Error('seed project missing BoxMesh');
-    const nodeId = Object.keys(dag.state.nodes).find(
-      (k) => dag.state.nodes[k] === node,
-    );
+    const nodeId = Object.keys(dag.state.nodes).find((k) => dag.state.nodes[k] === node);
     dag.dispatchAtomic(
       [{ type: 'setParam', nodeId, paramPath: 'position', value: [1, 0, 0] }],
       'user',
@@ -172,7 +170,9 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
   await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
 });
 
-test('P6.W3#6 AddMenu reachable from RMB and toolbar + button (D-04 regression)', async ({ page }) => {
+test('P6.W3#6 AddMenu reachable from RMB and toolbar + button (D-04 regression)', async ({
+  page,
+}) => {
   // Path 1 — RMB on viewport.
   const viewport = page.getByTestId('viewport-slot');
   await viewport.click({ button: 'right', position: { x: 200, y: 200 } });

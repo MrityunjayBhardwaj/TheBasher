@@ -31,12 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // not reach the vitest .test.tsx transform here).
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import {
-  TimelineCanvas,
-  collectChannelRows,
-  paintStaticLayer,
-  PALETTE,
-} from './TimelineCanvas';
+import { TimelineCanvas, collectChannelRows, paintStaticLayer, PALETTE } from './TimelineCanvas';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
 import type { Node } from '../core/dag/types';
@@ -177,9 +172,7 @@ describe('paintStaticLayer', () => {
   it('does not throw on zero-size dims or zero duration', () => {
     const { ctx } = recordingCtx();
     const rows = collectChannelRows({ ch1: makeChannel('ch1', 'x', [0]) });
-    expect(() =>
-      paintStaticLayer(ctx, rows, { cssW: 0, cssH: 0 }, 0, null),
-    ).not.toThrow();
+    expect(() => paintStaticLayer(ctx, rows, { cssW: 0, cssH: 0 }, 0, null)).not.toThrow();
   });
 });
 
@@ -189,14 +182,7 @@ describe('PALETTE', () => {
   it('exposes the exact keys C5 contrast-checks, all valid hex', () => {
     const keys = Object.keys(PALETTE).sort();
     expect(keys).toEqual(
-      [
-        'ACTIVE_DIAMOND',
-        'CANVAS_BG',
-        'DIAMOND',
-        'LABEL_TEXT',
-        'PLAYHEAD',
-        'ROW_LINE',
-      ].sort(),
+      ['ACTIVE_DIAMOND', 'CANVAS_BG', 'DIAMOND', 'LABEL_TEXT', 'PLAYHEAD', 'ROW_LINE'].sort(),
     );
     for (const v of Object.values(PALETTE)) {
       expect(v).toMatch(/^#[0-9a-f]{6}$/);
@@ -210,14 +196,10 @@ describe('TimelineCanvas host contract', () => {
   it('renders the host with testid, role, and initial mirror attrs', () => {
     seed({});
     act(() => root.render(<TimelineCanvas duration={5} />));
-    const host = container.querySelector(
-      '[data-testid="timeline-canvas"]',
-    ) as HTMLDivElement;
+    const host = container.querySelector('[data-testid="timeline-canvas"]') as HTMLDivElement;
     expect(host).not.toBeNull();
     expect(host.getAttribute('role')).toBe('img');
-    expect(host.getAttribute('aria-label')).toBe(
-      'Animation dopesheet — 0 channels',
-    );
+    expect(host.getAttribute('aria-label')).toBe('Animation dopesheet — 0 channels');
     // C4: data-playhead-px / data-frame are written by the rAF loop, but
     // C3's dims-INDEPENDENT data effect seeds a sane '0' pre-tick (the
     // happy-dom 0x0 getBoundingClientRect means the pixel effect + the
@@ -237,9 +219,7 @@ describe('TimelineCanvas host contract', () => {
       ch2: makeChannel('ch2', 'y', [0, 99]), // 99 culled at duration 5
     });
     act(() => root.render(<TimelineCanvas duration={5} />));
-    const host = container.querySelector(
-      '[data-testid="timeline-canvas"]',
-    ) as HTMLDivElement;
+    const host = container.querySelector('[data-testid="timeline-canvas"]') as HTMLDivElement;
     expect(host.dataset.channelCount).toBe('2');
     expect(host.dataset.frameCount).toBe(String(5 * 60));
     // ch1: 0,1,2 in [0,5] = 3; ch2: 0 in, 99 out = 1 → 4 total.

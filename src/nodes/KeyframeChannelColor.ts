@@ -59,11 +59,7 @@ function rgbToHex(r: number, g: number, b: number): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-function rgbToHsl(
-  r: number,
-  g: number,
-  b: number,
-): readonly [number, number, number] {
+function rgbToHsl(r: number, g: number, b: number): readonly [number, number, number] {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const l = (max + min) / 2;
@@ -77,11 +73,7 @@ function rgbToHsl(
   return [h, s, l];
 }
 
-function hslToRgb(
-  h: number,
-  s: number,
-  l: number,
-): readonly [number, number, number] {
+function hslToRgb(h: number, s: number, l: number): readonly [number, number, number] {
   if (s === 0) return [l, l, l];
   const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
   const p = 2 * l - q;

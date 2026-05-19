@@ -12,13 +12,7 @@
 
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { z } from 'zod';
-import type {
-  LLMConfig,
-  ChatMessage,
-  ToolSchema,
-  ToolCall,
-  StreamChunk,
-} from './types';
+import type { LLMConfig, ChatMessage, ToolSchema, ToolCall, StreamChunk } from './types';
 
 export interface StreamOptions {
   messages: ChatMessage[];

@@ -93,8 +93,7 @@ function getSessionId(): string {
   // `pure: true` lint bans crypto.randomUUID inside src/nodes/, but
   // this isn't a node evaluator. We use a sufficient-entropy random
   // string for telemetry deduplication only — the value is opaque.
-  cachedSessionId =
-    Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  cachedSessionId = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   return cachedSessionId;
 }
 

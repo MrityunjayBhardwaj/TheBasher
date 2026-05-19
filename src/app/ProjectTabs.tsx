@@ -30,12 +30,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useProjectStore } from '../core/project/store';
 import type { ProjectMetadata } from '../core/project/io';
-import {
-  createNewProject,
-  deleteProject,
-  listAllProjectMetadata,
-  switchProject,
-} from './boot';
+import { createNewProject, deleteProject, listAllProjectMetadata, switchProject } from './boot';
 import { ComfyStatusIndicator } from './ComfyStatusIndicator';
 import { formatTooltip } from './projectTabsHelpers';
 
@@ -181,9 +176,7 @@ export function ProjectTabs(): ReactNode {
               data-testid={`project-tab-${p.id}`}
               data-active={isActive || undefined}
               className={`flex items-center gap-1 border-r border-border px-2 ${
-                isActive
-                  ? 'bg-bg-1 text-fg'
-                  : 'text-fg-dim hover:bg-bg-1/40 hover:text-fg'
+                isActive ? 'bg-bg-1 text-fg' : 'text-fg-dim hover:bg-bg-1/40 hover:text-fg'
               }`}
               onMouseEnter={(e) => onTabEnter(e, p.id)}
               onMouseLeave={onTabLeave}

@@ -13,11 +13,10 @@ export const dagInspectSchema = z.object({
   scope: z
     .enum(['all', 'node', 'output', 'types'])
     .default('all')
-    .describe('What to inspect: all (full DAG), node (specific node), output (scene outputs), types (available node types)'),
-  nodeId: z
-    .string()
-    .optional()
-    .describe('Required when scope=node — the node ID to inspect'),
+    .describe(
+      'What to inspect: all (full DAG), node (specific node), output (scene outputs), types (available node types)',
+    ),
+  nodeId: z.string().optional().describe('Required when scope=node — the node ID to inspect'),
 });
 
 export type DagInspectArgs = z.infer<typeof dagInspectSchema>;
@@ -119,9 +118,7 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function listInputs(
-  inputs: Record<string, unknown>,
-): Array<{ socket: string; from: string }> {
+function listInputs(inputs: Record<string, unknown>): Array<{ socket: string; from: string }> {
   const result: Array<{ socket: string; from: string }> = [];
   for (const [socket, binding] of Object.entries(inputs)) {
     if (Array.isArray(binding)) {
@@ -140,9 +137,7 @@ function listInputs(
  * Produce a compact JSON-schema-like summary of a zod schema.
  * Gives the LLM enough info to construct valid params for dag.exec.
  */
-function summarizeZodSchema(
-  schema: unknown,
-): Record<string, unknown> {
+function summarizeZodSchema(schema: unknown): Record<string, unknown> {
   const def = (schema as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
   if (!def) return {};
 

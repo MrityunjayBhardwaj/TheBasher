@@ -68,9 +68,7 @@ export function Timebar() {
           aria-hidden="true"
           className={
             'inline-block h-2 w-2 rounded-full ' +
-            (autoKey
-              ? 'bg-record animate-pulse ring-2 ring-record/40'
-              : 'border border-fg/40')
+            (autoKey ? 'bg-record animate-pulse ring-2 ring-record/40' : 'border border-fg/40')
           }
         />
         REC

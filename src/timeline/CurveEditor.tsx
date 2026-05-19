@@ -28,7 +28,10 @@ export function CurveEditor({ duration }: { duration: number }) {
 
   if (channelId == null) {
     return (
-      <div data-testid="curve-editor" className="flex h-full items-center justify-center text-xs text-mute">
+      <div
+        data-testid="curve-editor"
+        className="flex h-full items-center justify-center text-xs text-mute"
+      >
         Select a channel row above to view its curve.
       </div>
     );
@@ -36,7 +39,10 @@ export function CurveEditor({ duration }: { duration: number }) {
   const node = nodes[channelId];
   if (!node) {
     return (
-      <div data-testid="curve-editor" className="flex h-full items-center justify-center text-xs text-mute">
+      <div
+        data-testid="curve-editor"
+        className="flex h-full items-center justify-center text-xs text-mute"
+      >
         Channel not found (it may have been deleted).
       </div>
     );
@@ -63,7 +69,8 @@ export function CurveEditor({ duration }: { duration: number }) {
           {node.type.replace('KeyframeChannel', '')} — {params.paramPath ?? '(no path)'}
         </span>
         <span className="text-[10px]">
-          Curve preview not yet implemented for {node.type === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
+          Curve preview not yet implemented for{' '}
+          {node.type === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
         </span>
         <span className="text-[10px]">
           {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}; values shown in dopesheet.
@@ -188,7 +195,10 @@ function sampleAt(track: Track[], t: number): number {
   return last.value;
 }
 
-function computeRange(samples: Array<Array<{ t: number; v: number }>>): { min: number; max: number } {
+function computeRange(samples: Array<Array<{ t: number; v: number }>>): {
+  min: number;
+  max: number;
+} {
   let min = Infinity;
   let max = -Infinity;
   for (const track of samples) {

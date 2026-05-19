@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  StubComfyUICapability,
-} from '../../core/comfy';
+import { StubComfyUICapability } from '../../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
 import { MemoryStorage } from '../../core/storage';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';

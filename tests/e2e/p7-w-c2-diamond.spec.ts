@@ -24,10 +24,7 @@ interface KF {
 interface DagNode {
   id: string;
   type: string;
-  params?: { target?: string; paramPath?: string; keyframes?: KF[] } & Record<
-    string,
-    unknown
-  >;
+  params?: { target?: string; paramPath?: string; keyframes?: KF[] } & Record<string, unknown>;
 }
 interface BasherWindow {
   __basher_dag?: {
@@ -84,14 +81,10 @@ test.beforeEach(async ({ page }) => {
   // only the first ('mesh') is default-expanded (§5.8). 'position' lives
   // in 'transform', so expand it (real affordance — the section toggle).
   await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(
-    page.getByTestId('inspector-section-body-transform'),
-  ).toBeVisible();
+  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
 });
 
-test('P7.C2 diamond: none → first-key composite → on-key (one undo entry)', async ({
-  page,
-}) => {
+test('P7.C2 diamond: none → first-key composite → on-key (one undo entry)', async ({ page }) => {
   // Scrub to frame 60 (1.0s).
   await page.evaluate(() => {
     (window as unknown as BasherWindow).__basher_time!.getState().setTime(1.0);
@@ -140,9 +133,7 @@ test('P7.C2 diamond: none → first-key composite → on-key (one undo entry)', 
   await expect(diamond).toHaveAttribute('data-anim-state', 'animated');
 });
 
-test('P7.C2 Cmd+Z reverts the first-key composite in ONE step', async ({
-  page,
-}) => {
+test('P7.C2 Cmd+Z reverts the first-key composite in ONE step', async ({ page }) => {
   await page.evaluate(() => {
     (window as unknown as BasherWindow).__basher_time!.getState().setTime(1.0);
   });
@@ -157,13 +148,9 @@ test('P7.C2 Cmd+Z reverts the first-key composite in ONE step', async ({
   expect(after.undoLen).toBe(before.undoLen + 1);
 
   // ONE Cmd+Z reverts the whole composite (layer + channel + sample).
-  await page.keyboard.press(
-    process.platform === 'darwin' ? 'Meta+z' : 'Control+z',
-  );
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
 
-  await expect
-    .poll(async () => (await dagSnapshot(page)).layerCount)
-    .toBe(before.layerCount);
+  await expect.poll(async () => (await dagSnapshot(page)).layerCount).toBe(before.layerCount);
   const reverted = await dagSnapshot(page);
   expect(reverted.layerCount).toBe(0);
   expect(reverted.channelCount).toBe(0);

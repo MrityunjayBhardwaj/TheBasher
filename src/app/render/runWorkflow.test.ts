@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  StubComfyUICapability,
-  type ComfyInputs,
-  type ComfyWorkflowJson,
-} from '../../core/comfy';
+import { StubComfyUICapability, type ComfyInputs, type ComfyWorkflowJson } from '../../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
 import { MemoryStorage } from '../../core/storage';
@@ -23,12 +19,14 @@ afterEach(() => {
   useDagStore.getState().reset();
 });
 
-function seedWorkflowDag(opts: {
-  frameStart?: number;
-  frameEnd?: number;
-  lastGoodFrame?: number;
-  outputPath?: string;
-} = {}) {
+function seedWorkflowDag(
+  opts: {
+    frameStart?: number;
+    frameEnd?: number;
+    lastGoodFrame?: number;
+    outputPath?: string;
+  } = {},
+) {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
   s = applyOp(s, {
@@ -205,7 +203,11 @@ describe('runWorkflow (Wave B2 — caller seam)', () => {
     expect(r2.status).toBe('completed');
     if (r2.status !== 'completed') return;
     expect(r2.report.framesWritten).toBe(3);
-    expect(r2.report.outputs.map((p) => p.match(/_(\d+)\.png$/)![1])).toEqual(['0002', '0003', '0004']);
+    expect(r2.report.outputs.map((p) => p.match(/_(\d+)\.png$/)![1])).toEqual([
+      '0002',
+      '0003',
+      '0004',
+    ]);
   });
 
   it('side-by-side workflows can run concurrently (different ids do not collide)', async () => {

@@ -21,7 +21,9 @@ const OpBatchSchema = z.object({
   ops: z
     .array(OpSchema)
     .min(1, 'At least one Op is required')
-    .describe('Array of Ops to execute in order. Supported: addNode, removeNode, connect, disconnect, setParam.'),
+    .describe(
+      'Array of Ops to execute in order. Supported: addNode, removeNode, connect, disconnect, setParam.',
+    ),
 });
 
 export type DagExecArgs = z.infer<typeof OpBatchSchema>;

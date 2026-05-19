@@ -34,12 +34,11 @@ test.beforeEach(async ({ page }) => {
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();
   // Wait for dev seams.
-  await page.waitForFunction(
-    () =>
-      Boolean(
-        (window as unknown as { __basher_chrome?: unknown; __basher_inspector_sections?: unknown })
-          .__basher_chrome,
-      ),
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as unknown as { __basher_chrome?: unknown; __basher_inspector_sections?: unknown })
+        .__basher_chrome,
+    ),
   );
   // Expand the LeftSidebar so we can interact with SceneTree.
   await page.evaluate(() => {
@@ -97,8 +96,8 @@ test('P6.W4#3 toggling a section header persists across reload', async ({ page }
 
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_chrome?: unknown }).__basher_chrome),
   );
   await page.evaluate(() => {
     const w = window as unknown as {
@@ -122,8 +121,8 @@ test('P6.W4#4 raw-fallback path: legacy nodes render flat (no sections)', async 
   // Add a Character node — declared without inspectorSections (D-08 B).
   // Use the seed scene's existing Character node if present, else add one
   // via the agent surface; for v0.5 simplest, dispatch directly.
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_dag?: unknown }).__basher_dag),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_dag?: unknown }).__basher_dag),
   );
   const characterId = await page.evaluate(() => {
     const w = window as unknown as {
@@ -156,8 +155,8 @@ test('P6.W4#4 raw-fallback path: legacy nodes render flat (no sections)', async 
   });
   // Select the character via the selection dev seam (Characters may not
   // appear in SceneTree by default — selection drives Inspector directly).
-  await page.waitForFunction(
-    () => Boolean((window as unknown as { __basher_selection?: unknown }).__basher_selection),
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_selection?: unknown }).__basher_selection),
   );
   await page.evaluate((id) => {
     const w = window as unknown as {

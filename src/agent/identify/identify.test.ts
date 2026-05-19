@@ -134,11 +134,7 @@ describe('identify — match strategies', () => {
     const state = buildScene();
     // Two-id selection — selection strategy keeps all of them. Wave A's
     // closure infers from the union.
-    const r = identify(
-      { query: 'selected' },
-      state,
-      new Set(['redCube', 'greenCube']),
-    );
+    const r = identify({ query: 'selected' }, state, new Set(['redCube', 'greenCube']));
     expect(r.type).toBe('match');
     if (r.type === 'match') {
       expect(r.selectors).toEqual(expect.arrayContaining(['redCube', 'greenCube']));
@@ -358,24 +354,48 @@ describe('identify — color resolution (#16 + #18)', () => {
     let s = emptyDagState();
     // Pure red, off-red (picker-sampled), pink, light gray.
     s = applyOp(s, {
-      type: 'addNode', nodeId: 'pureRed', nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0],
-        material: { name: 'm', color: '#ff0000' } },
+      type: 'addNode',
+      nodeId: 'pureRed',
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'm', color: '#ff0000' },
+      },
     }).next;
     s = applyOp(s, {
-      type: 'addNode', nodeId: 'offRed', nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [1, 0, 0], rotation: [0, 0, 0],
-        material: { name: 'm', color: '#fa0a0a' } },
+      type: 'addNode',
+      nodeId: 'offRed',
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [1, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'm', color: '#fa0a0a' },
+      },
     }).next;
     s = applyOp(s, {
-      type: 'addNode', nodeId: 'pink', nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0],
-        material: { name: 'm', color: '#ffaaaa' } },
+      type: 'addNode',
+      nodeId: 'pink',
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [2, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'm', color: '#ffaaaa' },
+      },
     }).next;
     s = applyOp(s, {
-      type: 'addNode', nodeId: 'lightGray', nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0],
-        material: { name: 'm', color: '#cccccc' } },
+      type: 'addNode',
+      nodeId: 'lightGray',
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [3, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'm', color: '#cccccc' },
+      },
     }).next;
     return s;
   }
@@ -431,20 +451,34 @@ describe('identify — color family saturation bound (#29)', () => {
   function familyScene(refHex: string, probeId: string, probeHex: string): DagState {
     let s = emptyDagState();
     s = applyOp(s, {
-      type: 'addNode', nodeId: 'ref', nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0],
-        material: { name: 'm', color: refHex } },
+      type: 'addNode',
+      nodeId: 'ref',
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'm', color: refHex },
+      },
     }).next;
     s = applyOp(s, {
-      type: 'addNode', nodeId: probeId, nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [1, 0, 0], rotation: [0, 0, 0],
-        material: { name: 'm', color: probeHex } },
+      type: 'addNode',
+      nodeId: probeId,
+      nodeType: 'BoxMesh',
+      params: {
+        size: [1, 1, 1],
+        position: [1, 0, 0],
+        rotation: [0, 0, 0],
+        material: { name: 'm', color: probeHex },
+      },
     }).next;
     return s;
   }
   function matches(refHex: string, family: string, probeId: string, probeHex: string): boolean {
-    const r = identify({ query: `the ${family} cube`, hint: 'multiple-allowed' },
-      familyScene(refHex, probeId, probeHex));
+    const r = identify(
+      { query: `the ${family} cube`, hint: 'multiple-allowed' },
+      familyScene(refHex, probeId, probeHex),
+    );
     return r.type === 'match' && r.selectors.includes(probeId);
   }
 

@@ -23,7 +23,11 @@ export function DiffOverlay() {
   return <DiffOverlayInner diff={diff} />;
 }
 
-function DiffOverlayInner({ diff }: { diff: NonNullable<ReturnType<typeof useDiffStore.getState>['pendingDiff']> }) {
+function DiffOverlayInner({
+  diff,
+}: {
+  diff: NonNullable<ReturnType<typeof useDiffStore.getState>['pendingDiff']>;
+}) {
   const seconds = useTimeStore((s) => s.seconds);
   const frame = useTimeStore((s) => s.frame);
   const normalized = useTimeStore((s) => s.normalized);
@@ -158,7 +162,13 @@ function GhostChild({ value }: { value: SceneChild }) {
       return (
         <mesh position={(value.position as [number, number, number]) ?? [0, 0.5, 0]}>
           <boxGeometry args={[0.4, 1, 0.4]} />
-          <meshBasicMaterial transparent opacity={0.35} color="#88aaff" depthWrite={false} wireframe />
+          <meshBasicMaterial
+            transparent
+            opacity={0.35}
+            color="#88aaff"
+            depthWrite={false}
+            wireframe
+          />
         </mesh>
       );
   }

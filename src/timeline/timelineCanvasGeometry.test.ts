@@ -34,8 +34,7 @@ import {
   KEYFRAME_EDGE_INSET_PX,
 } from './timelineCanvasGeometry';
 
-const isFinitePositiveOrZero = (n: number) =>
-  Number.isFinite(n) && !Number.isNaN(n) && n >= 0;
+const isFinitePositiveOrZero = (n: number) => Number.isFinite(n) && !Number.isNaN(n) && n >= 0;
 
 describe('secondsToFrame', () => {
   it('mirrors deriveFrame = round(seconds * fps) with fps injected', () => {
@@ -230,12 +229,8 @@ describe('keyframeToRect — diamond box (generalizes Dopesheet 8x8)', () => {
   });
 
   it('UIR F-7: deterministic — same args twice -> deep-equal rect', () => {
-    expect(keyframeToRect(0, 0, 10, 1000, 24, 8)).toEqual(
-      keyframeToRect(0, 0, 10, 1000, 24, 8),
-    );
-    expect(keyframeToRect(10, 3, 10, 480, 24, 8)).toEqual(
-      keyframeToRect(10, 3, 10, 480, 24, 8),
-    );
+    expect(keyframeToRect(0, 0, 10, 1000, 24, 8)).toEqual(keyframeToRect(0, 0, 10, 1000, 24, 8));
+    expect(keyframeToRect(10, 3, 10, 480, 24, 8)).toEqual(keyframeToRect(10, 3, 10, 480, 24, 8));
   });
 
   it('exports a documented edge-inset constant = half the diamond box', () => {
@@ -347,13 +342,7 @@ describe('cullVisibleKeyframes — returns indices, inclusive bounds', () => {
 
   it('all-in: every keyframe inside range', () => {
     const r = cullVisibleKeyframes(kfs, 0, 10);
-    expect(r).toEqual([
-      { index: 0 },
-      { index: 1 },
-      { index: 2 },
-      { index: 3 },
-      { index: 4 },
-    ]);
+    expect(r).toEqual([{ index: 0 }, { index: 1 }, { index: 2 }, { index: 3 }, { index: 4 }]);
     expect(r.length).toBe(kfs.length); // == data-rendered-keyframes
   });
 
@@ -362,10 +351,7 @@ describe('cullVisibleKeyframes — returns indices, inclusive bounds', () => {
   });
 
   it('partial: only middle keyframes survive', () => {
-    expect(cullVisibleKeyframes(kfs, 1.5, 3.5)).toEqual([
-      { index: 2 },
-      { index: 3 },
-    ]);
+    expect(cullVisibleKeyframes(kfs, 1.5, 3.5)).toEqual([{ index: 2 }, { index: 3 }]);
   });
 
   it('exact lower boundary is INCLUSIVE', () => {
@@ -375,11 +361,7 @@ describe('cullVisibleKeyframes — returns indices, inclusive bounds', () => {
 
   it('exact upper boundary is INCLUSIVE', () => {
     // range [2,4] includes both the 2 and the 4 endpoints
-    expect(cullVisibleKeyframes(kfs, 2, 4)).toEqual([
-      { index: 2 },
-      { index: 3 },
-      { index: 4 },
-    ]);
+    expect(cullVisibleKeyframes(kfs, 2, 4)).toEqual([{ index: 2 }, { index: 3 }, { index: 4 }]);
   });
 
   it('returns indices, not keyframe objects (caller maps back to ids)', () => {
@@ -389,16 +371,9 @@ describe('cullVisibleKeyframes — returns indices, inclusive bounds', () => {
   });
 
   it('preserves original index order regardless of value spacing', () => {
-    const sparse = [
-      { timeSeconds: 0 },
-      { timeSeconds: 50 },
-      { timeSeconds: 2 },
-    ];
+    const sparse = [{ timeSeconds: 0 }, { timeSeconds: 50 }, { timeSeconds: 2 }];
     // visible [0,3] -> originals 0 and 2 (NOT re-sorted)
-    expect(cullVisibleKeyframes(sparse, 0, 3)).toEqual([
-      { index: 0 },
-      { index: 2 },
-    ]);
+    expect(cullVisibleKeyframes(sparse, 0, 3)).toEqual([{ index: 0 }, { index: 2 }]);
   });
 });
 
@@ -463,9 +438,7 @@ describe('CSS-px-only contract — no dpr anywhere (dpr is C3 concern)', () => {
     const src = MODULE_SOURCE;
     // strip block + line comments so the documentation prose explaining
     // "no dpr param" does not trip the assertion — we assert on CODE.
-    const code = src
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(code).not.toMatch(/devicePixelRatio/);
     expect(code).not.toMatch(/\bdpr\b/);
   });
@@ -488,15 +461,11 @@ describe('determinism — same args twice -> strictly equal result', () => {
   });
 
   it('object-returning functions are deep-equal on repeat call', () => {
-    expect(keyframeToRect(5, 2, 10, 1000, 24, 8)).toEqual(
-      keyframeToRect(5, 2, 10, 1000, 24, 8),
-    );
+    expect(keyframeToRect(5, 2, 10, 1000, 24, 8)).toEqual(keyframeToRect(5, 2, 10, 1000, 24, 8));
     expect(cullVisibleKeyframes([{ timeSeconds: 1 }], 0, 5)).toEqual(
       cullVisibleKeyframes([{ timeSeconds: 1 }], 0, 5),
     );
-    expect(playheadStripRect(500, 2, 300)).toEqual(
-      playheadStripRect(500, 2, 300),
-    );
+    expect(playheadStripRect(500, 2, 300)).toEqual(playheadStripRect(500, 2, 300));
   });
 
   it('no hidden state — interleaved calls do not affect each other', () => {
@@ -522,11 +491,7 @@ describe('pre-mortem observation — frame-space vs seconds-space within 1px', (
     // sample exact frame-boundary seconds: every 12 frames across the range
     for (let f = 0; f <= totalFrames; f += 12) {
       const s = f / fps; // a seconds value that lands exactly on a frame
-      const viaFrame = frameToX(
-        secondsToFrame(s, fps),
-        totalFrames,
-        widthPx,
-      );
+      const viaFrame = frameToX(secondsToFrame(s, fps), totalFrames, widthPx);
       const viaSeconds = secondsToX(s, durationSeconds, widthPx);
       expect(Math.abs(viaFrame - viaSeconds)).toBeLessThanOrEqual(1);
     }

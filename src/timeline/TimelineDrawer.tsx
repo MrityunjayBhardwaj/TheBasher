@@ -28,16 +28,10 @@ import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useModeStore } from '../app/stores/modeStore';
-import {
-  useTimelineDockStore,
-  type TimelineTab,
-} from '../app/stores/timelineDockStore';
+import { useTimelineDockStore, type TimelineTab } from '../app/stores/timelineDockStore';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
-import {
-  buildKeyframeInsertOp,
-  buildKeyframeDeleteOp,
-} from '../app/KeyboardShortcuts';
+import { buildKeyframeInsertOp, buildKeyframeDeleteOp } from '../app/KeyboardShortcuts';
 import { removeKeyframesMutator, validatePlan } from '../agent/mutators';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
@@ -289,9 +283,7 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={`rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        disabled
-          ? 'cursor-not-allowed text-mute'
-          : 'text-fg hover:bg-line'
+        disabled ? 'cursor-not-allowed text-mute' : 'text-fg hover:bg-line'
       }`}
     >
       {label}

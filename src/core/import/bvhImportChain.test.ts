@@ -2,12 +2,7 @@
 // builds a working Skeleton + AnimationClip + Time wiring.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  __resetRegistryForTests,
-  applyOp,
-  emptyDagState,
-  evaluate,
-} from '../dag';
+import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { buildBvhImportOps, __resetBvhImportCounterForTests } from './bvhImportChain';
 import type { AnimationClipValue } from '../../nodes/types';
@@ -56,8 +51,16 @@ describe('buildBvhImportOps', () => {
     expect(ops).toHaveLength(4);
     expect(ops[0]).toMatchObject({ type: 'addNode', nodeId: 'sk', nodeType: 'Skeleton' });
     expect(ops[1]).toMatchObject({ type: 'addNode', nodeId: 'clip', nodeType: 'AnimationClip' });
-    expect(ops[2]).toMatchObject({ type: 'connect', from: { node: 'sk', socket: 'out' }, to: { node: 'clip', socket: 'skeleton' } });
-    expect(ops[3]).toMatchObject({ type: 'connect', from: { node: 'time', socket: 'out' }, to: { node: 'clip', socket: 'time' } });
+    expect(ops[2]).toMatchObject({
+      type: 'connect',
+      from: { node: 'sk', socket: 'out' },
+      to: { node: 'clip', socket: 'skeleton' },
+    });
+    expect(ops[3]).toMatchObject({
+      type: 'connect',
+      from: { node: 'time', socket: 'out' },
+      to: { node: 'clip', socket: 'time' },
+    });
     expect(skeletonId).toBe('sk');
     expect(clipId).toBe('clip');
   });

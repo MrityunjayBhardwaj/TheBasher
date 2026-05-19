@@ -21,7 +21,9 @@ const DryRunWorkflowSchema = z.object({
   workflowNodeId: z
     .string()
     .min(1)
-    .describe('ComfyUIWorkflow node id to probe — addAIPass returns the workflowId you can pass here.'),
+    .describe(
+      'ComfyUIWorkflow node id to probe — addAIPass returns the workflowId you can pass here.',
+    ),
 });
 export type DryRunWorkflowArgs = z.infer<typeof DryRunWorkflowSchema>;
 

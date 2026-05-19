@@ -46,9 +46,7 @@ export function resolveChannel(
       keyframes?: unknown;
     };
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
-    const kfs = Array.isArray(p.keyframes)
-      ? (p.keyframes as { time: number }[])
-      : [];
+    const kfs = Array.isArray(p.keyframes) ? (p.keyframes as { time: number }[]) : [];
     const onKey = kfs.find((kf) => Math.round(kf.time * 60) === currentFrame);
     return { channelId: node.id, onKeySeconds: onKey ? onKey.time : null };
   }
@@ -79,8 +77,7 @@ export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown)
 
   // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
   // this (nodeId, paramPath) — the SAME pure scan the diamond uses (C1).
-  const exists =
-    paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
+  const exists = paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
 
   let result: { ok: true } | { ok: false; reason: string };
   if (!exists) {

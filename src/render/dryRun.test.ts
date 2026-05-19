@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  StubComfyUICapability,
-  type ComfyInputs,
-  type ComfyWorkflowJson,
-} from '../core/comfy';
+import { StubComfyUICapability, type ComfyInputs, type ComfyWorkflowJson } from '../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
@@ -19,11 +15,13 @@ beforeEach(() => {
  * BeautyPass + Prompt + ComfyUIWorkflow. outputPath set to a Mutator-
  * style literal so the empty-outputPath guard passes.
  */
-function buildDryRunState(opts: {
-  outputPath?: string;
-  frameStart?: number;
-  frameEnd?: number;
-} = {}) {
+function buildDryRunState(
+  opts: {
+    outputPath?: string;
+    frameStart?: number;
+    frameEnd?: number;
+  } = {},
+) {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
   s = applyOp(s, {

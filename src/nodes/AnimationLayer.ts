@@ -27,11 +27,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type {
-  AnimationLayerValue,
-  KeyframeChannelValue,
-  SceneChild,
-} from './types';
+import type { AnimationLayerValue, KeyframeChannelValue, SceneChild } from './types';
 
 export const AnimationLayerParams = z.object({
   name: z.string().default('Layer'),
@@ -172,5 +168,5 @@ function blend(
   // quat / color / unknown: snap at the half-weight mark. Smooth blending
   // for these types needs slerp / HSL-lerp; defer until weight<1 is a real
   // authoring need.
-  return w >= 0.5 ? channelValue : original ?? channelValue;
+  return w >= 0.5 ? channelValue : (original ?? channelValue);
 }

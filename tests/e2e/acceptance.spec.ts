@@ -56,13 +56,21 @@ test('#2 default project has the 4-node DAG (5 with RenderOutput) and viewport r
     return Boolean((window as unknown as Win).__basher_chrome);
   });
   await page.evaluate(() => {
-    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    type Win = {
+      __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } };
+    };
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
   await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-n_scene')).toBeVisible();
   const dagShape = await page.evaluate(() => {
-    type Win = { __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown>; outputs: Record<string, { node: string }> } } } };
+    type Win = {
+      __basher_dag?: {
+        getState: () => {
+          state: { nodes: Record<string, unknown>; outputs: Record<string, { node: string }> };
+        };
+      };
+    };
     const w = window as unknown as Win;
     const s = w.__basher_dag!.getState().state;
     return {
@@ -153,7 +161,9 @@ test('#5 inspector edit propagates to viewport within 16ms (DAG dispatch latency
     return Boolean((window as unknown as Win).__basher_chrome);
   });
   await page.evaluate(() => {
-    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    type Win = {
+      __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } };
+    };
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
   await page.getByTestId('scene-tree-row-n_box').click();

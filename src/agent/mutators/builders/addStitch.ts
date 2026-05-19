@@ -55,8 +55,8 @@ function defaultStitchId(jobId: NodeId, used: Set<NodeId>): NodeId {
 export const addStitchMutator: MutatorDefinition<AddStitchSpec> = {
   name: 'mutator.render.addStitch',
   description:
-    'Stitch a ComfyUIWorkflow\'s stylized frames into a final video file. ' +
-    'Adds a VideoStitch node consuming the workflow\'s frames over the ' +
+    "Stitch a ComfyUIWorkflow's stylized frames into a final video file. " +
+    "Adds a VideoStitch node consuming the workflow's frames over the " +
     'pass-input edge kind (D-01 reuse) + a Time wire. Produces an MP4 ' +
     'at `${jobOutputPath}/final.mp4` by default. v0.5 codec: h264 only.',
   spec: AddStitchSpec,

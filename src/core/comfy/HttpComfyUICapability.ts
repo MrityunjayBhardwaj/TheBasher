@@ -84,10 +84,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
     }
   }
 
-  async submit(
-    workflowJson: ComfyWorkflowJson,
-    inputs: ComfyInputs,
-  ): Promise<ComfySubmitResult> {
+  async submit(workflowJson: ComfyWorkflowJson, inputs: ComfyInputs): Promise<ComfySubmitResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -123,9 +120,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
       const firstNodeId = Object.keys(outputs).sort()[0];
       const firstImage = outputs[firstNodeId]?.images?.[0];
       if (!firstImage) {
-        throw new Error(
-          `ComfyUI prompt ${jobId} completed but produced no output image`,
-        );
+        throw new Error(`ComfyUI prompt ${jobId} completed but produced no output image`);
       }
       const frame = await this.fetchImage(firstImage, controller.signal);
       return { jobId, frame };
@@ -148,11 +143,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
 
   // ----- helpers --------------------------------------------------------
 
-  private async uploadImage(
-    name: string,
-    bytes: Uint8Array,
-    signal: AbortSignal,
-  ): Promise<void> {
+  private async uploadImage(name: string, bytes: Uint8Array, signal: AbortSignal): Promise<void> {
     const filename = `${name}.png`;
     const form = new FormData();
     const ab = new ArrayBuffer(bytes.byteLength);
@@ -207,9 +198,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
       signal,
     });
     if (!res.ok) {
-      throw new Error(
-        `ComfyUI /view rejected ${image.filename}: ${res.status} ${res.statusText}`,
-      );
+      throw new Error(`ComfyUI /view rejected ${image.filename}: ${res.status} ${res.statusText}`);
     }
     const buf = await res.arrayBuffer();
     return new Uint8Array(buf);

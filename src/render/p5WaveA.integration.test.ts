@@ -71,8 +71,7 @@ function buildWaveAState(): DagState {
 
   // Three pass types feeding job1 + the AI workflow.
   for (const id of ['beauty1', 'depth1', 'normal1'] as const) {
-    const nodeType =
-      id === 'beauty1' ? 'BeautyPass' : id === 'depth1' ? 'DepthPass' : 'NormalPass';
+    const nodeType = id === 'beauty1' ? 'BeautyPass' : id === 'depth1' ? 'DepthPass' : 'NormalPass';
     s = applyOp(s, { type: 'addNode', nodeId: id, nodeType, params: {} }).next;
     s = applyOp(s, {
       type: 'connect',
@@ -241,10 +240,7 @@ describe('P5 Wave A — integration', () => {
 
   it('closure rooted at cw with pass-input reaches cw + raw passes — D-01 (stylized output reuses pass-input)', () => {
     const state = buildWaveAState();
-    const closure = expandClosure(
-      { rootSelectors: ['cw'], followedEdges: ['pass-input'] },
-      state,
-    );
+    const closure = expandClosure({ rootSelectors: ['cw'], followedEdges: ['pass-input'] }, state);
     expect(closure.nodes.has('cw')).toBe(true);
     expect(closure.nodes.has('beauty1')).toBe(true);
     expect(closure.nodes.has('depth1')).toBe(true);
@@ -328,9 +324,7 @@ describe('P5 Wave A — integration', () => {
     expect(report.workflowId).toBe('cw');
     expect(report.frames).toBe(31); // 0..30 inclusive
     expect(report.estimatedSeconds).toBeGreaterThanOrEqual(0);
-    expect(report.samplePath).toBe(
-      'renders/job1/stylized_stylizedRealism_0000.png',
-    );
+    expect(report.samplePath).toBe('renders/job1/stylized_stylizedRealism_0000.png');
     expect(await storage.exists(report.samplePath)).toBe(true);
   });
 });

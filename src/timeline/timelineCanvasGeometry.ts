@@ -111,11 +111,7 @@ export function secondsToFrame(seconds: number, fps: number): number {
  * and `widthPx`: a zero (or negative) span or width returns 0 — finite,
  * never NaN/Infinity (the Dopesheet `Math.max` precedent generalized).
  */
-export function frameToX(
-  frame: number,
-  totalFrames: number,
-  widthPx: number,
-): number {
+export function frameToX(frame: number, totalFrames: number, widthPx: number): number {
   if (widthPx <= 0) return 0;
   const span = Math.max(totalFrames, SPAN_EPSILON);
   const clamped = frame < 0 ? 0 : frame > span ? span : frame;
@@ -131,11 +127,7 @@ export function frameToX(
  * deliberately (the C2 off-by-one pre-mortem) — the playhead and the
  * frame readout must never be derived through the same code path.
  */
-export function secondsToX(
-  seconds: number,
-  durationSeconds: number,
-  widthPx: number,
-): number {
+export function secondsToX(seconds: number, durationSeconds: number, widthPx: number): number {
   if (widthPx <= 0) return 0;
   const span = Math.max(durationSeconds, SPAN_EPSILON);
   const clamped = seconds < 0 ? 0 : seconds > span ? span : seconds;

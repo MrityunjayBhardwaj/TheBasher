@@ -58,10 +58,7 @@ export class StubComfyUICapability implements ComfyUICapability {
     return true;
   }
 
-  async submit(
-    workflowJson: ComfyWorkflowJson,
-    inputs: ComfyInputs,
-  ): Promise<ComfySubmitResult> {
+  async submit(workflowJson: ComfyWorkflowJson, inputs: ComfyInputs): Promise<ComfySubmitResult> {
     if (this.errorQueue.length > 0) {
       const err = this.errorQueue.shift()!;
       throw err;

@@ -5,11 +5,7 @@ export default {
   // tokens (e.g. focusRingGate.test.ts's grep regex over the legacy
   // focus pseudo-class) that destabilize Tailwind's content extractor.
   // Production CSS doesn't need styles from test sources. (P6 W8 C3.)
-  content: [
-    './index.html',
-    './src/**/*.{ts,tsx}',
-    '!./src/**/*.test.{ts,tsx}',
-  ],
+  content: ['./index.html', './src/**/*.{ts,tsx}', '!./src/**/*.test.{ts,tsx}'],
   darkMode: 'class',
   theme: {
     extend: {

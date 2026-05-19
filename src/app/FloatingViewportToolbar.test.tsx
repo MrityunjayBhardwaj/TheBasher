@@ -76,12 +76,7 @@ describe('homeFrame routing', () => {
 
 describe('TOOLS catalog', () => {
   it('exposes exactly 4 tools in the fixed order Select / Move / Rot / Scale', () => {
-    expect(TOOLS.map((t) => t.id)).toEqual([
-      'select',
-      'translate',
-      'rotate',
-      'scale',
-    ]);
+    expect(TOOLS.map((t) => t.id)).toEqual(['select', 'translate', 'rotate', 'scale']);
   });
 
   it('preserves the testid contract the e2e suite + agent automation rely on', () => {
@@ -100,11 +95,7 @@ describe('TOOLS catalog', () => {
 
 describe('SHADING catalog', () => {
   it('exposes the three ShadingMode values in studio → wireframe → rendered order', () => {
-    expect(SHADING.map((s) => s.value)).toEqual([
-      'studio',
-      'wireframe',
-      'rendered',
-    ]);
+    expect(SHADING.map((s) => s.value)).toEqual(['studio', 'wireframe', 'rendered']);
   });
 
   it('preserves the shading-chip testid contract', () => {

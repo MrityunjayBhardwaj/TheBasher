@@ -14,23 +14,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
-import {
-  simplifyChannelMutator,
-  validatePlan,
-} from '../agent/mutators';
+import { simplifyChannelMutator, validatePlan } from '../agent/mutators';
 import { useTimelineSelection } from './timelineSelection';
 
 const DEFAULT_TOLERANCE = 0.01;
 const MIN_TOLERANCE = 0.0001;
 const MAX_TOLERANCE = 1;
 
-export function SimplifyPopover({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export function SimplifyPopover({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [raw, setRaw] = useState<string>(String(DEFAULT_TOLERANCE));
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);

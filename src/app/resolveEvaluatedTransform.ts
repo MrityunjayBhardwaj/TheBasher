@@ -158,11 +158,7 @@ export function resolveEvaluatedTransform(
   if (!isVec3(c.position)) return null; // identity-null: not a transformable child
   const rotation = isVec3(c.rotation) ? (c.rotation as Vec3) : null;
   // Mirror getManipulable:69-76 — explicit scale wins, then size fallback.
-  const scale = isVec3(c.scale)
-    ? (c.scale as Vec3)
-    : isVec3(c.size)
-      ? (c.size as Vec3)
-      : null;
+  const scale = isVec3(c.scale) ? (c.scale as Vec3) : isVec3(c.size) ? (c.size as Vec3) : null;
 
   return { position: c.position as Vec3, rotation, scale };
 }

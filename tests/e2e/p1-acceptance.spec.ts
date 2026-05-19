@@ -330,7 +330,9 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
     return Boolean((window as unknown as Win).__basher_chrome);
   });
   await page.evaluate(() => {
-    type Win = { __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } } };
+    type Win = {
+      __basher_chrome?: { getState: () => { setLeftSidebarCollapsed: (v: boolean) => void } };
+    };
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
   await expect(page.getByTestId('scene-tree')).toBeVisible();

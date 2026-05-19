@@ -96,10 +96,7 @@ export interface TurnOptions {
  *
  * Bounded by MAX_ROUNDS and the per-turn token budget.
  */
-export async function runAgentTurn(
-  config: LLMConfig,
-  options: TurnOptions,
-): Promise<TurnResult> {
+export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Promise<TurnResult> {
   const { message, mode, signal, selectedNodeIds, comfyCapability, storage } = options;
   const sessionStore = useAgentSessionStore.getState();
 
@@ -135,10 +132,11 @@ export async function runAgentTurn(
   // Distinct from session.messages (UI-facing).
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
-    ...priorHistory.map((m): ChatMessage =>
-      m.role === 'assistant'
-        ? { role: 'assistant', content: m.content }
-        : { role: 'user', content: m.content },
+    ...priorHistory.map(
+      (m): ChatMessage =>
+        m.role === 'assistant'
+          ? { role: 'assistant', content: m.content }
+          : { role: 'user', content: m.content },
     ),
     { role: 'user', content: `${initialContext}\n\nUser request: ${message}` },
   ];
@@ -188,11 +186,14 @@ export async function runAgentTurn(
       sessionStore.addMessage({ role: 'assistant', content: '' });
 
       const roundText: string[] = [];
-      const toolCallAccumulators = new Map<number, {
-        id: string;
-        name: string;
-        argsBuffer: string;
-      }>();
+      const toolCallAccumulators = new Map<
+        number,
+        {
+          id: string;
+          name: string;
+          argsBuffer: string;
+        }
+      >();
       // F3: capture exactly one usage event per round (provider sends
       // cumulative-per-request totals on the final chunk).
       let roundPromptTokens = 0;
@@ -334,9 +335,7 @@ export async function runAgentTurn(
         });
 
         // Surface the result to the user in the chat too (debuggability).
-        sessionStore.appendToLastAssistant(
-          `\n\n[${acc.name}] ${resultMessage}`,
-        );
+        sessionStore.appendToLastAssistant(`\n\n[${acc.name}] ${resultMessage}`);
 
         if (result.ops.length > 0) {
           for (const op of result.ops) {
@@ -550,7 +549,8 @@ async function executeToolCall(
 
   try {
     const handlerResult = toolDef.handler(parsed.data, ctx);
-    const result: ToolResult = handlerResult instanceof Promise ? await handlerResult : handlerResult;
+    const result: ToolResult =
+      handlerResult instanceof Promise ? await handlerResult : handlerResult;
     return result;
   } catch (handlerErr) {
     return { ops: [], text: `ERROR: ${(handlerErr as Error).message}` };
@@ -635,7 +635,10 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
 }
 
 function buildContextBlock(
-  dagState: { nodes: Record<string, { type: string; params?: unknown }>; outputs: Record<string, { node: string; socket: string } | unknown> },
+  dagState: {
+    nodes: Record<string, { type: string; params?: unknown }>;
+    outputs: Record<string, { node: string; socket: string } | unknown>;
+  },
   selectedNodeIds: ReadonlySet<string>,
 ): string {
   const summary = summarizeDag(dagState.nodes, dagState.outputs);
@@ -654,9 +657,10 @@ function buildContextBlock(
       anchorLines.push(`  - ${name} → ${r.node}${typeTag}, socket "${r.socket}"`);
     }
   }
-  const anchorsBlock = anchorLines.length > 0
-    ? `Anchors (project named outputs — use these ids verbatim, do NOT use the names "scene"/"render" as node ids):\n${anchorLines.join('\n')}`
-    : 'Anchors: (none — call dag.inspect to discover node ids)';
+  const anchorsBlock =
+    anchorLines.length > 0
+      ? `Anchors (project named outputs — use these ids verbatim, do NOT use the names "scene"/"render" as node ids):\n${anchorLines.join('\n')}`
+      : 'Anchors: (none — call dag.inspect to discover node ids)';
 
   // Selection block — id, type, and a truncated JSON of params so the LLM
   // can act on selected nodes without having to dag.inspect first.
@@ -668,9 +672,10 @@ function buildContextBlock(
       selectionDetails.push(`  - ${id} (${n.type}): ${paramsStr}`);
     }
   }
-  const selectionBlock = selectedNodeIds.size > 0
-    ? `Selected nodes:\n${selectionDetails.join('\n')}`
-    : 'Selected nodes: none.';
+  const selectionBlock =
+    selectedNodeIds.size > 0
+      ? `Selected nodes:\n${selectionDetails.join('\n')}`
+      : 'Selected nodes: none.';
 
   return ['Context (current DAG state):', summary, '', anchorsBlock, '', selectionBlock].join('\n');
 }
@@ -708,9 +713,7 @@ function anchorHistory(
  *
  * REF: P2.5.2 PLAN §5 Wave A.4 + Wave B.4; vyapti V13.
  */
-function inferClosureSpec(
-  rootIds: ReadonlySet<NodeId>,
-): ClosureSpec | undefined {
+function inferClosureSpec(rootIds: ReadonlySet<NodeId>): ClosureSpec | undefined {
   if (rootIds.size === 0) return undefined;
   return {
     rootSelectors: [...rootIds],
@@ -890,7 +893,9 @@ export function parseProposePlanClosureSpec(text: string | undefined): ClosureSp
 function unionClosureSpecs(a: ClosureSpec, b: ClosureSpec): ClosureSpec {
   return {
     rootSelectors: Array.from(new Set([...a.rootSelectors, ...b.rootSelectors])),
-    followedEdges: Array.from(new Set([...a.followedEdges, ...b.followedEdges])) as ClosureSpec['followedEdges'],
+    followedEdges: Array.from(
+      new Set([...a.followedEdges, ...b.followedEdges]),
+    ) as ClosureSpec['followedEdges'],
     maxDepth: a.maxDepth ?? b.maxDepth,
   };
 }

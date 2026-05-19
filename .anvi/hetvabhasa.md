@@ -240,6 +240,7 @@ visual (mod 360).
 in DAG params, radians at the THREE seam. Single helper module
 `src/viewport/rotation.ts` exporting `degVec3ToRad` / `radVec3ToDeg`.
 Convert at five sites:
+
 1. `SceneFromDAG.tsx` — every `<mesh|group rotation={...}>` for BoxMesh,
    SphereMesh, Transform.
 2. `SceneFromDAG.tsx` — directional light Euler for direction
@@ -309,7 +310,7 @@ to know.
 **Trap:** Suspect the LLM is hallucinating, suspect zod validation, suspect
 a missing tool call. None of those — the model did exactly what the
 system prompt taught it: copied the example verbatim. The model is
-disciplined; the *prompt* is wrong.
+disciplined; the _prompt_ is wrong.
 
 **Root cause:** The agent system prompt's op-shape examples used
 `"scene"` as a literal placeholder for the scene aggregator's node id:
@@ -319,7 +320,7 @@ disciplined; the *prompt* is wrong.
 ```
 
 A model with no other signal will copy that string verbatim. The
-*Selection* block in the per-turn context gave the model selected node
+_Selection_ block in the per-turn context gave the model selected node
 ids, but the scene-root anchor isn't selected — it's reachable only
 via `outputs.scene.node`, which the prompt never surfaced.
 
@@ -465,6 +466,7 @@ missing `targetSelectors`. Gate 2 caught it cleanly — but the rejection
 was the FIRST signal the LLM had that the spec shape was undefined.
 
 **Five-limbed argument:**
+
 1. **Claim:** When tool A's parameter description points the LLM at tool
    B's output for X, tool B must actually return X. Otherwise the
    advertised contract is a fiction the gate has to enforce after the
@@ -529,6 +531,7 @@ random color rotation and scale to each of the object" → no-match.
 Filed as #24 + #25, fixed in P2.5.3 Wave A.
 
 **Five-limbed argument:**
+
 1. **Claim:** A resolver advertised as "the LLM-facing way to point at
    nodes by description" must accept the natural-language quantifier
    forms a director uses. Singular-only is an arbitrary scope.
@@ -575,20 +578,21 @@ selector becomes a closure root). PLAN P2.5.3 §2 Wave A.
 
 **Symptom:** the spec frames two files as "duplicate / mergeable" because their names rhyme (`Inspector.tsx` + `NPanel.tsx`, `assetStore.ts` + `assetCache.ts`, etc.); the spec proposes a merge / delete that would silently lose load-bearing functionality if executed; the error is only caught when someone actually opens both files.
 
-**Root cause:** the spec was authored from memory of file *names* and the surrounding domain language, not from observation of file *contents*. Domain words ("inspector", "panel", "store", "cache") cluster around boundaries because the boundary is the thing being named — but two files at the same boundary often have orthogonal jobs (one mutates, one displays; one props-edits, one HUD-toggles). Naming similarity is downstream of the same boundary; functional overlap is a separate question.
+**Root cause:** the spec was authored from memory of file _names_ and the surrounding domain language, not from observation of file _contents_. Domain words ("inspector", "panel", "store", "cache") cluster around boundaries because the boundary is the thing being named — but two files at the same boundary often have orthogonal jobs (one mutates, one displays; one props-edits, one HUD-toggles). Naming similarity is downstream of the same boundary; functional overlap is a separate question.
 
 **The trap:** writing the merge into the locked-decisions table (D-UX-N) and pulling forward into a wave's atomic commit before reading both files. Once "merge X and Y" is locked, the discovery that they aren't duplicates feels like late-breaking noise instead of the actual signal it is.
 
-**The real fix:** before any "merge / delete / replace" decision lands in a spec, open the two files end-to-end. State each file's job in one sentence. Only if the sentences overlap does the merge framing apply. Add a "what each file actually does today" pass to the spec authoring routine, *before* the locked-decision table is populated.
+**The real fix:** before any "merge / delete / replace" decision lands in a spec, open the two files end-to-end. State each file's job in one sentence. Only if the sentences overlap does the merge framing apply. Add a "what each file actually does today" pass to the spec authoring routine, _before_ the locked-decision table is populated.
 
 **Five-limbed argument:**
+
 1. **Claim:** Functional roles must be observed from code, not inferred from filenames.
 2. **Reason:** Filenames cluster at boundaries; functional roles span boundaries. Two files at the same boundary may have non-overlapping jobs.
-3. **Universal principle:** Lokayata at the *spec* level — observation runs alongside specification, not after.
+3. **Universal principle:** Lokayata at the _spec_ level — observation runs alongside specification, not after.
 4. **Application:** P6 spec D-UX-8 framed `Inspector.tsx` (property editor) + `NPanel.tsx` (viewport HUD: gizmo mode, snap, grid/axis toggles) as duplicate inspectors based on name similarity. They have orthogonal roles.
 5. **Conclusion:** Caught at W1 start by reading both files; D-UX-8 corrected mid-wave (NPanel deleted in W7 with functions absorbed into R8, Inspector kept as canonical). One round-trip lost; one decision-table cell rewritten.
 
-**Update 2026-05-11 (W2.6):** the W1 correction was itself reversed two waves later. By W2 the TopToolbar absorbed NPanel's mode + snap groups, leaving only grid/axis toggles unique to NPanel — and those were already slated to move to W7's FloatingViewportToolbar. The "they're not duplicates" claim that was true at W1 (lokayata-validated then) was false at W2.6 (lokayata-disconfirmed by the new chrome shape). The DEEPER lesson under H25: spec re-validation is a *cycle*, not a one-time fix. Every wave that touches adjacent chrome can shift whether two surfaces remain distinct. The sister pattern H27 below captures this directly.
+**Update 2026-05-11 (W2.6):** the W1 correction was itself reversed two waves later. By W2 the TopToolbar absorbed NPanel's mode + snap groups, leaving only grid/axis toggles unique to NPanel — and those were already slated to move to W7's FloatingViewportToolbar. The "they're not duplicates" claim that was true at W1 (lokayata-validated then) was false at W2.6 (lokayata-disconfirmed by the new chrome shape). The DEEPER lesson under H25: spec re-validation is a _cycle_, not a one-time fix. Every wave that touches adjacent chrome can shift whether two surfaces remain distinct. The sister pattern H27 below captures this directly.
 
 **Sister patterns:** any future spec that proposes a merge based on name resemblance — `MaterialOverride.ts` + `MaterialPreset.ts`, `KeyframeChannel*.ts` siblings, `*Store.ts` lookalikes. Read both before locking. AND: any prior "they're not duplicates" claim should be re-validated after every wave that absorbs chrome (H27).
 
@@ -602,20 +606,25 @@ selector becomes a closure root). PLAN P2.5.3 §2 Wave A.
 
 **Root cause:** vitest's `happy-dom` environment exposes `localStorage` as a globalThis property, but its method bindings are not attached at the moment a `src/app/stores/*.ts` module is imported by the test file. `typeof localStorage === 'undefined'` returns `'object'` (truthy guard misfires); the call to `getItem` then bombs because the slot is a partially-constructed Storage stub.
 
-**The trap:** asserting `typeof localStorage === 'undefined'` is sufficient defense. It isn't — the value is *defined*, but methods aren't.
+**The trap:** asserting `typeof localStorage === 'undefined'` is sufficient defense. It isn't — the value is _defined_, but methods aren't.
 
-**The real fix:** defensive helpers that check for *callable* methods, not just defined globals:
+**The real fix:** defensive helpers that check for _callable_ methods, not just defined globals:
+
 ```ts
 function safeGetItem(key: string): string | null {
   try {
     if (typeof localStorage?.getItem !== 'function') return null;
     return localStorage.getItem(key);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 ```
+
 And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE importing the store (so the store's module-load-time read sees a working API).
 
 **Five-limbed argument:**
+
 1. **Claim:** Defensive localStorage access requires method-callable checks, not just defined-global checks.
 2. **Reason:** Test envs supply Storage as a partially-constructed object; `typeof` returns truthy for partial stubs.
 3. **Universal principle:** When the boundary is "browser API in test env", stub completeness is the failure mode, not stub presence.
@@ -634,14 +643,15 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 
 **Root cause:** specs lock claims at a snapshot; chrome evolution moves sections between surfaces wave-by-wave. The "X has Y, Z, W sections unique to it" claim is conjunctive — when Y, Z, W all migrate elsewhere, the conjunction goes false silently. There's no automatic re-validation; the spec's earlier "they're distinct" verdict reads as authoritative even when the underlying premises have evaporated.
 
-**The trap:** trusting a frozen-in-time "they're not duplicates" claim. A claim that was lokayata-validated against W1's chrome shape is just a memory once W2's chrome ships. H25 caught the *first* iteration of this trap (don't lock from memory before reading code); H27 catches the *recurring* iteration (don't trust prior validation across structural waves).
+**The trap:** trusting a frozen-in-time "they're not duplicates" claim. A claim that was lokayata-validated against W1's chrome shape is just a memory once W2's chrome ships. H25 caught the _first_ iteration of this trap (don't lock from memory before reading code); H27 catches the _recurring_ iteration (don't trust prior validation across structural waves).
 
-**The real fix:** every wave that absorbs chrome (TopToolbar absorbing NPanel mode/snap groups; FloatingViewportToolbar absorbing grid/axis toggles; etc.) triggers a re-validation pass over any spec entry of the form "X and Y are distinct because…". Test: list each surface's *current* unique sections; if the count is 0 or 1, the merge is unblocked and the spec entry is stale.
+**The real fix:** every wave that absorbs chrome (TopToolbar absorbing NPanel mode/snap groups; FloatingViewportToolbar absorbing grid/axis toggles; etc.) triggers a re-validation pass over any spec entry of the form "X and Y are distinct because…". Test: list each surface's _current_ unique sections; if the count is 0 or 1, the merge is unblocked and the spec entry is stale.
 
 **Five-limbed argument:**
+
 1. **Claim:** Spec entries asserting surface distinctness must be re-validated after every wave that touches adjacent chrome.
 2. **Reason:** Distinctness claims are conjunctions of "X has unique section Y, Z, W" — chrome evolution can empty the conjunction silently.
-3. **Universal principle:** Lokayata at the spec level is *recurring*, not one-time. The first observation validates the claim at W_N; the same observation must run again at W_(N+k) if any adjacent chrome shifted.
+3. **Universal principle:** Lokayata at the spec level is _recurring_, not one-time. The first observation validates the claim at W*N; the same observation must run again at W*(N+k) if any adjacent chrome shifted.
 4. **Application:** D-UX-8 swung once at W1 ("they're not duplicates", true at the time). At W2 TopToolbar absorbed NPanel's mode + snap groups; W7 was already slated to take the grid/axis toggles. By W2.6 NPanel had nothing unique left. The spec entry still read "they're distinct, merge in W7". User pushed merge forward to W2.6 after observing — restoration was the right call once observation re-ran.
 5. **Conclusion:** Add a "section inventory" pass to every wave plan that touches multi-surface chrome. If any surface's unique-section count drops to ≤1, flag it for merge consideration.
 
@@ -666,6 +676,7 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 **Detection signal:** "I dispatched an Op and the DAG read still shows old state." Or: "the test seed runs without throwing but later assertions on the seeded state fail." Or: e2e log shows OpError in dispatch label "seed" but the test continues. Run the same setParam through `validatePlan` (any Mutator that uses setParam) instead of direct dispatch — the five-gate validator's gate 2 ('param_schema') would surface the rejection with a clear reason.
 
 **Five-limbed argument:**
+
 1. **Claim:** Direct `setParam` Op dispatch fails silently for paramPaths outside the node's paramSchema.
 2. **Reason:** `applySetParam` re-validates the post-write params object against `def.paramSchema.safeParse()` at `src/core/dag/ops.ts:271`; failure throws OpError; atomic batch dispatchers may swallow + continue.
 3. **Universal principle:** Schema-strict mutation paths require the caller to know the schema OR route through a validator that surfaces rejections. "Set any property" is not a universal Op semantic in this system.
@@ -680,7 +691,7 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 
 ### H29: Testid-migration grep gate scoped to the "owning" file misses legacy specs that reference the same testid
 
-**Span:** every chrome wave that deletes or renames a `data-testid` value. Author's mental model: "the testid lives in component X, so I'll grep its tests + the test file named after X." Reality: testids are global identifiers — *any* spec across the entire `tests/e2e/` tree can reference them as setup, side-effect verification, or unrelated coverage.
+**Span:** every chrome wave that deletes or renames a `data-testid` value. Author's mental model: "the testid lives in component X, so I'll grep its tests + the test file named after X." Reality: testids are global identifiers — _any_ spec across the entire `tests/e2e/` tree can reference them as setup, side-effect verification, or unrelated coverage.
 
 **Symptom:** P6 W7 C2 deleted `TransformToolbar.tsx` and its `toolbar-shading-*` testids. The C2 grep gate matched testids inside the obviously-related `tests/e2e/p26-acceptance.spec.ts` (P2.6 was where the component originally landed) and migrated 3 specs cleanly. The full e2e suite passed locally because Playwright was run scoped to the migrated specs. A separate top-level acceptance suite at `tests/e2e/acceptance.spec.ts:233` used `toolbar-shading-rendered` as a SETUP step for the PostFx beauty pixel-diff test (#7 PostFx beauty matches reference within 2% pixel diff) — caught only by the post-PR critical-self-review running the full suite, not by the wave's verification gate.
 
@@ -693,8 +704,9 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 **Detection signal:** "I migrated all the obvious specs and they pass, but a screenshot/integration test from an unrelated phase suddenly fails with `Locator not found: getByTestId('old-name')`." Or: `--reporter=list` on the full suite shows a single failure in a spec whose name has no obvious connection to the changed component. Or: CI fails on a spec the author never opened during the migration. All three are the same signature: a non-obvious consumer.
 
 **Five-limbed argument:**
+
 1. **Claim:** Scoping a testid-migration grep to the file you mentally associate with the testid will miss legacy specs that consume the testid as setup or side-effect verification.
-2. **Reason:** Testids are project-global names; the original component owns the *production* of the name, but its CONSUMERS can be anywhere — including specs from earlier phases that wired the testid as a "click this before the real test" setup step.
+2. **Reason:** Testids are project-global names; the original component owns the _production_ of the name, but its CONSUMERS can be anywhere — including specs from earlier phases that wired the testid as a "click this before the real test" setup step.
 3. **Universal principle:** When a name is global, the migration gate must be global too. File-scoped greps encode a false ownership relationship onto a flat namespace.
 4. **Application:** W7 C2 deleted `TransformToolbar.tsx`. Grep gate ran inside the `p26-acceptance.spec.ts` file (the "owning" tests). Clean. But `tests/e2e/acceptance.spec.ts:233` used `toolbar-shading-rendered` as a setup step for the PostFx beauty test — completely unrelated to the chrome migration's intent, yet still a hard consumer. The orphaned reference was caught only by post-PR critical self-review (`50eec3b`).
 5. **Conclusion:** Run testid-deletion grep gates with `tests/ src/` as the search root, never a single file. Add the project-wide grep to the wave's verification gate list, BEFORE the deletion commit message gets written. Sister rule applies to type renames, store-key renames, and any other global-name change.
@@ -711,21 +723,22 @@ And in the test file, install an in-memory Storage mock in `beforeAll` BEFORE im
 
 **Symptom:** P6 W7 C1 added `<FloatingViewportToolbar />` as an `absolute bottom-4` overlay inside `<div data-testid="viewport" className="relative">`. The `tests/e2e/acceptance.spec.ts#7 PostFx beauty matches reference within 2% pixel diff` test, which captures `page.getByTestId('viewport').toHaveScreenshot('postfx-beauty.png')`, started failing with `Expected an image 660px by 557px, received 660px by 570px. 14765 pixels (ratio 0.04 of all image pixels) are different.` The Canvas-render content was unchanged; only the surrounding chrome region grew (the absolute child extended the element's screenshot extent by ~13px).
 
-**Trap:** assume `position: absolute` children don't change the parent's bounding box (true for CSS *layout* purposes — absolute removes children from normal flow). Therefore assume the screenshot of the parent stays the same. False — Playwright's element-screenshot captures the laid-out bounding rect *including* visible descendants when `overflow: visible` (the default). Absolute children with `bottom-N` painted within the parent's frame ARE captured.
+**Trap:** assume `position: absolute` children don't change the parent's bounding box (true for CSS _layout_ purposes — absolute removes children from normal flow). Therefore assume the screenshot of the parent stays the same. False — Playwright's element-screenshot captures the laid-out bounding rect _including_ visible descendants when `overflow: visible` (the default). Absolute children with `bottom-N` painted within the parent's frame ARE captured.
 
 **Root cause:** **Playwright `toHaveScreenshot` on a locator uses the element's full painted bounds, not its CSS content-box.** When an absolute child paints outside the inline content area (which `bottom-4` does — it's positioned relative to the parent's bottom edge, not stacked at the end of inline flow), the screenshot extent grows to include the painted child. The "trap" only fires when (a) the parent's CSS has no explicit `overflow: hidden` AND (b) the absolute child paints a visible region (background, border, content).
 
 **Real fix two options:**
 
-- **Option A — rebaseline.** When the overlay is a *permanent* part of the new editor reality (as R8 is post-W7), the right move is `npx playwright test --update-snapshots` to capture the new ground truth. Verify the rebaseline is intentional in the commit message + body so future readers understand it wasn't just "the test was flaky."
+- **Option A — rebaseline.** When the overlay is a _permanent_ part of the new editor reality (as R8 is post-W7), the right move is `npx playwright test --update-snapshots` to capture the new ground truth. Verify the rebaseline is intentional in the commit message + body so future readers understand it wasn't just "the test was flaky."
 
-- **Option B — narrow the screenshot target.** When the overlay is incidental to what the test is *about* (e.g., the PostFx beauty test is about the canvas render, not the surrounding chrome), change the target from the wrapper div to the canvas itself: `page.locator('canvas').toHaveScreenshot('postfx-beauty.png')`. This is a one-time baseline migration but produces a more honest test going forward.
+- **Option B — narrow the screenshot target.** When the overlay is incidental to what the test is _about_ (e.g., the PostFx beauty test is about the canvas render, not the surrounding chrome), change the target from the wrapper div to the canvas itself: `page.locator('canvas').toHaveScreenshot('postfx-beauty.png')`. This is a one-time baseline migration but produces a more honest test going forward.
 
 W7 used Option A (R8 is permanent; preserve the existing test framing).
 
 **Detection signal:** `toHaveScreenshot` fails with a small dimension delta (~10-50px on one axis) on a test that previously passed, AND a recent commit added an absolute-positioned descendant to the screenshot-targeted element. The fingerprint is dimensional, not content-based — the pixel ratio in the diff will be misleadingly low (~0.04 in the W7 case) because most pixels match; the failure is the framing, not the content.
 
 **Five-limbed argument:**
+
 1. **Claim:** Adding an absolute-positioned overlay child to a Playwright-screenshot-targeted container breaks the existing baseline by extending the captured extent.
 2. **Reason:** Playwright element-screenshot captures the full painted bounds of the locator including overflowing descendants (default `overflow: visible`); absolute children painted within or near the parent ARE part of those bounds.
 3. **Universal principle:** Element-screenshots are not coupled to CSS layout boxes — they capture paint extent. Any visible painted region inside or extending from the targeted element will appear in the snapshot.
@@ -755,6 +768,7 @@ W7 used Option A (R8 is permanent; preserve the existing test framing).
 **The trap (wrong fix):** rewrite the test's regex to "look less Tailwind-y" — e.g., split `focus:outline-none` into `'focus' + ':' + 'outline-none'` so the substring never appears whole in the file. This works but encodes the wrong invariant. The Tailwind scanner shouldn't see test files at all; the right fix is the content-glob exclusion, not source-level evasion. The split-string form is fine as belt-and-braces (P6 W8 C5's `grepGates.test.ts` uses it), but the primary defense is the glob exclusion.
 
 **Five-limbed argument:**
+
 1. **Claim:** Including test sources in Tailwind's content globs lets hostile candidate strings reach the rule generator, which can throw on regex-constructed pseudo-class fragments.
 2. **Reason:** Tailwind's candidate extractor is regex-based and AST-unaware; any substring shaped like a utility class is fed into the same code path as real className strings.
 3. **Universal principle:** Build-time scanners that consume source code should be scoped to the files that actually contribute to the build. Tests don't produce CSS; their content should not enter the CSS pipeline.
@@ -781,7 +795,7 @@ W7 used Option A (R8 is permanent; preserve the existing test framing).
 
 - **Option A — author convention (lightweight, applied in C5):** in source code comments, prefer parenthetical phrasing over hyphenated compounds that share Tailwind class prefixes. "(which holds the label text)" instead of "the text-bearing label". Costs zero engineering effort; prevents future occurrences from the moment the convention is adopted. Documented in this catalogue entry; not enforced by any tool.
 
-- **Option B — test-side fix (heavier, deferred):** scope the grep to JSX `className` attribute contexts only — match `className="[^"]*\btext-[a-z]+"` or wrap matches inside a `className={\`...${var}...\`}` template-literal pattern. This requires either a lightweight JSX parser or a heuristic match that excludes lines beginning with `//` or sitting inside `/* */`. The complexity isn't justified by a single occurrence; revisit if the pattern recurs.
+- **Option B — test-side fix (heavier, deferred):** scope the grep to JSX `className` attribute contexts only — match `className="[^"]*\btext-[a-z]+"` or wrap matches inside a `className={\`...${var}...\`}`template-literal pattern. This requires either a lightweight JSX parser or a heuristic match that excludes lines beginning with`//`or sitting inside`/\* \*/`. The complexity isn't justified by a single occurrence; revisit if the pattern recurs.
 
 C5 used Option A. The whitelist was NOT widened — that would have been a workaround (papering over a single false positive at the cost of admitting a bogus token into the gate's accepted set, which would shadow real misses).
 
@@ -790,6 +804,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 **The trap (wrong fix):** add the bogus class to the gate's WHITELIST. This makes the gate pass but the whitelist now contains an entry that doesn't correspond to any production CSS. Future genuine misses with similar patterns can ride into the whitelist on precedent ("we exempted text-bearing, why not text-floating?"). The right move is to fix the source so the regex doesn't match in the first place, OR to fix the regex so it doesn't see comments.
 
 **Five-limbed argument:**
+
 1. **Claim:** Raw substring greps over source code that scan for class-name patterns will produce false positives on hyphenated phrases inside comments.
 2. **Reason:** Regex matching has no syntactic awareness; the pattern engine treats source code as a flat character stream.
 3. **Universal principle:** When a code-quality gate runs on raw source, it must either (a) parse to a syntactic level above the gate's concern, or (b) accept a noise floor and document the convention that avoids it.
@@ -806,7 +821,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 **Symptom (caught at planning, not runtime — the deductive win):** P6 W9 context memo D-W9-9 specified "Clock.tsx dual-writes `timeStore.setTime(seconds)` AND `currentFrameRef.current = frame`". Source read before planning showed `Clock.tsx:29` calls `useTimeStore.getState().tick(delta)` — there is **no `setTime` call in Clock**, and Clock's `tick` early-returns when `!playing`. Non-playback scrub (dragScrub, ruler drag) and `setDuration` reframing mutate the frame **directly via timeStore, bypassing Clock entirely**. A Clock-sited dual-write would mirror the frame ONLY during playback — the escape-hatch playhead silently freezes during scrub and on duration change while every React `seconds`-subscriber keeps updating. The exact silent-failure the decision was written to prevent, relocated to the paths the rAF owner doesn't touch.
 
-**Trap (the wrong fix):** site the mirror write at the rAF/animation owner because "that's where the tick happens." The animation owner is one *consumer* of frame changes, not the *producer*. Mirroring there covers only paths flowing through that owner; every other mutator of the source is an uncovered divergence site. Adding a second mirror at each missed call site (scrub handler, setDuration) is the workaround cascade — N call sites, N places to forget.
+**Trap (the wrong fix):** site the mirror write at the rAF/animation owner because "that's where the tick happens." The animation owner is one _consumer_ of frame changes, not the _producer_. Mirroring there covers only paths flowing through that owner; every other mutator of the source is an uncovered divergence site. Adding a second mirror at each missed call site (scrub handler, setDuration) is the workaround cascade — N call sites, N places to forget.
 
 **Root cause:** **the mirror was placed at a consumer, not at the single producer chokepoint.** `timeStore.frame` is derived inside exactly three setters that all call `deriveFrame()` → `set({...frame...})`: `setTime`, `setDuration`, `tick`. That is the chokepoint. A value mirrored for a React-bypass hatch must be written there — once — so it holds by construction for every path that can change the source.
 
@@ -815,6 +830,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 **Detection signal:** a value duplicated for a hot loop; the mirror write sits in a component/effect/loop body rather than the store action that owns the source; there exist mutation paths to the source that don't pass through that component (scrub vs playback, programmatic vs UI). Ask: "list every call site that changes the source — does the mirror fire for all, or only the one I was looking at?"
 
 **Five-limbed argument:**
+
 1. **Claim:** A React-bypass escape-hatch value must be mirrored at the single state chokepoint that mutates its source, never at one of its consumers.
 2. **Reason:** The consumer sees only the subset of source changes that flow through it; other mutators bypass it and leave the mirror stale with no error.
 3. **Universal principle:** Duplicated state must have exactly one writer co-located with the source's single mutation point; single-writer-at-the-chokepoint is the only structure under which a derived copy cannot diverge.
@@ -831,15 +847,16 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 **Symptom:** KeyframeChannelVec3 → AnimationLayer.animation is wired, playback advances, dopesheet shows the channel row — but the mesh does not move in the viewport. The evaluated `scene.children[0]` is still the raw un-patched mesh value (or, if `target` is also unwired, the layer renders nothing).
 
-**Trap (the wrong fix):** assume the closure/eval walk auto-splices AnimationLayer between the mesh and the Scene because AnimationLayer.ts:19-23 references H22 multi-direction closure specs. It does not. H22 closure walking is for Mutator *scope computation* (which nodes a mutation touches), NOT for render evaluation. The render evaluator only follows input bindings. Adding more channels, toggling weight, or re-dispatching the channel never helps — the layer is an orphan node off the render path.
+**Trap (the wrong fix):** assume the closure/eval walk auto-splices AnimationLayer between the mesh and the Scene because AnimationLayer.ts:19-23 references H22 multi-direction closure specs. It does not. H22 closure walking is for Mutator _scope computation_ (which nodes a mutation touches), NOT for render evaluation. The render evaluator only follows input bindings. Adding more channels, toggling weight, or re-dispatching the channel never helps — the layer is an orphan node off the render path.
 
-**Root cause (data-flow / scene-graph ownership):** `Scene.children` (a *list* input socket — `src/core/dag/ops.ts:192-197`) is bound to the raw mesh's `.out` in the default seed (`src/core/project/default.ts:60-64`). AnimationLayer produces a patched deep-clone on its `.out` (`src/nodes/AnimationLayer.ts:82-93`) but nothing consumes that socket. The evaluator never reaches the layer; the un-patched seed box keeps flowing into the scene. Two edges are missing/wrong: (1) `mesh.out → layer.target` (without it `patchTarget(null,…)→null`, layer renders nothing — AnimationLayer.ts:112, SceneFromDAG.tsx:381); (2) `Scene.children` must be **rewired** — disconnect `mesh.out → scene.children` and connect `layer.out → scene.children`. Because children is a list, a bare `connect` without the matching `disconnect` renders BOTH the raw box and the layer side-by-side.
+**Root cause (data-flow / scene-graph ownership):** `Scene.children` (a _list_ input socket — `src/core/dag/ops.ts:192-197`) is bound to the raw mesh's `.out` in the default seed (`src/core/project/default.ts:60-64`). AnimationLayer produces a patched deep-clone on its `.out` (`src/nodes/AnimationLayer.ts:82-93`) but nothing consumes that socket. The evaluator never reaches the layer; the un-patched seed box keeps flowing into the scene. Two edges are missing/wrong: (1) `mesh.out → layer.target` (without it `patchTarget(null,…)→null`, layer renders nothing — AnimationLayer.ts:112, SceneFromDAG.tsx:381); (2) `Scene.children` must be **rewired** — disconnect `mesh.out → scene.children` and connect `layer.out → scene.children`. Because children is a list, a bare `connect` without the matching `disconnect` renders BOTH the raw box and the layer side-by-side.
 
 **Real fix (seed topology, not a code bug):** four edges — `time.out→channel.time`, `channel.out→layer.animation`, `mesh.out→layer.target`, and `disconnect mesh.out→scene.children` then `connect layer.out→scene.children`. Verified by dev-seam observation: evaluated `scene.children[0]` becomes the AnimationLayer value whose `.target.rotation` advances `[0,0,0]→[0,90,0]→[0,180,0]→[0,360,0]` across t=0→2s.
 
 **Detection signal:** an animation wrapper is wired to its channels but `Scene.children` (or the relevant downstream list socket) still names the raw target node, not the wrapper's `.out`. Ask: "trace from `outputs.render` through input bindings only — is the wrapper on that path? Is its `target` wired?"
 
 **Five-limbed argument:**
+
 1. **Claim:** An AnimationLayer animates the viewport only if its `.out` is on the input-binding path from the active render output AND its `target` input is wired to the mesh.
 2. **Reason:** The evaluator resolves nodes exclusively by walking declared input bindings (evaluator.ts:97-113); an orphan wrapper is never evaluated, and a targetless wrapper patches `null`.
 3. **Universal principle:** In a pull-based DAG evaluator, a node contributes to an output iff it is reachable from that output's root through input edges — producing a value on an unconsumed output socket is inert.
@@ -850,19 +867,20 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 ### H35 — Cardinality-mirror passes while pixels are clipped: the "count ≠ visible" escape (canvas coordinate maps with no edge inset)
 
-**Span:** any canvas/imperative surface whose automated test asserts a *count* mirror-attribute (`data-rendered-keyframes`, `data-*-count`) as a proxy for "the thing is on screen", while the actual draw uses a coordinate map that can place elements off the drawable area. P6 instantiation: `TimelineCanvas` — `cullVisibleKeyframes` (inclusive bounds) counts a keyframe at `t=0` or `t=duration` as "rendered" (count=2), but `secondsToX` maps `[0,dur]→[0,widthPx]` with no inset, so `keyframeToRect` centered an 8px diamond at x∈[-4,+4] / [w-4,w+4] — half-clipped off both edges, the frame-0 keyframe (the most common keyframe in any animation) effectively invisible behind the label gutter. Predicted recurrence: any future canvas surface (P7 splats overlay, node-graph minimap) that count-asserts visibility.
+**Span:** any canvas/imperative surface whose automated test asserts a _count_ mirror-attribute (`data-rendered-keyframes`, `data-*-count`) as a proxy for "the thing is on screen", while the actual draw uses a coordinate map that can place elements off the drawable area. P6 instantiation: `TimelineCanvas` — `cullVisibleKeyframes` (inclusive bounds) counts a keyframe at `t=0` or `t=duration` as "rendered" (count=2), but `secondsToX` maps `[0,dur]→[0,widthPx]` with no inset, so `keyframeToRect` centered an 8px diamond at x∈[-4,+4] / [w-4,w+4] — half-clipped off both edges, the frame-0 keyframe (the most common keyframe in any animation) effectively invisible behind the label gutter. Predicted recurrence: any future canvas surface (P7 splats overlay, node-graph minimap) that count-asserts visibility.
 
 **Symptom:** the W9 e2e (`data-rendered-keyframes` constant/equal) passes; the user sees fewer diamonds than keyframes. Count says N, eyes say <N. No error anywhere.
 
-**Trap (the wrong fix):** trust the green count test and conclude "rendering is fine, the seed/data is wrong" — exactly the inference that cost the orchestrator four wrong console snippets before reading `timelineCanvasGeometry.ts`. Or: widen the cull bounds (the cull is *correct*; the keyframes ARE in range — the bug is the x-map, not the filter). Or: pixel-diff the canvas to catch it (forbidden — H30/D-W9-4; and it would only catch it after the fact, not state the cause).
+**Trap (the wrong fix):** trust the green count test and conclude "rendering is fine, the seed/data is wrong" — exactly the inference that cost the orchestrator four wrong console snippets before reading `timelineCanvasGeometry.ts`. Or: widen the cull bounds (the cull is _correct_; the keyframes ARE in range — the bug is the x-map, not the filter). Or: pixel-diff the canvas to catch it (forbidden — H30/D-W9-4; and it would only catch it after the fact, not state the cause).
 
-**Root cause (boundary / coordinate-mapping):** `data-rendered-keyframes` is a **cardinality** mirror — it proves "how many passed culling", NOT "how many are within the visible pixel rectangle". A coordinate map `[0,span]→[0,widthPx]` with **no edge inset** places terminal elements with their *center* on the canvas extreme, so any element with width clips by half. The mirror-attr test is structurally blind to this because the count is computed pre-projection (from cull) while the clip happens post-projection (in `keyframeToRect`). This is the **concrete escape of the FLAG-2 "count ≠ pixels" limitation** that was *predicted* at W9 (D-W9-4 / W9 shipped memo: "count-constant ≠ pixels-restored") and recorded as a known automated-observation gap — H35 is its promotion from predicted-gap to demonstrated-pattern (per the dharana decision model: predicted-then-occurred = catalogue).
+**Root cause (boundary / coordinate-mapping):** `data-rendered-keyframes` is a **cardinality** mirror — it proves "how many passed culling", NOT "how many are within the visible pixel rectangle". A coordinate map `[0,span]→[0,widthPx]` with **no edge inset** places terminal elements with their _center_ on the canvas extreme, so any element with width clips by half. The mirror-attr test is structurally blind to this because the count is computed pre-projection (from cull) while the clip happens post-projection (in `keyframeToRect`). This is the **concrete escape of the FLAG-2 "count ≠ pixels" limitation** that was _predicted_ at W9 (D-W9-4 / W9 shipped memo: "count-constant ≠ pixels-restored") and recorded as a known automated-observation gap — H35 is its promotion from predicted-gap to demonstrated-pattern (per the dharana decision model: predicted-then-occurred = catalogue).
 
-**Real fix:** inset the *element* coordinate map, not the cull. F-7 (`4762d49`): `keyframeToRect` maps into `[inset, widthPx-inset]` (`effective inset = max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)` so any diamond size is fully on-canvas), `secondsToX`/playhead untouched, zero-guard preserved. The proof surface is the **pure-geometry vitest** (D-W9-4's tested-pure layer): assert `keyframeToRect(t=0,…).x ≥ 0` and `t=dur → x+w ≤ widthPx`. This closes the *specific* escape; the *general* lesson is the detection signal below.
+**Real fix:** inset the _element_ coordinate map, not the cull. F-7 (`4762d49`): `keyframeToRect` maps into `[inset, widthPx-inset]` (`effective inset = max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)` so any diamond size is fully on-canvas), `secondsToX`/playhead untouched, zero-guard preserved. The proof surface is the **pure-geometry vitest** (D-W9-4's tested-pure layer): assert `keyframeToRect(t=0,…).x ≥ 0` and `t=dur → x+w ≤ widthPx`. This closes the _specific_ escape; the _general_ lesson is the detection signal below.
 
-**Detection signal:** a canvas test asserts a `*-count` mirror-attr as evidence of visibility; the geometry maps a value range flush onto `[0,widthPx]` (or `[0,height]`) with no inset; elements have non-zero width/height. Ask: "does the count test prove *cardinality* or *on-screen position*? Can a counted element be drawn with its center on x=0 or x=width?" If the count is computed before the projection that can clip, the test is blind to clipping by construction — add a pure-geometry bounds assertion (not a pixel-diff).
+**Detection signal:** a canvas test asserts a `*-count` mirror-attr as evidence of visibility; the geometry maps a value range flush onto `[0,widthPx]` (or `[0,height]`) with no inset; elements have non-zero width/height. Ask: "does the count test prove _cardinality_ or _on-screen position_? Can a counted element be drawn with its center on x=0 or x=width?" If the count is computed before the projection that can clip, the test is blind to clipping by construction — add a pure-geometry bounds assertion (not a pixel-diff).
 
 **Five-limbed argument:**
+
 1. **Claim:** A cardinality mirror-attribute (`data-*-count`) cannot serve as a visibility assertion for a canvas surface whose coordinate map can place elements off the drawable rectangle.
 2. **Reason:** the count is computed pre-projection (from culling); the clip occurs post-projection (in the rect map); no information flows from the clip back to the count, so a green count is consistent with invisible elements.
 3. **Universal principle:** a proxy assertion is only valid if every failure mode of the real property also fails the proxy; here a real failure (element off-canvas) leaves the proxy (count) passing — the proxy is unsound for the property.
@@ -883,11 +901,12 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 **Root cause (boundary / proxy-vs-property):** V14's distinctness signature is `(requiredEdges, requiredNodeTypes, preserves)` — `lossy` is excluded (`mutators.test.ts:155-159`). For two Mutators that differ only in what they DESTROY (append vs delete a sample), the only honest discriminator lives in `lossy`, but the gate cannot see it — so honest contracts collide and the mechanically-rewarded escape is a false `preserves` entry. The gate's input set is too narrow for the property it certifies.
 
-**Real fix (the invariant, not the artifact):** widen V14's signature to include the `lossy` aspect set so delete-class Mutators are distinct *by their honest loss declaration*, then state `deleteKeyframe` truthfully (`keyframe-identity` in `lossy` ONLY; drop the false `preserves:['animation-shape']`). This is a change to the V14 vyapti definition + its mechanical test, scoped on its own (it re-touches every Mutator's distinctness computation) — not an inline patch. Until then the false contract is a documented LOW-impact caveat (it feeds preview hints, not the evaluated motion path; P7's GOAL gate asserts the evaluated transform delta, which is unaffected).
+**Real fix (the invariant, not the artifact):** widen V14's signature to include the `lossy` aspect set so delete-class Mutators are distinct _by their honest loss declaration_, then state `deleteKeyframe` truthfully (`keyframe-identity` in `lossy` ONLY; drop the false `preserves:['animation-shape']`). This is a change to the V14 vyapti definition + its mechanical test, scoped on its own (it re-touches every Mutator's distinctness computation) — not an inline patch. Until then the false contract is a documented LOW-impact caveat (it feeds preview hints, not the evaluated motion path; P7's GOAL gate asserts the evaluated transform delta, which is unaffected).
 
 **Detection signal:** a token appears in BOTH a contract's `preserves` and `lossy`; OR a `preserves` claim is identical to another Mutator's but the operation is strictly more destructive; OR a commit message / deviation note says "added X to preserves so V14 passes". Ask: "is this token in `preserves` because the op preserves it, or because the distinctness gate only reads `preserves`?" If the latter, the gate's input set — not the contract — is what must change.
 
 **Five-limbed argument:**
+
 1. **Claim:** Making a Mutator V14-distinct by adding a token to `preserves` that the operation does not preserve produces a green gate and a false contract.
 2. **Reason:** V14's distinctness tuple excludes `lossy`, so the only field that can break a delete-vs-append collision is `preserves`; a truthful `lossy`-only declaration leaves them colliding, so the mechanically-rewarded move is a `preserves` entry the op contradicts.
 3. **Universal principle:** when a mechanical gate certifies a property using a strict subset of the contract, optimising for the gate diverges from the property exactly where the excluded fields carry the real distinction — the proxy must read every field the property depends on, or it rewards lies.
@@ -902,40 +921,42 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 ### H37 — Inverting the wrong forward map: a pixel→value inverse blind to an edge inset (H35-family sibling)
 
-**Span:** any inverse coordinate function whose forward partner applies an edge inset (or any non-identity affine term) that a *sibling* forward function does NOT. P7.1 instantiation: `xToSeconds` must invert `keyframeToRect`'s center-x map (`inset + secondsToX(t,dur,widthPx-2*inset)`, `inset = max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)`), NOT bare `secondsToX` — the diamonds a director grabs are inset (F-7); the playhead is deliberately not. Predicted recurrence: any future hit-test/drop inverse for an inset/padded canvas element (CurveEditor value-drag, splat overlay, a zoomed timeline).
+**Span:** any inverse coordinate function whose forward partner applies an edge inset (or any non-identity affine term) that a _sibling_ forward function does NOT. P7.1 instantiation: `xToSeconds` must invert `keyframeToRect`'s center-x map (`inset + secondsToX(t,dur,widthPx-2*inset)`, `inset = max(KEYFRAME_EDGE_INSET_PX, diamondPx/2)`), NOT bare `secondsToX` — the diamonds a director grabs are inset (F-7); the playhead is deliberately not. Predicted recurrence: any future hit-test/drop inverse for an inset/padded canvas element (CurveEditor value-drag, splat overlay, a zoomed timeline).
 
-**Symptom:** drag hit-test and drop *seem* to work in the track interior but drift by exactly the inset at the track edges — grabbing or dropping the t=0 or t=duration keyframe (the single most common keyframe in any animation) lands off by `KEYFRAME_EDGE_INSET_PX`. A round-trip vitest written against the *bare* forward map (`secondsToX`) passes for the wrong inverse — the test is blind to the inset by construction (sister of H32/H35).
+**Symptom:** drag hit-test and drop _seem_ to work in the track interior but drift by exactly the inset at the track edges — grabbing or dropping the t=0 or t=duration keyframe (the single most common keyframe in any animation) lands off by `KEYFRAME_EDGE_INSET_PX`. A round-trip vitest written against the _bare_ forward map (`secondsToX`) passes for the wrong inverse — the test is blind to the inset by construction (sister of H32/H35).
 
 **Trap (the wrong fix):** invert the simpler/more-visible forward function (`secondsToX`) because it is "the time→x map" — the inset lives one call up in `keyframeToRect` and is easy to not see. Then "fix" the edge drift with a +inset fudge at the call site, which is a second uncatalogued map (the H36 one-honest-discriminator family applied to geometry).
 
-**Real fix:** invert the EXACT forward map the grabbed element uses, including every term (`inset`, `innerWidth`, and the degenerate `innerWidth ≤ 0` else-branch `keyframeToRect` falls back to). Prove it with a tested-pure round-trip whose x is derived from `keyframeToRect` *exactly as the canvas computes it* (NOT `secondsToX`), and whose cases INCLUDE t=0 and t=duration — an inset-blind inverse fails there specifically and only there. Never a pixel-diff (H30 / D-W9-4 / D-W9-8).
+**Real fix:** invert the EXACT forward map the grabbed element uses, including every term (`inset`, `innerWidth`, and the degenerate `innerWidth ≤ 0` else-branch `keyframeToRect` falls back to). Prove it with a tested-pure round-trip whose x is derived from `keyframeToRect` _exactly as the canvas computes it_ (NOT `secondsToX`), and whose cases INCLUDE t=0 and t=duration — an inset-blind inverse fails there specifically and only there. Never a pixel-diff (H30 / D-W9-4 / D-W9-8).
 
-**Detection signal:** an inverse function pairs with a forward function whose name suggests it is "the" map, but the element being inverted is positioned by a *wrapper* that adds padding/inset/zoom. Ask: "which exact expression computes the pixel I am inverting — is it the bare map, or the bare map wrapped in an inset/transform? Does my round-trip test derive its input from the wrapper or the bare map?" If the test uses the bare map, it cannot catch an inset-blind inverse.
+**Detection signal:** an inverse function pairs with a forward function whose name suggests it is "the" map, but the element being inverted is positioned by a _wrapper_ that adds padding/inset/zoom. Ask: "which exact expression computes the pixel I am inverting — is it the bare map, or the bare map wrapped in an inset/transform? Does my round-trip test derive its input from the wrapper or the bare map?" If the test uses the bare map, it cannot catch an inset-blind inverse.
 
 **Five-limbed argument:**
+
 1. **Claim:** Inverting `secondsToX` instead of `keyframeToRect`'s inset-aware center-x yields a hit-test/drop that drifts by the inset at the track edges.
 2. **Reason:** the diamond's pixel is `inset + secondsToX(t,dur,widthPx-2*inset)`; the inverse of `secondsToX` alone omits the `inset` shift and the `widthPx-2*inset` rescale, so the error is zero only at the inset's symmetric midpoint and maximal at t=0 / t=dur.
 3. **Universal principle:** an inverse is correct only against the exact forward expression that produced the value; inverting a sub-expression of the true forward map is correct only where the omitted terms vanish.
 4. **Application:** P7.1 `xToSeconds` mirrors `keyframeToRect:177-182` term-for-term incl. the `innerWidth ≤ 0` fallback; the round-trip vitest derives x via `keyframeToRect` and asserts t=0 & t=duration < 1e-9 (an inset-blind inverse fails exactly these).
 5. **Conclusion:** the bounds-faithful round-trip in the tested-pure layer (not a pixel-diff, not a secondsToX round-trip) is the only sound proof the inverse is the true inverse.
 
-**Cross-ref:** [[H35]] (parent — count/coord map blind to edge insets; this is the *inverse-direction* sibling), F-7 / `KEYFRAME_EDGE_INSET_PX` (the forward inset this undoes), [[H36]] (the "+inset fudge at call site" would be the second-discriminator trap), D-07 (the locked decision), `src/timeline/timelineCanvasGeometry.ts` (`xToSeconds`, `keyframeToRect`), `src/timeline/timelineCanvasGeometry.test.ts` (the `xToSeconds (D-07 inverse)` block — t=0/t=dur edge cases). Provenance: predicted in CONTEXT D-07 pre-mortem; built correctly first pass with the edge round-trip as the guard; catalogued per the framework mandate (a >0-attempt-prevented pattern — the test design is what prevented the attempt).
+**Cross-ref:** [[H35]] (parent — count/coord map blind to edge insets; this is the _inverse-direction_ sibling), F-7 / `KEYFRAME_EDGE_INSET_PX` (the forward inset this undoes), [[H36]] (the "+inset fudge at call site" would be the second-discriminator trap), D-07 (the locked decision), `src/timeline/timelineCanvasGeometry.ts` (`xToSeconds`, `keyframeToRect`), `src/timeline/timelineCanvasGeometry.test.ts` (the `xToSeconds (D-07 inverse)` block — t=0/t=dur edge cases). Provenance: predicted in CONTEXT D-07 pre-mortem; built correctly first pass with the edge round-trip as the guard; catalogued per the framework mandate (a >0-attempt-prevented pattern — the test design is what prevented the attempt).
 
 ---
 
 ### H38 — Composite retime drops `easing`: the channel's per-type default silently overwrites it
 
-**Span:** any composite that removes-then-re-adds a record through a builder that *defaults* an omitted field. P7.1 instantiation: `dispatchRetimeKeyframe` = `removeKeyframes({scope:{time:fromTime}})` + `keyframe({time:toTime,value,easing})`; `keyframe.ts:105` falls `easing` through to a per-channel-type default (`linear`/`cubic`) when omitted. Predicted recurrence: any "move/duplicate X" built as remove+add where X carries fields the add-builder defaults (easing, tangents, interpolation mode, per-key metadata).
+**Span:** any composite that removes-then-re-adds a record through a builder that _defaults_ an omitted field. P7.1 instantiation: `dispatchRetimeKeyframe` = `removeKeyframes({scope:{time:fromTime}})` + `keyframe({time:toTime,value,easing})`; `keyframe.ts:105` falls `easing` through to a per-channel-type default (`linear`/`cubic`) when omitted. Predicted recurrence: any "move/duplicate X" built as remove+add where X carries fields the add-builder defaults (easing, tangents, interpolation mode, per-key metadata).
 
 **Symptom:** the keyframe retimes to the right time with the right value, but its easing silently reverts to the channel default — a `cubic`-eased key dragged on a Number channel comes back `linear`. No error; the interpolation just changes. Surfaces only when a consumer inspects easing or the curve shape visibly differs after a drag.
 
 **Trap (the wrong fix):** pass only `{channelId, time, value}` to the `keyframe` builder (the obvious "move it to the new time with its value" shape) and let easing default — the happy-path test that only asserts time+value is green, so the loss is invisible.
 
-**Real fix:** capture EVERY defaulted field of the original record from the live DAG *before* the remove, and pass each explicitly into the re-add spec. Assert the field survives the round trip in the verify (the dispatch vitest asserts `easing` preserved; the e2e asserts it through the evaluated path).
+**Real fix:** capture EVERY defaulted field of the original record from the live DAG _before_ the remove, and pass each explicitly into the re-add spec. Assert the field survives the round trip in the verify (the dispatch vitest asserts `easing` preserved; the e2e asserts it through the evaluated path).
 
 **Detection signal:** a composite reads a record, removes it, re-adds it via a builder; the re-add spec omits a field the builder is documented to default. Ask: "what does the add-builder do with every field I did NOT pass? Is any of them present on the original record?" If yes and omitted → silent overwrite.
 
 **Five-limbed argument:**
+
 1. **Claim:** Omitting `easing` from the retime's `keyframe` spec silently changes the keyframe's interpolation to the channel default.
 2. **Reason:** `keyframe.ts:105` is `spec.easing ?? DEFAULT_EASING_BY_TYPE[type]`; an undefined spec field is indistinguishable from "use the default", so the original easing is lost the moment it is not threaded through.
 3. **Universal principle:** a remove+re-add is value-preserving only if every field the source carried is explicitly carried into the re-add — defaulted fields are dropped unless named.
@@ -950,7 +971,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 **Span:** any imperative canvas with ≥2 independently-driven overlays sharing one rAF loop, where overlay B's redraw is nested inside overlay A's "did A change?" idle-guard. P7.1 instantiation: the drag ghost (driven by the cursor) nested inside the playhead's `if (newX !== lastPlayheadXRef.current)` (driven by time) — a PAUSED director scrubbing a key has a moving cursor but ZERO playhead delta, so the ghost freezes mid-drag. Predicted recurrence: any future canvas overlay added to K13's loop (splat handles, selection marquee, snap guides) gated on the playhead's or another overlay's change-compare.
 
-**Symptom:** the ghost (or second overlay) tracks fine *while the playhead is also moving* (playing back), but FREEZES the instant playback is paused — exactly when a director is most likely to be precisely placing a key. Looks like the drag "stopped working" with no error; resumes if playback restarts.
+**Symptom:** the ghost (or second overlay) tracks fine _while the playhead is also moving_ (playing back), but FREEZES the instant playback is paused — exactly when a director is most likely to be precisely placing a key. Looks like the drag "stopped working" with no error; resumes if playback restarts.
 
 **Trap (the wrong fix):** nest the new overlay's draw inside the existing idle-guard because "it's the same rAF tick and the guard is already there" — it couples overlay B's liveness to overlay A's driver. A worse second workaround: force the playhead to redraw every tick (kills the K13 idle early-out → perf regression) to "unfreeze" the ghost.
 
@@ -959,6 +980,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 **Detection signal:** a new per-frame draw is added inside an existing `if (somethingChanged)` block whose `somethingChanged` is driven by a DIFFERENT input than the new draw. Ask: "what makes THIS overlay need a redraw, and is that the same signal as the guard I'm nesting under? Can my driver change while the guard's driver is static?" If yes → the overlay freezes whenever the guard's driver is idle.
 
 **Five-limbed argument:**
+
 1. **Claim:** Nesting the ghost redraw in the playhead idle-guard freezes the ghost whenever the playhead is static.
 2. **Reason:** the guard body runs only when `newX !== lastPlayheadXRef`; a paused playhead has constant `newX`, so the body (and the nested ghost) never executes even though the cursor — the ghost's actual driver — is moving.
 3. **Universal principle:** a redraw must be gated on a change-compare of its OWN driver; gating it on an unrelated driver's compare makes its liveness a hostage to that driver's activity.
@@ -971,7 +993,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 
 ### H40 — A UI surface bound to a node's SOURCE params reads a stale value when a wrapper patches the rendered clone (H22/H34 sibling — #68)
 
-**Span:** any UI surface (gizmo proxy, inspector field, overlay label, snap guide) that seeds from `node.params.X` while the RENDERED value of X is produced by a wrapper node (AnimationLayer / Transform / MaterialOverride) that deep-clones the target and patches X onto the *clone* at eval time — the source node is never mutated. #68 instantiation: `Gizmo.getManipulable` read `n_box.params.position` (static authored) while the cube rendered at `AnimationLayer.patchTarget`'s clone position (`AnimationLayer.ts:107-122`); once position was animated they diverged and the gizmo froze at the authored point for the whole animation. Predicted recurrence: the NPanel inspector showing live evaluated values during playback (the explicit sibling — D-08 follow-up issue), any future viewport HUD/label/handle that reads `params` while a wrapper patches the rendered value (CurveEditor value readout, splat transform handle, a material swatch under MaterialOverride).
+**Span:** any UI surface (gizmo proxy, inspector field, overlay label, snap guide) that seeds from `node.params.X` while the RENDERED value of X is produced by a wrapper node (AnimationLayer / Transform / MaterialOverride) that deep-clones the target and patches X onto the _clone_ at eval time — the source node is never mutated. #68 instantiation: `Gizmo.getManipulable` read `n_box.params.position` (static authored) while the cube rendered at `AnimationLayer.patchTarget`'s clone position (`AnimationLayer.ts:107-122`); once position was animated they diverged and the gizmo froze at the authored point for the whole animation. Predicted recurrence: the NPanel inspector showing live evaluated values during playback (the explicit sibling — D-08 follow-up issue), any future viewport HUD/label/handle that reads `params` while a wrapper patches the rendered value (CurveEditor value readout, splat transform handle, a material swatch under MaterialOverride).
 
 **Symptom:** the surface FREEZES at the authored value while the rendered object visibly moves/changes — the gizmo sits at the cube's start position while the cube animates away from it; scrubbing/playing does not move the surface even though the render tracks. No error; the binding is "correct" against a now-false assumption ("`params.X` IS X") that held only until a wrapper made X reachable for animation.
 
@@ -982,6 +1004,7 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 **Detection signal:** a surface seeds from `params.X`; somewhere a wrapper node (AnimationLayer/Transform/MaterialOverride) can sit between that node and `outputs.render`. Ask: "is X reachable for animation/override via a wrapper? If so, does this surface read the SOURCE param or the EVALUATED render value? Did I verify the SURFACE side of the boundary, or only the evaluator side?" The boundary-pair check: P7's E2 asserted the evaluator output and NEVER the gizmo proxy — only one side was observed, which is exactly why #68 shipped.
 
 **Five-limbed argument:**
+
 1. **Claim:** A surface bound to `node.params.X` shows a stale value the moment a wrapper patches X onto the rendered clone, and "evaluate the node" does not fix it.
 2. **Reason:** `patchTarget` deep-clones the target and writes the channel value onto the clone (`AnimationLayer.ts:114-121`); the source node's `params.X` is never mutated, and `evaluate(node)` returns that untouched source — the live value exists only in the wrapper's output, indexed by the renderer's scene-child correspondence.
 3. **Universal principle:** the single source of truth for "where/what a thing renders" is the evaluated render tree, not the authored params; a surface is correct only if it reads the same evaluated value the renderer does, by the same traversal.

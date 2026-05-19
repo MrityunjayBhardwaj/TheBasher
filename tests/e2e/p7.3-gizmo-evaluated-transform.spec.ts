@@ -35,7 +35,9 @@ interface BasherWindow {
     };
   };
   __basher_selection?: { getState: () => { select: (id: string) => void } };
-  __basher_autokey?: { getState: () => { enabled: boolean; toggle: () => void; set?: (v: boolean) => void } };
+  __basher_autokey?: {
+    getState: () => { enabled: boolean; toggle: () => void; set?: (v: boolean) => void };
+  };
   __basher_evaluate?: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
@@ -70,9 +72,9 @@ async function evalWalkPosition(
       }).value as { scene?: { children: Array<Record<string, unknown>> } };
       const scene = out.scene ?? (out as unknown as { children?: unknown[] });
       const children = (scene as { children: Array<Record<string, unknown>> }).children;
-      const layer = children.find(
-        (c) => (c as { kind?: string }).kind === 'AnimationLayer',
-      ) as { target?: { position?: [number, number, number] } } | undefined;
+      const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
+        | { target?: { position?: [number, number, number] } }
+        | undefined;
       return layer?.target?.position ?? null;
     },
     { s: seconds },
@@ -152,9 +154,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag!.getState().state.nodes;
     const layerId = Object.entries(nodes).find(([, n]) => n.type === 'AnimationLayer')?.[0];
-    const chId = Object.entries(nodes).find(([, n]) =>
-      n.type.startsWith('KeyframeChannel'),
-    )?.[0];
+    const chId = Object.entries(nodes).find(([, n]) => n.type.startsWith('KeyframeChannel'))?.[0];
     return { layerId, chId };
   });
 }
@@ -206,14 +206,11 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
         // tail write guarantees a committed value; poll absorbs the React
         // effect settle without an arbitrary sleep).
         const evalPos = await evalWalkPosition(page, t);
-        await expect
-          .poll(async () => V(await gizmoProxyPosition(page)))
-          .toBe(V(evalPos));
+        await expect.poll(async () => V(await gizmoProxyPosition(page))).toBe(V(evalPos));
 
         const proxyPos = await gizmoProxyPosition(page);
         console.log(
-          `[P7.3 D-06] select=${sel} t=${t} ` +
-            `eval=${V(evalPos)} proxy=${V(proxyPos)}`,
+          `[P7.3 D-06] select=${sel} t=${t} ` + `eval=${V(evalPos)} proxy=${V(proxyPos)}`,
         );
         // The assertion whose absence let #68 ship: BOTH sides equal.
         expect(proxyPos![0]).toBeCloseTo(evalPos![0], 4);
@@ -244,9 +241,8 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
     const before = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       const nodes = w.__basher_dag!.getState().state.nodes;
-      const ch = nodes[
-        Object.keys(nodes).find((k) => nodes[k].type.startsWith('KeyframeChannel'))!
-      ];
+      const ch =
+        nodes[Object.keys(nodes).find((k) => nodes[k].type.startsWith('KeyframeChannel'))!];
       return {
         kfCount: ((ch.params.keyframes ?? []) as unknown[]).length,
         boxPos: (nodes.n_box.params as { position: number[] }).position,
@@ -261,9 +257,8 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
     const after = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       const nodes = w.__basher_dag!.getState().state.nodes;
-      const ch = nodes[
-        Object.keys(nodes).find((k) => nodes[k].type.startsWith('KeyframeChannel'))!
-      ];
+      const ch =
+        nodes[Object.keys(nodes).find((k) => nodes[k].type.startsWith('KeyframeChannel'))!];
       const kfs = (ch.params.keyframes ?? []) as { time: number; value: number[] }[];
       return {
         kfCount: kfs.length,
@@ -307,9 +302,7 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
       };
     });
     const dagBefore = await page.evaluate(() =>
-      JSON.stringify(
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes,
-      ),
+      JSON.stringify((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes),
     );
 
     await page.evaluate(() => {
@@ -324,7 +317,9 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
         alerts: ww.__alertMsgs,
       };
     });
-    console.log(`[P7.3 grab-OFF] alerts=${JSON.stringify(alerts)} dagChanged=${dagAfter !== dagBefore}`);
+    console.log(
+      `[P7.3 grab-OFF] alerts=${JSON.stringify(alerts)} dagChanged=${dagAfter !== dagBefore}`,
+    );
 
     // ZERO ops — the DAG is byte-unchanged.
     expect(dagAfter).toBe(dagBefore);
@@ -387,18 +382,14 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
       .toBe(true);
 
     const dagBefore = await page.evaluate(() =>
-      JSON.stringify(
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes,
-      ),
+      JSON.stringify((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes),
     );
     // A grab attempt WHILE PLAYING produces ZERO ops (D-03 paused gate).
     await page.evaluate(() => {
       (window as unknown as BasherWindow).__basher_gizmo_grab!('translate', [9, 0, 0]);
     });
     const dagAfterPlay = await page.evaluate(() =>
-      JSON.stringify(
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes,
-      ),
+      JSON.stringify((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes),
     );
     console.log(`[P7.3 D-03] playing grab dagChanged=${dagAfterPlay !== dagBefore}`);
     expect(dagAfterPlay).toBe(dagBefore); // no-op while playing
@@ -414,9 +405,7 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
       (window as unknown as BasherWindow).__basher_gizmo_grab!('translate', [9, 0, 0]);
     });
     const dagAfterPause = await page.evaluate(() =>
-      JSON.stringify(
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes,
-      ),
+      JSON.stringify((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes),
     );
     expect(dagAfterPause).not.toBe(dagBefore); // paused grab keyed
   });

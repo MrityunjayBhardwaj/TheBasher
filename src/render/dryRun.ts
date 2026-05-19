@@ -100,9 +100,7 @@ export async function dryRun(
   const node = state.nodes[workflowNodeId];
   if (!node) throw new Error(`dryRun: unknown workflowNodeId "${workflowNodeId}"`);
   if (node.type !== 'ComfyUIWorkflow') {
-    throw new Error(
-      `dryRun: node "${workflowNodeId}" is not a ComfyUIWorkflow (got ${node.type})`,
-    );
+    throw new Error(`dryRun: node "${workflowNodeId}" is not a ComfyUIWorkflow (got ${node.type})`);
   }
 
   // V10 guard — defensive defaults. params may have been hydrated from a

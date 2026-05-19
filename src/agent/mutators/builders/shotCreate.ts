@@ -54,10 +54,7 @@ export const shotCreateMutator: MutatorDefinition<ShotCreateSpec> = {
   preconditions(spec, _closure, state) {
     const camera = state.nodes[spec.cameraId];
     if (!camera) return { ok: false, reason: `Camera "${spec.cameraId}" not in DAG.` };
-    if (
-      camera.type !== 'PerspectiveCamera' &&
-      camera.type !== 'OrthographicCamera'
-    ) {
+    if (camera.type !== 'PerspectiveCamera' && camera.type !== 'OrthographicCamera') {
       return {
         ok: false,
         reason: `cameraId "${spec.cameraId}" is ${camera.type}; expected a Camera node.`,
@@ -66,10 +63,16 @@ export const shotCreateMutator: MutatorDefinition<ShotCreateSpec> = {
     const scene = state.nodes[spec.sceneId];
     if (!scene) return { ok: false, reason: `Scene "${spec.sceneId}" not in DAG.` };
     if (scene.type !== 'Scene') {
-      return { ok: false, reason: `sceneId "${spec.sceneId}" is ${scene.type}; expected a Scene node.` };
+      return {
+        ok: false,
+        reason: `sceneId "${spec.sceneId}" is ${scene.type}; expected a Scene node.`,
+      };
     }
     if (spec.endTime < spec.startTime) {
-      return { ok: false, reason: `endTime (${spec.endTime}) must be >= startTime (${spec.startTime}).` };
+      return {
+        ok: false,
+        reason: `endTime (${spec.endTime}) must be >= startTime (${spec.startTime}).`,
+      };
     }
     return { ok: true };
   },

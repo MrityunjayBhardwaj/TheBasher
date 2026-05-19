@@ -65,10 +65,7 @@ function formatSeconds(s: number): string {
 
 /** Read OPFS bytes at `path` and return a blob: URL. Returns null if the
  *  read fails (probe wrote 0 bytes, file missing, etc). Caller revokes. */
-async function readAsBlobUrl(
-  storage: StorageCapability,
-  path: string,
-): Promise<string | null> {
+async function readAsBlobUrl(storage: StorageCapability, path: string): Promise<string | null> {
   try {
     const bytes = await storage.read(path);
     // BlobPart accepts ArrayBufferView; Uint8Array is fine.
@@ -140,8 +137,7 @@ export function CostPreview({ workflowNodeId, deps }: CostPreviewProps) {
   const framesDone = Math.max(0, Math.min(frameTotal, lastGoodFrame - frameStart + 1));
   const progressPct = inFlight || framesDone > 0 ? (framesDone / frameTotal) * 100 : 0;
 
-  const submitDisabled =
-    estimate.status !== 'ready' || submit.status === 'running' || inFlight;
+  const submitDisabled = estimate.status !== 'ready' || submit.status === 'running' || inFlight;
 
   return (
     <div
@@ -174,19 +170,13 @@ export function CostPreview({ workflowNodeId, deps }: CostPreviewProps) {
         <div className="mb-2 space-y-1">
           <div className="flex items-baseline justify-between text-[10px]">
             <span className="text-fg/60">frames</span>
-            <span
-              className="font-mono text-fg/90"
-              data-testid="cost-preview-frames"
-            >
+            <span className="font-mono text-fg/90" data-testid="cost-preview-frames">
               {estimate.report.frames}
             </span>
           </div>
           <div className="flex items-baseline justify-between text-[10px]">
             <span className="text-fg/60">est. time</span>
-            <span
-              className="font-mono text-fg/90"
-              data-testid="cost-preview-est-seconds"
-            >
+            <span className="font-mono text-fg/90" data-testid="cost-preview-est-seconds">
               {formatSeconds(estimate.report.estimatedSeconds)}
             </span>
           </div>

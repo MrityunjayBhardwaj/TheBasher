@@ -44,9 +44,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as StubComfyWindow;
-    return Boolean(
-      w.__basher_dag && w.__basher_selection && w.__basher_useStubComfy,
-    );
+    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_useStubComfy);
   });
   // Swap in the deterministic stub capability — no ComfyUI server needed.
   await page.evaluate(() => {
@@ -60,13 +58,14 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
     const w = window as unknown as StubComfyWindow;
     const dag = w.__basher_dag!.getState();
     const nodes = dag.state.nodes;
-    const findOf = (t: string) =>
-      Object.entries(nodes).find(([, n]) => n.type === t)?.[0];
+    const findOf = (t: string) => Object.entries(nodes).find(([, n]) => n.type === t)?.[0];
     const timeId = findOf('TimeSource');
     const camId = findOf('PerspectiveCamera');
     const sceneId = findOf('Scene');
     if (!timeId || !camId || !sceneId) {
-      throw new Error(`seed scene missing time/cam/scene: time=${timeId} cam=${camId} scene=${sceneId}`);
+      throw new Error(
+        `seed scene missing time/cam/scene: time=${timeId} cam=${camId} scene=${sceneId}`,
+      );
     }
     // Wire all three required upstream passes — stylizedRealism preset
     // mandates beauty + depth + normal. Match the addAIPass Mutator's
@@ -109,7 +108,7 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
             outputPath: 'renders/cw_test/stylized_stylizedRealism',
           },
         },
-        ...(['beauty_test', 'depth_test', 'normal_test'].flatMap((passId) => [
+        ...['beauty_test', 'depth_test', 'normal_test'].flatMap((passId) => [
           {
             type: 'connect',
             from: { node: sceneId, socket: 'out' },
@@ -130,7 +129,7 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
             from: { node: passId, socket: 'out' },
             to: { node: 'cw_test', socket: 'pass-input' },
           },
-        ])),
+        ]),
         {
           type: 'connect',
           from: { node: 'p_test', socket: 'out' },
@@ -161,10 +160,7 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
     for (let f = 0; f <= end; f++) {
       const padded = f.toString().padStart(4, '0');
       for (const kind of ['beauty', 'depth', 'normal']) {
-        await w.__basher_writeOpfsBytes!(
-          `renders/cw_test/${kind}_${padded}.png`,
-          fakeBytes,
-        );
+        await w.__basher_writeOpfsBytes!(`renders/cw_test/${kind}_${padded}.png`, fakeBytes);
       }
     }
 
@@ -172,7 +168,9 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
   }, frameEnd);
 }
 
-test('P5#C5.1 selecting a ComfyUIWorkflow node embeds CostPreview in Inspector', async ({ page }) => {
+test('P5#C5.1 selecting a ComfyUIWorkflow node embeds CostPreview in Inspector', async ({
+  page,
+}) => {
   await seedWorkflowGraph(page);
   await expect(page.getByTestId('cost-preview')).toBeVisible({ timeout: 5_000 });
   await expect(page.getByTestId('cost-preview-estimate')).toBeVisible();

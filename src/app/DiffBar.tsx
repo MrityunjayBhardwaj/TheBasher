@@ -63,14 +63,18 @@ export function DiffBar() {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px' }}>
         <span style={{ fontWeight: 600, color: '#88aaff', marginRight: 8 }}>Agent Diff</span>
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span
+          style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
           {pendingDiff.description}
         </span>
         <span style={{ color: '#888', fontSize: 12 }}>
           {selectedCount}/{total} selected
         </span>
         {selectedCount !== total && (
-          <button onClick={() => selectAll(true)} style={btnStyle}>Select all</button>
+          <button onClick={() => selectAll(true)} style={btnStyle}>
+            Select all
+          </button>
         )}
         <button
           onClick={handleApply}
@@ -83,7 +87,10 @@ export function DiffBar() {
         >
           {accepting ? 'Applying...' : `Apply${selectedCount < total ? ` (${selectedCount})` : ''}`}
         </button>
-        <button onClick={() => reject()} style={{ ...btnStyle, background: '#5a1a1a', color: '#ff8888' }}>
+        <button
+          onClick={() => reject()}
+          style={{ ...btnStyle, background: '#5a1a1a', color: '#ff8888' }}
+        >
           Reject
         </button>
       </div>
@@ -127,9 +134,7 @@ export function DiffBar() {
           {timeRange && (
             <span data-testid="diffbar-time-range">
               <span style={{ color: '#666' }}>Time:</span>{' '}
-              <span style={{ color: '#bbc' }}>
-                {formatTimeRange(timeRange)}
-              </span>
+              <span style={{ color: '#bbc' }}>{formatTimeRange(timeRange)}</span>
             </span>
           )}
           {warnings.length > 0 && (

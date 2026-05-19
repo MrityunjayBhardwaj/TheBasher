@@ -114,9 +114,7 @@ describe('createFork', () => {
   it('throws on invalid op (nonexistent node)', () => {
     const state = buildBaselineDag();
     expect(() =>
-      createFork(state, [
-        { type: 'setParam', nodeId: 'nonexistent', paramPath: 'x', value: 5 },
-      ]),
+      createFork(state, [{ type: 'setParam', nodeId: 'nonexistent', paramPath: 'x', value: 5 }]),
     ).toThrow();
   });
 });
@@ -133,9 +131,13 @@ describe('useDiffStore', () => {
 
   it('propose creates a pending diff with all ops selected', () => {
     const state = buildBaselineDag();
-    useDiffStore.getState().propose(state, [
-      { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-    ], 'move box');
+    useDiffStore
+      .getState()
+      .propose(
+        state,
+        [{ type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] }],
+        'move box',
+      );
     const store = useDiffStore.getState();
     expect(store.status).toBe('pending');
     expect(store.pendingDiff).not.toBeNull();
@@ -182,9 +184,13 @@ describe('useDiffStore', () => {
 
   it('reject clears the diff and sets status to rejected', () => {
     const state = buildBaselineDag();
-    useDiffStore.getState().propose(state, [
-      { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-    ], 'move box');
+    useDiffStore
+      .getState()
+      .propose(
+        state,
+        [{ type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] }],
+        'move box',
+      );
     rejectDiff();
     expect(useDiffStore.getState().status).toBe('rejected');
     expect(useDiffStore.getState().pendingDiff).toBeNull();
@@ -192,9 +198,7 @@ describe('useDiffStore', () => {
 
   it('acceptSelectedOps feeds forward ops into the provided dispatcher', () => {
     const state = buildBaselineDag();
-    const ops = [
-      { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-    ];
+    const ops = [{ type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] }];
     useDiffStore.getState().propose(state, ops, 'move box');
 
     let dispatched: { ops: unknown[]; source: string; description?: string } | null = null;
@@ -212,18 +216,26 @@ describe('useDiffStore', () => {
 
   it('acceptSelectedOps returns false when nothing selected', () => {
     const state = buildBaselineDag();
-    useDiffStore.getState().propose(state, [
-      { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-    ], 'move box');
+    useDiffStore
+      .getState()
+      .propose(
+        state,
+        [{ type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] }],
+        'move box',
+      );
     useDiffStore.getState().selectAll(false);
     expect(acceptSelectedOps(() => {})).toBe(false);
   });
 
   it('reset clears everything', () => {
     const state = buildBaselineDag();
-    useDiffStore.getState().propose(state, [
-      { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-    ], 'move box');
+    useDiffStore
+      .getState()
+      .propose(
+        state,
+        [{ type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] }],
+        'move box',
+      );
     useDiffStore.getState().reset();
     expect(useDiffStore.getState().status).toBe('idle');
     expect(useDiffStore.getState().pendingDiff).toBeNull();
@@ -289,13 +301,15 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
       followedEdges: ['parent', 'children'],
     };
     expect(() =>
-      useDiffStore.getState().propose(
-        state,
-        [{ type: 'setParam', nodeId: 'sibling', paramPath: 'position', value: [9, 0, 0] }],
-        'oob',
-        undefined,
-        spec,
-      ),
+      useDiffStore
+        .getState()
+        .propose(
+          state,
+          [{ type: 'setParam', nodeId: 'sibling', paramPath: 'position', value: [9, 0, 0] }],
+          'oob',
+          undefined,
+          spec,
+        ),
     ).toThrow(ClosurePreservationError);
     expect(useDiffStore.getState().status).toBe(beforeStatus);
     expect(useDiffStore.getState().pendingDiff).toBeNull();

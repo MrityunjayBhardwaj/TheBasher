@@ -45,6 +45,7 @@
 **Silent-failure modes:** agent applies tool that bypasses Diff; agent applies invalid op (zod validation skipped); user rejects but state already mutated.
 **Status:** EXERCISED (P2.5 v2, 2026-05-07). 6 tools registered: 2 universals (`dag.inspect`, `dag.exec`) + 4 macros (`character.walkTo`, `camera.snapshot`, `library.import`, `mesh.add`). Multi-turn loop (max 3 rounds): inspect → results fed back → exec. `ToolResult { ops, text }` replaces raw `Op[]` (read-only→text, mutation→ops). Selection context: `selectedNodeIds` flows from SelectionStore → ToolContext → system prompt (V11 ALIGNED). Tool registry + fork engine + diff store + ghost overlay + accept/reject bar all shipped. V7 ALIGNED. K3 cataloged with file:line REFs.
 **Observation targets:**
+
 - every agent turn → diff store shows pending → accept lands single dispatchAtomic entry; reject clears with zero state changes.
 - **Selection context check (P2.5 v2):** before any agent turn that targets "selected" / "this" / pronouns, verify the API request body's system prompt contains a `Selected nodes:` block listing the current `selectionStore.selectedNodeIds`. If the block is absent or stale, the LLM will fall through to all-nodes or wrong-node behavior — symptom looks like "agent rotates everything" or "agent ignores selection." See H19 for the stale-snapshot mechanism that produced this class of bug.
 - **Multi-turn drift check:** in the follow-up message after `dag.inspect`, verify the original user request appears verbatim (not the literal string `"the user's request"`). If verbatim text is missing, H19's stale-snapshot pattern is active in `runAgentTurn`.
@@ -87,6 +88,7 @@ model-reported.
 `.anvi/hetvabhasa.md`.
 
 **Silent-failure modes:**
+
 - Heuristic false-negative: a prompt that references existing nodes
   slips past the heuristic; closure gate (B3) catches the resulting
   out-of-scope op. Telemetry tracks per-turn round counts to spot
@@ -96,6 +98,7 @@ model-reported.
   model's self-reported number is ignored.
 
 **Observation targets:**
+
 - For prompts that reference existing nodes: verify round 1 emitted
   a `tool_choice: { name: 'agent.identify' }` request body and that
   the result was 'match' (or 'ambiguous'/'no-match' surfaced cleanly).
@@ -150,6 +153,7 @@ escape (mode-gated to copilot/sandbox).
 six starter Mutators in `src/agent/mutators/builders/`.
 
 **Silent-failure modes:**
+
 - Mutator preconditions misalign with reality (P-5 risk).
   Shape-only checks; semantic state ("Navmesh has obstacles configured")
   belongs in build — not in preconditions.
@@ -159,6 +163,7 @@ six starter Mutators in `src/agent/mutators/builders/`.
   activates at P7 PlayCanvas export.
 
 **Observation targets:**
+
 - For every agent.proposePlan call: verify the JSON return either has
   `ok: true` with closureRoots + warnings, or `ok: false, gate, reason`.
 - For "make character walk to (5,0,3)" without a Navmesh: verify gate 4
@@ -177,88 +182,89 @@ six starter Mutators in `src/agent/mutators/builders/`.
 
 ### Boundary B11: Design spec ↔ source code (UI-SPEC authoring + re-validation boundary)
 
-**ORIGIN:** P6 W1 (2026-05-10). D-UX-8 was authored from memory of file *names* (Inspector.tsx + NPanel.tsx — sounded like duplicate inspectors) without reading either file. Observation at W1 start revealed they have orthogonal roles. Decision was retracted; spec was patched mid-wave; one round-trip lost. **Update P6 W2.6 (2026-05-11):** the W1 correction was *itself* reversed two waves later, when W2's TopToolbar absorbed NPanel's mode + snap groups and W7 was already slated to take grid/axis toggles. NPanel ended up with nothing unique left; the merge unblocked itself. User pushed merge forward to W2.6; spec restored to original direction. Two reversals on the same decision in 5 commits.
+**ORIGIN:** P6 W1 (2026-05-10). D-UX-8 was authored from memory of file _names_ (Inspector.tsx + NPanel.tsx — sounded like duplicate inspectors) without reading either file. Observation at W1 start revealed they have orthogonal roles. Decision was retracted; spec was patched mid-wave; one round-trip lost. **Update P6 W2.6 (2026-05-11):** the W1 correction was _itself_ reversed two waves later, when W2's TopToolbar absorbed NPanel's mode + snap groups and W7 was already slated to take grid/axis toggles. NPanel ended up with nothing unique left; the merge unblocked itself. User pushed merge forward to W2.6; spec restored to original direction. Two reversals on the same decision in 5 commits.
 
-**WHY:** the W1 lesson was "don't lock from memory before reading code." The W2.6 lesson is the deeper one: **spec entries asserting surface distinctness decay across waves**. A claim like "X and Y are not duplicates because each has unique sections {Y₁, Y₂, Y₃}" is a *conjunction*; any wave that absorbs Y_i into a third surface erodes the conjunction silently. Without a re-validation cycle, the spec's earlier "they're distinct" verdict reads as authoritative even when the underlying premises have evaporated. Both kinds of drift (initial-authoring memory error, mid-roadmap conjunction decay) silently mislead downstream waves. The boundary's WHY now covers both phases, not just the first.
+**WHY:** the W1 lesson was "don't lock from memory before reading code." The W2.6 lesson is the deeper one: **spec entries asserting surface distinctness decay across waves**. A claim like "X and Y are not duplicates because each has unique sections {Y₁, Y₂, Y₃}" is a _conjunction_; any wave that absorbs Y_i into a third surface erodes the conjunction silently. Without a re-validation cycle, the spec's earlier "they're distinct" verdict reads as authoritative even when the underlying premises have evaporated. Both kinds of drift (initial-authoring memory error, mid-roadmap conjunction decay) silently mislead downstream waves. The boundary's WHY now covers both phases, not just the first.
 
 **HOW (authoring-time):** before any "merge / delete / replace" decision lands in a spec's locked-decisions table, open every file the decision names. Write a one-sentence functional description per file. Only if the descriptions semantically overlap does the merge framing apply.
 
-**HOW (re-validation, NEW W2.6):** every wave plan that touches multi-surface chrome (TopToolbar, ToolRail, FloatingViewportToolbar, NPanel, LeftSidebar tabs, AddMenu/AssetsPopover) runs a *section inventory pass* over any spec entry of the form "X and Y serve different roles":
-1. List each surface's *current* unique sections (from code, not from memory).
+**HOW (re-validation, NEW W2.6):** every wave plan that touches multi-surface chrome (TopToolbar, ToolRail, FloatingViewportToolbar, NPanel, LeftSidebar tabs, AddMenu/AssetsPopover) runs a _section inventory pass_ over any spec entry of the form "X and Y serve different roles":
+
+1. List each surface's _current_ unique sections (from code, not from memory).
 2. Cross-check against the spec's distinctness claim.
 3. If any surface's unique-section count drops to ≤ 1, flag the merge as unblocked and update the spec entry's status, even if the merge isn't yet executed.
 4. Surface candidates to re-validate at every wave: AddMenu / AssetsPopover (creation vs asset import); LeftSidebar Scene tab / Agent tab (DAG view vs LLM chat); future Inspector Render section / external CostPreview mount.
 
 **REF:** docs/UI-SPEC.md §1 D-UX-8 (the swing → restore ledger captures provenance for both reversals); §5.8 NPanel canonical Inspector (W2.6); hetvabhasa H25 (initial-authoring trap); hetvabhasa H27 (re-validation-cycle trap — the W2.6-revealed iteration); P6 W1 commit `5a71e67` + P6 W2.6 commit `c19b43a`.
 
-**Silent-failure modes:** (a) decision locked from memory at authoring → downstream wave acts on it → code break surfaces only when test exercises the deleted/merged surface OR user encounters broken affordance; (b) decision *was* correct at authoring but adjacent chrome evolved → distinctness claim now false → merge stays scheduled for a far-future wave (or never) while the redundant surface confuses users every session; (c) re-validation pass skipped → next chrome wave inherits the stale claim → cycle repeats.
+**Silent-failure modes:** (a) decision locked from memory at authoring → downstream wave acts on it → code break surfaces only when test exercises the deleted/merged surface OR user encounters broken affordance; (b) decision _was_ correct at authoring but adjacent chrome evolved → distinctness claim now false → merge stays scheduled for a far-future wave (or never) while the redundant surface confuses users every session; (c) re-validation pass skipped → next chrome wave inherits the stale claim → cycle repeats.
 
 **Observation targets:** every D-UX entry in a spec carries either a `**REF:**` to file:line that's been opened during authoring, OR a `**TODO: observe**` flag. Spec-checker (anvi-ui-checker) treats unobserved files in a locked decision as a BLOCK verdict. **Additional W2.6 target:** every wave plan touching multi-surface chrome adds a "section inventory" step that re-runs §B11 HOW (re-validation) over distinctness claims, with output recorded in the wave's plan as either "no shifts" or "{D-UX-N} restored / overridden / advanced".
 
 **W3 section-inventory pass (2026-05-12):** ran B11 HOW (re-validation) over the surfaces W3 touches:
 
-| Surface pair | Inventory result | Verdict |
-|---|---|---|
-| AddMenu (4 groups: Mesh/Light/Camera/Empty, 11 procedural items) vs AssetsPopover (3 bundled glTF tiles via DRAG_MIME drop chain) | Disjoint: AddMenu spawns procedural primitives via `buildAddPrimitiveOps` + dispatchAtomic; AssetsPopover triggers HTML5 drag onto AssetDropZone. Zero section overlap. | no shifts |
-| LeftSidebar Scene tab (DAG tree, drag-reorder, K6 asset-drop integration) vs Agent tab (LLM transcript, mode selector, tool-call rows) | Orthogonal domains (scene hierarchy vs LLM chat). Zero section overlap. | no shifts |
+| Surface pair                                                                                                                                                                                   | Inventory result                                                                                                                                                                                                                                                                     | Verdict   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| AddMenu (4 groups: Mesh/Light/Camera/Empty, 11 procedural items) vs AssetsPopover (3 bundled glTF tiles via DRAG_MIME drop chain)                                                              | Disjoint: AddMenu spawns procedural primitives via `buildAddPrimitiveOps` + dispatchAtomic; AssetsPopover triggers HTML5 drag onto AssetDropZone. Zero section overlap.                                                                                                              | no shifts |
+| LeftSidebar Scene tab (DAG tree, drag-reorder, K6 asset-drop integration) vs Agent tab (LLM transcript, mode selector, tool-call rows)                                                         | Orthogonal domains (scene hierarchy vs LLM chat). Zero section overlap.                                                                                                                                                                                                              | no shifts |
 | ProjectTabs (R1: always-visible strip with select/close/new/dirty-dot/tooltip + ComfyStatusIndicator host on right edge) vs ProjectsMenu (popover with full CRUD: new/duplicate/rename/delete) | Share one read seam (`listAllProjectMetadata`) but UI affordances disjoint. ProjectTabs = always-visible switch + status; ProjectsMenu = on-demand CRUD. Both surfaces emit `createNewProject`/`deleteProject`/`switchProject` through the same boot helpers — single mutation path. | no shifts |
 
 **Future re-validation triggers:** (a) ProjectsMenu absorbs ComfyStatusIndicator or unsaved-indicator → ProjectTabs may become redundant; (b) Agent tab keyframe badges migrate to timeline dock → Scene tab loses Animate-mode unique section, may merge with Agent; (c) AddMenu absorbs glTF import via virtual entries → AssetsPopover may collapse to the drag surface only. Each future chrome-touching wave runs this inventory afresh.
 
 **W4 section-inventory pass (2026-05-12):** ran B11 HOW over the surfaces W4 touches:
 
-| Surface pair | Inventory result | Verdict |
-|---|---|---|
-| NPanel section cards (Transform/Mesh/Material/Render/Animate/Channel/Layout — 7 declared sections) vs NPanel raw-fallback (flat param renderer for nodes without inspectorSections) | Disjoint by design: sectioned path renders cards per declared section; raw-fallback renders single flat list under `inspector-raw-fallback` testid. The two paths are mutually exclusive per node — selection check is `declared.length === 0`. Raw-fallback is the *escape* path for legacy/glue nodes; never co-renders with sections. | no shifts (intentional |/either) |
-| inspectorSections (per-node-type registry declaration) vs paramToSection (predicate-based param router) | Complementary, not redundant. Registry declares *which sections apply* to a node type; predicate routes *which params land in each section*. Adding a new node type requires registry declaration; adding a new param to an existing section just extends the predicate. No duplication. | no shifts |
-| Section catalog (§5.8: 7 entries) vs §7.2 multi-select sections (`['Transform', 'Metadata']`) | Spec internal: §7.2 references 'Metadata' which is NOT in §5.8's catalog. Locked D-10 A: multi-select uses `['transform', 'layout']` (Layout substitutes for Metadata since Layout is the catalog's "always last; positioning hints" entry). Documented in `MULTI_SELECT_SECTIONS`. | resolved via D-10 |
+| Surface pair                                                                                                                                                                        | Inventory result                                                                                                                                                                                                                                                                                                                         | Verdict                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------- |
+| NPanel section cards (Transform/Mesh/Material/Render/Animate/Channel/Layout — 7 declared sections) vs NPanel raw-fallback (flat param renderer for nodes without inspectorSections) | Disjoint by design: sectioned path renders cards per declared section; raw-fallback renders single flat list under `inspector-raw-fallback` testid. The two paths are mutually exclusive per node — selection check is `declared.length === 0`. Raw-fallback is the _escape_ path for legacy/glue nodes; never co-renders with sections. | no shifts (intentional | /either) |
+| inspectorSections (per-node-type registry declaration) vs paramToSection (predicate-based param router)                                                                             | Complementary, not redundant. Registry declares _which sections apply_ to a node type; predicate routes _which params land in each section_. Adding a new node type requires registry declaration; adding a new param to an existing section just extends the predicate. No duplication.                                                 | no shifts              |
+| Section catalog (§5.8: 7 entries) vs §7.2 multi-select sections (`['Transform', 'Metadata']`)                                                                                       | Spec internal: §7.2 references 'Metadata' which is NOT in §5.8's catalog. Locked D-10 A: multi-select uses `['transform', 'layout']` (Layout substitutes for Metadata since Layout is the catalog's "always last; positioning hints" entry). Documented in `MULTI_SELECT_SECTIONS`.                                                      | resolved via D-10      |
 
 **W4 re-validation triggers:** (a) new node types added that should fit existing sections but lack inspectorSections — registry-snapshot test would catch silent omission only for the buckets we explicitly probe; (b) new section ids added to the catalog → must update SECTION_IDS + paramToSection predicate + node declarations; (c) §7.2 'Metadata' gets a real home in the catalog → MULTI_SELECT_SECTIONS narrows back to its original spec wording. Each future Inspector-touching wave re-runs the §5.8 catalog vs registry-declared coverage check.
 
 **W5 section-inventory pass (2026-05-13):** ran B11 HOW over the surfaces W5 touches:
 
-| Surface pair | Inventory result | Verdict |
-|---|---|---|
+| Surface pair                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Inventory result                                                                                                                                                                                                                                                                                                                                                                                       | Verdict                                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
 | `src/timeline/Dopesheet.tsx` (collectLayers + LayerRowControls mute/solo + ChannelRowView with per-channel diamond markers across ALL channels + orphan-channels section + DopesheetHeader tick marks every 0.5s + EmptyHint + absolute-`<div>` playhead, ~275 LOC) vs `src/timeline/CurveEditor.tsx` (reads single `activeChannelId` from `timelineSelection` + `expandToTracks` Vec3→3 RGB polylines + `sampleTrack` interpolation @ 30 samples/s with `smoothstep` Bézier easing + `computeRange` Y-padding + circle keyframes + Quat/Color placeholder + SVG `<line>` playhead, ~210 LOC) | Disjoint domains: keyframe geometry across ALL channels grouped by layer vs interpolated continuous curve of ONE channel. Different store subscriptions (`useSelectionStore.primaryNodeId` + `useDagStore.state.nodes` vs `useTimelineSelection.activeChannelId` + same DAG slice). Different render primitives (HTML/CSS layout vs SVG). Different playhead implementations. Zero functional overlap. | no shifts — D-UX-2 split justified at code level |
-| Tab strip header (TabButton + Frame/FPS readout) vs existing Timebar (always-visible scrub bar below the drawer) | Disjoint: tab strip is gated on `timelineDrawerOpen === true` and lives INSIDE the drawer body header. Timebar lives outside the drawer body, always visible, and owns playhead scrub. Both read from `timeStore` but neither dispatches; no shared visual region. | no shifts |
-| `timelineDockStore.activeTab` vs `viewportStore.timelineDrawerOpen` | Complementary, not redundant. `timelineDrawerOpen` answers "is the drawer expanded at all?" (default false, preserves pixel baselines); `activeTab` answers "which pane shows when expanded?". Both persist independently. Closing the drawer does NOT clear the tab choice — when the user re-opens, they return to the tab they left. | no shifts |
+| Tab strip header (TabButton + Frame/FPS readout) vs existing Timebar (always-visible scrub bar below the drawer)                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Disjoint: tab strip is gated on `timelineDrawerOpen === true` and lives INSIDE the drawer body header. Timebar lives outside the drawer body, always visible, and owns playhead scrub. Both read from `timeStore` but neither dispatches; no shared visual region.                                                                                                                                     | no shifts                                        |
+| `timelineDockStore.activeTab` vs `viewportStore.timelineDrawerOpen`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Complementary, not redundant. `timelineDrawerOpen` answers "is the drawer expanded at all?" (default false, preserves pixel baselines); `activeTab` answers "which pane shows when expanded?". Both persist independently. Closing the drawer does NOT clear the tab choice — when the user re-opens, they return to the tab they left.                                                                | no shifts                                        |
 
-**W5 re-validation triggers:** (a) future Timebar absorbs Frame/FPS readout → DockHeader's right-side readout becomes redundant (would collapse to tab strip only); (b) keyboard shortcut for tab switching (Tab? Shift+Tab?) lands in W6 → tab-strip click handler becomes one of several entry points to `setActiveTab`; (c) ~~imperative TimelineCanvas (W9) replaces SVG Curve Editor rendering~~ **CORRECTED 2026-05-15 (W9 discuss, D-W9-2):** W9 replaces the **Dopesheet** (HTML/CSS DOM diamonds), NOT the SVG CurveEditor. CurveEditor stays SVG + declarative playhead. Tab boundary unaffected; the *Dopesheet pane content* swaps to a canvas-2D surface; (d) track-ops bottom toolbar lands in W6 → new "actions row" inventory pair vs existing tab strip + Timebar.
+**W5 re-validation triggers:** (a) future Timebar absorbs Frame/FPS readout → DockHeader's right-side readout becomes redundant (would collapse to tab strip only); (b) keyboard shortcut for tab switching (Tab? Shift+Tab?) lands in W6 → tab-strip click handler becomes one of several entry points to `setActiveTab`; (c) ~~imperative TimelineCanvas (W9) replaces SVG Curve Editor rendering~~ **CORRECTED 2026-05-15 (W9 discuss, D-W9-2):** W9 replaces the **Dopesheet** (HTML/CSS DOM diamonds), NOT the SVG CurveEditor. CurveEditor stays SVG + declarative playhead. Tab boundary unaffected; the _Dopesheet pane content_ swaps to a canvas-2D surface; (d) track-ops bottom toolbar lands in W6 → new "actions row" inventory pair vs existing tab strip + Timebar.
 
 **W6 section-inventory pass (2026-05-13):** ran B11 HOW over the surfaces W6 touches:
 
-| Surface pair | Inventory | Verdict |
-|---|---|---|
-| W5 tab strip (28px top of body) vs W6 bottom toolbar (28px at body bottom: `[Key][Delete][Simplify…][Clear]`) | Disjoint visual + functional regions. Top = read-only status (Frame/FPS) + tab navigation. Bottom = Mutator-dispatching action buttons gated on (channelId, keyframeId) selection state. No shared testids; no shared dispatch path. | no shifts |
-| Global `KeyboardShortcuts.tsx` handler vs proposed Animate-only branches (Space/K/`[`/`]`/Delete-override) | Complementary, extends same file with mode-gated `if (editorMode === 'animate')` branches. Keys Space, K, `[`, `]` were previously unused; Delete branch *overrides* existing node-delete only when `activeKeyframeId` is set (early return), preserving edit-mode semantics. | no shifts |
-| Toolbar dispatch path vs Keyboard dispatch path | Single source of truth: both routes funnel through the same pure helpers (`buildKeyframeInsertOp`, `buildKeyframeDeleteOp`) exported from KeyboardShortcuts.tsx. Toolbar Clear and Simplify go through validatePlan + dispatchAtomic (Mutator path) — same five-gate validation as agent calls. V1 (Op-system) preserved. | no shifts |
+| Surface pair                                                                                                                | Inventory                                                                                                                                                                                                                                                                                                                                                           | Verdict                                |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| W5 tab strip (28px top of body) vs W6 bottom toolbar (28px at body bottom: `[Key][Delete][Simplify…][Clear]`)               | Disjoint visual + functional regions. Top = read-only status (Frame/FPS) + tab navigation. Bottom = Mutator-dispatching action buttons gated on (channelId, keyframeId) selection state. No shared testids; no shared dispatch path.                                                                                                                                | no shifts                              |
+| Global `KeyboardShortcuts.tsx` handler vs proposed Animate-only branches (Space/K/`[`/`]`/Delete-override)                  | Complementary, extends same file with mode-gated `if (editorMode === 'animate')` branches. Keys Space, K, `[`, `]` were previously unused; Delete branch _overrides_ existing node-delete only when `activeKeyframeId` is set (early return), preserving edit-mode semantics.                                                                                       | no shifts                              |
+| Toolbar dispatch path vs Keyboard dispatch path                                                                             | Single source of truth: both routes funnel through the same pure helpers (`buildKeyframeInsertOp`, `buildKeyframeDeleteOp`) exported from KeyboardShortcuts.tsx. Toolbar Clear and Simplify go through validatePlan + dispatchAtomic (Mutator path) — same five-gate validation as agent calls. V1 (Op-system) preserved.                                           | no shifts                              |
 | `mutator.timeline.keyframe` (existing) vs `mutator.timeline.simplifyChannel` (new) vs `mutator.timeline.clearChannel` (new) | All three target KeyframeChannel nodes. V14 (Mutator non-redundancy) initially collided — fix: extend `PreservedAspect` with `'animation-shape'` + `'keyframe-density'`. Three distinct contract signatures: keyframe preserves both, simplify preserves shape only (lossy density), clear preserves neither (lossy both). Genuinely distinct semantics, not gamed. | resolved via PreservedAspect extension |
-| SimplifyPopover (new chrome) vs existing popover precedents (AddMenu, AssetsPopover, ProjectsMenu) | Pattern reuse — `bottom-full right-0 absolute` card + click-outside + Esc dismissal. No global modal infra introduced. testids: `simplify-popover`, `…-input`, `…-apply`, `…-cancel`, `…-error`. | no shifts (pattern reuse) |
-| Existing `Tab` keybinding (3D ↔ UV) vs W5-deferred "dock tab-switch keyboard" | Resolved by D-W6-5 = drop entirely. No replacement key worth the discoverability cost. Mouse-only tab switching for v0.5. | resolved: dropped |
+| SimplifyPopover (new chrome) vs existing popover precedents (AddMenu, AssetsPopover, ProjectsMenu)                          | Pattern reuse — `bottom-full right-0 absolute` card + click-outside + Esc dismissal. No global modal infra introduced. testids: `simplify-popover`, `…-input`, `…-apply`, `…-cancel`, `…-error`.                                                                                                                                                                    | no shifts (pattern reuse)              |
+| Existing `Tab` keybinding (3D ↔ UV) vs W5-deferred "dock tab-switch keyboard"                                               | Resolved by D-W6-5 = drop entirely. No replacement key worth the discoverability cost. Mouse-only tab switching for v0.5.                                                                                                                                                                                                                                           | resolved: dropped                      |
 
 **W6 re-validation triggers:** (a) W7 FloatingViewportToolbar adds new buttons in a 4th visual region → re-inventory toolbar regions; (b) Insert blank frame / Cut/Copy/Paste land later → bottom toolbar grows, need to verify §5.9 button order; (c) keyframe drag (W9 imperative) adds a 2nd `activeKeyframeId` setter path → re-validate single source of truth; (d) Quat/Color simplify becomes supported → simplifyChannel's no-op branch shrinks, may invalidate W6#7 spec's implicit Number-only assumption.
 
 **W7 section-inventory pass (2026-05-14):** ran B11 HOW over the surfaces W7 touches:
 
-| Surface pair | Inventory | Verdict |
-|---|---|---|
-| R3 TopToolbar.TransformToolbar.ModeGroup (gizmo Sel/Mv/Rot/Scl) vs R8 FloatingViewportToolbar gizmo buttons | Pre-declared at W2 authoring (`TopToolbar.tsx:8-11` + `TransformToolbar.tsx:155-159`: "W7 absorbs gizmo + grid + persp/ortho; TransformToolbar split apart"). C1 added R8; C2 deleted TransformToolbar.tsx entirely; SpaceGroup inlined into TopToolbar. Asymmetric writer (TransformToolbar.ModeGroup wrote `gizmoStore.mode` direct, not `editorStore.activeTool`) eliminated. | **advanced** — W7 executed the pre-scheduled split |
-| R4 ToolRail Sel/Mv/Rot/Scl vs R8 Sel/Mv/Rot/Scl | Distinctness via location (R4 = persistent left edge, R8 = contextual bottom-near-viewport); both dispatch through `editorStore.setActiveTool` per D-W7-2 (V19). Spline pattern preserves both surfaces. e2e P6.W7#2 + #3 + #4 verify 3-way sync (R4 ↔ R8 ↔ keyboard W/E/R) end-to-end. | no shifts (distinctness preserved by location + dispatch unified) |
-| R3 TopToolbar Shading/Snap/Space groups vs R8 | Spec §5.7 originally silent on these. **D-W7-3 amendment:** Shading + Snap migrate R3 → R8 (viewport-state knobs near viewport, Spline pattern); Space stays in TopToolbar (workspace switch at a different conceptual level). e2e p26-acceptance migrated 3 specs (P2.6#1/#2/#10) to the new R8 testids; P2.6#3/#4/#11 untouched (toolbar-space-* testids preserved through SpaceGroup inline). | resolved via D-W7-3 amendment |
-| R7 NPanel Transform section (per-node x/y/z `setParam` rows) vs R8 gizmo tool buttons | Different concept entirely: NPanel rows MUTATE the DAG via setParam Ops; R8 sets a UI projection (`editorStore.activeTool`). W2.6 already moved viewport-toggle sections out of NPanel. No collision surface. | no shifts |
-| viewportStore key surface vs R8 spec'd buttons | `gridVisible` + `toggleGridVisible` exist (P2.6); `frameSelected` + `frameAll` exist in `character/framing.ts:74,84`; `shading`/`setShading` + `snapEnabled`/`toggleSnapEnabled`/`snapStep`/`setSnapStep` exist (P2.6). **Persp/Ortho had zero scaffolding** — no `projection` key, no THREE camera-swap plumbing. | resolved via D-W7-1 drop (amend §5.7 anatomy; defer until real director use case) |
-| §11 #9 "R3 collapsed" vs implementation `display:none` | Spec language said R3 collapses to a thin strip with mode pill (recovery affordance). Implementation hides R3 entirely; Esc + universal mode pill recovery during edit suffice. Risk of locking director users out exists only if Esc handler breaks — V16 catalogue entry covers that. | resolved via §11 #9 amendment (R3 "hidden", not "collapsed") |
-| ModeBadge top-right of R6 vs DiffBar top-left of R6 vs FpsMeter (R6 overlays) | Disjoint corners + disjoint content (DiffBar = Mutator metadata; FpsMeter = fps readout; ModeBadge = operational mode). `pointer-events-none` on ModeBadge so click-through to viewport works. No shared testids. | no shifts |
+| Surface pair                                                                                                | Inventory                                                                                                                                                                                                                                                                                                                                                                                         | Verdict                                                                           |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| R3 TopToolbar.TransformToolbar.ModeGroup (gizmo Sel/Mv/Rot/Scl) vs R8 FloatingViewportToolbar gizmo buttons | Pre-declared at W2 authoring (`TopToolbar.tsx:8-11` + `TransformToolbar.tsx:155-159`: "W7 absorbs gizmo + grid + persp/ortho; TransformToolbar split apart"). C1 added R8; C2 deleted TransformToolbar.tsx entirely; SpaceGroup inlined into TopToolbar. Asymmetric writer (TransformToolbar.ModeGroup wrote `gizmoStore.mode` direct, not `editorStore.activeTool`) eliminated.                  | **advanced** — W7 executed the pre-scheduled split                                |
+| R4 ToolRail Sel/Mv/Rot/Scl vs R8 Sel/Mv/Rot/Scl                                                             | Distinctness via location (R4 = persistent left edge, R8 = contextual bottom-near-viewport); both dispatch through `editorStore.setActiveTool` per D-W7-2 (V19). Spline pattern preserves both surfaces. e2e P6.W7#2 + #3 + #4 verify 3-way sync (R4 ↔ R8 ↔ keyboard W/E/R) end-to-end.                                                                                                           | no shifts (distinctness preserved by location + dispatch unified)                 |
+| R3 TopToolbar Shading/Snap/Space groups vs R8                                                               | Spec §5.7 originally silent on these. **D-W7-3 amendment:** Shading + Snap migrate R3 → R8 (viewport-state knobs near viewport, Spline pattern); Space stays in TopToolbar (workspace switch at a different conceptual level). e2e p26-acceptance migrated 3 specs (P2.6#1/#2/#10) to the new R8 testids; P2.6#3/#4/#11 untouched (toolbar-space-\* testids preserved through SpaceGroup inline). | resolved via D-W7-3 amendment                                                     |
+| R7 NPanel Transform section (per-node x/y/z `setParam` rows) vs R8 gizmo tool buttons                       | Different concept entirely: NPanel rows MUTATE the DAG via setParam Ops; R8 sets a UI projection (`editorStore.activeTool`). W2.6 already moved viewport-toggle sections out of NPanel. No collision surface.                                                                                                                                                                                     | no shifts                                                                         |
+| viewportStore key surface vs R8 spec'd buttons                                                              | `gridVisible` + `toggleGridVisible` exist (P2.6); `frameSelected` + `frameAll` exist in `character/framing.ts:74,84`; `shading`/`setShading` + `snapEnabled`/`toggleSnapEnabled`/`snapStep`/`setSnapStep` exist (P2.6). **Persp/Ortho had zero scaffolding** — no `projection` key, no THREE camera-swap plumbing.                                                                                | resolved via D-W7-1 drop (amend §5.7 anatomy; defer until real director use case) |
+| §11 #9 "R3 collapsed" vs implementation `display:none`                                                      | Spec language said R3 collapses to a thin strip with mode pill (recovery affordance). Implementation hides R3 entirely; Esc + universal mode pill recovery during edit suffice. Risk of locking director users out exists only if Esc handler breaks — V16 catalogue entry covers that.                                                                                                           | resolved via §11 #9 amendment (R3 "hidden", not "collapsed")                      |
+| ModeBadge top-right of R6 vs DiffBar top-left of R6 vs FpsMeter (R6 overlays)                               | Disjoint corners + disjoint content (DiffBar = Mutator metadata; FpsMeter = fps readout; ModeBadge = operational mode). `pointer-events-none` on ModeBadge so click-through to viewport works. No shared testids.                                                                                                                                                                                 | no shifts                                                                         |
 
 **W7 re-validation triggers:** (a) W8 contrast audit must verify `bg-bg-2/90` on R8 + ModeBadge over rendered viewport (R8 lives over the live render, dark + light cube scenes both need to pass §4.1 + §8.4); (b) W9 imperative TimelineCanvas drag-redraw — if R9 chrome grows in animate mode, re-inventory R8 ↔ R9 bottom-edge collision (R8 floats inside R6 at bottom-4; R9 is a separate grid row below — currently disjoint, but a future R9 popover that extends UP into R6 would collide); (c) future ortho/top/front/side view requirement reopens D-W7-1 — when it does, add `viewportStore.projection` + camera-swap pipeline first (capability gap remains the constraint); (d) any future direct writer to `gizmoStore.mode` outside `editorStore.ts:56` re-violates V19 — grep gate must run on every chrome PR.
 
 **W9 section-inventory pre-pass (2026-05-15, discuss-phase):** ran B11 HOW over the surfaces W9 will touch. Pre-pass (decisions locked, code not yet written); the executing wave re-runs this and records the post-pass.
 
-| Surface pair | Inventory | Verdict |
-|---|---|---|
-| `src/timeline/Dopesheet.tsx` (deleted W9) vs new `src/timeline/TimelineCanvas.tsx` (canvas-2D diamonds + cached static layer + imperative rAF playhead, dpr-scaled, mirror data-attrs) | Same domain (keyframe geometry across ALL channels grouped by layer), same store subscriptions. TimelineCanvas is a render-primitive swap (HTML/CSS `<div>` diamonds → canvas-2D), NOT a new distinct surface. The W5 Dopesheet↔CurveEditor distinctness pair (line 213) **survives**: TimelineCanvas (canvas diamonds, all channels) vs CurveEditor (SVG curve, one channel) remain disjoint domains + different primitives + different playhead impls. | **advanced** — Dopesheet→TimelineCanvas render-primitive swap; D-UX-2/D-UX-3 split preserved |
-| R3F `Canvas` (`src/viewport/Viewport.tsx`, mounts ONCE per V8 rider + K1 step 6 + THESIS §11) vs new 2D `<canvas>` (TimelineCanvas, in the timeline-drawer subtree) | **NEW design-entailed boundary.** Two persistent canvas elements now coexist. They are structurally disjoint (viewport slot vs drawer subtree) so a remount of one should not touch the other — but the architecture GUARANTEES this risk exists the moment a 2nd canvas lands, so it is captured at design time (dharana-spec design-entailed exception, not observation-loop-deferred). Silent-failure mode: adding TimelineCanvas perturbs the React tree such that the R3F Canvas remounts (WebGL context lost, scene rebuilt, V8 mount-once violated). | **flagged** — W9 must assert R3F Canvas DOM identity stable across TimelineCanvas mount/unmount + drawer open/close (reuse acceptance #5 / Canvas-preservation E2E #9 harness) |
-| `viewportStore.currentFrameRef` (new escape-hatch field, D-W9-1) vs `timeStore.frame` (existing derived) | Complementary, not redundant. Both carry the same integer frame; ~~Clock.tsx dual-writes both every rAF tick from one source (D-W9-9)~~ **CORRECTED 2026-05-15 (W9 C1 grounding): `timeStore`'s three frame setters (`setTime`/`setDuration`/`tick`) dual-write both — the single frame chokepoint — NOT Clock.tsx (Clock calls `tick()`, never `setTime`, and scrub/setDuration bypass Clock; see [[H33]]/[[V20]]).** `timeStore.frame` is the React-path (NPanel params, CurveEditor SVG playhead, any `seconds` subscriber re-renders); `currentFrameRef.current` is the escape-path (TimelineCanvas rAF loop only, zero React). Never diverge — invariant asserted in tests: after any setTime, `currentFrameRef.current === timeStore.getState().frame`. | no shifts (deliberate dual-channel; single source) |
+| Surface pair                                                                                                                                                                           | Inventory                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Verdict                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/timeline/Dopesheet.tsx` (deleted W9) vs new `src/timeline/TimelineCanvas.tsx` (canvas-2D diamonds + cached static layer + imperative rAF playhead, dpr-scaled, mirror data-attrs) | Same domain (keyframe geometry across ALL channels grouped by layer), same store subscriptions. TimelineCanvas is a render-primitive swap (HTML/CSS `<div>` diamonds → canvas-2D), NOT a new distinct surface. The W5 Dopesheet↔CurveEditor distinctness pair (line 213) **survives**: TimelineCanvas (canvas diamonds, all channels) vs CurveEditor (SVG curve, one channel) remain disjoint domains + different primitives + different playhead impls.                                                                                                                                                                                                                                                                                                      | **advanced** — Dopesheet→TimelineCanvas render-primitive swap; D-UX-2/D-UX-3 split preserved                                                                                   |
+| R3F `Canvas` (`src/viewport/Viewport.tsx`, mounts ONCE per V8 rider + K1 step 6 + THESIS §11) vs new 2D `<canvas>` (TimelineCanvas, in the timeline-drawer subtree)                    | **NEW design-entailed boundary.** Two persistent canvas elements now coexist. They are structurally disjoint (viewport slot vs drawer subtree) so a remount of one should not touch the other — but the architecture GUARANTEES this risk exists the moment a 2nd canvas lands, so it is captured at design time (dharana-spec design-entailed exception, not observation-loop-deferred). Silent-failure mode: adding TimelineCanvas perturbs the React tree such that the R3F Canvas remounts (WebGL context lost, scene rebuilt, V8 mount-once violated).                                                                                                                                                                                                   | **flagged** — W9 must assert R3F Canvas DOM identity stable across TimelineCanvas mount/unmount + drawer open/close (reuse acceptance #5 / Canvas-preservation E2E #9 harness) |
+| `viewportStore.currentFrameRef` (new escape-hatch field, D-W9-1) vs `timeStore.frame` (existing derived)                                                                               | Complementary, not redundant. Both carry the same integer frame; ~~Clock.tsx dual-writes both every rAF tick from one source (D-W9-9)~~ **CORRECTED 2026-05-15 (W9 C1 grounding): `timeStore`'s three frame setters (`setTime`/`setDuration`/`tick`) dual-write both — the single frame chokepoint — NOT Clock.tsx (Clock calls `tick()`, never `setTime`, and scrub/setDuration bypass Clock; see [[H33]]/[[V20]]).** `timeStore.frame` is the React-path (NPanel params, CurveEditor SVG playhead, any `seconds` subscriber re-renders); `currentFrameRef.current` is the escape-path (TimelineCanvas rAF loop only, zero React). Never diverge — invariant asserted in tests: after any setTime, `currentFrameRef.current === timeStore.getState().frame`. | no shifts (deliberate dual-channel; single source)                                                                                                                             |
 
 **Provenance for the new R3F↔2nd-canvas boundary entry:**
 ORIGIN: W9 discuss-phase pre-mortem (2026-05-15) — design lens identified that introducing TimelineCanvas creates a second persistent canvas adjacent to the mounts-once R3F Canvas. Not a failed fix; a design-time structural fact.
@@ -268,11 +274,11 @@ REF: THESIS.md §11; vyapti V8 (mount-once rider clause, `vyapti.md:77`); krama 
 
 **W9 section-inventory POST-pass (2026-05-15, execute-phase — commits C1 `a01ce47` → C5 `f2298a0`):** the executing wave re-ran B11 HOW; outcomes vs the pre-pass:
 
-| Pre-pass pair | Post-pass result |
-|---|---|
-| Dopesheet → TimelineCanvas | **CONFIRMED advanced.** Dopesheet.tsx deleted (311 LOC), TimelineCanvas mounted at `TimelineDrawer.tsx:87`, CurveEditor git-proven untouched. The W5 Dopesheet↔CurveEditor distinctness pair survives (canvas-diamonds-all-channels vs SVG-curve-one-channel — disjoint, intact). D-UX-2/D-UX-3 split preserved. H29 grep gate enumerated + hand-resolved every legacy testid consumer (5 e2e specs + contrastMatrix R9 rows) in the same commit as the delete; the `'dopesheet'` *tab id/label* intentionally retained (D-UX-2 — only the render primitive advanced, not the tab). |
-| R3F Canvas ↔ 2nd 2D canvas (flagged) | **RESOLVED — no shift. The flagged risk did NOT materialize.** `tests/e2e/p6-w9-timeline-canvas.spec.ts` #4 reuses the acceptance #9 Canvas-preservation harness: R3F Canvas DOM identity stable across drawer toggle ×3 + Dopesheet↔Curve tab churn forcing TimelineCanvas remount. Structural disjointness (viewport slot vs drawer subtree) confirmed by observation, not inference. The boundary entry STAYS in dharana (Chesterton — the risk class is permanent for any future canvas-adjacent wave; trigger (b) still live). |
-| currentFrameRef ↔ timeStore.frame | **CONFIRMED no shifts, mechanism corrected.** Single source, dual channel — but the writer is `timeStore`'s 3-setter chokepoint, not Clock (the C1 grounding correction; [[H33]]/[[V20]] catalogued). Sync invariant asserted: `viewportStore.test.ts` 15/15 (after setTime/tick/setDuration) + e2e #3 (data-playhead-px-derived frame == `timeline-dock-frame-readout` every scrub sample). |
+| Pre-pass pair                        | Post-pass result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dopesheet → TimelineCanvas           | **CONFIRMED advanced.** Dopesheet.tsx deleted (311 LOC), TimelineCanvas mounted at `TimelineDrawer.tsx:87`, CurveEditor git-proven untouched. The W5 Dopesheet↔CurveEditor distinctness pair survives (canvas-diamonds-all-channels vs SVG-curve-one-channel — disjoint, intact). D-UX-2/D-UX-3 split preserved. H29 grep gate enumerated + hand-resolved every legacy testid consumer (5 e2e specs + contrastMatrix R9 rows) in the same commit as the delete; the `'dopesheet'` _tab id/label_ intentionally retained (D-UX-2 — only the render primitive advanced, not the tab). |
+| R3F Canvas ↔ 2nd 2D canvas (flagged) | **RESOLVED — no shift. The flagged risk did NOT materialize.** `tests/e2e/p6-w9-timeline-canvas.spec.ts` #4 reuses the acceptance #9 Canvas-preservation harness: R3F Canvas DOM identity stable across drawer toggle ×3 + Dopesheet↔Curve tab churn forcing TimelineCanvas remount. Structural disjointness (viewport slot vs drawer subtree) confirmed by observation, not inference. The boundary entry STAYS in dharana (Chesterton — the risk class is permanent for any future canvas-adjacent wave; trigger (b) still live).                                                 |
+| currentFrameRef ↔ timeStore.frame    | **CONFIRMED no shifts, mechanism corrected.** Single source, dual channel — but the writer is `timeStore`'s 3-setter chokepoint, not Clock (the C1 grounding correction; [[H33]]/[[V20]] catalogued). Sync invariant asserted: `viewportStore.test.ts` 15/15 (after setTime/tick/setDuration) + e2e #3 (data-playhead-px-derived frame == `timeline-dock-frame-readout` every scrub sample).                                                                                                                                                                                        |
 
 **Goal-backward outcome:** the 240-frame@60fps Lokayata gate (`tests/e2e/p6-w9-perf.spec.ts`) **PASSED**, independently re-run by the verifier (p95≈9.0–9.6ms, max≤15.3ms; budget p95≤16.6/max≤33). Trigger (d)'s dirty-rect/offscreen-tiling escalation path was **not** invoked — no perf workaround, no threshold weakening. Known automated-observation gap (FLAG-2): strip-restore-doesn't-erase-diamonds has no automated pixel proof (D-W9-4 forbids canvas pixel-diff); the e2e does the count-constant + monotonic best-effort and labels it; manual scrub recorded as user UAT in `project_p6_w9_shipped.md`. Lifecycle catalogued as [[K13]] (imperative-canvas hot-path) for the predicted P7-splats recurrence.
 
@@ -280,13 +286,13 @@ REF: THESIS.md §11; vyapti V8 (mount-once rider clause, `vyapti.md:77`); krama 
 
 **W10 — P6-wide B11 consolidation + protocol transition (2026-05-16, the final P6 wave / first retroactive audit wave):**
 
-W10 = `/anvi:ui-review` retroactive 6-pillar audit. Its `docs/UI-REVIEW.md` is the **consolidated §B11 re-validation for all of P6** — the W3..W9 per-wave pre/post inventory passes converge into one verdict, re-derived from the *assembled* UI (not copied from per-wave memory — the H25/H27 lock-from-memory trap was explicitly avoided; the audit re-observed).
+W10 = `/anvi:ui-review` retroactive 6-pillar audit. Its `docs/UI-REVIEW.md` is the **consolidated §B11 re-validation for all of P6** — the W3..W9 per-wave pre/post inventory passes converge into one verdict, re-derived from the _assembled_ UI (not copied from per-wave memory — the H25/H27 lock-from-memory trap was explicitly avoided; the audit re-observed).
 
 **Consolidated distinctness verdict (all 6 pairs hold; NO organizational fatality at the UI-SPEC↔source boundary):** 2 ADVANCED (Dopesheet→TimelineCanvas, TransformToolbar→R4/R8 split), 1 RESTORED (Inspector→NPanel merge), 3 NO-SHIFT. No stale distinctness claim survives into P6 close.
 
-**Protocol transition (provenance: W10 close):** the per-wave "section-inventory pre/post-pass" protocol (instituted W2.6, run W3..W9) **retires for P6**. `docs/UI-REVIEW.md` is now the P6 distinctness baseline; **future audits are delta-from-UI-REVIEW.md, not per-wave pre/post**. The W2.6 additional-target ("every wave plan touching multi-surface chrome runs §B11 HOW") still applies to *new* milestones (v0.6+), but within a milestone that has a UI-REVIEW.md, the consolidated doc supersedes per-wave passes. ORIGIN: W10 produced the first consolidated audit; WHY: per-wave passes were necessary while the chrome was being built incrementally (each wave could shift a prior claim) — once assembled and audited as a whole, the consolidated doc is the stronger, single source (per-wave passes would now duplicate it and risk drift). HOW: a v0.6 chrome wave re-opens only the specific UI-REVIEW.md surface rows it touches, not a fresh full pre/post.
+**Protocol transition (provenance: W10 close):** the per-wave "section-inventory pre/post-pass" protocol (instituted W2.6, run W3..W9) **retires for P6**. `docs/UI-REVIEW.md` is now the P6 distinctness baseline; **future audits are delta-from-UI-REVIEW.md, not per-wave pre/post**. The W2.6 additional-target ("every wave plan touching multi-surface chrome runs §B11 HOW") still applies to _new_ milestones (v0.6+), but within a milestone that has a UI-REVIEW.md, the consolidated doc supersedes per-wave passes. ORIGIN: W10 produced the first consolidated audit; WHY: per-wave passes were necessary while the chrome was being built incrementally (each wave could shift a prior claim) — once assembled and audited as a whole, the consolidated doc is the stronger, single source (per-wave passes would now duplicate it and risk drift). HOW: a v0.6 chrome wave re-opens only the specific UI-REVIEW.md surface rows it touches, not a fresh full pre/post.
 
-**W10 scope-safeguard observation (memory, not yet a numbered catalogue entry — first occurrence; promote on recurrence at the v0.6 audit per the dharana decision model):** the D-W10-1 "fix everything inline" policy collided with reality for exactly 2 of 10 findings (c-1 zoom-%, c-2 non-destructive-close) — both were *new capability disguised as an audit finding*, not corrections to existing chrome. The plan's audit→triage(A4)→fix→**mini-checkpoint** krama caught both before they ballooned the audit wave: each STOPPED at investigation, surfaced to the user (not silently built, not silently deferred), and the user dispositioned per-item (c-1 build-in-W10, c-2 DEFER→v0.6). The reusable pattern: **a retroactive-audit finding whose fix requires new capability is a roadmap item, not an audit-wave fix; forcing it inline balloons scope — the per-finding mini-checkpoint is the cap.** Recorded in `project_p6_w10_shipped.md`; promote to a numbered hetvabhasa/krama entry if it recurs at the v0.6 ui-review (single occurrence → memory, recurrence → catalogue).
+**W10 scope-safeguard observation (memory, not yet a numbered catalogue entry — first occurrence; promote on recurrence at the v0.6 audit per the dharana decision model):** the D-W10-1 "fix everything inline" policy collided with reality for exactly 2 of 10 findings (c-1 zoom-%, c-2 non-destructive-close) — both were _new capability disguised as an audit finding_, not corrections to existing chrome. The plan's audit→triage(A4)→fix→**mini-checkpoint** krama caught both before they ballooned the audit wave: each STOPPED at investigation, surfaced to the user (not silently built, not silently deferred), and the user dispositioned per-item (c-1 build-in-W10, c-2 DEFER→v0.6). The reusable pattern: **a retroactive-audit finding whose fix requires new capability is a roadmap item, not an audit-wave fix; forcing it inline balloons scope — the per-finding mini-checkpoint is the cap.** Recorded in `project_p6_w10_shipped.md`; promote to a numbered hetvabhasa/krama entry if it recurs at the v0.6 ui-review (single occurrence → memory, recurrence → catalogue).
 
 **W10 re-validation triggers:** (a) any post-W10 P6 chrome change re-opens only the affected UI-REVIEW.md surface row (delta-from-baseline, not full pass); (b) c-2's deferred non-destructive-close → when the v0.6 open-tabs-vs-storage session abstraction lands, re-inventory the ProjectTabs ↔ storage-set distinctness (a NEW pair that does not exist in v0.5); (c) c-1's new `viewportStore.cameraZoom` field + Viewport.tsx `onChange` writer — re-verify the V8 file-rooted boundary on any future viewport-store write (the precedent set: UI-projection-store writes from `src/viewport/` are V8-clean; DAG dispatch from there is not — the distinction must hold); (d) the next milestone's first ui-review consumes UI-REVIEW.md as its baseline — if it's stale/missing, that audit blocks.
 
@@ -294,15 +300,15 @@ W10 = `/anvi:ui-review` retroactive 6-pillar audit. Its `docs/UI-REVIEW.md` is t
 
 **P7 W-D section-inventory pass (2026-05-18) — PROTOCOL RE-ACTIVATED.** P7 is the next milestone's first chrome wave (W2.6 additional-target + W10 wake-condition (d)); P6's `docs/UI-REVIEW.md` baseline does NOT cover the v0.7 affordances (Auto-Key indicator, 3-state inspector diamond), so per-wave pre/post section-inventory passes apply until P7's own consolidation. **FLAG-2:** P7 has no UI-REVIEW.md baseline (dharana.md:284). Ran B11 HOW (re-validation) over every surface Wave D touches — **files OPENED, not recalled from memory** (H25/H27):
 
-| Surface | File:line opened | Current unique sections | Auto-Key / diamond collision? |
-|---|---|---|---|
-| Timebar (always-visible transport) | `src/app/Timebar.tsx:23-89` (rendered at `src/timeline/TimelineDrawer.tsx:113`) | play/pause btn · **REC toggle+dot (NEW D2)** · scrub range · seconds readout | NO — REC sits between play/pause and scrub; does not overlap the seconds readout or scrub region. |
-| DockHeader / timeline-tab-strip (drawer-open only) | `src/timeline/TimelineDrawer.tsx:120-154` | Dopesheet tab · Curve Editor tab · spacer · frame/total readout (`timeline-dock-frame-readout`) | NO — physically a SEPARATE element from Timebar (DockHeader is inside the open drawer body at TimelineDrawer.tsx:74; Timebar is the row at :101-115 BELOW it). The §5.10 frame/fps readout lives in DockHeader, NOT Timebar — no overlap with the REC toggle. |
-| NPanel ParamRow (NumericField + VectorField) | `src/app/NPanel.tsx:103-190` (ParamDiamond), `:209-211`/`:308-310` (leading-span mount) | leading `<span>`: diamond + drag-scrub label · value input(s) | NO — the C2 diamond is a leading adornment inside the label `<span className="flex items-center gap-1">`, left of the drag-scrub label; the value `<input>` is the right-hand sibling. The diamond does not overlap any existing param-row adornment. |
+| Surface                                            | File:line opened                                                                        | Current unique sections                                                                         | Auto-Key / diamond collision?                                                                                                                                                                                                                                 |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Timebar (always-visible transport)                 | `src/app/Timebar.tsx:23-89` (rendered at `src/timeline/TimelineDrawer.tsx:113`)         | play/pause btn · **REC toggle+dot (NEW D2)** · scrub range · seconds readout                    | NO — REC sits between play/pause and scrub; does not overlap the seconds readout or scrub region.                                                                                                                                                             |
+| DockHeader / timeline-tab-strip (drawer-open only) | `src/timeline/TimelineDrawer.tsx:120-154`                                               | Dopesheet tab · Curve Editor tab · spacer · frame/total readout (`timeline-dock-frame-readout`) | NO — physically a SEPARATE element from Timebar (DockHeader is inside the open drawer body at TimelineDrawer.tsx:74; Timebar is the row at :101-115 BELOW it). The §5.10 frame/fps readout lives in DockHeader, NOT Timebar — no overlap with the REC toggle. |
+| NPanel ParamRow (NumericField + VectorField)       | `src/app/NPanel.tsx:103-190` (ParamDiamond), `:209-211`/`:308-310` (leading-span mount) | leading `<span>`: diamond + drag-scrub label · value input(s)                                   | NO — the C2 diamond is a leading adornment inside the label `<span className="flex items-center gap-1">`, left of the drag-scrub label; the value `<input>` is the right-hand sibling. The diamond does not overlap any existing param-row adornment.         |
 
-**Cross-check vs UI-SPEC §5.8 / §5.9 / §5.10 distinctness claims (file:line opened — `docs/UI-SPEC.md:458-552`):** §5.8 Section catalog ALREADY lists the Animate section owner as `animation — Record/AddKey/Simplify/Clear` (UI-SPEC.md:496) — the spec *anticipated* a Record affordance under the Animate domain BEFORE P7; D2/C2 *realize* an already-declared concern, they do not introduce a new contested surface. §5.9/§5.10 already split Timebar (transport+scrub) from DockHeader (tabs + Range + frame/fps) by content; the REC toggle lands in transport (Timebar), semantically correct, no merge pressure. No "X and Y are distinct" conjunction decayed.
+**Cross-check vs UI-SPEC §5.8 / §5.9 / §5.10 distinctness claims (file:line opened — `docs/UI-SPEC.md:458-552`):** §5.8 Section catalog ALREADY lists the Animate section owner as `animation — Record/AddKey/Simplify/Clear` (UI-SPEC.md:496) — the spec _anticipated_ a Record affordance under the Animate domain BEFORE P7; D2/C2 _realize_ an already-declared concern, they do not introduce a new contested surface. §5.9/§5.10 already split Timebar (transport+scrub) from DockHeader (tabs + Range + frame/fps) by content; the REC toggle lands in transport (Timebar), semantically correct, no merge pressure. No "X and Y are distinct" conjunction decayed.
 
-**VERDICT: NO SHIFTS.** No D-UX entry restored / overridden / advanced. No distinctness claim decayed. Wave D adds two new chrome elements (Auto-Key REC indicator in Timebar; 3-state diamond in NPanel ParamRow) that *realize* the already-specced §5.8 "Animate — Record/AddKey" concern — purely **additive**, pinned by a new **D-UX-14** in UI-SPEC §1 with `**REF:**` to opened file:lines. ORIGIN: P7 Wave D first chrome wave of the v0.7 milestone; WHY: without this pass the §5.8 Record affordance ships with no pinned visual contract and the anvi-ui-checker would BLOCK D-UX-14 on unobserved files; HOW: per-surface table above + the file:line REFs on D-UX-14.
+**VERDICT: NO SHIFTS.** No D-UX entry restored / overridden / advanced. No distinctness claim decayed. Wave D adds two new chrome elements (Auto-Key REC indicator in Timebar; 3-state diamond in NPanel ParamRow) that _realize_ the already-specced §5.8 "Animate — Record/AddKey" concern — purely **additive**, pinned by a new **D-UX-14** in UI-SPEC §1 with `**REF:**` to opened file:lines. ORIGIN: P7 Wave D first chrome wave of the v0.7 milestone; WHY: without this pass the §5.8 Record affordance ships with no pinned visual contract and the anvi-ui-checker would BLOCK D-UX-14 on unobserved files; HOW: per-surface table above + the file:line REFs on D-UX-14.
 
 ---
 
@@ -384,9 +390,9 @@ matures (blender-mcp at 21K stars; Houdini-MCP, C4D-MCP, Maya-LLM
 likely to land soon). Each bridge is a reference implementation
 mining ground for ideas, not an architectural template.
 
-**WHY this axis exists:** these bridges optimize for *Blender's API
-surface* (vast, unbounded — they need `execute_blender_code`).
-Basher's DAG vocabulary is *bounded* — we have V1 (op-as-only-mutation
+**WHY this axis exists:** these bridges optimize for _Blender's API
+surface_ (vast, unbounded — they need `execute_blender_code`).
+Basher's DAG vocabulary is _bounded_ — we have V1 (op-as-only-mutation
 path) + V7 (handlers return Op[]) + diff-first preview. Adopting
 their patterns naively imports their compromises. We need a deliberate
 filter: take ideas that align with V1/V7; reject ones that violate
@@ -394,6 +400,7 @@ them.
 
 **HOW to apply:** when surveying a DCC-LLM bridge (or any LLM-tool
 integration), separate ideas into three buckets:
+
 1. **Adopt** — vision/screenshot tools, asset-catalog integrations,
    AI-3D-generation, telemetry, strategy-as-resource patterns.
 2. **Defer** — MCP-server-as-additional-surface (v0.6 scope when
@@ -418,9 +425,10 @@ boundary between user-facing storage (degrees) and engine-layer
 consumption (THREE radians). The bug was invisible until the agent's
 first non-zero degree input. No existing catalogue axis surfaced it
 because the mismatch wasn't a flow bug or a state bug — it was a
-*convention* bug.
+_convention_ bug.
 
 **WHY this axis exists:** Basher straddles three convention zones:
+
 1. **THREE.js / glTF runtime** — engine-mandated (radians, +Z forward,
    xyzw quaternions, vertical FOV).
 2. **DCC user mental models** — Blender / Maya / Houdini / C4D / 3ds Max
@@ -651,10 +659,10 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   rewrite + 8 correctness fixes (F1-F8 from AGENT.md analysis), Tailwind
   AgentChat refactor, AGENT.md doc, H20 (rotation units → degrees in DAG,
   radians at THREE seam), dcc-reference.md (20-section convention lookup
-  + V12 invariant), H21 (anchor placeholder bug + Anchors block in
-  per-turn context). Wire format now OpenAI-spec-correct (assistant
-  {tool_calls} → role:'tool' with tool_call_id) — testable on Claude /
-  GPT-4o via OpenRouter.
+  - V12 invariant), H21 (anchor placeholder bug + Anchors block in
+    per-turn context). Wire format now OpenAI-spec-correct (assistant
+    {tool_calls} → role:'tool' with tool_call_id) — testable on Claude /
+    GPT-4o via OpenRouter.
 - **B3 (Agent ↔ DAG)** observation targets extended for selection
   context check + multi-turn drift check.
 - **B4 (Node evaluator ↔ time/randomness)** unchanged — V2 + V3 still
@@ -682,7 +690,7 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
      No new lifecycle crossings 3+ module boundaries.
 
   **Verdict: organization remains sound after P2.5.1.** B3's
-  three-pattern cluster is a *cluster of similar mechanisms*, not a
+  three-pattern cluster is a _cluster of similar mechanisms_, not a
   structural fatality — closure preservation + Mutator preconditions
   (P2.5.2 plan) is the right structural answer. No restructuring;
   invariant tightening.
@@ -721,14 +729,14 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 **Updated:** 2026-05-08 — post-P2.5.2 (Waves A+B+C+D shipped):
 
 - **Wave A** — closure expansion + preservation gate. `src/agent/closure/`
-  + `src/agent/diff/store.ts` propose-time gate. V13 flips to ALIGNED.
-  Per-edge-kind BFS with shared visited-set + maxDepth 256 (P-1 cycle
-  mitigation). Each declared kind runs its own per-root BFS — no
-  free-mixing of 'parent' and 'children' (the early bug that would have
-  leaked siblings into the closure was caught in unit tests before
-  shipping). Orchestrator infers closure from selection or
-  identifiedSelectors; falls vacuous when no roots → additive prompts
-  unchanged.
+  - `src/agent/diff/store.ts` propose-time gate. V13 flips to ALIGNED.
+    Per-edge-kind BFS with shared visited-set + maxDepth 256 (P-1 cycle
+    mitigation). Each declared kind runs its own per-root BFS — no
+    free-mixing of 'parent' and 'children' (the early bug that would have
+    leaked siblings into the closure was caught in unit tests before
+    shipping). Orchestrator infers closure from selection or
+    identifiedSelectors; falls vacuous when no roots → additive prompts
+    unchanged.
 - **Wave B** — two-stage Identify → Plan. `src/agent/identify/`. New
   boundary B7 (Agent identifier ↔ DAG node-set). Pure local resolver
   (no LLM round needed — model just constructs the query). Confidence
@@ -744,12 +752,12 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   agent.proposePlan returns ops or {ok:false, gate, reason} the LLM
   reacts to.
 - **Wave D** — strategy resources + telemetry. `src/agent/strategy/`
-  + `src/agent/telemetry/`. V15 flips to ALIGNED. System prompt's
-  inline paramTips (units + materials) lifted into the strategy
-  catalog; prompt keeps a one-line pointer. Telemetry recorder is
-  opt-in localStorage by default; killswitch via env or localStorage;
-  no PII (tool name + outcome + duration only); allowlist of known
-  tool names blocks accidental leak through.
+  - `src/agent/telemetry/`. V15 flips to ALIGNED. System prompt's
+    inline paramTips (units + materials) lifted into the strategy
+    catalog; prompt keeps a one-line pointer. Telemetry recorder is
+    opt-in localStorage by default; killswitch via env or localStorage;
+    no PII (tool name + outcome + duration only); allowlist of known
+    tool names blocks accidental leak through.
 
 - **Hetvabhasa update:** no new H entries surfaced during execution —
   the planning was thorough enough that the only genuine bug
@@ -763,7 +771,7 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
   1. Hetvabhasa clustering: 19 entries (no new). H19/H20/H21 cluster
      at B3 — Wave A/B/C consolidate the cluster into V13 (gate) +
      V14 (catalog) + B7 (identifier seam) + B8 (mutator seam). The
-     cluster's *mechanism* is now structurally addressed; future
+     cluster's _mechanism_ is now structurally addressed; future
      B3-class bugs land at gate-rejection time with structured
      failures, not as silent symptoms.
   2. Vyapti span: V13 + V14 + V15 added. V13 spans
@@ -781,8 +789,8 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 
   **Verdict: organization remains sound after P2.5.2.** B3's
   three-pattern hetvabhasa cluster (H19/H20/H21) is now closed by
-  three structural invariants (V13 + V14 + V11) — the *cluster
-  mechanism* is mechanically rejected at the gate. The DCC-LLM
+  three structural invariants (V13 + V14 + V11) — the _cluster
+  mechanism_ is mechanically rejected at the gate. The DCC-LLM
   bridge axis (added pre-P2.5.2) has its first worked example: the
   blender-mcp survey's strategy-resource pattern + opt-in telemetry
   pattern were adopted; arbitrary code execution + direct setState
@@ -796,11 +804,12 @@ Goal-backward review caught two real bugs that all 8 acceptance tests missed:
 **Provenance:** Updated 2026-05-08 — post-P2.5.2: V13 + V14 + V15
 added; B7 + B8 boundaries added; DCC-LLM bridge axis activated with
 the blender-mcp survey as the first worked example; strategy-resource
-+ opt-in telemetry patterns adopted; six starter Mutators registered;
-agent.identify + agent.proposePlan + agent.listStrategies +
-agent.getStrategy tools added (registry now 11). H19/H20/H21
-mechanism class structurally closed by V13 + Wave B Identify stage +
-Wave C Mutator catalog.
+
+- opt-in telemetry patterns adopted; six starter Mutators registered;
+  agent.identify + agent.proposePlan + agent.listStrategies +
+  agent.getStrategy tools added (registry now 11). H19/H20/H21
+  mechanism class structurally closed by V13 + Wave B Identify stage +
+  Wave C Mutator catalog.
 
 **Updated:** 2026-05-09 — post-P3 (Timeline = animation nodes):
 
@@ -968,9 +977,9 @@ Wave C Mutator catalog.
 
 - **New node types BeautyPass + IDPass + RenderJob** (33 → 36; THESIS
   §43 narrowed to 3 of 7 listed for v0.5; AO + Depth + Normal + Albedo
-  + Alpha + MotionVector deferred to P5+ on demand). BeautyPass + IDPass
-  are pure: true (Scene + Camera + Time → Image metadata only); RenderJob
-  is pure: false — the only impure node added in P4.
+  - Alpha + MotionVector deferred to P5+ on demand). BeautyPass + IDPass
+    are pure: true (Scene + Camera + Time → Image metadata only); RenderJob
+    is pure: false — the only impure node added in P4.
 
 - **New socket types Image + JobResult.** Image is a lazy value
   (descriptor + sourceHash, no pixels until execution). JobResult is
@@ -996,7 +1005,7 @@ Wave C Mutator catalog.
   kind locked in at P3.
 
 - **V8 file-rooted dispatch mechanically guarded.** runRenderJob.test.ts
-  contains a textual import-only regex that fails CI if src/render/*
+  contains a textual import-only regex that fails CI if src/render/\*
   ever imports a dispatcher (dagStore / useDagStore / dispatchAtomic /
   core/dag/ops). Same enforcement style as STRATEGY_TOPICS.
 
@@ -1074,8 +1083,8 @@ preset, ComfyUI capability, video stitch — all four waves shipped):
   - Writebacks (e.g. lastGoodFrame on ComfyUIWorkflow) are
     callbacks the caller dispatches — never inline dispatch from
     the execution file.
-  Each violation reopens H19 (stale snapshot) / V8 (file-rooted)
-  / V1 (op-as-only-mutation) holes that were already closed.
+    Each violation reopens H19 (stale snapshot) / V8 (file-rooted)
+    / V1 (op-as-only-mutation) holes that were already closed.
 
   **HOW:** Mechanical guard — every file under `src/render/**` has
   a textual import-only regex test in `runRenderJob.test.ts` that
@@ -1094,7 +1103,7 @@ preset, ComfyUI capability, video stitch — all four waves shipped):
   - Adding a new src/render/ file without extending the import-only
     guard → V8 violation lands silently.
   - Calling `useDagStore.getState()` inside an async loop in
-    src/render/* → H19 stale-snapshot pattern; capture-once at
+    src/render/\* → H19 stale-snapshot pattern; capture-once at
     function start instead.
   - Writing to fs/opfs directly (bypassing StorageCapability) →
     Tauri swap at v0.6 becomes a rewrite. Reviewer rejects.
@@ -1102,9 +1111,9 @@ preset, ComfyUI capability, video stitch — all four waves shipped):
   **Observation targets:**
   - For every new file under `src/render/**`: confirm the V8
     import-only test names it. Missing entry → fail CI before merge.
-  - For every async loop in src/render/*: confirm state.nodes is
+  - For every async loop in src/render/\*: confirm state.nodes is
     read once at function entry, not per-iteration.
-  - For every storage path constructed in src/render/*: confirm it
+  - For every storage path constructed in src/render/\*: confirm it
     flows through `StorageCapability.write`, never `node:fs` /
     `OpfsStorage` directly.
 
@@ -1117,7 +1126,7 @@ preset, ComfyUI capability, video stitch — all four waves shipped):
   its place. Tracked in memory as `project_p5_shipped.md`.
 
 - **V13 (closure preservation) ALIGNED re-verified.** addAIPass +
-  addStitch each declare buildClosureSpec. Gate 3 (closure_
+  addStitch each declare buildClosureSpec. Gate 3 (closure\_
   preservation) accepts both Mutators' op chains under the rooted
   closures. V13 status unchanged — the new Mutators integrate
   cleanly through existing machinery.

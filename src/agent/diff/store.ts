@@ -126,11 +126,7 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
           continue;
         }
         const target = opTargetNodeId(op);
-        if (
-          target !== null &&
-          !closure.nodes.has(target) &&
-          !introducedIds.has(target)
-        ) {
+        if (target !== null && !closure.nodes.has(target) && !introducedIds.has(target)) {
           throw new ClosurePreservationError(target, closure);
         }
       }
@@ -221,9 +217,7 @@ export function acceptSelectedOps(
   // P5: when only a subset is accepted, the original description (built from
   // the full proposed batch) is misleading. Rebuild it from the selected
   // op sources so the undo entry reflects what actually landed.
-  const description = allSelected
-    ? diff.description
-    : buildPartialDescription(diff);
+  const description = allSelected ? diff.description : buildPartialDescription(diff);
   dispatchAtomic(selected.forward, 'agent', description);
   diffStore.markApplied();
   return true;

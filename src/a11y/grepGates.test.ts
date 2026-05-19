@@ -159,11 +159,11 @@ describe('a11y grep gates — P6 W8 C5.4', () => {
 
     // Pattern A — destructured at hook call (and its variants).
     const patternA = [
-      "const { setMode } = useGizmoStore();",
-      "const { mode, setMode } = useGizmoStore();",
-      "const { setMode: applyMode } = useGizmoStore();",
-      "const { setMode } = useGizmoStore.getState();",
-      "  const { setMode } = useGizmoStore((s) => s);",
+      'const { setMode } = useGizmoStore();',
+      'const { mode, setMode } = useGizmoStore();',
+      'const { setMode: applyMode } = useGizmoStore();',
+      'const { setMode } = useGizmoStore.getState();',
+      '  const { setMode } = useGizmoStore((s) => s);',
     ];
     for (const line of patternA) {
       expect(anyMatch(line), `Pattern A must be detected: ${line}`).toBe(true);
@@ -171,9 +171,9 @@ describe('a11y grep gates — P6 W8 C5.4', () => {
 
     // Pattern B — alias from a chained reference WITHOUT calling it.
     const patternB = [
-      "const fn = useGizmoStore.getState().setMode;",
-      "const apply = useGizmoStore((s) => s).setMode;",
-      "let handler = useGizmoStore().setMode",
+      'const fn = useGizmoStore.getState().setMode;',
+      'const apply = useGizmoStore((s) => s).setMode;',
+      'let handler = useGizmoStore().setMode',
     ];
     for (const line of patternB) {
       expect(anyMatch(line), `Pattern B must be detected: ${line}`).toBe(true);
@@ -182,10 +182,10 @@ describe('a11y grep gates — P6 W8 C5.4', () => {
     // Negative controls — these MUST NOT match (no false positives that
     // would make the V19 gate trip on innocent code):
     const benign = [
-      "const mode = useGizmoStore((s) => s.mode);", // reads mode, not setMode
-      "const { mode } = useGizmoStore();", // destructures mode only
-      "// setMode is the canonical dispatcher", // a comment mentioning it
-      "useGizmoStore.getState().mode;", // reads .mode
+      'const mode = useGizmoStore((s) => s.mode);', // reads mode, not setMode
+      'const { mode } = useGizmoStore();', // destructures mode only
+      '// setMode is the canonical dispatcher', // a comment mentioning it
+      'useGizmoStore.getState().mode;', // reads .mode
       "const setModeLabel = 'translate';", // unrelated identifier
     ];
     for (const line of benign) {

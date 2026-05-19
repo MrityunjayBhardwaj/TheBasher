@@ -62,9 +62,7 @@ export const test = base.extend({
     // Monkey-patch — every `page.screenshot(...)` (and therefore every
     // `expect(page).toHaveScreenshot(...)`) routes through this wrapper.
     // The `await` is non-negotiable per the lifecycle comment above.
-    page.screenshot = (async (
-      ...args: Parameters<typeof originalScreenshot>
-    ) => {
+    page.screenshot = (async (...args: Parameters<typeof originalScreenshot>) => {
       await page.evaluate(() => {
         const el = document.activeElement as HTMLElement | null;
         el?.blur();

@@ -35,10 +35,7 @@ export function __resetFbxImportCounterForTests(): void {
   counter = 0;
 }
 
-export function buildFbxImportOps(
-  args: FbxImportChainArgs,
-  state: DagState,
-): FbxImportChainResult {
+export function buildFbxImportOps(args: FbxImportChainArgs, state: DagState): FbxImportChainResult {
   const parsed = parseFbx(args.data, args.name ?? 'imported-fbx');
 
   const ids = args.ids ?? {

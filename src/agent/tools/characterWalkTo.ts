@@ -11,10 +11,7 @@ import { buildWalkToOps } from '../../app/character/walkTo';
 
 export const characterWalkToSchema = z.object({
   characterId: z.string().min(1, 'characterId is required'),
-  worldPoint: z
-    .array(z.number())
-    .length(3)
-    .describe('Target position as [x, y, z]'),
+  worldPoint: z.array(z.number()).length(3).describe('Target position as [x, y, z]'),
 });
 
 export type CharacterWalkToArgs = z.infer<typeof characterWalkToSchema>;
@@ -23,7 +20,7 @@ export const characterWalkToTool: ToolDefinition<CharacterWalkToArgs> = {
   name: 'character.walkTo',
   description:
     'Make a Character node walk to a world-space point. ' +
-    'Returns an Op[] that adds/connects a WalkPath to the character\'s LocomotionState.',
+    "Returns an Op[] that adds/connects a WalkPath to the character's LocomotionState.",
   paramSchema: characterWalkToSchema,
   handler(args: CharacterWalkToArgs, ctx: ToolContext): ToolResult {
     const result = buildWalkToOps(

@@ -13,10 +13,7 @@ import type { Op } from '../../core/dag/types';
 
 export const cameraSnapshotSchema = z.object({
   fov: z.number().positive().default(45).describe('Camera field of view in degrees'),
-  position: z
-    .array(z.number())
-    .length(3)
-    .describe('Camera position as [x, y, z]'),
+  position: z.array(z.number()).length(3).describe('Camera position as [x, y, z]'),
   lookAt: z
     .array(z.number())
     .length(3)

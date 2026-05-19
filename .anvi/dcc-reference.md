@@ -11,13 +11,14 @@
 > phase) / **DEFERRED** (waiting on a trigger).
 >
 > Authority order when sources disagree:
->   1. **glTF 2.0 spec** — wins for asset interchange (it's the import/
->      export contract).
->   2. **THREE.js / R3F runtime** — wins for engine-layer details we
->      can't override cheaply.
->   3. **Majority DCC convention** — wins for user-facing UI, params,
->      and agent prompts.
->   4. **Blender alone** — used as a tiebreak for FOSS-aligned defaults.
+>
+> 1. **glTF 2.0 spec** — wins for asset interchange (it's the import/
+>    export contract).
+> 2. **THREE.js / R3F runtime** — wins for engine-layer details we
+>    can't override cheaply.
+> 3. **Majority DCC convention** — wins for user-facing UI, params,
+>    and agent prompts.
+> 4. **Blender alone** — used as a tiebreak for FOSS-aligned defaults.
 >
 > Cross-references are to `.anvi/hetvabhasa.md` (H#), `.anvi/vyapti.md`
 > (V#), `.anvi/dharana.md` (B#), `.anvi/krama.md` (K#), and `THESIS.md`
@@ -59,20 +60,20 @@ tool args, and the inspector.
 **Basher's choice:** **degrees in DAG params, radians at the THREE seam.**
 Status: **DECIDED** (H20).
 
-| App        | UI display | Scripting / storage API                     | Internal math      |
-| ---------- | ---------- | ------------------------------------------- | ------------------ |
-| Blender    | degrees    | radians (Python `obj.rotation_euler`)       | matrices + quat    |
-| Maya       | degrees    | degrees (MEL `rotate -ro 45 0 0`)           | matrices           |
-| 3ds Max    | degrees    | degrees (MAXScript `rotateX 45`)            | matrices           |
-| Cinema 4D  | degrees    | radians (Python API)                        | matrices           |
-| Houdini    | degrees    | radians in VEX; `radians()` / `degrees()`   | radians            |
+| App       | UI display | Scripting / storage API                   | Internal math   |
+| --------- | ---------- | ----------------------------------------- | --------------- |
+| Blender   | degrees    | radians (Python `obj.rotation_euler`)     | matrices + quat |
+| Maya      | degrees    | degrees (MEL `rotate -ro 45 0 0`)         | matrices        |
+| 3ds Max   | degrees    | degrees (MAXScript `rotateX 45`)          | matrices        |
+| Cinema 4D | degrees    | radians (Python API)                      | matrices        |
+| Houdini   | degrees    | radians in VEX; `radians()` / `degrees()` | radians         |
 
-| Engine     | UI                  | Code                                         | Internal     |
-| ---------- | ------------------- | -------------------------------------------- | ------------ |
-| Unity      | degrees (Inspector) | degrees (`Quaternion.Euler(45,0,0)`)         | quaternions  |
-| Unreal     | degrees (Details)   | degrees (`FRotator` yaw/pitch/roll)          | quaternions  |
-| Godot 4    | degrees (Inspector) | both: `rotation` (rad), `rotation_degrees`   | quaternions  |
-| THREE.js   | n/a                 | radians (`Object3D.rotation` is `Euler`)     | quat / matrix|
+| Engine   | UI                  | Code                                       | Internal      |
+| -------- | ------------------- | ------------------------------------------ | ------------- |
+| Unity    | degrees (Inspector) | degrees (`Quaternion.Euler(45,0,0)`)       | quaternions   |
+| Unreal   | degrees (Details)   | degrees (`FRotator` yaw/pitch/roll)        | quaternions   |
+| Godot 4  | degrees (Inspector) | both: `rotation` (rad), `rotation_degrees` | quaternions   |
+| THREE.js | n/a                 | radians (`Object3D.rotation` is `Euler`)   | quat / matrix |
 
 **Recommendation:** degrees for user-facing storage; convert at the
 engine seam. Reason: 45/90/180 are readable, π/4/π/2/π are not. THREE
@@ -89,21 +90,21 @@ forces radians at consumption — convert there.
 **Basher's choice:** **meters everywhere.** Status: **DECIDED** (implicit
 since P0; THREE is unitless but seed scene + tests treat 1 unit = 1 m).
 
-| App        | Default unit | Configurable?                     |
-| ---------- | ------------ | --------------------------------- |
-| Blender    | meters       | yes (Scene Properties → Units)    |
-| Maya       | centimeters  | yes (Settings → Working Units)    |
-| 3ds Max    | inches (US)  | yes (Customize → Units Setup)     |
-| Cinema 4D  | centimeters  | yes (Project Settings)            |
-| Houdini    | meters       | yes (Edit → Preferences → Hip)    |
+| App       | Default unit | Configurable?                  |
+| --------- | ------------ | ------------------------------ |
+| Blender   | meters       | yes (Scene Properties → Units) |
+| Maya      | centimeters  | yes (Settings → Working Units) |
+| 3ds Max   | inches (US)  | yes (Customize → Units Setup)  |
+| Cinema 4D | centimeters  | yes (Project Settings)         |
+| Houdini   | meters       | yes (Edit → Preferences → Hip) |
 
-| Engine     | Default unit                                       |
-| ---------- | -------------------------------------------------- |
-| Unity      | meters                                             |
-| Unreal 5   | centimeters (legacy); meters supported via UWS     |
-| Godot      | meters                                             |
-| glTF 2.0   | **meters** (spec-mandated)                         |
-| THREE.js   | unitless (convention is meters)                    |
+| Engine   | Default unit                                   |
+| -------- | ---------------------------------------------- |
+| Unity    | meters                                         |
+| Unreal 5 | centimeters (legacy); meters supported via UWS |
+| Godot    | meters                                         |
+| glTF 2.0 | **meters** (spec-mandated)                     |
+| THREE.js | unitless (convention is meters)                |
 
 **Recommendation:** **meters.** Aligns with Blender, Houdini, Unity,
 Godot, and the glTF spec. Aligns with physics if/when we add it. Aligns
@@ -125,21 +126,21 @@ Maya) — cognitively expensive.
 **Basher's choice:** **Y-up, right-handed, -Z forward.** Status:
 **DECIDED** (inherited from THREE.js / glTF).
 
-| App        | Up   | Forward | Handedness |
-| ---------- | ---- | ------- | ---------- |
-| Blender    | **Z** | -Y      | right-handed |
-| Maya       | Y    | -Z      | right-handed |
-| 3ds Max    | **Z** | -Y      | right-handed |
-| Cinema 4D  | Y    | +Z      | left-handed (legacy); right-handed (config) |
-| Houdini    | Y    | -Z      | right-handed |
+| App       | Up    | Forward | Handedness                                  |
+| --------- | ----- | ------- | ------------------------------------------- |
+| Blender   | **Z** | -Y      | right-handed                                |
+| Maya      | Y     | -Z      | right-handed                                |
+| 3ds Max   | **Z** | -Y      | right-handed                                |
+| Cinema 4D | Y     | +Z      | left-handed (legacy); right-handed (config) |
+| Houdini   | Y     | -Z      | right-handed                                |
 
-| Engine     | Up   | Forward | Handedness |
-| ---------- | ---- | ------- | ---------- |
-| Unity      | Y    | +Z      | left-handed |
-| Unreal     | **Z** | +X      | left-handed |
-| Godot      | Y    | -Z      | right-handed |
-| glTF 2.0   | Y    | -Z      | **right-handed** (spec-mandated) |
-| THREE.js   | Y    | -Z      | right-handed |
+| Engine   | Up    | Forward | Handedness                       |
+| -------- | ----- | ------- | -------------------------------- |
+| Unity    | Y     | +Z      | left-handed                      |
+| Unreal   | **Z** | +X      | left-handed                      |
+| Godot    | Y     | -Z      | right-handed                     |
+| glTF 2.0 | Y     | -Z      | **right-handed** (spec-mandated) |
+| THREE.js | Y     | -Z      | right-handed                     |
 
 **Recommendation:** **Y-up, -Z forward, right-handed.** Matches glTF,
 THREE, Maya, Houdini, Godot. Diverges from Blender / Max (Z-up). The
@@ -162,17 +163,17 @@ debugging.
 **Basher's choice:** **+Z forward (glTF convention).** Status:
 **DECIDED** (assets imported via library.import inherit the glTF orientation).
 
-| Source     | Front-facing axis (asset author convention)            |
-| ---------- | ------------------------------------------------------- |
-| Blender    | -Y (default front); Empire-of-Code mods use +Y         |
-| Maya       | +Z (default character orientation)                      |
-| 3ds Max    | -Y                                                      |
-| Cinema 4D  | +Z                                                      |
-| Houdini    | -Z (varies by asset)                                    |
-| glTF 2.0   | conventionally **+Z** for characters; not spec-mandated |
-| Unity      | +Z                                                      |
-| Unreal     | +X                                                      |
-| Godot      | -Z                                                      |
+| Source    | Front-facing axis (asset author convention)             |
+| --------- | ------------------------------------------------------- |
+| Blender   | -Y (default front); Empire-of-Code mods use +Y          |
+| Maya      | +Z (default character orientation)                      |
+| 3ds Max   | -Y                                                      |
+| Cinema 4D | +Z                                                      |
+| Houdini   | -Z (varies by asset)                                    |
+| glTF 2.0  | conventionally **+Z** for characters; not spec-mandated |
+| Unity     | +Z                                                      |
+| Unreal    | +X                                                      |
+| Godot     | -Z                                                      |
 
 **Recommendation:** **+Z forward** for character assets, document at
 import. If a file ships -Y forward (Blender default), the agent / human
@@ -190,20 +191,20 @@ adds a Transform with `rotation: [0, 90, 0]` or similar to align.
 **Basher's choice:** **linear-space math, sRGB display.** Status:
 **DECIDED** (THREE default + R3F's `gl={{ outputColorSpace: 'srgb' }}`).
 
-| App        | Authoring color picker | Math    | Display              |
-| ---------- | --------------------- | ------- | -------------------- |
-| Blender    | sRGB → linear         | linear  | sRGB (Filmic/AgX OCIO)|
-| Maya       | sRGB                  | linear  | sRGB                 |
-| 3ds Max    | sRGB                  | linear (gamma 2.2 / OCIO) | sRGB |
-| Cinema 4D  | sRGB                  | linear  | sRGB                 |
-| Houdini    | linear (default!)     | linear  | sRGB (OCIO)          |
+| App       | Authoring color picker | Math                      | Display                |
+| --------- | ---------------------- | ------------------------- | ---------------------- |
+| Blender   | sRGB → linear          | linear                    | sRGB (Filmic/AgX OCIO) |
+| Maya      | sRGB                   | linear                    | sRGB                   |
+| 3ds Max   | sRGB                   | linear (gamma 2.2 / OCIO) | sRGB                   |
+| Cinema 4D | sRGB                   | linear                    | sRGB                   |
+| Houdini   | linear (default!)      | linear                    | sRGB (OCIO)            |
 
-| Engine     | Authoring | Math   | Display              |
-| ---------- | --------- | ------ | -------------------- |
-| Unity      | sRGB      | linear | sRGB                 |
-| Unreal     | sRGB      | linear | sRGB                 |
-| Godot      | sRGB      | linear | sRGB                 |
-| THREE.js   | sRGB textures, linear math | linear | sRGB (`outputColorSpace`) |
+| Engine   | Authoring                  | Math   | Display                   |
+| -------- | -------------------------- | ------ | ------------------------- |
+| Unity    | sRGB                       | linear | sRGB                      |
+| Unreal   | sRGB                       | linear | sRGB                      |
+| Godot    | sRGB                       | linear | sRGB                      |
+| THREE.js | sRGB textures, linear math | linear | sRGB (`outputColorSpace`) |
 
 **Recommendation:** **linear math, sRGB display, sRGB-tagged texture
 inputs.** Only Houdini diverges by treating its picker as linear (which
@@ -221,20 +222,20 @@ linear, output transformed to sRGB.
 
 **Basher's choice:** **CSS hex strings (`#rrggbb`).** Status: **DECIDED**.
 
-| App        | Storage in scene file                            |
-| ---------- | ------------------------------------------------ |
-| Blender    | float [0..1] RGBA in .blend                      |
-| Maya       | float [0..1] in .ma; hex in .json export         |
-| 3ds Max    | 0-255 integers in legacy; float in newer         |
-| Cinema 4D  | float [0..1]                                     |
-| Houdini    | float [0..1]                                     |
-| glTF 2.0   | **float [0..1]** linear RGBA (spec-mandated)     |
+| App       | Storage in scene file                        |
+| --------- | -------------------------------------------- |
+| Blender   | float [0..1] RGBA in .blend                  |
+| Maya      | float [0..1] in .ma; hex in .json export     |
+| 3ds Max   | 0-255 integers in legacy; float in newer     |
+| Cinema 4D | float [0..1]                                 |
+| Houdini   | float [0..1]                                 |
+| glTF 2.0  | **float [0..1]** linear RGBA (spec-mandated) |
 
-| Engine     | Inspector edit       | Storage              |
-| ---------- | -------------------- | -------------------- |
-| Unity      | hex + RGBA picker    | float [0..1]         |
-| Unreal     | hex + RGBA picker    | float [0..1]         |
-| Godot      | hex + RGBA picker    | float [0..1]         |
+| Engine | Inspector edit    | Storage      |
+| ------ | ----------------- | ------------ |
+| Unity  | hex + RGBA picker | float [0..1] |
+| Unreal | hex + RGBA picker | float [0..1] |
+| Godot  | hex + RGBA picker | float [0..1] |
 
 **Recommendation:** **hex strings in DAG params** for v0.5 (readable, web
 native, agent-friendly). Convert to float at the THREE seam (THREE.Color
@@ -257,19 +258,19 @@ clips, render jobs).
 authoritative) + `frame` (computed from seconds × fps) + `normalized`
 [0..1] (clip-relative).** Status: **DECIDED** (TimeSource node, P2).
 
-| App        | Primary unit  | Secondary                      |
-| ---------- | ------------- | ------------------------------ |
-| Blender    | frames        | seconds (frames / fps)         |
-| Maya       | frames        | seconds (frame / fps)          |
-| 3ds Max    | frames + ticks (4800 ticks/s) | seconds         |
-| Cinema 4D  | frames        | seconds                        |
-| Houdini    | frames        | seconds (`@Time = $T`)         |
+| App       | Primary unit                  | Secondary              |
+| --------- | ----------------------------- | ---------------------- |
+| Blender   | frames                        | seconds (frames / fps) |
+| Maya      | frames                        | seconds (frame / fps)  |
+| 3ds Max   | frames + ticks (4800 ticks/s) | seconds                |
+| Cinema 4D | frames                        | seconds                |
+| Houdini   | frames                        | seconds (`@Time = $T`) |
 
-| Engine     | Primary                      |
-| ---------- | ---------------------------- |
-| Unity      | seconds (`Time.deltaTime`)   |
-| Unreal     | seconds (`DeltaSeconds`)     |
-| Godot      | seconds (`process(delta)`)   |
+| Engine | Primary                    |
+| ------ | -------------------------- |
+| Unity  | seconds (`Time.deltaTime`) |
+| Unreal | seconds (`DeltaSeconds`)   |
+| Godot  | seconds (`process(delta)`) |
 
 **Recommendation:** **seconds-primary** (matches game engines + the
 underlying THREE.Clock) but expose `frame` as a derived field on the
@@ -288,19 +289,19 @@ inherit that for animation while staying seconds-native everywhere else.
 **Basher's choice:** **TBD** — likely 24 fps. Status: **TBD** (P3 wires
 the timeline; default lands then).
 
-| App        | Default fps                |
-| ---------- | -------------------------- |
-| Blender    | 24                         |
-| Maya       | 24 (film) or 30 (NTSC)     |
-| 3ds Max    | 30 (NTSC default)          |
-| Cinema 4D  | 30                         |
-| Houdini    | 24                         |
+| App       | Default fps            |
+| --------- | ---------------------- |
+| Blender   | 24                     |
+| Maya      | 24 (film) or 30 (NTSC) |
+| 3ds Max   | 30 (NTSC default)      |
+| Cinema 4D | 30                     |
+| Houdini   | 24                     |
 
-| Engine     | Default                              |
-| ---------- | ------------------------------------ |
-| Unity      | uncapped (vsync) — no fixed fps      |
-| Unreal     | uncapped — Sequencer defaults to 30  |
-| Godot      | uncapped                             |
+| Engine | Default                             |
+| ------ | ----------------------------------- |
+| Unity  | uncapped (vsync) — no fixed fps     |
+| Unreal | uncapped — Sequencer defaults to 30 |
+| Godot  | uncapped                            |
 
 **Recommendation:** **24 fps default** (film convention; matches
 Blender, Maya-film, Houdini). Easy override in project settings.
@@ -319,21 +320,21 @@ horizontal angle).
 **Basher's choice:** **vertical FOV in degrees.** Status: **DECIDED**
 (inherited — `PerspectiveCamera.fov` from THREE/R3F is vertical degrees).
 
-| App        | FOV interpretation              |
-| ---------- | ------------------------------- |
-| Blender    | focal length (mm) primary; vertical FOV derived |
-| Maya       | horizontal focal length / FOV   |
-| 3ds Max    | horizontal FOV                  |
-| Cinema 4D  | horizontal FOV                  |
-| Houdini    | vertical aperture (mm) primary  |
+| App       | FOV interpretation                              |
+| --------- | ----------------------------------------------- |
+| Blender   | focal length (mm) primary; vertical FOV derived |
+| Maya      | horizontal focal length / FOV                   |
+| 3ds Max   | horizontal FOV                                  |
+| Cinema 4D | horizontal FOV                                  |
+| Houdini   | vertical aperture (mm) primary                  |
 
-| Engine     | FOV                                       |
-| ---------- | ----------------------------------------- |
-| Unity      | vertical FOV (degrees)                    |
-| Unreal     | horizontal FOV (degrees)                  |
-| Godot      | vertical FOV (degrees)                    |
-| glTF 2.0   | **vertical FOV (radians)** (`yfov`)       |
-| THREE.js   | vertical FOV (degrees) — `Camera.fov`     |
+| Engine   | FOV                                   |
+| -------- | ------------------------------------- |
+| Unity    | vertical FOV (degrees)                |
+| Unreal   | horizontal FOV (degrees)              |
+| Godot    | vertical FOV (degrees)                |
+| glTF 2.0 | **vertical FOV (radians)** (`yfov`)   |
+| THREE.js | vertical FOV (degrees) — `Camera.fov` |
 
 **Recommendation:** **vertical FOV in degrees.** Matches THREE, glTF
 (via converter), Unity, Godot. Diverges from Maya/Max/Unreal (horizontal).
@@ -353,13 +354,13 @@ choice; glTF agreed; modern engines followed.
 **Basher's choice:** **viewport-derived in v0.5; explicit per-Shot in
 P3+.** Status: **TBD** (P4 render passes need explicit aspect).
 
-| App        | Source of aspect ratio                         |
-| ---------- | ---------------------------------------------- |
-| Blender    | Render Properties (output resolution + pixel ratio) |
-| Maya       | Render Globals                                 |
-| 3ds Max    | Render Setup                                   |
-| Cinema 4D  | Render Settings                                |
-| Houdini    | Camera node `Resolution` parameter             |
+| App       | Source of aspect ratio                              |
+| --------- | --------------------------------------------------- |
+| Blender   | Render Properties (output resolution + pixel ratio) |
+| Maya      | Render Globals                                      |
+| 3ds Max   | Render Setup                                        |
+| Cinema 4D | Render Settings                                     |
+| Houdini   | Camera node `Resolution` parameter                  |
 
 **Recommendation:** **explicit on the camera or shot node.** Don't read
 from viewport DOM. P3's `Shot` node should carry `resolution: [w, h]`
@@ -376,21 +377,21 @@ or `aspect: number`; cameras stay aspect-agnostic. Matches every DCC.
 **Basher's choice:** **PBR metalness/roughness (Disney-ish).** Status:
 **DECIDED** (P1, vyapti V9 — "Materials are data, not code in v0.5").
 
-| App        | Default model                                  |
-| ---------- | ---------------------------------------------- |
-| Blender    | Principled BSDF (metalness/roughness + sheen + clearcoat) |
-| Maya       | aiStandardSurface (Arnold) — metalness/roughness |
-| 3ds Max    | Physical Material — metalness/roughness        |
-| Cinema 4D  | Standard / Redshift Material — metalness/roughness primary |
-| Houdini    | Principled Shader — metalness/roughness        |
+| App       | Default model                                              |
+| --------- | ---------------------------------------------------------- |
+| Blender   | Principled BSDF (metalness/roughness + sheen + clearcoat)  |
+| Maya      | aiStandardSurface (Arnold) — metalness/roughness           |
+| 3ds Max   | Physical Material — metalness/roughness                    |
+| Cinema 4D | Standard / Redshift Material — metalness/roughness primary |
+| Houdini   | Principled Shader — metalness/roughness                    |
 
-| Engine     | Default                                        |
-| ---------- | ---------------------------------------------- |
-| Unity HDRP | metalness/roughness                            |
-| Unreal     | metalness/roughness (UE4+)                     |
-| Godot      | metalness/roughness                            |
+| Engine     | Default                                                              |
+| ---------- | -------------------------------------------------------------------- |
+| Unity HDRP | metalness/roughness                                                  |
+| Unreal     | metalness/roughness (UE4+)                                           |
+| Godot      | metalness/roughness                                                  |
 | glTF 2.0   | **metalness/roughness** (PBR Metallic-Roughness, spec-mandated core) |
-| THREE.js   | MeshStandardMaterial = metalness/roughness     |
+| THREE.js   | MeshStandardMaterial = metalness/roughness                           |
 
 **Recommendation:** **metalness/roughness.** Universal modern standard.
 Spec/gloss is dead in mainstream pipelines (deprecated in glTF, removed
@@ -407,25 +408,26 @@ from Substance Designer's defaults).
 **Basher's choice:** **unitless multiplier in v0.5; lumens/lux in P4+
 (physical mode flag).** Status: **DECIDED v0.5; PARTIAL** for P4.
 
-| App        | Default                                              |
-| ---------- | ---------------------------------------------------- |
-| Blender    | watts (Cycles physical) or unitless (Eevee non-physical) |
-| Maya       | unitless (legacy) → lumens (Arnold physical)         |
-| 3ds Max    | candela / lumens (mr/Arnold physical)                |
-| Cinema 4D  | lumens / unitless toggle                             |
-| Houdini    | watts / lumens / unitless                            |
+| App       | Default                                                  |
+| --------- | -------------------------------------------------------- |
+| Blender   | watts (Cycles physical) or unitless (Eevee non-physical) |
+| Maya      | unitless (legacy) → lumens (Arnold physical)             |
+| 3ds Max   | candela / lumens (mr/Arnold physical)                    |
+| Cinema 4D | lumens / unitless toggle                                 |
+| Houdini   | watts / lumens / unitless                                |
 
-| Engine     | Default                                              |
-| ---------- | ---------------------------------------------------- |
-| Unity HDRP | lumens (physical) / unitless (legacy URP)            |
-| Unreal     | lumens (physical) / unitless (legacy)                |
-| Godot      | lumens                                               |
-| glTF 2.0   | **lumens** (KHR_lights_punctual extension)           |
-| THREE.js   | unitless (`Light.intensity` is a multiplier)         |
+| Engine     | Default                                      |
+| ---------- | -------------------------------------------- |
+| Unity HDRP | lumens (physical) / unitless (legacy URP)    |
+| Unreal     | lumens (physical) / unitless (legacy)        |
+| Godot      | lumens                                       |
+| glTF 2.0   | **lumens** (KHR_lights_punctual extension)   |
+| THREE.js   | unitless (`Light.intensity` is a multiplier) |
 
 **Recommendation:** start unitless (matches THREE, simpler authoring),
 add a "physical mode" toggle in P4 that interprets values as lumens
-+ scales by the engine's physical unit. Document the scale clearly.
+
+- scales by the engine's physical unit. Document the scale clearly.
 
 **Why not lumens day one:** the user types "make the sun intensity 5";
 they expect a 5x multiplier, not 5 lumens (which is dim). Physical mode
@@ -443,20 +445,20 @@ and sRGB display.
 **Basher's choice:** **ACES filmic (default)** with selectable presets.
 Status: **DECIDED** (PostFx.tsx).
 
-| App        | Default                              | Available                                |
-| ---------- | ------------------------------------ | ---------------------------------------- |
-| Blender    | AgX (3.6+) or Filmic (older)         | AgX, Filmic, Standard, Khronos PBR Neutral |
-| Maya       | aiStandard / Reinhard                | ACES, Reinhard, Hable, custom OCIO      |
-| 3ds Max    | ACES (Arnold)                        | ACES, Reinhard, custom                   |
-| Cinema 4D  | ACES                                 | ACES, Reinhard, others via Redshift      |
-| Houdini    | Reinhard (default), ACES popular     | ACES, AgX, Reinhard, custom OCIO         |
+| App       | Default                          | Available                                  |
+| --------- | -------------------------------- | ------------------------------------------ |
+| Blender   | AgX (3.6+) or Filmic (older)     | AgX, Filmic, Standard, Khronos PBR Neutral |
+| Maya      | aiStandard / Reinhard            | ACES, Reinhard, Hable, custom OCIO         |
+| 3ds Max   | ACES (Arnold)                    | ACES, Reinhard, custom                     |
+| Cinema 4D | ACES                             | ACES, Reinhard, others via Redshift        |
+| Houdini   | Reinhard (default), ACES popular | ACES, AgX, Reinhard, custom OCIO           |
 
-| Engine     | Default                              |
-| ---------- | ------------------------------------ |
-| Unity HDRP | ACES (URP: Neutral/ACES toggle)      |
-| Unreal     | ACES                                 |
-| Godot      | Filmic (default), ACES, Reinhard     |
-| THREE.js   | None (set via `gl.toneMapping`)      |
+| Engine     | Default                          |
+| ---------- | -------------------------------- |
+| Unity HDRP | ACES (URP: Neutral/ACES toggle)  |
+| Unreal     | ACES                             |
+| Godot      | Filmic (default), ACES, Reinhard |
+| THREE.js   | None (set via `gl.toneMapping`)  |
 
 **Recommendation:** **ACES** as v0.5 default (matches Unreal, Unity,
 modern Maya/Max/C4D). AgX as a preset (Blender 3.6+ shifted; some users
@@ -473,21 +475,21 @@ content (P5+).
 
 **Basher's choice:** **XYZ.** Status: **DECIDED** (THREE's `Euler` default).
 
-| App        | Default order                |
-| ---------- | ---------------------------- |
-| Blender    | XYZ (per-object configurable to ZYX/ZXY/...) |
-| Maya       | XYZ (per-object configurable) |
-| 3ds Max    | XYZ                          |
-| Cinema 4D  | HPB (Heading-Pitch-Bank, custom) — converts to XYZ for export |
-| Houdini    | XYZ                          |
+| App       | Default order                                                 |
+| --------- | ------------------------------------------------------------- |
+| Blender   | XYZ (per-object configurable to ZYX/ZXY/...)                  |
+| Maya      | XYZ (per-object configurable)                                 |
+| 3ds Max   | XYZ                                                           |
+| Cinema 4D | HPB (Heading-Pitch-Bank, custom) — converts to XYZ for export |
+| Houdini   | XYZ                                                           |
 
-| Engine     | Default                              |
-| ---------- | ------------------------------------ |
-| Unity      | ZXY                                  |
-| Unreal     | YXZ (yaw-pitch-roll)                 |
-| Godot      | YXZ                                  |
-| glTF 2.0   | quaternion (no Euler order question) |
-| THREE.js   | XYZ (default for `Euler`)            |
+| Engine   | Default                              |
+| -------- | ------------------------------------ |
+| Unity    | ZXY                                  |
+| Unreal   | YXZ (yaw-pitch-roll)                 |
+| Godot    | YXZ                                  |
+| glTF 2.0 | quaternion (no Euler order question) |
+| THREE.js | XYZ (default for `Euler`)            |
 
 **Recommendation:** **XYZ.** Matches THREE default, Blender, Maya, Max,
 Houdini. Game-engine quirks (Unity ZXY, Unreal YXZ) come from their
@@ -511,17 +513,17 @@ THREE.Euler default applies).
 quaternion fields in DAG yet; lands in P3 if KeyframeChannel<quat> is
 added).
 
-| App / format | Order   |
-| ------------ | ------- |
-| Blender      | wxyz (.blend Python) |
-| Maya         | xyzw                 |
-| 3ds Max      | xyzw                 |
-| Cinema 4D    | xyzw                 |
-| Houdini      | xyzw                 |
-| glTF 2.0     | **xyzw** (spec-mandated) |
+| App / format | Order                       |
+| ------------ | --------------------------- |
+| Blender      | wxyz (.blend Python)        |
+| Maya         | xyzw                        |
+| 3ds Max      | xyzw                        |
+| Cinema 4D    | xyzw                        |
+| Houdini      | xyzw                        |
+| glTF 2.0     | **xyzw** (spec-mandated)    |
 | Unity        | xyzw (`Quaternion.x,y,z,w`) |
-| Unreal       | xyzw (`FQuat.X,Y,Z,W`) |
-| Godot        | xyzw                 |
+| Unreal       | xyzw (`FQuat.X,Y,Z,W`)      |
+| Godot        | xyzw                        |
 | THREE.js     | xyzw (`Quaternion.x,y,z,w`) |
 
 **Recommendation:** **xyzw.** Universal except Blender's Python API
@@ -540,20 +542,20 @@ intermediate values.
 **Basher's choice:** **TBD — bezier (with weighted handles), linear,
 step, hermite as options.** Status: **TBD** (P3).
 
-| App        | Defaults / available                          |
-| ---------- | --------------------------------------------- |
-| Blender    | bezier (default), linear, constant; weighted handles |
-| Maya       | spline (TCB / Hermite), linear, step, plateau, auto |
-| 3ds Max    | bezier (default), linear, step, custom curves |
-| Cinema 4D  | spline (custom), linear, step                 |
-| Houdini    | linear (default), bezier, cubic, ease, custom |
+| App       | Defaults / available                                 |
+| --------- | ---------------------------------------------------- |
+| Blender   | bezier (default), linear, constant; weighted handles |
+| Maya      | spline (TCB / Hermite), linear, step, plateau, auto  |
+| 3ds Max   | bezier (default), linear, step, custom curves        |
+| Cinema 4D | spline (custom), linear, step                        |
+| Houdini   | linear (default), bezier, cubic, ease, custom        |
 
-| Engine     | Default                                       |
-| ---------- | --------------------------------------------- |
-| Unity      | linear, hermite (default for Animation), step |
-| Unreal     | bezier (Sequencer default), linear, constant  |
-| Godot      | linear (default), nearest, cubic              |
-| glTF 2.0   | **linear, step, cubicspline** (spec-mandated) |
+| Engine   | Default                                       |
+| -------- | --------------------------------------------- |
+| Unity    | linear, hermite (default for Animation), step |
+| Unreal   | bezier (Sequencer default), linear, constant  |
+| Godot    | linear (default), nearest, cubic              |
+| glTF 2.0 | **linear, step, cubicspline** (spec-mandated) |
 
 **Recommendation for P3:** **bezier with weighted handles as the default
 authoring mode**, with linear/step/cubicspline as gamut for glTF
@@ -576,18 +578,18 @@ glTF spec. One step at the export boundary.
 **Basher's choice:** **4 (glTF default).** Status: **DEFERRED** (P2
 ships Character with no skinning yet; P3+ when we wire skinned meshes).
 
-| App / format | Default weights/vertex |
-| ------------ | --------------------- |
-| Blender      | 4 (glTF export); 32 internal max |
-| Maya         | 4 default; configurable        |
-| 3ds Max      | 4 default                      |
-| Cinema 4D    | 4 default                      |
-| Houdini      | 4 default                      |
-| glTF 2.0     | **4 per JOINTS_0/WEIGHTS_0 set; multiple sets (8, 12) supported via _1, _2 ...** |
-| Unity        | 4 (default), 8 (HDRP / DOTS-Animation) |
-| Unreal       | 8 (since 4.x)                  |
-| Godot 4      | 4 default; 8 supported         |
-| THREE.js     | 4 (`SkinnedMesh.skin.bones`)   |
+| App / format | Default weights/vertex                                                             |
+| ------------ | ---------------------------------------------------------------------------------- |
+| Blender      | 4 (glTF export); 32 internal max                                                   |
+| Maya         | 4 default; configurable                                                            |
+| 3ds Max      | 4 default                                                                          |
+| Cinema 4D    | 4 default                                                                          |
+| Houdini      | 4 default                                                                          |
+| glTF 2.0     | **4 per JOINTS_0/WEIGHTS_0 set; multiple sets (8, 12) supported via \_1, \_2 ...** |
+| Unity        | 4 (default), 8 (HDRP / DOTS-Animation)                                             |
+| Unreal       | 8 (since 4.x)                                                                      |
+| Godot 4      | 4 default; 8 supported                                                             |
+| THREE.js     | 4 (`SkinnedMesh.skin.bones`)                                                       |
 
 **Recommendation:** **4.** Default everywhere. Bumping to 8 needs
 runtime support + bigger vertex buffers; not worth it for v0.5.
@@ -604,19 +606,19 @@ LocomotionState foot-IK / hand-IK.
 **Basher's choice:** **TBD — probably FABRIK or two-bone analytic.**
 Status: **DEFERRED**.
 
-| App        | Default solver(s)                               |
-| ---------- | ----------------------------------------------- |
-| Blender    | iTaSC (default), Standard (CCD-like), Splat IK  |
-| Maya       | RP (Rotate-Plane), SC (Single-Chain), Spline IK |
-| 3ds Max    | HI (History-Independent, IK-FK blend) Solver    |
-| Cinema 4D  | XPresso IK / standard                           |
-| Houdini    | Two-Bone, Multi-Bone (FABRIK-flavor), Channel IK|
+| App       | Default solver(s)                                |
+| --------- | ------------------------------------------------ |
+| Blender   | iTaSC (default), Standard (CCD-like), Splat IK   |
+| Maya      | RP (Rotate-Plane), SC (Single-Chain), Spline IK  |
+| 3ds Max   | HI (History-Independent, IK-FK blend) Solver     |
+| Cinema 4D | XPresso IK / standard                            |
+| Houdini   | Two-Bone, Multi-Bone (FABRIK-flavor), Channel IK |
 
-| Engine     | Default                                         |
-| ---------- | ----------------------------------------------- |
-| Unity      | Animation Rigging package — FABRIK + two-bone   |
-| Unreal     | FBIK (Full-Body), Two-Bone IK, FABRIK           |
-| Godot      | FABRIK                                          |
+| Engine | Default                                       |
+| ------ | --------------------------------------------- |
+| Unity  | Animation Rigging package — FABRIK + two-bone |
+| Unreal | FBIK (Full-Body), Two-Bone IK, FABRIK         |
+| Godot  | FABRIK                                        |
 
 **Recommendation for P3 wire-up:** **FABRIK + two-bone analytic** as the
 two starter solvers. FABRIK for chains (arms, spines), analytic for
@@ -634,13 +636,13 @@ solver substitute) — it's older and more iteration-hungry.
 **Basher's choice:** **TBD — likely linear EXR for AOVs, sRGB PNG/JPEG
 for beauty preview.** Status: **TBD** (P4).
 
-| App        | Default beauty output | AOV output            |
-| ---------- | --------------------- | --------------------- |
-| Blender    | sRGB PNG (default Filmic) | linear EXR        |
-| Maya       | sRGB / linear toggle  | linear EXR (Arnold)   |
-| 3ds Max    | sRGB                  | linear EXR (Arnold/V-Ray) |
-| Cinema 4D  | sRGB                  | linear EXR            |
-| Houdini    | linear EXR (mantra/karma) | linear EXR        |
+| App       | Default beauty output     | AOV output                |
+| --------- | ------------------------- | ------------------------- |
+| Blender   | sRGB PNG (default Filmic) | linear EXR                |
+| Maya      | sRGB / linear toggle      | linear EXR (Arnold)       |
+| 3ds Max   | sRGB                      | linear EXR (Arnold/V-Ray) |
+| Cinema 4D | sRGB                      | linear EXR                |
+| Houdini   | linear EXR (mantra/karma) | linear EXR                |
 
 **Recommendation:** **linear EXR for AOVs (depth, normal, motion-vec,
 ID); sRGB-encoded PNG for beauty/preview**. Matches every DCC for
@@ -657,17 +659,17 @@ compositing-pipeline AOVs. Beauty-as-sRGB matches what users post.
 **Basher's choice:** **SMAA in P0 viewport.** Status: **DECIDED v0.5
 viewport**; render-time AA TBD in P4.
 
-| App / engine | Real-time viewport      | Render               |
-| ------------ | ----------------------- | -------------------- |
-| Blender      | OpenGL MSAA (workbench), Eevee TAA | Cycles supersample |
-| Maya         | viewport 2.0 MSAA       | Arnold supersample  |
-| 3ds Max      | viewport MSAA           | Arnold supersample  |
-| Cinema 4D    | viewport MSAA           | Standard / Redshift supersample |
-| Houdini      | OpenGL MSAA             | Mantra/Karma supersample |
-| Unity HDRP   | TAA (default)           | TAA / SMAA           |
-| Unreal       | TSR (UE5 default), TAA  | TSR                  |
-| Godot        | MSAA / TAA              | MSAA / FXAA          |
-| THREE.js     | None default (MSAA via `antialias: true`) | post-process |
+| App / engine | Real-time viewport                        | Render                          |
+| ------------ | ----------------------------------------- | ------------------------------- |
+| Blender      | OpenGL MSAA (workbench), Eevee TAA        | Cycles supersample              |
+| Maya         | viewport 2.0 MSAA                         | Arnold supersample              |
+| 3ds Max      | viewport MSAA                             | Arnold supersample              |
+| Cinema 4D    | viewport MSAA                             | Standard / Redshift supersample |
+| Houdini      | OpenGL MSAA                               | Mantra/Karma supersample        |
+| Unity HDRP   | TAA (default)                             | TAA / SMAA                      |
+| Unreal       | TSR (UE5 default), TAA                    | TSR                             |
+| Godot        | MSAA / TAA                                | MSAA / FXAA                     |
+| THREE.js     | None default (MSAA via `antialias: true`) | post-process                    |
 
 **Recommendation:** **SMAA for viewport** (sharp, predictable, no
 temporal artifacts). **TAA optional** for higher quality but may lose
@@ -686,13 +688,13 @@ numbering, codec id, and the prev-frame placeholder name?
 
 **Basher's choice:**
 
-| Decision                  | Value                                           | Rationale |
-| ------------------------- | ----------------------------------------------- | --------- |
-| Stylized output color     | **sRGB PNG (rgba8)**                            | Matches raw passes (Beauty/Depth/Normal). ControlNet's input contract assumes sRGB; emitting linear here would force a per-pass conversion in the encoder. |
-| Frame numbering           | **`frame.toString().padStart(4, '0')` — 4-digit zero-pad** | Matches `framePath` in `runRenderJob.ts` so a beauty + stylized pair sit adjacent (`beauty_0000.png` next to `stylized_stylizedRealism_0000.png`). 4 digits cover up to 9999 frames (333s @ 30fps) — generous for v0.5 demos. |
-| WebCodecs codec id (Wave D) | **`'avc1.42E01F'`** at the seam, **`'h264'`** as user-facing label | `'avc1.42E01F'` = H.264 Baseline 3.1 — broadest player support. Surfacing the `avc1.*` literal in the UI confuses users; `'h264'` is the friendly label. |
-| Container (Wave D)        | **MP4 (H.264 in mp4 container)**                | Universal browser playback; user-shareable without conversion. AV1 / VP9 deferred until WebCodecs encode support stabilizes across browsers. |
-| Prev-frame placeholder    | **`prev_frame_image`**                          | The workflow JSON references this key; the execute layer fills it with frame N-1's stylized output (or a zero/black image on frame 0). The literal name appears in preset workflow JSON files; renaming it requires a coordinated migration of every preset. |
+| Decision                    | Value                                                              | Rationale                                                                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Stylized output color       | **sRGB PNG (rgba8)**                                               | Matches raw passes (Beauty/Depth/Normal). ControlNet's input contract assumes sRGB; emitting linear here would force a per-pass conversion in the encoder.                                                                                                   |
+| Frame numbering             | **`frame.toString().padStart(4, '0')` — 4-digit zero-pad**         | Matches `framePath` in `runRenderJob.ts` so a beauty + stylized pair sit adjacent (`beauty_0000.png` next to `stylized_stylizedRealism_0000.png`). 4 digits cover up to 9999 frames (333s @ 30fps) — generous for v0.5 demos.                                |
+| WebCodecs codec id (Wave D) | **`'avc1.42E01F'`** at the seam, **`'h264'`** as user-facing label | `'avc1.42E01F'` = H.264 Baseline 3.1 — broadest player support. Surfacing the `avc1.*` literal in the UI confuses users; `'h264'` is the friendly label.                                                                                                     |
+| Container (Wave D)          | **MP4 (H.264 in mp4 container)**                                   | Universal browser playback; user-shareable without conversion. AV1 / VP9 deferred until WebCodecs encode support stabilizes across browsers.                                                                                                                 |
+| Prev-frame placeholder      | **`prev_frame_image`**                                             | The workflow JSON references this key; the execute layer fills it with frame N-1's stylized output (or a zero/black image on frame 0). The literal name appears in preset workflow JSON files; renaming it requires a coordinated migration of every preset. |
 
 **Status:** DECIDED v0.5. Re-evaluate at v0.6 when meta-prompt-authored
 presets land — they may need additional placeholder names that get
@@ -705,6 +707,7 @@ same formula); `src/agent/strategy/presets/stylizedRealism.ts` (Wave C
 D-04, D-05.
 
 **Failure modes this catalogues:**
+
 - Renaming the placeholder in code without migrating the preset JSON
   → the preset substitutes the wrong key → ControlNet receives no
   prev-frame conditioning → output flickers between frames.

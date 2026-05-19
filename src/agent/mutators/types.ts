@@ -85,9 +85,7 @@ export interface MutatorContract {
   lossy?: LossyAspect[];
 }
 
-export type PreconditionResult =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type PreconditionResult = { ok: true } | { ok: false; reason: string };
 
 export interface MutatorDefinition<Spec = unknown> {
   /** Tool-call name (LLM surface). */

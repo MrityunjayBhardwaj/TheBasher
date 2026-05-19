@@ -21,10 +21,7 @@ import type { DagState } from '../../core/dag/state';
 import type { NodeId } from '../../core/dag/types';
 import type { StorageCapability } from '../../core/storage';
 import type { CompileWorkflowFn } from '../../render/dryRun';
-import {
-  runComfyUIWorkflow,
-  type RunComfyUIWorkflowReport,
-} from '../../render/runComfyUIWorkflow';
+import { runComfyUIWorkflow, type RunComfyUIWorkflowReport } from '../../render/runComfyUIWorkflow';
 import { useRenderJobsStore } from '../stores/renderJobsStore';
 
 export interface RunWorkflowDeps {
@@ -36,7 +33,11 @@ export interface RunWorkflowDeps {
 export type RunWorkflowResult =
   | { readonly status: 'completed'; readonly report: RunComfyUIWorkflowReport }
   | { readonly status: 'busy'; readonly workflowId: NodeId }
-  | { readonly status: 'failed'; readonly error: Error; readonly partialReport?: RunComfyUIWorkflowReport };
+  | {
+      readonly status: 'failed';
+      readonly error: Error;
+      readonly partialReport?: RunComfyUIWorkflowReport;
+    };
 
 /**
  * Run the ComfyUIWorkflow at `workflowNodeId` against the configured

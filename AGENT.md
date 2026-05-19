@@ -42,13 +42,13 @@ two memory models. The thesis collapses them by design.
 
 The five concrete commitments that fall out of this:
 
-| Commitment                    | Mechanism                                                    | Where enforced                |
-| ----------------------------- | ------------------------------------------------------------ | ----------------------------- |
-| Tool handlers return `Op[]`   | `ToolDefinition.handler: (args, ctx) => ToolResult`          | `src/agent/tools/types.ts`    |
-| Agent never dispatches direct | Result.ops flow through `useDiffStore.propose` → fork        | `src/agent/orchestrator.ts`   |
-| Diff is previewable           | `DiffOverlay` renders forked DAG semi-transparently in R3F   | `src/viewport/DiffOverlay.tsx`|
-| Accept = single undo entry    | `acceptSelectedOps` calls `dispatchAtomic` (one InverseOp)   | `src/agent/diff/store.ts`     |
-| Reject = zero state changes   | Fork is discarded; real DAG was never touched                | `src/agent/diff/forkedDag.ts` |
+| Commitment                    | Mechanism                                                  | Where enforced                 |
+| ----------------------------- | ---------------------------------------------------------- | ------------------------------ |
+| Tool handlers return `Op[]`   | `ToolDefinition.handler: (args, ctx) => ToolResult`        | `src/agent/tools/types.ts`     |
+| Agent never dispatches direct | Result.ops flow through `useDiffStore.propose` → fork      | `src/agent/orchestrator.ts`    |
+| Diff is previewable           | `DiffOverlay` renders forked DAG semi-transparently in R3F | `src/viewport/DiffOverlay.tsx` |
+| Accept = single undo entry    | `acceptSelectedOps` calls `dispatchAtomic` (one InverseOp) | `src/agent/diff/store.ts`      |
+| Reject = zero state changes   | Fork is discarded; real DAG was never touched              | `src/agent/diff/forkedDag.ts`  |
 
 These five together are the **vyapti V7** invariant: agent tool handlers
 return Ops, never call `dagStore.setState`. ALIGNED in P2.5.
@@ -122,7 +122,7 @@ Round 1 ships:
 ```jsonc
 [
   { "role": "system", "content": "Static rules + tool catalogue + op examples …" },
-  { "role": "user",   "content": "Context (DAG summary + selection block)\n\nUser request: …" }
+  { "role": "user", "content": "Context (DAG summary + selection block)\n\nUser request: …" },
 ]
 ```
 
@@ -150,12 +150,12 @@ guaranteed by the discriminated `ChatMessage` union in
 
 ### 3.2 Round budget
 
-| Mechanism            | Cap         | Source                         |
-| -------------------- | ----------- | ------------------------------ |
-| `MAX_ROUNDS`         | 4           | `orchestrator.ts:18`           |
-| `maxTurnTokens`      | 30,000      | `orchestrator.ts:19` (tunable) |
-| Per-stream timeout   | inherited from `fetch`/SSE — no separate timeout in v0.5 |
-| Abort signal         | `AbortController` wired from chat input |
+| Mechanism          | Cap                                                      | Source                         |
+| ------------------ | -------------------------------------------------------- | ------------------------------ |
+| `MAX_ROUNDS`       | 4                                                        | `orchestrator.ts:18`           |
+| `maxTurnTokens`    | 30,000                                                   | `orchestrator.ts:19` (tunable) |
+| Per-stream timeout | inherited from `fetch`/SSE — no separate timeout in v0.5 |
+| Abort signal       | `AbortController` wired from chat input                  |
 
 When the budget is exceeded mid-turn, the loop prints a cost-guard
 notice into the assistant bubble and stops. Already-streamed text and
@@ -212,12 +212,12 @@ every system prompt. That's a token bill that grows linearly with scene
 size. `dag.inspect` is opt-in: the model fetches what it needs when it
 needs it. The four scopes are graduated:
 
-| Scope    | Returns                                          | When the model picks it             |
-| -------- | ------------------------------------------------ | ----------------------------------- |
-| `all`    | Every node + outputs map                         | First contact / fresh session       |
-| `node`   | One specific node's params + I/O bindings        | Drill-down on a known ID            |
-| `output` | The `outputs` map (named anchors like `scene`)   | Need to find scene root             |
-| `types`  | Every registered node type's param/IO schema     | Constructing addNode for a new type |
+| Scope    | Returns                                        | When the model picks it             |
+| -------- | ---------------------------------------------- | ----------------------------------- |
+| `all`    | Every node + outputs map                       | First contact / fresh session       |
+| `node`   | One specific node's params + I/O bindings      | Drill-down on a known ID            |
+| `output` | The `outputs` map (named anchors like `scene`) | Need to find scene root             |
+| `types`  | Every registered node type's param/IO schema   | Constructing addNode for a new type |
 
 **Params:** `{ scope: 'all'|'node'|'output'|'types', nodeId?: string }`.
 Default scope is `all`.
@@ -240,7 +240,7 @@ through here.
 **Why this design:** there's exactly one mutation surface. If you wanted
 to rename a node, change a material color, and disconnect a child, all
 three go through `dag.exec`. The macros (mesh.add, library.import,
-walkTo, snapshot) are *also* implemented as Op[] producers — they exist
+walkTo, snapshot) are _also_ implemented as Op[] producers — they exist
 purely for ergonomics, not because they have privileged access.
 
 **Params:** `{ description: string, ops: Op[] }`. The `ops` array is
@@ -369,6 +369,7 @@ in the diff store.
 ### 5.1 "Add a red cube"
 
 **Round 1 — model emits:**
+
 ```jsonc
 { "role": "assistant",
   "tool_calls": [{ "id": "c1", "function": {
@@ -394,12 +395,21 @@ in the diff store.
 ### 5.2 "Look at the scene, then add a sphere next to whatever's selected"
 
 **Round 1 — model emits dag.inspect:**
+
 ```jsonc
-{ "role": "assistant", "content": "Let me see the scene first.",
-  "tool_calls": [{ "id": "c1", "function": {
-    "name": "dag.inspect",
-    "arguments": "{\"scope\":\"all\"}"
-  }}] }
+{
+  "role": "assistant",
+  "content": "Let me see the scene first.",
+  "tool_calls": [
+    {
+      "id": "c1",
+      "function": {
+        "name": "dag.inspect",
+        "arguments": "{\"scope\":\"all\"}",
+      },
+    },
+  ],
+}
 ```
 
 **Tool result (round 1):** the full DAG JSON. The model now sees the
@@ -407,6 +417,7 @@ selected node's params (selection block was already in round 1's user
 message via `buildContextBlock`, but dag.inspect surfaces full I/O too).
 
 **Round 2 — model emits dag.exec:**
+
 ```jsonc
 { "role": "assistant", "content": "I'll place a sphere at x=2 next to the selected cube.",
   "tool_calls": [{ "id": "c2", "function": {
@@ -429,15 +440,24 @@ short-circuits the inspect step when the user's request is "this", "it",
 
 **Round 1 — dag.inspect (the model needs both the character ID and the
 cube's position):**
+
 - Tool result lists `char1 (Character)` and `redCube1 (BoxMesh)
-  position: [0,1,0]`.
+position: [0,1,0]`.
 
 **Round 2 — character.walkTo:**
+
 ```jsonc
-{ "tool_calls": [{ "id": "c2", "function": {
-    "name": "character.walkTo",
-    "arguments": "{\"characterId\":\"char1\",\"worldPoint\":[0,0,0]}"
-  }}] }
+{
+  "tool_calls": [
+    {
+      "id": "c2",
+      "function": {
+        "name": "character.walkTo",
+        "arguments": "{\"characterId\":\"char1\",\"worldPoint\":[0,0,0]}",
+      },
+    },
+  ],
+}
 ```
 
 The macro emits the WalkPath addNode + LocomotionState reconnect. The
@@ -465,13 +485,14 @@ the reason it justifies its own document.
 > field added anywhere in Basher's DAG widens the agent's capabilities
 > without any change to the agent code.**
 
-Why: the agent surface is *derived* from the DAG, not coupled to it.
+Why: the agent surface is _derived_ from the DAG, not coupled to it.
 Three derivation paths:
 
 ### 6.1 Derivation #1 — `dag.inspect types` is the LLM's curriculum
 
 When the model calls `dag.inspect { scope: 'types' }`, it gets every
 registered NodeDefinition's:
+
 - type name
 - inputs (sockets + types + cardinalities)
 - outputs (sockets + types)
@@ -504,19 +525,19 @@ sees `Scatter×1, GltfAsset×3, Group×4` — proportionate context.
 
 ### 6.4 What this looks like phase by phase
 
-| Phase shipped | Nodes added                                          | Agent capability gained (no code change) |
-| ------------- | ---------------------------------------------------- | ----------------------------------------- |
-| P0 (done)     | Scene, BoxMesh, RenderOutput, ...                    | Spawn meshes, set transforms, render-pass scaffolding |
-| P1 (done)     | GltfAsset, Transform, Group, MaterialOverride, Scatter, Library | Drop assets, scatter geometry, override materials |
-| P2 (done)     | Character, Skeleton, AnimationClip, LocomotionState, Navmesh, WalkPath, TimeSource | Place characters, animate locomotion, navmesh-aware paths |
-| P2.6 (done)   | SphereMesh, all 4 light types with rotation+scale, EditorLights, AddMenu | Author lighting + mesh primitives via Add menu vocabulary |
-| **P2.5 v2 (this branch)** | + `dag.inspect`, `dag.exec` universals; mode + diff + cost guards | Agent now has full DAG visibility AND single mutation surface |
-| **P2.5.2 (this branch)** | + closure-preservation gate (V13); + `agent.identify` two-stage flow (B7); + Mutator catalog with five-gate validator (B8, V14); + strategy resources (V15); + opt-in telemetry | Agent surface now structurally rejects out-of-scope ops, surfaces ambiguity to the user explicitly, gates plans on contract preconditions, and pulls workflow guidance lazily — system prompt leaner; H19/H20/H21 mechanism class closed |
-| P3 (next)     | KeyframeChannel<T>, Curve<T>, AnimationLayer, Shot, Cut | **Agent can author keyframes, layered animations, shot lists** |
-| P4            | BeautyPass, DepthPass, NormalPass, AlbedoPass, IDPass, AlphaPass, MotionVectorPass, RenderJob | Agent can compose render graphs, trigger renders |
-| P5            | ComfyUIWorkflow, Prompt, VideoStitch                 | Agent can run AI restyle, estimate cost before dispatch |
-| P6            | SplatAsset, SplatRender, SplatScatter, SplatAsset4D  | Agent can place 3DGS assets, scatter splats |
-| P7            | (export-only — no new nodes, just a traversal)       | Agent can publish projects to PlayCanvas |
+| Phase shipped             | Nodes added                                                                                                                                                                     | Agent capability gained (no code change)                                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 (done)                 | Scene, BoxMesh, RenderOutput, ...                                                                                                                                               | Spawn meshes, set transforms, render-pass scaffolding                                                                                                                                                                                    |
+| P1 (done)                 | GltfAsset, Transform, Group, MaterialOverride, Scatter, Library                                                                                                                 | Drop assets, scatter geometry, override materials                                                                                                                                                                                        |
+| P2 (done)                 | Character, Skeleton, AnimationClip, LocomotionState, Navmesh, WalkPath, TimeSource                                                                                              | Place characters, animate locomotion, navmesh-aware paths                                                                                                                                                                                |
+| P2.6 (done)               | SphereMesh, all 4 light types with rotation+scale, EditorLights, AddMenu                                                                                                        | Author lighting + mesh primitives via Add menu vocabulary                                                                                                                                                                                |
+| **P2.5 v2 (this branch)** | + `dag.inspect`, `dag.exec` universals; mode + diff + cost guards                                                                                                               | Agent now has full DAG visibility AND single mutation surface                                                                                                                                                                            |
+| **P2.5.2 (this branch)**  | + closure-preservation gate (V13); + `agent.identify` two-stage flow (B7); + Mutator catalog with five-gate validator (B8, V14); + strategy resources (V15); + opt-in telemetry | Agent surface now structurally rejects out-of-scope ops, surfaces ambiguity to the user explicitly, gates plans on contract preconditions, and pulls workflow guidance lazily — system prompt leaner; H19/H20/H21 mechanism class closed |
+| P3 (next)                 | KeyframeChannel<T>, Curve<T>, AnimationLayer, Shot, Cut                                                                                                                         | **Agent can author keyframes, layered animations, shot lists**                                                                                                                                                                           |
+| P4                        | BeautyPass, DepthPass, NormalPass, AlbedoPass, IDPass, AlphaPass, MotionVectorPass, RenderJob                                                                                   | Agent can compose render graphs, trigger renders                                                                                                                                                                                         |
+| P5                        | ComfyUIWorkflow, Prompt, VideoStitch                                                                                                                                            | Agent can run AI restyle, estimate cost before dispatch                                                                                                                                                                                  |
+| P6                        | SplatAsset, SplatRender, SplatScatter, SplatAsset4D                                                                                                                             | Agent can place 3DGS assets, scatter splats                                                                                                                                                                                              |
+| P7                        | (export-only — no new nodes, just a traversal)                                                                                                                                  | Agent can publish projects to PlayCanvas                                                                                                                                                                                                 |
 
 The pattern: **agent code stays roughly fixed; node code is where
 intelligence accumulates.** This is THESIS §6 — eighty percent of
@@ -673,11 +694,13 @@ Aligned with THESIS Part VII (§37-47). The agent's deltas per phase:
 (BoxMesh.positionAnim, light.intensityAnim, etc.).
 
 **What the agent gets for free** (no agent code change):
+
 - Authoring keyframes via `dag.exec` with `addNode KeyframeChannel<vec3>` ops.
 - Composing animation layers (e.g., walk-cycle layer + look-at-target layer additively).
 - Constructing Shots and Cuts as DAG nodes — agent can describe the cut, build the shot.
 
 **New tools to add:**
+
 - `timeline.keyframe(targetNodeId, paramPath, time, value, easing?)` —
   ergonomic macro that creates the channel + connects time + connects to
   the target's `*Anim` socket. Same builder the dopesheet UI uses.
@@ -700,11 +723,13 @@ viewport, scrubs in dopesheet. "Frame the character + cube together"
 IDPass, AlphaPass, MotionVectorPass, RenderJob.
 
 **What the agent gets for free:**
+
 - Constructing render graphs via dag.exec (compose passes onto a
   Scene+Camera).
 - Reading render results for context (RenderOutput already shipped).
 
 **New tools:**
+
 - `render.shot(shotId)` — trigger a single shot's RenderJob.
 - `render.preview(passType)` — quick low-res preview of a single pass
   for context.
@@ -716,6 +741,7 @@ IDPass, AlphaPass, MotionVectorPass, RenderJob.
 **Node types added:** ComfyUIWorkflow, Prompt, VideoStitch.
 
 **New tools:**
+
 - `render.aiRestyle(workflowNodeId, frames?)` — execute the workflow.
   Cost preview enforced.
 - `prompt.suggest(scene)` — propose a stylized prompt from current scene
@@ -738,12 +764,14 @@ alone.
 **No new node types** (export is a traversal).
 
 **New tool:**
+
 - `publish.toPlayCanvas(projectName)` — bake the evaluated DAG to a
   PlayCanvas scene JSON + assets bundle.
 
 ### 8.6 P8 — Progressive UX + Demo
 
 **Agent deltas:**
+
 - Mode switcher integrates with the agent's mode pill — Director mode
   defaults agent to copilot, Pro to read-only, Simple to copilot with
   more aggressive auto-accept.
@@ -764,12 +792,12 @@ alone.
 
 ## A. Conventions
 
-| Quantity   | Storage (DAG params) | THREE.js seam        | UI display                      |
-| ---------- | -------------------- | -------------------- | ------------------------------- |
-| Position   | meters               | meters (passthrough) | meters                          |
-| Size       | meters               | meters (passthrough) | meters                          |
-| Rotation   | **degrees**          | radians (converted)  | degrees (Inspector + Gizmo)     |
-| Color      | CSS hex (`#rrggbb`)  | hex / Color          | swatch + hex                    |
+| Quantity | Storage (DAG params) | THREE.js seam        | UI display                  |
+| -------- | -------------------- | -------------------- | --------------------------- |
+| Position | meters               | meters (passthrough) | meters                      |
+| Size     | meters               | meters (passthrough) | meters                      |
+| Rotation | **degrees**          | radians (converted)  | degrees (Inspector + Gizmo) |
+| Color    | CSS hex (`#rrggbb`)  | hex / Color          | swatch + hex                |
 
 **Why degrees:** every modern DCC and game engine (Blender, Maya, 3ds Max,
 Cinema 4D, Houdini, Unity, Unreal, Godot) stores user-facing rotation as
@@ -797,16 +825,17 @@ any new units boundary or default value.
 ## B. Strategy resources catalog (Wave D)
 
 The system prompt is lean — rules + tool catalogue + Op shape examples
-+ a one-line conventions summary. Workflow guidance is fetched lazily
-via `agent.getStrategy({ topic })`. Five resources ship in v0.5:
 
-| Topic         | When the LLM should fetch it                                                |
-| ------------- | --------------------------------------------------------------------------- |
-| `units`       | The user / context mentions rotation degrees, position units, or hex colors |
-| `materials`   | The request is about material properties, MaterialOverride, PBR, color/roughness/metalness/emissive |
+- a one-line conventions summary. Workflow guidance is fetched lazily
+  via `agent.getStrategy({ topic })`. Five resources ship in v0.5:
+
+| Topic         | When the LLM should fetch it                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| `units`       | The user / context mentions rotation degrees, position units, or hex colors                               |
+| `materials`   | The request is about material properties, MaterialOverride, PBR, color/roughness/metalness/emissive       |
 | `lighting`    | Adding / tuning lights; choosing between Directional/Point/Spot/Area/Ambient; intensity scaling questions |
-| `cameras`     | FOV choice, framing, snapshot vs author, lens guidance                      |
-| `assetChoice` | Decision between `library.import`, `mesh.add`, and (P5+) AI-generation      |
+| `cameras`     | FOV choice, framing, snapshot vs author, lens guidance                                                    |
+| `assetChoice` | Decision between `library.import`, `mesh.add`, and (P5+) AI-generation                                    |
 
 The LLM picks via `agent.listStrategies()` (read-only metadata) then
 fetches a body with `agent.getStrategy({ topic: 'lighting' })`. New
@@ -836,25 +865,26 @@ content-carrying field.
 
 ## 9. References
 
-| Source                              | Topic                                                  |
-| ----------------------------------- | ------------------------------------------------------ |
-| `THESIS.md` §18-25                  | Agent thesis, modes, memory, guardrails                |
-| `THESIS.md` §41                     | P2.5 phase plan (this milestone)                       |
-| `THESIS.md` §50                     | Op system as the only mutation path (V1)               |
-| `.anvi/dharana.md` §B3              | Boundary observation targets, silent-failure modes     |
-| `.anvi/vyapti.md` V7, V11           | Tool handler purity, selection wiring                  |
-| `.anvi/hetvabhasa.md` H10, H17, H18, H19 | Zustand snapshot pitfalls, tool-call accumulator,
-                                      JSON-Schema converter, stale-snapshot in orchestrator     |
-| `.anvi/krama.md` K3                 | Agent tool dispatch lifecycle                           |
-| `src/agent/orchestrator.ts`         | The turn engine                                         |
-| `src/agent/transport/openai.ts`     | SSE + provider shim                                     |
-| `src/agent/tools/`                  | Six tool implementations                                |
-| `src/agent/diff/`                   | Fork + propose + accept/reject                          |
-| `src/app/AgentChat.tsx`             | Chat UI                                                 |
+| Source                                                | Topic                                              |
+| ----------------------------------------------------- | -------------------------------------------------- |
+| `THESIS.md` §18-25                                    | Agent thesis, modes, memory, guardrails            |
+| `THESIS.md` §41                                       | P2.5 phase plan (this milestone)                   |
+| `THESIS.md` §50                                       | Op system as the only mutation path (V1)           |
+| `.anvi/dharana.md` §B3                                | Boundary observation targets, silent-failure modes |
+| `.anvi/vyapti.md` V7, V11                             | Tool handler purity, selection wiring              |
+| `.anvi/hetvabhasa.md` H10, H17, H18, H19              | Zustand snapshot pitfalls, tool-call accumulator,  |
+| JSON-Schema converter, stale-snapshot in orchestrator |
+| `.anvi/krama.md` K3                                   | Agent tool dispatch lifecycle                      |
+| `src/agent/orchestrator.ts`                           | The turn engine                                    |
+| `src/agent/transport/openai.ts`                       | SSE + provider shim                                |
+| `src/agent/tools/`                                    | Six tool implementations                           |
+| `src/agent/diff/`                                     | Fork + propose + accept/reject                     |
+| `src/app/AgentChat.tsx`                               | Chat UI                                            |
 
 ---
 
 **Updates to this doc** are required whenever:
+
 - A tool is added or removed (update §4 catalogue + §6.4 phase table).
 - The wire format changes (update §3.1).
 - A limitation is closed (move from §7 to "shipped" line in §8).

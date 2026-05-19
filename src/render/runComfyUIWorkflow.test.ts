@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import {
-  StubComfyUICapability,
-  type ComfyInputs,
-  type ComfyWorkflowJson,
-} from '../core/comfy';
+import { StubComfyUICapability, type ComfyInputs, type ComfyWorkflowJson } from '../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
@@ -17,13 +13,15 @@ beforeEach(() => {
   __reseedAllNodesForTests();
 });
 
-function buildWorkflowState(opts: {
-  outputPath?: string;
-  frameStart?: number;
-  frameEnd?: number;
-  lastGoodFrame?: number;
-  presetId?: string;
-} = {}) {
+function buildWorkflowState(
+  opts: {
+    outputPath?: string;
+    frameStart?: number;
+    frameEnd?: number;
+    lastGoodFrame?: number;
+    presetId?: string;
+  } = {},
+) {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
   s = applyOp(s, {
@@ -107,7 +105,13 @@ function makeRecordingCompiler(): {
   observed: { frame: number; prev: string | null }[];
 } {
   const observed: { frame: number; prev: string | null }[] = [];
-  const compile: CompileWorkflowFn = async ({ presetId, prompt, passes, frame, prevFrameStylizedPath }) => {
+  const compile: CompileWorkflowFn = async ({
+    presetId,
+    prompt,
+    passes,
+    frame,
+    prevFrameStylizedPath,
+  }) => {
     observed.push({ frame, prev: prevFrameStylizedPath ?? null });
     const workflowJson: ComfyWorkflowJson = {
       preset: presetId,
@@ -192,7 +196,11 @@ describe('runComfyUIWorkflow (Wave B1 — execute side)', () => {
 
     // Run 1: stub configured to throw on the third submit (frames 0, 1, 2).
     const failingCap = new StubComfyUICapability({
-      errorQueue: [undefined as unknown as Error, undefined as unknown as Error, new Error('comfy crashed')],
+      errorQueue: [
+        undefined as unknown as Error,
+        undefined as unknown as Error,
+        new Error('comfy crashed'),
+      ],
     });
     // Filter out the `undefined` placeholders by filtering errorQueue for
     // real Error objects: empty placeholders are skipped via the test-

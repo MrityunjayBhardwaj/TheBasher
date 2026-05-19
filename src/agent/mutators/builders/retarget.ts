@@ -19,10 +19,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import type { AnimationKeyframe, BoneSpec } from '../../../nodes/types';
 import { retargetClip } from '../../../core/import/retarget';
-import {
-  getBoneNameMapPreset,
-  listBoneNameMapPresets,
-} from '../../../core/import/boneNameMaps';
+import { getBoneNameMapPreset, listBoneNameMapPresets } from '../../../core/import/boneNameMaps';
 
 const RetargetSpec = z.object({
   sourceClipId: z.string().min(1),
@@ -66,35 +63,46 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   },
   preconditions(spec, _closure, state) {
     const sourceClip = state.nodes[spec.sourceClipId];
-    if (!sourceClip) return { ok: false, reason: `sourceClipId "${spec.sourceClipId}" not in DAG.` };
+    if (!sourceClip)
+      return { ok: false, reason: `sourceClipId "${spec.sourceClipId}" not in DAG.` };
     if (sourceClip.type !== 'AnimationClip') {
-      return { ok: false, reason: `sourceClipId "${spec.sourceClipId}" is ${sourceClip.type}; expected AnimationClip.` };
+      return {
+        ok: false,
+        reason: `sourceClipId "${spec.sourceClipId}" is ${sourceClip.type}; expected AnimationClip.`,
+      };
     }
     const sourceSkel = state.nodes[spec.sourceSkeletonId];
-    if (!sourceSkel) return { ok: false, reason: `sourceSkeletonId "${spec.sourceSkeletonId}" not in DAG.` };
+    if (!sourceSkel)
+      return { ok: false, reason: `sourceSkeletonId "${spec.sourceSkeletonId}" not in DAG.` };
     if (sourceSkel.type !== 'Skeleton') {
       return { ok: false, reason: `sourceSkeletonId is ${sourceSkel.type}; expected Skeleton.` };
     }
     const targetSkel = state.nodes[spec.targetSkeletonId];
-    if (!targetSkel) return { ok: false, reason: `targetSkeletonId "${spec.targetSkeletonId}" not in DAG.` };
+    if (!targetSkel)
+      return { ok: false, reason: `targetSkeletonId "${spec.targetSkeletonId}" not in DAG.` };
     if (targetSkel.type !== 'Skeleton') {
       return { ok: false, reason: `targetSkeletonId is ${targetSkel.type}; expected Skeleton.` };
     }
     if (!findTimeSource(state)) {
       return {
         ok: false,
-        reason: 'No TimeSource node in DAG. Default projects seed `n_time`; restore one before retargeting.',
+        reason:
+          'No TimeSource node in DAG. Default projects seed `n_time`; restore one before retargeting.',
       };
     }
     if (!spec.mapPresetId && !spec.customMap) {
-      const knownIds = listBoneNameMapPresets().map((p) => p.id).join(', ');
+      const knownIds = listBoneNameMapPresets()
+        .map((p) => p.id)
+        .join(', ');
       return {
         ok: false,
         reason: `Either mapPresetId or customMap is required. Known presets: ${knownIds}.`,
       };
     }
     if (spec.mapPresetId && !getBoneNameMapPreset(spec.mapPresetId)) {
-      const knownIds = listBoneNameMapPresets().map((p) => p.id).join(', ');
+      const knownIds = listBoneNameMapPresets()
+        .map((p) => p.id)
+        .join(', ');
       return {
         ok: false,
         reason: `Unknown mapPresetId "${spec.mapPresetId}". Known: ${knownIds}.`,

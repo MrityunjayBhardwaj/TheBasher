@@ -38,7 +38,11 @@ export const listMutatorsTool: ToolDefinition<Record<string, never>> = {
     'tool names. Do not call "mutator.X" directly; use agent.proposePlan({ ' +
     'mutator: "mutator.X", spec: {...} }) instead. Read-only; call BEFORE ' +
     'proposing a plan to pick the right Mutator and copy its specExample shape.',
-  paramSchema: listMutatorsSchema as unknown as z.ZodType<Record<string, never>, z.ZodTypeDef, unknown>,
+  paramSchema: listMutatorsSchema as unknown as z.ZodType<
+    Record<string, never>,
+    z.ZodTypeDef,
+    unknown
+  >,
   handler(_args, _ctx: ToolContext): ToolResult {
     return {
       ops: [],

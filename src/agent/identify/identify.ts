@@ -145,8 +145,9 @@ export function identify(
   const colorHex = inferColor(q);
   const hadColor = colorHex !== null;
   const colorMatched = colorHex
-    ? (typeMatched.length > 0 ? typeMatched : Object.values(state.nodes).map(toCandidate))
-        .filter((c) => colorsInSameFamily(nodeColorHex(state.nodes[c.id]), colorHex))
+    ? (typeMatched.length > 0 ? typeMatched : Object.values(state.nodes).map(toCandidate)).filter(
+        (c) => colorsInSameFamily(nodeColorHex(state.nodes[c.id]), colorHex),
+      )
     : null;
 
   // Conjunction logic: when the query supplies BOTH a color and a type,
@@ -463,11 +464,7 @@ function colorsInSameFamily(a: string | null, b: string | null): boolean {
   // brown(#a52a2a, s~0.55) vs red(#ff0000, s 1.0) → Δs 0.45 → REJECTED.
   // salmon(#fa8072, s~0.93) → Δs 0.07 → still MATCHES (intentional —
   // salmon is reddish; a user asking for "red" expects salmon included).
-  return (
-    hueDistance(A.h, B.h) <= 25 &&
-    Math.abs(A.l - B.l) < 0.3 &&
-    Math.abs(A.s - B.s) < 0.3
-  );
+  return hueDistance(A.h, B.h) <= 25 && Math.abs(A.l - B.l) < 0.3 && Math.abs(A.s - B.s) < 0.3;
 }
 
 function nodeColorHex(node: Node | undefined): string | null {

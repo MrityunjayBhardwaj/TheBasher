@@ -22,10 +22,7 @@
 
 import { retargetClip as threeRetargetClip } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { AnimationClip as ThreeAnimationClip, SkinnedMesh } from 'three';
-import type {
-  AnimationKeyframe,
-  BoneSpec,
-} from '../../nodes/types';
+import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import {
   bonesToSpec,
   clipToKeyframes,
@@ -68,12 +65,8 @@ export interface RetargetResult {
  * Pure: same inputs → same output. No DOM / clock side effects.
  */
 export function retargetClip(args: RetargetArgs): RetargetResult {
-  const { skeleton: sourceSkeleton, bones: sourceBoneObjs } = specToThreeSkeleton(
-    args.sourceBones,
-  );
-  const { skeleton: targetSkeleton, bones: targetBoneObjs } = specToThreeSkeleton(
-    args.targetBones,
-  );
+  const { skeleton: sourceSkeleton, bones: sourceBoneObjs } = specToThreeSkeleton(args.sourceBones);
+  const { skeleton: targetSkeleton, bones: targetBoneObjs } = specToThreeSkeleton(args.targetBones);
 
   // SkeletonUtils.retargetClip wants Object3D-like wrappers exposing
   // `.skeleton` and `.isObject3D=true`. SkinnedMesh fits. Add the root
@@ -100,12 +93,9 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   for (const [sourceName, targetName] of Object.entries(args.nameMap)) {
     targetToSource[targetName] = sourceName;
   }
-  const retargeted: ThreeAnimationClip = threeRetargetClip(
-    targetWrap,
-    sourceWrap,
-    sourceClip,
-    { names: targetToSource },
-  );
+  const retargeted: ThreeAnimationClip = threeRetargetClip(targetWrap, sourceWrap, sourceClip, {
+    names: targetToSource,
+  });
 
   const targetSpecs = bonesToSpec(targetBoneObjs);
   const keyframes = clipToKeyframes(retargeted, targetSpecs);

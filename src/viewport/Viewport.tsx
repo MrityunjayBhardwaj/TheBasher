@@ -51,9 +51,7 @@ function EditorOrbit() {
     const controls = e?.target;
     if (!controls) return;
     const distance = controls.object.position.distanceTo(controls.target);
-    useViewportStore
-      .getState()
-      .setCameraZoom(cameraDistanceToZoomPercent(distance));
+    useViewportStore.getState().setCameraZoom(cameraDistanceToZoomPercent(distance));
   }, []);
 
   return (

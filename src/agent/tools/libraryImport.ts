@@ -14,11 +14,7 @@ export const libraryImportSchema = z.object({
   assetRef: z
     .string()
     .min(1, 'assetRef is required — use the library-relative path e.g. assets/cube.gltf'),
-  position: z
-    .array(z.number())
-    .length(3)
-    .default([0, 0, 0])
-    .describe('Position as [x, y, z]'),
+  position: z.array(z.number()).length(3).default([0, 0, 0]).describe('Position as [x, y, z]'),
 });
 
 export type LibraryImportArgs = z.infer<typeof libraryImportSchema>;
@@ -28,7 +24,7 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
   description:
     'Import a library asset into the scene. ' +
     'Returns an Op[] that creates a GltfAsset + Transform + Group chain ' +
-    'and wires it into the Scene aggregator\'s children.',
+    "and wires it into the Scene aggregator's children.",
   paramSchema: libraryImportSchema,
   handler(args: LibraryImportArgs, ctx: ToolContext): ToolResult {
     const sceneRef = ctx.dagState.outputs.scene;

@@ -61,13 +61,13 @@ describe('retargetClip', () => {
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: TARGET_BONES,
-      nameMap: { 'mixamorig_Hips': 'hips', 'mixamorig_Spine': 'spine' },
+      nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
     });
     const b = retargetClip({
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: TARGET_BONES,
-      nameMap: { 'mixamorig_Hips': 'hips', 'mixamorig_Spine': 'spine' },
+      nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
     });
     expect(a.clipParams).toEqual(b.clipParams);
   });
@@ -81,7 +81,7 @@ describe('retargetClip', () => {
       sourceBones: orphanSource,
       sourceClip: { name: 'wag', duration: 1, keyframes: [] },
       targetBones: TARGET_BONES,
-      nameMap: { 'mixamorig_Hips': 'hips', 'mixamorig_Spine': 'spine' },
+      nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
     });
     expect(result.unmappedSourceBones).toContain('mixamorig_Tail');
   });
@@ -95,7 +95,7 @@ describe('retargetClip', () => {
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: richerTarget,
-      nameMap: { 'mixamorig_Hips': 'hips', 'mixamorig_Spine': 'spine' },
+      nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
     });
     expect(result.unboundTargetBones).toContain('tail');
   });

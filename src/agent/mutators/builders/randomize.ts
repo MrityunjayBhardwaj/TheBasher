@@ -173,9 +173,7 @@ function sampleRotationDelta(
   range: RotationRangeT,
 ): { axis: 'x' | 'y' | 'z'; deltaDeg: number } {
   const axis: 'x' | 'y' | 'z' =
-    range.axis === 'random'
-      ? (['x', 'y', 'z'] as const)[Math.floor(rng() * 3)]
-      : range.axis;
+    range.axis === 'random' ? (['x', 'y', 'z'] as const)[Math.floor(rng() * 3)] : range.axis;
   const deltaDeg = randRange(rng, range.degRange[0], range.degRange[1]);
   return { axis, deltaDeg };
 }
@@ -307,8 +305,7 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
   // order is `for (target of targetSelectors) for (prop of properties)` in
   // spec order so the seed sequence is byte-stable across hosts/runs.
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const rng: () => number =
-      spec.seed !== undefined ? mulberry32(spec.seed) : Math.random;
+    const rng: () => number = spec.seed !== undefined ? mulberry32(spec.seed) : Math.random;
     const ops: Op[] = [];
 
     for (const id of spec.targetSelectors) {

@@ -100,9 +100,7 @@ function ToolButton({
 }): ReactNode {
   const base =
     'flex h-7 w-7 items-center justify-center rounded text-sm font-mono transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
-  const state = active
-    ? 'bg-bg-1 text-accent'
-    : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
+  const state = active ? 'bg-bg-1 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
   return (
     <button
       type="button"
@@ -135,9 +133,7 @@ function Chip({
 }): ReactNode {
   const base =
     'rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
-  const state = active
-    ? 'bg-accent/25 text-accent'
-    : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
+  const state = active ? 'bg-accent/25 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
   return (
     <button
       type="button"

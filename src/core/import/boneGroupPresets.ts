@@ -46,17 +46,7 @@ const UPPER_BODY: BoneGroupPreset = {
 const LOWER_BODY: BoneGroupPreset = {
   id: 'lowerBody',
   name: 'Lower body',
-  bones: [
-    'hips',
-    'thigh.L',
-    'shin.L',
-    'foot.L',
-    'toe.L',
-    'thigh.R',
-    'shin.R',
-    'foot.R',
-    'toe.R',
-  ],
+  bones: ['hips', 'thigh.L', 'shin.L', 'foot.L', 'toe.L', 'thigh.R', 'shin.R', 'foot.R', 'toe.R'],
 };
 
 const ARMS_ONLY: BoneGroupPreset = {

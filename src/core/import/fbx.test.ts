@@ -70,11 +70,7 @@ describe('threeAdapter via FBX-shaped input', () => {
         return b;
       })(),
     ]);
-    const positionTrack = new VectorKeyframeTrack(
-      'Hips.position',
-      [0, 1],
-      [0, 0, 0, 0, 2, 0],
-    );
+    const positionTrack = new VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 0, 2, 0]);
     const rotationTrack = new QuaternionKeyframeTrack(
       'Spine.quaternion',
       [0, 1],

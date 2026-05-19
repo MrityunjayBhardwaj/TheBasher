@@ -156,7 +156,12 @@ function findAdjacentKeyframeTime(direction: 'prev' | 'next'): number | null {
   return null;
 }
 
-export { nextKeyframesAfterInsert, buildKeyframeInsertOp, buildKeyframeDeleteOp, findAdjacentKeyframeTime };
+export {
+  nextKeyframesAfterInsert,
+  buildKeyframeInsertOp,
+  buildKeyframeDeleteOp,
+  findAdjacentKeyframeTime,
+};
 
 // Mode keys 1/2/3/4 → operational mode (UI-SPEC §6.2). Indexed list keeps
 // the binding declarative — adding a fifth mode is one entry, not a new

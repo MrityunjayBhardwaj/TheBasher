@@ -72,9 +72,7 @@ export function paramAnimationState(
     if (!node.type.startsWith('KeyframeChannel')) continue;
     const p = (node.params ?? {}) as ChannelParams;
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
-    keyframes = Array.isArray(p.keyframes)
-      ? (p.keyframes as ChannelKeyframe[])
-      : [];
+    keyframes = Array.isArray(p.keyframes) ? (p.keyframes as ChannelKeyframe[]) : [];
     break;
   }
 
@@ -87,8 +85,6 @@ export function paramAnimationState(
   //     a second equality rule (D-03 is exact-float; this is grid slack).
   const halfFrameSec = 0.5 / FRAMES_PER_SECOND;
   const playheadSec = currentFrame / FRAMES_PER_SECOND;
-  const onKey = keyframes.some(
-    (kf) => Math.abs(kf.time - playheadSec) <= halfFrameSec + 1e-9,
-  );
+  const onKey = keyframes.some((kf) => Math.abs(kf.time - playheadSec) <= halfFrameSec + 1e-9);
   return onKey ? 'on-key' : 'animated';
 }

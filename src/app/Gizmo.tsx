@@ -266,8 +266,8 @@ export function Gizmo() {
       };
       const w = window as unknown as Record<string, unknown>;
       w.__basher_gizmo = () =>
-        (groupNode as unknown as { userData: Record<string, unknown> }).userData
-          .__basher_gizmo ?? null;
+        (groupNode as unknown as { userData: Record<string, unknown> }).userData.__basher_gizmo ??
+        null;
     }
   }, [groupNode, manip, isCharacter, selectedId, seconds, frame, normalized, playing]);
 
@@ -302,8 +302,7 @@ export function Gizmo() {
     if (!selectedId) return false;
     const state = useDagStore.getState().state;
     const grabFrame = useTimeStore.getState().frame;
-    const animated =
-      paramAnimationState(state, selectedId, paramPath, grabFrame) !== 'none';
+    const animated = paramAnimationState(state, selectedId, paramPath, grabFrame) !== 'none';
     if (!animated) return false; // un-animated → raw setParam, byte-identical
 
     // D-03 paused gate: during playback the gizmo is display-follow only.

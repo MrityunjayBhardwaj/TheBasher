@@ -60,7 +60,10 @@ test('H16#1 token bar is scrolled into view after messages fill the drawer', asy
     const w = window as unknown as AgentSessionWindow;
     const store = w.__basher_agent_session!;
     store.getState().addMessage({ role: 'user', content: 'add a new cube' });
-    store.getState().addMessage({ role: 'assistant', content: 'I added a CubeMesh node. You can see it in the viewport.' });
+    store.getState().addMessage({
+      role: 'assistant',
+      content: 'I added a CubeMesh node. You can see it in the viewport.',
+    });
     store.getState().addTokenUsage(631, 15);
   });
 
