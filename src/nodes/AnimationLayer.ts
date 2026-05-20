@@ -57,6 +57,12 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
   // SocketTypeName is reserved for future layer-mixer nodes.
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
   inspectorSections: ['animate'],
+  // TODO(post-7.5): TransformClipValue composition. The patchTarget
+  // dispatch below switches on KeyframeChannel.valueType today; a
+  // future seam adds a TransformClip branch that overlays per-target
+  // TRS onto the cloned scene before channel patches apply. See
+  // PLAN.md Wave E5 + RESEARCH Q4 — implementation deferred to the
+  // glTF-child gizmo follow-up (#91).
   evaluate(params, inputs: ResolvedInputs) {
     const target = (inputs.target as SceneChild | undefined) ?? null;
     const channelInput = inputs.animation;

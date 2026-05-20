@@ -478,6 +478,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // Meshopt is already drei-default-on; nothing to do for it.
   const extendLoader = useGltfLoaderExtend();
   const gltf = useGLTF(url, '/draco/', true, extendLoader) as unknown as { scene: THREE.Group };
+  // P7.5 R1: do NOT share the clone across instances — the per-child
+  // TRS override below mutates this Object3D in-place. useMemo with
+  // gltf.scene as dependency gives one clone per (component-instance,
+  // source-scene) pair, which is correct here.
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
   const shading = useViewportStore((s) => s.shading);
   useEffect(() => {
@@ -514,6 +518,27 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
     });
   }, [cloned, shading]);
+  // P7.5 — per-child TRS override (consumer side of the H40 boundary-pair).
+  // The DAG's TransformClip (sourced via ClipSelect → GltfAsset.transformClip
+  // input socket) is the producer; the renderer is the consumer. Walk
+  // gltf.scene by name, look up the matching evaluated TRS, and apply.
+  // Rotation arrives in degrees (B3 CHECKPOINT — SECTION-INVENTORY.md);
+  // convert at the THREE seam via degVec3ToRad (same call all other
+  // .rotation consumers in this file use — line 525, 426, 449).
+  useEffect(() => {
+    const clip = value.transformClip;
+    if (!clip) return;
+    for (const name of Object.keys(value.nodeNameMap)) {
+      const child = cloned.getObjectByName(name);
+      if (!child) continue;
+      const track = clip.tracks[name];
+      if (!track) continue;
+      child.position.set(track.position[0], track.position[1], track.position[2]);
+      const radRot = degVec3ToRad(track.rotation);
+      child.rotation.set(radRot[0], radRot[1], radRot[2]);
+      child.scale.set(track.scale[0], track.scale[1], track.scale[2]);
+    }
+  }, [cloned, value.transformClip, value.nodeNameMap]);
   return <primitive object={cloned} />;
 }
 

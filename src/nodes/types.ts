@@ -149,6 +149,24 @@ export interface SphereMeshValue {
 export interface GltfAssetValue {
   readonly kind: 'GltfAsset';
   readonly assetRef: string;
+  /**
+   * P7.5 — glTF TRS animation extraction (issue #81).
+   *
+   * Filled in by `buildGltfImportOps` at drop time: a sanitised
+   * scene-node-name → DAG target id map. `GltfAssetR` walks
+   * `gltf.scene` via `getObjectByName` and overrides per-child TRS
+   * with `transformClip.tracks[name]`. Default `{}` so pre-7.5
+   * projects (and the static-only fixture path) hydrate as no-ops.
+   */
+  readonly nodeNameMap: Readonly<Record<string, string>>;
+  /**
+   * The selected clip's evaluated TRS at the input Time, sourced from
+   * the connected `ClipSelect.out`. `null` when no animation is
+   * imported (degenerate path) OR when `selectedClipName` doesn't
+   * match any imported clip. The renderer treats null as "no
+   * override" — falls back to the cloned scene's static TRS.
+   */
+  readonly transformClip: TransformClipValue | null;
 }
 
 export interface TransformValue {
