@@ -26,7 +26,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { TransformClipValue, Vec3 } from './types';
+import type { TimeValue, TransformClipValue, Vec3 } from './types';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -56,6 +56,63 @@ export const TransformClipParams = z.object({
 });
 export type TransformClipParams = z.infer<typeof TransformClipParams>;
 
+type Keyframe = TransformClipParams['keyframes'][number];
+interface TRS {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function lerpVec3(a: Vec3, b: Vec3, t: number): Vec3 {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+
+/** Group keyframes by targetNodeId, sorted ascending by time. Pure. */
+function groupByTarget(keyframes: readonly Keyframe[]): Map<string, Keyframe[]> {
+  const map = new Map<string, Keyframe[]>();
+  for (const k of keyframes) {
+    const list = map.get(k.targetNodeId) ?? [];
+    list.push(k);
+    map.set(k.targetNodeId, list);
+  }
+  for (const list of map.values()) list.sort((a, b) => a.time - b.time);
+  return map;
+}
+
+/** Sample one target's piecewise-linear TRS at clip-time `t`. Clamps at endpoints.
+ *  Returns the keyframe verbatim when only one exists.
+ *  Rotation is interpolated component-wise on Euler degrees — RESEARCH Q3
+ *  acknowledges the singularity-crossing limitation; v0.5 AnimationClip
+ *  already accepts this for the same reason (cheap, no slerp cost). */
+function sampleTarget(track: Keyframe[], t: number): TRS {
+  // Single-keyframe + endpoint clamps mirror AnimationClip.ts:76-80
+  // (the bone sampler) — byte-faithful to keep the regression class
+  // surface unified.
+  const last = track[track.length - 1];
+  if (t <= track[0].time)
+    return { position: track[0].position, rotation: track[0].rotation, scale: track[0].scale };
+  if (t >= last.time)
+    return { position: last.position, rotation: last.rotation, scale: last.scale };
+  for (let i = 0; i < track.length - 1; i++) {
+    const a = track[i];
+    const b = track[i + 1];
+    if (t >= a.time && t <= b.time) {
+      const span = b.time - a.time;
+      const u = span > 0 ? (t - a.time) / span : 0;
+      return {
+        position: lerpVec3(a.position, b.position, u),
+        rotation: lerpVec3(a.rotation, b.rotation, u),
+        scale: lerpVec3(a.scale, b.scale, u),
+      };
+    }
+  }
+  return { position: last.position, rotation: last.rotation, scale: last.scale };
+}
+
 export const TransformClipNode: NodeDefinition<TransformClipParams, TransformClipValue> = {
   type: 'TransformClip',
   version: 1,
@@ -67,17 +124,36 @@ export const TransformClipNode: NodeDefinition<TransformClipParams, TransformCli
   },
   outputs: { out: { type: 'TransformClip', cardinality: 'single' } },
   inspectorSections: ['animate'],
-  evaluate(params, _inputs: ResolvedInputs): TransformClipValue {
-    // Wave A stub: shape-conformant empty value. The piecewise-linear
-    // sampler (using `params.keyframes` + `inputs.time`) lands in
-    // Wave B. Returning `tracks: {}` is intentional — the renderer
-    // (Wave E) treats absent target ids as "no override," which is
-    // the correct behavior for a not-yet-imported clip.
+  evaluate(params, inputs: ResolvedInputs): TransformClipValue {
+    const time = inputs.time as TimeValue | undefined;
+    const empty: TransformClipValue = {
+      kind: 'TransformClip',
+      name: params.name,
+      duration: params.duration,
+      tracks: {},
+    };
+    if (!time) return empty;
+    if (params.keyframes.length === 0) return empty;
+
+    // loop / clamp folding — byte-faithful to AnimationClip.ts:113-115.
+    const d = params.duration;
+    let t = time.seconds;
+    if (params.loop === 'loop') {
+      t = ((t % d) + d) % d;
+    } else {
+      t = Math.max(0, Math.min(d, t));
+    }
+
+    const tracks: Record<string, TRS> = {};
+    for (const [targetId, group] of groupByTarget(params.keyframes)) {
+      if (group.length === 0) continue;
+      tracks[targetId] = sampleTarget(group, t);
+    }
     return {
       kind: 'TransformClip',
       name: params.name,
       duration: params.duration,
-      tracks: {} as Readonly<Record<string, { position: Vec3; rotation: Vec3; scale: Vec3 }>>,
+      tracks,
     };
   },
 };
