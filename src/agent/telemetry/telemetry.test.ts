@@ -117,4 +117,66 @@ describe('telemetry recorder', () => {
     expect(events).toHaveLength(2);
     expect(events[0].sessionId).toBe(events[1].sessionId);
   });
+
+  // #17: sessionId now comes from crypto.randomUUID (in any env that
+  // exposes it — every browser + Node ≥ 14.17). Shape check is enough;
+  // we don't want to lock the test to a specific format if the platform
+  // hands us a longer id.
+  it('sessionId uses crypto.randomUUID when available (#17)', () => {
+    recordEvent({ kind: 'turn_start' });
+    const sessionId = readEvents()[0].sessionId;
+    const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    expect(sessionId).toMatch(uuidV4);
+  });
+
+  // #17: cross-tab killswitch propagation. Another tab toggles
+  // localStorage[KILLSWITCH_KEY] → fires a `storage` event on this tab
+  // → cachedDisabled invalidates → next `isTelemetryDisabled()` re-reads.
+  it("'storage' event invalidates the killswitch cache (#17)", () => {
+    // First call seeds the cache (and registers the listener lazily).
+    expect(isTelemetryDisabled()).toBe(false);
+
+    // Another tab writes the killswitch. Same-tab localStorage.setItem
+    // does not fire the `storage` event by spec, so we simulate the
+    // cross-tab signal explicitly: set the underlying storage and
+    // dispatch the event manually.
+    localStorage.setItem('basher.telemetry.disabled', 'true');
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'basher.telemetry.disabled',
+        newValue: 'true',
+        oldValue: null,
+        storageArea: localStorage,
+      }),
+    );
+
+    expect(isTelemetryDisabled()).toBe(true);
+  });
+
+  it("'storage' event for unrelated keys does NOT invalidate the cache (#17)", () => {
+    // Seed: telemetry currently disabled. Cache is `true`.
+    localStorage.setItem('basher.telemetry.disabled', 'true');
+    __resetTelemetryCacheForTests();
+    expect(isTelemetryDisabled()).toBe(true);
+
+    // Another tab writes an unrelated key. Cache should NOT invalidate.
+    // (If it did, the next isTelemetryDisabled() would still report
+    // true because we left the underlying value set — but the contract
+    // is "no invalidation work for unrelated keys," verified by
+    // observing the cache directly via a second flip below.)
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'some.other.key',
+        newValue: 'whatever',
+        oldValue: null,
+        storageArea: localStorage,
+      }),
+    );
+
+    // Same-tab clear of the killswitch — does NOT fire `storage`, so
+    // the cache must still report `true` from its prior seed. Proves
+    // the unrelated-key event above didn't invalidate.
+    localStorage.removeItem('basher.telemetry.disabled');
+    expect(isTelemetryDisabled()).toBe(true);
+  });
 });
