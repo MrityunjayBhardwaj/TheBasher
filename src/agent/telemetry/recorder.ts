@@ -49,14 +49,40 @@ const TOOL_ALLOWLIST = new Set<string>([
 
 let cachedSessionId: string | null = null;
 let cachedDisabled: boolean | null = null;
+let storageListenerRegistered = false;
 
 /**
  * Reset the cached killswitch decision. Call from test setup so changes
  * to localStorage / env are reflected.
+ *
+ * `storageListenerRegistered` is intentionally NOT reset — the
+ * `addEventListener` call is guarded by this flag to prevent duplicate
+ * listeners stacking up across test cycles. Production code reaches the
+ * listener exactly once per page load.
  */
 export function __resetTelemetryCacheForTests(): void {
   cachedSessionId = null;
   cachedDisabled = null;
+}
+
+/**
+ * Lazily attach a single `'storage'` listener that invalidates the
+ * killswitch cache when another tab/window toggles
+ * `localStorage[KILLSWITCH_KEY]`. The `'storage'` event only fires for
+ * cross-tab changes (browsers do not dispatch it for same-tab writes),
+ * which matches user intent: a user disabling telemetry in one tab
+ * expects every other open tab to honor it without a reload.
+ */
+function ensureStorageListener(): void {
+  if (storageListenerRegistered) return;
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+  window.addEventListener('storage', (event: StorageEvent) => {
+    // `event.key === null` is the localStorage.clear() signal.
+    if (event.key === null || event.key === KILLSWITCH_KEY) {
+      cachedDisabled = null;
+    }
+  });
+  storageListenerRegistered = true;
 }
 
 function getEnvFlag(): boolean {
@@ -82,6 +108,7 @@ function getLocalStorageFlag(): boolean {
 }
 
 export function isTelemetryDisabled(): boolean {
+  ensureStorageListener();
   if (cachedDisabled !== null) return cachedDisabled;
   cachedDisabled = getEnvFlag() || getLocalStorageFlag();
   return cachedDisabled;
@@ -89,11 +116,20 @@ export function isTelemetryDisabled(): boolean {
 
 function getSessionId(): string {
   if (cachedSessionId) return cachedSessionId;
-  // Lightweight tab-scoped id. Not crypto.randomUUID — Basher's
-  // `pure: true` lint bans crypto.randomUUID inside src/nodes/, but
-  // this isn't a node evaluator. We use a sufficient-entropy random
-  // string for telemetry deduplication only — the value is opaque.
-  cachedSessionId = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  // crypto.randomUUID is allowed here. The `pure: true` lint rule that
+  // forbids it (eslint.config) is scoped to `src/nodes/**` evaluators
+  // (V2 determinism — node outputs must be a function of params+inputs).
+  // The telemetry recorder is in `src/agent/`, outside that scope; a
+  // session id is *inherently* non-deterministic (it identifies one
+  // runtime), so a crypto-strong source is the right choice.
+  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    cachedSessionId = cryptoApi.randomUUID();
+  } else {
+    // Pre-Node-20 / non-secure-context fallback. Still session-scoped,
+    // still no-PII — just lower entropy than the primary path.
+    cachedSessionId = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
   return cachedSessionId;
 }
 
