@@ -49,7 +49,19 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       throw new Error('camera.snapshot: Scene.camera input has unexpected list cardinality');
     }
 
-    const newId = `cam_agent_${Date.now().toString(36)}`;
+    // Deterministic id (V2 / THESIS §48): content-addressed off the
+    // tool args + the target scene node so the twice-call determinism
+    // test holds byte-faithfully even when the two calls cross a
+    // millisecond boundary (latent flake exposed under CI load — was
+    // `Date.now().toString(36)`, which silently failed determinism
+    // whenever the two calls landed in different ms).
+    const idKey = JSON.stringify([sceneRef.node, args.fov, args.position, args.lookAt]);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < idKey.length; i++) {
+      h ^= idKey.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    const newId = `cam_agent_${h.toString(16).padStart(8, '0')}`;
     const ops: Op[] = [];
 
     if (existing) {
