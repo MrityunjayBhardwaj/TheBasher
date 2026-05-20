@@ -65,6 +65,8 @@ export type SocketTypeName =
   | 'Skeleton'
   | 'PosedSkeleton'
   | 'AnimationClip'
+  // P7.5 — glTF TRS animation extraction (THESIS §42, issue #81)
+  | 'TransformClip'
   | 'Navmesh'
   | 'WalkPath'
   | 'LocomotionState'

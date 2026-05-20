@@ -45,6 +45,7 @@ const ALL_TYPES = [
   'BoneNameMap',
   'BoxMesh',
   'Character',
+  'ClipSelect',
   'ComfyUIWorkflow',
   'Cut',
   'DepthPass',
@@ -75,6 +76,7 @@ const ALL_TYPES = [
   'SpotLight',
   'TimeSource',
   'Transform',
+  'TransformClip',
   'VideoStitch',
   'WalkPath',
 ];

@@ -244,6 +244,39 @@ export interface AnimationClipValue {
   readonly pose: PosedSkeletonValue;
 }
 
+/**
+ * P7.5 — glTF TRS animation clip extraction (issue #81).
+ *
+ * Scene-node-indexed counterpart to {@link AnimationClipValue} (which is
+ * bone-indexed and pairs with a Skeleton). A TransformClipValue is the
+ * sampled, per-target TRS that the renderer applies to children of a
+ * `gltf.scene` walk: `tracks[targetNodeId]` is the evaluated
+ * `{position, rotation, scale}` at the input Time. Targets without a
+ * keyframe at this sample-time are simply absent from the map — the
+ * renderer falls back to the original `gltf.scene` child's TRS for
+ * those.
+ *
+ * **Rotation unit:** degrees Euler XYZ (matches Transform.rotation
+ * throughout the codebase; SceneFromDAG.tsx:266,426,449,525). The
+ * importer converts glTF quaternions → radians via
+ * `quaternionToEulerVec3` → degrees before they land here.
+ */
+export interface TransformClipValue {
+  readonly kind: 'TransformClip';
+  readonly name: string;
+  readonly duration: number;
+  readonly tracks: Readonly<
+    Record<
+      string,
+      {
+        readonly position: Vec3;
+        readonly rotation: Vec3;
+        readonly scale: Vec3;
+      }
+    >
+  >;
+}
+
 export interface NavmeshValue {
   readonly kind: 'Navmesh';
   /** Half-extents of the ground-plane navmesh primitive (P2 hardcoded source). */
