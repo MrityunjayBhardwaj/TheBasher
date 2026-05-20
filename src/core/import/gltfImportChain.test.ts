@@ -1,0 +1,360 @@
+// gltfImportChain unit tests — Wave D2 + D3.
+//
+// Synthetic in-memory GLBs (parser/encoder shared with glb.test.ts).
+// Pin the determinism + ordering + degenerate-path contracts plus the
+// B3 CHECKPOINT rad→deg conversion at the emit site.
+//
+// REF: PLAN.md Wave D; SECTION-INVENTORY.md B3.
+
+import { describe, expect, it } from 'vitest';
+import { Quaternion } from 'three';
+import { quaternionToEulerVec3 } from './threeAdapter';
+import { radVec3ToDeg } from '../../viewport/rotation';
+import { buildGltfImportOps, buildNodeNameMap } from './gltfImportChain';
+import type { Op } from '../dag/types';
+import type { DagState } from '../dag/state';
+import type { GltfJson } from './glb';
+
+const MAGIC = 0x46546c67;
+const CHUNK_JSON = 0x4e4f534a;
+const CHUNK_BIN = 0x004e4942;
+
+function pad4(bytes: Uint8Array, padByte = 0): Uint8Array {
+  if (bytes.length % 4 === 0) return bytes;
+  const out = new Uint8Array(bytes.length + (4 - (bytes.length % 4)));
+  out.set(bytes);
+  if (padByte !== 0) out.fill(padByte, bytes.length);
+  return out;
+}
+
+function makeGlb(json: GltfJson, binBytes?: Uint8Array): ArrayBuffer {
+  const jsonBytes = pad4(new TextEncoder().encode(JSON.stringify(json)), 0x20);
+  const bin = binBytes ? pad4(binBytes) : null;
+  const totalLength = 12 + 8 + jsonBytes.length + (bin ? 8 + bin.length : 0);
+  const buf = new ArrayBuffer(totalLength);
+  const v = new DataView(buf);
+  v.setUint32(0, MAGIC, true);
+  v.setUint32(4, 2, true);
+  v.setUint32(8, totalLength, true);
+  let cursor = 12;
+  v.setUint32(cursor, jsonBytes.length, true);
+  v.setUint32(cursor + 4, CHUNK_JSON, true);
+  new Uint8Array(buf, cursor + 8, jsonBytes.length).set(jsonBytes);
+  cursor += 8 + jsonBytes.length;
+  if (bin) {
+    v.setUint32(cursor, bin.length, true);
+    v.setUint32(cursor + 4, CHUNK_BIN, true);
+    new Uint8Array(buf, cursor + 8, bin.length).set(bin);
+  }
+  return buf;
+}
+
+function f32Bytes(values: number[]): Uint8Array {
+  const arr = new Float32Array(values);
+  return new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+}
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const len = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(len);
+  let cursor = 0;
+  for (const c of chunks) {
+    out.set(c, cursor);
+    cursor += c.length;
+  }
+  return out;
+}
+
+/** Minimal DagState shape — only the TimeSource discovery cares. */
+function stateWithTimeSource(timeId = 'n_time'): DagState {
+  return {
+    nodes: {
+      [timeId]: { id: timeId, type: 'TimeSource', version: 1, params: {}, inputs: {} },
+      n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} },
+    },
+    outputs: {},
+  } as unknown as DagState;
+}
+
+function singleTranslationClipGlb(): ArrayBuffer {
+  // One Cube node; one animation "bob" that translates Y over t in [0,1].
+  const timesBytes = f32Bytes([0, 1]);
+  const valuesBytes = f32Bytes([0, 0, 0, 0, 1, 0]); // pos[0]=(0,0,0), pos[1]=(0,1,0)
+  const bin = concatBytes(timesBytes, valuesBytes);
+  const json: GltfJson = {
+    nodes: [{ name: 'Cube' }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+      { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
+    ],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: timesBytes.length },
+      { buffer: 0, byteOffset: timesBytes.length, byteLength: valuesBytes.length },
+    ],
+    buffers: [{ byteLength: bin.length }],
+    animations: [
+      {
+        name: 'bob',
+        channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+        samplers: [{ input: 0, output: 1 }],
+      },
+    ],
+  };
+  return makeGlb(json, bin);
+}
+
+describe('buildNodeNameMap', () => {
+  it('dedupes duplicate Cube names with __1 suffix in JSON order', () => {
+    const json: GltfJson = { nodes: [{ name: 'Cube' }, { name: 'Cube' }] };
+    const { nodeNameMap, keyByGltfNodeIndex } = buildNodeNameMap(json, 'asset/foo.glb');
+    expect(Object.keys(nodeNameMap).sort()).toEqual(['Cube', 'Cube__1']);
+    expect(keyByGltfNodeIndex[0]).toBe('Cube');
+    expect(keyByGltfNodeIndex[1]).toBe('Cube__1');
+  });
+
+  it('sanitises THREE-reserved characters in node names', () => {
+    const json: GltfJson = { nodes: [{ name: 'Spine[0]' }] };
+    const { nodeNameMap } = buildNodeNameMap(json, 'asset/foo.glb');
+    expect(Object.keys(nodeNameMap)[0]).not.toContain('[');
+    expect(Object.keys(nodeNameMap)[0]).not.toContain(']');
+  });
+
+  it('falls back to `node_<i>` for empty names', () => {
+    const json: GltfJson = { nodes: [{ name: 'Cube' }, { name: '' }, { name: 'Other' }] };
+    const { keyByGltfNodeIndex } = buildNodeNameMap(json, 'asset/foo.glb');
+    expect(keyByGltfNodeIndex[1]).toBe('node_1');
+  });
+
+  it('deterministic: same (json, assetRef) → same dag ids', () => {
+    const json: GltfJson = { nodes: [{ name: 'Cube' }] };
+    const a = buildNodeNameMap(json, 'asset/foo.glb');
+    const b = buildNodeNameMap(json, 'asset/foo.glb');
+    expect(a.nodeNameMap).toEqual(b.nodeNameMap);
+  });
+
+  it('different assetRef → different dag ids', () => {
+    const json: GltfJson = { nodes: [{ name: 'Cube' }] };
+    const a = buildNodeNameMap(json, 'asset/foo.glb');
+    const b = buildNodeNameMap(json, 'asset/bar.glb');
+    expect(a.nodeNameMap.Cube).not.toBe(b.nodeNameMap.Cube);
+  });
+});
+
+describe('buildGltfImportOps', () => {
+  it('emits 1 TransformClip + 1 ClipSelect + the static chain in locked order', () => {
+    const buf = singleTranslationClipGlb();
+    const result = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    expect(result.transformClipIds).toHaveLength(1);
+    expect(result.clipSelectId).not.toBeNull();
+    expect(result.nodeNameMap.Cube).toBeDefined();
+    // Op order: GltfAsset, Transform, connect(gltf→tx), Group,
+    // connect(tx→grp), connect(grp→scene), TransformClip[0],
+    // ClipSelect, connect(time→clip[0]), connect(clip[0]→sel),
+    // connect(sel→gltf.transformClip).
+    const types = result.ops.map((o: Op) => o.type);
+    expect(types).toEqual([
+      'addNode',
+      'addNode',
+      'connect',
+      'addNode',
+      'connect',
+      'connect',
+      'addNode',
+      'addNode',
+      'connect',
+      'connect',
+      'connect',
+    ]);
+    const tcOp = result.ops[6];
+    expect(tcOp.type).toBe('addNode');
+    if (tcOp.type === 'addNode') expect(tcOp.nodeType).toBe('TransformClip');
+  });
+
+  it('determinism: same buffer → byte-identical Op[]', () => {
+    const buf = singleTranslationClipGlb();
+    const a = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const b = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    expect(JSON.stringify(a.ops)).toBe(JSON.stringify(b.ops));
+  });
+
+  it('multi-clip GLB: N TransformClips + ClipSelect picks animations[0]', () => {
+    const timesBytes = f32Bytes([0, 1]);
+    const valuesBytes = f32Bytes([0, 0, 0, 0, 1, 0]);
+    const bin = concatBytes(timesBytes, valuesBytes);
+    const json: GltfJson = {
+      nodes: [{ name: 'Cube' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: timesBytes.length },
+        { buffer: 0, byteOffset: timesBytes.length, byteLength: valuesBytes.length },
+      ],
+      buffers: [{ byteLength: bin.length }],
+      animations: [
+        {
+          name: 'walk',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+        {
+          name: 'run',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+        {
+          name: 'idle',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    };
+    const buf = makeGlb(json, bin);
+    const result = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/multi.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    expect(result.transformClipIds).toHaveLength(3);
+    expect(result.clipSelectId).not.toBeNull();
+    const selectOp = result.ops.find(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'ClipSelect',
+    );
+    expect(selectOp).toBeDefined();
+    if (selectOp?.type === 'addNode') {
+      expect((selectOp.params as { selectedClipName: string }).selectedClipName).toBe('walk');
+    }
+    // ClipSelect connect indices preserve animations[] order.
+    const clipConnects = result.ops.filter(
+      (o: Op) =>
+        o.type === 'connect' && o.to.node === result.clipSelectId && o.to.socket === 'clips',
+    );
+    expect(clipConnects).toHaveLength(3);
+    clipConnects.forEach((op, i) => {
+      if (op.type === 'connect') expect(op.index).toBe(i);
+    });
+  });
+
+  it('no-animations GLB: degenerate path emits static chain only', () => {
+    const json: GltfJson = { nodes: [{ name: 'Cube' }] };
+    const buf = makeGlb(json);
+    const result = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/static.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    expect(result.transformClipIds).toHaveLength(0);
+    expect(result.clipSelectId).toBeNull();
+    expect(
+      result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip'),
+    ).toBeUndefined();
+    expect(
+      result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'ClipSelect'),
+    ).toBeUndefined();
+  });
+
+  it('B3 CHECKPOINT — rotation quat [0,0,sin(π/4),cos(π/4)] emits ≈ [0,0,90] degrees', () => {
+    const times = f32Bytes([0, 1]);
+    const rotValues = f32Bytes([
+      // t=0: identity quat
+      0,
+      0,
+      0,
+      1,
+      // t=1: 90deg about Z
+      0,
+      0,
+      Math.sin(Math.PI / 4),
+      Math.cos(Math.PI / 4),
+    ]);
+    const bin = concatBytes(times, rotValues);
+    const json: GltfJson = {
+      nodes: [{ name: 'Cube' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 2, type: 'VEC4' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: times.length },
+        { buffer: 0, byteOffset: times.length, byteLength: rotValues.length },
+      ],
+      buffers: [{ byteLength: bin.length }],
+      animations: [
+        {
+          name: 'spin',
+          channels: [{ sampler: 0, target: { node: 0, path: 'rotation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    };
+    const buf = makeGlb(json, bin);
+    const result = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/spin.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const tcOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip');
+    if (tcOp?.type !== 'addNode') throw new Error('expected TransformClip addNode');
+    const kf = (
+      tcOp.params as { keyframes: Array<{ time: number; rotation: [number, number, number] }> }
+    ).keyframes;
+    const last = kf.find((k) => k.time === 1)!;
+    // 90deg about Z — sanity-cross-check via the same helper.
+    const expected = radVec3ToDeg(
+      quaternionToEulerVec3(new Quaternion(0, 0, Math.sin(Math.PI / 4), Math.cos(Math.PI / 4))),
+    );
+    expect(last.rotation[2]).toBeCloseTo(expected[2], 4);
+    expect(last.rotation[2]).toBeCloseTo(90, 1);
+    // Negative assertion: NOT radians (π/2 ≈ 1.5708).
+    expect(Math.abs(last.rotation[2])).toBeGreaterThan(10);
+  });
+
+  it('sanitises bracket-character node names into the keyframe targetNodeId', () => {
+    const times = f32Bytes([0, 1]);
+    const values = f32Bytes([0, 0, 0, 0, 1, 0]);
+    const bin = concatBytes(times, values);
+    const json: GltfJson = {
+      nodes: [{ name: 'Cube[0]' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: times.length },
+        { buffer: 0, byteOffset: times.length, byteLength: values.length },
+      ],
+      buffers: [{ byteLength: bin.length }],
+      animations: [
+        {
+          name: 'a',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    };
+    const buf = makeGlb(json, bin);
+    const result = buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/bracket.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const tcOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip');
+    if (tcOp?.type !== 'addNode') throw new Error('expected TransformClip addNode');
+    const kf = (tcOp.params as { keyframes: Array<{ targetNodeId: string }> }).keyframes;
+    expect(kf[0].targetNodeId).not.toMatch(/[[\].:/]/);
+  });
+
+  it('throws when DAG has no TimeSource and animations exist', () => {
+    const buf = singleTranslationClipGlb();
+    const state: DagState = { nodes: {}, outputs: {} } as unknown as DagState;
+    expect(() =>
+      buildGltfImportOps({ buffer: buf, assetRef: 'asset/x.glb', sceneNodeId: 'n_scene' }, state),
+    ).toThrow(/No TimeSource node in DAG/);
+  });
+});

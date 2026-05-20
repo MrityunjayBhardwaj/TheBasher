@@ -9,12 +9,21 @@
 // REF: THESIS.md §14, §39 (P1 node types).
 
 import { z } from 'zod';
-import type { NodeDefinition } from '../core/dag/types';
-import type { GltfAssetValue } from './types';
+import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
+import type { GltfAssetValue, TransformClipValue } from './types';
 
 export const GltfAssetParams = z.object({
   /** Storage-relative path or URL. e.g. "assets/tree.glb" or "https://…". */
   assetRef: z.string().min(1),
+  /**
+   * P7.5 — glTF TRS animation extraction (issue #81). Sanitised
+   * scene-node-name → DAG target id, populated by `buildGltfImportOps`
+   * at drop time. The `.default({})` makes the field additive: pre-7.5
+   * saved projects with a GltfAsset node hydrate with an empty map,
+   * which the renderer treats as "no per-child override available."
+   * (V10 / H14-clean — no schema-version bump needed.)
+   */
+  nodeNameMap: z.record(z.string(), z.string()).default({}),
 });
 export type GltfAssetParams = z.infer<typeof GltfAssetParams>;
 
@@ -24,10 +33,20 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: GltfAssetParams,
-  inputs: {},
+  inputs: {
+    // P7.5 — optional. When connected, `GltfAssetR` overrides per-child
+    // TRS via `nodeNameMap` keys. Closure walks via the 'animation'
+    // EdgeKind (V13 — same as the AnimationLayer.animation socket).
+    transformClip: { type: 'TransformClip', cardinality: 'single' },
+  },
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material'],
-  evaluate(params) {
-    return { kind: 'GltfAsset', assetRef: params.assetRef };
+  evaluate(params, inputs: ResolvedInputs): GltfAssetValue {
+    return {
+      kind: 'GltfAsset',
+      assetRef: params.assetRef,
+      nodeNameMap: params.nodeNameMap,
+      transformClip: (inputs.transformClip as TransformClipValue | undefined) ?? null,
+    };
   },
 };

@@ -10,6 +10,8 @@ import { useState, type DragEvent, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { DRAG_MIME } from './asset/catalog';
 import { buildAssetDropOps } from './asset/dropChain';
+import { getStorage } from './boot';
+import { buildGltfImportOps } from '../core/import/gltfImportChain';
 
 interface Props {
   children: ReactNode;
@@ -46,6 +48,41 @@ export function AssetDropZone({ children }: Props) {
       console.warn('AssetDropZone: project has no `scene` output; drop ignored');
       return;
     }
+
+    // P7.5 — single-path glTF routing (CONTEXT D-02). `.glb` files
+    // route through `buildGltfImportOps`, which eager-parses the GLB
+    // binary + animations and emits N TransformClips + 1 ClipSelect
+    // (or the degenerate static-only chain when no animations exist).
+    //
+    // `.gltf` (JSON-only) files stay on the existing static path —
+    // they require external-buffer resolution that is filed as a
+    // separate follow-up (#90). Routing them through the new path
+    // today would throw at `parseGlb` (magic mismatch on the JSON
+    // header) and surface as a silent drop.
+    const lower = path.toLowerCase();
+    if (lower.endsWith('.glb')) {
+      void (async () => {
+        try {
+          const storage = await getStorage();
+          const bytes = await storage.read(path);
+          // Detach a non-shared ArrayBuffer view for the importer.
+          // Uint8Array.buffer is typed `ArrayBufferLike`, including
+          // SharedArrayBuffer — the GLB parser wants a plain ArrayBuffer.
+          const copy = new Uint8Array(bytes.byteLength);
+          copy.set(bytes);
+          const buffer = copy.buffer;
+          const result = buildGltfImportOps(
+            { buffer, assetRef: path, sceneNodeId: sceneRef.node },
+            useDagStore.getState().state,
+          );
+          dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
+        } catch (err) {
+          console.error('AssetDropZone: glTF import failed', err);
+        }
+      })();
+      return;
+    }
+
     const ops = buildAssetDropOps({ assetRef: path, sceneNodeId: sceneRef.node });
     dispatchAtomic(ops, 'user', `import asset: ${path}`);
   }

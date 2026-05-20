@@ -6,11 +6,15 @@ import type { NodeDefinition } from '../core/dag/types';
 import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
 import { AnimationLayerNode } from './AnimationLayer';
+// P7.5 — glTF TRS animation extraction (issue #81). Imports stay
+// alphabetised so a re-sort doesn't produce noise.
+// (TransformClipNode is imported later in the alphabetical block.)
 import { AreaLightNode } from './AreaLight';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { CharacterNode } from './Character';
+import { ClipSelectNode } from './ClipSelect';
 import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { CutNode } from './Cut';
 import { DepthPassNode } from './DepthPass';
@@ -40,6 +44,7 @@ import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
 import { TimeSourceNode } from './TimeSource';
+import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
@@ -78,6 +83,10 @@ const ALL: NodeDefinition[] = [
   KeyframeChannelQuatNode as unknown as NodeDefinition,
   KeyframeChannelColorNode as unknown as NodeDefinition,
   AnimationLayerNode as unknown as NodeDefinition,
+  // P7.5 — glTF TRS animation extraction (issue #81); pure node-indexed
+  // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
+  TransformClipNode as unknown as NodeDefinition,
+  ClipSelectNode as unknown as NodeDefinition,
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,
   BoneNameMapNode as unknown as NodeDefinition,

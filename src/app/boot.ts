@@ -252,6 +252,27 @@ export function boot(): Promise<void> {
           return { skeletonId, clipId };
         };
       });
+      // P7.5 — glTF TRS animation import seam (issue #81). Mirrors the
+      // BVH/FBX seam shape; takes an ArrayBuffer + the assetRef the
+      // GltfAsset should reference. The e2e fixture stages clips via
+      // this entry point (H41 — fixtures via the NEW path from day one).
+      void import('../core/import/gltfImportChain').then((m) => {
+        w.__basher_importGltf = (buffer: ArrayBuffer, assetRef: string) => {
+          const dag = useDagStore.getState();
+          const sceneRef = dag.state.outputs.scene;
+          if (!sceneRef) throw new Error('__basher_importGltf: project has no `scene` output');
+          const result = m.buildGltfImportOps(
+            { buffer, assetRef, sceneNodeId: sceneRef.node },
+            dag.state,
+          );
+          dag.dispatchAtomic(result.ops, 'user', `import gltf: ${assetRef}`);
+          return {
+            gltfAssetId: result.gltfAssetId,
+            clipSelectId: result.clipSelectId,
+            transformClipIds: result.transformClipIds,
+          };
+        };
+      });
       // P7.3 D-06 — autoKeyStore exposed so the gizmo-grab boundary spec
       // can drive Auto-Key ON/OFF without depending on the indicator
       // chrome (the spec asserts the grab re-route, not the toggle UI).

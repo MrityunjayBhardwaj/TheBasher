@@ -149,6 +149,24 @@ export interface SphereMeshValue {
 export interface GltfAssetValue {
   readonly kind: 'GltfAsset';
   readonly assetRef: string;
+  /**
+   * P7.5 — glTF TRS animation extraction (issue #81).
+   *
+   * Filled in by `buildGltfImportOps` at drop time: a sanitised
+   * scene-node-name → DAG target id map. `GltfAssetR` walks
+   * `gltf.scene` via `getObjectByName` and overrides per-child TRS
+   * with `transformClip.tracks[name]`. Default `{}` so pre-7.5
+   * projects (and the static-only fixture path) hydrate as no-ops.
+   */
+  readonly nodeNameMap: Readonly<Record<string, string>>;
+  /**
+   * The selected clip's evaluated TRS at the input Time, sourced from
+   * the connected `ClipSelect.out`. `null` when no animation is
+   * imported (degenerate path) OR when `selectedClipName` doesn't
+   * match any imported clip. The renderer treats null as "no
+   * override" — falls back to the cloned scene's static TRS.
+   */
+  readonly transformClip: TransformClipValue | null;
 }
 
 export interface TransformValue {
@@ -242,6 +260,39 @@ export interface AnimationClipValue {
   readonly duration: number;
   /** Sampled pose at the input `Time`, given the clip's keyframes. */
   readonly pose: PosedSkeletonValue;
+}
+
+/**
+ * P7.5 — glTF TRS animation clip extraction (issue #81).
+ *
+ * Scene-node-indexed counterpart to {@link AnimationClipValue} (which is
+ * bone-indexed and pairs with a Skeleton). A TransformClipValue is the
+ * sampled, per-target TRS that the renderer applies to children of a
+ * `gltf.scene` walk: `tracks[targetNodeId]` is the evaluated
+ * `{position, rotation, scale}` at the input Time. Targets without a
+ * keyframe at this sample-time are simply absent from the map — the
+ * renderer falls back to the original `gltf.scene` child's TRS for
+ * those.
+ *
+ * **Rotation unit:** degrees Euler XYZ (matches Transform.rotation
+ * throughout the codebase; SceneFromDAG.tsx:266,426,449,525). The
+ * importer converts glTF quaternions → radians via
+ * `quaternionToEulerVec3` → degrees before they land here.
+ */
+export interface TransformClipValue {
+  readonly kind: 'TransformClip';
+  readonly name: string;
+  readonly duration: number;
+  readonly tracks: Readonly<
+    Record<
+      string,
+      {
+        readonly position: Vec3;
+        readonly rotation: Vec3;
+        readonly scale: Vec3;
+      }
+    >
+  >;
 }
 
 export interface NavmeshValue {
