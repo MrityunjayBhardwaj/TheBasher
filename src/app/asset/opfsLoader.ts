@@ -12,9 +12,20 @@
 // React Suspense pattern: `useResolvedAssetUrl` returns synchronously when
 // the URL is cached, otherwise throws a Promise to trigger Suspense.
 //
+// Multi-file `.gltf` (#82): when the resolved file is JSON glTF that
+// references external sibling URIs (a `.bin` buffer or relative
+// texture), the single-blob wrap above is insufficient — three.js
+// can't resolve siblings against a `blob:` URL. The loader detects
+// that case (JSON-parse + URI scan) and routes through
+// `opfsGltfResolver`, which pre-loads every sibling into a sentinel
+// URL cache (`basher-opfs:///<opfsPath>`). The viewport's
+// `useGltfLoaderExtend` installs a LoadingManager URL modifier that
+// resolves those sentinels back to blob URLs at fetch time.
+//
 // REF: THESIS.md §14, §33; vyapti V6.
 
 import { getStorage } from '../boot';
+import { gltfReferencesExternalSiblings, loadMultiFileGltf } from './opfsGltfResolver';
 
 const urlCache = new Map<string, string>();
 const promiseCache = new Map<string, Promise<string>>();
@@ -36,6 +47,22 @@ function load(path: string): Promise<string> {
   return (async () => {
     const storage = await getStorage();
     const bytes = await storage.read(path);
+    if (path.toLowerCase().endsWith('.gltf')) {
+      // Cheap parse-and-scan first; only route to the multi-file path
+      // when the JSON actually references external siblings. Catches
+      // self-contained data-URI `.gltf` (the bundled cube/sphere/cone)
+      // on the legacy blob-URL fast-path with no behaviour change.
+      try {
+        const json = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+        if (gltfReferencesExternalSiblings(json)) {
+          return loadMultiFileGltf(storage, path, bytes);
+        }
+      } catch {
+        // Not valid JSON — fall through to the legacy blob-URL path.
+        // A `.gltf` with invalid JSON is the consumer's problem to
+        // surface; we don't want to mask the actual parse error here.
+      }
+    }
     const ab = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(ab).set(bytes);
     const blob = new Blob([ab], { type: 'model/gltf+json' });
