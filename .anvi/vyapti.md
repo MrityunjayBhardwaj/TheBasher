@@ -381,3 +381,71 @@ Lokayata-on-bug.
 **Violation surface:** a "should be ignored" class added to one ignore-file but not the others; relying on a "we just don't track that" convention without enforcement; symptom-patching one tool's output without auditing the others' coverage. Smell: a recurrence where the SAME class causes a second failure in a DIFFERENT tool weeks/PRs later.
 
 **REF:** `.gitignore` (the `.planning/` entry added in commit `31ed8c2`), `.prettierignore` (the `.planning/` entry added in `8c7dc35` + the vendored-decoder block added in `31ed8c2` covering `public/draco/`, `public/basis/`), memory file `feedback_verify_own_framing.md` (the orchestrator-framing reflex that propagates "this is just untracked" without verifying its enforcement). Negative pattern at the meta level: [[H25]] (initial-authoring trap — single-tool ignore-file patching IS the initial-authoring assumption that the next tool's scan will violate). Provenance: ORIGIN = the same `.planning/` class causing failure first at the prettier surface (W7, 2026-05-19) then at the git surface (#80 PR, 2026-05-20) — two ignore-file gates, one class. WHY without it: every "should be ignored" class gets a second discovery cycle when the next tool's scan finds it, costing PR rework + force-pushes + the architectural confusion of "I thought we ignored that." HOW: the audit-every-ignore-file mechanism above, enforced as a one-shot per class addition.
+
+### V22: Generated DAG node ids must be deterministic over `(args, state)` — never wall-clock, never RNG
+
+**Status:** ALIGNED (2026-05-21, post PR #87/#92/#93).
+
+**Span:** every site outside `src/nodes/**` that emits an `addNode` Op
+with a freshly-generated `nodeId`. Includes agent tool handlers
+(`src/agent/tools/**`), import chains
+(`src/core/import/{bvh,fbx,gltf}ImportChain.ts`), drop chains
+(`src/app/asset/dropChain.ts`), and any future Op-emitter that creates
+DAG-resident state. Excludes UI-only stores and per-render ephemera
+(those don't cross the V2 / THESIS §48 boundary).
+
+**Invariant:** for a given `(args, relevant-state)` tuple, two adjacent
+calls to the emitter produce **byte-identical Op[]**. This is the
+"twice-call" determinism contract every tool's vitest spec already
+asserts; V22 is the codification of WHY that contract must hold.
+
+**Mechanism:** content-addressed ids via a deterministic hash over the
+args tuple. Two acceptable shapes in the codebase today:
+
+- **fnv1a-32** (dependency-free, 13-line helper): used by
+  `gltfImportChain.ts:57-68` and `cameraSnapshot.ts` (`4c82536`).
+  Output: `n_<prefix>_<8-hex>`. Fast; deterministic; non-cryptographic
+  but determinism is the only property the seam needs.
+- **`crypto.randomUUID()`** (browser + Node ≥ 14.17): used by
+  `recorder.ts` (`b42fea7`) for telemetry `sessionId`. Acceptable when
+  the field is **inherently non-deterministic by design** (a session
+  id identifies one runtime; it is NOT the same shape as a DAG node
+  id derived from args).
+
+**Forbidden:** `Date.now()`, `performance.now()`, `Math.random()`,
+any global counter that doesn't reset per-call, or any closure
+that captures wall-clock state.
+
+**Detection gate (grep — runs as part of any /anvi:quick / wave-close
+gate touching emitter surfaces):**
+
+```
+grep -nE 'Date\.now\(\)|Math\.random\(\)|performance\.now\(\)' \
+  src/agent src/app src/core src/viewport \
+  | grep -v test \
+  | grep -E "n_[a-zA-Z]+_\$\{"
+```
+
+Any hit on a node-id template literal is a V22 violation.
+
+**Why not just trust V2:** V2 is scoped to `src/nodes/**` evaluators
+(pure-lint enforced via eslint `no-restricted-syntax`). V22 covers
+the adjacent surface — Op-emitters one layer up — where the same
+determinism property must hold but no lint rule fires today. Promote
+the eslint rule to V22's span if a fourth site recurs.
+
+**Application across the 2026-05-19→21 arc:**
+
+| Site                         | Original shape                                            | Fix                                                                                         |
+| ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `recorder.ts:96` (#17)       | `Math.random().toString(36) + Math.random().toString(36)` | `crypto.randomUUID()` (PR #87)                                                              |
+| `cameraSnapshot.ts:52` (#93) | `cam_agent_${Date.now().toString(36)}`                    | `cam_agent_${fnv1a32(JSON.stringify([sceneNodeId, fov, position, lookAt]))}` (PR `4c82536`) |
+| `gltfImportChain.ts` (P7.5)  | designed-in                                               | fnv1a-32 over `(assetRef, key)` from day one (no fix needed)                                |
+
+Cross-ref [[H42]] (the recurring error pattern V22 codifies as
+invariant), V2 (the pure-evaluator sibling — same principle, different
+surface), THESIS §48, [[V13]] (closure preservation — the consumer
+of V22's stability promise: Op-emitter ids must hash-stable so closure
+diffs are deterministic). Provenance: 2026-05-21 — three independent
+fixes converged on the same pattern within 2 days, lifting it from
+"one-off oversights" to a named invariant.
