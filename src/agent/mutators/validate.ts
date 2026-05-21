@@ -224,9 +224,16 @@ function rejection(
  */
 function setDotted(obj: unknown, path: string, value: unknown): unknown {
   const keys = path.split('.');
-  // Cheap deep clone for plain JSON. params shapes are JSON-serializable
-  // — that's a documented v0.5 invariant via the Op store.
-  const clone = obj === undefined ? {} : (JSON.parse(JSON.stringify(obj)) as unknown);
+  // #21: prefer structuredClone over JSON round-trip. params shapes are
+  // JSON-serializable today (v0.5 Op-store invariant), but a future
+  // schema with a Date / Map / typed-array field would silently lose
+  // it through JSON.stringify — gate 2 would then schema-validate
+  // against a stripped candidate and accept setParams the runtime
+  // would later reject. structuredClone preserves the structured-
+  // clone-supported types and throws on truly non-cloneable values
+  // (functions, DOM nodes) — loud failure at the boundary beats a
+  // silent strip.
+  const clone = obj === undefined ? {} : structuredClone(obj);
   let cursor = clone as Record<string, unknown>;
   for (let i = 0; i < keys.length - 1; i++) {
     const k = keys[i];

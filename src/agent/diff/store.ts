@@ -229,7 +229,12 @@ function buildPartialDescription(diff: PendingDiff): string {
     for (let i = 0; i < diff.ops.length; i++) {
       if (diff.selected[i]) acceptedSources.add(diff.opSources[i]);
     }
-    const list = [...acceptedSources].join(', ');
+    // #21: sort to make the undo title deterministic. Set iteration is
+    // insertion-order in modern JS, but the insertion order itself is
+    // op-emission-order — which a future Mutator refactor could shuffle
+    // without anyone realising the user-visible undo string changed
+    // with it. Locale-independent ASCII sort keeps test fixtures stable.
+    const list = [...acceptedSources].sort().join(', ');
     return list ? `(partial) ${list}` : `(partial) ${diff.description}`;
   }
   return `(partial) ${diff.description}`;
