@@ -706,6 +706,123 @@ describe('duplicate mutator', () => {
       }
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Emission order — issue #19.
+  //
+  // The mutator emits `addNode(clone)` before every `connect` whose `from`
+  // references that clone. The validator does NOT enforce this property:
+  // `opTargetNodeId` on a connect returns `op.to.node` (the consumer), so a
+  // connect referencing a missing `from.node` is invisible to gate 1
+  // (node_existence) and gate 3 (closure_preservation). The actual safety
+  // net lives one layer down: `applyConnect` (src/core/dag/ops.ts:165) calls
+  // `getNode(state, op.from.node)` and throws OpError if the from-node
+  // doesn't exist — but that only fires at dispatch time, after the plan has
+  // been accepted as a valid Mutator output.
+  //
+  // So the mutator's emission order IS the contract. These tests pin it.
+  // ---------------------------------------------------------------------------
+  describe('emission order — #19 (addNode before connect-from-clone)', () => {
+    it('emits addNode for the clone before any connect referencing the clone id', () => {
+      const state = buildScene();
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['box'], offset: [2, 0, 0] },
+        state,
+        'dup',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const addNodeIdx = result.ops.findIndex((o) => o.type === 'addNode');
+      const cloneId = (result.ops[addNodeIdx] as { type: 'addNode'; nodeId: string }).nodeId;
+      expect(cloneId).toBe('box_copy1');
+
+      // Every connect whose `from.node` is the clone must appear AFTER
+      // the addNode. Asserting on each connect (not just the first) so a
+      // multi-consumer fanout regression — where one connect slides
+      // before the addNode — is caught.
+      const cloneConnects = result.ops
+        .map((op, i) => ({ op, i }))
+        .filter(({ op }) => op.type === 'connect' && op.from.node === cloneId);
+
+      expect(cloneConnects.length).toBeGreaterThan(0);
+      for (const { i } of cloneConnects) {
+        expect(i).toBeGreaterThan(addNodeIdx);
+      }
+    });
+
+    it('multi-target duplicate: each clone gets its addNode before its connects', () => {
+      // Two targets at once — the loop in duplicateMutator.build() emits
+      // (addNode_A, connects_A…, addNode_B, connects_B…). A regression
+      // that broke this per-target ordering (e.g. a pre-pass that
+      // collected all addNodes after all connects) would fire here.
+      const state = buildScene();
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['box', 'sphere'], offset: [2, 0, 0] },
+        state,
+        'dup two',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const addNodes = result.ops
+        .map((op, i) => ({ op, i }))
+        .filter(({ op }) => op.type === 'addNode');
+      expect(addNodes).toHaveLength(2);
+
+      for (const { op, i: addIdx } of addNodes) {
+        const cloneId = (op as { type: 'addNode'; nodeId: string }).nodeId;
+        const connects = result.ops
+          .map((o, i) => ({ o, i }))
+          .filter(({ o }) => o.type === 'connect' && o.from.node === cloneId);
+        expect(connects.length).toBeGreaterThan(0);
+        for (const { i: cIdx } of connects) {
+          expect(cIdx).toBeGreaterThan(addIdx);
+        }
+      }
+    });
+
+    it('safety net: applying a reordered plan throws at applyConnect (validator does not catch it)', () => {
+      // The validator accepts a reordered plan (see block comment above)
+      // — the failure surfaces at the Op layer. This test pins that
+      // safety net: if a future Mutator-author bug or refactor swaps
+      // emission order, dispatch fails loudly rather than silently
+      // producing a connect-to-nothing in the DAG.
+      const state = buildScene();
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['box'], offset: [2, 0, 0] },
+        state,
+        'dup',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const addIdx = result.ops.findIndex((o) => o.type === 'addNode');
+      const firstConnectIdx = result.ops.findIndex(
+        (o) =>
+          o.type === 'connect' &&
+          o.from.node === (result.ops[addIdx] as { type: 'addNode'; nodeId: string }).nodeId,
+      );
+      expect(firstConnectIdx).toBeGreaterThan(-1);
+
+      // Swap the addNode and the first clone-from connect.
+      const reordered = [...result.ops];
+      [reordered[addIdx], reordered[firstConnectIdx]] = [
+        reordered[firstConnectIdx],
+        reordered[addIdx],
+      ];
+
+      let next = state;
+      expect(() => {
+        for (const op of reordered) {
+          next = applyOp(next, op).next;
+        }
+      }).toThrow(/box_copy1/);
+    });
+  });
 });
 
 describe('deleteNode mutator', () => {
