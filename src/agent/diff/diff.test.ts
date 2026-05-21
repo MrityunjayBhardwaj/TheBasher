@@ -214,6 +214,34 @@ describe('useDiffStore', () => {
     expect(useDiffStore.getState().status).toBe('applied');
   });
 
+  it('acceptSelectedOps emits a deterministic, sorted partial-description (#21)', () => {
+    // When the user accepts a SUBSET of the proposed ops, the undo
+    // title is rebuilt from the accepted op sources. The sort makes
+    // this independent of Mutator emission order — a future builder
+    // refactor can shuffle emission without changing the user-visible
+    // string. Test with op sources intentionally NOT in ASCII order
+    // so a regression that drops the sort would surface here.
+    const state = buildBaselineDag();
+    const ops: Op[] = [
+      { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
+      { type: 'setParam', nodeId: 'box', paramPath: 'rotation', value: [0, 1, 0] },
+      { type: 'setParam', nodeId: 'box', paramPath: 'size', value: [2, 2, 2] },
+    ];
+    // Intentionally reversed-alphabetical emission order.
+    const opSources = ['agent:mutator.scale', 'agent:mutator.rotate', 'agent:mutator.duplicate'];
+    useDiffStore.getState().propose(state, ops, 'bulk edit', opSources);
+    // Accept only ops 0 and 2 (scale + duplicate) — skip the middle.
+    useDiffStore.getState().toggleOp(1);
+
+    let dispatched: { description?: string } | null = null;
+    acceptSelectedOps((_ops, _source, description) => {
+      dispatched = { description };
+    });
+    expect(dispatched).not.toBeNull();
+    // Sorted ASCII: duplicate < scale.
+    expect(dispatched!.description).toBe('(partial) agent:mutator.duplicate, agent:mutator.scale');
+  });
+
   it('acceptSelectedOps returns false when nothing selected', () => {
     const state = buildBaselineDag();
     useDiffStore

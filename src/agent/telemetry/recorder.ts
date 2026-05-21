@@ -47,6 +47,22 @@ const TOOL_ALLOWLIST = new Set<string>([
   'mutator.deleteNode',
 ]);
 
+/**
+ * Runtime allowlist for event kinds (#21 defense-in-depth). The
+ * TelemetryEventKind type guards compile-time callers, but the
+ * recorder takes an external-shaped event and a typo / accidental
+ * downstream pass-through that adds a new kind without updating the
+ * recorder would slip into localStorage silently. Reject unknown
+ * kinds at runtime so any new kind has to walk through this list.
+ */
+const VALID_EVENT_KINDS = new Set<string>([
+  'tool_call',
+  'turn_start',
+  'turn_end',
+  'diff_accept',
+  'diff_reject',
+]);
+
 let cachedSessionId: string | null = null;
 let cachedDisabled: boolean | null = null;
 let storageListenerRegistered = false;
@@ -144,6 +160,12 @@ function getSessionId(): string {
  */
 export function recordEvent(event: Omit<TelemetryEvent, 'timestamp' | 'sessionId'>): void {
   if (isTelemetryDisabled()) return;
+  // #21 — kind allowlist runs first: a typo / unknown kind drops
+  // before the tool_call branch can leak a half-shaped event into
+  // localStorage. The type system already enforces the union at
+  // compile time; this is the runtime mirror for external callers
+  // (recorder is imported from `src/agent/*`, no plumbing layer).
+  if (!VALID_EVENT_KINDS.has(event.kind)) return;
   if (event.kind === 'tool_call' && event.toolName && !TOOL_ALLOWLIST.has(event.toolName)) {
     return;
   }

@@ -64,9 +64,23 @@ describe('telemetry recorder', () => {
     expect(e.durationMs).toBe(12);
     expect(typeof e.timestamp).toBe('number');
     expect(typeof e.sessionId).toBe('string');
-    // Negative assertion: nothing in the event carries content.
-    const json = JSON.stringify(e);
-    expect(json).not.toMatch(/prompt|args|nodeId|params/);
+    // #21: shape allowlist beats a content blocklist. A regex over
+    // JSON.stringify(e) checking `not.toMatch(/prompt|args|nodeId|params/)`
+    // would slip past a future field named `arguments`, `payload`,
+    // `details`, etc. Asserting on the exact key set forces every
+    // new field to walk through both this test AND the types file,
+    // making it impossible to land a PII surface without a review.
+    const ALLOWED_KEYS = new Set([
+      'kind',
+      'toolName',
+      'success',
+      'durationMs',
+      'timestamp',
+      'sessionId',
+    ]);
+    for (const k of Object.keys(e)) {
+      expect(ALLOWED_KEYS.has(k)).toBe(true);
+    }
   });
 
   it('drops events for non-allowlisted tool names (defense vs accidental leak)', () => {
@@ -101,6 +115,14 @@ describe('telemetry recorder', () => {
     recordEvent({ kind: 'diff_accept', success: true });
     recordEvent({ kind: 'diff_reject', success: false });
     expect(readEvents()).toHaveLength(4);
+  });
+
+  it('drops events with an unknown kind (#21 defense-in-depth)', () => {
+    // Type-system normally prevents this; cast through unknown so the
+    // runtime allowlist is what we observe — protects against a future
+    // caller-side type widening or external (e.g. devtools) injection.
+    recordEvent({ kind: 'mystery_kind' as unknown as 'turn_start' });
+    expect(readEvents()).toHaveLength(0);
   });
 
   it('clearEvents removes the localStorage bucket', () => {
