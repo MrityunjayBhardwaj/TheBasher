@@ -499,6 +499,35 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
 // Tool execution
 // ---------------------------------------------------------------------------
 
+/**
+ * Build the structured ToolResult returned when the LLM names a tool that
+ * isn't in the registry. Two shapes:
+ *
+ * - `mutator.X` (any name starting with `mutator.`) — the LLM is pattern-
+ *   matching `agent.listMutators` output as if every entry were callable.
+ *   Surface the corrective shape inline (`agent.proposePlan({ mutator: …, … })`)
+ *   so the next round is the LLM's last mistake, not a third one.
+ *   B2 / H23-class hint.
+ *
+ * - Anything else — a plain "unknown tool" message. No corrective shape
+ *   to suggest; the LLM should pick a real tool from its registry.
+ *
+ * Exported for unit coverage (#31). Live consumer: `executeToolCall`
+ * branches on `!toolDef`.
+ */
+export function buildUnknownToolError(name: string): ToolResult {
+  if (name.startsWith('mutator.')) {
+    return {
+      ops: [],
+      text:
+        `ERROR: unknown tool "${name}". Mutators are NOT callable tools. ` +
+        `Use agent.proposePlan({ mutator: "${name}", intent: "...", spec: {...} }) ` +
+        `instead. Call agent.listMutators to see the spec shape (specExample field).`,
+    };
+  }
+  return { ops: [], text: `ERROR: unknown tool "${name}"` };
+}
+
 async function executeToolCall(
   acc: { id: string; name: string; argsBuffer: string },
   toolDef: ToolDefinition | undefined,
@@ -509,20 +538,7 @@ async function executeToolCall(
   // LLM-facing tool message. The LLM can retry with corrections instead of
   // looping on the same broken call.
   if (!toolDef) {
-    // B2 — H23-class hint: when the LLM tries "mutator.X" as a top-level
-    // tool, it's pattern-matching the listMutators output as if every
-    // entry were a callable tool. Surface the corrective shape inline
-    // so the next round is the LLM's last mistake, not a third one.
-    if (acc.name.startsWith('mutator.')) {
-      return {
-        ops: [],
-        text:
-          `ERROR: unknown tool "${acc.name}". Mutators are NOT callable tools. ` +
-          `Use agent.proposePlan({ mutator: "${acc.name}", intent: "...", spec: {...} }) ` +
-          `instead. Call agent.listMutators to see the spec shape (specExample field).`,
-      };
-    }
-    return { ops: [], text: `ERROR: unknown tool "${acc.name}"` };
+    return buildUnknownToolError(acc.name);
   }
 
   // A4: belt-and-suspenders mode check. The tools array sent to the LLM is
