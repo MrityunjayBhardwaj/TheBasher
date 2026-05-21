@@ -418,12 +418,14 @@ that captures wall-clock state.
 
 **Detection gate (grep — runs as part of any /anvi:quick / wave-close
 gate touching emitter surfaces):**
+
 ```
 grep -nE 'Date\.now\(\)|Math\.random\(\)|performance\.now\(\)' \
   src/agent src/app src/core src/viewport \
   | grep -v test \
   | grep -E "n_[a-zA-Z]+_\$\{"
 ```
+
 Any hit on a node-id template literal is a V22 violation.
 
 **Why not just trust V2:** V2 is scoped to `src/nodes/**` evaluators
@@ -434,11 +436,11 @@ the eslint rule to V22's span if a fourth site recurs.
 
 **Application across the 2026-05-19→21 arc:**
 
-| Site | Original shape | Fix |
-|---|---|---|
-| `recorder.ts:96` (#17) | `Math.random().toString(36) + Math.random().toString(36)` | `crypto.randomUUID()` (PR #87) |
-| `cameraSnapshot.ts:52` (#93) | `cam_agent_${Date.now().toString(36)}` | `cam_agent_${fnv1a32(JSON.stringify([sceneNodeId, fov, position, lookAt]))}` (PR `4c82536`) |
-| `gltfImportChain.ts` (P7.5) | designed-in | fnv1a-32 over `(assetRef, key)` from day one (no fix needed) |
+| Site                         | Original shape                                            | Fix                                                                                         |
+| ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `recorder.ts:96` (#17)       | `Math.random().toString(36) + Math.random().toString(36)` | `crypto.randomUUID()` (PR #87)                                                              |
+| `cameraSnapshot.ts:52` (#93) | `cam_agent_${Date.now().toString(36)}`                    | `cam_agent_${fnv1a32(JSON.stringify([sceneNodeId, fov, position, lookAt]))}` (PR `4c82536`) |
+| `gltfImportChain.ts` (P7.5)  | designed-in                                               | fnv1a-32 over `(assetRef, key)` from day one (no fix needed)                                |
 
 Cross-ref [[H42]] (the recurring error pattern V22 codifies as
 invariant), V2 (the pure-evaluator sibling — same principle, different
