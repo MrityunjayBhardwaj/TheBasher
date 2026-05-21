@@ -36,15 +36,28 @@
 // which is the canonical R3F renderer accessor; cadence is renderer-
 // change, not per-frame).
 //
-// REF: #80, THESIS §39 (P1 node types), THESIS §48 (determinism — no
+// REF: #80, #82, THESIS §39 (P1 node types), THESIS §48 (determinism — no
 // CDN nondeterminism), `src/viewport/SceneFromDAG.tsx` GltfAssetR
-// (the consumer).
+// (the consumer), `src/app/asset/opfsGltfResolver.ts` (the sentinel
+// URL cache populated at import time).
+//
+// Multi-file `.gltf` URL modifier (#82): a multi-file `.gltf` references
+// sibling URIs (`.bin` buffers, relative textures) that GLTFLoader
+// resolves by concatenating onto the asset's URL base. `opfsLoader`
+// detects that case and emits a sentinel URL of the form
+// `basher-opfs:///<opfsPath>` for the main asset; siblings concatenate
+// to predictable sentinels (`basher-opfs:///<dir>/<rel>`). The URL
+// modifier installed below intercepts every URL three.js requests on
+// this loader's manager — sentinel hits translate to the pre-cached
+// blob URL via `resolveBasherOpfsUrl`; non-sentinels (the Draco
+// decoder, KTX2 transcoder, ordinary blob URLs) pass through.
 
 import { useMemo } from 'react';
 import { useThree } from '@react-three/fiber';
 import { KTX2Loader } from 'three-stdlib';
 import type { GLTFLoader } from 'three-stdlib';
 import type { WebGLRenderer } from 'three';
+import { resolveBasherOpfsUrl } from '../app/asset/opfsGltfResolver';
 
 /** Self-hosted decoder paths. Served from `public/` at the app root. */
 export const DRACO_DECODER_PATH = '/draco/';
@@ -74,6 +87,12 @@ export function useGltfLoaderExtend(): ((loader: GLTFLoader) => void) | undefine
     ktx2.detectSupport(gl);
     return (loader: GLTFLoader) => {
       loader.setKTX2Loader(ktx2);
+      // #82 — sentinel-URL resolver. Sync Map lookup; non-sentinel URLs
+      // (Draco WASM, KTX2 transcoder, ordinary blob/data URLs) fall
+      // through unchanged. Safe to set per-loader: drei creates a fresh
+      // GLTFLoader (and thus a fresh LoadingManager) per useGLTF call,
+      // so this never clobbers a modifier owned by another consumer.
+      loader.manager.setURLModifier((url) => resolveBasherOpfsUrl(url) ?? url);
     };
   }, [gl]);
 }
