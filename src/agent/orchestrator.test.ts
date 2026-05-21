@@ -9,7 +9,11 @@
 // REF: PLAN.md p2.5.3-identify-v2 §2 Wave A4.
 
 import { describe, expect, it } from 'vitest';
-import { parseProposePlanClosureSpec, parseProposePlanMeta } from './orchestrator';
+import {
+  buildUnknownToolError,
+  parseProposePlanClosureSpec,
+  parseProposePlanMeta,
+} from './orchestrator';
 
 describe('parseProposePlanClosureSpec — edge-kind validation (#14)', () => {
   it('accepts a valid spec with known edge kinds', () => {
@@ -136,5 +140,41 @@ describe('parseProposePlanMeta — Mutator metadata extraction (Wave C1)', () =>
   it('returns null on undefined / malformed input', () => {
     expect(parseProposePlanMeta(undefined)).toBeNull();
     expect(parseProposePlanMeta('not-json')).toBeNull();
+  });
+});
+
+describe('buildUnknownToolError — Wave B mutator.X corrective hint (#31)', () => {
+  // executeToolCall returns this whenever the LLM names a tool the
+  // registry doesn't know. Two shapes — the `mutator.X` shape is the
+  // primary fix for "the LLM keeps calling mutator.duplicate as a top-
+  // level tool" (Goal 4 of PR #28). These tests pin the corrective
+  // string so a future copy-edit can't silently drop the proposePlan
+  // hint and resurrect the loop.
+
+  it('mutator.X: surfaces both "unknown tool" AND the agent.proposePlan corrective shape', () => {
+    const result = buildUnknownToolError('mutator.rotate');
+    expect(result.ops).toEqual([]);
+    expect(result.text).toContain('unknown tool');
+    expect(result.text).toContain('"mutator.rotate"');
+    // The corrective example must name the same mutator AND show the
+    // proposePlan call shape — both are required so the LLM's next
+    // round is a fix, not another mistake.
+    expect(result.text).toContain('agent.proposePlan({ mutator: "mutator.rotate"');
+    expect(result.text).toContain('agent.listMutators');
+  });
+
+  it('mutator.duplicate (Goal 4 case): same corrective shape with the actual name interpolated', () => {
+    const result = buildUnknownToolError('mutator.duplicate');
+    expect(result.text).toContain('agent.proposePlan({ mutator: "mutator.duplicate"');
+  });
+
+  it('non-mutator unknown tool: bare "unknown tool" without the proposePlan hint', () => {
+    // The corrective shape is mutator-specific. For any other unknown
+    // name the LLM should pick a real tool, not be misdirected into
+    // proposePlan.
+    const result = buildUnknownToolError('random.nonexistent');
+    expect(result.ops).toEqual([]);
+    expect(result.text).toBe('ERROR: unknown tool "random.nonexistent"');
+    expect(result.text).not.toContain('proposePlan');
   });
 });
