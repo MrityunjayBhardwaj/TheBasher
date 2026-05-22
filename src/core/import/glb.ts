@@ -6,11 +6,13 @@
 // touched — Draco/KTX2 stay drei-lazy at render time (B12).
 //
 // Scope discipline (per CONTEXT.md + RESEARCH.md):
-//   - FLOAT32-only animation accessors (componentType 5126). Quantised
-//     (5120/5121/5122/5123) throw with a clear follow-up message.
+//   - Animation accessors: FLOAT32 (5126) + the four quantised integer
+//     types (5120/5121/5122/5123, KHR_mesh_quantization) with spec
+//     dequantisation when `normalized` is set (#89). UNSIGNED_INT (5125)
+//     and unknown types throw.
 //   - Embedded BIN only. `buffers[].uri` (data-URI / external `.bin`)
-//     throws — RESEARCH R2; the multi-file `.gltf` case is filed as a
-//     follow-up before this phase merges.
+//     throws — RESEARCH R2 / #90; the multi-file `.gltf` load-layer
+//     case is #82.
 //
 // GLB layout (little-endian):
 //   header: 12 bytes — magic 'glTF' (0x46546C67) | version 2 | length
@@ -37,6 +39,12 @@ export interface GltfAccessor {
   componentType: number;
   count: number;
   type: 'SCALAR' | 'VEC2' | 'VEC3' | 'VEC4' | 'MAT4';
+  /**
+   * When true, integer component values are dequantised to [0,1]
+   * (unsigned) or [-1,1] (signed) per glTF 2.0 §3.6.2.1.2. Common on
+   * KHR_mesh_quantization sampler outputs. Absent / false → raw values.
+   */
+  normalized?: boolean;
 }
 
 export interface GltfBufferView {
@@ -162,22 +170,43 @@ const NUM_COMPONENTS: Record<GltfAccessor['type'], number> = {
   MAT4: 16,
 };
 
+// Dequantisation divisors per glTF 2.0 §3.6.2.1.2 (accessor data types).
+// Applied only when `accessor.normalized === true`. Signed types floor at
+// -1 (the `-MAX` slot is reserved/unused so c/MAX can dip just below -1).
+const NORMALIZE_DIVISOR: Record<number, number> = {
+  5120: 127, // BYTE → [-1, 1]
+  5121: 255, // UNSIGNED_BYTE → [0, 1]
+  5122: 32767, // SHORT → [-1, 1]
+  5123: 65535, // UNSIGNED_SHORT → [0, 1]
+};
+
+const SIGNED_COMPONENT = new Set([5120, 5122]);
+
 /**
- * Read a FLOAT32 accessor as a Float32Array view over the bin chunk.
+ * Read an accessor's data into a Float32Array (one copy, dequantised).
  *
- * v0.7.5 ONLY handles componentType 5126 (FLOAT). Quantised animation
- * accessors (KHR_mesh_quantization) throw with a clear follow-up
- * message. This matches the CONTEXT D-04 scope discipline — the
- * follow-up issue is filed before this phase merges.
+ * Supports FLOAT (5126) and the four integer component types
+ * (5120 BYTE / 5121 UBYTE / 5122 SHORT / 5123 USHORT) — the latter are
+ * common on KHR_mesh_quantization size-optimised exports (#89). When
+ * `accessor.normalized` is set, integer values are dequantised per the
+ * spec (signed → [-1,1] with a -1 floor; unsigned → [0,1]); otherwise
+ * the raw integer value is widened to float.
+ *
+ * Reads through a DataView (little-endian, glTF's required byte order)
+ * so arbitrary bin byteOffsets are safe regardless of component-size
+ * alignment — and returns a fresh array (callers only read by index;
+ * no aliasing dependency, verified at #89).
  */
 export function readAccessor(json: GltfJson, bin: Uint8Array, accessorIndex: number): Float32Array {
   const accessor = json.accessors?.[accessorIndex];
   if (!accessor) throw new Error(`readAccessor: accessor[${accessorIndex}] missing`);
-  if (accessor.componentType !== 5126) {
+  const compBytes = COMPONENT_BYTES[accessor.componentType];
+  if (!compBytes || accessor.componentType === 5125) {
+    // 5125 (UNSIGNED_INT) is valid only for mesh indices, never for
+    // animation sampler I/O — reject it (and any unknown type) loudly.
     throw new Error(
-      `readAccessor: componentType ${accessor.componentType} (non-FLOAT32) is not supported ` +
-        `in v0.7.5. Re-export with sampler outputs as FLOAT. ` +
-        `Tracking: glTF quantised animation accessors follow-up.`,
+      `readAccessor: componentType ${accessor.componentType} is not supported for ` +
+        `animation accessors (expected FLOAT / BYTE / UBYTE / SHORT / USHORT).`,
     );
   }
   const bufferView = json.bufferViews?.[accessor.bufferView];
@@ -186,18 +215,40 @@ export function readAccessor(json: GltfJson, bin: Uint8Array, accessorIndex: num
   if (!numComponents) {
     throw new Error(`readAccessor: unsupported accessor type ${accessor.type}`);
   }
-  const compBytes = COMPONENT_BYTES[accessor.componentType];
+  const count = accessor.count * numComponents;
   const byteOffset = (bufferView.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-  const totalBytes = accessor.count * numComponents * compBytes;
+  const totalBytes = count * compBytes;
   if (byteOffset + totalBytes > bin.byteLength) {
     throw new Error(
       `readAccessor: byteOffset+length ${byteOffset + totalBytes} overruns BIN chunk (${bin.byteLength} bytes)`,
     );
   }
-  // Float32Array alignment: glTF 2.0 spec §3.6.2.4 requires accessor
-  // offsets be a multiple of componentType size. For FLOAT32 that's 4
-  // bytes — well-formed exports always satisfy it. If a misaligned
-  // export ever surfaces, swap to a DataView read.
-  const startInBin = bin.byteOffset + byteOffset;
-  return new Float32Array(bin.buffer, startInBin, accessor.count * numComponents);
+  const dv = new DataView(bin.buffer, bin.byteOffset + byteOffset, totalBytes);
+  const out = new Float32Array(count);
+  const normalized = accessor.normalized === true;
+  const divisor = NORMALIZE_DIVISOR[accessor.componentType];
+  const signed = SIGNED_COMPONENT.has(accessor.componentType);
+  for (let i = 0; i < count; i++) {
+    const off = i * compBytes;
+    let raw: number;
+    switch (accessor.componentType) {
+      case 5126:
+        out[i] = dv.getFloat32(off, true);
+        continue;
+      case 5120:
+        raw = dv.getInt8(off);
+        break;
+      case 5121:
+        raw = dv.getUint8(off);
+        break;
+      case 5122:
+        raw = dv.getInt16(off, true);
+        break;
+      default: // 5123
+        raw = dv.getUint16(off, true);
+        break;
+    }
+    out[i] = normalized ? (signed ? Math.max(raw / divisor, -1) : raw / divisor) : raw;
+  }
+  return out;
 }

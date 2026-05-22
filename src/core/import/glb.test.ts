@@ -1,9 +1,10 @@
 // GLB parser unit tests — Wave D1.
 //
-// Round-trip + invariant breaks + accessor reading + the two
-// follow-up error messages (quantised accessors / data-URI buffers).
+// Round-trip + invariant breaks + accessor reading (FLOAT32 + the
+// quantised integer types per #89) + the data-URI-buffer follow-up
+// error message (#90).
 //
-// REF: PLAN.md Wave D1.
+// REF: PLAN.md Wave D1; #89 (quantised accessors).
 
 import { describe, expect, it } from 'vitest';
 import { parseGlb, readAccessor, type GltfJson } from './glb';
@@ -104,18 +105,130 @@ describe('readAccessor', () => {
     expect(Array.from(result)).toEqual([0, 0, 0, 1, 2, 3]);
   });
 
-  it('throws on a SHORT (5122) accessor with the quantised follow-up message', () => {
-    const binBytes = new Uint8Array(4);
+  it('reads a normalized SHORT (5122) accessor → [-1, 1] (#89)', () => {
+    // Three SCALAR samples: 0 → 0, 32767 → 1, -32767 → -1.
+    const binBytes = new Uint8Array(6);
+    const v = new DataView(binBytes.buffer);
+    v.setInt16(0, 0, true);
+    v.setInt16(2, 32767, true);
+    v.setInt16(4, -32767, true);
     const json: GltfJson = {
       nodes: [],
-      accessors: [{ bufferView: 0, componentType: 5122, count: 2, type: 'SCALAR' }],
+      accessors: [
+        { bufferView: 0, componentType: 5122, count: 3, type: 'SCALAR', normalized: true },
+      ],
+      bufferViews: [{ buffer: 0, byteLength: 6 }],
+      buffers: [{ byteLength: 6 }],
+    };
+    const buf = makeGlb(json, binBytes);
+    const parsed = parseGlb(buf);
+    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    expect(result[0]).toBeCloseTo(0, 6);
+    expect(result[1]).toBeCloseTo(1, 6);
+    expect(result[2]).toBeCloseTo(-1, 6);
+  });
+
+  it('reads a normalized UNSIGNED_BYTE (5121) accessor → [0, 1] (#89)', () => {
+    // 0 → 0, 255 → 1, 128 → ~0.502.
+    const binBytes = new Uint8Array([0, 255, 128, 0]); // 4th byte = alignment pad
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [
+        { bufferView: 0, componentType: 5121, count: 3, type: 'SCALAR', normalized: true },
+      ],
       bufferViews: [{ buffer: 0, byteLength: 4 }],
       buffers: [{ byteLength: 4 }],
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
+    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    expect(result[0]).toBeCloseTo(0, 6);
+    expect(result[1]).toBeCloseTo(1, 6);
+    expect(result[2]).toBeCloseTo(128 / 255, 6);
+  });
+
+  it('reads a normalized BYTE (5120) accessor with the -1 floor (#89)', () => {
+    // -128 is the reserved slot; dequantises to -1.0156 raw but floors to -1.
+    const binBytes = new Uint8Array(4);
+    const v = new DataView(binBytes.buffer);
+    v.setInt8(0, -128);
+    v.setInt8(1, 127);
+    v.setInt8(2, 0);
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [
+        { bufferView: 0, componentType: 5120, count: 3, type: 'SCALAR', normalized: true },
+      ],
+      bufferViews: [{ buffer: 0, byteLength: 4 }],
+      buffers: [{ byteLength: 4 }],
+    };
+    const buf = makeGlb(json, binBytes);
+    const parsed = parseGlb(buf);
+    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    expect(result[0]).toBe(-1); // floored, NOT -128/127 = -1.0078…
+    expect(result[1]).toBeCloseTo(1, 6);
+    expect(result[2]).toBeCloseTo(0, 6);
+  });
+
+  it('reads a NON-normalized USHORT (5123) accessor as raw integer values (#89)', () => {
+    // Without `normalized`, integer types widen to float verbatim.
+    const binBytes = new Uint8Array(4);
+    const v = new DataView(binBytes.buffer);
+    v.setUint16(0, 7, true);
+    v.setUint16(2, 65535, true);
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [{ bufferView: 0, componentType: 5123, count: 2, type: 'SCALAR' }],
+      bufferViews: [{ buffer: 0, byteLength: 4 }],
+      buffers: [{ byteLength: 4 }],
+    };
+    const buf = makeGlb(json, binBytes);
+    const parsed = parseGlb(buf);
+    expect(Array.from(readAccessor(parsed.json, parsed.bin, 0))).toEqual([7, 65535]);
+  });
+
+  it('still reads a quantised accessor at a non-zero bufferView byteOffset (DataView alignment-safe)', () => {
+    // SHORT samples start 2 bytes into the bin — a misaligned offset for
+    // a 2-byte type only if read as a direct Int16Array view. DataView
+    // tolerates it.
+    const binBytes = new Uint8Array(8);
+    const v = new DataView(binBytes.buffer);
+    v.setInt16(2, 32767, true);
+    v.setInt16(4, -32767, true);
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [
+        {
+          bufferView: 0,
+          byteOffset: 2,
+          componentType: 5122,
+          count: 2,
+          type: 'SCALAR',
+          normalized: true,
+        },
+      ],
+      bufferViews: [{ buffer: 0, byteLength: 8 }],
+      buffers: [{ byteLength: 8 }],
+    };
+    const buf = makeGlb(json, binBytes);
+    const parsed = parseGlb(buf);
+    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    expect(result[0]).toBeCloseTo(1, 6);
+    expect(result[1]).toBeCloseTo(-1, 6);
+  });
+
+  it('throws on UNSIGNED_INT (5125) — valid for indices, never animation I/O', () => {
+    const binBytes = new Uint8Array(8);
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [{ bufferView: 0, componentType: 5125, count: 2, type: 'SCALAR' }],
+      bufferViews: [{ buffer: 0, byteLength: 8 }],
+      buffers: [{ byteLength: 8 }],
+    };
+    const buf = makeGlb(json, binBytes);
+    const parsed = parseGlb(buf);
     expect(() => readAccessor(parsed.json, parsed.bin, 0)).toThrow(
-      /componentType 5122 \(non-FLOAT32\) is not supported/,
+      /componentType 5125 is not supported for animation accessors/,
     );
   });
 
