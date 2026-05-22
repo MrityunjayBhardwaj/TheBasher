@@ -443,14 +443,30 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     item.dispatchEvent(new DragEvent('dragend', { dataTransfer: dt, bubbles: true }));
   });
 
+  // #90 — `.gltf` now routes through the ASYNC glTF importer (reads the
+  // bytes from OPFS, parses, resolves the data-URI buffer, emits the
+  // GltfAsset → Transform → Group chain). The drop handler is
+  // fire-and-forget, so wait for the chain to land before asserting
+  // (the static path was synchronous; the importer is not).
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as DagWindow;
+      return Object.keys(w.__basher_dag!.getState().state.nodes).some((id) =>
+        id.startsWith('n_gltf_'),
+      );
+    },
+    { timeout: 10_000 },
+  );
+
   const after = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     const s = w.__basher_dag!.getState();
     const nodes = s.state.nodes;
     const newNodeIds = Object.keys(nodes).filter((id) => id.startsWith('n_'));
-    // The dropChain helper generates ids prefixed with `n_gltf_`, `n_tx_`,
-    // `n_grp_`. Only the three from this drop should match (default project
-    // ids are `n_camera`, `n_light`, `n_box`, `n_scene`, `n_render`).
+    // The glTF importer generates ids prefixed with `n_gltf_`, `n_tx_`,
+    // `n_grp_` (same content-addressed prefixes the static dropChain used).
+    // Only the three from this drop should match (default project ids are
+    // `n_camera`, `n_light`, `n_box`, `n_scene`, `n_render`).
     const gltf = newNodeIds.find((id) => id.startsWith('n_gltf_'));
     const tx = newNodeIds.find((id) => id.startsWith('n_tx_'));
     const grp = newNodeIds.find((id) => id.startsWith('n_grp_'));
