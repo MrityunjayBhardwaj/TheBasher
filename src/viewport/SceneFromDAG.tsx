@@ -19,6 +19,10 @@ import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/dre
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+// #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
+// (SkeletonUtils is already a project dep; retarget.ts imports retargetClip from
+// the same module. This is a NEW `clone` named import.)
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -493,7 +497,15 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // TRS override below mutates this Object3D in-place. useMemo with
   // gltf.scene as dependency gives one clone per (component-instance,
   // source-scene) pair, which is correct here.
-  const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  // #88: SkeletonUtils.clone, not Object3D.clone(true). Plain Object3D.clone
+  // leaves a cloned SkinnedMesh bound to the ORIGINAL bones — animating the
+  // cloned joints (via the TRS override below) then deforms nothing (the
+  // T-pose footgun). SkeletonUtils.clone rebinds SkinnedMesh.skeleton to the
+  // cloned bones so the per-child TRS drives real deformation. It is a safe
+  // superset: non-skinned subtrees fall through to standard clone, and the
+  // per-instance / mutates-in-place rationale above is unchanged (still one
+  // deep clone per component-instance).
+  const cloned = useMemo(() => cloneSkinned(gltf.scene) as THREE.Group, [gltf.scene]);
   const shading = useViewportStore((s) => s.shading);
   useEffect(() => {
     if (!override) return;
@@ -550,6 +562,42 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       child.scale.set(track.scale[0], track.scale[1], track.scale[2]);
     }
   }, [cloned, value.transformClip, value.nodeNameMap]);
+  // #88 (DEV-only) — observation seam for the skinned-deform e2e. The proof
+  // that #88 works is that a skin-bound VERTEX moves (not just that a joint
+  // Object3D animates — that already happens via the TRS effect above). That
+  // vertex only exists on the rendered cloned SkinnedMesh, which nothing
+  // exposes to e2e today. Mirror the gizmo's userData + window-getter pattern
+  // (Gizmo.tsx:254): expose a live reader over the first SkinnedMesh in the
+  // cloned tree. Read-only — no DAG mutation, no store writes (V8 clean).
+  // Single-skinned-asset assumption (the e2e loads one), same stance as the
+  // gizmo's single-selection getter.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    let skinned: THREE.SkinnedMesh | null = null;
+    cloned.traverse((child) => {
+      if (skinned) return;
+      if ((child as THREE.SkinnedMesh).isSkinnedMesh) skinned = child as THREE.SkinnedMesh;
+    });
+    if (!skinned) return; // don't clobber a registered getter with a non-skinned sibling
+    const mesh: THREE.SkinnedMesh = skinned;
+    mesh.userData.__basher_skin = {
+      boneCount: mesh.skeleton ? mesh.skeleton.bones.length : 0,
+      bound: Boolean(mesh.skeleton && mesh.skeleton.bones.length > 0),
+      // Live reader: computes the CPU-skinned vertex (three 0.169) at CALL
+      // time, in world space, so reads at t=0 vs t=mid reflect the current
+      // bone-matrix palette. Call this inside page.evaluate (the function
+      // does not cross the Playwright boundary — its result does).
+      vertex: (i: number): [number, number, number] => {
+        const v = new THREE.Vector3();
+        mesh.getVertexPosition(i, v);
+        mesh.localToWorld(v);
+        return [v.x, v.y, v.z];
+      },
+    };
+    const w = window as unknown as Record<string, unknown>;
+    w.__basher_gltf_skin = () =>
+      (mesh as unknown as { userData: Record<string, unknown> }).userData.__basher_skin ?? null;
+  }, [cloned]);
   return <primitive object={cloned} />;
 }
 
