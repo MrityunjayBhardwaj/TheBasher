@@ -33,6 +33,7 @@
 import { AssetDropZone } from './AssetDropZone';
 import { Chrome } from './Chrome';
 import { DiffBar } from './DiffBar';
+import { AssetErrorBanner } from './AssetErrorBanner';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
@@ -189,6 +190,7 @@ export function Layout() {
           data-testid="view3d-slot"
         >
           <DiffBar />
+          <AssetErrorBanner />
           <AssetDropZone>
             <Viewport />
           </AssetDropZone>

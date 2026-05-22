@@ -28,7 +28,15 @@ import { getStorage } from '../boot';
 import { gltfReferencesExternalSiblings, loadMultiFileGltf } from './opfsGltfResolver';
 
 const urlCache = new Map<string, string>();
-const promiseCache = new Map<string, Promise<string>>();
+const promiseCache = new Map<string, Promise<void>>();
+// #83 gap 2: rejected resolutions land here so the next render throws the
+// real Error (not the already-settled promise). Without this, a missing /
+// unreadable asset suspended forever — the promise rejected but the
+// suspense `throw p` re-threw a settled promise each retry, so React kept
+// the boundary suspended and the user saw a permanent blank. Recording the
+// error and throwing it on retry converts that silent hang into a caught
+// throw the AssetErrorBoundary can surface.
+const errorCache = new Map<string, Error>();
 
 function isPassthroughUrl(p: string): boolean {
   return (
@@ -78,12 +86,25 @@ function load(path: string): Promise<string> {
 export function useResolvedAssetUrl(path: string): string {
   const cached = urlCache.get(path);
   if (cached) return cached;
+  // #83 gap 2: a prior load that rejected surfaces its Error here so the
+  // AssetErrorBoundary catches it instead of the component re-suspending.
+  const failed = errorCache.get(path);
+  if (failed) throw failed;
   let p = promiseCache.get(path);
   if (!p) {
-    p = load(path).then((url) => {
-      urlCache.set(path, url);
-      return url;
-    });
+    // The resolution promise always FULFILLS (settling into urlCache on
+    // success or errorCache on failure) so React's retry re-runs this
+    // hook — which then either returns the cached URL or throws the
+    // cached Error. Throwing the raw promise on rejection would re-throw
+    // a settled promise forever (the original silent-hang bug).
+    p = load(path).then(
+      (url) => {
+        urlCache.set(path, url);
+      },
+      (err: unknown) => {
+        errorCache.set(path, err instanceof Error ? err : new Error(String(err)));
+      },
+    );
     promiseCache.set(path, p);
   }
   throw p;
@@ -99,4 +120,5 @@ export function __resetAssetUrlCacheForTests(): void {
   for (const url of urlCache.values()) URL.revokeObjectURL(url);
   urlCache.clear();
   promiseCache.clear();
+  errorCache.clear();
 }

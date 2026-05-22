@@ -31,6 +31,7 @@ import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
 import { PostFx } from '../render/PostFx';
 import { DiffOverlay } from './DiffOverlay';
+import { AssetErrorBoundary } from './AssetErrorBoundary';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -366,7 +367,17 @@ function MeshChild({ value, override }: MeshChildProps) {
     case 'SphereMesh':
       return <SphereMeshR value={value} override={override} />;
     case 'GltfAsset':
-      return <GltfAssetR value={value} override={override} />;
+      // #83 gap 2 — per-asset error boundary. A load/parse failure
+      // (bad bytes, unsupported extension, missing #82 sibling, Draco
+      // decode fail) is caught here, reported to the assetErrorStore,
+      // and rendered as nothing — so one broken asset can't blank the
+      // whole viewport. Keyed by assetRef so a swapped asset remounts
+      // fresh and re-attempts.
+      return (
+        <AssetErrorBoundary key={value.assetRef} assetRef={value.assetRef}>
+          <GltfAssetR value={value} override={override} />
+        </AssetErrorBoundary>
+      );
     case 'Transform':
       return <TransformR value={value} override={override} />;
     case 'Group':
