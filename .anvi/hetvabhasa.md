@@ -1056,3 +1056,32 @@ C5 used Option A. The whitelist was NOT widened — that would have been a worka
 5. **Conclusion:** The flake class is fully eliminable by the grep gate above before code lands. The catalogue's contribution is the "this is a CATEGORY of bug" framing — single instances looked like one-off oversights; three in one arc proved the pattern.
 
 **Cross-ref:** [[V22]] (the invariant this enforces — "generated DAG node ids must be deterministic over (args, state)"); commits `b42fea7` (#17 fix), `6553b0d` (P7.5 importer determinism), `4c82536` (cameraSnapshot fix). Provenance: ORIGIN = three independent occurrences (#17 / P7.5 / #93) within the 2026-05-19→21 backlog sweep; WHY = without catalogue framing, each next site gets diagnosed as a one-off; HOW = the grep gate above should run as part of any "/anvi:quick" or wave-close gate touching files outside `src/nodes/**` that emit Ops. REF: `src/agent/telemetry/recorder.ts:96` (the radix-36 shape), `src/agent/tools/cameraSnapshot.ts:52` (the `Date.now` shape — fixed at `4c82536`), `src/core/import/gltfImportChain.ts:57-68` (the fnv1a-32 helper others can borrow), THESIS §48.
+
+### H43 — A Suspense resolver that throws the in-flight promise on every retry suspends FOREVER on rejection (never reaches the error boundary)
+
+**Span:** any React Suspense data-loader that follows the "throw a Promise to suspend, cache the resolved value, return it on retry" pattern but caches ONLY the success value. When the promise rejects, the cache miss persists, so the next render re-throws the _same already-settled_ promise — React re-subscribes to a promise that will never re-resolve, and the component is stuck suspended. No error is ever thrown to the nearest error boundary, no console error fires, the suspense fallback (often `null`) shows indefinitely. Instantiated at `src/app/asset/opfsLoader.ts::useResolvedAssetUrl` (#83) — a GltfAsset pointing at a missing OPFS path produced a permanent blank viewport with ZERO console/page errors.
+
+**Symptom:** a suspense-driven surface (asset, lazy route, data panel) shows its fallback forever for a specific bad input, with no error logged anywhere. An error boundary wrapping it never fires. In an e2e: `page.on('console')` + `page.on('pageerror')` capture NOTHING; the awaited element/banner never appears; the test times out rather than failing on an assertion.
+
+**Trap:** "add an error boundary" — necessary but NOT sufficient. The boundary can only catch what is THROWN; this loader never throws (it re-suspends). Shipping the boundary alone and "verifying" it by reading the code passes inference but the live behaviour is still a silent hang. Only running it (Lokāyata) exposes that nothing was thrown.
+
+**Real fix:** track rejection in the resolver and throw the real Error on retry. The resolution promise must always FULFILL — settle into a success cache OR an error cache — so React's retry re-runs the hook, which then returns the cached value (success) or throws the cached Error (failure → caught by the boundary). Pattern:
+
+```
+const failed = errorCache.get(key); if (failed) throw failed;       // surface to boundary
+let p = promiseCache.get(key);
+if (!p) { p = load(key).then(v => okCache.set(key,v), e => errorCache.set(key, asError(e))); promiseCache.set(key,p); }
+throw p;                                                            // still loading
+```
+
+**Detection signal:** grep for suspense loaders that `throw <promise>` where the `.then` has only an onFulfilled handler (no onRejected) AND the cache `.set` only happens in the success path. Companion runtime signal: a bad input yields a permanent fallback with empty `console`/`pageerror` capture — the "silent suspend" fingerprint distinct from the "throws and blanks" fingerprint.
+
+**Five-limbed argument:**
+
+1. **Claim:** A suspense resolver caching only success re-throws a settled (rejected) promise on retry, suspending forever instead of erroring.
+2. **Reason:** React retries the render when the thrown promise settles; the retry re-reads the cache (still empty on failure) and throws the same rejected promise; React subscribes to a promise that will never transition again → permanent suspend, no throw, no boundary.
+3. **Universal principle:** Suspense surfaces an ERROR only when the component THROWS a non-promise on retry. A loader that wants failures visible must convert "promise rejected" into "throw the error synchronously on the next render" — i.e. the promise must fulfill into a terminal state the retry can branch on.
+4. **Application:** `useResolvedAssetUrl` (#83) split its single `.then(url => urlCache.set)` into `.then(onFulfilled→urlCache, onRejected→errorCache)`; the hook now throws `errorCache.get(path)` before re-suspending. The per-asset `AssetErrorBoundary` then catches it and reports to `assetErrorStore` → the user sees "asset failed: <ref> — <reason>".
+5. **Conclusion:** The error boundary is the catcher; the loader's rejection-surfacing is the thrower. Both are required — the boundary alone is a no-op against a loader that never throws.
+
+**Cross-ref:** [[H42]] (sibling "silent until observed" class — both hide until a live run surfaces them), the boundary-pair discipline (observe the loader's THROW behaviour, not just the boundary's CATCH behaviour), #82 (loud-failure sibling on the importer side — missing sibling throws at import time). Provenance: ORIGIN = #83 gap 2; the e2e proved the boundary-only fix was insufficient (zero errors, permanent suspend) — found by Lokāyata, not inference. WHY = without this entry the next suspense loader added under the success-only-cache pattern repeats the silent hang and a future "add a boundary" fix looks correct in code review but fails in the browser. HOW = when adding/auditing any `throw promise` suspense loader, verify the rejection path throws on retry; in e2e, assert via `console`/`pageerror` capture that a bad input produces a CAUGHT error, not silence. REF: `src/app/asset/opfsLoader.ts::useResolvedAssetUrl` (errorCache + rejection-surfacing), `src/viewport/AssetErrorBoundary.tsx` (the catcher), `tests/e2e/p83-asset-error-boundary.spec.ts` (the live observation), PR #101.
