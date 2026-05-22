@@ -1,13 +1,21 @@
-// GLB parser unit tests — Wave D1.
+// GLB parser unit tests — Wave D1 + #90.
 //
 // Round-trip + invariant breaks + accessor reading (FLOAT32 + the
-// quantised integer types per #89) + the data-URI-buffer follow-up
-// error message (#90).
+// quantised integer types per #89, now multi-buffer indexed) + the
+// #90 buffer-resolution surface (JSON-only `.gltf`, data-URI decode,
+// external-buffer resolver, magic dispatch).
 //
-// REF: PLAN.md Wave D1; #89 (quantised accessors).
+// REF: PLAN.md Wave D1; #89 (quantised accessors); #90 (buffers).
 
 import { describe, expect, it } from 'vitest';
-import { parseGlb, readAccessor, type GltfJson } from './glb';
+import {
+  parseGlb,
+  parseGltfJson,
+  parseGltfContainer,
+  resolveBuffers,
+  readAccessor,
+  type GltfJson,
+} from './glb';
 
 const MAGIC = 0x46546c67;
 const CHUNK_JSON = 0x4e4f534a;
@@ -101,7 +109,7 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    const result = readAccessor(parsed.json, parsed.bin, 0);
+    const result = readAccessor(parsed.json, [parsed.bin], 0);
     expect(Array.from(result)).toEqual([0, 0, 0, 1, 2, 3]);
   });
 
@@ -122,7 +130,7 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    const result = Array.from(readAccessor(parsed.json, [parsed.bin], 0));
     expect(result[0]).toBeCloseTo(0, 6);
     expect(result[1]).toBeCloseTo(1, 6);
     expect(result[2]).toBeCloseTo(-1, 6);
@@ -141,7 +149,7 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    const result = Array.from(readAccessor(parsed.json, [parsed.bin], 0));
     expect(result[0]).toBeCloseTo(0, 6);
     expect(result[1]).toBeCloseTo(1, 6);
     expect(result[2]).toBeCloseTo(128 / 255, 6);
@@ -164,7 +172,7 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    const result = Array.from(readAccessor(parsed.json, [parsed.bin], 0));
     expect(result[0]).toBe(-1); // floored, NOT -128/127 = -1.0078…
     expect(result[1]).toBeCloseTo(1, 6);
     expect(result[2]).toBeCloseTo(0, 6);
@@ -184,7 +192,7 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    expect(Array.from(readAccessor(parsed.json, parsed.bin, 0))).toEqual([7, 65535]);
+    expect(Array.from(readAccessor(parsed.json, [parsed.bin], 0))).toEqual([7, 65535]);
   });
 
   it('still reads a quantised accessor at a non-zero bufferView byteOffset (DataView alignment-safe)', () => {
@@ -212,7 +220,7 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    const result = Array.from(readAccessor(parsed.json, parsed.bin, 0));
+    const result = Array.from(readAccessor(parsed.json, [parsed.bin], 0));
     expect(result[0]).toBeCloseTo(1, 6);
     expect(result[1]).toBeCloseTo(-1, 6);
   });
@@ -227,17 +235,125 @@ describe('readAccessor', () => {
     };
     const buf = makeGlb(json, binBytes);
     const parsed = parseGlb(buf);
-    expect(() => readAccessor(parsed.json, parsed.bin, 0)).toThrow(
+    expect(() => readAccessor(parsed.json, [parsed.bin], 0)).toThrow(
       /componentType 5125 is not supported for animation accessors/,
     );
   });
 
-  it('throws when buffers[0].uri is set (data-URI / external BIN follow-up)', () => {
+  it('reads an accessor backed by a non-zero buffer index (#90 multi-buffer)', () => {
+    // bufferView.buffer = 1 → must read buffers[1], not buffers[0].
     const json: GltfJson = {
       nodes: [],
-      buffers: [{ byteLength: 0, uri: 'data:application/octet-stream;base64,AAAA' }],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' }],
+      bufferViews: [{ buffer: 1, byteLength: 8 }],
+      buffers: [{ byteLength: 0 }, { byteLength: 8 }],
+    };
+    const buf0 = new Uint8Array(0);
+    const buf1 = new Uint8Array(8);
+    new DataView(buf1.buffer).setFloat32(0, 3, true);
+    new DataView(buf1.buffer).setFloat32(4, 7, true);
+    expect(Array.from(readAccessor(json, [buf0, buf1], 0))).toEqual([3, 7]);
+  });
+
+  it('throws when bufferView.buffer index is unresolved (#90)', () => {
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: 'SCALAR' }],
+      bufferViews: [{ buffer: 2, byteLength: 4 }],
+    };
+    expect(() => readAccessor(json, [new Uint8Array(4)], 0)).toThrow(/not resolved/);
+  });
+});
+
+describe('parseGlb (#90 — buffers[].uri no longer rejected)', () => {
+  it('parses a GLB whose buffers[0] omits uri (embedded BIN) without throwing', () => {
+    const json: GltfJson = {
+      nodes: [{ name: 'cube' }],
+      buffers: [{ byteLength: 4 }],
+    };
+    const buf = makeGlb(json, new Uint8Array([9, 8, 7, 6]));
+    const parsed = parseGlb(buf);
+    expect(Array.from(parsed.bin.slice(0, 4))).toEqual([9, 8, 7, 6]);
+  });
+
+  it('no longer throws when a buffer carries a uri (resolution deferred to resolveBuffers)', () => {
+    const json: GltfJson = {
+      nodes: [],
+      buffers: [{ byteLength: 4, uri: 'data:application/octet-stream;base64,AAAA' }],
     };
     const buf = makeGlb(json);
-    expect(() => parseGlb(buf)).toThrow(/data-URI \/ external buffers are not supported/);
+    expect(() => parseGlb(buf)).not.toThrow();
+  });
+});
+
+describe('parseGltfJson + parseGltfContainer (#90)', () => {
+  it('parses a JSON-only .gltf document into json + empty bin', () => {
+    const json: GltfJson = { nodes: [{ name: 'Cube' }], buffers: [{ byteLength: 0 }] };
+    const buf = new TextEncoder().encode(JSON.stringify(json)).buffer;
+    const parsed = parseGltfJson(buf as ArrayBuffer);
+    expect(parsed.json.nodes[0].name).toBe('Cube');
+    expect(parsed.bin.byteLength).toBe(0);
+  });
+
+  it('rejects non-JSON input', () => {
+    const buf = new TextEncoder().encode('not json {{{').buffer;
+    expect(() => parseGltfJson(buf as ArrayBuffer)).toThrow(/not valid JSON/);
+  });
+
+  it('dispatches GLB magic → parseGlb, JSON → parseGltfJson', () => {
+    const glb = makeGlb({ nodes: [{ name: 'g' }] }, new Uint8Array([1, 2, 3, 4]));
+    expect(parseGltfContainer(glb).bin.byteLength).toBeGreaterThan(0);
+    const gltf = new TextEncoder().encode(JSON.stringify({ nodes: [{ name: 'j' }] }))
+      .buffer as ArrayBuffer;
+    expect(parseGltfContainer(gltf).json.nodes[0].name).toBe('j');
+  });
+});
+
+describe('resolveBuffers (#90)', () => {
+  it('decodes an inline base64 data-URI buffer (no resolver needed)', async () => {
+    // base64 "AQIDBA==" = bytes [1,2,3,4].
+    const json: GltfJson = {
+      nodes: [],
+      buffers: [{ byteLength: 4, uri: 'data:application/octet-stream;base64,AQIDBA==' }],
+    };
+    const [b0] = await resolveBuffers(json, new Uint8Array(0));
+    expect(Array.from(b0)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('returns the embedded BIN at index 0 when buffers[0] omits uri', async () => {
+    const json: GltfJson = { nodes: [], buffers: [{ byteLength: 3 }] };
+    const embedded = new Uint8Array([5, 6, 7]);
+    const [b0] = await resolveBuffers(json, embedded);
+    expect(Array.from(b0)).toEqual([5, 6, 7]);
+  });
+
+  it('fetches an external buffer via the injected resolver', async () => {
+    const json: GltfJson = {
+      nodes: [],
+      buffers: [{ byteLength: 0 }, { byteLength: 2, uri: 'data.bin' }],
+    };
+    const fetched = new Uint8Array([42, 43]);
+    const buffers = await resolveBuffers(json, new Uint8Array(0), async (uri) => {
+      expect(uri).toBe('data.bin');
+      return fetched;
+    });
+    expect(Array.from(buffers[1])).toEqual([42, 43]);
+  });
+
+  it('throws on an external buffer when no resolver is provided', async () => {
+    const json: GltfJson = { nodes: [], buffers: [{ byteLength: 2, uri: 'data.bin' }] };
+    await expect(resolveBuffers(json, new Uint8Array(0))).rejects.toThrow(
+      /external but no resolveBuffer/,
+    );
+  });
+
+  it('throws when a non-zero buffer omits its uri', async () => {
+    const json: GltfJson = {
+      nodes: [],
+      buffers: [{ byteLength: 0 }, { byteLength: 4 }],
+    };
+    await expect(resolveBuffers(json, new Uint8Array(0))).rejects.toThrow(
+      /only the first .* buffer may omit it/,
+    );
   });
 });

@@ -29,7 +29,13 @@
 import { Quaternion } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
 import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
-import { parseGlb, readAccessor, type GltfAnimation, type GltfJson } from './glb';
+import {
+  parseGltfContainer,
+  resolveBuffers,
+  readAccessor,
+  type GltfAnimation,
+  type GltfJson,
+} from './glb';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 
@@ -47,6 +53,15 @@ export interface GltfImportChainArgs {
   readonly sceneNodeId: string;
   readonly timeSourceId?: string;
   readonly position?: Vec3;
+  /**
+   * Resolves an external buffer URI (relative `.bin`) to its bytes (#90).
+   * Injected because byte resolution is environment-specific (OPFS in
+   * the app, fixtures in tests). data-URI buffers are decoded inline by
+   * `resolveBuffers` and never reach this callback; omit it for
+   * single-file GLB / data-URI-only `.gltf`. An external URI with no
+   * resolver throws loudly at `resolveBuffers`.
+   */
+  readonly resolveBuffer?: (uri: string) => Promise<Uint8Array>;
 }
 
 // fnv1a 32-bit — small, dependency-free, deterministic. Output is an
@@ -128,7 +143,7 @@ function defaultTRS(node: GltfJson['nodes'][number]): Required<PartialKeyframe> 
 function buildClipKeyframes(
   animation: GltfAnimation,
   json: GltfJson,
-  bin: Uint8Array,
+  buffers: Uint8Array[],
   keyByGltfNodeIndex: Record<number, string>,
 ): { duration: number; keyframes: CompleteKeyframe[] } {
   // Per-target per-time partial assemblage. We merge translation /
@@ -143,8 +158,8 @@ function buildClipKeyframes(
     const targetIndex = channel.target.node;
     const targetKey = keyByGltfNodeIndex[targetIndex];
     if (!targetKey) continue;
-    const times = readAccessor(json, bin, sampler.input);
-    const values = readAccessor(json, bin, sampler.output);
+    const times = readAccessor(json, buffers, sampler.input);
+    const values = readAccessor(json, buffers, sampler.output);
     for (let i = 0; i < times.length; i++) {
       duration = Math.max(duration, times[i]);
       let perTarget = partial.get(targetKey);
@@ -210,11 +225,15 @@ function findTimeSource(state: DagState): string | null {
   return null;
 }
 
-export function buildGltfImportOps(
+export async function buildGltfImportOps(
   args: GltfImportChainArgs,
   state: DagState,
-): GltfImportChainResult {
-  const { json, bin } = parseGlb(args.buffer);
+): Promise<GltfImportChainResult> {
+  // #90 — accept GLB or JSON-only `.gltf`; materialise every buffer
+  // (embedded / data-URI / external via the injected resolver) before
+  // reading any accessor.
+  const { json, bin } = parseGltfContainer(args.buffer);
+  const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   const { nodeNameMap, keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
 
   // Static chain ids (deterministic) — mirrors dropChain.ts:36-73 but
@@ -287,7 +306,7 @@ export function buildGltfImportOps(
   // Emit one TransformClip per glTF animation, in animations[] order.
   for (let i = 0; i < animations.length; i++) {
     const anim = animations[i];
-    const { duration, keyframes } = buildClipKeyframes(anim, json, bin, keyByGltfNodeIndex);
+    const { duration, keyframes } = buildClipKeyframes(anim, json, buffers, keyByGltfNodeIndex);
     const name = anim.name ?? `clip_${i}`;
     ops.push({
       type: 'addNode',

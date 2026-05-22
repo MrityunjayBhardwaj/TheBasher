@@ -10,9 +10,15 @@
 //     types (5120/5121/5122/5123, KHR_mesh_quantization) with spec
 //     dequantisation when `normalized` is set (#89). UNSIGNED_INT (5125)
 //     and unknown types throw.
-//   - Embedded BIN only. `buffers[].uri` (data-URI / external `.bin`)
-//     throws — RESEARCH R2 / #90; the multi-file `.gltf` load-layer
-//     case is #82.
+//   - Multiple buffers (#90). `parseGlb` recovers the embedded BIN as
+//     buffer 0; `resolveBuffers` then materialises the full
+//     `buffers[]` array — embedded (no uri), inline data-URI (decoded
+//     here, sync), or external relative `.bin` (fetched via an injected
+//     async resolver, OPFS in production). `parseGltfJson` handles the
+//     JSON-only `.gltf` container (no GLB magic / chunks). `readAccessor`
+//     indexes `buffers[bufferView.buffer]`. NOTE: this is the IMPORTER's
+//     own byte-level buffer resolution — a different path from #82's
+//     renderer-side sentinel-URL sibling loader (`opfsGltfResolver`).
 //
 // GLB layout (little-endian):
 //   header: 12 bytes — magic 'glTF' (0x46546C67) | version 2 | length
@@ -134,23 +140,106 @@ export function parseGlb(buffer: ArrayBuffer): ParsedGlb {
 
   if (!json) throw new Error('parseGlb: missing JSON chunk');
 
-  // RESEARCH R2 — external buffers (data-URI or relative `.bin`) are not
-  // supported by this importer in v0.7.5. A follow-up issue covers
-  // multi-file `.gltf` resolution (#82-style scope).
-  if (json.buffers) {
-    for (let i = 0; i < json.buffers.length; i++) {
-      if (json.buffers[i].uri !== undefined) {
+  // #90 — `buffers[].uri` (data-URI / external `.bin`) is no longer
+  // rejected here. The embedded BIN is returned as buffer 0; any
+  // uri-bearing buffer is materialised later by `resolveBuffers`.
+  // Embedded BIN may be absent for JSON-only-with-no-animations files;
+  // the import chain handles bin=empty when no accessors are read.
+  return { json, bin: bin ?? new Uint8Array(0) };
+}
+
+/**
+ * Parse a JSON-only `.gltf` container (#90) — plain UTF-8 JSON, no GLB
+ * magic / chunks / embedded BIN. Buffers are always external or inline
+ * data-URIs, materialised by `resolveBuffers`. Returns an empty `bin`
+ * (buffer 0 has no embedded chunk in this container).
+ */
+export function parseGltfJson(buffer: ArrayBuffer): ParsedGlb {
+  const text = new TextDecoder('utf-8').decode(new Uint8Array(buffer));
+  let json: GltfJson;
+  try {
+    json = JSON.parse(text) as GltfJson;
+  } catch (e) {
+    throw new Error(`parseGltfJson: not valid JSON (${(e as Error).message})`);
+  }
+  if (json === null || typeof json !== 'object') {
+    throw new Error('parseGltfJson: parsed value is not a glTF document object');
+  }
+  return { json, bin: new Uint8Array(0) };
+}
+
+/**
+ * Container dispatcher (#90): a `.glb` starts with the GLB magic
+ * (0x46546C67) → `parseGlb`; anything else is treated as JSON-only
+ * `.gltf` → `parseGltfJson`. Lets one importer entry point accept both
+ * containers without a separate format flag (single-path; CONTEXT D-02).
+ */
+export function parseGltfContainer(buffer: ArrayBuffer): ParsedGlb {
+  if (buffer.byteLength >= 4 && new DataView(buffer).getUint32(0, true) === MAGIC) {
+    return parseGlb(buffer);
+  }
+  return parseGltfJson(buffer);
+}
+
+/** Decode a `data:` URI's payload into raw bytes (base64 or percent-encoded). */
+function decodeDataUri(uri: string): Uint8Array {
+  const comma = uri.indexOf(',');
+  if (comma < 0) throw new Error('resolveBuffers: malformed data URI (no comma)');
+  const meta = uri.slice('data:'.length, comma);
+  const payload = uri.slice(comma + 1);
+  const raw = /;base64/i.test(meta) ? atob(payload) : decodeURIComponent(payload);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Materialise `json.buffers[]` into a concrete byte array per buffer
+ * index — the shape `readAccessor` indexes via `bufferView.buffer` (#90).
+ *
+ *   - No `uri`  → the GLB-embedded BIN (`embeddedBin`). Valid only at
+ *     index 0 per glTF 2.0 §4.4.3; a later no-uri buffer is malformed.
+ *   - `data:` URI → decoded inline (sync, no IO).
+ *   - external relative URI (`foo.bin`) → fetched via the injected
+ *     `resolveBuffer` callback (OPFS in production). An external URI with
+ *     no resolver throws loudly rather than silently dropping geometry.
+ *
+ * Async because external resolution is IO-bound; the embedded / data-URI
+ * branches never await, so single-file GLB import stays effectively sync.
+ */
+export async function resolveBuffers(
+  json: GltfJson,
+  embeddedBin: Uint8Array,
+  resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+): Promise<Uint8Array[]> {
+  const buffers = json.buffers ?? [];
+  if (buffers.length === 0) {
+    // No declared buffers: expose the embedded BIN at index 0 so a stray
+    // bufferView (none expected) still resolves; empty otherwise.
+    return embeddedBin.byteLength > 0 ? [embeddedBin] : [];
+  }
+  const out: Uint8Array[] = [];
+  for (let i = 0; i < buffers.length; i++) {
+    const uri = buffers[i].uri;
+    if (uri === undefined) {
+      if (i !== 0) {
         throw new Error(
-          `parseGlb: buffers[${i}].uri is set — data-URI / external buffers are not supported in v0.7.5. ` +
-            `Re-export as a single-file GLB. Tracking: glTF data-URI buffers follow-up.`,
+          `resolveBuffers: buffers[${i}] has no uri — only the first (GLB-embedded) buffer may omit it.`,
         );
       }
+      out.push(embeddedBin);
+    } else if (uri.startsWith('data:')) {
+      out.push(decodeDataUri(uri));
+    } else {
+      if (!resolveBuffer) {
+        throw new Error(
+          `resolveBuffers: buffers[${i}].uri="${uri}" is external but no resolveBuffer callback was provided.`,
+        );
+      }
+      out.push(await resolveBuffer(uri));
     }
   }
-
-  // Embedded BIN may be absent for JSON-only-with-no-animations files;
-  // the import chain handles bin=null when no accessors are read.
-  return { json, bin: bin ?? new Uint8Array(0) };
+  return out;
 }
 
 const COMPONENT_BYTES: Record<number, number> = {
@@ -197,7 +286,11 @@ const SIGNED_COMPONENT = new Set([5120, 5122]);
  * alignment — and returns a fresh array (callers only read by index;
  * no aliasing dependency, verified at #89).
  */
-export function readAccessor(json: GltfJson, bin: Uint8Array, accessorIndex: number): Float32Array {
+export function readAccessor(
+  json: GltfJson,
+  buffers: Uint8Array[],
+  accessorIndex: number,
+): Float32Array {
   const accessor = json.accessors?.[accessorIndex];
   if (!accessor) throw new Error(`readAccessor: accessor[${accessorIndex}] missing`);
   const compBytes = COMPONENT_BYTES[accessor.componentType];
@@ -211,6 +304,14 @@ export function readAccessor(json: GltfJson, bin: Uint8Array, accessorIndex: num
   }
   const bufferView = json.bufferViews?.[accessor.bufferView];
   if (!bufferView) throw new Error(`readAccessor: bufferView[${accessor.bufferView}] missing`);
+  // #90 — multi-buffer: select the backing buffer by `bufferView.buffer`.
+  const bin = buffers[bufferView.buffer];
+  if (!bin) {
+    throw new Error(
+      `readAccessor: bufferView[${accessor.bufferView}].buffer=${bufferView.buffer} not resolved ` +
+        `(${buffers.length} buffer(s) available)`,
+    );
+  }
   const numComponents = NUM_COMPONENTS[accessor.type];
   if (!numComponents) {
     throw new Error(`readAccessor: unsupported accessor type ${accessor.type}`);
@@ -220,7 +321,7 @@ export function readAccessor(json: GltfJson, bin: Uint8Array, accessorIndex: num
   const totalBytes = count * compBytes;
   if (byteOffset + totalBytes > bin.byteLength) {
     throw new Error(
-      `readAccessor: byteOffset+length ${byteOffset + totalBytes} overruns BIN chunk (${bin.byteLength} bytes)`,
+      `readAccessor: byteOffset+length ${byteOffset + totalBytes} overruns buffer ${bufferView.buffer} (${bin.byteLength} bytes)`,
     );
   }
   const dv = new DataView(bin.buffer, bin.byteOffset + byteOffset, totalBytes);
