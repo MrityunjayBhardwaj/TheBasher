@@ -117,6 +117,17 @@ function joinOpfs(dir: string, rel: string): string {
   return dir === '' ? rel : `${dir}/${rel}`;
 }
 
+/**
+ * OPFS path of a glTF sibling resource referenced by a relative URI,
+ * resolved against the main `.gltf`/`.glb`'s directory. Shared with the
+ * #90 importer's `resolveBuffer` so the renderer (sentinel-URL) path and
+ * the importer (byte-level) path agree on where siblings live.
+ * glTF URIs are percent-encoded (spec §3.9.3.1) → decoded here.
+ */
+export function opfsSiblingPath(mainPath: string, relUri: string): string {
+  return joinOpfs(dirOf(mainPath), decodeURIComponent(relUri));
+}
+
 function uniqueUris(json: GltfJson): string[] {
   const out = new Set<string>();
   for (const b of json.buffers ?? []) {

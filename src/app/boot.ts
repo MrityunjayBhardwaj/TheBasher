@@ -257,12 +257,18 @@ export function boot(): Promise<void> {
       // GltfAsset should reference. The e2e fixture stages clips via
       // this entry point (H41 — fixtures via the NEW path from day one).
       void import('../core/import/gltfImportChain').then((m) => {
-        w.__basher_importGltf = (buffer: ArrayBuffer, assetRef: string) => {
+        w.__basher_importGltf = async (
+          buffer: ArrayBuffer,
+          assetRef: string,
+          resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+        ) => {
           const dag = useDagStore.getState();
           const sceneRef = dag.state.outputs.scene;
           if (!sceneRef) throw new Error('__basher_importGltf: project has no `scene` output');
-          const result = m.buildGltfImportOps(
-            { buffer, assetRef, sceneNodeId: sceneRef.node },
+          // #90 — async: the importer resolves external/data-URI buffers.
+          // `resolveBuffer` is optional (embedded GLB / data-URI need none).
+          const result = await m.buildGltfImportOps(
+            { buffer, assetRef, sceneNodeId: sceneRef.node, resolveBuffer },
             dag.state,
           );
           dag.dispatchAtomic(result.ops, 'user', `import gltf: ${assetRef}`);

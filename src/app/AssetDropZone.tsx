@@ -12,6 +12,7 @@ import { DRAG_MIME } from './asset/catalog';
 import { buildAssetDropOps } from './asset/dropChain';
 import { getStorage } from './boot';
 import { buildGltfImportOps } from '../core/import/gltfImportChain';
+import { opfsSiblingPath } from './asset/opfsGltfResolver';
 
 interface Props {
   children: ReactNode;
@@ -49,30 +50,37 @@ export function AssetDropZone({ children }: Props) {
       return;
     }
 
-    // P7.5 — single-path glTF routing (CONTEXT D-02). `.glb` files
-    // route through `buildGltfImportOps`, which eager-parses the GLB
-    // binary + animations and emits N TransformClips + 1 ClipSelect
-    // (or the degenerate static-only chain when no animations exist).
+    // P7.5 + #90 — single-path glTF routing (CONTEXT D-02). Both `.glb`
+    // (binary container) and `.gltf` (JSON-only container) route through
+    // `buildGltfImportOps`, which eager-parses the container + animations
+    // and emits N TransformClips + 1 ClipSelect (or the degenerate
+    // static-only chain when no animations exist).
     //
-    // `.gltf` (JSON-only) files stay on the existing static path —
-    // they require external-buffer resolution that is filed as a
-    // separate follow-up (#90). Routing them through the new path
-    // today would throw at `parseGlb` (magic mismatch on the JSON
-    // header) and surface as a silent drop.
+    // External `.bin` buffers (multi-file `.gltf`) resolve via the OPFS
+    // `resolveBuffer` callback below, against the asset's own directory
+    // (#90). Inline data-URI buffers decode inside `resolveBuffers` with
+    // no IO. NOTE: this is the importer's byte-level path; the renderer's
+    // texture/sibling resolution is the separate `opfsGltfResolver`
+    // sentinel-URL path (#82).
     const lower = path.toLowerCase();
-    if (lower.endsWith('.glb')) {
+    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
       void (async () => {
         try {
           const storage = await getStorage();
           const bytes = await storage.read(path);
           // Detach a non-shared ArrayBuffer view for the importer.
           // Uint8Array.buffer is typed `ArrayBufferLike`, including
-          // SharedArrayBuffer — the GLB parser wants a plain ArrayBuffer.
+          // SharedArrayBuffer — the parser wants a plain ArrayBuffer.
           const copy = new Uint8Array(bytes.byteLength);
           copy.set(bytes);
           const buffer = copy.buffer;
-          const result = buildGltfImportOps(
-            { buffer, assetRef: path, sceneNodeId: sceneRef.node },
+          const result = await buildGltfImportOps(
+            {
+              buffer,
+              assetRef: path,
+              sceneNodeId: sceneRef.node,
+              resolveBuffer: (uri) => storage.read(opfsSiblingPath(path, uri)),
+            },
             useDagStore.getState().state,
           );
           dispatchAtomic(result.ops, 'user', `import asset: ${path}`);

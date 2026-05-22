@@ -41,11 +41,12 @@ interface BasherWindow {
   __basher_importGltf?: (
     buffer: ArrayBuffer,
     assetRef: string,
-  ) => {
+    resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+  ) => Promise<{
     gltfAssetId: string;
     clipSelectId: string | null;
     transformClipIds: string[];
-  };
+  }>;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -117,7 +118,7 @@ test('P7.5 Test 1 — single-clip drop → evaluator samples bobbing Y at t=0.5'
     };
 
     const buffer = buildGlb();
-    const ids = w.__basher_importGltf!(buffer, 'p7.5/cube-bob.glb');
+    const ids = await w.__basher_importGltf!(buffer, 'p7.5/cube-bob.glb');
     const ctxHalf = { time: { frame: 30, seconds: 0.5, normalized: 0.5 } };
 
     // Producer side — TransformClip evaluator at t=0.5.
@@ -218,7 +219,7 @@ test('P7.5 Test 2 — clip-switch via setParam selects the matching TransformCli
     };
 
     const buffer = buildGlb();
-    const ids = w.__basher_importGltf!(buffer, 'p7.5/multi.glb');
+    const ids = await w.__basher_importGltf!(buffer, 'p7.5/multi.glb');
     const ctxHalf = { time: { frame: 30, seconds: 0.5, normalized: 0.5 } };
     const initial = w.__basher_evaluate(ids.gltfAssetId, ctxHalf).value as {
       transformClip: {

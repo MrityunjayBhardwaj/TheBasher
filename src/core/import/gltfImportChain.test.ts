@@ -141,9 +141,9 @@ describe('buildNodeNameMap', () => {
 });
 
 describe('buildGltfImportOps', () => {
-  it('emits 1 TransformClip + 1 ClipSelect + the static chain in locked order', () => {
+  it('emits 1 TransformClip + 1 ClipSelect + the static chain in locked order', async () => {
     const buf = singleTranslationClipGlb();
-    const result = buildGltfImportOps(
+    const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
@@ -173,20 +173,20 @@ describe('buildGltfImportOps', () => {
     if (tcOp.type === 'addNode') expect(tcOp.nodeType).toBe('TransformClip');
   });
 
-  it('determinism: same buffer → byte-identical Op[]', () => {
+  it('determinism: same buffer → byte-identical Op[]', async () => {
     const buf = singleTranslationClipGlb();
-    const a = buildGltfImportOps(
+    const a = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
-    const b = buildGltfImportOps(
+    const b = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
     expect(JSON.stringify(a.ops)).toBe(JSON.stringify(b.ops));
   });
 
-  it('multi-clip GLB: N TransformClips + ClipSelect picks animations[0]', () => {
+  it('multi-clip GLB: N TransformClips + ClipSelect picks animations[0]', async () => {
     const timesBytes = f32Bytes([0, 1]);
     const valuesBytes = f32Bytes([0, 0, 0, 0, 1, 0]);
     const bin = concatBytes(timesBytes, valuesBytes);
@@ -220,7 +220,7 @@ describe('buildGltfImportOps', () => {
       ],
     };
     const buf = makeGlb(json, bin);
-    const result = buildGltfImportOps(
+    const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/multi.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
@@ -244,10 +244,10 @@ describe('buildGltfImportOps', () => {
     });
   });
 
-  it('no-animations GLB: degenerate path emits static chain only', () => {
+  it('no-animations GLB: degenerate path emits static chain only', async () => {
     const json: GltfJson = { nodes: [{ name: 'Cube' }] };
     const buf = makeGlb(json);
-    const result = buildGltfImportOps(
+    const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/static.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
@@ -261,7 +261,7 @@ describe('buildGltfImportOps', () => {
     ).toBeUndefined();
   });
 
-  it('B3 CHECKPOINT — rotation quat [0,0,sin(π/4),cos(π/4)] emits ≈ [0,0,90] degrees', () => {
+  it('B3 CHECKPOINT — rotation quat [0,0,sin(π/4),cos(π/4)] emits ≈ [0,0,90] degrees', async () => {
     const times = f32Bytes([0, 1]);
     const rotValues = f32Bytes([
       // t=0: identity quat
@@ -296,7 +296,7 @@ describe('buildGltfImportOps', () => {
       ],
     };
     const buf = makeGlb(json, bin);
-    const result = buildGltfImportOps(
+    const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/spin.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
@@ -316,7 +316,7 @@ describe('buildGltfImportOps', () => {
     expect(Math.abs(last.rotation[2])).toBeGreaterThan(10);
   });
 
-  it('sanitises bracket-character node names into the keyframe targetNodeId', () => {
+  it('sanitises bracket-character node names into the keyframe targetNodeId', async () => {
     const times = f32Bytes([0, 1]);
     const values = f32Bytes([0, 0, 0, 0, 1, 0]);
     const bin = concatBytes(times, values);
@@ -340,7 +340,7 @@ describe('buildGltfImportOps', () => {
       ],
     };
     const buf = makeGlb(json, bin);
-    const result = buildGltfImportOps(
+    const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/bracket.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
@@ -350,11 +350,100 @@ describe('buildGltfImportOps', () => {
     expect(kf[0].targetNodeId).not.toMatch(/[[\].:/]/);
   });
 
-  it('throws when DAG has no TimeSource and animations exist', () => {
+  it('throws when DAG has no TimeSource and animations exist', async () => {
     const buf = singleTranslationClipGlb();
     const state: DagState = { nodes: {}, outputs: {} } as unknown as DagState;
-    expect(() =>
+    await expect(
       buildGltfImportOps({ buffer: buf, assetRef: 'asset/x.glb', sceneNodeId: 'n_scene' }, state),
-    ).toThrow(/No TimeSource node in DAG/);
+    ).rejects.toThrow(/No TimeSource node in DAG/);
+  });
+
+  it('JSON-only .gltf with a data-URI buffer → TransformClip (#90 container + buffer path)', async () => {
+    // The .gltf container path: plain JSON (no GLB magic), buffer bytes
+    // inline as a base64 data-URI. One node 'Cube', one "bob" clip moving
+    // Y 0→1. Proves parseGltfContainer + resolveBuffers + readAccessor
+    // compose end-to-end through the importer with no embedded BIN.
+    const timesBytes = f32Bytes([0, 1]);
+    const valuesBytes = f32Bytes([0, 0, 0, 0, 1, 0]);
+    const bin = concatBytes(timesBytes, valuesBytes);
+    const b64 = btoa(String.fromCharCode(...bin));
+    const json: GltfJson = {
+      nodes: [{ name: 'Cube' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: timesBytes.length },
+        { buffer: 0, byteOffset: timesBytes.length, byteLength: valuesBytes.length },
+      ],
+      buffers: [{ byteLength: bin.length, uri: `data:application/octet-stream;base64,${b64}` }],
+      animations: [
+        {
+          name: 'bob',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    };
+    const buffer = new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer;
+    const result = await buildGltfImportOps(
+      { buffer, assetRef: 'asset/cube.gltf', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    expect(result.transformClipIds).toHaveLength(1);
+    const tcOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip');
+    if (tcOp?.type !== 'addNode') throw new Error('expected TransformClip addNode');
+    const kf = (
+      tcOp.params as { keyframes: Array<{ time: number; position: [number, number, number] }> }
+    ).keyframes;
+    expect(kf.find((k) => k.time === 1)!.position[1]).toBeCloseTo(1, 6);
+  });
+
+  it('routes an external buffer through the injected resolveBuffer (#90)', async () => {
+    // .gltf referencing a sibling .bin; resolver supplies the bytes.
+    const timesBytes = f32Bytes([0, 1]);
+    const valuesBytes = f32Bytes([0, 0, 0, 0, 2, 0]);
+    const bin = concatBytes(timesBytes, valuesBytes);
+    const json: GltfJson = {
+      nodes: [{ name: 'Cube' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: timesBytes.length },
+        { buffer: 0, byteOffset: timesBytes.length, byteLength: valuesBytes.length },
+      ],
+      buffers: [{ byteLength: bin.length, uri: 'cube.bin' }],
+      animations: [
+        {
+          name: 'bob',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    };
+    const buffer = new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer;
+    let requested = '';
+    const result = await buildGltfImportOps(
+      {
+        buffer,
+        assetRef: 'asset/cube.gltf',
+        sceneNodeId: 'n_scene',
+        resolveBuffer: async (uri) => {
+          requested = uri;
+          return bin;
+        },
+      },
+      stateWithTimeSource(),
+    );
+    expect(requested).toBe('cube.bin');
+    const tcOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip');
+    if (tcOp?.type !== 'addNode') throw new Error('expected TransformClip addNode');
+    const kf = (
+      tcOp.params as { keyframes: Array<{ time: number; position: [number, number, number] }> }
+    ).keyframes;
+    expect(kf.find((k) => k.time === 1)!.position[1]).toBeCloseTo(2, 6);
   });
 });
