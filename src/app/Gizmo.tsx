@@ -286,6 +286,31 @@ export function Gizmo() {
   // component's closure; the branch order + FLAG-A reject are preserved
   // verbatim in the shared module. See its docstring for the full contract.
 
+  // P7.7 (#91 / D-02) — the GltfChild manual-layer write. A GltfChild is the
+  // manual override layer over the per-child clip/base layering (R-4). Writing
+  // the TRS value WITHOUT flipping its `overridden[field]` flag is the C2 trap:
+  // the next renderer re-layer would let the clip/base re-win and the gizmo
+  // would snap back (the H36 snap-back ghost in a new guise). So the value and
+  // the flag must land in ONE atomic dispatch (one Cmd+Z) — applySetParam
+  // supports the dotted nested paramPath 'overridden.<field>' (ops.ts setAtPath
+  // clone-on-write + whole-object re-validation). For every non-GltfChild node
+  // this returns false and the caller's existing single setParam fires,
+  // byte-identical to pre-7.7.
+  function writeGltfChildOverride(field: 'position' | 'rotation' | 'scale', value: Vec3): boolean {
+    if (!selectedId) return false;
+    const sel = useDagStore.getState().state.nodes[selectedId];
+    if (sel?.type !== 'GltfChild') return false;
+    useDagStore.getState().dispatchAtomic(
+      [
+        { type: 'setParam', nodeId: selectedId, paramPath: field, value },
+        { type: 'setParam', nodeId: selectedId, paramPath: `overridden.${field}`, value: true },
+      ],
+      'user',
+      `gizmo ${field} (glTF child override)`,
+    );
+    return true;
+  }
+
   function onObjectChange() {
     // Character: no per-frame dispatch — walkTo fires on drag end only.
     if (isCharacter) return;
@@ -296,6 +321,10 @@ export function Gizmo() {
     if (liveMode === 'translate') {
       const value = maybeSnapVec3([g.position.x, g.position.y, g.position.z]);
       if (routeAnimatedGrab(selectedId, 'position', value)) return; // D-02: re-route BEFORE setParam
+      // P7.7: a GltfChild has NO keyframe channel (the clip lives on the asset),
+      // so routeAnimatedGrab returns false and we land here — the manual layer.
+      // Write value + overridden flag atomically (no snap-back).
+      if (writeGltfChildOverride('position', value)) return;
       useDagStore
         .getState()
         .dispatch(
@@ -310,6 +339,7 @@ export function Gizmo() {
       // Object3D.rotation is radians — params.rotation is degrees.
       const value: Vec3 = radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
       if (routeAnimatedGrab(selectedId, 'rotation', value)) return; // D-02: re-route BEFORE setParam
+      if (writeGltfChildOverride('rotation', value)) return; // P7.7 manual layer
       useDagStore
         .getState()
         .dispatch(
@@ -323,6 +353,9 @@ export function Gizmo() {
     if (!manip.scaleParamPath) return;
     const value: Vec3 = [g.scale.x, g.scale.y, g.scale.z];
     if (routeAnimatedGrab(selectedId, manip.scaleParamPath, value)) return; // D-02: re-route BEFORE setParam
+    // P7.7: a GltfChild declares `scale` (never `size`), so scaleParamPath is
+    // 'scale' and the override flag is `overridden.scale`.
+    if (manip.scaleParamPath === 'scale' && writeGltfChildOverride('scale', value)) return;
     useDagStore
       .getState()
       .dispatch(
