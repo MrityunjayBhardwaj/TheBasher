@@ -24,6 +24,16 @@ export const GltfAssetParams = z.object({
    * (V10 / H14-clean — no schema-version bump needed.)
    */
   nodeNameMap: z.record(z.string(), z.string()).default({}),
+  /**
+   * P7.7 — glTF child DAG addressing (issue #91). Parent-key → child-keys,
+   * derived from the glTF `node.children` index arrays at drop time
+   * (`buildNodeNameMap`). Stored by post-dedup KEY (matching nodeNameMap),
+   * NOT by raw glTF index. The outliner (Wave D) reads this to nest child
+   * rows — pure PROJECTION, not render `inputs` (R-2 / B12 guard). The
+   * `.default({})` makes it additive: pre-7.7 saves hydrate with an empty
+   * hierarchy (V10 / H14-clean — no schema-version bump needed).
+   */
+  childHierarchy: z.record(z.string(), z.array(z.string())).default({}),
 });
 export type GltfAssetParams = z.infer<typeof GltfAssetParams>;
 
@@ -46,6 +56,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
       kind: 'GltfAsset',
       assetRef: params.assetRef,
       nodeNameMap: params.nodeNameMap,
+      childHierarchy: params.childHierarchy,
       transformClip: (inputs.transformClip as TransformClipValue | undefined) ?? null,
     };
   },

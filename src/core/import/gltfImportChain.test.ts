@@ -147,6 +147,43 @@ describe('buildNodeNameMap', () => {
     const b = buildNodeNameMap(json, 'asset/bar.glb');
     expect(a.nodeNameMap.Cube).not.toBe(b.nodeNameMap.Cube);
   });
+
+  // P7.7 (#91 A3) — childHierarchy persisted by KEY for the outliner.
+  it('childHierarchy maps parent KEY → child KEYs (by post-dedup key, not index)', () => {
+    // Index 0 = Root with children [1, 2]; 1 = ChildA; 2 = ChildB.
+    const json: GltfJson = {
+      nodes: [{ name: 'Root', children: [1, 2] }, { name: 'ChildA' }, { name: 'ChildB' }],
+    };
+    const { childHierarchy } = buildNodeNameMap(json, 'asset/h.glb');
+    expect(childHierarchy).toEqual({ Root: ['ChildA', 'ChildB'] });
+  });
+
+  it('childHierarchy stores deduped child keys (bone__1), not raw names', () => {
+    // Two same-named children → second is deduped to Bone__1.
+    const json: GltfJson = {
+      nodes: [{ name: 'Root', children: [1, 2] }, { name: 'Bone' }, { name: 'Bone' }],
+    };
+    const { childHierarchy } = buildNodeNameMap(json, 'asset/h.glb');
+    expect(childHierarchy.Root).toEqual(['Bone', 'Bone__1']);
+  });
+
+  it('childless glTF → empty childHierarchy (no spurious entries)', () => {
+    const json: GltfJson = { nodes: [{ name: 'A' }, { name: 'B' }] };
+    const { childHierarchy } = buildNodeNameMap(json, 'asset/flat.glb');
+    expect(childHierarchy).toEqual({});
+  });
+
+  it('skinned-bar.glb: nests the bone chain (SkinnedBar→Bone0→Bone1)', () => {
+    const buf = skinnedBarBuffer();
+    // Parse the JSON chunk directly to feed buildNodeNameMap with the real json.
+    const dv = new DataView(buf);
+    const jsonLen = dv.getUint32(12, true);
+    const jsonBytes = new Uint8Array(buf, 20, jsonLen);
+    const json = JSON.parse(new TextDecoder().decode(jsonBytes)) as GltfJson;
+    const { childHierarchy } = buildNodeNameMap(json, 'assets/skinned-bar.glb');
+    // Fixture hierarchy: SkinnedBar→[Bone0], Bone0→[Bone1].
+    expect(childHierarchy).toEqual({ SkinnedBar: ['Bone0'], Bone0: ['Bone1'] });
+  });
 });
 
 describe('buildGltfImportOps', () => {

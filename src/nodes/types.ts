@@ -160,6 +160,14 @@ export interface GltfAssetValue {
    */
   readonly nodeNameMap: Readonly<Record<string, string>>;
   /**
+   * P7.7 — glTF child DAG addressing (issue #91). Parent-key → child-keys,
+   * derived from the glTF `node.children` index arrays at drop time. The
+   * outliner (Wave D) reads this to nest child rows — pure PROJECTION, not
+   * render `inputs` (R-2 / B12 guard). Default `{}` so pre-7.7 values are
+   * no-ops (V10 / H14-clean).
+   */
+  readonly childHierarchy: Readonly<Record<string, readonly string[]>>;
+  /**
    * The selected clip's evaluated TRS at the input Time, sourced from
    * the connected `ClipSelect.out`. `null` when no animation is
    * imported (degenerate path) OR when `selectedClipName` doesn't
