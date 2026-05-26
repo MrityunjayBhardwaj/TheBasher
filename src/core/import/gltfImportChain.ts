@@ -270,6 +270,36 @@ export async function buildGltfImportOps(
     nodeType: 'GltfAsset',
     params: { assetRef: args.assetRef, nodeNameMap },
   });
+  // P7.7 (#91) — one GltfChild addNode per scene child, in json.nodes
+  // INTEGER-INDEX order (NOT Object.keys — that order is incidental today
+  // and a future map-build change would silently reorder the Op stream,
+  // breaking V22). The dagId is the SAME content-addressed id already
+  // computed by buildNodeNameMap (hashId('gltfChild', assetRef, key)), so
+  // re-import is byte-identical and the renderer's name lookup matches.
+  // Seeded with the child's captured base TRS (defaultTRS) and overridden
+  // all-false — the manual dirty flags are set later by the gizmo (Wave C).
+  // These are inputless addressing satellites (R-1): NOT connected to
+  // anything. Emitted in the SAME atomic ops array (K6 — one Cmd+Z),
+  // BEFORE the TransformClip/ClipSelect block so the chain order is locked.
+  const childNodes = json.nodes ?? [];
+  for (let i = 0; i < childNodes.length; i++) {
+    const key = keyByGltfNodeIndex[i];
+    const dagId = nodeNameMap[key];
+    const base = defaultTRS(childNodes[i]);
+    ops.push({
+      type: 'addNode',
+      nodeId: dagId,
+      nodeType: 'GltfChild',
+      params: {
+        assetRef: args.assetRef,
+        childName: key,
+        position: base.position,
+        rotation: base.rotation,
+        scale: base.scale,
+        overridden: { position: false, rotation: false, scale: false },
+      },
+    });
+  }
   ops.push({
     type: 'addNode',
     nodeId: transformId,

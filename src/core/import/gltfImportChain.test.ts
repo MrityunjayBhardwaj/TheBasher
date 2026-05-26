@@ -6,6 +6,8 @@
 //
 // REF: PLAN.md Wave D; SECTION-INVENTORY.md B3.
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Quaternion } from 'three';
 import { quaternionToEulerVec3 } from './threeAdapter';
@@ -14,6 +16,13 @@ import { buildGltfImportOps, buildNodeNameMap } from './gltfImportChain';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 import type { GltfJson } from './glb';
+
+/** Loads the committed skinned-bar.glb fixture as an ArrayBuffer (P7.7 #91).
+ *  vitest runs from the repo root, so resolve against process.cwd(). */
+function skinnedBarBuffer(): ArrayBuffer {
+  const node = readFileSync(resolve(process.cwd(), 'public/assets/skinned-bar.glb'));
+  return node.buffer.slice(node.byteOffset, node.byteOffset + node.byteLength) as ArrayBuffer;
+}
 
 const MAGIC = 0x46546c67;
 const CHUNK_JSON = 0x4e4f534a;
@@ -150,25 +159,35 @@ describe('buildGltfImportOps', () => {
     expect(result.transformClipIds).toHaveLength(1);
     expect(result.clipSelectId).not.toBeNull();
     expect(result.nodeNameMap.Cube).toBeDefined();
-    // Op order: GltfAsset, Transform, connect(gltf→tx), Group,
-    // connect(tx→grp), connect(grp→scene), TransformClip[0],
+    // Op order (P7.7 #91 — one GltfChild addNode per scene child is now
+    // emitted right after the GltfAsset addNode, before Transform):
+    // GltfAsset, GltfChild×N (here 1: 'Cube'), Transform, connect(gltf→tx),
+    // Group, connect(tx→grp), connect(grp→scene), TransformClip[0],
     // ClipSelect, connect(time→clip[0]), connect(clip[0]→sel),
     // connect(sel→gltf.transformClip).
     const types = result.ops.map((o: Op) => o.type);
     expect(types).toEqual([
-      'addNode',
-      'addNode',
+      'addNode', // GltfAsset
+      'addNode', // GltfChild (Cube)
+      'addNode', // Transform
       'connect',
-      'addNode',
+      'addNode', // Group
       'connect',
       'connect',
-      'addNode',
-      'addNode',
+      'addNode', // TransformClip[0]
+      'addNode', // ClipSelect
       'connect',
       'connect',
       'connect',
     ]);
-    const tcOp = result.ops[6];
+    // The first GltfChild addNode sits at index 1 (between GltfAsset and Transform).
+    const gcOp = result.ops[1];
+    expect(gcOp.type).toBe('addNode');
+    if (gcOp.type === 'addNode') {
+      expect(gcOp.nodeType).toBe('GltfChild');
+      expect(gcOp.nodeId).toBe(result.nodeNameMap.Cube);
+    }
+    const tcOp = result.ops[7];
     expect(tcOp.type).toBe('addNode');
     if (tcOp.type === 'addNode') expect(tcOp.nodeType).toBe('TransformClip');
   });
@@ -445,5 +464,115 @@ describe('buildGltfImportOps', () => {
       tcOp.params as { keyframes: Array<{ time: number; position: [number, number, number] }> }
     ).keyframes;
     expect(kf.find((k) => k.time === 1)!.position[1]).toBeCloseTo(2, 6);
+  });
+});
+
+// P7.7 (#91) Wave A2 — one GltfChild addNode per scene child, deterministic.
+describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
+  it('emits exactly one GltfChild addNode per json.nodes entry, index-ordered', async () => {
+    // Two distinct nodes, no animations (degenerate static path).
+    const json: GltfJson = { nodes: [{ name: 'Root' }, { name: 'Leaf' }] };
+    const buf = makeGlb(json);
+    const result = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/two.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const childOps = result.ops.filter(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+    );
+    expect(childOps).toHaveLength(2);
+    // Index order: childName Root (index 0) then Leaf (index 1).
+    if (childOps[0].type === 'addNode' && childOps[1].type === 'addNode') {
+      expect((childOps[0].params as { childName: string }).childName).toBe('Root');
+      expect((childOps[1].params as { childName: string }).childName).toBe('Leaf');
+    }
+  });
+
+  it('GltfChild ids equal hashId(gltfChild, assetRef, key) — the nodeNameMap id', async () => {
+    const json: GltfJson = { nodes: [{ name: 'Root' }, { name: 'Leaf' }] };
+    const buf = makeGlb(json);
+    const result = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/two.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const childOps = result.ops.filter(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+    );
+    for (const op of childOps) {
+      if (op.type !== 'addNode') continue;
+      const key = (op.params as { childName: string }).childName;
+      // The emission MUST reuse the renderer's lookup id (the deduped key's
+      // hashId), not the raw name — otherwise the rendered name lookup misses.
+      expect(op.nodeId).toBe(result.nodeNameMap[key]);
+    }
+  });
+
+  it('seeds the child base TRS + overridden all-false', async () => {
+    const json: GltfJson = {
+      nodes: [{ name: 'Mover', translation: [1, 2, 3], scale: [2, 2, 2] }],
+    };
+    const buf = makeGlb(json);
+    const result = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/m.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const childOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild');
+    if (childOp?.type !== 'addNode') throw new Error('expected GltfChild addNode');
+    const p = childOp.params as {
+      position: number[];
+      scale: number[];
+      overridden: { position: boolean; rotation: boolean; scale: boolean };
+    };
+    expect(p.position).toEqual([1, 2, 3]);
+    expect(p.scale).toEqual([2, 2, 2]);
+    expect(p.overridden).toEqual({ position: false, rotation: false, scale: false });
+  });
+
+  it('GltfChild addNodes precede the TransformClip block in the atomic chain', async () => {
+    const buf = singleTranslationClipGlb();
+    const result = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const firstChild = result.ops.findIndex(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+    );
+    const firstClip = result.ops.findIndex(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip',
+    );
+    expect(firstChild).toBeGreaterThanOrEqual(0);
+    expect(firstClip).toBeGreaterThan(firstChild);
+  });
+
+  it('skinned-bar.glb fixture: one GltfChild per scene child (3 nodes)', async () => {
+    const buf = skinnedBarBuffer();
+    const result = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const childOps = result.ops.filter(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+    );
+    // skinned-bar.glb has 3 json.nodes: Bone1, Bone0, SkinnedBar.
+    expect(childOps).toHaveLength(3);
+    const names = childOps.map((o) =>
+      o.type === 'addNode' ? (o.params as { childName: string }).childName : '',
+    );
+    expect(names).toEqual(['Bone1', 'Bone0', 'SkinnedBar']);
+  });
+
+  it('V22 determinism: skinned-bar.glb → byte-identical Op[] across two runs', async () => {
+    const buf = skinnedBarBuffer();
+    const a = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const b = await buildGltfImportOps(
+      { buffer: skinnedBarBuffer(), assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    // The whole ops array — including the GltfChild addNodes — must be
+    // byte-identical. This is the V22 gate: deterministic ids + locked order.
+    expect(JSON.stringify(a.ops)).toBe(JSON.stringify(b.ops));
   });
 });
