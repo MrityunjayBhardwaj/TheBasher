@@ -9,7 +9,7 @@
 
 import { useMemo, useState, type DragEvent } from 'react';
 import { useDagStore } from '../core/dag/store';
-import type { Op } from '../core/dag/types';
+import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
 
@@ -20,10 +20,40 @@ export function SceneTree() {
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   const selected = useSelectionStore((s) => s.selectedNodeId);
   const select = useSelectionStore((s) => s.select);
-  const rows = useMemo(() => buildSceneTreeRows(state), [state]);
+  const allRows = useMemo(() => buildSceneTreeRows(state), [state]);
 
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  // GltfAsset child subtrees start COLLAPSED by default (D-05 node-flood:
+  // a 50-100-bone character would otherwise flood the outliner). This is a
+  // local set of the GltfAsset node ids the user has EXPANDED — empty =
+  // every glTF subtree collapsed. Pure UI state, never touches the DAG.
+  const [expandedAssets, setExpandedAssets] = useState<Set<NodeId>>(() => new Set());
+
+  function toggleAsset(assetId: NodeId) {
+    setExpandedAssets((prev) => {
+      const next = new Set(prev);
+      if (next.has(assetId)) next.delete(assetId);
+      else next.add(assetId);
+      return next;
+    });
+  }
+
+  // GltfAsset node ids that own at least one projected child row — only those
+  // rows get the collapse/expand chevron (an asset with no children doesn't).
+  const assetsWithChildren = useMemo(() => {
+    const s = new Set<NodeId>();
+    for (const r of allRows) if (r.gltfAssetOwner) s.add(r.gltfAssetOwner);
+    return s;
+  }, [allRows]);
+
+  // Hide projected GltfChild rows whose owning asset is collapsed. The rows
+  // (and their GltfChild DAG nodes) still EXIST — this is purely which rows
+  // render (projection only, no DAG mutation).
+  const rows = useMemo(
+    () => allRows.filter((r) => !r.gltfAssetOwner || expandedAssets.has(r.gltfAssetOwner)),
+    [allRows, expandedAssets],
+  );
 
   function onDragStart(e: DragEvent, row: TreeRow) {
     if (!row.parent) {
@@ -103,6 +133,10 @@ export function SceneTree() {
           const isSel = selected === row.nodeId;
           const isDragging = dragKey === row.key;
           const isHover = hoverKey === row.key;
+          // GltfAsset rows that own child rows get a collapse/expand chevron
+          // (D2 — the D-05 node-flood toggle). Collapsed by default.
+          const hasChildTree = row.nodeType === 'GltfAsset' && assetsWithChildren.has(row.nodeId);
+          const isExpanded = hasChildTree && expandedAssets.has(row.nodeId);
           return (
             <li
               key={row.key}
@@ -110,6 +144,7 @@ export function SceneTree() {
               data-depth={row.depth}
               data-dragging={isDragging || undefined}
               data-drop-hover={isHover || undefined}
+              data-gltf-expanded={hasChildTree ? isExpanded : undefined}
               draggable={Boolean(row.parent)}
               onDragStart={(e) => onDragStart(e, row)}
               onDragEnd={onDragEnd}
@@ -123,6 +158,21 @@ export function SceneTree() {
                 } ${isHover ? 'outline outline-1 outline-accent' : ''}`}
                 style={{ paddingLeft: `${0.5 + row.depth * 0.75}rem` }}
               >
+                {hasChildTree && (
+                  <button
+                    type="button"
+                    data-testid={`scene-tree-toggle-${row.nodeId}`}
+                    aria-label={isExpanded ? 'Collapse children' : 'Expand children'}
+                    aria-expanded={isExpanded}
+                    className="shrink-0 text-fg/40 hover:text-fg/80 focus-visible:ring-1 focus-visible:ring-accent"
+                    onClick={(e) => {
+                      e.stopPropagation(); // toggle only — do NOT select the asset
+                      toggleAsset(row.nodeId);
+                    }}
+                  >
+                    {isExpanded ? '▾' : '▸'}
+                  </button>
+                )}
                 <span className="grow truncate">{row.display}</span>
                 <span className="text-[10px] text-fg/40">{row.nodeId}</span>
               </div>
