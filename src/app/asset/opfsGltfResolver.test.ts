@@ -268,5 +268,77 @@ describe('percent-encoding — importer + renderer agree on the DECODED OPFS pat
     //     (checker C2 — the spec, not a coincidence):
     const importerPath = opfsSiblingPath(mainPath, 'my%20texture.png');
     expect(resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}${importerPath}`)).toMatch(/^blob:/);
+
+    // (c) The raw URL three.js actually composes (encoded uri concat-
+    //     onto the entry's directory) ALSO hits the cache. The renderer-
+    //     half lookup decodes before lookup, so the encoded sentinel must
+    //     resolve to the same blob. Wave F Task 12 spaced-filename gate.
+    expect(
+      resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}user-imports/spaced/my%20texture.png`),
+    ).toMatch(/^blob:/);
+  });
+});
+
+// Wave F Task 12 — the NESTED-entry fixture: `gltf/scene.gltf` references
+// `../buffers/scene.bin` + `../textures/texture.png`. The naive join
+// `<dir>/gltf/../buffers/scene.bin` contains `..` segments that OPFS's
+// `FileSystemDirectoryHandle.getDirectoryHandle` rejects with "Name is not
+// allowed". BOTH halves of the resolver boundary must normalize before the
+// path reaches storage / before the URL becomes a cache key. Asserted on
+// both halves below.
+describe('relative-path normalization — `..` collapses on both halves (Wave F Task 12 C1 trap)', () => {
+  const NESTED_GLTF = {
+    asset: { version: '2.0' },
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+    nodes: [{ mesh: 0 }],
+    buffers: [{ byteLength: 4, uri: '../buffers/scene.bin' }],
+    images: [{ uri: '../textures/texture.png' }],
+  };
+
+  it('opfsSiblingPath collapses `..` against the entry directory', () => {
+    // gltf/scene.gltf + ../buffers/scene.bin → <dir>/buffers/scene.bin
+    expect(opfsSiblingPath('user-imports/nested/gltf/scene.gltf', '../buffers/scene.bin')).toBe(
+      'user-imports/nested/buffers/scene.bin',
+    );
+    expect(
+      opfsSiblingPath('user-imports/nested/gltf/scene.gltf', '../textures/my texture.png'),
+    ).toBe('user-imports/nested/textures/my texture.png');
+  });
+
+  it('opfsSiblingPath rejects paths that escape the root (anti-traversal)', () => {
+    expect(() => opfsSiblingPath('user-imports/nested/scene.gltf', '../../../etc/secret')).toThrow(
+      /escapes root/,
+    );
+  });
+
+  it('loadMultiFileGltf writes NORMALIZED cache keys for nested-entry siblings', async () => {
+    const storage = new MemoryStorage();
+    const mainPath = 'user-imports/nested/gltf/scene.gltf';
+    const mainBytes = bytesOf(NESTED_GLTF);
+    await storage.write(mainPath, mainBytes);
+    await storage.write('user-imports/nested/buffers/scene.bin', new Uint8Array([1, 2, 3, 4]));
+    await storage.write('user-imports/nested/textures/texture.png', new Uint8Array([9, 9, 9, 9]));
+
+    await loadMultiFileGltf(storage, mainPath, mainBytes);
+
+    // (a) The on-disk path (decoded + normalized) resolves to a blob URL.
+    expect(
+      resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}user-imports/nested/buffers/scene.bin`),
+    ).toMatch(/^blob:/);
+    expect(
+      resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}user-imports/nested/textures/texture.png`),
+    ).toMatch(/^blob:/);
+
+    // (b) The raw URL three.js composes — `<entry-dir>/<uri-with-..>` —
+    //     also resolves. The renderer-half normalization in the lookup is
+    //     what bridges the two encodings. Without it the modifier misses
+    //     and the GLTFLoader silently fails to load the sibling.
+    expect(
+      resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}user-imports/nested/gltf/../buffers/scene.bin`),
+    ).toMatch(/^blob:/);
+    expect(
+      resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}user-imports/nested/gltf/../textures/texture.png`),
+    ).toMatch(/^blob:/);
   });
 });

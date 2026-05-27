@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
+import { deflateSync } from 'node:zlib';
 
 // Same FileReader polyfill the sister fixture scripts use. GLTFExporter's
 // data-URI emission path goes through FileReader.readAsDataURL even when
@@ -76,25 +77,52 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const OUT_ROOT = resolve(ROOT, 'public/fixtures/multifile');
 
-// --- the canonical "smallest valid PNG": 1×1 opaque red pixel. -----------
-// PNG signature (8) + IHDR (25) + IDAT (~22) + IEND (12). Verified bytes;
-// the renderer just needs a parseable PNG at the texture URI. Hand-coded
-// so we don't pull in `canvas` / `sharp` / `jimp` as a dev-dep.
+// --- a 2×2 red PNG built via zlib (Wave F Task 12 follow-up). ------------
+// The previous "smallest valid PNG" (hand-coded 1×1) parsed correctly via
+// the `file` command but Playwright's headless Chromium rejected it with
+// "The source image could not be decoded." when `createImageBitmap` was
+// invoked with `colorSpaceConversion: 'none'` (the option three.js's
+// ImageBitmapLoader passes). A 2×2 RGB PNG with zlib-compressed IDAT is
+// the minimum size that survives that decoder's tolerance check while
+// still being trivially small. No `canvas` / `sharp` / `jimp` dep — we
+// use Node's built-in `zlib` and a 6-line CRC32.
 // REF: https://www.w3.org/TR/PNG/  (header, IHDR, IDAT zlib stream, IEND).
-const ONE_PIXEL_RED_PNG = Buffer.from([
-  // signature
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  // IHDR: length=13, type=IHDR, w=1, h=1, bitdepth=8, colortype=2(RGB),
-  // compression=0, filter=0, interlace=0, crc
-  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-  0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde,
-  // IDAT: length=12, type=IDAT, zlib data (a single deflate block
-  // containing the filter byte 0x00 + RGB bytes 0xff 0x00 0x00 = red), crc
-  0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00,
-  0x00, 0x03, 0x00, 0x01, 0x36, 0x00, 0xb5, 0x77,
-  // IEND: length=0, type=IEND, crc
-  0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-]);
+const ONE_PIXEL_RED_PNG = (() => {
+  const crc32 = (data) => {
+    let crc = ~0;
+    for (let i = 0; i < data.length; i += 1) {
+      crc = crc ^ data[i];
+      for (let j = 0; j < 8; j += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    return ~crc >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const typeBuf = Buffer.from(type, 'ascii');
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+    return Buffer.concat([len, typeBuf, data, crc]);
+  };
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  // IHDR: 2×2, 8-bit, RGB (color type 2).
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0); // width
+  ihdr.writeUInt32BE(2, 4); // height
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  // raw scanlines: each row = filter byte (0) + 2 px × 3 bytes (RGB).
+  const raw = Buffer.from([
+    0x00, 0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00, 0x00,
+  ]);
+  const idat = deflateSync(raw);
+  return Buffer.concat([
+    sig,
+    chunk('IHDR', ihdr),
+    chunk('IDAT', idat),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+})();
 
 // --- build a tiny textured mesh and export to .gltf JSON ------------------
 async function exportBoxToGltfJson() {
