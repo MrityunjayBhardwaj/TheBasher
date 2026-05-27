@@ -22,6 +22,7 @@ import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/vie
 import { useSelectionSummary } from '../app/hooks/useSelectionSummary';
 import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
+import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
 import { ModeBadge } from './ModeBadge';
 import { SceneFromDAG } from './SceneFromDAG';
@@ -149,7 +150,10 @@ export function Viewport() {
           {/* Editor-only fill rig — gated on viewportStore.shading. Does
               NOT enter the DAG; production renders bypass it. */}
           <EditorLights />
-          <SceneFromDAG />
+          <PerfBoundary>
+            <SceneFromDAG />
+          </PerfBoundary>
+          <GpuProbe />
           <GroundClick />
           <Gizmo />
           <EditorOrbit />

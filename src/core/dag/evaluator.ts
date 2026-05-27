@@ -49,6 +49,16 @@ export function createEvaluatorCache(): EvaluatorCache {
 
 const DEPTH_LIMIT = 32;
 
+// Optional dev-only instrumentation. Receives the self-time of each node's
+// evaluate() body (0 for a cache hit) and whether the result came from cache.
+// Inert unless armed by the frame profiler (production never sets it), so the
+// eval hot path costs one null check.
+type EvalPerfHook = (selfMs: number, cacheHit: boolean) => void;
+let evalPerfHook: EvalPerfHook | null = null;
+export function __setEvalPerfHook(hook: EvalPerfHook | null): void {
+  evalPerfHook = hook;
+}
+
 export interface EvaluateOptions {
   cache?: EvaluatorCache;
   ctx?: EvalCtx;
@@ -122,12 +132,15 @@ export function evaluate(
     if (cache) {
       const hit = cache.get(cacheKey);
       if (hit) {
+        if (evalPerfHook) evalPerfHook(0, true);
         memo.set(id, hit);
         return hit;
       }
     }
 
+    const evalStart = evalPerfHook ? performance.now() : 0;
     const out = def.evaluate(node.params, resolved, ctx);
+    if (evalPerfHook) evalPerfHook(performance.now() - evalStart, false);
     const hash = hashString(cacheKey);
     const result: EvalResult = { value: out, hash };
     if (cache) cache.set(cacheKey, result);
