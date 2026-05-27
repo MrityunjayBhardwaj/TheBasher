@@ -449,3 +449,94 @@ of V22's stability promise: Op-emitter ids must hash-stable so closure
 diffs are deterministic). Provenance: 2026-05-21 — three independent
 fixes converged on the same pattern within 2 days, lifting it from
 "one-off oversights" to a named invariant.
+
+### V23: Multi-file glTF sibling-path resolution MUST normalize `..`/`.` segments symmetrically on BOTH halves of the importer/renderer boundary, and MUST reject root-escape
+
+**Status:** ALIGNED (2026-05-28, post P7.9 Wave F Task 12 / `26e6f1a`).
+
+**Span:** `src/app/asset/opfsGltfResolver.ts` — the single shared
+multi-file-glTF resolver consumed by BOTH halves of the [[B12]]
+chokepoint:
+
+- **Importer half:** `opfsSiblingPath` / `loadMultiFileGltf`'s
+  parse-time `resolveBuffer` callback (reads sibling buffer bytes
+  from OPFS when the parser hits a `buffers[*].uri`).
+- **Renderer half:** `resolveBasherOpfsUrl` URL modifier + cache
+  lookup (resolves textures and re-resolves buffers at render time,
+  fed by the URL three.js composes via `LoaderUtils.resolveURL`).
+
+A single shared helper (`normalizeOpfsPath`) is the only correct
+implementation; both halves must call it. No parallel
+normalization, no inline path-joining that skips the helper.
+
+**Invariant:** for any multi-file glTF whose entry lives in a
+subdirectory and references siblings via `../`-relative URIs
+(e.g. `nested/gltf/scene.gltf` → `../buffers/foo.bin` →
+`nested/buffers/foo.bin`), the resolver collapses `..` and `.`
+segments BEFORE handing the path to the OPFS API. Both halves of
+the boundary produce the SAME collapsed key for the SAME input
+URI. Any path that resolves above the picked folder root is
+REJECTED (root-escape attempt → error, not silent read of an
+unrelated OPFS region).
+
+**Mechanism:** `normalizeOpfsPath(baseDir, uri)`:
+
+1. Strip the entry's own directory prefix from `baseDir`.
+2. Join `baseDir` and `uri`.
+3. Walk segments left-to-right; `..` pops the previous segment,
+   `.` is skipped.
+4. If the pop count exceeds the segment count (root-escape),
+   throw.
+5. Re-join the surviving segments — that is the OPFS key for both
+   halves.
+
+**Forbidden:**
+
+- Hand-rolled `String.replace('/../', '/')` shortcuts (don't
+  handle the leading-segment case).
+- Asymmetric normalization (importer normalizes, renderer doesn't —
+  or vice versa) — see [[H47]] for the silent-failure pattern.
+- Passing literal `..` segments to `navigator.storage.getDirectory()`
+  child handles — OPFS rejects with "Name is not allowed."
+- Allowing root-escape to silently read an unrelated OPFS region.
+
+**Detection gate (unit + e2e):**
+
+- Unit (`src/app/asset/opfsGltfResolver.test.ts`) — path-
+  normalization assertions: nested-entry `../sibling` collapses to
+  the parent folder's sibling key; `..`-overflow throws; both
+  halves' normalization output match byte-identical for the same
+  input.
+- E2E (`tests/e2e/p7.9-gltf-file-import.spec.ts` sub-case a2) —
+  rendered-surface gate on the `public/fixtures/multifile/nested/`
+  fixture: the asset must visibly render after ingest (proves the
+  importer found the buffer AND the renderer found the texture
+  through `../`).
+
+**Why not just trust the importer's normalization:** the importer
+and renderer use INDEPENDENT lookup paths (parser callback vs.
+LoadingManager URL modifier). The importer normalizing is necessary
+but not sufficient — the renderer's cache key derives from
+three.js's `LoaderUtils.resolveURL`, which preserves traversal
+segments unless the consumer explicitly normalizes. Both halves
+must normalize. [[H47]] is the silent-failure pattern this
+invariant blocks.
+
+**Application across the P7.9 arc:**
+
+| Wave             | State before                                                                   | Fix                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| A–E (`2977240`..`7785faf`) | unit tests used flat fixtures only; nested fixture not asserted              | shipped; gap latent                                                                   |
+| F Task 12 (`26e6f1a`)      | nested e2e on `multifile/nested/` failed with "Name is not allowed" on `..`  | added shared `normalizeOpfsPath`, called from BOTH halves; unit asserts both sides   |
+| F Task 13 (`11b208c`)      | full regression gate — 17/17 e2e + 1072 vitest green on nested + spaced       | invariant validated end-to-end                                                        |
+
+Cross-ref [[H47]] (the encode/decode sibling pattern V23 sits next
+to — same boundary, different transform, same "asymmetric ⇒ silent
+fail" structure), [[B12]] (the glTF chokepoint this invariant
+lives in), [[V20]] (single-writer mirror principle — V23 is the
+single-normalizer instantiation: one helper, both halves call it),
+[[H40]] (which side of the boundary did I observe — V23's
+detection gate observes BOTH sides). Provenance: 2026-05-28 — P7.9
+Wave F Task 12 (`26e6f1a`); the gap surfaced when the headline e2e
+exercised a real nested fixture for the first time (unit tests had
+used flat fixtures only). Issue #110.
