@@ -524,11 +524,11 @@ invariant blocks.
 
 **Application across the P7.9 arc:**
 
-| Wave             | State before                                                                   | Fix                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| A–E (`2977240`..`7785faf`) | unit tests used flat fixtures only; nested fixture not asserted              | shipped; gap latent                                                                   |
-| F Task 12 (`26e6f1a`)      | nested e2e on `multifile/nested/` failed with "Name is not allowed" on `..`  | added shared `normalizeOpfsPath`, called from BOTH halves; unit asserts both sides   |
-| F Task 13 (`11b208c`)      | full regression gate — 17/17 e2e + 1072 vitest green on nested + spaced       | invariant validated end-to-end                                                        |
+| Wave                       | State before                                                                | Fix                                                                                |
+| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| A–E (`2977240`..`7785faf`) | unit tests used flat fixtures only; nested fixture not asserted             | shipped; gap latent                                                                |
+| F Task 12 (`26e6f1a`)      | nested e2e on `multifile/nested/` failed with "Name is not allowed" on `..` | added shared `normalizeOpfsPath`, called from BOTH halves; unit asserts both sides |
+| F Task 13 (`11b208c`)      | full regression gate — 17/17 e2e + 1072 vitest green on nested + spaced     | invariant validated end-to-end                                                     |
 
 Cross-ref [[H47]] (the encode/decode sibling pattern V23 sits next
 to — same boundary, different transform, same "asymmetric ⇒ silent
