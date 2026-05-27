@@ -30,6 +30,7 @@ import { registerAllTools } from '../agent/tools';
 import { registerAllMutators } from '../agent/mutators';
 import { registerAllStrategies } from '../agent/strategy';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
+import { ingestGltfFolder, importGltfFromOpfs, type IngestFile } from './asset/importGltf';
 import { useTimeStore } from './stores/timeStore';
 
 let cachedStorage: StorageCapability | null = null;
@@ -279,6 +280,21 @@ export function boot(): Promise<void> {
           };
         };
       });
+      // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives
+      // the SHARED core: ingestGltfFolder (disk → OPFS write) → then
+      // importGltfFromOpfs (OPFS read → dispatchAtomic). Wave F e2e uses
+      // this to exercise the full write→ingest→dispatch→render pipeline
+      // (H41 — fixtures via the new path from day one, not a synthetic
+      // shortcut). The existing __basher_importGltf seam above is left
+      // intact — it is the P7.5/P7.6 fixture entry (Chesterton).
+      w.__basher_ingestGltfFolder = async (
+        files: ReadonlyArray<IngestFile>,
+        folderName: string,
+      ): Promise<string> => {
+        const entryPath = await ingestGltfFolder(files, folderName);
+        await importGltfFromOpfs(entryPath);
+        return entryPath;
+      };
       // P7.3 D-06 — autoKeyStore exposed so the gizmo-grab boundary spec
       // can drive Auto-Key ON/OFF without depending on the indicator
       // chrome (the spec asserts the grab re-route, not the toggle UI).

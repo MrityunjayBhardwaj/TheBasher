@@ -56,9 +56,24 @@ export function isBasherOpfsUrl(url: string): boolean {
  * Sync lookup for the LoadingManager URL modifier. Returns the cached
  * blob URL when `url` is a known sentinel; returns null when the URL
  * is unknown (caller should pass the URL through unchanged).
+ *
+ * Sentinel URLs are normalized AND percent-decoded before lookup. The
+ * GLTFLoader composes a sibling URL by string-concatenating the (already
+ * percent-encoded) glTF URI onto the entry's directory; the cache key
+ * written by `loadMultiFileGltf` is the DECODED + normalized form (the
+ * on-disk OPFS path). Both halves of this boundary must agree.
+ *
+ * (Wave F Task 12 trap class: `gltf/scene.gltf` + `../buffers/foo.bin`
+ * → the `..` segment needs collapsing; `images[0].uri = my%20texture.png`
+ * → the `%20` needs decoding. Without both, the modifier cache misses
+ * and the texture/buffer fails to load.)
  */
 export function resolveBasherOpfsUrl(url: string): string | null {
-  return opfsUrlCache.get(url) ?? null;
+  const lookup = url.startsWith(BASHER_OPFS_SCHEME)
+    ? BASHER_OPFS_SCHEME +
+      normalizeOpfsPath(decodeURIComponent(url.slice(BASHER_OPFS_SCHEME.length)))
+    : url;
+  return opfsUrlCache.get(lookup) ?? null;
 }
 
 interface GltfUriHolder {
@@ -118,14 +133,47 @@ function joinOpfs(dir: string, rel: string): string {
 }
 
 /**
+ * Normalize an OPFS path by resolving `..` and `.` segments. The OPFS
+ * `FileSystemDirectoryHandle.getDirectoryHandle` API rejects literal `..`
+ * names with `"Name is not allowed"`, so any `..` produced by joining a
+ * relative URI must be collapsed BEFORE the path reaches storage.
+ *
+ * Surfaces in the nested-entry fixture case (Wave F Task 12): a glTF at
+ * `user-imports/<asset>/gltf/scene.gltf` references `../buffers/scene.bin`;
+ * naive join → `user-imports/<asset>/gltf/../buffers/scene.bin` → OPFS
+ * read throws. Normalization → `user-imports/<asset>/buffers/scene.bin`.
+ *
+ * Throws when `..` escapes the path root (anti path-traversal — a sibling
+ * URI must NOT be able to reach outside its OPFS subtree).
+ */
+function normalizeOpfsPath(path: string): string {
+  const out: string[] = [];
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (out.length === 0) {
+        throw new Error(`opfsSiblingPath: relative path escapes root: ${path}`);
+      }
+      out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return out.join('/');
+}
+
+/**
  * OPFS path of a glTF sibling resource referenced by a relative URI,
  * resolved against the main `.gltf`/`.glb`'s directory. Shared with the
  * #90 importer's `resolveBuffer` so the renderer (sentinel-URL) path and
  * the importer (byte-level) path agree on where siblings live.
  * glTF URIs are percent-encoded (spec §3.9.3.1) → decoded here.
+ * `..` segments (nested-entry exports — `gltf/scene.gltf` referencing
+ * `../buffers/foo.bin`) are normalized so the resulting path is valid
+ * for `FileSystemDirectoryHandle.getDirectoryHandle`.
  */
 export function opfsSiblingPath(mainPath: string, relUri: string): string {
-  return joinOpfs(dirOf(mainPath), decodeURIComponent(relUri));
+  return normalizeOpfsPath(joinOpfs(dirOf(mainPath), decodeURIComponent(relUri)));
 }
 
 function uniqueUris(json: GltfJson): string[] {
@@ -171,7 +219,17 @@ export async function loadMultiFileGltf(
   }
 
   for (const uri of uniqueUris(json)) {
-    const siblingPath = joinOpfs(baseDir, uri);
+    // glTF URIs are percent-encoded (spec §3.9.3.1); the on-disk OPFS
+    // name is the DECODED form (the importer writes files under the
+    // entry's actual name, and `opfsSiblingPath:128` already decodes on
+    // the buffer-resolve side). Both halves of the sibling-resolution
+    // boundary must agree on the decoded path — otherwise a fixture
+    // with a space-or-unicode filename imports but never renders. This
+    // is the percent-encoding divergence flagged in RESEARCH §2 for #82.
+    // Normalize `..`/`.` segments (the nested-entry case from Wave F
+    // Task 12 — `gltf/scene.gltf` → `../buffers/foo.bin`) so the OPFS
+    // read can locate the file and the sentinel-URL key is stable.
+    const siblingPath = normalizeOpfsPath(joinOpfs(baseDir, decodeURIComponent(uri)));
     const siblingUrl = opfsUrlFor(siblingPath);
     if (opfsUrlCache.has(siblingUrl)) continue;
     const bytes = await storage.read(siblingPath);
