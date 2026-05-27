@@ -1,42 +1,60 @@
 # Basher
 
-> A film is a graph that evaluates to a sequence of frames. The director —
-> human, agent, or both — edits the graph. The graph evaluates the film.
+Director-first, agent-native, procedural video platform. The entire project —
+geometry, characters, animation, render passes, and AI render jobs — is one
+directed acyclic graph of typed, lazily-evaluated nodes. Every editing surface
+(viewport, timeline, scene tree, inspector, agent chat) reads from and writes to
+that single graph. Humans and AI agents edit through the same operations.
 
-Director-first, agent-native, procedural AI video platform.
+## Model
 
-**Status:** v0.5 P2.6 (Editor polish + Add menu). Blender-style Add menu
-(Shift+A or right-click in the viewport): meshes (Cube, UV Sphere),
-lights (Sun / Point / Spot / Area / Ambient), cameras (Perspective /
-Orthographic), empties (Group / Transform). TransformToolbar across the
-top (Move/Rotate/Scale + Snap + Studio/Rendered shading + 3D View/UV
-Editor space). Editor-only studio fill rig so dim DAGs are still
-visible while editing; Rendered mode reverts to DAG-only lights for
-production parity. Read-only UV editor scaffold for BoxMesh. Selection
-multi-select, click-to-pick, Inspector drag-scrub, NPanel overlay, full
-menu bar (File/Add/Edit/Select/View) with keyboard shortcuts,
-camera-from-view, Frame Selected (F) / Frame All (Home). P2 shipped 23
-node types (24 with SphereMesh), Time as a typed socket (V3 ALIGNED),
-the Character + walkTo chain, multi-character cache isolation,
-scrubbable playhead. P0+P1 still ships: R3F viewport with recursive
-Mesh dispatcher, OPFS-backed asset library, drag-drop import, scene
-tree, TransformControls gizmo, deterministic ScatterNode.
+The system is built on one primitive: a **typed node in a DAG**, evaluated
+lazily and deterministically for a given seed. Two consequences follow:
 
-## What is this
+- **One source of truth.** The viewport, canvas timeline, scene tree, NPanel
+  inspector, and agent transcript are all projections of the same graph. There
+  is no separate scene format, animation format, or render format to keep in
+  sync.
+- **Deterministic evaluation.** Pure nodes are bit-exact reproducible. Caching,
+  undo, and agent diffing all rely on a content hash that propagates through
+  node inputs, so a change re-evaluates exactly the affected subgraph.
 
-Three failure modes for AI video tools today:
+All mutation flows through five Op primitives — `addNode`, `removeNode`,
+`connect`, `disconnect`, `setParam`. Stores never mutate state directly; agents
+emit the same Ops a human action produces.
 
-- **Sora-class:** the model does everything; the director is a passenger.
-- **Blender + AI plugins:** the director does everything; AI is a render filter.
-- **Theatre.js + R3F from scratch:** months of plumbing.
+## Current capabilities
 
-Basher commits to a single primitive — **a typed, lazily-evaluated node in a
-DAG with deterministic evaluation given a seed.** Every surface (viewport,
-timeline, scene tree, chat) is a projection of that one DAG. AI agents and
-humans both edit through the same five Op primitives.
+- **DAG core** — 42 registered node types, lazy evaluator with input-hash
+  caching, versioned project schema with a migration runner, and OPFS-backed
+  persistence.
+- **Node library** — cameras (perspective/orthographic), five light types,
+  meshes, groups/transforms, `ScatterNode`, and a glTF asset pipeline.
+- **glTF import** — self-hosted Draco + Basis decoders (no CDN dependency),
+  single-file `.glb`, multi-file `.gltf` + `.bin` + textures, skinned-mesh
+  deformation, embedded TRS animation clip extraction, and disk import (drag a
+  file/folder onto the viewport or **File → Import glTF…**) persisted in a
+  reusable **My Imports** Library section.
+- **Character & locomotion** — `Skeleton` / `PosedSkeleton` / `Character`,
+  navmesh + `WalkPath` + `LocomotionState`, multi-character cache isolation.
+- **Timeline & animation authoring** — keyframe channels (number / vec3 / quat /
+  color), animation layers, clip selection, dopesheet + curve editor on a
+  canvas-2D timeline, keyframe drag-to-retime, channel simplification (RDP),
+  and BVH/FBX animation import with bone-name retargeting.
+- **AI agent on the DAG** — natural-language requests resolve through an
+  Identify → Mutator → Diff → apply pipeline. 17 Mutators (translate, rotate,
+  scale, duplicate, keyframe, retarget, randomize, add render pass, …) and 9
+  agent tools, all gated by a Diff preview before application.
+- **Render graph** — Beauty / ID / Depth / Normal passes feeding a `RenderJob`.
+- **AI render bridge** — ComfyUI workflow + Prompt nodes, a stylized-realism
+  preset with Depth/Normal ControlNet inputs, and `VideoStitch` for assembling
+  frames (WebCodecs with an ffmpeg-wasm fallback).
+- **Editor** — Blender-style Add menu (Shift+A), transform gizmos tracking
+  evaluated transforms, multi-select, NPanel inspector with drag-scrub, full
+  menu bar with keyboard shortcuts, and a WCAG-audited design system.
 
-Read [THESIS.md](./THESIS.md) for the full argument, the plan, and the
-disciplines. Every PR references the section it implements or amends.
+`THESIS.md` is the design source of truth. Every PR references the section it
+implements or amends.
 
 ## Quickstart
 
@@ -45,77 +63,82 @@ npm install
 npm run dev          # http://localhost:5180
 ```
 
+Verification scripts:
+
 ```bash
-npm run typecheck    # strict TS
-npm run lint         # ESLint, incl. V2 purity rule on src/nodes/**
-npm test             # vitest unit suite
-npm run test:e2e     # playwright acceptance tests
-npm run license-audit
+npm run typecheck    # strict TypeScript (tsc -b --noEmit)
+npm run lint         # ESLint, incl. the purity rule on src/nodes/**
+npm run format:check # Prettier
+npm test             # Vitest unit suite
+npm run test:e2e     # Playwright acceptance suite (29 specs)
+npm run license-audit # dependency license gate
 ```
+
+CI runs `lint` (ESLint + Prettier), `typecheck`, `test`, `test:e2e`, and
+`license-audit`; all five gate merge.
 
 ## Layout
 
 ```
 src/
-  core/dag/          # types, ops (5 primitives), evaluator, registry, store
+  core/dag/          # types, 5 Op primitives, evaluator, hash, registry, store
   core/storage/      # StorageCapability + OpfsStorage / TauriStorage / MemoryStorage
-  core/project/      # schema (versioned), migrations runner, save/load, default DAG
-  nodes/             # 23 node types: cameras, lights, meshes (P0+P1) plus the P2
-                     # Time chain — TimeSource (the impure singleton), Skeleton,
-                     # PosedSkeleton, AnimationClip, Navmesh, WalkPath,
-                     # LocomotionState, Character. All pure where possible.
-  app/               # boot, Layout (CSS-grid), Clock (rAF), Timebar (scrub),
-                     # Library, AssetDropZone, SceneTree, Gizmo, Inspector,
-                     # mode/selection/time stores, asset/{catalog, seedOpfs,
-                     # opfsLoader, dropChain}, character/{walkTo, GroundClick}
-  viewport/          # R3F Canvas + SceneFromDAG (recursive DAG → primitives)
-  render/            # PostFx (ACES + SMAA), FpsMeter
-  integrations/blender/  # capability + browser-poll bridge
-tools/
-  vite/              # vite-plugin-blender-mock (dev-only middleware)
-  blender-companion/ # Python http.server companion script
+  core/project/      # versioned schema, migration runner, save/load, default DAG
+  core/import/       # glTF / BVH / FBX import chains + bone-name retargeting
+  core/comfy/        # ComfyUI workflow types
+  nodes/             # 42 node types (cameras, lights, meshes, time/animation,
+                     # render passes, AI render bridge, aggregators) + registry
+  agent/             # identify, mutators (17), tools (9), diff, strategy,
+                     # session, telemetry, transport
+  app/               # boot, Layout, stores, MenuBar, NPanel, AssetDropZone,
+                     # AssetsPopover, Gizmo, asset/ (glTF import + OPFS resolver),
+                     # animate/, character/, timeline/
+  viewport/          # R3F Canvas + SceneFromDAG (recursive DAG -> primitives)
+  timeline/          # canvas-2D TimelineCanvas, CurveEditor, geometry, selection
+  render/            # PostFx (ACES + SMAA), pass/job/stitch runners, encoders
+  a11y/              # WCAG contrast utilities
+  integrations/blender/  # capability interface + browser-poll bridge
+public/draco, public/basis  # self-hosted glTF decoders (THESIS §48: no CDN)
+scripts/             # license audit, asset seeding, fixture generators
+tests/e2e/           # Playwright specs
 .anvi/               # dharana, vyapti, krama, hetvabhasa catalogues
-THESIS.md            # source of truth for v0.5
+THESIS.md            # design source of truth
 ```
 
-## Disciplines (active in P0 + P1 + P2)
+## Disciplines
 
-- **Op system is the only mutation path.** Stores never set state directly.
-- **Pure nodes are bit-exact reproducible.** Lint bans `Math.random` /
-  `Date.now` / `performance.now` / `crypto.randomUUID` / `useFrame` /
-  `useThree` in `src/nodes/**`.
-- **Time enters as a socket (V3 ALIGNED, P2).** Pure consumers (Animation
-  Clip / PosedSkeleton / LocomotionState / Character) wire their `time`
-  input to the `TimeSource` singleton — the only impure time producer.
-  TimeSource's hash flips per frame, propagating through `inputHashes` to
-  re-evaluate every downstream pure node bit-exactly.
-- **Versioned node schemas + migration runner.** First bump triggers the
-  first migration before the second bump is allowed.
-- **Permissive licenses only.** `license-audit` is a CI gate. No GPL.
-- **Capability interfaces decouple browser/native.** Storage and Blender
-  bridge already follow this; v0.6 Tauri swap is a one-line provider change.
-- **Materials are data, not code (V9, P1).** `MaterialOverride` exposes
-  preset PBR scalars only — no shader source surface in v0.5. TSL deferred
-  to P4 per `.anvi/dharana.md` §3.
+These are enforced, not aspirational:
 
-## Phase map (11 weeks to v0.5)
+- **The Op system is the only mutation path.** Stores never call `set` on graph
+  state directly; every change is an Op, so human and agent edits share one
+  applier, one undo stack, and one diff surface.
+- **Pure nodes are bit-exact reproducible.** ESLint bans `Math.random`,
+  `Date.now`, `performance.now`, `crypto.randomUUID`, `useFrame`, and `useThree`
+  in `src/nodes/**`. Node ids are content-addressed over `(args, state)`.
+- **Time enters as a typed socket.** Pure consumers wire their `time` input to
+  the single `TimeSource` producer; its per-frame hash propagates through
+  `inputHashes` to re-evaluate downstream nodes deterministically.
+- **Project schemas are versioned with a migration runner.** A schema bump
+  requires a migration before the next bump is allowed.
+- **Capability interfaces decouple browser from native.** Storage and the
+  Blender bridge are providers behind an interface; the Tauri swap is a provider
+  change, not a rewrite.
+- **Materials are data, not code.** `MaterialOverride` exposes preset PBR
+  scalars; no shader-source surface ships in the current milestone.
+- **Permissive licenses only.** `license-audit` is a CI gate. No GPL
+  dependencies.
 
-| Phase  | Description                                     | Status      |
-| ------ | ----------------------------------------------- | ----------- |
-| **P0** | **Foundation + DAG core**                       | **shipped** |
-| **P1** | **First node types + Asset Library**            | **shipped** |
-| **P2** | **Character + Move (as nodes)**                 | **shipped** |
-| P2.1   | Viewport polish + menu bar                      | **shipped** |
-| P2.6   | Editor polish (toolbar + shading + UV scaffold) | **shipped** |
-| P2.5   | AI Agent on the DAG                             | next        |
-| P3     | Timeline = animation nodes                      |             |
-| P4     | Render graph = render nodes                     |             |
-| P5     | AI Render Bridge                                |             |
-| P6     | Splats node                                     |             |
-| P7     | PlayCanvas export                               |             |
-| P8     | Progressive UX + Demo                           |             |
+## Roadmap
+
+Shipped: DAG foundation, node library + asset pipeline, character/locomotion,
+the AI agent on the DAG, the timeline + animation authoring, the render graph,
+the AI render bridge, and the editor design system. Animation import and glTF
+disk import landed as follow-on work on the animation milestone.
+
+Deferred: Gaussian Splat nodes, PlayCanvas export, and progressive onboarding
+UX. See `THESIS.md` §37–47 for the original phase plan and the rationale behind
+each cut or reorder.
 
 ## License
 
-MIT. See [LICENSE](./LICENSE). Permissive deps only — license posture is
-enforced by CI.
+MIT. See [LICENSE](./LICENSE). Permissive dependencies only — enforced by CI.
