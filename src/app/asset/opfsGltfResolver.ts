@@ -171,7 +171,14 @@ export async function loadMultiFileGltf(
   }
 
   for (const uri of uniqueUris(json)) {
-    const siblingPath = joinOpfs(baseDir, uri);
+    // glTF URIs are percent-encoded (spec §3.9.3.1); the on-disk OPFS
+    // name is the DECODED form (the importer writes files under the
+    // entry's actual name, and `opfsSiblingPath:128` already decodes on
+    // the buffer-resolve side). Both halves of the sibling-resolution
+    // boundary must agree on the decoded path — otherwise a fixture
+    // with a space-or-unicode filename imports but never renders. This
+    // is the percent-encoding divergence flagged in RESEARCH §2 for #82.
+    const siblingPath = joinOpfs(baseDir, decodeURIComponent(uri));
     const siblingUrl = opfsUrlFor(siblingPath);
     if (opfsUrlCache.has(siblingUrl)) continue;
     const bytes = await storage.read(siblingPath);
