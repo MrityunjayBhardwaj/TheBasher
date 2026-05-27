@@ -29,6 +29,18 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { ASSET_CATALOG, DRAG_MIME, type CatalogEntry } from './asset/catalog';
 import { getStorage } from './boot';
+import { useImportRefreshStore } from './stores/importRefreshStore';
+
+/** OPFS swatch for user-imported entries — the `warn` token (#f0b85a, amber).
+ * Distinct from every bundled-asset swatch (cube #5af07a green, sphere #7aaaff
+ * blue, cone #ff8a5a orange, skinned-bar #b07aff purple) AND from the `accent`
+ * green so user-imported assets read as "yours" at-a-glance. Lives in the
+ * existing palette (`tailwind.config.ts:26`) — no new token introduced. */
+const MY_IMPORT_SWATCH = '#f0b85a';
+
+/** OPFS root for user-imported asset folders (Phase 7.9 Wave A — mirrors
+ * `USER_IMPORTS_ROOT` in `src/app/asset/importGltf.ts:74`). */
+const USER_IMPORTS_ROOT = 'user-imports';
 
 interface AssetsPopoverState {
   open: boolean;
@@ -55,15 +67,33 @@ interface AvailableAsset extends CatalogEntry {
   available: boolean;
 }
 
+/** A user-imported entry surfaced under the "my imports" section. Mirrors the
+ * draggable shape of `AvailableAsset` (path + name + swatch) but is always
+ * `available` — the entry's existence in OPFS is the availability proof. */
+interface MyImportEntry {
+  /** OPFS path of the entry .gltf/.glb (the value passed via DRAG_MIME and
+   * consumed by AssetDropZone's library branch). */
+  readonly path: string;
+  /** Display name — the user-imports subdirectory name (sanitized at ingest). */
+  readonly name: string;
+}
+
 export function AssetsPopover(): ReactNode {
   const open = useAssetsPopoverStore((s) => s.open);
   const x = useAssetsPopoverStore((s) => s.x);
   const y = useAssetsPopoverStore((s) => s.y);
   const close = useAssetsPopoverStore((s) => s.close);
+  // My-Imports freshness: every successful import bumps `tick` (the import core
+  // bumps AFTER `dispatchAtomic` returns — see `src/app/asset/importGltf.ts:184`,
+  // pre-mortem #3 mitigation). Including `tick` in the enumeration effect's dep
+  // array makes a same-session import IMMEDIATELY appear in an already-open
+  // popover (checker C3 non-optional freshness guarantee).
+  const tick = useImportRefreshStore((s) => s.tick);
   const ref = useRef<HTMLDivElement | null>(null);
   const [assets, setAssets] = useState<AvailableAsset[]>(
     ASSET_CATALOG.map((c) => ({ ...c, available: false })),
   );
+  const [myImports, setMyImports] = useState<MyImportEntry[]>([]);
 
   // Lazy-resolve availability whenever the popover opens. Re-checking on
   // every open keeps the indicator honest if the user re-seeded assets
@@ -81,6 +111,75 @@ export function AssetsPopover(): ReactNode {
       cancelled = true;
     };
   }, [open]);
+
+  // My-Imports enumeration. Keyed on `[open, tick]` — every popover open AND
+  // every successful import re-enumerates. The OPFS dir IS the source of truth
+  // (V18 — no localStorage mirror). On first run `user-imports/` does not exist
+  // and `storage.list` THROWS (the same shape as `exists()` in OpfsStorage.ts:72)
+  // so the outer list call is wrapped in try/catch → []. Per-subdir list calls
+  // are independently guarded so a single missing/disappeared entry doesn't
+  // wipe the whole section.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const storage = await getStorage();
+        let subdirs: string[];
+        try {
+          subdirs = await storage.list(USER_IMPORTS_ROOT);
+        } catch {
+          // First-run crash mitigation: `user-imports` doesn't exist yet.
+          // Mirror OpfsStorage.exists's try/catch → fall back to empty.
+          subdirs = [];
+        }
+        const entries: MyImportEntry[] = [];
+        for (const name of subdirs) {
+          try {
+            const files = await storage.list(`${USER_IMPORTS_ROOT}/${name}`);
+            // Resolve the entry file. .glb (single-file container) wins over
+            // .gltf at the same depth. If neither is present at the root of
+            // the subdir, recurse one level (a common shape for nested-entry
+            // exports like `<dir>/gltf/scene.gltf`).
+            const rootGlb = files.find((f) => f.toLowerCase().endsWith('.glb'));
+            const rootGltf = files.find((f) => f.toLowerCase().endsWith('.gltf'));
+            let entryRel: string | null = rootGlb ?? rootGltf ?? null;
+            if (!entryRel) {
+              for (const sub of files) {
+                try {
+                  const innerFiles = await storage.list(`${USER_IMPORTS_ROOT}/${name}/${sub}`);
+                  const innerGlb = innerFiles.find((f) => f.toLowerCase().endsWith('.glb'));
+                  const innerGltf = innerFiles.find((f) => f.toLowerCase().endsWith('.gltf'));
+                  if (innerGlb || innerGltf) {
+                    entryRel = `${sub}/${innerGlb ?? innerGltf}`;
+                    break;
+                  }
+                } catch {
+                  // `sub` is a file (not a dir) — list throws on a file path;
+                  // skip and try the next sibling.
+                }
+              }
+            }
+            if (!entryRel) continue; // orphan dir (no .gltf/.glb anywhere)
+            entries.push({
+              path: `${USER_IMPORTS_ROOT}/${name}/${entryRel}`,
+              name,
+            });
+          } catch {
+            // Subdir disappeared between the outer list and this read;
+            // silently skip — V18 keeps OPFS authoritative, no error needed.
+          }
+        }
+        if (!cancelled) setMyImports(entries);
+      } catch {
+        // Storage unavailable entirely — render an empty section, silent.
+        if (!cancelled) setMyImports([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tick]);
 
   // Outside-click + Esc → close. Mirrors AddMenu's dismiss UX.
   useEffect(() => {
@@ -146,6 +245,40 @@ export function AssetsPopover(): ReactNode {
           </li>
         ))}
       </ul>
+      {myImports.length > 0 && (
+        <>
+          <header className="mb-1 mt-2 px-1 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">
+            my imports
+          </header>
+          <ul className="flex flex-col gap-1" data-testid="library-popover-my-imports">
+            {myImports.map((entry) => (
+              <li key={entry.path}>
+                <button
+                  type="button"
+                  draggable
+                  data-testid={`library-popover-my-import-${entry.path}`}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(DRAG_MIME, entry.path);
+                    e.dataTransfer.setData('text/plain', entry.path);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  onDragEnd={() => close()}
+                  className="flex w-full cursor-grab items-center gap-2 rounded border border-border bg-bg-1/40 px-2 py-1.5 text-left text-fg/90 hover:border-accent hover:bg-bg-1"
+                  title="Drag onto viewport to import"
+                >
+                  <span
+                    aria-hidden
+                    className="h-5 w-5 shrink-0 rounded border border-border"
+                    style={{ background: MY_IMPORT_SWATCH }}
+                  />
+                  <span className="grow truncate">{entry.name}</span>
+                  <span className="text-[9px] text-fg-mute">user</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
