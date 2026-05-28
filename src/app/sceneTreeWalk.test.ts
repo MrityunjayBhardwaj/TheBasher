@@ -75,6 +75,70 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
     expect(rows[2].parent).toEqual({ nodeId: 'tx', socket: 'target', index: 0 });
   });
 
+  it('expands a GltfAsset into nested GltfChild rows (Option A, #91 Wave D)', () => {
+    // Asset with two children: a parent "bone0" and its child "bone1".
+    // nodeNameMap: childKey → GltfChild node id; childHierarchy: parent → children.
+    let state = buildSceneOnly();
+    state = applyAll(state, [
+      {
+        type: 'addNode',
+        nodeId: 'gltf',
+        nodeType: 'GltfAsset',
+        params: {
+          assetRef: 'assets/skinned-bar.glb',
+          nodeNameMap: { bone0: 'child_b0', bone1: 'child_b1' },
+          childHierarchy: { bone0: ['bone1'] },
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'child_b0',
+        nodeType: 'GltfChild',
+        params: {
+          assetRef: 'assets/skinned-bar.glb',
+          childName: 'bone0',
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'child_b1',
+        nodeType: 'GltfChild',
+        params: {
+          assetRef: 'assets/skinned-bar.glb',
+          childName: 'bone1',
+          position: [0, 1, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      },
+      {
+        type: 'connect',
+        from: { node: 'gltf', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]);
+    const rows = buildSceneTreeRows(state);
+    // Scene → GltfAsset → bone0 (depth 2) → bone1 (depth 3).
+    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'GltfAsset', 'GltfChild', 'GltfChild']);
+    const gltfRow = rows[1];
+    const bone0Row = rows[2];
+    const bone1Row = rows[3];
+    expect(gltfRow.nodeType).toBe('GltfAsset');
+    // bone0 is a root child → directly under the asset.
+    expect(bone0Row.display).toBe('bone0');
+    expect(bone0Row.depth).toBe(gltfRow.depth + 1);
+    expect(bone0Row.nodeId).toBe('child_b0'); // click selects the GltfChild node
+    expect(bone0Row.parent).toBeUndefined(); // non-reorderable: no scene edge
+    // bone1 nests one deeper under bone0.
+    expect(bone1Row.display).toBe('bone1');
+    expect(bone1Row.depth).toBe(bone0Row.depth + 1);
+    expect(bone1Row.nodeId).toBe('child_b1');
+    expect(bone1Row.parent).toBeUndefined();
+  });
+
   it('produces the same tree shape for two non-identical DAGs that evaluate the same hierarchy', () => {
     // DAG A: Scene → Group → BoxMesh
     let a = buildSceneOnly();

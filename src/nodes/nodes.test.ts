@@ -51,6 +51,7 @@ const ALL_TYPES = [
   'DepthPass',
   'DirectionalLight',
   'GltfAsset',
+  'GltfChild',
   'Group',
   'IDPass',
   'KeyframeChannelColor',

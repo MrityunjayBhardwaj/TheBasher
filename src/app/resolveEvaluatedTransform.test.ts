@@ -12,7 +12,7 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
-import type { BoxMeshValue, RenderOutputValue } from '../nodes/types';
+import type { BoxMeshValue } from '../nodes/types';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
 const BOX_ID = 'n_box';
@@ -270,5 +270,152 @@ describe('resolveEvaluatedTransform', () => {
     // The default box size is [1,1,1]; BoxMesh has no `scale` field, so the
     // resolver falls back to `.size` per the documented contract.
     expect(r!.scale).toEqual([1, 1, 1]);
+  });
+});
+
+// P7.7 (#91) — the TRAILING glTF-child branch. A GltfChild id is neither a
+// top-level scene-child ref nor a single-hop AnimationLayer target, so the
+// existing match always misses; the new branch fires only on that miss AND
+// only for a GltfChild, layering manual override → clip track → base via the
+// SAME B1 primitive the renderer uses. The box-select regression assertion (3)
+// is the H40 guard at the unit layer.
+describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
+  const ASSET_REF = 'assets/skinned-bar.glb';
+  const ASSET_ID = 'n_gltf_asset';
+  const CHILD_ID = 'n_gltf_child';
+  const CHILD_NAME = 'Bone';
+  // Captured base TRS (seeded at import). Clip + override are deliberately
+  // distinct so each layer is observable, not trivially equal.
+  const BASE_POS: [number, number, number] = [1, 0, 0];
+  const BASE_ROT: [number, number, number] = [0, 0, 0];
+  const BASE_SCALE: [number, number, number] = [1, 1, 1];
+  const OVERRIDE_POS: [number, number, number] = [5, 6, 7];
+  const CLIP_POS: [number, number, number] = [9, 9, 9];
+  const CLIP_ROT: [number, number, number] = [0, 45, 0];
+
+  /** Build a state with a GltfAsset (optionally carrying a transformClip
+   *  track for the child) + a GltfChild node. The GltfChild has NO render
+   *  edge (R-1 inputless), so it never matches the scene-child correspondence
+   *  loop — the trailing branch is the only path that resolves it. */
+  function buildGltfState(opts: {
+    overridden?: { position: boolean; rotation: boolean; scale: boolean };
+    overridePos?: [number, number, number];
+    withClip?: boolean;
+  }): DagState {
+    let state = buildDefaultDagState();
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: ASSET_ID,
+        nodeType: 'GltfAsset',
+        params: {
+          assetRef: ASSET_REF,
+          nodeNameMap: { [CHILD_NAME]: CHILD_ID },
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: CHILD_ID,
+        nodeType: 'GltfChild',
+        params: {
+          assetRef: ASSET_REF,
+          childName: CHILD_NAME,
+          position: opts.overridePos ?? BASE_POS,
+          rotation: BASE_ROT,
+          scale: BASE_SCALE,
+          overridden: opts.overridden ?? { position: false, rotation: false, scale: false },
+        },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+
+    if (opts.withClip) {
+      // Wire a real TransformClip producer into the GltfAsset's transformClip
+      // input. The track is keyed by `targetNodeId` = the childName key
+      // (gltfImportChain.ts:233 sets targetNodeId = the sanitised name key,
+      // and the renderer/resolver look it up by that key). A single keyframe
+      // clamps to its value at any time. The clip samples the project clock
+      // (n_time) so it evaluates without a separate Time mock.
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: 'n_clip',
+        nodeType: 'TransformClip',
+        params: {
+          name: 'anim',
+          duration: 1,
+          keyframes: [
+            { targetNodeId: CHILD_NAME, time: 0, position: CLIP_POS, rotation: CLIP_ROT },
+          ],
+        },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'n_time', socket: 'out' },
+        to: { node: 'n_clip', socket: 'time' },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: 'n_clip', socket: 'out' },
+        to: { node: ASSET_ID, socket: 'transformClip' },
+      }).next;
+    }
+    return state;
+  }
+
+  // 1. OVERRIDDEN → the manual value wins over base (and over a clip if present).
+  it('returns the overridden value for an overridden GltfChild field', () => {
+    const state = buildGltfState({
+      overridden: { position: true, rotation: false, scale: false },
+      overridePos: OVERRIDE_POS,
+    });
+    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(OVERRIDE_POS); // manual layer wins
+    expect(r!.rotation).toEqual(BASE_ROT); // not overridden, no clip → base
+    expect(r!.scale).toEqual(BASE_SCALE);
+  });
+
+  // 2. NON-OVERRIDDEN + active clip → the clip track wins (clip over base);
+  //    an overridden field still wins over the clip (manual over clip).
+  it('a non-overridden child with an active clip resolves to the clip track', () => {
+    const state = buildGltfState({
+      overridden: { position: false, rotation: false, scale: false },
+      withClip: true,
+    });
+    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(CLIP_POS); // clip wins over base
+    expect(r!.rotation).toEqual(CLIP_ROT);
+    // scale has no clip track value distinct from base (clip seeded [1,1,1])
+    expect(r!.scale).toEqual(BASE_SCALE);
+  });
+
+  // 2b. Manual override beats the clip: overridden position + active clip →
+  //     the manual value, not the clip track (R-4 precedence).
+  it('an overridden field wins over the active clip track (R-4)', () => {
+    const state = buildGltfState({
+      overridden: { position: true, rotation: false, scale: false },
+      overridePos: OVERRIDE_POS,
+      withClip: true,
+    });
+    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(OVERRIDE_POS); // manual beats clip
+    expect(r!.rotation).toEqual(CLIP_ROT); // rotation not overridden → clip wins
+  });
+
+  // 3 (regression, H40). A box select still resolves via the EXISTING path —
+  //   the trailing branch must not shadow or reorder it.
+  it('a box select still resolves via the existing scene-child path (H40)', () => {
+    const state = buildAnimatedState();
+    const r = resolveEvaluatedTransform(state, BOX_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(KF0_POS); // the patched animated value, unchanged
+  });
+
+  // Identity-null still holds: a non-GltfChild, non-rendered node → null.
+  it('returns null for a GltfAsset id (not a GltfChild, not a scene child)', () => {
+    const state = buildGltfState({});
+    expect(resolveEvaluatedTransform(state, ASSET_ID, ctxAt(0))).toBeNull();
   });
 });

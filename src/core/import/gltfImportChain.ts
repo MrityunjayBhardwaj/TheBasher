@@ -89,6 +89,17 @@ interface NameMapResult {
   nodeNameMap: Record<string, string>;
   /** Glb-JSON-index → unique key (same key as in nodeNameMap). */
   keyByGltfNodeIndex: Record<number, string>;
+  /**
+   * P7.7 (#91) — parent KEY → child KEYs. Derived from the glTF
+   * `node.children` index arrays, mapped through `keyByGltfNodeIndex` so the
+   * hierarchy is stored by post-dedup KEY (e.g. `bone__1`), matching the
+   * nodeNameMap key contract — NOT by raw glTF index (which doesn't survive
+   * the dedup-suffix rename). Persisted on the GltfAsset node (A3) and read
+   * by the outliner (Wave D) as a pure projection — children are NOT render
+   * `inputs` (R-2 / B12 guard). A node absent as a value here (appears in no
+   * parent's child list) is a root; the walk computes roots from that.
+   */
+  childHierarchy: Record<string, string[]>;
 }
 
 export function buildNodeNameMap(json: GltfJson, assetRef: string): NameMapResult {
@@ -110,7 +121,19 @@ export function buildNodeNameMap(json: GltfJson, assetRef: string): NameMapResul
     nodeNameMap[key] = dagId;
     keyByGltfNodeIndex[i] = key;
   }
-  return { nodeNameMap, keyByGltfNodeIndex };
+  // Second pass — keys are now fully assigned, so child indices resolve to
+  // their post-dedup keys. Only emit an entry for a parent that actually has
+  // children (keeps the persisted map minimal + the determinism stable).
+  const childHierarchy: Record<string, string[]> = {};
+  for (let i = 0; i < nodes.length; i++) {
+    const children = nodes[i].children;
+    if (!children || children.length === 0) continue;
+    const parentKey = keyByGltfNodeIndex[i];
+    childHierarchy[parentKey] = children
+      .map((ci) => keyByGltfNodeIndex[ci])
+      .filter((k): k is string => k !== undefined);
+  }
+  return { nodeNameMap, keyByGltfNodeIndex, childHierarchy };
 }
 
 interface PartialKeyframe {
@@ -234,7 +257,7 @@ export async function buildGltfImportOps(
   // reading any accessor.
   const { json, bin } = parseGltfContainer(args.buffer);
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
-  const { nodeNameMap, keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
+  const { nodeNameMap, keyByGltfNodeIndex, childHierarchy } = buildNodeNameMap(json, args.assetRef);
 
   // Static chain ids (deterministic) — mirrors dropChain.ts:36-73 but
   // content-addressed off assetRef so re-import of the same file
@@ -263,13 +286,45 @@ export async function buildGltfImportOps(
   const ops: Op[] = [];
 
   // GltfAsset includes the deterministic nodeNameMap so the renderer
-  // can match Object3D.name → DAG target id without re-deriving.
+  // can match Object3D.name → DAG target id without re-deriving, plus the
+  // childHierarchy (P7.7 #91) so the outliner (Wave D) can nest child rows
+  // by KEY without re-walking the glTF — pure projection, not render inputs.
   ops.push({
     type: 'addNode',
     nodeId: gltfAssetId,
     nodeType: 'GltfAsset',
-    params: { assetRef: args.assetRef, nodeNameMap },
+    params: { assetRef: args.assetRef, nodeNameMap, childHierarchy },
   });
+  // P7.7 (#91) — one GltfChild addNode per scene child, in json.nodes
+  // INTEGER-INDEX order (NOT Object.keys — that order is incidental today
+  // and a future map-build change would silently reorder the Op stream,
+  // breaking V22). The dagId is the SAME content-addressed id already
+  // computed by buildNodeNameMap (hashId('gltfChild', assetRef, key)), so
+  // re-import is byte-identical and the renderer's name lookup matches.
+  // Seeded with the child's captured base TRS (defaultTRS) and overridden
+  // all-false — the manual dirty flags are set later by the gizmo (Wave C).
+  // These are inputless addressing satellites (R-1): NOT connected to
+  // anything. Emitted in the SAME atomic ops array (K6 — one Cmd+Z),
+  // BEFORE the TransformClip/ClipSelect block so the chain order is locked.
+  const childNodes = json.nodes ?? [];
+  for (let i = 0; i < childNodes.length; i++) {
+    const key = keyByGltfNodeIndex[i];
+    const dagId = nodeNameMap[key];
+    const base = defaultTRS(childNodes[i]);
+    ops.push({
+      type: 'addNode',
+      nodeId: dagId,
+      nodeType: 'GltfChild',
+      params: {
+        assetRef: args.assetRef,
+        childName: key,
+        position: base.position,
+        rotation: base.rotation,
+        scale: base.scale,
+        overridden: { position: false, rotation: false, scale: false },
+      },
+    });
+  }
   ops.push({
     type: 'addNode',
     nodeId: transformId,
