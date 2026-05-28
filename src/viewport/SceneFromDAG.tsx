@@ -16,7 +16,7 @@
 // REF: THESIS.md §11, vyapti V8.
 
 import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/drei';
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 // #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
@@ -158,10 +158,21 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
 // Cameras
 // ---------------------------------------------------------------------------
 
-function CameraNode({ value }: { value: CameraValue }) {
+// [[B13]] Pass 1 — memoize the per-scene-child top-level dispatcher.
+// The evaluator returns stable EvalResult references for cache hits
+// (`evaluator.ts:132-138`), and `extractSocket` reads a property off
+// that cached object — so `value.scene.children[i]` IS a stable reference
+// across renders when the i-th child's content hash is unchanged. Default
+// shallow-prop compare therefore short-circuits the entire MeshChild
+// subtree reconciliation for any static child during an unrelated edit
+// (the CHURN regime in `perf-scene-scale.spec.ts`) AND during playback
+// for any pure subtree (no upstream impure dep). Time-driven subtrees
+// (TransformClip-wrapped GltfAsset) still re-render every frame — that's
+// the Pass 2 (imperative playback) lever. REF: [[H48]], dharana [[B13]].
+const CameraNode = memo(function CameraNode({ value }: { value: CameraValue }) {
   if (value.kind === 'PerspectiveCamera') return <PerspectiveCameraNode value={value} />;
   return <OrthographicCameraNode value={value} />;
-}
+});
 
 function PerspectiveCameraNode({
   value,
@@ -221,7 +232,7 @@ function OrthographicCameraNode({
 // Lights
 // ---------------------------------------------------------------------------
 
-function LightNode({ value }: { value: LightValue }) {
+const LightNode = memo(function LightNode({ value }: { value: LightValue }) {
   switch (value.kind) {
     case 'DirectionalLight':
       return <DirectionalLightR value={value} />;
@@ -234,7 +245,7 @@ function LightNode({ value }: { value: LightValue }) {
     case 'AreaLight':
       return <AreaLightR value={value} />;
   }
-}
+});
 
 /** Volume product of the (defensive) scale vec — drives power scaling
  *  on Point/Spot/Directional lights. AreaLight handles power via
@@ -364,7 +375,7 @@ interface MeshChildProps {
   override?: MaterialValue;
 }
 
-function MeshChild({ value, override }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
@@ -396,7 +407,7 @@ function MeshChild({ value, override }: MeshChildProps) {
       // P3 Wave A — passthrough renderer. Channel application lands in Wave C.
       return value.target ? <MeshChild value={value.target} override={override} /> : null;
   }
-}
+});
 
 function applyOverride(
   baseColor: string,
