@@ -212,11 +212,60 @@ test('perf fox-duplication playback: skinned+animated three-budget sweep', async
     // PLAYBACK MEASUREMENT — start the profiler, call play() so the real
     // Clock.tsx rAF loop drives timeStore.tick (the same code path users
     // hit), wait PLAYBACK_SECONDS of real time, pause, stop.
+    //
+    // ALSO orbit the camera during the run. Real director usage is "play AND
+    // look around" — orbit moves the camera matrix every frame (GPU sees a
+    // moving viewport, frustum culling changes, any per-frame React work tied
+    // to camera state surfaces). OrbitControls (drei → three) listens for
+    // pointerdown/move/up on the renderer's canvas, so synthetic PointerEvents
+    // dispatched on the canvas drive the same handlers a user's mouse would.
+    // The drag follows a deterministic sine path keyed on perf clock so the
+    // orbit budget is reproducible across levels.
     const summary = await page.evaluate(async (seconds) => {
       const w = window as unknown as PerfWindow;
+      const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
+      if (!canvas) throw new Error('perf-fox-benchmark: no canvas to orbit on');
+      const rect = canvas.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const DRAG_RADIUS = 80; // px — wide enough that OrbitControls registers motion, narrow enough to keep the fox in-frustum
+      const ANGULAR_VEL = 0.5; // rad/sec — slow user-style orbit, not a fling
+      const mkEvt = (type: string, x: number, y: number) =>
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          bubbles: true,
+          cancelable: true,
+        });
+      // Begin drag at the canvas center.
+      canvas.dispatchEvent(mkEvt('pointerdown', cx, cy));
+
+      // Start measurement + playback.
       w.__basher_perf!.start();
       w.__basher_time!.getState().play();
+
+      // Per-rAF orbit driver — runs concurrently with the timed sleep below.
+      let stopOrbit = false;
+      const t0 = performance.now();
+      const orbit = () => {
+        const t = (performance.now() - t0) / 1000;
+        const angle = t * ANGULAR_VEL;
+        const dx = Math.cos(angle) * DRAG_RADIUS;
+        const dy = Math.sin(angle) * (DRAG_RADIUS * 0.4); // ellipse: more yaw than pitch
+        canvas.dispatchEvent(mkEvt('pointermove', cx + dx, cy + dy));
+        if (!stopOrbit) requestAnimationFrame(orbit);
+      };
+      requestAnimationFrame(orbit);
+
       await new Promise<void>((r) => setTimeout(r, seconds * 1000));
+
+      // End drag, pause playback, stop profiler.
+      stopOrbit = true;
+      canvas.dispatchEvent(mkEvt('pointerup', cx, cy));
       w.__basher_time!.getState().pause();
       return w.__basher_perf!.stop();
     }, PLAYBACK_SECONDS);
