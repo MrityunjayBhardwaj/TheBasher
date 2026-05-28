@@ -348,11 +348,9 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
           ],
         },
       }).next;
-      state = applyOp(state, {
-        type: 'connect',
-        from: { node: 'n_time', socket: 'out' },
-        to: { node: 'n_clip', socket: 'time' },
-      }).next;
+      // P7.10 (#114): TransformClip no longer declares a `time` input
+      // socket. The Time→Clip wire is gone; time enters via the value's
+      // `.sample(seconds)` method (V3 amended), invoked by the consumer.
       state = applyOp(state, {
         type: 'connect',
         from: { node: 'n_clip', socket: 'out' },

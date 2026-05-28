@@ -122,18 +122,24 @@ test('P7.5 Test 1 — single-clip drop → evaluator samples bobbing Y at t=0.5'
     const ctxHalf = { time: { frame: 30, seconds: 0.5, normalized: 0.5 } };
 
     // Producer side — TransformClip evaluator at t=0.5.
+    // P7.10 (#114): TransformClipValue carries `.sample(seconds)` instead
+    // of a pre-baked `.tracks` map. The producer (evaluator) returns the
+    // closure-bearing value; the consumer (this test, the renderer, the
+    // gizmo) invokes the closure at the desired sample time.
     const clipVal = w.__basher_evaluate(ids.transformClipIds[0], ctxHalf).value as {
-      tracks: Record<string, { position: [number, number, number] }>;
+      sample: (seconds: number) => Record<string, { position: [number, number, number] }>;
     };
     // Eval-flow through ClipSelect → GltfAsset.transformClip.
     const gltfVal = w.__basher_evaluate(ids.gltfAssetId, ctxHalf).value as {
-      transformClip: { tracks: Record<string, { position: [number, number, number] }> } | null;
+      transformClip: {
+        sample: (seconds: number) => Record<string, { position: [number, number, number] }>;
+      } | null;
       nodeNameMap: Record<string, string>;
     };
     return {
       ids,
-      clipPosY: clipVal.tracks.Cube?.position[1] ?? null,
-      gltfClipPosY: gltfVal.transformClip?.tracks.Cube?.position[1] ?? null,
+      clipPosY: clipVal.sample(ctxHalf.time.seconds).Cube?.position[1] ?? null,
+      gltfClipPosY: gltfVal.transformClip?.sample(ctxHalf.time.seconds).Cube?.position[1] ?? null,
       nodeNameMapHasCube: Boolean(gltfVal.nodeNameMap?.Cube),
     };
   });
@@ -221,10 +227,11 @@ test('P7.5 Test 2 — clip-switch via setParam selects the matching TransformCli
     const buffer = buildGlb();
     const ids = await w.__basher_importGltf!(buffer, 'p7.5/multi.glb');
     const ctxHalf = { time: { frame: 30, seconds: 0.5, normalized: 0.5 } };
+    // P7.10 (#114): TransformClipValue → `.sample(seconds)` shape.
     const initial = w.__basher_evaluate(ids.gltfAssetId, ctxHalf).value as {
       transformClip: {
         name: string;
-        tracks: Record<string, { position: [number, number, number] }>;
+        sample: (seconds: number) => Record<string, { position: [number, number, number] }>;
       } | null;
     };
     // Switch selection to 'run' via setParam.
@@ -245,7 +252,7 @@ test('P7.5 Test 2 — clip-switch via setParam selects the matching TransformCli
     const switched = w.__basher_evaluate(ids.gltfAssetId, ctxHalf).value as {
       transformClip: {
         name: string;
-        tracks: Record<string, { position: [number, number, number] }>;
+        sample: (seconds: number) => Record<string, { position: [number, number, number] }>;
       } | null;
     };
     // Switch to a non-existent name to verify null-on-miss.
@@ -266,9 +273,9 @@ test('P7.5 Test 2 — clip-switch via setParam selects the matching TransformCli
     };
     return {
       initialName: initial.transformClip?.name ?? null,
-      initialPosY: initial.transformClip?.tracks.Cube?.position[1] ?? null,
+      initialPosY: initial.transformClip?.sample(ctxHalf.time.seconds).Cube?.position[1] ?? null,
       switchedName: switched.transformClip?.name ?? null,
-      switchedPosY: switched.transformClip?.tracks.Cube?.position[1] ?? null,
+      switchedPosY: switched.transformClip?.sample(ctxHalf.time.seconds).Cube?.position[1] ?? null,
       missClip: miss.transformClip,
     };
   });

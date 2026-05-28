@@ -200,8 +200,12 @@ describe('buildGltfImportOps', () => {
     // emitted right after the GltfAsset addNode, before Transform):
     // GltfAsset, GltfChild×N (here 1: 'Cube'), Transform, connect(gltf→tx),
     // Group, connect(tx→grp), connect(grp→scene), TransformClip[0],
-    // ClipSelect, connect(time→clip[0]), connect(clip[0]→sel),
-    // connect(sel→gltf.transformClip).
+    // ClipSelect, connect(clip[0]→sel), connect(sel→gltf.transformClip).
+    //
+    // P7.10 (#114): the connect(time→clip[0]) wire is GONE. TransformClip's
+    // value carries `.sample(seconds)` and time enters at the consumer
+    // (GltfAssetR's useFrame), so the importer no longer wires a TimeSource
+    // edge. One fewer Op per animation; total = 11 (was 12 with 1 clip).
     const types = result.ops.map((o: Op) => o.type);
     expect(types).toEqual([
       'addNode', // GltfAsset
@@ -213,9 +217,8 @@ describe('buildGltfImportOps', () => {
       'connect',
       'addNode', // TransformClip[0]
       'addNode', // ClipSelect
-      'connect',
-      'connect',
-      'connect',
+      'connect', // clip[0] → ClipSelect.clips
+      'connect', // ClipSelect.out → GltfAsset.transformClip
     ]);
     // The first GltfChild addNode sits at index 1 (between GltfAsset and Transform).
     const gcOp = result.ops[1];
@@ -406,12 +409,29 @@ describe('buildGltfImportOps', () => {
     expect(kf[0].targetNodeId).not.toMatch(/[[\].:/]/);
   });
 
-  it('throws when DAG has no TimeSource and animations exist', async () => {
+  // P7.10 (#114) — the OLD invariant ("a TimeSource MUST exist in the DAG
+  // before importing an animated glTF") is GONE. TransformClip no longer
+  // declares a `time` input, so the importer no longer connects to
+  // TimeSource. An empty DAG state is now a valid input for animated
+  // imports. This test inverts the old assertion: it must NOT throw, and
+  // the resulting Op stream must NOT mention TimeSource.
+  it('succeeds when DAG has no TimeSource (P7.10: TransformClip drops Time input)', async () => {
     const buf = singleTranslationClipGlb();
     const state: DagState = { nodes: {}, outputs: {} } as unknown as DagState;
-    await expect(
-      buildGltfImportOps({ buffer: buf, assetRef: 'asset/x.glb', sceneNodeId: 'n_scene' }, state),
-    ).rejects.toThrow(/No TimeSource node in DAG/);
+    const result = await buildGltfImportOps(
+      { buffer: buf, assetRef: 'asset/x.glb', sceneNodeId: 'n_scene' },
+      state,
+    );
+    expect(result.transformClipIds.length).toBeGreaterThan(0);
+    // No emitted Op references TimeSource as either an addNode type or a connect source.
+    for (const op of result.ops) {
+      if (op.type === 'addNode') expect(op.nodeType).not.toBe('TimeSource');
+      if (op.type === 'connect') {
+        // No connect should reference a `time` input socket on a consumer
+        // (TransformClip is the only node that used to have one in this chain).
+        expect(op.to.socket).not.toBe('time');
+      }
+    }
   });
 
   it('JSON-only .gltf with a data-URI buffer → TransformClip (#90 container + buffer path)', async () => {
