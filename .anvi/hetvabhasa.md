@@ -1204,3 +1204,35 @@ foxes | tris | draws | frame.p95 | react.p95 | reactOnly.p95 | eval.p95 | evalCa
 ```
 
 The skinned+animated case **predicted** non-zero eval (TimeSource hash flips every frame → TransformClip cache misses every frame, evalCalls/commit ramps 20→62) and **measured** it: eval p95 grows 0.3→0.8ms. But **eval remains 30× smaller than React** at every level — ~0.083ms/fox eval vs ~2.9ms/fox React. The 60fps knee lands between 4 and 6 foxes (`react.p95 = 12.5 → 18.4`), matching B13's synthetic-sphere extrapolation. GPU draws (6→12) and triangles (1.3K→4.7K) are trivial. **Conclusion held: the bottleneck is React reconciliation, not the evaluator, not the GPU.** Reproduce: `PWHEADED=1 npx playwright test tests/e2e/perf-fox-benchmark.spec.ts --headed`. REF (added): `tests/e2e/perf-fox-benchmark.spec.ts`.
+
+**3rd occurrence (2026-05-29, headed M-series, real GPU) — Pass 3 SHIPPED (P7.10), same Fox-duplication benchmark + orbit:**
+
+```
+foxes | tris | draws | frame.p95 | react.p95 | reactOnly.p95 | eval.p95 | evalCalls/commit | cacheHit% | commits
+    2 | 1294 |     6 |     9.50  |     0.00  |     0.00      |    0.00  |              0.0 |     0.0% |       0
+    4 | 2446 |     8 |     9.60  |     0.00  |     0.00      |    0.00  |              0.0 |     0.0% |       0
+    6 | 3598 |    10 |     9.60  |     0.00  |     0.00      |    0.00  |              0.0 |     0.0% |       0
+    8 | 4750 |    12 |     9.50  |     0.00  |     0.00      |    0.00  |              0.0 |     0.0% |       0
+```
+
+**The diagnostic arc closes.** Pass 3 (P7.10): `TransformClipValue.sample(seconds)` lifts time INTO the value-shape (Houdini precedent); TransformClip drops its `time` input socket so its cache key stops flipping per frame; SceneFromDAG drops its `useTimeStore.seconds/frame/normalized` subscriptions and evaluates with frozen `ctx.time={0,0,0}`. Consequence: **React did not re-render at all during 5 seconds of playback** (`commits = 0` at every level, vs ~600 commits pre-Pass-3). `react.p95` collapsed from 24ms → 0.00ms at 8 foxes. `frame.p95` is now FLAT at ~9.5ms across all levels (60fps with headroom) — per-frame work (TRS write inside useFrame) is bounded by GPU/CPU, not React reconciliation. Vertex-deformation validity gate still passes (foxes animate via useFrame). The CHURN/edit regime preserved Pass 1's halved slope (2000 nodes react.p95 = 9.90ms; PR #115 = 10.20). See [[H49]] for the lesson generalized + [[V24]] for the new invariant; the boundary's HOW is updated in [[B13]]. REF: `src/nodes/TransformClip.ts` (no `time` input + closure builder), `src/nodes/types.ts` `TransformClipValue.sample`, `src/viewport/SceneFromDAG.tsx:73` (no time subs + frozen ctx), `src/app/resolveGltfChildTransform.ts` (signature: `tracks` not `clip`).
+
+---
+
+### H49 — Returning a pre-computed value where a function-of-time is needed inflates React's commit budget
+
+**Detection signal:** An impure-rooted node's evaluate signature returns a pre-baked `T` (computed from `ctx.time` at evaluate time) instead of a `(t: number) => T` closure-bearing value. The React.p95 budget then scales with playback fps because every Clock tick mutates a value reference passed as a prop down a React tree; even with React.memo on every consumer, the per-frame new prop ref defeats shallow-compare.
+
+**Root cause:** Time is being expressed as a CACHE-KEY component (the evaluator's `inputHashes` flip per frame via the impure TimeSource ancestor), so the value tree's identity changes every frame even though most of its content is static. React reconciliation walks the tree to discover this. Moving the WRITE loop out of the commit phase (the Pass 2 "useFrame relocation" move) helps marginally — the dominant cost is the tree-walk itself, not the leaf-write.
+
+**Trap (wrong fix that looks right):** "Move the per-frame TRS-write loop from useEffect into useFrame so it runs outside React's commit phase." This is what PR #115 Pass 2 did. The TRS-write loop's body relocated, but the SURROUNDING React tree continued to walk per frame because the value-ref-per-frame chain stayed intact (impure node → new EvalResult → new value prop → memo cache-miss → re-render). Measured: 3-8% improvement on Fox, knee unchanged. Diagnostic, not solution.
+
+**Real fix:** Lift time INTO the value-shape, not the cache key. The impure node returns `{ ..., sample: (seconds) => T }` and the evaluator's local impurity gate goes away (the node becomes `pure: true` with no Time input). Then the cache key is stable across frames, the value ref is stable, React.memo actually short-circuits, and the per-frame work moves to the only place that needs it (consumer-local useFrame, where time-sampling cadence belongs).
+
+**Cross-ref + lineage:** Sibling to [[H48]] (which named the BROAD framing: evaluator-not-bottleneck). H49 names the SPECIFIC architectural lever — "where does time live in the value contract?" The two-pass diagnostic that arrived here:
+
+- Pass 1 (memoize MeshChild/LightNode/CameraNode): halved CHURN slope, didn't help skinned playback because for Fox every child IS time-driven so memo always misses. Correct fix for static scenes; insufficient for animated.
+- Pass 2 (move TRS-write to useFrame): tiny win on Fox (3-8%). Diagnostic — proved the loop was NOT the dominant cost.
+- Pass 3 (TransformClipValue.sample): solved it. react.p95 24ms → 0.00ms at 8 foxes; commits = 0 across 5s playback.
+
+Provenance: ORIGIN = P7.10 (#114), 2026-05-29. WHY = without this entry, a future impure node (audio sync, physics, procedural animation) would re-discover the cache-key-time-component trap by repeating Pass 2 and walking away with a small win and an unhealed regression. HOW = before adding any new impure node, ask "does this node's output VARY with time?" — if yes, design its VALUE TYPE as a function-of-time first; opt into the impure flag only if no value-shape solution exists. REF: `src/nodes/TransformClip.ts`, `src/nodes/types.ts` `TransformClipValue`, `tests/e2e/perf-fox-benchmark.spec.ts` (the measurement loop that distinguishes Pass 2 from Pass 3), [[H48]], [[B13]], [[V24]]. Issue #114.
