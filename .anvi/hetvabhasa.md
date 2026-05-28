@@ -1192,3 +1192,15 @@ If the two halves disagree on encode/decode (one decodes, the other doesn't), th
 **The discipline this enforces:** decompose "slow" into independently-attributable budgets (eval / React / GPU) and MEASURE before choosing a fix; never infer the bottleneck from architectural aesthetics. The profiler that produced this — `src/perf/frameProfiler.ts` (`window.__basher_perf`) + `src/perf/PerfProbe.tsx` + `__basher_perf_stress` seam + `tests/e2e/perf-scene-scale.spec.ts` — IS the grounding tool; re-run it before any future perf decision.
 
 **Cross-ref:** [[B13]] (the SceneFromDAG render-reconciliation boundary where the fix clusters). Note the GPU-load metric must come from a scene-graph walk, NOT `gl.info.render`, because PostFx's EffectComposer leaves `gl.info` reflecting only its final fullscreen pass (~handful of triangles) — a measurement trap caught while building the profiler. Provenance: ORIGIN = perf investigation 2026-05-28, issue #114, branch `perf/scene-scale-profiling`. WHY = without this entry the next "engine is slow" prompt re-litigates the Rust/WebGPU rewrite from instinct instead of re-running the profiler and reading eval≈0 / React-linear. HOW = run `__basher_perf` over `__basher_perf_stress` (synthetic) or the Fox-duplication benchmark (skinned/animated) and read the three-budget table before proposing any fix. REF: `src/perf/frameProfiler.ts`, `src/perf/PerfProbe.tsx`, `src/core/dag/evaluator.ts` (the `__setEvalPerfHook` + cache-hit site `:122-128`), `src/viewport/SceneFromDAG.tsx:73,78` (the two per-frame subscriptions that drive the re-walk), `tests/e2e/perf-scene-scale.spec.ts`. Issue #114.
+
+**2nd occurrence (2026-05-28, headed M-series, real GPU) — Fox-duplication skinned+animated playback, 5s of `useTimeStore.play()` per level:**
+
+```
+foxes | tris | draws | frame.p95 | react.p95 | reactOnly.p95 | eval.p95 | evalCalls/commit | cacheHit%
+    2 | 1294 |     6 |     9.70  |     6.70  |     6.60      |    0.30  |             20.0 |    15.0%
+    4 | 2446 |     8 |    13.70  |    12.50  |    12.20      |    0.50  |             34.0 |     8.8%
+    6 | 3598 |    10 |    19.60  |    18.40  |    18.10      |    0.70  |             48.0 |     6.3%
+    8 | 4750 |    12 |    25.50  |    24.10  |    23.70      |    0.80  |             62.0 |     4.8%
+```
+
+The skinned+animated case **predicted** non-zero eval (TimeSource hash flips every frame → TransformClip cache misses every frame, evalCalls/commit ramps 20→62) and **measured** it: eval p95 grows 0.3→0.8ms. But **eval remains 30× smaller than React** at every level — ~0.083ms/fox eval vs ~2.9ms/fox React. The 60fps knee lands between 4 and 6 foxes (`react.p95 = 12.5 → 18.4`), matching B13's synthetic-sphere extrapolation. GPU draws (6→12) and triangles (1.3K→4.7K) are trivial. **Conclusion held: the bottleneck is React reconciliation, not the evaluator, not the GPU.** Reproduce: `PWHEADED=1 npx playwright test tests/e2e/perf-fox-benchmark.spec.ts --headed`. REF (added): `tests/e2e/perf-fox-benchmark.spec.ts`.
