@@ -20,6 +20,7 @@ import { CutNode } from './Cut';
 import { DepthPassNode } from './DepthPass';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
+import { GltfChildNode } from './GltfChild';
 import { GroupNode } from './Group';
 import { IDPassNode } from './IDPass';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
@@ -65,6 +66,10 @@ const ALL: NodeDefinition[] = [
   BoxMeshNode as unknown as NodeDefinition,
   SphereMeshNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
+  // P7.7 — addressable proxy per glTF scene child (issue #91). Inputless,
+  // non-producing addressing satellite; emitted one-per-child at import
+  // (gltfImportChain). Must be registered before its addNode validates (V1).
+  GltfChildNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,

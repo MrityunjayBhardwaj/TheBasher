@@ -160,6 +160,14 @@ export interface GltfAssetValue {
    */
   readonly nodeNameMap: Readonly<Record<string, string>>;
   /**
+   * P7.7 — glTF child DAG addressing (issue #91). Parent-key → child-keys,
+   * derived from the glTF `node.children` index arrays at drop time. The
+   * outliner (Wave D) reads this to nest child rows — pure PROJECTION, not
+   * render `inputs` (R-2 / B12 guard). Default `{}` so pre-7.7 values are
+   * no-ops (V10 / H14-clean).
+   */
+  readonly childHierarchy: Readonly<Record<string, readonly string[]>>;
+  /**
    * The selected clip's evaluated TRS at the input Time, sourced from
    * the connected `ClipSelect.out`. `null` when no animation is
    * imported (degenerate path) OR when `selectedClipName` doesn't
@@ -167,6 +175,37 @@ export interface GltfAssetValue {
    * override" — falls back to the cloned scene's static TRS.
    */
   readonly transformClip: TransformClipValue | null;
+}
+
+/**
+ * P7.7 — an addressable proxy for ONE glTF scene child (issue #91).
+ *
+ * Emitted as a real DAG node per scene child at import (gltfImportChain A2),
+ * it owns ONLY the child's local TRS override; three.js owns the geometry +
+ * skeleton (#88 / H45 / B12). The renderer applies this TRS back onto the
+ * named three.js object by name lookup — it is NEVER walked as a scene object.
+ *
+ * NOT a member of the `SceneChild` union, deliberately: it is not a scene
+ * producer (R-1), so it must not be rendered as a scene object (the #88
+ * double-render guard). The resolver (Wave C) reads it by id from the DAG;
+ * the renderer (Wave B) reads it by assetRef filter.
+ *
+ * `overridden` is the explicit dirty signal (R-4): the layering primitive
+ * branches on these flags, never on value-equality against the base TRS.
+ * Rotation is degrees Euler XYZ (the codebase convention).
+ */
+export interface GltfChildValue {
+  readonly kind: 'GltfChild';
+  readonly childName: string;
+  readonly assetRef: string;
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+  readonly overridden: {
+    readonly position: boolean;
+    readonly rotation: boolean;
+    readonly scale: boolean;
+  };
 }
 
 export interface TransformValue {

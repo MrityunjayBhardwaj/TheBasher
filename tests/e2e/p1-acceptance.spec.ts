@@ -470,6 +470,11 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     const gltf = newNodeIds.find((id) => id.startsWith('n_gltf_'));
     const tx = newNodeIds.find((id) => id.startsWith('n_tx_'));
     const grp = newNodeIds.find((id) => id.startsWith('n_grp_'));
+    // P7.7 (#91) — the importer now ALSO materializes one GltfChild node per
+    // scene child (the addressable-child mechanism). cube.gltf has 1 scene
+    // node ('cube') → 1 GltfChild, so the drop now adds GltfAsset + GltfChild +
+    // Transform + Group = 4 nodes (was 3 pre-7.7). Count them explicitly.
+    const gltfChildCount = Object.values(nodes).filter((n) => n.type === 'GltfChild').length;
     const assetRef = gltf ? (nodes[gltf].params as { assetRef: string }).assetRef : null;
     return {
       delta: Object.keys(nodes).length - newNodeIds.length, // pre-existing count
@@ -477,14 +482,17 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
       sawGltf: Boolean(gltf),
       sawTransform: Boolean(tx),
       sawGroup: Boolean(grp),
+      gltfChildCount,
       assetRef,
       undoLen: s.undoStack.length,
     };
   });
-  expect(after.nodeCount).toBe(beforeNodeCount + 3);
+  // GltfAsset + 1 GltfChild (cube.gltf has one scene node) + Transform + Group.
+  expect(after.nodeCount).toBe(beforeNodeCount + 4);
   expect(after.sawGltf).toBe(true);
   expect(after.sawTransform).toBe(true);
   expect(after.sawGroup).toBe(true);
+  expect(after.gltfChildCount).toBe(1);
   expect(after.assetRef).toBe('assets/cube.gltf');
 });
 

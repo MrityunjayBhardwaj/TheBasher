@@ -46,7 +46,8 @@
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeRef } from '../core/dag/types';
-import type { RenderOutputValue, SceneChild } from '../nodes/types';
+import type { GltfAssetValue, RenderOutputValue, SceneChild } from '../nodes/types';
+import { resolveGltfChildTrs, type ChildTrs } from './resolveGltfChildTransform';
 
 type Vec3 = [number, number, number];
 
@@ -138,7 +139,82 @@ export function resolveEvaluatedTransform(
       }
     }
   }
-  if (matchIdx === -1) return null;
+  if (matchIdx === -1) {
+    // 4b. TRAILING glTF-child branch (P7.7 / #91 — purely additive, H40).
+    //   A GltfChild id is NEITHER a top-level scene-child ref NOR a single-hop
+    //   AnimationLayer target — it lives BY NAME inside a GltfAssetValue, so the
+    //   index-correspondence match above (the box/AnimationLayer path) always
+    //   misses it. This branch fires ONLY on that miss AND only when the node is
+    //   a GltfChild, so the existing paths are never reordered or shadowed.
+    //
+    //   It layers the SAME way the renderer does (resolveGltfChildTrs, B1 — one
+    //   precedence rule across renderer + resolver, V20): manual override (if
+    //   overridden[field]) → active clip track → captured base. The base for a
+    //   non-overridden field IS the child node's seeded param (A2 seeded it with
+    //   the captured static base at import), so the child node serves as BOTH
+    //   the override layer AND the base. The clip track comes from the owning
+    //   GltfAsset's evaluated TransformClip.
+    const selected = state.nodes[selectedId];
+    if (selected?.type === 'GltfChild') {
+      const cp = selected.params as {
+        position?: unknown;
+        rotation?: unknown;
+        scale?: unknown;
+        assetRef?: unknown;
+        childName?: unknown;
+        overridden?: { position: boolean; rotation: boolean; scale: boolean };
+      };
+      if (
+        !isVec3(cp.position) ||
+        !isVec3(cp.rotation) ||
+        !isVec3(cp.scale) ||
+        typeof cp.assetRef !== 'string' ||
+        typeof cp.childName !== 'string' ||
+        !cp.overridden
+      ) {
+        return null;
+      }
+      const childTrs: ChildTrs = {
+        position: cp.position,
+        rotation: cp.rotation,
+        scale: cp.scale,
+      };
+
+      // Find the owning GltfAsset (matched by assetRef) and read its evaluated
+      // TransformClip track for this child. Evaluation is best-effort: a missing
+      // / unevaluable asset simply means "no clip layer" — the override or base
+      // still resolves (the child node carries both).
+      let clipTrack: ChildTrs | undefined;
+      for (const node of Object.values(state.nodes)) {
+        if (node.type !== 'GltfAsset') continue;
+        const ap = node.params as { assetRef?: unknown };
+        if (ap.assetRef !== cp.assetRef) continue;
+        try {
+          const assetVal = evaluate(state, node.id, { cache, ctx }).value as GltfAssetValue;
+          clipTrack = assetVal.transformClip?.tracks[cp.childName];
+        } catch {
+          clipTrack = undefined;
+        }
+        break;
+      }
+
+      const resolved = resolveGltfChildTrs({
+        base: childTrs,
+        clipTrack,
+        childNode: { ...childTrs, overridden: cp.overridden },
+      });
+      // The child always carries rotation + scale (seeded at import), so unlike
+      // the box/size-fallback path these are never null. Copy into mutable
+      // tuples — resolveGltfChildTrs returns readonly Vec3s (ChildTrs), the
+      // EvaluatedTransform contract is the mutable local Vec3.
+      return {
+        position: [resolved.position[0], resolved.position[1], resolved.position[2]],
+        rotation: [resolved.rotation[0], resolved.rotation[1], resolved.rotation[2]],
+        scale: [resolved.scale[0], resolved.scale[1], resolved.scale[2]],
+      };
+    }
+    return null;
+  }
 
   // 5. Unwrap the AnimationLayer to the patched clone (the H34 mechanism —
   //    THIS is the animated value, NOT a re-evaluate of selectedId).

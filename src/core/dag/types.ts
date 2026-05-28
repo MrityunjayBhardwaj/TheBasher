@@ -81,7 +81,11 @@ export type SocketTypeName =
   | 'JobResult'
   // P5 — AI Render Bridge (THESIS §28, §44)
   | 'Prompt'
-  | 'Video';
+  | 'Video'
+  // P7.7 — glTF scene children → addressable DAG nodes (issue #91). An
+  // addressing satellite, not a scene producer: GltfChild has no inputs/
+  // outputs into the render graph (the name registers the type only).
+  | 'GltfChild';
 
 export type Cardinality = 'single' | 'list';
 

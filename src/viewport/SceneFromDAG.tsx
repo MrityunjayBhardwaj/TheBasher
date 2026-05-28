@@ -30,9 +30,11 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { degVec3ToRad } from './rotation';
+import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
+import type { DagState } from '../core/dag/state';
 import { PostFx } from '../render/PostFx';
 import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
@@ -55,6 +57,7 @@ import type {
   SpotLightValue,
   SphereMeshValue,
   TransformValue,
+  Vec3,
 } from '../nodes/types';
 
 let rectAreaInit = false;
@@ -478,6 +481,48 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
   );
 }
 
+/**
+ * P7.7 (#91) — derive the GltfChild override layer for one asset from the DAG
+ * node table. Pure projection (no mutation): filter the nodes for
+ * `type === 'GltfChild' && params.assetRef === assetRef`, keyed by childName.
+ *
+ * V8 is FILE-ROOTED: a read-only state access under `src/viewport/` is clean —
+ * V8 forbids dispatch/setState/mutation, not reads. The threading alternative
+ * (a `childNodes` field on GltfAssetValue) is UNREACHABLE, not merely a
+ * preference: R-1 makes GltfChild INPUTLESS, so GltfAsset.evaluate has no input
+ * edge to the children; the only way the evaluated value could carry them is a
+ * raw sibling-state read inside the evaluator, which violates V2 (pure
+ * evaluators are bit-exact over (params, inputs); a sibling-filter-by-assetRef
+ * is not an input). So the viewport read-only filter is the ONLY V2-respecting
+ * option.
+ */
+function childOverridesForAsset(
+  nodes: DagState['nodes'],
+  assetRef: string,
+): Record<string, ChildOverride> {
+  const out: Record<string, ChildOverride> = {};
+  for (const node of Object.values(nodes)) {
+    if (node.type !== 'GltfChild') continue;
+    const p = node.params as {
+      assetRef?: unknown;
+      childName?: unknown;
+      position?: Vec3;
+      rotation?: Vec3;
+      scale?: Vec3;
+      overridden?: ChildOverride['overridden'];
+    };
+    if (p.assetRef !== assetRef || typeof p.childName !== 'string') continue;
+    if (!p.position || !p.rotation || !p.scale || !p.overridden) continue;
+    out[p.childName] = {
+      position: p.position,
+      rotation: p.rotation,
+      scale: p.scale,
+      overridden: p.overridden,
+    };
+  }
+  return out;
+}
+
 function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
   // useResolvedAssetUrl turns OPFS-relative paths (e.g. "assets/cube.gltf")
   // into blob URLs; passthrough URLs (/foo, http://..., blob:) are returned
@@ -507,6 +552,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // deep clone per component-instance).
   const cloned = useMemo(() => cloneSkinned(gltf.scene) as THREE.Group, [gltf.scene]);
   const shading = useViewportStore((s) => s.shading);
+  // P7.7 (#91) — SUBSCRIBED read of the DAG node table (NOT a getState()
+  // snapshot). The node table is referentially stable until a dispatch, so a
+  // gizmo setParam on a GltfChild produces a NEW `nodes` object → this selector
+  // emits → the per-child effect below re-fires → re-layers → re-applies. A
+  // getState() snapshot would NOT be a React dependency, so a manual override
+  // would silently never re-render (the H40 freeze / C2 snap-back, caused
+  // upstream here). The per-asset child map is derived in a memo keyed on the
+  // subscribed nodes + assetRef so the effect dep is stable across unrelated
+  // dispatches.
+  const dagNodes = useDagStore((s) => s.state.nodes);
+  const childOverrides = useMemo(
+    () => childOverridesForAsset(dagNodes, value.assetRef),
+    [dagNodes, value.assetRef],
+  );
   useEffect(() => {
     if (!override) return;
     const mat = applyOverride('#ffffff', override);
@@ -541,27 +600,35 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
     });
   }, [cloned, shading]);
-  // P7.5 — per-child TRS override (consumer side of the H40 boundary-pair).
-  // The DAG's TransformClip (sourced via ClipSelect → GltfAsset.transformClip
-  // input socket) is the producer; the renderer is the consumer. Walk
-  // gltf.scene by name, look up the matching evaluated TRS, and apply.
-  // Rotation arrives in degrees (B3 CHECKPOINT — SECTION-INVENTORY.md);
-  // convert at the THREE seam via degVec3ToRad (same call all other
-  // .rotation consumers in this file use — line 525, 426, 449).
+  // P7.5 + P7.7 — per-child TRS override (consumer side of the H40
+  // boundary-pair). This is the SOLE writer of per-child TRS onto the clone
+  // (V20 / H36 / H33 — never add a second). It reads THREE layers and lets the
+  // ONE layering primitive (resolveAllChildTrs, B1) pick per-component:
+  //   manual GltfChild override (if overridden[field]) → clip track → base.
+  // The base for each name is the GltfChild node's seeded TRS (captured static
+  // base at import); with no node it falls back to the clip track.
+  //
+  // P7.7 REMOVED the old `if (!clip) return` early-out: children must still get
+  // their manual/base TRS even with NO animation. The per-name guard inside
+  // resolveAllChildTrs (omit names with neither node nor clip) replaces it.
+  //
+  // Rotation is degrees throughout the layering; convert at the THREE seam via
+  // degVec3ToRad (same call all other .rotation consumers in this file use).
   useEffect(() => {
-    const clip = value.transformClip;
-    if (!clip) return;
-    for (const name of Object.keys(value.nodeNameMap)) {
+    const resolved = resolveAllChildTrs({
+      names: Object.keys(value.nodeNameMap),
+      childByName: childOverrides,
+      clip: value.transformClip,
+    });
+    for (const [name, trs] of Object.entries(resolved)) {
       const child = cloned.getObjectByName(name);
       if (!child) continue;
-      const track = clip.tracks[name];
-      if (!track) continue;
-      child.position.set(track.position[0], track.position[1], track.position[2]);
-      const radRot = degVec3ToRad(track.rotation);
+      child.position.set(trs.position[0], trs.position[1], trs.position[2]);
+      const radRot = degVec3ToRad(trs.rotation);
       child.rotation.set(radRot[0], radRot[1], radRot[2]);
-      child.scale.set(track.scale[0], track.scale[1], track.scale[2]);
+      child.scale.set(trs.scale[0], trs.scale[1], trs.scale[2]);
     }
-  }, [cloned, value.transformClip, value.nodeNameMap]);
+  }, [cloned, value.transformClip, value.nodeNameMap, childOverrides]);
   // #88 (DEV-only) — observation seam for the skinned-deform e2e. The proof
   // that #88 works is that a skin-bound VERTEX moves (not just that a joint
   // Object3D animates — that already happens via the TRS effect above). That
