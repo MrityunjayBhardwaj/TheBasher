@@ -30,6 +30,9 @@ import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import type { PrimitiveKind } from './addPrimitives';
+import { inputFilesToFiles } from './asset/ingestReaders';
+import { importGltfFromOpfs, ingestGltfFolder } from './asset/importGltf';
+import { useAssetErrorStore, formatAssetError } from './stores/assetErrorStore';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -234,6 +237,71 @@ function onExportGltf() {
   window.alert('glTF scene export lands with the render graph (P4).');
 }
 
+/**
+ * File → Import glTF… — Phase 7.9 Wave D Task 7 (issue #110).
+ *
+ * Programmatic hidden `<input type="file" webkitdirectory multiple>`:
+ * directory pickers ship in Chromium/Firefox/Safari natively
+ * (RESEARCH §1), so no `showDirectoryPicker` fallback is needed and no
+ * mid-handler branch picks between APIs.
+ *
+ * Funnels onchange → `inputFilesToFiles` (Wave B reader) →
+ * `ingestGltfFolder` (Wave A write-to-OPFS) → `importGltfFromOpfs`
+ * (Wave A DAG dispatchAtomic). Same shared core as the AssetDropZone
+ * drop path (Wave C) — one ingest chokepoint, three call sites.
+ *
+ * folderName derivation: the picked-folder root segment of the first
+ * file's `webkitRelativePath`. The `slash < 0` fallback (a `webkit-
+ * directory` picker yielding a single root-level file) uses basename-
+ * without-extension so the OPFS layout matches the drop single-file
+ * layout (`user-imports/<basename>/<basename>.glb`) — checker C5
+ * dedup parity across drop vs picker.
+ *
+ * Failures route to `useAssetErrorStore` (V14/silent-failure fix), NOT
+ * `console.error`.
+ */
+function onImportGltf(): void {
+  const input = document.createElement('input');
+  input.type = 'file';
+  (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+
+  input.onchange = () => {
+    void (async () => {
+      try {
+        if (!input.files || input.files.length === 0) return;
+        const ingestFiles = await inputFilesToFiles(input.files);
+        if (ingestFiles.length === 0) return;
+        // Derive folderName from the picked-folder root segment of the
+        // first file's webkitRelativePath. The lone-file edge case
+        // (slash < 0 — directory picker yielding a single root-level
+        // file) falls back to basename-without-ext so the OPFS layout
+        // matches the AssetDropZone single-file drop (checker C5):
+        // user-imports/<basename>/<basename>.glb.
+        const first = ingestFiles[0].relativePath;
+        const slash = first.indexOf('/');
+        let folderName: string;
+        if (slash > 0) {
+          folderName = first.slice(0, slash);
+        } else {
+          const dot = first.lastIndexOf('.');
+          folderName = dot > 0 ? first.slice(0, dot) : first;
+        }
+        const entryPath = await ingestGltfFolder(ingestFiles, folderName);
+        await importGltfFromOpfs(entryPath);
+      } catch (err) {
+        useAssetErrorStore.getState().report('menu-import', formatAssetError(err));
+      } finally {
+        input.remove();
+      }
+    })();
+  };
+
+  input.click();
+}
+
 function onResetToDefault() {
   const ok = window.confirm(
     'Reset current project to the default scene? This clears the undo history.',
@@ -351,6 +419,8 @@ export function MenuBar() {
           testId="menu-file-export-gltf"
         />
         <Item label="Export DAG as JSON" onSelect={exportDagJson} testId="menu-file-export-json" />
+        <Divider />
+        <Item label="Import glTF…" onSelect={onImportGltf} testId="menu-file-import-gltf" />
       </Menu>
 
       <Menu

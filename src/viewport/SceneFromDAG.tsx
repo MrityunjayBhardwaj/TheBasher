@@ -665,6 +665,37 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     w.__basher_gltf_skin = () =>
       (mesh as unknown as { userData: Record<string, unknown> }).userData.__basher_skin ?? null;
   }, [cloned]);
+  // P7.9 Wave F Task 12 (DEV-only) — observation seam for the disk-import
+  // Lokayata gate. The proof that a multi-file `.gltf` rendered TEXTURED is
+  // that one of the cloned Meshes carries a non-null `material.map`. That
+  // surface only exists on the cloned three.js tree — nothing else in the
+  // app exposes it. Mirror the `__basher_gltf_skin` pattern (line 597-599):
+  // a DEV-only window getter that walks the cloned tree and returns the
+  // serializable mesh summary. Read-only — no DAG mutation, no store writes
+  // (V8 clean). Single-asset assumption (the e2e loads one); a later asset
+  // mounting will clobber the getter, which is fine for the test.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__basher_gltf_meshes = () => {
+      const summary: Array<{ name: string; hasMap: boolean; mapImageOk: boolean }> = [];
+      cloned.traverse((child) => {
+        const m = child as THREE.Mesh;
+        if (!m.isMesh) return;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        for (const mat of mats) {
+          const map = (mat as { map?: THREE.Texture | null } | null)?.map ?? null;
+          const image = map?.image as { width?: number } | undefined;
+          summary.push({
+            name: m.name ?? '',
+            hasMap: map !== null,
+            mapImageOk: Boolean(image && (image.width ?? 0) > 0),
+          });
+        }
+      });
+      return summary;
+    };
+  }, [cloned]);
   return <primitive object={cloned} />;
 }
 
