@@ -7,7 +7,7 @@
 
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
-import type { EvalCtx, NodeId } from '../core/dag/types';
+import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
   buildDefaultDagState,
   buildDefaultProject,
@@ -307,6 +307,81 @@ export function boot(): Promise<void> {
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         return evaluateDag(state, nodeId, { ctx });
+      };
+      // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
+      // SphereMesh nodes at `segments` tessellation in a compact grid (kept
+      // near origin so they stay inside the default camera frustum — culled
+      // meshes would under-report GPU load), all wired to the Scene's
+      // `children` socket in ONE dispatchAtomic. Returns the seeded ids so the
+      // harness can drive an edit-churn setParam + clear between levels.
+      // Triangle count is read off renderer.info via the frame profiler, not
+      // estimated here. Pure additive scene seeding — no production caller.
+      w.__basher_perf_stress = (opts: { meshes: number; segments?: number }) => {
+        const dag = useDagStore.getState();
+        const sceneRef = dag.state.outputs.scene;
+        if (!sceneRef) throw new Error('__basher_perf_stress: project has no `scene` output');
+        const sceneId = sceneRef.node;
+        const segments = Math.max(3, opts.segments ?? 24);
+        const n = Math.max(0, Math.floor(opts.meshes));
+        const side = Math.max(1, Math.ceil(Math.cbrt(n)));
+        const spacing = 0.9;
+        const offset = ((side - 1) * spacing) / 2;
+        const ids: string[] = [];
+        const ops: Op[] = [];
+        for (let i = 0; i < n; i++) {
+          const id = `perfstress_${i}`;
+          ids.push(id);
+          const gx = i % side;
+          const gy = Math.floor(i / side) % side;
+          const gz = Math.floor(i / (side * side));
+          ops.push({
+            type: 'addNode',
+            nodeId: id,
+            nodeType: 'SphereMesh',
+            params: {
+              radius: 0.3,
+              widthSegments: segments,
+              heightSegments: segments,
+              position: [gx * spacing - offset, gy * spacing - offset, gz * spacing - offset],
+              rotation: [0, 0, 0],
+              material: { name: 'default', color: '#88aaff' },
+            },
+          });
+          ops.push({
+            type: 'connect',
+            from: { node: id, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          });
+        }
+        dag.dispatchAtomic(ops, 'user', `perf-stress: ${n} spheres @ ${segments}seg`);
+        w.__basher_perf_stress_ids = ids;
+        return { meshCount: n, segments, sceneId, firstMeshId: ids[0] ?? null };
+      };
+      // Remove the seeded stress meshes, restoring a clean scene between
+      // harness levels. removeNode throws while a node is still consumed
+      // (ops.ts applyRemoveNode), so each mesh is DISCONNECTED from the Scene
+      // `children` socket before removal — disconnects first, then removes, all
+      // in ONE dispatchAtomic (= one undo).
+      w.__basher_perf_clear = () => {
+        const dag = useDagStore.getState();
+        const ids = (w.__basher_perf_stress_ids as string[] | undefined) ?? [];
+        if (ids.length === 0) return 0;
+        const sceneRef = dag.state.outputs.scene;
+        const sceneId = sceneRef?.node;
+        const ops: Op[] = [];
+        if (sceneId) {
+          for (const id of ids) {
+            ops.push({
+              type: 'disconnect',
+              from: { node: id, socket: 'out' },
+              to: { node: sceneId, socket: 'children' },
+            });
+          }
+        }
+        for (const id of ids) ops.push({ type: 'removeNode', nodeId: id });
+        dag.dispatchAtomic(ops, 'user', `perf-stress clear: ${ids.length}`);
+        w.__basher_perf_stress_ids = [];
+        return ids.length;
       };
     }
 

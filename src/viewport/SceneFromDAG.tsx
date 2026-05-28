@@ -16,7 +16,8 @@
 // REF: THESIS.md §11, vyapti V8.
 
 import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/drei';
-import { useEffect, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 // #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
@@ -161,10 +162,21 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
 // Cameras
 // ---------------------------------------------------------------------------
 
-function CameraNode({ value }: { value: CameraValue }) {
+// [[B13]] Pass 1 — memoize the per-scene-child top-level dispatcher.
+// The evaluator returns stable EvalResult references for cache hits
+// (`evaluator.ts:132-138`), and `extractSocket` reads a property off
+// that cached object — so `value.scene.children[i]` IS a stable reference
+// across renders when the i-th child's content hash is unchanged. Default
+// shallow-prop compare therefore short-circuits the entire MeshChild
+// subtree reconciliation for any static child during an unrelated edit
+// (the CHURN regime in `perf-scene-scale.spec.ts`) AND during playback
+// for any pure subtree (no upstream impure dep). Time-driven subtrees
+// (TransformClip-wrapped GltfAsset) still re-render every frame — that's
+// the Pass 2 (imperative playback) lever. REF: [[H48]], dharana [[B13]].
+const CameraNode = memo(function CameraNode({ value }: { value: CameraValue }) {
   if (value.kind === 'PerspectiveCamera') return <PerspectiveCameraNode value={value} />;
   return <OrthographicCameraNode value={value} />;
-}
+});
 
 function PerspectiveCameraNode({
   value,
@@ -224,7 +236,7 @@ function OrthographicCameraNode({
 // Lights
 // ---------------------------------------------------------------------------
 
-function LightNode({ value }: { value: LightValue }) {
+const LightNode = memo(function LightNode({ value }: { value: LightValue }) {
   switch (value.kind) {
     case 'DirectionalLight':
       return <DirectionalLightR value={value} />;
@@ -237,7 +249,7 @@ function LightNode({ value }: { value: LightValue }) {
     case 'AreaLight':
       return <AreaLightR value={value} />;
   }
-}
+});
 
 /** Volume product of the (defensive) scale vec — drives power scaling
  *  on Point/Spot/Directional lights. AreaLight handles power via
@@ -367,7 +379,7 @@ interface MeshChildProps {
   override?: MaterialValue;
 }
 
-function MeshChild({ value, override }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
@@ -399,7 +411,7 @@ function MeshChild({ value, override }: MeshChildProps) {
       // P3 Wave A — passthrough renderer. Channel application lands in Wave C.
       return value.target ? <MeshChild value={value.target} override={override} /> : null;
   }
-}
+});
 
 function applyOverride(
   baseColor: string,
@@ -614,11 +626,36 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   //
   // Rotation is degrees throughout the layering; convert at the THREE seam via
   // degVec3ToRad (same call all other .rotation consumers in this file use).
-  useEffect(() => {
+  //
+  // [[B13]] Pass 2 — useFrame, not useEffect. The clip value (`value.transformClip`)
+  // is a new reference every playback frame (TransformClip is impure → cache-miss
+  // per frame). When this was a `useEffect`, the TRS-write loop ran inside React's
+  // COMMIT phase every frame — the dominant cost the React Profiler measured at
+  // Fox benchmark `react.p95 = 24ms @ 8 foxes` (H48 2nd-occurrence). Moving the
+  // loop into `useFrame` (R3F's per-frame rAF, OUTSIDE React's commit) keeps the
+  // SAME total work but removes it from React's reconciliation budget. The
+  // reference-identity dirty-check below preserves the paused-state efficiency
+  // the old `useEffect` dep-array gave for free: when neither clip nor overrides
+  // change (idle / paused), the write is skipped on subsequent frames.
+  //
+  // Correctness: useFrame runs after the React commit but before renderer.render
+  // — the bones are updated in time for this frame's draw, identical observable
+  // behavior to the previous useEffect path. The single-writer V20/H36/H33
+  // invariant still holds (this is still the sole TRS-writer onto the clone).
+  const lastApplied = useRef<{ clip: unknown; overrides: unknown } | null>(null);
+  useFrame(() => {
+    const clip = value.transformClip;
+    if (
+      lastApplied.current !== null &&
+      lastApplied.current.clip === clip &&
+      lastApplied.current.overrides === childOverrides
+    ) {
+      return;
+    }
     const resolved = resolveAllChildTrs({
       names: Object.keys(value.nodeNameMap),
       childByName: childOverrides,
-      clip: value.transformClip,
+      clip,
     });
     for (const [name, trs] of Object.entries(resolved)) {
       const child = cloned.getObjectByName(name);
@@ -628,7 +665,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       child.rotation.set(radRot[0], radRot[1], radRot[2]);
       child.scale.set(trs.scale[0], trs.scale[1], trs.scale[2]);
     }
-  }, [cloned, value.transformClip, value.nodeNameMap, childOverrides]);
+    lastApplied.current = { clip, overrides: childOverrides };
+  });
+  // Re-apply on clone swap (asset reload) — the new clone has bind-pose TRS,
+  // and the dirty-check above would short-circuit if clip/overrides happen to
+  // be referentially equal to the last clone's apply.
+  useEffect(() => {
+    lastApplied.current = null;
+  }, [cloned]);
   // #88 (DEV-only) — observation seam for the skinned-deform e2e. The proof
   // that #88 works is that a skin-bound VERTEX moves (not just that a joint
   // Object3D animates — that already happens via the TRS effect above). That
