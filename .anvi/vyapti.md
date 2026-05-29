@@ -563,3 +563,28 @@ detection gate observes BOTH sides). Provenance: 2026-05-28 — P7.9
 Wave F Task 12 (`26e6f1a`); the gap surfaced when the headline e2e
 exercised a real nested fixture for the first time (unit tests had
 used flat fixtures only). Issue #110.
+
+### V25: A `GltfSkeleton` is a PURE read-only projection of GltfAsset-captured bind data; pose ownership stays with GltfChild (no write-back), and every per-joint datum shares ONE `skin.joints[]` ordering
+
+**Status:** ALIGNED (P7.11, #100).
+
+**Span:** `src/nodes/GltfSkeleton.ts` (the node) + `src/core/import/projectGltfSkeleton.ts` (the pure join) + `src/core/import/gltfImportChain.ts` `buildSkinMetadata` (the capture) + `GltfAsset.skins` param (the captured datum). The invariant reaches the render boundary at `src/viewport/SceneFromDAG.tsx` GltfAssetR (the [[H40]] consumer side).
+
+**Statement (two coupled clauses):**
+
+1. **Read-only projection (extends [[V20]]/[[H36]] single-writer to a new boundary).** `GltfSkeleton.evaluate` is a PURE function of its `asset` input (a `GltfAssetValue` whose `skins` were captured at import) — `(params, inputs) → SkeletonValue`, no store handle, no `setParam`, no `dispatch`, no `GltfChild` reference. A `Skeleton` is a BIND-pose definition and the bind pose is import-time STATIC, so there is NO edge from (and NO read of) GltfChild's live pose. GltfChild remains the SOLE pose owner; the projection NEVER writes back. This is the architectural guarantee D-02 was chosen for — and it is ENFORCED, not merely claimed (see below).
+2. **One joints-order spine (the index discipline).** Every per-joint array — `jointKeys`, `bindTRS`, `parentJointIndex`, `inverseBindMatrices` — is captured and projected in `skin.joints[]` order. Therefore BoneSpec index i == `skin.joints[]` position i == IBM index i == `parentJointIndex` space i == rendered `SkinnedMesh.skeleton.bones` index i. Rotation crosses a units boundary: captured `bindTRS.rotation` is DEGREES (DAG-storage convention), `BoneSpec.rotation` is RADIANS (the BVH/FBX adapter contract) — the projector converts, so a glTF-projected rig and a BVH/FBX rig are consumed identically by `specToThreeSkeleton`.
+
+**Why it matters:** Clause 1 prevents a second persisted copy of pose and the dual-write trap [[H36]] reappears at every new surface that touches a glTF rig (the prior P7 surfaces — gizmo, NPanel — each re-litigated it). Clause 2 is the precondition that makes the [[H40]] render boundary-pair a trivial index-by-index name check instead of a fuzzy name-matching reconciliation; violating it scrambles the rig silently on permuted-joint rigs ([[H50]]).
+
+**Enforcement (build gates, not prose):**
+
+- **Read-only:** `src/nodes/GltfSkeleton.test.ts` greps `GltfSkeleton.ts` + `projectGltfSkeleton.ts` source (comments stripped) for write/store tokens (`setParam`/`dispatch`/`setState`/`getState`/`useStore`/`useDagStore`/`useViewportStore`/`GltfChild`) and asserts ABSENCE — a future "convenience" write-back fails the build. Mirrors the `gltfLoaderConfig.test.ts` regression-guard precedent.
+- **Index spine:** `gltfSkinCapture.test.ts` + `projectGltfSkeleton.test.ts` assert ordering + parent on BOTH `skinned-bar` (`[1,0]`) and `many-bone-rig` (`[63..0]`); the reversed-order fixture fails loudly if a node-index slip creeps in ([[H50]]).
+- **Boundary-pair:** `tests/e2e/p7.11-gltf-rig-nodes.spec.ts` F6a-2 observes BOTH sides — projected `bones[i].name` == rendered `skeleton.bones[i].name` (sanitized), index-by-index.
+- **Determinism (extends [[V2]]):** `GltfSkeleton.test.ts` twice-eval deep-equal; `gltfSkinCapture.test.ts` re-import byte-identical ([[V22]]).
+- **Separability (retarget needs no IBM):** retarget consumes only name+parent+position+rotation(+scale); IBM ([[V9]]: `number[16]`, never a `Matrix4`) rides for deform-fidelity + future DAG-side skinning. `retarget.test.ts` (F6b) proves the cross-vocabulary bridge with a NON-IDENTITY nameMap + falsification.
+
+**Cross-ref:** [[V20]] (single-writer principle this extends to the projection boundary), [[H36]] (the dual-write trap clause 1 blocks), [[H50]] (joint-index-vs-node-index — the trap clause 2 blocks), [[H51]] (matrix-form bind capture), [[H40]] (the boundary-pair the index spine makes trivial), [[H45]]/[[H46]] (the render-side skin family), [[V2]]/[[V9]]/[[V22]].
+
+**Provenance:** ORIGIN = P7.11 (#100), 2026-05-29 — Wave F closes #100's rig-projection + retarget half. WHY = without this invariant, the next rig consumer (DAG-side skinning, viewport bone-pick #100/D-06, FBX node-indexed clips) re-derives BOTH the no-write-back discipline AND the joints-order spine from scratch; the read-only clause in particular guards against a "just write the pose back here" shortcut reopening [[H36]] on a fourth glTF surface. HOW = a new rig-reading surface checks: does it read captured bind data only (no GltfChild edge, no store write)? does it preserve the `skin.joints[]` spine? — both are grep-/test-enforced here. REF: GROUND_TRUTH_GLTF.md DEFERRED (Wave E2) → interim grounding RESEARCH.md §B1 three.js citations (`GLTFLoader.js:3930-3993` loadSkin, `Skeleton.js:64-78` calculateInverses); `src/nodes/GltfSkeleton.ts`, `src/core/import/projectGltfSkeleton.ts`, `src/core/import/gltfImportChain.ts` `buildSkinMetadata`, `src/nodes/GltfSkeleton.test.ts`, `src/core/import/projectGltfSkeleton.test.ts`, `src/core/import/gltfSkinCapture.test.ts`, `tests/e2e/p7.11-gltf-rig-nodes.spec.ts`. Issue #100. (Interim-grounded until GROUND_TRUTH_GLTF.md exists.)
