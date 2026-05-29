@@ -21,6 +21,8 @@ import { buildGltfImportOps, buildNodeNameMap, buildSkinMetadata } from './gltfI
 import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
+import { GltfAssetParams } from '../../nodes/GltfAsset';
+import { SkeletonNode, SkeletonParams } from '../../nodes/Skeleton';
 
 const MAGIC = 0x46546c67;
 const CHUNK_JSON = 0x4e4f534a;
@@ -251,5 +253,51 @@ describe('buildGltfImportOps — skins emitted on the GltfAsset op (P7.11 A3/A4)
     expect(skin.bindTRS).toHaveLength(n);
     expect(skin.parentJointIndex).toHaveLength(n);
     expect(skin.inverseBindMatrices).toHaveLength(n);
+  });
+});
+
+// Phase 7.11 Wave F (F4): the D-03/D-04 additive fields must not break
+// pre-7.11 saves or BVH/FBX-emitted Skeleton nodes. The fields are all
+// `.optional()` / `.default([])`, so a legacy param object lacking them
+// hydrates to the legacy shape and a legacy bone evaluates byte-identical.
+describe('back-compat — additive fields are non-breaking (P7.11 F4 / D-03)', () => {
+  it('a pre-7.11 GltfAsset param object lacking `skins` hydrates to []', () => {
+    // The shape a project saved BEFORE 7.11 carries: no `skins` key at all.
+    const legacy = GltfAssetParams.parse({
+      assetRef: 'assets/legacy.glb',
+      nodeNameMap: {},
+      childHierarchy: {},
+    });
+    expect(legacy.skins).toEqual([]);
+  });
+
+  it('the 3-bone default Skeleton evaluates with NO scale/IBM keys (BVH/FBX parity)', () => {
+    const params = SkeletonParams.parse({}); // legacy = no scale/IBM authored
+    const out = SkeletonNode.evaluate(params, {});
+    expect(out.bones).toHaveLength(3);
+    for (const b of out.bones) {
+      // The optional fields must be ABSENT (not `undefined`) so a legacy
+      // Skeleton value is byte-identical to its pre-7.11 self.
+      expect('scale' in b).toBe(false);
+      expect('inverseBindMatrix' in b).toBe(false);
+    }
+  });
+
+  it('a Skeleton WITH scale/IBM carries them through (the glTF-projected path)', () => {
+    const params = SkeletonParams.parse({
+      bones: [
+        {
+          name: 'j',
+          parent: -1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [2, 2, 2],
+          inverseBindMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        },
+      ],
+    });
+    const out = SkeletonNode.evaluate(params, {});
+    expect(out.bones[0].scale).toEqual([2, 2, 2]);
+    expect(out.bones[0].inverseBindMatrix).toHaveLength(16);
   });
 });

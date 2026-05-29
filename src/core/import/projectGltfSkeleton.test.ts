@@ -21,7 +21,8 @@ import { buildNodeNameMap, buildSkinMetadata } from './gltfImportChain';
 import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
 import { projectGltfSkeleton } from './projectGltfSkeleton';
 import { specToThreeSkeleton } from './threeAdapter';
-import type { GltfSkinMetadata } from '../../nodes/types';
+import { retargetClip } from './retarget';
+import type { AnimationKeyframe, BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 
 function fixtureBuffer(name: string): ArrayBuffer {
   const node = readFileSync(resolve(process.cwd(), `public/assets/${name}`));
@@ -140,5 +141,61 @@ describe('projectGltfSkeleton — pure projection (P7.11 C1)', () => {
       expect(threeBones[1].quaternion.z).toBeCloseTo(expectedQ.z, 6);
       expect(threeBones[1].quaternion.w).toBeCloseTo(expectedQ.w, 6);
     });
+  });
+});
+
+// Phase 7.11 Wave F (F5): the name-IDENTITY plumbing proof — a REAL
+// projectGltfSkeleton output is a valid retarget `targetBones`. This proves
+// the projection → retarget wiring (the bridge being load-bearing is a
+// SEPARATE proof: retarget.test.ts F6b, with DIFFERENT names + falsification).
+describe('retarget consumes a real GltfSkeleton projection (P7.11 F5 — plumbing)', () => {
+  it('produces target-bone-named tracks from a projected glTF rig (identity map)', async () => {
+    const { skin } = await projectFixture('skinned-bar.glb');
+    const { bones: gltfTargetBones } = projectGltfSkeleton(skin);
+    // The projected rig is the retarget TARGET. Author a tiny source on the
+    // SAME names (identity bridge) → the plumbing carries the clip onto the
+    // glTF target bone indices.
+    const names = gltfTargetBones.map((b) => b.name); // ['Bone0','Bone1']
+    const sourceBones: BoneSpec[] = gltfTargetBones.map((b) => ({
+      name: b.name,
+      parent: b.parent,
+      position: b.position,
+      rotation: b.rotation,
+    }));
+    const sourceKfs: AnimationKeyframe[] = [
+      { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { bone: 0, time: 1, position: [0, 0, 0], rotation: [0, 0.5, 0] },
+      { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0.3, 0] },
+    ];
+    const result = retargetClip({
+      sourceBones,
+      sourceClip: { name: 'wiggle', duration: 1, keyframes: sourceKfs },
+      targetBones: gltfTargetBones,
+      nameMap: Object.fromEntries(names.map((n) => [n, n])), // identity
+    });
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    for (const kf of result.clipParams.keyframes) {
+      expect(kf.bone).toBeGreaterThanOrEqual(0);
+      expect(kf.bone).toBeLessThan(gltfTargetBones.length);
+    }
+    // Identity bridge over identical names binds every target bone.
+    expect(result.unboundTargetBones).toEqual([]);
+    expect(result.unmappedSourceBones).toEqual([]);
+  });
+
+  it('surfaces unbound target bones for a deliberately partial map (non-silent)', async () => {
+    const { skin } = await projectFixture('skinned-bar.glb');
+    const { bones: gltfTargetBones } = projectGltfSkeleton(skin);
+    const sourceBones: BoneSpec[] = [
+      { name: 'Bone0', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    const result = retargetClip({
+      sourceBones,
+      sourceClip: { name: 'partial', duration: 1, keyframes: [] },
+      targetBones: gltfTargetBones,
+      nameMap: { Bone0: 'Bone0' }, // Bone1 deliberately unmapped
+    });
+    expect(result.unboundTargetBones).toContain('Bone1');
   });
 });
