@@ -12,7 +12,24 @@
 //   - Blender Rigify (metarig): Blender's stock human metarig
 //     deform-bone naming.
 //
-// REF: THESIS §42.1; project_p31_plan.md.
+// glTF-RIG BRIDGE (Phase 7.11 Wave D, #100): a `GltfSkeleton` projection
+// (src/nodes/GltfSkeleton.ts) outputs `BoneSpec[]` whose names are the
+// glTF asset's NATIVE, SANITIZED joint keys (`skin.joints[]` order). When a
+// director drops a Mixamo/BVH clip (a DIFFERENT vocabulary) onto that rig,
+// the retarget engine binds source→target by NAME — so a bridge that maps
+// the foreign source names ONTO the glTF-native joint keys is load-bearing.
+// With glTF-native names an IDENTITY map is a NO-OP (every source bone would
+// be unbound — research risk #4: silent all-unbound); the preset below is a
+// genuine NON-IDENTITY map (foreign source names → glTF-native keys), and
+// the retarget path surfaces `unmappedSourceBones`/`unboundTargetBones`
+// (retarget.ts:58-60) so a broken bridge is observable, not silent.
+//
+// V9 (data not code): every bridge is a static `Record<string,string>` —
+// the wiring is data, picked by a stable preset id (no code branch per rig).
+//
+// REF: THESIS §42.1; project_p31_plan.md; PLAN 7.11 Wave D (D1) / CONTEXT
+// D-01; GltfSkeleton.ts (the projected target rig); retarget.ts (the engine
+// + unmapped/unbound surfacing).
 
 export interface BoneNameMapPreset {
   readonly id: string;
@@ -93,6 +110,24 @@ const MIXAMO_TO_RIGIFY: Readonly<Record<string, string>> = {
   mixamorig_RightFoot: 'DEF-foot.R',
 };
 
+// Foreign source vocabulary → a glTF rig's NATIVE joint keys (Phase 7.11
+// Wave D, #100). A GltfSkeleton projects bind data into BoneSpec[] whose
+// names are the asset's sanitized joint keys in `skin.joints[]` order — e.g.
+// the committed `skinned-bar.glb` rig is `Bone0`/`Bone1`. A Mixamo/BVH clip
+// authored on `mixamorig_*` names binds to NOTHING on such a rig without a
+// bridge, so this is a deliberately NON-IDENTITY map (the source and target
+// vocabularies DIFFER): it proves the bridge is load-bearing rather than the
+// no-op an identity map would be (research risk #4: silent all-unbound).
+//
+// This 2-joint map matches the committed `skinned-bar` rig so the Wave F6b
+// cross-vocabulary proof needs no humanoid fixture. Real Blender-exported
+// glTF rigs typically carry their own joint vocabulary; a director supplies
+// the matching map via `customMap` (V9: data, not code) or a project preset.
+const MIXAMO_TO_GLTF_BAR_RIG: Readonly<Record<string, string>> = {
+  mixamorig_Hips: 'Bone0',
+  mixamorig_Spine: 'Bone1',
+};
+
 export const BONE_NAME_MAP_PRESETS: readonly BoneNameMapPreset[] = [
   {
     id: 'mixamoToGltf',
@@ -114,6 +149,13 @@ export const BONE_NAME_MAP_PRESETS: readonly BoneNameMapPreset[] = [
     source: 'Mixamo',
     target: 'Rigify',
     map: MIXAMO_TO_RIGIFY,
+  },
+  {
+    id: 'mixamoToGltfBarRig',
+    name: 'Mixamo → glTF bar rig (skinned-bar)',
+    source: 'Mixamo',
+    target: 'glTF (native joint keys)',
+    map: MIXAMO_TO_GLTF_BAR_RIG,
   },
 ];
 
