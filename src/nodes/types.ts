@@ -298,6 +298,21 @@ export interface BoneSpec {
   readonly position: Vec3;
   /** Bind-pose Euler rotation (relative to parent). */
   readonly rotation: Vec3;
+  /**
+   * P7.11 (D-03) — OPTIONAL bind-pose scale relative to parent. Absent →
+   * treated as [1,1,1]. BVH/FBX `Skeleton` nodes omit it (back-compat); a
+   * glTF rig with non-uniform bind scale populates it so the retarget bind
+   * pose (specToThreeSkeleton) and the projection stay deform-faithful.
+   */
+  readonly scale?: Vec3;
+  /**
+   * P7.11 (D-04) — OPTIONAL number[16] column-major model/skin-space inverse
+   * bind matrix, captured from a glTF skin. Absent → none (three.js
+   * reconstructs inverses from the bind pose; retarget does not consume it).
+   * Rides only on `GltfSkeleton`-produced bones, never round-tripped through
+   * the retarget adapter.
+   */
+  readonly inverseBindMatrix?: readonly number[];
 }
 
 export interface SkeletonValue {

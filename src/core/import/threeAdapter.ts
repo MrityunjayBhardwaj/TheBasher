@@ -58,6 +58,12 @@ export function bonesToSpec(bones: readonly Bone[]): BoneSpec[] {
       parent: parentIdx,
       position: [bone.position.x, bone.position.y, bone.position.z] as const,
       rotation: quaternionToEulerVec3(bone.quaternion),
+      // P7.11 (D-03) — carry bind-pose scale so a BoneSpec → Bone → BoneSpec
+      // round-trip is lossless for non-uniform-scale rigs. IBM is deliberately
+      // NOT round-tripped here: the adapter has no IBM source (retarget
+      // reconstructs inverses from the bind pose); the captured IBM rides only
+      // on GltfSkeleton output, never through the retarget clip path.
+      scale: [bone.scale.x, bone.scale.y, bone.scale.z] as const,
     };
   });
 }
@@ -170,6 +176,11 @@ export function specToThreeSkeleton(specs: readonly BoneSpec[]): {
     b.name = s.name;
     b.position.set(s.position[0], s.position[1], s.position[2]);
     b.quaternion.setFromEuler(new Euler(s.rotation[0], s.rotation[1], s.rotation[2], 'XYZ'));
+    // P7.11 (D-03) — honor non-uniform bind-pose scale so the retarget bind
+    // pose (and the inverses `new Skeleton(bones)` reconstructs from it) stays
+    // deform-faithful. Guarded on the optional field: legacy BVH/FBX specs
+    // leave the Bone's default [1,1,1] untouched.
+    if (s.scale) b.scale.set(s.scale[0], s.scale[1], s.scale[2]);
     return b;
   });
   for (let i = 0; i < specs.length; i++) {
