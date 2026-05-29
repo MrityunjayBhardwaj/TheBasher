@@ -49,7 +49,8 @@
 // gltfImportChain.ts:72-83 (fnv1a id derivation); issue #110.
 
 import { useDagStore } from '../../core/dag/store';
-import { buildGltfImportOps } from '../../core/import/gltfImportChain';
+import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
+import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
 import { opfsSiblingPath } from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
@@ -137,21 +138,53 @@ function locateEntryFile(files: readonly IngestFile[]): IngestFile | null {
 }
 
 /**
- * Import a glTF asset whose bytes already live in OPFS at `path`.
+ * Non-dispatching core of the glTF import: read the OPFS bytes at `path`,
+ * detach a plain ArrayBuffer, and build the deterministic import Op chain
+ * (GltfAsset + per-child GltfChild + Transform + Group + — when the file
+ * carries embedded animations — N TransformClip + 1 ClipSelect + connects)
+ * against a CALLER-SUPPLIED DAG `state`. Returns the full
+ * `GltfImportChainResult`; the caller decides whether to dispatch.
  *
- * Extracted verbatim from `AssetDropZone.onDrop:67-90`. Both the OS-file
- * drop branch (Wave C), the picker branch (Wave D), and the existing
- * library-drag funnel through this single chokepoint.
+ * Two callers, one chokepoint (B12):
+ *   - `importGltfFromOpfs` (disk path) passes the live store state and then
+ *     `dispatchAtomic`s the result.
+ *   - `library.import` (agent tool, V7) passes the FORKED `ctx.dagState` and
+ *     returns the ops for the Diff to apply — it NEVER dispatches.
  *
- * On success: dispatchAtomic with the import Ops (K6, one undo), then
- * bumps the My-Imports refresh signal — pre-mortem #3 mitigation: the
- * bump happens ONLY after dispatchAtomic returns, never before.
+ * Sharing this with the agent tool closes the #81-class silent drop on the
+ * agent surface: before, `library.import` called the static
+ * `buildAssetDropOps` (no clip extraction), so an animated glTF imported as
+ * a static mesh. Now both surfaces extract clips identically (H40 boundary-
+ * pair: same node-type set on both paths).
  *
- * On failure: reports a human-readable message to assetErrorStore so the
- * AssetErrorBanner surfaces "asset failed: <reason>" — the silent
- * `console.error` catch in the original onDrop path was the user-side
- * silent failure this replaces.
+ * The `resolveBuffer` resolver mirrors the disk path verbatim
+ * (`opfsSiblingPath` against the OPFS sibling dir) so multi-file `.gltf`
+ * (#82) resolves its `.bin` / textures the same way regardless of surface.
  */
+export async function buildGltfImportOpsFromOpfs(
+  path: string,
+  sceneNodeId: string,
+  state: DagState,
+): Promise<GltfImportChainResult> {
+  const storage = await getStorage();
+  const bytes = await storage.read(path);
+  // Detach a non-shared ArrayBuffer view for the importer. Uint8Array.buffer
+  // is typed `ArrayBufferLike`, including SharedArrayBuffer — the parser
+  // wants a plain ArrayBuffer. (Verbatim from AssetDropZone.onDrop:74-76.)
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const buffer = copy.buffer;
+  return buildGltfImportOps(
+    {
+      buffer,
+      assetRef: path,
+      sceneNodeId,
+      resolveBuffer: (uri) => storage.read(opfsSiblingPath(path, uri)),
+    },
+    state,
+  );
+}
+
 export async function importGltfFromOpfs(path: string): Promise<void> {
   try {
     const dag = useDagStore.getState();
@@ -160,21 +193,9 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       useAssetErrorStore.getState().report(path, 'import failed: project has no scene output');
       return;
     }
-    const storage = await getStorage();
-    const bytes = await storage.read(path);
-    // Detach a non-shared ArrayBuffer view for the importer. Uint8Array.buffer
-    // is typed `ArrayBufferLike`, including SharedArrayBuffer — the parser
-    // wants a plain ArrayBuffer. (Verbatim from AssetDropZone.onDrop:74-76.)
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
-    const buffer = copy.buffer;
-    const result = await buildGltfImportOps(
-      {
-        buffer,
-        assetRef: path,
-        sceneNodeId: sceneRef.node,
-        resolveBuffer: (uri) => storage.read(opfsSiblingPath(path, uri)),
-      },
+    const result = await buildGltfImportOpsFromOpfs(
+      path,
+      sceneRef.node,
       useDagStore.getState().state,
     );
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);

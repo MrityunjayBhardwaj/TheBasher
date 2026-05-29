@@ -5,9 +5,21 @@
 //
 // REF: vyapti V7 (tool handlers return Op[]), THESIS.md §20.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { MemoryStorage } from '../../core/storage/MemoryStorage';
+
+// library.import's glTF branch reads OPFS bytes via boot.getStorage() (the
+// same chokepoint the UI file-drop uses). Mock boot so getStorage() returns
+// a fresh per-test MemoryStorage we stage fixture bytes into. Mirrors the
+// importGltf.test.ts pattern. Other tools take ctx.storage, not boot, so this
+// only affects the library.import glTF path.
+let currentStorage: MemoryStorage = new MemoryStorage();
+vi.mock('../../app/boot', () => ({
+  getStorage: async () => currentStorage,
+}));
+
 import {
   registerAllTools,
   getTool,
@@ -300,33 +312,130 @@ function buildSceneBaseline(): DagState {
   return state;
 }
 
+// ---------------------------------------------------------------------------
+// Synthetic-GLB fixture builders for the library.import glTF branch (#105).
+// Mirror of gltfImportChain.test.ts:27-59,88-113 (the GLB encoder + an
+// animated single-translation clip). Staged into the mocked OPFS storage.
+// ---------------------------------------------------------------------------
+
+const GLB_MAGIC = 0x46546c67;
+const GLB_CHUNK_JSON = 0x4e4f534a;
+const GLB_CHUNK_BIN = 0x004e4942;
+
+function pad4(bytes: Uint8Array, padByte = 0): Uint8Array {
+  if (bytes.length % 4 === 0) return bytes;
+  const out = new Uint8Array(bytes.length + (4 - (bytes.length % 4)));
+  out.set(bytes);
+  if (padByte !== 0) out.fill(padByte, bytes.length);
+  return out;
+}
+
+function makeGlb(json: object, binBytes?: Uint8Array): Uint8Array {
+  const jsonBytes = pad4(new TextEncoder().encode(JSON.stringify(json)), 0x20);
+  const bin = binBytes ? pad4(binBytes) : null;
+  const totalLength = 12 + 8 + jsonBytes.length + (bin ? 8 + bin.length : 0);
+  const buf = new ArrayBuffer(totalLength);
+  const v = new DataView(buf);
+  v.setUint32(0, GLB_MAGIC, true);
+  v.setUint32(4, 2, true);
+  v.setUint32(8, totalLength, true);
+  let cursor = 12;
+  v.setUint32(cursor, jsonBytes.length, true);
+  v.setUint32(cursor + 4, GLB_CHUNK_JSON, true);
+  new Uint8Array(buf, cursor + 8, jsonBytes.length).set(jsonBytes);
+  cursor += 8 + jsonBytes.length;
+  if (bin) {
+    v.setUint32(cursor, bin.length, true);
+    v.setUint32(cursor + 4, GLB_CHUNK_BIN, true);
+    new Uint8Array(buf, cursor + 8, bin.length).set(bin);
+  }
+  return new Uint8Array(buf);
+}
+
+function f32Bytes(values: number[]): Uint8Array {
+  const arr = new Float32Array(values);
+  return new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+}
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const len = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(len);
+  let cursor = 0;
+  for (const c of chunks) {
+    out.set(c, cursor);
+    cursor += c.length;
+  }
+  return out;
+}
+
+/** Animated GLB: one Cube node, one "bob" clip translating Y over t∈[0,1]. */
+function animatedGlb(): Uint8Array {
+  const timesBytes = f32Bytes([0, 1]);
+  const valuesBytes = f32Bytes([0, 0, 0, 0, 1, 0]);
+  const bin = concatBytes(timesBytes, valuesBytes);
+  return makeGlb(
+    {
+      asset: { version: '2.0' },
+      nodes: [{ name: 'Cube' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: timesBytes.length },
+        { buffer: 0, byteOffset: timesBytes.length, byteLength: valuesBytes.length },
+      ],
+      buffers: [{ byteLength: bin.length }],
+      animations: [
+        {
+          name: 'bob',
+          channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    },
+    bin,
+  );
+}
+
+/** Static GLB: one Cube node, NO animations (falsification fixture). */
+function staticGlb(): Uint8Array {
+  return makeGlb({ asset: { version: '2.0' }, nodes: [{ name: 'Cube' }] });
+}
+
+function nodeTypesOf(ops: { type: string; nodeType?: string }[]): string[] {
+  return ops.filter((o) => o.type === 'addNode').map((o) => o.nodeType as string);
+}
+
 describe('library.import tool', () => {
-  it('returns the 6-op drop chain (twice-call)', () => {
+  beforeEach(() => {
+    currentStorage = new MemoryStorage();
+  });
+
+  it('non-glTF assetRef → the static 6-op drop chain, no clip nodes (twice-call)', async () => {
     const ctx: ToolContext = { dagState: buildSceneBaseline() };
 
-    const result1 = libraryImportTool.handler(
-      { assetRef: 'assets/cube.gltf', position: [1, 0, 1] },
+    const result1 = await libraryImportTool.handler(
+      { assetRef: 'assets/cube.fbx', position: [1, 0, 1] },
       ctx,
     );
-    const result2 = libraryImportTool.handler(
-      { assetRef: 'assets/cube.gltf', position: [1, 0, 1] },
+    const result2 = await libraryImportTool.handler(
+      { assetRef: 'assets/cube.fbx', position: [1, 0, 1] },
       ctx,
     );
 
-    // Twice-call check: same args → same shape (ids contain randomness, so
-    // we verify structural equality of types and connections instead of deep equality)
     expect(result1.ops.length).toBe(6);
     expect(result2.ops.length).toBe(6);
 
     // Structure: addNode gltf → addNode transform → connect → addNode group → connect → connect
     const types1 = result1.ops.map((o) => o.type);
     expect(types1).toEqual(['addNode', 'addNode', 'connect', 'addNode', 'connect', 'connect']);
+    expect(result2.ops.map((o) => o.type)).toEqual(types1);
 
-    // The second result is structurally identical
-    const types2 = result2.ops.map((o) => o.type);
-    expect(types2).toEqual(types1);
+    // Static path → GltfAsset → Transform → Group, NO TransformClip / ClipSelect.
+    expect(nodeTypesOf(result1.ops)).toEqual(['GltfAsset', 'Transform', 'Group']);
 
-    // Each connect references ids from preceding addNode calls
+    // Each connect references ids from preceding addNode calls.
     const gltfId = (result1.ops[0] as { nodeId: string }).nodeId;
     const txId = (result1.ops[1] as { nodeId: string }).nodeId;
     const grpId = (result1.ops[3] as { nodeId: string }).nodeId;
@@ -342,9 +451,76 @@ describe('library.import tool', () => {
     expect(connect3.to.node).toBe('scene');
   });
 
-  it('throws when scene output is missing', () => {
+  // #105 — the core parity proof: an animated glTF imported via the agent
+  // tool now extracts TransformClip + ClipSelect, exactly like the UI drop
+  // (buildGltfImportOps). Before the fix the tool emitted only the static
+  // chain (silent #81-class drop on the agent surface).
+  it('animated glTF → extracts TransformClip + ClipSelect (parity with UI drop)', async () => {
+    const assetRef = 'assets/animated-cube.glb';
+    await currentStorage.write(assetRef, animatedGlb());
+    const ctx: ToolContext = { dagState: buildSceneBaseline() };
+
+    const result = await libraryImportTool.handler({ assetRef, position: [0, 0, 0] }, ctx);
+
+    const nodeTypes = nodeTypesOf(result.ops);
+    expect(nodeTypes).toContain('TransformClip');
+    expect(nodeTypes).toContain('ClipSelect');
+    // H40 boundary-pair — the agent path now produces the SAME node-type set
+    // the UI path emits for the same file (GltfAsset + the per-child
+    // GltfChild + Transform + Group + TransformClip + ClipSelect).
+    expect(nodeTypes).toEqual(
+      expect.arrayContaining([
+        'GltfAsset',
+        'GltfChild',
+        'Transform',
+        'Group',
+        'TransformClip',
+        'ClipSelect',
+      ]),
+    );
+    // ClipSelect wires into the GltfAsset's transformClip socket.
+    const gltfAdd = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'GltfAsset') as {
+      nodeId: string;
+    };
+    const selToGltf = result.ops.find(
+      (o) =>
+        o.type === 'connect' && o.to.node === gltfAdd.nodeId && o.to.socket === 'transformClip',
+    );
+    expect(selToGltf).toBeDefined();
+  });
+
+  // Falsification — a STATIC glTF yields NO ClipSelect / TransformClip.
+  it('static glTF → no ClipSelect / TransformClip (falsification)', async () => {
+    const assetRef = 'assets/static-cube.glb';
+    await currentStorage.write(assetRef, staticGlb());
+    const ctx: ToolContext = { dagState: buildSceneBaseline() };
+
+    const result = await libraryImportTool.handler({ assetRef }, ctx);
+
+    const nodeTypes = nodeTypesOf(result.ops);
+    expect(nodeTypes).toContain('GltfAsset');
+    expect(nodeTypes).not.toContain('ClipSelect');
+    expect(nodeTypes).not.toContain('TransformClip');
+  });
+
+  // V22 — two imports of the same assetRef yield byte-identical node ids
+  // (buildGltfImportOps is content-addressed off assetRef via hashId).
+  it('deterministic ids: same assetRef → identical node ids (V22)', async () => {
+    const assetRef = 'assets/animated-cube.glb';
+    await currentStorage.write(assetRef, animatedGlb());
+    const ctx: ToolContext = { dagState: buildSceneBaseline() };
+
+    const a = await libraryImportTool.handler({ assetRef }, ctx);
+    const b = await libraryImportTool.handler({ assetRef }, ctx);
+
+    const idsOf = (r: typeof a) =>
+      r.ops.filter((o) => o.type === 'addNode').map((o) => (o as { nodeId: string }).nodeId);
+    expect(idsOf(a)).toEqual(idsOf(b));
+  });
+
+  it('throws when scene output is missing', async () => {
     const ctx: ToolContext = { dagState: emptyDagState() };
-    expect(() => libraryImportTool.handler({ assetRef: 'assets/cube.gltf' }, ctx)).toThrow(
+    await expect(libraryImportTool.handler({ assetRef: 'assets/cube.gltf' }, ctx)).rejects.toThrow(
       'no Scene output',
     );
   });
