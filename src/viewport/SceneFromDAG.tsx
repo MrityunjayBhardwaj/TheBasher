@@ -75,19 +75,29 @@ interface SceneFromDAGProps {
 
 export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const state = useDagStore((s) => s.state);
-  // Time is a UI-projection store, NOT the DAG. The viewport reads it on
-  // every render and threads it into ctx; pure consumers re-evaluate via
-  // TimeSource hash flips (V3). Subscribing here makes scrub-rendered
-  // frames bit-exactly track the playhead.
-  const seconds = useTimeStore((s) => s.seconds);
-  const frame = useTimeStore((s) => s.frame);
-  const normalized = useTimeStore((s) => s.normalized);
+  // P7.10 (B13 Pass 3, #114) — time subscriptions REMOVED.
+  //
+  // Pre-P7.10 this component subscribed to `useTimeStore.seconds/frame/normalized`
+  // so it could thread them into `evaluate(ctx)` — and SceneFromDAG (with the
+  // whole downstream React tree) re-rendered on every Clock rAF tick. That's
+  // B13: at 8 Fox.glb instances react.p95 hit 24ms (H48 2nd-occurrence).
+  //
+  // Pass 3 lifts time INTO time-dependent VALUE shapes (TransformClipValue now
+  // carries `.sample(seconds)`). Animated consumers (GltfAssetR's useFrame)
+  // read live time locally via `useTimeStore.getState()` and invoke the
+  // closure at consumer cadence. SceneFromDAG no longer needs to subscribe
+  // to time at all — it re-renders ONLY on `useDagStore.state` changes.
+  // ctx.time below is frozen at zero — kept for evaluator signature
+  // compatibility, but no impure node consumes ctx.time anymore (TransformClip
+  // dropped its `time` input socket in PLAN 7.10 Wave A; TimeSource is the
+  // sole impure node left and has no DAG consumers post-Wave B).
+  //
   // Single shared cache across renders; param edits invalidate via content
-  // hash (the cache key changes when params change, so old entries leak but
-  // are pruned at LRU ceiling — P1 wires the 512MB cap from THESIS.md §51).
-  // P2 note: time-driven invalidation creates a new entry per (frame, node)
-  // tuple. Bounded by N pure consumers × distinct frames visited; LRU is
-  // the right home for this concern when it bites (P3+).
+  // hash. With ctx.time frozen, impure-node cache keys no longer flip per
+  // frame — TransformClip cache HITS across renders, so value.transformClip
+  // is a referentially-stable closure. That stability is what unlocks Pass 1's
+  // React.memo on MeshChild to short-circuit per-fox reconciliation during
+  // playback.
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
   // Light helpers display only when shading isn't 'rendered'. Subscribed
@@ -100,7 +110,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
 
   const result = evaluate(state, target.node, {
     cache,
-    ctx: { time: { frame, seconds, normalized } },
+    ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
   });
   const value = result.value as RenderOutputValue;
 
@@ -627,35 +637,50 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // Rotation is degrees throughout the layering; convert at the THREE seam via
   // degVec3ToRad (same call all other .rotation consumers in this file use).
   //
-  // [[B13]] Pass 2 — useFrame, not useEffect. The clip value (`value.transformClip`)
-  // is a new reference every playback frame (TransformClip is impure → cache-miss
-  // per frame). When this was a `useEffect`, the TRS-write loop ran inside React's
-  // COMMIT phase every frame — the dominant cost the React Profiler measured at
-  // Fox benchmark `react.p95 = 24ms @ 8 foxes` (H48 2nd-occurrence). Moving the
-  // loop into `useFrame` (R3F's per-frame rAF, OUTSIDE React's commit) keeps the
-  // SAME total work but removes it from React's reconciliation budget. The
-  // reference-identity dirty-check below preserves the paused-state efficiency
-  // the old `useEffect` dep-array gave for free: when neither clip nor overrides
-  // change (idle / paused), the write is skipped on subsequent frames.
+  // [[B13]] Pass 2 (PR #115) → Pass 3 (P7.10, this commit) — useFrame samples
+  // the closure-of-time directly from useTimeStore.getState(), NOT from a
+  // value.transformClip ref that changes per frame.
   //
-  // Correctness: useFrame runs after the React commit but before renderer.render
-  // — the bones are updated in time for this frame's draw, identical observable
-  // behavior to the previous useEffect path. The single-writer V20/H36/H33
-  // invariant still holds (this is still the sole TRS-writer onto the clone).
-  const lastApplied = useRef<{ clip: unknown; overrides: unknown } | null>(null);
+  // Pre-P7.10 value.transformClip carried a pre-sampled `.tracks` map produced
+  // by TransformClip's evaluate at ctx.time. Its identity changed every
+  // playback frame, which forced SceneFromDAG (subscribed to time) to re-render
+  // and the whole React tree to walk per fox subtree — even with Pass 1's
+  // memo, the new prop ref defeated it. The Pass 2 useFrame moved the TRS-write
+  // loop OUT of React's commit, but the tree-walk itself stayed: H48's 2nd
+  // occurrence measured react.p95 still ≈24ms @ 8 foxes.
+  //
+  // Pass 3 (P7.10): TransformClipValue is now a function-of-time
+  // (`.sample(seconds)`). The cache key for TransformClip became stable across
+  // frames (its evaluate now takes no `time` input — input hashes don't flip),
+  // so value.transformClip is a referentially-stable closure across renders.
+  // The hot path moves entirely OUT of React: useFrame reads live time from
+  // useTimeStore (snapshot, fires every R3F rAF) and invokes the closure at
+  // consumer cadence. The dirty-check keys on (seconds, childOverrides) so the
+  // PAUSED case (seconds stable) skips the write loop, and an edit-while-playing
+  // setParam (new childOverrides ref) re-applies on the next frame.
+  //
+  // Correctness: useFrame runs in the R3F frameloop OUTSIDE React's commit;
+  // bones are updated in time for this frame's draw. The single-writer
+  // V20/H36/H33 invariant still holds (this is still the sole TRS-writer onto
+  // the clone). REF: PLAN 7.10 Wave C; H48 + B13 catalogue.
+  const lastApplied = useRef<{ seconds: number; overrides: unknown } | null>(null);
   useFrame(() => {
-    const clip = value.transformClip;
+    const seconds = useTimeStore.getState().seconds;
     if (
       lastApplied.current !== null &&
-      lastApplied.current.clip === clip &&
+      lastApplied.current.seconds === seconds &&
       lastApplied.current.overrides === childOverrides
     ) {
       return;
     }
+    // Sample the closure at live time. value.transformClip is a stable
+    // referentially-equal closure across renders (P7.10 cache invariance);
+    // .sample() is a pure call producing a fresh TRS map per invocation.
+    const tracks = value.transformClip?.sample(seconds) ?? null;
     const resolved = resolveAllChildTrs({
       names: Object.keys(value.nodeNameMap),
       childByName: childOverrides,
-      clip,
+      tracks,
     });
     for (const [name, trs] of Object.entries(resolved)) {
       const child = cloned.getObjectByName(name);
@@ -665,7 +690,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       child.rotation.set(radRot[0], radRot[1], radRot[2]);
       child.scale.set(trs.scale[0], trs.scale[1], trs.scale[2]);
     }
-    lastApplied.current = { clip, overrides: childOverrides };
+    lastApplied.current = { seconds, overrides: childOverrides };
   });
   // Re-apply on clone swap (asset reload) — the new clone has bind-pose TRS,
   // and the dirty-check above would short-circuit if clip/overrides happen to

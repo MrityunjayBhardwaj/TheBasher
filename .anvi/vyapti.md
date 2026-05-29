@@ -30,17 +30,23 @@
 **Status:** ALIGNED (P0)
 **REF:** THESIS.md §48, §51; `src/core/dag/evaluator.ts:79`
 
-### V3: Time enters as a `Time` socket, never as a closure or global
+### V3: Time enters as a typed `Time` socket OR a typed function parameter — never as a closure or global
 
-**Span:** All animation and render node evaluators in `src/nodes/**`. The `TimeSource` node (`src/nodes/TimeSource.ts`) is the SOLE legal time producer; pure consumers wire their `time` input to it.
+**Span:** All animation and render node evaluators in `src/nodes/**`. The `TimeSource` node (`src/nodes/TimeSource.ts`) is one legal time producer (socket form); value-shape time methods like `TransformClipValue.sample(seconds)` are the other (function-parameter form, P7.10 #114). In both forms time is STRUCTURED and TYPED at the boundary; closure-over-global remains forbidden.
+
+**P7.10 amend (#114):** Pre-P7.10 V3 required socket-only. Reading the actual codebase: every legitimate impure use threaded ctx.time through a typed Time socket from TimeSource. The synthesis P7.10 adds — `(seconds: number) => TRS-map` — is ITSELF a typed structured boundary (the function signature IS the contract), with the additional property that the consumer (not the evaluator) picks the cadence. Both forms satisfy V3's spirit (Time is explicit, typed, no globals). The amendment widens the LETTER to accept either; closure-form is opt-in and currently used only by `TransformClipValue.sample`.
+
 **Enforcement:**
 
 - ESLint `no-restricted-syntax` on `src/nodes/**` bans `Math.random` / `Date.now` / `performance.now` / `crypto.randomUUID` / `useFrame` / `useThree` (`eslint.config.js:6-32`).
 - Vitest twice-eval at multiple t values for every Time-aware pure node — PosedSkeleton, AnimationClip, LocomotionState, Character (`src/nodes/nodes.test.ts` Wave A block).
 - The evaluator's cache key includes time only for `pure: false` nodes (`src/core/dag/evaluator.ts:119`); pure consumers re-evaluate via the upstream TimeSource hash flip propagated through `inputHashes`.
-  **Status:** ALIGNED (P2). The first user — `AnimationClip` consuming `Time` via socket — flipped this from NOT YET IMPLEMENTED. P2 acceptance #1 (E2E) verifies bit-exact replay at t=2.5s.
-  **REF:** THESIS.md §49; `src/nodes/TimeSource.ts:1`; `src/nodes/AnimationClip.ts:1`; `src/nodes/PosedSkeleton.ts:1`; `src/nodes/LocomotionState.ts:1`.
-  **Why it matters:** scrubbing, frame-stepping, agent's "what does scene look like at t=2.5?" all depend on this.
+- For function-parameter form (P7.10): the closure-bearing value's TYPE encodes the contract (`sample: (seconds: number) => Record<...>`). TS catches any consumer that reads `.tracks` (the pre-P7.10 shape) instead of invoking `.sample(t)`. `src/nodes/TransformClip.test.ts` asserts `inputs === {}` as a regression guard against a future revert re-adding the Time input socket (which would re-introduce the B13 per-frame cache-miss).
+
+**Status:** ALIGNED (P2 + P7.10 amend). The socket form ships in `AnimationClip` / `PosedSkeleton` / `LocomotionState` / `Character` (unchanged). The function-parameter form ships in `TransformClipValue.sample` (P7.10). Both forms can coexist in the same DAG without conflict.
+
+**REF:** THESIS.md §49; `src/nodes/TimeSource.ts:1`; `src/nodes/AnimationClip.ts:1`; `src/nodes/PosedSkeleton.ts:1`; `src/nodes/LocomotionState.ts:1`; `src/nodes/TransformClip.ts:1` (P7.10 function-parameter form); `src/nodes/types.ts` `TransformClipValue` (the type-level contract); `src/nodes/TransformClip.test.ts` "declares no inputs — time enters via .sample(seconds) (V3 amend)" (regression guard).
+**Why it matters:** scrubbing, frame-stepping, agent's "what does scene look like at t=2.5?" all depend on this. The P7.10 amend additionally unlocks the consumer-cadence pattern: a renderer can sample at R3F's frameloop rate while the DAG re-evaluates only on dispatch — closing B13 (the SceneFromDAG re-walks-per-frame bottleneck).
 
 ### V4: Every node type carries a `version: number`; project loaders migrate
 
@@ -449,6 +455,23 @@ of V22's stability promise: Op-emitter ids must hash-stable so closure
 diffs are deterministic). Provenance: 2026-05-21 — three independent
 fixes converged on the same pattern within 2 days, lifting it from
 "one-off oversights" to a named invariant.
+
+### V24: Time-dependency lives at the value-shape, NOT at the React-prop chain
+
+**Span:** All time-driven values flowing through the renderer chain — currently `TransformClipValue`. Any future impure or impure-rooted value that the React tree consumes during playback.
+
+**Statement:** If a value's content depends on time, its TYPE MUST expose time as a typed function parameter on the value itself (e.g., `sample: (seconds: number) => T`). Consumers read live time imperatively at their own cadence (R3F's `useFrame`, or a local time subscription). The React tree itself MUST NEVER subscribe to `useTimeStore.seconds/frame/normalized` at a level where downstream value props would change per frame — most concretely, `SceneFromDAG.tsx` MUST NOT subscribe to time.
+
+**Why it matters:** Per-frame React re-renders during animation playback are the B13 / H48 / H49 bottleneck. The mechanism: if any value-prop ref in the React tree changes per frame (because an impure node up-chain re-evaluates per frame), every React.memo down-chain misses, and the whole tree walks. Lifting time INTO the value-shape (`sample(t)` method) and removing time subscriptions at the React tree's root makes the value-prop ref stable across renders; React only re-renders on DAG state changes; the per-frame work moves to `useFrame` where the time-sample cadence belongs.
+
+**Enforcement:**
+
+- Type system: `TransformClipValue.sample(seconds: number)` is the typed contract; any consumer that reads `.tracks` (the pre-P7.10 shape) fails to typecheck. `src/nodes/types.ts:321` documents the contract; `src/nodes/TransformClip.test.ts` "declares no inputs" is the regression guard against re-adding the Time input socket (which would re-enable per-frame cache-miss propagation).
+- The B13 perf benchmark `tests/e2e/perf-fox-benchmark.spec.ts` asserts `commits = 0` during 5s of playback at every Fox-count level (skinned + animated). A future regression that re-introduces a SceneFromDAG time subscription would fail this assertion immediately.
+
+**Status:** ALIGNED (P7.10). One time-driven value-shape currently exists (`TransformClipValue`). Future impure additions (audio sync, physics, procedural animation) opt into the same pattern by design — no per-node-type wiring needed.
+
+**REF:** `src/nodes/types.ts:321` (`TransformClipValue.sample`), `src/nodes/TransformClip.ts` (the closure builder), `src/viewport/SceneFromDAG.tsx:73` (the no-time-subscription site), `src/viewport/SceneFromDAG.tsx` `GltfAssetR` `useFrame` (the consumer-local cadence), `tests/e2e/perf-fox-benchmark.spec.ts` (the goal-backward gate), [[H48]], [[H49]], [[B13]]. Issue #114.
 
 ### V23: Multi-file glTF sibling-path resolution MUST normalize `..`/`.` segments symmetrically on BOTH halves of the importer/renderer boundary, and MUST reject root-escape
 

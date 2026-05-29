@@ -241,16 +241,15 @@ function buildClipKeyframes(
   return { duration: duration > 0 ? duration : 1, keyframes };
 }
 
-function findTimeSource(state: DagState): string | null {
-  for (const node of Object.values(state.nodes)) {
-    if (node.type === 'TimeSource') return node.id;
-  }
-  return null;
-}
+// P7.10 (#114): `findTimeSource` removed — TransformClip no longer
+// declares a `time` input socket, so the importer no longer needs to
+// resolve a TimeSource singleton. The `state` parameter on
+// `buildGltfImportOps` is preserved for signature stability across the
+// boot.ts caller; flagged unused via the underscore prefix.
 
 export async function buildGltfImportOps(
   args: GltfImportChainArgs,
-  state: DagState,
+  _state: DagState,
 ): Promise<GltfImportChainResult> {
   // #90 — accept GLB or JSON-only `.gltf`; materialise every buffer
   // (embedded / data-URI / external via the injected resolver) before
@@ -269,14 +268,11 @@ export async function buildGltfImportOps(
 
   const animations = json.animations ?? [];
   const hasClips = animations.length > 0;
-  const timeId = hasClips ? (args.timeSourceId ?? findTimeSource(state)) : null;
-  if (hasClips && !timeId) {
-    throw new Error(
-      'No TimeSource node in DAG. Default projects seed `n_time` (PR #40); ' +
-        'this project has been mutated to remove it. Add a TimeSource node ' +
-        'before importing animated glTF.',
-    );
-  }
+  // P7.10 (B13 Pass 3, #114): TransformClip no longer has a `time` input
+  // socket — its value carries `.sample(seconds)` and the renderer
+  // (GltfAssetR's useFrame) drives time at consumer cadence. The
+  // findTimeSource() / timeId plumbing is no longer needed for the
+  // animated path; left as dead code below (cleanup tracked as P7.10.x).
 
   const transformClipIds: string[] = animations.map((_, i) =>
     hashId('clip', args.assetRef, String(i)),
@@ -382,13 +378,12 @@ export async function buildGltfImportOps(
   });
 
   // Wire connects in the locked deterministic order.
-  for (let i = 0; i < animations.length; i++) {
-    ops.push({
-      type: 'connect',
-      from: { node: timeId!, socket: 'out' },
-      to: { node: transformClipIds[i], socket: 'time' },
-    });
-  }
+  // P7.10 (#114): the Time → TransformClip connect-loop is removed —
+  // TransformClip no longer declares a `time` input socket. Time enters
+  // each clip via its `.sample(seconds)` method, called by GltfAssetR's
+  // useFrame at consumer cadence. The TimeSource node remains in the
+  // default project for save-format compatibility; it is now unused by
+  // the animated-glTF chain and will be cleaned up in P7.10.x.
   for (let i = 0; i < animations.length; i++) {
     ops.push({
       type: 'connect',

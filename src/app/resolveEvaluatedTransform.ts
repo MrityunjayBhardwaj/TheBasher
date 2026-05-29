@@ -191,7 +191,11 @@ export function resolveEvaluatedTransform(
         if (ap.assetRef !== cp.assetRef) continue;
         try {
           const assetVal = evaluate(state, node.id, { cache, ctx }).value as GltfAssetValue;
-          clipTrack = assetVal.transformClip?.tracks[cp.childName];
+          // P7.10 (#114): TransformClipValue carries `.sample(seconds)` instead
+          // of a pre-baked `.tracks` map. Sample at the caller's ctx.time —
+          // this resolver is the gizmo/NPanel static-read path, so the right
+          // time is "the current play time" the caller passed in.
+          clipTrack = assetVal.transformClip?.sample(ctx.time.seconds)[cp.childName];
         } catch {
           clipTrack = undefined;
         }

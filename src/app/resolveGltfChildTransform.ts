@@ -74,20 +74,29 @@ export function resolveGltfChildTrs(args: {
  * present the name is simply omitted (the renderer leaves the cloned scene's
  * native TRS untouched).
  *
+ * **P7.10 (B13 Pass 3, #114):** the `tracks` argument is now a pre-sampled
+ * TRS map (caller materialized it from `TransformClipValue.sample(currentTime)`).
+ * Pre-P7.10 this function accepted `clip: TransformClipValue | null` and read
+ * `clip.tracks` internally; the value-shape change moved time-sampling OUT of
+ * the layering helper so the renderer (useFrame-driven) and static readers
+ * (gizmo / NPanel — current-time resolution) can each control the sample
+ * cadence. The layering rule (manual → clip → base) is unchanged.
+ *
  * @param names         the scene-child name keys to resolve (GltfAsset.nodeNameMap keys).
  * @param childByName   GltfChild params keyed by childName (subscribed selector output).
- * @param clip          the active TransformClip, or null/undefined.
+ * @param tracks        the active clip's per-child TRS at the current sample
+ *                       time, or null/undefined when no clip is active.
  */
 export function resolveAllChildTrs(args: {
   names: readonly string[];
   childByName: Readonly<Record<string, ChildOverride>>;
-  clip: { tracks: Readonly<Record<string, ChildTrs>> } | null | undefined;
+  tracks: Readonly<Record<string, ChildTrs>> | null | undefined;
 }): Record<string, ChildTrs> {
-  const { names, childByName, clip } = args;
+  const { names, childByName, tracks } = args;
   const out: Record<string, ChildTrs> = {};
   for (const name of names) {
     const childNode = childByName[name];
-    const clipTrack = clip?.tracks[name];
+    const clipTrack = tracks?.[name];
     // The base is the child node's seeded TRS (the captured static base when
     // not overridden). With no child node, the clip is the only layer; with
     // neither, omit so the renderer keeps the native cloned TRS.

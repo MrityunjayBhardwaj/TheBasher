@@ -155,8 +155,9 @@ export interface GltfAssetValue {
    * Filled in by `buildGltfImportOps` at drop time: a sanitised
    * scene-node-name → DAG target id map. `GltfAssetR` walks
    * `gltf.scene` via `getObjectByName` and overrides per-child TRS
-   * with `transformClip.tracks[name]`. Default `{}` so pre-7.5
-   * projects (and the static-only fixture path) hydrate as no-ops.
+   * with `transformClip.sample(currentTime)[name]` (P7.10 — the value's
+   * sample method replaces the pre-baked `.tracks` shape). Default `{}`
+   * so pre-7.5 projects (and the static-only fixture path) hydrate as no-ops.
    */
   readonly nodeNameMap: Readonly<Record<string, string>>;
   /**
@@ -303,15 +304,31 @@ export interface AnimationClipValue {
 
 /**
  * P7.5 — glTF TRS animation clip extraction (issue #81).
+ * P7.10 — function-of-time value shape (B13 Pass 3, #114).
  *
  * Scene-node-indexed counterpart to {@link AnimationClipValue} (which is
- * bone-indexed and pairs with a Skeleton). A TransformClipValue is the
- * sampled, per-target TRS that the renderer applies to children of a
- * `gltf.scene` walk: `tracks[targetNodeId]` is the evaluated
- * `{position, rotation, scale}` at the input Time. Targets without a
- * keyframe at this sample-time are simply absent from the map — the
- * renderer falls back to the original `gltf.scene` child's TRS for
- * those.
+ * bone-indexed and pairs with a Skeleton). A TransformClipValue is a
+ * function-of-time: `sample(seconds)` returns the per-target TRS map at
+ * that clip-time. Targets without a keyframe at this sample-time are
+ * simply absent from the map — the renderer falls back to the original
+ * `gltf.scene` child's TRS for those.
+ *
+ * **Why function-of-time, not pre-sampled (P7.10):** Pre-P7.10, this
+ * value carried a pre-computed `tracks` map sampled at `ctx.time` inside
+ * the evaluator. That meant TransformClip's cache key changed every
+ * frame (its TimeSource-input hash flipped), forcing the WHOLE React
+ * tree downstream of SceneFromDAG to re-walk per playback frame —
+ * measured as B13 / H48 (issue #114). Lifting time INTO the value (as a
+ * method parameter) makes TransformClip's evaluate genuinely pure with
+ * NO Time input, so its cache hits across frames; downstream consumers
+ * call `.sample(currentTime)` themselves at their own cadence
+ * (renderers via R3F's useFrame; the gizmo/NPanel/resolveEvaluatedTransform
+ * static-read path at their resolution time).
+ *
+ * V3 (amended P7.10): Time may enter an animation evaluator via typed
+ * Time input socket OR via typed function parameter. Both forms are
+ * structured/typed; closure-over-global remains forbidden. The
+ * `sample(seconds: number)` signature IS the typed contract.
  *
  * **Rotation unit:** degrees Euler XYZ (matches Transform.rotation
  * throughout the codebase; SceneFromDAG.tsx:266,426,449,525). The
@@ -322,7 +339,17 @@ export interface TransformClipValue {
   readonly kind: 'TransformClip';
   readonly name: string;
   readonly duration: number;
-  readonly tracks: Readonly<
+  /**
+   * Sample the clip at clip-time `seconds`. Applies the loop/clamp
+   * folding declared at evaluate time; returns the per-target TRS map.
+   * Pure function of `seconds` given the captured keyframes — calling
+   * twice at the same seconds returns equal TRS values.
+   *
+   * Caller owns invocation cadence: the renderer calls this from
+   * `useFrame` (R3F frameloop, ~60 Hz); the gizmo/NPanel static-read
+   * path calls this once at the current time when it needs to resolve.
+   */
+  readonly sample: (seconds: number) => Readonly<
     Record<
       string,
       {

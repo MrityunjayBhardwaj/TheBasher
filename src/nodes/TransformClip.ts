@@ -5,28 +5,37 @@
 // keyframes and emits a TRS map keyed by `targetNodeId`. This is the
 // shape glTF embedded animations need: tracks reference scene-graph
 // node names, not skeleton bones. The mapping is filled in by the
-// drop-time importer (Wave D); the renderer (Wave E) reads
-// TransformClipValue.tracks[targetNodeId] and overrides the matching
-// gltf.scene child's TRS.
+// drop-time importer (Wave D); the renderer (Wave E) calls
+// TransformClipValue.sample(seconds) to get the TRS map for the current
+// playback time and overrides the matching gltf.scene child's TRS.
 //
 // Discipline mirrors AnimationClip.ts:
-//   - pure: true, V2 — output is a function of (params, inputs.time).
+//   - pure: true, V2 — output is a function of (params).
 //   - NO three.js AnimationMixer / clock.
-//   - Time enters through the `Time` input socket (V3).
+//   - Time enters through the value's `sample(seconds)` method (V3 amended P7.10).
 //   - Rotation is **degrees Euler XYZ** — matches Transform.rotation
 //     end-to-end (SceneFromDAG.tsx:266,426,449,525). The Wave-B
-//     CHECKPOINT B3 will verify this against the producer side
-//     (`degVec3ToRad` / `quaternionToEulerVec3`) before any importer
-//     code lands.
+//     CHECKPOINT B3 verifies this against the producer side
+//     (`degVec3ToRad` / `quaternionToEulerVec3`).
 //
-// Wave A: stub evaluator returns an empty `tracks` map. The
-// piecewise-linear sampler lands in Wave B.
+// P7.10 — function-of-time value shape (B13 Pass 3, #114). Pre-P7.10
+// TransformClip had a `time` input socket and its evaluate pre-sampled
+// the TRS at ctx.time, producing a value with a pre-baked `tracks` map.
+// The Time-input made TransformClip's cache key flip every frame (its
+// inputs hash included TimeSource's per-frame-flipping hash), which
+// forced the WHOLE React tree downstream of SceneFromDAG to re-walk per
+// playback frame (B13 / H48). Lifting time INTO the value (the
+// `sample(seconds)` method) makes evaluate truly pure with NO Time
+// input, so the cache hits across frames; consumers call .sample() at
+// their own cadence (renderers via useFrame; the gizmo/NPanel
+// static-read path at their resolution time).
 //
-// REF: THESIS.md §42, §49; vyapti V2/V3; CONTEXT.md D-01/D-03; issue #81.
+// REF: THESIS.md §42, §49; vyapti V2/V3 (amended P7.10); CONTEXT/PLAN
+// 7.10 (D-01 final lock + D-05 V3 amend); issue #81 + #114.
 
 import { z } from 'zod';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { TimeValue, TransformClipValue, Vec3 } from './types';
+import type { NodeDefinition } from '../core/dag/types';
+import type { TransformClipValue, Vec3 } from './types';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -119,41 +128,44 @@ export const TransformClipNode: NodeDefinition<TransformClipParams, TransformCli
   pure: true,
   cost: 'cheap',
   paramSchema: TransformClipParams,
-  inputs: {
-    time: { type: 'Time', cardinality: 'single' },
-  },
+  // P7.10: no `time` input — time enters via the value's sample(seconds)
+  // method (V3 amended). Pre-P7.10 wires from TimeSource→TransformClip in
+  // saved projects become harmless ghost bindings: the evaluator ignores
+  // bindings to sockets the node no longer declares.
+  inputs: {},
   outputs: { out: { type: 'TransformClip', cardinality: 'single' } },
   inspectorSections: ['animate'],
-  evaluate(params, inputs: ResolvedInputs): TransformClipValue {
-    const time = inputs.time as TimeValue | undefined;
-    const empty: TransformClipValue = {
-      kind: 'TransformClip',
-      name: params.name,
-      duration: params.duration,
-      tracks: {},
+  evaluate(params): TransformClipValue {
+    // Pre-group ONCE at evaluate time (closure-captured). The hot path
+    // (sample invocation) only does per-target interpolation; no per-call
+    // grouping allocation.
+    const groupedTracks = groupByTarget(params.keyframes);
+    const duration = params.duration;
+    const loop = params.loop;
+    const hasKeyframes = params.keyframes.length > 0;
+
+    const sample = (seconds: number): Record<string, TRS> => {
+      if (!hasKeyframes) return {};
+      // loop / clamp folding — byte-faithful to AnimationClip.ts:113-115.
+      let t = seconds;
+      if (loop === 'loop') {
+        t = ((t % duration) + duration) % duration;
+      } else {
+        t = Math.max(0, Math.min(duration, t));
+      }
+      const tracks: Record<string, TRS> = {};
+      for (const [targetId, group] of groupedTracks) {
+        if (group.length === 0) continue;
+        tracks[targetId] = sampleTarget(group, t);
+      }
+      return tracks;
     };
-    if (!time) return empty;
-    if (params.keyframes.length === 0) return empty;
 
-    // loop / clamp folding — byte-faithful to AnimationClip.ts:113-115.
-    const d = params.duration;
-    let t = time.seconds;
-    if (params.loop === 'loop') {
-      t = ((t % d) + d) % d;
-    } else {
-      t = Math.max(0, Math.min(d, t));
-    }
-
-    const tracks: Record<string, TRS> = {};
-    for (const [targetId, group] of groupByTarget(params.keyframes)) {
-      if (group.length === 0) continue;
-      tracks[targetId] = sampleTarget(group, t);
-    }
     return {
       kind: 'TransformClip',
       name: params.name,
-      duration: params.duration,
-      tracks,
+      duration,
+      sample,
     };
   },
 };

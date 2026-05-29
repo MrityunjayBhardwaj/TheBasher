@@ -121,18 +121,19 @@ describe('resolveGltfChildTrs — per-component mix', () => {
 });
 
 describe('resolveAllChildTrs — all children at once (one precedence rule)', () => {
+  // P7.10 (#114): `clip: TransformClipValue | null` → `tracks: Record<.>`.
+  // Caller now pre-samples (GltfAssetR's useFrame at live time; static
+  // resolvers at their resolution time) and passes the materialized map.
   it('resolves each name via the per-child rule', () => {
     const childByName: Record<string, ChildOverride> = {
       bone: { ...base, overridden: allFalse },
       moved: override(allTrue),
     };
-    const clip = {
-      tracks: {
-        bone: clipTrack,
-        moved: clipTrack,
-      },
+    const tracks = {
+      bone: clipTrack,
+      moved: clipTrack,
     };
-    const result = resolveAllChildTrs({ names: ['bone', 'moved'], childByName, clip });
+    const result = resolveAllChildTrs({ names: ['bone', 'moved'], childByName, tracks });
     expect(result.bone).toEqual(clipTrack); // not overridden → clip
     expect(result.moved).toEqual(manual); // overridden → manual
   });
@@ -141,7 +142,7 @@ describe('resolveAllChildTrs — all children at once (one precedence rule)', ()
     const result = resolveAllChildTrs({
       names: ['orphan'],
       childByName: {},
-      clip: { tracks: {} },
+      tracks: {},
     });
     expect(result.orphan).toBeUndefined();
     expect(Object.keys(result)).toHaveLength(0);
@@ -151,7 +152,7 @@ describe('resolveAllChildTrs — all children at once (one precedence rule)', ()
     const childByName: Record<string, ChildOverride> = {
       bone: { ...base, overridden: allFalse },
     };
-    const result = resolveAllChildTrs({ names: ['bone'], childByName, clip: null });
+    const result = resolveAllChildTrs({ names: ['bone'], childByName, tracks: null });
     expect(result.bone).toEqual(base);
   });
 
@@ -159,7 +160,7 @@ describe('resolveAllChildTrs — all children at once (one precedence rule)', ()
     const result = resolveAllChildTrs({
       names: ['legacy'],
       childByName: {},
-      clip: { tracks: { legacy: clipTrack } },
+      tracks: { legacy: clipTrack },
     });
     expect(result.legacy).toEqual(clipTrack);
   });
