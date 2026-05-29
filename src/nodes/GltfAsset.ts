@@ -12,6 +12,8 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { GltfAssetValue, TransformClipValue } from './types';
 
+const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
+
 export const GltfAssetParams = z.object({
   /** Storage-relative path or URL. e.g. "assets/tree.glb" or "https://…". */
   assetRef: z.string().min(1),
@@ -34,6 +36,30 @@ export const GltfAssetParams = z.object({
    * hierarchy (V10 / H14-clean — no schema-version bump needed).
    */
   childHierarchy: z.record(z.string(), z.array(z.string())).default({}),
+  /**
+   * P7.11 — glTF skin metadata (issue #100, D-04). Captured at import by
+   * `buildSkinMetadata`: per skin, the joint KEYS + bind TRS + parent index
+   * + inverse-bind matrices, ALL in `skin.joints[]` order (the projection
+   * spine). The pure `GltfSkeleton` node reads this to project a `Skeleton`
+   * value — no second copy of pose; GltfChild stays the sole pose owner
+   * (V20/H36). `.default([])` makes it additive: pre-7.11 saves hydrate with
+   * no skins (V10/H14-clean — no schema-version bump). Mirrors the
+   * nodeNameMap/childHierarchy additive-param precedent.
+   */
+  skins: z
+    .array(
+      z.object({
+        jointKeys: z.array(z.string()),
+        bindTRS: z.array(z.object({ position: Vec3, rotation: Vec3, scale: Vec3 })),
+        // (FLAG 2) first-class — GltfSkeleton (C1) reads it directly, no
+        // runtime parent re-derivation.
+        parentJointIndex: z.array(z.number()),
+        inverseBindMatrices: z.array(z.array(z.number()).length(16)),
+        skeletonRootKey: z.string().optional(),
+        name: z.string().optional(),
+      }),
+    )
+    .default([]),
 });
 export type GltfAssetParams = z.infer<typeof GltfAssetParams>;
 
@@ -57,6 +83,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
       assetRef: params.assetRef,
       nodeNameMap: params.nodeNameMap,
       childHierarchy: params.childHierarchy,
+      skins: params.skins,
       transformClip: (inputs.transformClip as TransformClipValue | undefined) ?? null,
     };
   },

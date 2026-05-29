@@ -26,7 +26,7 @@
 // REF: PLAN.md Wave D; CONTEXT D-01/D-02/D-03/D-06;
 // fbxImportChain.ts:7 (the abstraction note that earns its keep here).
 
-import { Quaternion } from 'three';
+import { Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
 import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
 import {
@@ -151,6 +151,29 @@ interface CompleteKeyframe {
 }
 
 function defaultTRS(node: GltfJson['nodes'][number]): Required<PartialKeyframe> {
+  // P7.11 (#100, FLAG 1) — a glTF node may carry its local transform as a
+  // single 4×4 column-major `matrix` INSTEAD of translation/rotation/scale
+  // (glTF 2.0 §3.6; Blender exports joints this way). Decompose it into the
+  // same TRS the T/R/S branch produces, so a matrix-form joint and the
+  // equivalent T/R/S joint yield identical bind TRS — correct-by-construction.
+  // Without this, matrix-form joints capture as identity (silent on the
+  // committed TRS-only fixtures) and deform fidelity breaks. This also closes
+  // the same latent gap on the pre-existing GltfChild import path (:309),
+  // which calls defaultTRS too. Matrix4.decompose recovers T/R/S within float
+  // limits; it cannot recover shear, but glTF joint matrices are affine TRS
+  // (no shear by spec), so the decomposition is exact for valid rigs.
+  if (node.matrix) {
+    const m = new Matrix4().fromArray(node.matrix); // fromArray reads column-major (matches glTF)
+    const pos = new Vector3();
+    const quat = new Quaternion();
+    const scl = new Vector3();
+    m.decompose(pos, quat, scl);
+    return {
+      position: [pos.x, pos.y, pos.z],
+      rotation: radVec3ToDeg(quaternionToEulerVec3(quat)),
+      scale: [scl.x, scl.y, scl.z],
+    };
+  }
   const rotRad: Vec3 = node.rotation
     ? quaternionToEulerVec3(
         new Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3]),
@@ -161,6 +184,95 @@ function defaultTRS(node: GltfJson['nodes'][number]): Required<PartialKeyframe> 
     rotation: radVec3ToDeg(rotRad),
     scale: (node.scale ?? [1, 1, 1]) as Vec3,
   };
+}
+
+/**
+ * P7.11 (#100, D-04) — per-skin bind metadata captured at import.
+ * Everything is indexed in `skin.joints[]` order (the SPINE): jointKeys[i],
+ * bindTRS[i], parentJointIndex[i], inverseBindMatrices[i] all describe the
+ * joint at joint-list position `i`. This single ordering makes the projector
+ * (C1) trivial and the H40 render boundary-pair a plain index-by-index check.
+ */
+export interface SkinMetadata {
+  /** GltfChild KEYS in skin.joints[] order. */
+  jointKeys: string[];
+  /** Per-joint bind TRS (degrees Euler), SAME order. Matrix-form handled by
+   *  defaultTRS. */
+  bindTRS: Required<PartialKeyframe>[];
+  /** Per-joint nearest joint-ancestor's position WITHIN jointKeys, or -1 for
+   *  a root / no-joint-parent. SAME order. (FLAG 2 — captured first-class so
+   *  C1 reads it directly, no runtime re-derivation.) */
+  parentJointIndex: number[];
+  /** Per-joint number[16] column-major IBM, SAME order. `[]` when the skin
+   *  declares no inverseBindMatrices (loader treats absent as identity). */
+  inverseBindMatrices: number[][];
+  /** Advisory common-root key (skin.skeleton mapped through keyByGltfNodeIndex). */
+  skeletonRootKey?: string;
+  name?: string;
+}
+
+/**
+ * Capture per-skin bind metadata (D-04). Deterministic — content-addressed
+ * off `json` (V22); no Math.random / Date.now. `childHierarchy` is inverted
+ * here to resolve each joint's nearest JOINT ancestor in joints space.
+ */
+export function buildSkinMetadata(
+  json: GltfJson,
+  buffers: Uint8Array[],
+  keyByGltfNodeIndex: Record<number, string>,
+  childHierarchy: Record<string, string[]>,
+): SkinMetadata[] {
+  const skins = json.skins ?? [];
+  // Invert childHierarchy once: child KEY → parent KEY. A node absent here is
+  // a root (in no parent's child list).
+  const parentKeyByChildKey: Record<string, string> = {};
+  for (const [parentKey, childKeys] of Object.entries(childHierarchy)) {
+    for (const childKey of childKeys) parentKeyByChildKey[childKey] = parentKey;
+  }
+
+  return skins.map((skin) => {
+    const jointKeys = skin.joints.map((nodeIdx) => keyByGltfNodeIndex[nodeIdx]);
+    // jointKey → its position in the joints list (the spine ordering).
+    const jointPosByKey: Record<string, number> = {};
+    for (let i = 0; i < jointKeys.length; i++) jointPosByKey[jointKeys[i]] = i;
+
+    const bindTRS = skin.joints.map((nodeIdx) => defaultTRS(json.nodes[nodeIdx]));
+
+    // (FLAG 2) Walk UP the hierarchy from each joint to the nearest JOINT
+    // ancestor; record that ancestor's joints-list position, or -1.
+    const parentJointIndex = jointKeys.map((jointKey) => {
+      let cursor: string | undefined = parentKeyByChildKey[jointKey];
+      while (cursor !== undefined) {
+        const pos = jointPosByKey[cursor];
+        if (pos !== undefined) return pos; // nearest joint ancestor
+        cursor = parentKeyByChildKey[cursor]; // skip non-joint parent, keep climbing
+      }
+      return -1; // root or no joint ancestor
+    });
+
+    // IBMs: read the MAT4/FLOAT accessor (16 floats per joint, column-major)
+    // and slice per joint by joint-list position `i` — the #1 bug site is
+    // indexing by NODE index here instead of joint-list position.
+    let inverseBindMatrices: number[][] = [];
+    if (skin.inverseBindMatrices !== undefined) {
+      const ibm = readAccessor(json, buffers, skin.inverseBindMatrices);
+      inverseBindMatrices = skin.joints.map((_, i) =>
+        Array.from(ibm.subarray(i * 16, i * 16 + 16)),
+      );
+    }
+
+    const skeletonRootKey =
+      skin.skeleton !== undefined ? keyByGltfNodeIndex[skin.skeleton] : undefined;
+
+    return {
+      jointKeys,
+      bindTRS,
+      parentJointIndex,
+      inverseBindMatrices,
+      ...(skeletonRootKey !== undefined ? { skeletonRootKey } : {}),
+      ...(skin.name !== undefined ? { name: skin.name } : {}),
+    };
+  });
 }
 
 function buildClipKeyframes(
@@ -281,15 +393,23 @@ export async function buildGltfImportOps(
 
   const ops: Op[] = [];
 
+  // P7.11 (#100, D-04) — capture per-skin bind metadata (joint keys + bind
+  // TRS + IBMs + parentJointIndex, all in skin.joints[] order) so the pure
+  // GltfSkeleton projection (Wave C) can build a Skeleton value from
+  // GltfAsset params alone. Buffers + childHierarchy are already resolved.
+  const skins = buildSkinMetadata(json, buffers, keyByGltfNodeIndex, childHierarchy);
+
   // GltfAsset includes the deterministic nodeNameMap so the renderer
   // can match Object3D.name → DAG target id without re-deriving, plus the
   // childHierarchy (P7.7 #91) so the outliner (Wave D) can nest child rows
   // by KEY without re-walking the glTF — pure projection, not render inputs.
+  // P7.11 adds the additive `skins` metadata in the SAME atomic op array
+  // (K6 — one Cmd+Z); both prod callers (boot.ts, importGltf.ts) get it free.
   ops.push({
     type: 'addNode',
     nodeId: gltfAssetId,
     nodeType: 'GltfAsset',
-    params: { assetRef: args.assetRef, nodeNameMap, childHierarchy },
+    params: { assetRef: args.assetRef, nodeNameMap, childHierarchy, skins },
   });
   // P7.7 (#91) — one GltfChild addNode per scene child, in json.nodes
   // INTEGER-INDEX order (NOT Object.keys — that order is incidental today

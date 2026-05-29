@@ -146,6 +146,32 @@ export interface SphereMeshValue {
   readonly material: InlineMaterialSpec;
 }
 
+/**
+ * P7.11 — captured per-skin bind metadata on a `GltfAsset` (issue #100, D-04).
+ *
+ * Every per-joint array is parallel and indexed in `skin.joints[]` order (the
+ * projection spine): `jointKeys[i]`, `bindTRS[i]`, `parentJointIndex[i]`, and
+ * `inverseBindMatrices[i]` all describe the joint at joint-list position `i`.
+ * This single ordering makes the pure `GltfSkeleton` projection trivial and the
+ * H40 render boundary-pair (projected bone i == rendered skeleton bone i) a
+ * plain index-by-index check. `inverseBindMatrices` is `[]` when the skin
+ * declares none (the loader treats absent as identity).
+ */
+export interface GltfSkinMetadata {
+  readonly jointKeys: readonly string[];
+  readonly bindTRS: readonly {
+    readonly position: Vec3;
+    readonly rotation: Vec3;
+    readonly scale: Vec3;
+  }[];
+  /** Per-joint nearest joint-ancestor index WITHIN jointKeys, -1 for root. */
+  readonly parentJointIndex: readonly number[];
+  /** Per-joint number[16] column-major model-space inverse-bind matrix. */
+  readonly inverseBindMatrices: readonly (readonly number[])[];
+  readonly skeletonRootKey?: string;
+  readonly name?: string;
+}
+
 export interface GltfAssetValue {
   readonly kind: 'GltfAsset';
   readonly assetRef: string;
@@ -168,6 +194,12 @@ export interface GltfAssetValue {
    * no-ops (V10 / H14-clean).
    */
   readonly childHierarchy: Readonly<Record<string, readonly string[]>>;
+  /**
+   * P7.11 — captured per-skin bind metadata (issue #100, D-04). One entry per
+   * glTF skin; the pure `GltfSkeleton` node projects a chosen skin into a
+   * `Skeleton` value. Default `[]` so pre-7.11 values are no-ops (V10/H14-clean).
+   */
+  readonly skins: readonly GltfSkinMetadata[];
   /**
    * The selected clip's evaluated TRS at the input Time, sourced from
    * the connected `ClipSelect.out`. `null` when no animation is
