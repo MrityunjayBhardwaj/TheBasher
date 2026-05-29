@@ -6,6 +6,7 @@ export { BoxMeshNode, BoxMeshParams } from './BoxMesh';
 export { CharacterNode, CharacterParams } from './Character';
 export { DirectionalLightNode, DirectionalLightParams } from './DirectionalLight';
 export { GltfAssetNode, GltfAssetParams } from './GltfAsset';
+export { GltfSkeletonNode, GltfSkeletonParams } from './GltfSkeleton';
 export { GroupNode, GroupParams } from './Group';
 export { LocomotionStateNode, LocomotionStateParams } from './LocomotionState';
 export { MaterialOverrideNode, MaterialOverrideParams } from './MaterialOverride';

@@ -729,6 +729,22 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         mesh.localToWorld(v);
         return [v.x, v.y, v.z];
       },
+      // P7.11 (#100) — the RENDER side of the H40 boundary-pair. The render
+      // skeleton's bones are in `skin.joints[]` order (GLTFLoader builds them
+      // that way, RESEARCH B1/B7), the SAME spine the pure `GltfSkeleton`
+      // projection emits. So `boneName(i)` (raw glTF node name) sanitized ==
+      // the projected `bones[i].name` (sanitized at import) index-by-index —
+      // the F6a both-sides equality. Read-only.
+      boneName: (i: number): string | null => mesh.skeleton?.bones[i]?.name ?? null,
+      // Bone local rotation (radians, XYZ Euler) at CALL time — drives the
+      // H46 rotation-delta proof (limbs rotate under playback; position is a
+      // constant bind offset → exact-zero false-negative if sampled instead).
+      boneRotation: (i: number): [number, number, number] | null => {
+        const b = mesh.skeleton?.bones[i];
+        if (!b) return null;
+        const e = new THREE.Euler().setFromQuaternion(b.quaternion, 'XYZ');
+        return [e.x, e.y, e.z];
+      },
     };
     const w = window as unknown as Record<string, unknown>;
     w.__basher_gltf_skin = () =>

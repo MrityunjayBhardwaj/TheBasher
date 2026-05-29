@@ -101,12 +101,83 @@ describe('retargetClip', () => {
   });
 });
 
+// Phase 7.11 Wave D (D1): a foreign-vocabulary source clip retargets onto a
+// glTF rig whose target bones are the GltfSkeleton projection's NATIVE joint
+// keys, bridged by a NON-IDENTITY nameMap. This is the D-01 director story
+// ("drop a Mixamo/BVH clip onto a dropped glTF character") proven at the
+// `retargetClip` layer — the bridge is load-bearing, not the no-op an
+// identity map would be (research risk #4: silent all-unbound). The full
+// drop→render e2e (F6a) + the headline cross-vocabulary proof (F6b) land in
+// Wave F; this is the Wave-D-level observation that the bridge maps.
+describe('retarget onto a glTF rig via a non-identity name bridge (Wave D / D-01)', () => {
+  // Stand-in for a GltfSkeleton projection output: BoneSpec[] whose names are
+  // the glTF asset's native joint keys (the committed `skinned-bar` rig is
+  // `Bone0`/`Bone1`). projectGltfSkeleton is covered by its own unit suite;
+  // here we only need the SHAPE a GltfSkeleton emits as the retarget target.
+  const GLTF_RIG_BONES: BoneSpec[] = [
+    { name: 'Bone0', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'Bone1', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+
+  it('a foreign-named source binds to glTF-native target keys through the bridge preset', () => {
+    const bridge = getBoneNameMapPreset('mixamoToGltfBarRig');
+    expect(bridge).toBeDefined();
+    // The bridge is genuinely NON-IDENTITY: source names differ from targets.
+    expect(bridge!.map['mixamorig_Hips']).toBe('Bone0');
+    expect(bridge!.map['mixamorig_Spine']).toBe('Bone1');
+
+    const result = retargetClip({
+      sourceBones: SOURCE_BONES, // mixamorig_Hips / mixamorig_Spine
+      sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
+      targetBones: GLTF_RIG_BONES, // glTF-native Bone0 / Bone1
+      nameMap: bridge!.map,
+    });
+
+    // The foreign source actually drove the glTF rig: tracks exist and bind to
+    // the glTF target bone indices — i.e. mixamorig_* mapped ONTO Bone0/Bone1.
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    for (const kf of result.clipParams.keyframes) {
+      expect(kf.bone).toBeGreaterThanOrEqual(0);
+      expect(kf.bone).toBeLessThan(GLTF_RIG_BONES.length);
+    }
+    // Both glTF target bones were bound by the bridge — nothing left dangling.
+    expect(result.unboundTargetBones).toEqual([]);
+    expect(result.unmappedSourceBones).toEqual([]);
+  });
+
+  it('FALSIFICATION: an empty nameMap leaves every glTF target bone unbound', () => {
+    // With glTF-native names, an empty (or identity) map is a no-op: the
+    // mixamorig_* source matches NO glTF joint key, so the bridge is what
+    // makes binding succeed. A broken bridge is observable, not silent.
+    const result = retargetClip({
+      sourceBones: SOURCE_BONES,
+      sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
+      targetBones: GLTF_RIG_BONES,
+      nameMap: {},
+    });
+    expect(result.unboundTargetBones).toEqual(['Bone0', 'Bone1']);
+    expect(result.unmappedSourceBones).toEqual(['mixamorig_Hips', 'mixamorig_Spine']);
+  });
+});
+
 describe('BONE_NAME_MAP_PRESETS catalog', () => {
   it('ships at least mixamoToGltf / mixamoToReze / mixamoToRigify', () => {
     const ids = BONE_NAME_MAP_PRESETS.map((p) => p.id).sort();
     expect(ids).toContain('mixamoToGltf');
     expect(ids).toContain('mixamoToReze');
     expect(ids).toContain('mixamoToRigify');
+  });
+
+  it('ships the glTF-rig bridge preset (mixamoToGltfBarRig) for Wave D / D-01', () => {
+    const ids = BONE_NAME_MAP_PRESETS.map((p) => p.id);
+    expect(ids).toContain('mixamoToGltfBarRig');
+    const bridge = getBoneNameMapPreset('mixamoToGltfBarRig');
+    // Load-bearing: the bridge maps foreign source names ONTO different
+    // glTF-native target keys (NON-IDENTITY).
+    expect(bridge?.map['mixamorig_Hips']).toBe('Bone0');
+    for (const [src, tgt] of Object.entries(bridge!.map)) {
+      expect(src).not.toBe(tgt);
+    }
   });
 
   it('every preset includes the Mixamo Hips entry as the load-bearing root mapping', () => {

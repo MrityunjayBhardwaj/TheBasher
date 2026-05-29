@@ -36,6 +36,16 @@ export interface GltfNode {
   translation?: [number, number, number];
   rotation?: [number, number, number, number];
   scale?: [number, number, number];
+  /**
+   * P7.11 (#100) — a node's local transform as a single 4×4 column-major
+   * matrix (16 floats). Per glTF 2.0 §3.6 this is MUTUALLY EXCLUSIVE with
+   * translation/rotation/scale on the same node — a node uses EITHER the
+   * decomposed T/R/S fields OR `matrix`, never both. Blender's exporter
+   * commonly emits `matrix` for JOINT nodes, so `defaultTRS`
+   * (gltfImportChain) must decompose it; ignoring it captures bind pose as
+   * identity and silently breaks deform fidelity on matrix-form rigs.
+   */
+  matrix?: number[];
   children?: number[];
 }
 
@@ -76,12 +86,34 @@ export interface GltfAnimation {
   samplers: GltfAnimationSampler[];
 }
 
+/**
+ * P7.11 (#100) — a glTF skin: the joint list + (optional) inverse-bind
+ * matrices that bind a SkinnedMesh's vertices to a bone hierarchy
+ * (glTF 2.0 §3.7.3.1).
+ */
+export interface GltfSkin {
+  /** glTF NODE indices, in joint-list order. The IBM accessor is indexed
+   *  by POSITION in this array, NOT by node index. */
+  joints: number[];
+  /** Accessor INDEX (MAT4/FLOAT) of the per-joint inverse-bind matrices,
+   *  parallel to `joints` in joint-list order. Optional — absent means the
+   *  loader reconstructs identity inverses. NOTE: this is the accessor
+   *  index (a number), not the matrix data; read it via `readAccessor`. */
+  inverseBindMatrices?: number;
+  /** Advisory common-root node index (skin.skeleton). Optional; structural
+   *  roots are also derivable from the node hierarchy. */
+  skeleton?: number;
+  name?: string;
+}
+
 export interface GltfJson {
   nodes: GltfNode[];
   accessors?: GltfAccessor[];
   bufferViews?: GltfBufferView[];
   buffers?: Array<{ byteLength: number; uri?: string }>;
   animations?: GltfAnimation[];
+  /** P7.11 (#100) — skin definitions; absent for non-skinned files. */
+  skins?: GltfSkin[];
 }
 
 export interface ParsedGlb {

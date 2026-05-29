@@ -21,6 +21,9 @@ import { setMaterialColorMutator } from './builders/setMaterialColor';
 import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
 import { randomizeMutator } from './builders/randomize';
+import { retargetMutator } from './builders/retarget';
+import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
+import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { proposePlanTool, listMutatorsTool } from './tool';
 
 beforeEach(() => {
@@ -2752,5 +2755,200 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       ).toBeUndefined();
       seen.set(sig, name);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P7.11 Wave G (#100) — the headline D-01 director story through the AGENT
+// MUTATOR surface: a director drops a glTF character, then issues
+// `mutator.animation.retarget` to drive its `GltfSkeleton` rig with a
+// foreign-vocabulary (Mixamo) source clip via a NON-IDENTITY bridge map.
+//
+// The verifier (VERIFICATION.md) found this reachable only at the
+// `retargetClip()` function layer; the mutator rejected a `GltfSkeleton`
+// target at the precondition AND, even past the gate, read `params.bones`
+// the projection node does not have. This suite proves the gap is closed at
+// the product surface: (a) preconditions accept a GltfSkeleton target, (b)
+// the emitted clip's tracks bind to the TARGET (glTF-native) bone names —
+// resolved by EVALUATING the GltfSkeleton, not by reading absent params, and
+// (c) the closure gate (V13) accepts the plan even though evaluating the
+// GltfSkeleton reads its upstream GltfAsset.
+// ---------------------------------------------------------------------------
+describe('mutator.animation.retarget — GltfSkeleton target (P7.11 Wave G / #100 / D-01)', () => {
+  // The committed `skinned-bar` skin shape (Wave D): glTF-native joint keys
+  // `Bone0`/`Bone1`, captured bind TRS in DEGREES (buildSkinMetadata convention)
+  // — projectGltfSkeleton converts to radians, matching the Skeleton/BVH/FBX
+  // BoneSpec contract. parentJointIndex is first-class (no runtime re-derive).
+  const SKINNED_BAR_SKIN: GltfSkinMetadata = {
+    jointKeys: ['Bone0', 'Bone1'],
+    bindTRS: [
+      { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    ],
+    parentJointIndex: [-1, 0],
+    inverseBindMatrices: [],
+  };
+
+  // Mixamo-vocabulary source rig + clip. Source bone NAMES differ from the
+  // glTF target keys, so an identity/empty map is a no-op — the bridge preset
+  // is load-bearing (research risk #4 / FLAG 3).
+  const MIXAMO_SOURCE_BONES: BoneSpec[] = [
+    { name: 'mixamorig_Hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 'mixamorig_Spine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+  ];
+  const MIXAMO_SOURCE_KFS = [
+    { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { bone: 0, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
+    { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+    { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.3, 0] },
+  ];
+
+  // Build a DAG matching what a director would have after dropping a glTF
+  // character (GltfAsset → GltfSkeleton target) and importing a Mixamo clip
+  // (Skeleton source + AnimationClip), with the project TimeSource present.
+  function buildSceneForGltfRetarget(): DagState {
+    let s = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
+    // The dropped glTF character: a GltfAsset carrying the captured skin.
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'gltf_asset',
+      nodeType: 'GltfAsset',
+      params: { assetRef: 'assets/skinned-bar.glb', skins: [SKINNED_BAR_SKIN] },
+    }).next;
+    // The PURE rig projection node — the director-reachable target. Its bones
+    // are an evaluated output, NOT params (D-02).
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'gltf_skel',
+      nodeType: 'GltfSkeleton',
+      params: { skinIndex: 0 },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'gltf_asset', socket: 'out' },
+      to: { node: 'gltf_skel', socket: 'asset' },
+    }).next;
+    // The foreign (Mixamo) source rig + clip.
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'src_skel',
+      nodeType: 'Skeleton',
+      params: { bones: MIXAMO_SOURCE_BONES },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'src_clip',
+      nodeType: 'AnimationClip',
+      params: { name: 'walk', duration: 1, keyframes: MIXAMO_SOURCE_KFS },
+    }).next;
+    return s;
+  }
+
+  function gltfRetargetSpec(map: Record<string, string>) {
+    return {
+      sourceClipId: 'src_clip',
+      sourceSkeletonId: 'src_skel',
+      targetSkeletonId: 'gltf_skel',
+      customMap: map,
+      outputClipId: 'walk_on_gltf',
+    };
+  }
+
+  it('passes preconditions + emits a retargeted clip bound to the glTF rig through the agent surface', () => {
+    const bridge = getBoneNameMapPreset('mixamoToGltfBarRig');
+    expect(bridge).toBeDefined();
+    // Load-bearing bridge: foreign source names map ONTO glTF-native targets.
+    expect(bridge!.map['mixamorig_Hips']).toBe('Bone0');
+
+    const state = buildSceneForGltfRetarget();
+    const result = validatePlan(
+      retargetMutator,
+      gltfRetargetSpec(bridge!.map),
+      state,
+      'drop a Mixamo clip onto a glTF character',
+    );
+
+    // (a) The mutator accepted the GltfSkeleton target — no precondition or
+    // closure-gate rejection. A silent rejection here is the gap reopening.
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error(`retarget rejected (gate ${result.gate}/${result.label}): ${result.reason}`);
+    }
+
+    // (b) It emitted a fresh AnimationClip wired to time + the glTF skeleton.
+    const addClip = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'AnimationClip');
+    expect(addClip).toBeDefined();
+    if (addClip?.type !== 'addNode') throw new Error('no AnimationClip addNode');
+    expect(addClip.nodeId).toBe('walk_on_gltf');
+    const wiredToTarget = result.ops.some(
+      (o) =>
+        o.type === 'connect' &&
+        o.from.node === 'gltf_skel' &&
+        o.to.node === 'walk_on_gltf' &&
+        o.to.socket === 'skeleton',
+    );
+    expect(wiredToTarget).toBe(true);
+
+    // (c) The clip's tracks bind to the TARGET (glTF-native) bones. The
+    // GltfSkeleton projects ['Bone0','Bone1']; every emitted keyframe's
+    // `bone` index must address one of THOSE, proving the target rig was
+    // resolved by EVALUATION (not by reading absent params.bones, which
+    // would have produced an empty rig → zero/out-of-range tracks).
+    const params = addClip.params as { keyframes?: { bone: number }[] };
+    const kfs = params.keyframes ?? [];
+    expect(kfs.length).toBeGreaterThan(0);
+    const projectedTargetNames = ['Bone0', 'Bone1'];
+    for (const kf of kfs) {
+      expect(kf.bone).toBeGreaterThanOrEqual(0);
+      expect(kf.bone).toBeLessThan(projectedTargetNames.length);
+    }
+    // The set of target bones actually driven includes a glTF-native key.
+    const drivenNames = new Set(kfs.map((kf) => projectedTargetNames[kf.bone]));
+    expect(drivenNames.has('Bone0')).toBe(true);
+  });
+
+  it('FALSIFICATION: an empty map yields an empty clip — the bridge is load-bearing, not a no-op', () => {
+    const state = buildSceneForGltfRetarget();
+    const result = validatePlan(
+      retargetMutator,
+      gltfRetargetSpec({}),
+      state,
+      'empty map — nothing should bind',
+    );
+    // The plan still validates (an empty clip is structurally valid), but the
+    // mixamorig_* source matches NO glTF joint key, so NO tracks bind.
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const addClip = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'AnimationClip');
+    if (addClip?.type !== 'addNode') throw new Error('no AnimationClip addNode');
+    const params = addClip.params as { keyframes?: { bone: number }[] };
+    expect(params.keyframes ?? []).toHaveLength(0);
+  });
+
+  it('rejects a non-skeleton target with a Skeleton-or-GltfSkeleton reason (precondition gate)', () => {
+    let state = buildSceneForGltfRetarget();
+    // Point the target at the GltfAsset (a Mesh-output node), not the rig.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'src_skel2',
+      nodeType: 'Skeleton',
+      params: { bones: MIXAMO_SOURCE_BONES },
+    }).next;
+    const result = validatePlan(
+      retargetMutator,
+      {
+        sourceClipId: 'src_clip',
+        sourceSkeletonId: 'src_skel',
+        targetSkeletonId: 'gltf_asset',
+        customMap: { mixamorig_Hips: 'Bone0' },
+        outputClipId: 'bad',
+      },
+      state,
+      'bad target type',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('GltfSkeleton');
   });
 });

@@ -21,6 +21,12 @@ export const SkeletonParams = z.object({
         parent: z.number().int().min(-1),
         position: Vec3.default([0, 0, 0]),
         rotation: Vec3.default([0, 0, 0]),
+        // P7.11 (D-03) — OPTIONAL bind-pose extras. Absent on the 3-bone
+        // default + every BVH/FBX-emitted Skeleton (back-compat / F4); only a
+        // glTF-projected rig populates them. No `.default(...)` so an omitted
+        // field stays omitted (keeps value-equality clean for legacy saves).
+        scale: Vec3.optional(),
+        inverseBindMatrix: z.array(z.number()).length(16).optional(),
       }),
     )
     // Default: a 3-bone "stick figure" — root → torso → head.
@@ -49,6 +55,11 @@ export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonValue> = {
         parent: b.parent,
         position: b.position,
         rotation: b.rotation,
+        // P7.11 (D-03/D-04) — only spread when present so a legacy bone (no
+        // scale/IBM) produces a byte-identical BoneSpec (no `scale: undefined`
+        // key). Back-compat: BVH/FBX + the 3-bone default are unchanged.
+        ...(b.scale !== undefined ? { scale: b.scale } : {}),
+        ...(b.inverseBindMatrix !== undefined ? { inverseBindMatrix: b.inverseBindMatrix } : {}),
       })),
     };
   },
