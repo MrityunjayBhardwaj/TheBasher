@@ -41,6 +41,7 @@ import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
 import { SceneNode } from './Scene';
 import { ShotNode } from './Shot';
+import { GltfSkeletonNode } from './GltfSkeleton';
 import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
@@ -76,6 +77,10 @@ const ALL: NodeDefinition[] = [
   ScatterNode as unknown as NodeDefinition,
   // P2 — Character + Move
   SkeletonNode as unknown as NodeDefinition,
+  // P7.11 — pure read-only projection of a glTF asset's captured skin bind data
+  // into a `Skeleton` value (issue #100, D-02). Registered alongside the rig
+  // family it joins.
+  GltfSkeletonNode as unknown as NodeDefinition,
   PosedSkeletonNode as unknown as NodeDefinition,
   AnimationClipNode as unknown as NodeDefinition,
   NavmeshNode as unknown as NodeDefinition,
