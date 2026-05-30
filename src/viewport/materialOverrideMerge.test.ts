@@ -86,7 +86,15 @@ describe('resolveMaterialOverrideFields (D-01 map-aware tint)', () => {
       metalnessMap: false,
     });
     expect(Object.keys(fields).sort()).toEqual(
-      ['color', 'emissive', 'emissiveIntensity', 'metalness', 'opacity', 'roughness', 'transparent'].sort(),
+      [
+        'color',
+        'emissive',
+        'emissiveIntensity',
+        'metalness',
+        'opacity',
+        'roughness',
+        'transparent',
+      ].sort(),
     );
   });
 });
