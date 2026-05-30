@@ -32,6 +32,8 @@ import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { degVec3ToRad } from './rotation';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
+import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
+import type { BakedChannel } from '../app/resolveGltfChildTransform';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -637,6 +639,18 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     () => childOverridesForAsset(dagNodes, value.assetRef),
     [dagNodes, value.assetRef],
   );
+  // P7.12 (#108, C2) — the BAKED-CHANNEL layer: per-bone KeyframeChannel nodes
+  // materialized by the copy-on-write bake (Wave D). SUBSCRIBED, like
+  // childOverrides — an edit produces a NEW `nodes` object so this memo re-derives
+  // and the next frame re-applies; but it does NOT subscribe to TIME (H48). The
+  // samplers are function-of-time closures (V24); the useFrame below invokes them
+  // at the same `seconds` snapshot it samples the clip at. Keyed by childName,
+  // scoped to this asset by nodeNameMap membership (BLOCK-2). Dormant until the
+  // bake mutator (D1) exists — no baked channel ⇒ empty map ⇒ pure clip behavior.
+  const bakedChannels = useMemo(
+    () => bakedChannelSamplersForAsset(dagNodes, value.nodeNameMap),
+    [dagNodes, value.nodeNameMap],
+  );
   useEffect(() => {
     if (!override) return;
     const mat = applyOverride('#ffffff', override);
@@ -712,13 +726,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // bones are updated in time for this frame's draw. The single-writer
   // V20/H36/H33 invariant still holds (this is still the sole TRS-writer onto
   // the clone). REF: PLAN 7.10 Wave C; H48 + B13 catalogue.
-  const lastApplied = useRef<{ seconds: number; overrides: unknown } | null>(null);
+  const lastApplied = useRef<{ seconds: number; overrides: unknown; baked: unknown } | null>(null);
   useFrame(() => {
     const seconds = useTimeStore.getState().seconds;
     if (
       lastApplied.current !== null &&
       lastApplied.current.seconds === seconds &&
-      lastApplied.current.overrides === childOverrides
+      lastApplied.current.overrides === childOverrides &&
+      lastApplied.current.baked === bakedChannels
     ) {
       return;
     }
@@ -726,10 +741,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     // referentially-equal closure across renders (P7.10 cache invariance);
     // .sample() is a pure call producing a fresh TRS map per invocation.
     const tracks = value.transformClip?.sample(seconds) ?? null;
+    // P7.12 (#108, C2) — sample the baked-channel band at the SAME `seconds`
+    // snapshot, per component, keyed by childName. A present component wins over
+    // the clip (presence, R-4) inside resolveAllChildTrs. No new time
+    // subscription: the samplers are invoked here in the existing useFrame.
+    let bakedByName: Record<string, BakedChannel> | null = null;
+    for (const name of Object.keys(bakedChannels)) {
+      const baked = sampleBakedChannel(bakedChannels[name], seconds);
+      if (baked) (bakedByName ??= {})[name] = baked;
+    }
     const resolved = resolveAllChildTrs({
       names: Object.keys(value.nodeNameMap),
       childByName: childOverrides,
       tracks,
+      bakedByName,
     });
     for (const [name, trs] of Object.entries(resolved)) {
       const child = cloned.getObjectByName(name);
@@ -739,7 +764,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       child.rotation.set(radRot[0], radRot[1], radRot[2]);
       child.scale.set(trs.scale[0], trs.scale[1], trs.scale[2]);
     }
-    lastApplied.current = { seconds, overrides: childOverrides };
+    lastApplied.current = { seconds, overrides: childOverrides, baked: bakedChannels };
   });
   // Re-apply on clone swap (asset reload) — the new clone has bind-pose TRS,
   // and the dirty-check above would short-circuit if clip/overrides happen to

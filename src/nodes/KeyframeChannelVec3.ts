@@ -32,6 +32,16 @@ export const KeyframeChannelVec3Params = z.object({
   name: z.string().default('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
+  // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
+  // imported clip track is materialized into per-bone channels (bakeGltfChannel,
+  // Wave D), each channel carries the bone's `childName` AND the owning asset's
+  // `assetRef` so the renderer/read-side resolver can enumerate it by name with
+  // no per-frame nodeNameMap inverse scan. These MUST be declared on the schema —
+  // the DAG stores zod-PARSED params (ops.ts applyAddNode), so an undeclared key
+  // would be silently stripped and the baked band would never be found. Optional
+  // + absent on ordinary authored channels (addChannel), so it's a no-op there.
+  childName: z.string().optional(),
+  assetRef: z.string().optional(),
   keyframes: z
     .array(
       z.object({
@@ -53,6 +63,18 @@ function smoothstep(u: number): number {
 function interp(a: Vec3, b: Vec3, u: number, easing: Easing): Vec3 {
   const t = easing === 'cubic' ? smoothstep(u) : u;
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/**
+ * Build the function-of-time sampler for a vec3 channel (V24): sort the
+ * keyframes ONCE, return a closure that interpolates per call. Exported so the
+ * P7.12 baked-channel enumerator (`bakedGltfChannels.ts`, the resolver band)
+ * reuses the SAME interpolation as the node's evaluate — one source of the
+ * sampling math, no per-frame ctx/inputs needed (BLOCK-1 shared logic).
+ */
+export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: number) => Vec3 {
+  const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
+  return (seconds: number) => sample(sorted, seconds);
 }
 
 function sample(keyframes: KeyframeChannelVec3Params['keyframes'], t: number): Vec3 {
@@ -87,15 +109,15 @@ export const KeyframeChannelVec3Node: NodeDefinition<
   inspectorSections: ['channel', 'animate'],
   evaluate(params): KeyframeChannelVec3Value {
     // Sort ONCE in the closure; sample() interpolates per call (function of
-    // time, V24). Shallow copy keeps evaluate pure (params untouched).
-    const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
+    // time, V24). buildVec3Sampler is the shared sampler builder (also used by
+    // the P7.12 baked-channel resolver band).
     return {
       kind: 'KeyframeChannel',
       valueType: 'vec3',
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
-      sample: (seconds: number) => sample(sorted, seconds),
+      sample: buildVec3Sampler(params),
     };
   },
 };
