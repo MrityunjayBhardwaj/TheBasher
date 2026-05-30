@@ -518,24 +518,36 @@ interface KeyframeChannelValueBase {
   readonly paramPath: string;
 }
 
+// P7.12 D-04 (function-of-time, V24/V3-amended) — mirrors the P7.10
+// TransformClipValue migration one node-family over. Pre-7.12 each channel
+// value carried a single pre-sampled scalar `value: T` (the channel's `time`
+// input socket sampled upstream). That made the channel's cache key flip every
+// playback frame (its inputs hash included TimeSource's per-frame-flipping
+// hash) and forced the React tree downstream to re-walk per frame (H48/H49 at
+// the type level). Lifting time INTO the value via a `sample(seconds)` closure
+// makes the channel's evaluate truly pure (no `time` input), so its cache hits
+// across frames; consumers (AnimationLayer-render useFrame, the Wave-C resolver
+// band) call `.sample()` at their own cadence. Dropping `value` entirely (NOT
+// keeping it alongside) is required — a residual pre-sampled field IS H49.
+// REF: vyapti V24/V3 (amended P7.10); hetvabhasa H48/H49; PLAN 7.12 D-04.
 export interface KeyframeChannelNumberValue extends KeyframeChannelValueBase {
   readonly valueType: 'number';
-  readonly value: number;
+  sample(seconds: number): number;
 }
 
 export interface KeyframeChannelVec3Value extends KeyframeChannelValueBase {
   readonly valueType: 'vec3';
-  readonly value: Vec3;
+  sample(seconds: number): Vec3;
 }
 
 export interface KeyframeChannelQuatValue extends KeyframeChannelValueBase {
   readonly valueType: 'quat';
-  readonly value: Quat;
+  sample(seconds: number): Quat;
 }
 
 export interface KeyframeChannelColorValue extends KeyframeChannelValueBase {
   readonly valueType: 'color';
-  readonly value: string;
+  sample(seconds: number): string;
 }
 
 export type KeyframeChannelValue =
@@ -553,8 +565,28 @@ export interface AnimationLayerValue {
   readonly boneMask: readonly string[];
   readonly mute: boolean;
   readonly solo: boolean;
-  /** Wrapped target — null when unwired. Layer is transparent in scene. */
+  /**
+   * Wrapped target — null when unwired. Layer is transparent in scene.
+   *
+   * P7.12 D-04 (shape B-lite): post-migration this is the UN-PATCHED base
+   * target. The channels are now function-of-time (no pre-sampled `.value`),
+   * so the layer cannot patch a fixed clone at evaluate time. The renderer
+   * (`AnimationLayerR`) samples `sampleTarget(seconds)` in a useFrame and
+   * renders the patched clone declaratively. The read-side
+   * (`resolveEvaluatedTransform`) reads `sampleTarget(ctx.time.seconds)` so
+   * gizmo/NPanel match the render (H40).
+   */
   readonly target: SceneChild | null;
+  /**
+   * Sample the channels onto a deep clone of `target` at `seconds`, blended by
+   * weight (P7.12 D-04 — function-of-time, V24/H40). Returns the un-patched
+   * base when no active channels / no target. The single per-frame consumer
+   * (AnimationLayerR useFrame) and the read-side resolver both call this; the
+   * channels stay pure function-of-time (the V24/H49 win), only the authored
+   * node re-renders per frame (B-lite — accepted, pre-7.10 behavior, this is
+   * ONE standalone scene node not 64 bones).
+   */
+  sampleTarget(seconds: number): SceneChild | null;
 }
 
 export interface ShotValue {

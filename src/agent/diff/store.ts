@@ -117,12 +117,30 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
       // Expand against the fork: closure roots must resolve, and the
       // walker needs the post-batch graph to find consumers/producers.
       closure = expandClosure(closureSpec, fork);
+      // A removeNode deletes its target — by construction the node is gone from
+      // `fork`, so the fork-expanded closure cannot reach it and the membership
+      // check below would falsely reject. But V13 must still catch a removeNode
+      // that reaches OUTSIDE the mutator's declared scope. So expand the SAME
+      // closureSpec against the ORIGINAL `state` (where the node still exists)
+      // and exempt a removeNode only when its target is in THAT closure — a
+      // deleteNode mutator roots its closure on the node(s) it deletes, so a
+      // legitimate delete is contained, while an out-of-closure removeNode still
+      // throws. Computed lazily (only when the batch actually removes a node).
+      // (P7.12 D3 — the revert path deletes edge-less baked channels.)
+      let originalClosure: ClosureSet | undefined;
+      const closureContainsInOriginal = (nodeId: string): boolean => {
+        originalClosure ??= expandClosure(closureSpec, state);
+        return originalClosure.nodes.has(nodeId);
+      };
       // Track ids introduced earlier in this same diff via fresh
       // addNode so subsequent ops referencing them pass the gate.
       const introducedIds = new Set<string>();
       for (const op of ops) {
         if (op.type === 'addNode' && isFreshAddNode(op, state)) {
           introducedIds.add(op.nodeId);
+          continue;
+        }
+        if (op.type === 'removeNode' && closureContainsInOriginal(op.nodeId)) {
           continue;
         }
         const target = opTargetNodeId(op);

@@ -11,6 +11,7 @@
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTimelineSelection } from './timelineSelection';
+import { resolveClipRow } from './clipChannelRows';
 
 const TRACK_COLORS = ['#ef4444', '#22c55e', '#3b82f6']; // x / y / z
 const SAMPLES_PER_SECOND = 30;
@@ -36,6 +37,81 @@ export function CurveEditor({ duration }: { duration: number }) {
       </div>
     );
   }
+  // P7.12 B2 — read-only imported-clip row. A synthetic `clip:<bone>:<comp>`
+  // active id has no DAG node; project its curve straight from the active
+  // TransformClip's keyframes (the SAME params the renderer samples — H40
+  // display-side: the curve shown must come from the clip the renderer reads,
+  // never a divergent sample path). No drag handlers; an "imported" affordance
+  // label tells the director the edit-to-bake gesture is available (Wave D).
+  const clipRow = channelId.startsWith('clip:') ? resolveClipRow(nodes, channelId) : null;
+  if (clipRow) {
+    // The clip carries the whole TRS per keyframe; render the SELECTED
+    // component's three axis lines (x/y/z) — position/rotation/scale Vec3s.
+    const compValues = clipRow.keyframes.map((k) => k[clipRow.component]);
+    const clipTracks: Track[][] = [0, 1, 2].map((vecAxis) =>
+      clipRow.keyframes.map((k, ki) => ({
+        time: k.time,
+        value: compValues[ki][vecAxis],
+        easing: 'linear' as const,
+      })),
+    );
+    const clipSamples = sampleTracks(clipTracks, duration);
+    const clipRange = computeRange(clipSamples);
+    return (
+      <div data-testid="curve-editor" className="relative h-full w-full bg-bg">
+        <div className="absolute left-2 top-1 text-[10px] text-mute">
+          {clipRow.childName} — {clipRow.component}
+        </div>
+        <div
+          data-testid="curve-readonly-label"
+          className="absolute right-2 top-1 text-[10px] text-mute italic"
+        >
+          (imported — edit to make editable)
+        </div>
+        <svg className="h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+          <line x1="0" y1="50" x2="100" y2="50" stroke="var(--line)" strokeWidth="0.2" />
+          {clipSamples.map((track, ti) => (
+            <polyline
+              key={ti}
+              data-testid={`curve-track-${ti}`}
+              fill="none"
+              stroke={TRACK_COLORS[ti % TRACK_COLORS.length]}
+              strokeWidth="0.6"
+              points={track
+                .map((p) => {
+                  const x = (p.t / Math.max(duration, 0.0001)) * 100;
+                  const y = 100 - normalizeY(p.v, clipRange) * 100;
+                  return `${x},${y}`;
+                })
+                .join(' ')}
+            />
+          ))}
+          {clipRow.keyframes.map((k, i) => {
+            const x = (k.time / Math.max(duration, 0.0001)) * 100;
+            return clipTracks.map((track, ti) => (
+              <circle
+                key={`${i}-${ti}`}
+                cx={x}
+                cy={100 - normalizeY(track[i]?.value ?? 0, clipRange) * 100}
+                r="0.8"
+                fill="var(--fg)"
+              />
+            ));
+          })}
+          <line
+            data-testid="curve-playhead"
+            x1={(seconds / Math.max(duration, 0.0001)) * 100}
+            y1="0"
+            x2={(seconds / Math.max(duration, 0.0001)) * 100}
+            y2="100"
+            stroke="var(--accent)"
+            strokeWidth="0.3"
+          />
+        </svg>
+      </div>
+    );
+  }
+
   const node = nodes[channelId];
   if (!node) {
     return (

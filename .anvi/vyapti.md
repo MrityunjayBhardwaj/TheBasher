@@ -458,7 +458,7 @@ fixes converged on the same pattern within 2 days, lifting it from
 
 ### V24: Time-dependency lives at the value-shape, NOT at the React-prop chain
 
-**Span:** All time-driven values flowing through the renderer chain — currently `TransformClipValue`. Any future impure or impure-rooted value that the React tree consumes during playback.
+**Span:** All time-driven values flowing through the renderer chain — `TransformClipValue` (P7.10) and the `KeyframeChannel{Number,Vec3,Quat,Color}` family + `AnimationLayer` (P7.12 D-04). Any future impure or impure-rooted value that the React tree consumes during playback.
 
 **Statement:** If a value's content depends on time, its TYPE MUST expose time as a typed function parameter on the value itself (e.g., `sample: (seconds: number) => T`). Consumers read live time imperatively at their own cadence (R3F's `useFrame`, or a local time subscription). The React tree itself MUST NEVER subscribe to `useTimeStore.seconds/frame/normalized` at a level where downstream value props would change per frame — most concretely, `SceneFromDAG.tsx` MUST NOT subscribe to time.
 
@@ -469,9 +469,11 @@ fixes converged on the same pattern within 2 days, lifting it from
 - Type system: `TransformClipValue.sample(seconds: number)` is the typed contract; any consumer that reads `.tracks` (the pre-P7.10 shape) fails to typecheck. `src/nodes/types.ts:321` documents the contract; `src/nodes/TransformClip.test.ts` "declares no inputs" is the regression guard against re-adding the Time input socket (which would re-enable per-frame cache-miss propagation).
 - The B13 perf benchmark `tests/e2e/perf-fox-benchmark.spec.ts` asserts `commits = 0` during 5s of playback at every Fox-count level (skinned + animated). A future regression that re-introduces a SceneFromDAG time subscription would fail this assertion immediately.
 
-**Status:** ALIGNED (P7.10). One time-driven value-shape currently exists (`TransformClipValue`). Future impure additions (audio sync, physics, procedural animation) opt into the same pattern by design — no per-node-type wiring needed.
+**Status:** ALIGNED (P7.10, extended P7.12). Time-driven value-shapes now in the codebase: `TransformClipValue` (P7.10) and the `KeyframeChannel{Number,Vec3,Quat,Color}` family + `AnimationLayer` (P7.12 D-04). Future impure additions (audio sync, physics, procedural animation) opt into the same pattern by design — no per-node-type wiring needed.
 
-**REF:** `src/nodes/types.ts:321` (`TransformClipValue.sample`), `src/nodes/TransformClip.ts` (the closure builder), `src/viewport/SceneFromDAG.tsx:73` (the no-time-subscription site), `src/viewport/SceneFromDAG.tsx` `GltfAssetR` `useFrame` (the consumer-local cadence), `tests/e2e/perf-fox-benchmark.spec.ts` (the goal-backward gate), [[H48]], [[H49]], [[B13]]. Issue #114.
+**Amendment (P7.12 D-04):** The `KeyframeChannel{Number,Vec3,Quat,Color}` family migrated to the same function-of-time value shape, joining `TransformClip`. Each channel value carries `sample(seconds)` and drops its Time input socket — consumers sample at their own cadence. `AnimationLayer` carries `sampleTarget(seconds)` (shape B-lite): the value's `.target` is the UN-PATCHED base, and the channel-patched target is produced by `sampleTarget(seconds)`. Any consumer reading `.target` for the animated value reads the base (0/static) — see [[H52]] (the value-shape migration missing test-inlined consumer copies). Back-compat: pre-D-04 `Time → channel` wires hydrate as harmless ghost bindings.
+
+**REF:** `src/nodes/types.ts:321` (`TransformClipValue.sample`), `src/nodes/TransformClip.ts` (the closure builder), `src/nodes/AnimationLayer.ts:99` (`sampleTarget` closure, P7.12 D-04), `src/app/resolveEvaluatedTransform.ts` (read-side `sampleTarget(ctx.time.seconds)`), `src/viewport/SceneFromDAG.tsx:73` (the no-time-subscription site), `src/viewport/SceneFromDAG.tsx` `GltfAssetR` `useFrame` (the consumer-local cadence), `tests/e2e/perf-fox-benchmark.spec.ts` (the goal-backward gate), [[H48]], [[H49]], [[H52]], [[B13]]. Issues #114, #108.
 
 ### V23: Multi-file glTF sibling-path resolution MUST normalize `..`/`.` segments symmetrically on BOTH halves of the importer/renderer boundary, and MUST reject root-escape
 
@@ -588,3 +590,20 @@ used flat fixtures only). Issue #110.
 **Cross-ref:** [[V20]] (single-writer principle this extends to the projection boundary), [[H36]] (the dual-write trap clause 1 blocks), [[H50]] (joint-index-vs-node-index — the trap clause 2 blocks), [[H51]] (matrix-form bind capture), [[H40]] (the boundary-pair the index spine makes trivial), [[H45]]/[[H46]] (the render-side skin family), [[V2]]/[[V9]]/[[V22]].
 
 **Provenance:** ORIGIN = P7.11 (#100), 2026-05-29 — Wave F closes #100's rig-projection + retarget half. WHY = without this invariant, the next rig consumer (DAG-side skinning, viewport bone-pick #100/D-06, FBX node-indexed clips) re-derives BOTH the no-write-back discipline AND the joints-order spine from scratch; the read-only clause in particular guards against a "just write the pose back here" shortcut reopening [[H36]] on a fourth glTF surface. HOW = a new rig-reading surface checks: does it read captured bind data only (no GltfChild edge, no store write)? does it preserve the `skin.joints[]` spine? — both are grep-/test-enforced here. REF: GROUND_TRUTH_GLTF.md DEFERRED (Wave E2) → interim grounding RESEARCH.md §B1 three.js citations (`GLTFLoader.js:3930-3993` loadSkin, `Skeleton.js:64-78` calculateInverses); `src/nodes/GltfSkeleton.ts`, `src/core/import/projectGltfSkeleton.ts`, `src/core/import/gltfImportChain.ts` `buildSkinMetadata`, `src/nodes/GltfSkeleton.test.ts`, `src/core/import/projectGltfSkeleton.test.ts`, `src/core/import/gltfSkinCapture.test.ts`, `tests/e2e/p7.11-gltf-rig-nodes.spec.ts`. Issue #100. (Interim-grounded until GROUND_TRUTH_GLTF.md exists.)
+
+### V26: A baked GltfChild KeyframeChannel stores BOTH params.target (the dagId) AND params.childName — the two key-spaces are not interchangeable
+
+**Status:** ALIGNED (P7.12 D-04 / Wave D, #108, 2026-05-30).
+
+**Span:** The copy-on-write bake boundary — `src/agent/mutators/builders/bakeGltfChannel.ts` (the writer), `src/app/bakedGltfChannels.ts` (the renderer/read-side enumerator), `src/app/animate/paramAnimationState.ts` (the selection/dopesheet matcher), `src/app/animate/bakeOnEdit.ts` + `dispatchMutator.ts` (the idempotency/exists check). All consume the SAME baked KeyframeChannelVec3 node.
+
+**Statement:** A P7.12 baked glTF-bone channel MUST carry, in its params, BOTH:
+
+- `target` = the GltfChild **dagId** (`gltfChildDagId(assetRef, childName)`) — REQUIRED by `paramAnimationState` (`p.target === selectionNodeId`, where the selection id IS the GltfChild dagId) AND by the bake idempotency / "does a channel already exist for this bone" check.
+- `childName` = the glTF child name — REQUIRED by the renderer/read-side enumerator (`bakedChannelSamplersForAsset`) so it resolves the bone by name with NO per-frame nodeNameMap inverse scan, and as the clip-track key ([[H53]]).
+
+Plus `assetRef` (the owning asset) so the enumerator/B2 display predicate can scope by asset. All three are written by D1 construction and persist only because they are declared on the schema ([[H56]]).
+
+**Why it matters:** the dagId space and the childName space are bridged ONLY by `nodeNameMap` (childName → dagId) and `gltfChildDagId`. Storing one and deriving the other per frame is either O(N) (inverse scan) or wrong (the wrong direction). The renderer's asset-membership test `nodeNameMap[childName] === target` is the cheap consistency assertion that the two stored keys agree.
+
+**Enforcement:** `bakeGltfChannel.test.ts` asserts every baked channel carries BOTH `target === gltfChildDagId(assetRef, childName)` AND `childName`; the enumerator's membership test fails closed (a channel whose keys disagree is excluded). Cross-ref [[H53]] (the childName-not-dagId key trap), [[H54]] (edge-less bridge), [[H56]] (schema-declaration prerequisite), [[V22]] (deterministic ids), [[V20]] (single writer). REF: `src/agent/mutators/builders/bakeGltfChannel.ts`, `src/app/bakedGltfChannels.ts`, `src/app/animate/paramAnimationState.ts`, `src/core/import/gltfImportChain.ts` (`gltfChildDagId`/`gltfChannelDagId`). Issue #108. (Interim-grounded until GROUND_TRUTH_GLTF.md.)

@@ -261,13 +261,17 @@ async function evalRenderRoot(page: import('@playwright/test').Page, seconds: nu
       const scene = out.scene ?? (out as unknown as { children?: unknown[] });
       const children = (scene as { children: Array<Record<string, unknown>> }).children;
       const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { kind: string; target?: { rotation?: [number, number, number] } }
+        | {
+            kind: string;
+            sampleTarget?: (sec: number) => { rotation?: [number, number, number] } | null;
+          }
         | undefined;
       return {
         // Names of every scene child by kind — proves the rewire.
         sceneChildKinds: children.map((c) => (c as { kind?: string }).kind),
         layerKind: layer?.kind ?? null,
-        rotation: layer?.target?.rotation ?? null,
+        // P7.12 D-04: sample the function-of-time patched target (was layer.target).
+        rotation: layer?.sampleTarget?.(s)?.rotation ?? null,
       };
     },
     { s: seconds },

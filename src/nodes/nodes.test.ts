@@ -11,6 +11,11 @@ import { buildDefaultDagState, buildDefaultProject } from '../core/project/defau
 import { ProjectSchema } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
+// P7.12 D-04 — node defs for the inputs:{} purity assertion.
+import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
+import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
+import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
+import { KeyframeChannelColorNode } from './KeyframeChannelColor';
 import type {
   AnimationClipValue,
   AnimationLayerValue,
@@ -909,11 +914,18 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
 // ---------------------------------------------------------------------------
 // P3 — Timeline = animation nodes (THESIS §42)
 //
-// Each KeyframeChannel<T> is a pure consumer of a Time socket — same (params,
-// time) → same value. AnimationLayer aggregates channels and mutes them at
-// the gate. Shot/Cut are editorial wrappers (data forwarders).
+// P7.12 D-04 — each KeyframeChannel<T> is now a FUNCTION-OF-TIME value (V24):
+// evaluate is pure over (params), no `time` input socket; the value carries
+// `sample(seconds)`. Tests call `.sample(t)` (was the pre-sampled `.value`).
+// AnimationLayer carries `sampleTarget(seconds)` (the patch moved into the
+// closure). Shot/Cut are editorial wrappers (data forwarders).
 // ---------------------------------------------------------------------------
 
+// P7.12 D-04: channels have no `time` socket. The TimeSource is still seeded
+// (some tests assert hash behavior elsewhere), and the legacy
+// `time→ch.time` connect would now reference a dropped socket — so it is
+// removed here. (The back-compat ghost-binding case is asserted explicitly in
+// the dedicated test below.)
 function buildChannelState(nodeType: string, params: unknown) {
   let state = emptyDagState();
   state = applyOp(state, {
@@ -928,15 +940,10 @@ function buildChannelState(nodeType: string, params: unknown) {
     nodeType,
     params,
   }).next;
-  state = applyOp(state, {
-    type: 'connect',
-    from: { node: 'time', socket: 'out' },
-    to: { node: 'ch', socket: 'time' },
-  }).next;
   return state;
 }
 
-describe('P3 — KeyframeChannelNumber (pure, time-aware)', () => {
+describe('P3 — KeyframeChannelNumber (pure, function-of-time D-04)', () => {
   const params = {
     name: 'intensity',
     target: 'light',
@@ -947,17 +954,19 @@ describe('P3 — KeyframeChannelNumber (pure, time-aware)', () => {
     ],
   };
 
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sample parity)', (t) => {
     const state = buildChannelState('KeyframeChannelNumber', params);
-    const a = evalAt<KeyframeChannelNumberValue>(state, 'ch', t);
-    const b = evalAt<KeyframeChannelNumberValue>(state, 'ch', t);
-    expect(a).toEqual(b);
+    const a = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    const b = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    // P7.12 D-04: evaluate is pure (no time input); the value carries
+    // sample(t). The two evaluations produce identical samples at every t.
+    expect(a.sample(t)).toEqual(b.sample(t));
   });
 
-  it('linear interp: at t=0.5 value is exactly 5', () => {
+  it('linear interp: at t=0.5 sample is exactly 5', () => {
     const state = buildChannelState('KeyframeChannelNumber', params);
-    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.5);
-    expect(v.value).toBeCloseTo(5, 6);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    expect(v.sample(0.5)).toBeCloseTo(5, 6);
     expect(v.valueType).toBe('number');
     expect(v.target).toBe('light');
     expect(v.paramPath).toBe('intensity');
@@ -972,22 +981,22 @@ describe('P3 — KeyframeChannelNumber (pure, time-aware)', () => {
       ],
     };
     const state = buildChannelState('KeyframeChannelNumber', cubic);
-    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.5);
-    expect(v.value).toBeCloseTo(5, 6);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    expect(v.sample(0.5)).toBeCloseTo(5, 6);
     // off-midpoint — cubic ≠ linear
-    const v2 = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.25);
-    expect(v2.value).toBeCloseTo(0.25 * 0.25 * (3 - 2 * 0.25) * 10, 6);
+    expect(v.sample(0.25)).toBeCloseTo(0.25 * 0.25 * (3 - 2 * 0.25) * 10, 6);
   });
 
   it('out-of-range clamps to first/last keyframe', () => {
     const state = buildChannelState('KeyframeChannelNumber', params);
-    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', -1).value).toBe(0);
-    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 5).value).toBe(10);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    expect(v.sample(-1)).toBe(0);
+    expect(v.sample(5)).toBe(10);
   });
 
   it('empty channel returns 0', () => {
     const state = buildChannelState('KeyframeChannelNumber', { ...params, keyframes: [] });
-    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0).value).toBe(0);
+    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0).sample(0)).toBe(0);
   });
 
   it('keyframes inserted out-of-time-order still interpolate correctly', () => {
@@ -998,11 +1007,78 @@ describe('P3 — KeyframeChannelNumber (pure, time-aware)', () => {
         { time: 0, value: 0, easing: 'linear' as const },
       ],
     });
-    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0.5).value).toBeCloseTo(5, 6);
+    expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0).sample(0.5)).toBeCloseTo(5, 6);
+  });
+
+  // P7.12 D-04 — V3-amend purity: no `time` input socket (mirrors 7.10's
+  // TransformClip test). Time enters via sample(seconds), so the node's inputs
+  // are empty and its cache key stops flipping per playback frame (H48/H49).
+  it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
+    expect(KeyframeChannelNumberNode.inputs).toEqual({});
+  });
+
+  // P7.12 D-04 — sample-parity to the pre-migration semantics: a sweep of t
+  // through sample() reproduces the same interpolated values the old
+  // time-input evaluate produced. (Linear 0→10 over [0,1].)
+  it('D-04: sample(t) reproduces the pre-migration interpolated curve', () => {
+    const state = buildChannelState('KeyframeChannelNumber', params);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    expect(v.sample(0)).toBeCloseTo(0, 6);
+    expect(v.sample(0.5)).toBeCloseTo(5, 6);
+    expect(v.sample(1)).toBeCloseTo(10, 6);
+    expect(v.sample(1.5)).toBeCloseTo(10, 6); // clamp past last
+    expect(v.sample(2)).toBeCloseTo(10, 6);
+  });
+
+  // P7.12 D-04 / R6 (NIT-1) — back-compat ghost binding. A saved project with
+  // a `Time→channel.time` wire (the now-dropped socket) must hydrate + evaluate
+  // WITHOUT throwing AND return a VALID sample closure with correct swept
+  // values. The evaluator ignores bindings to undeclared sockets (same
+  // mechanism as TransformClip post-7.10).
+  it('D-04 back-compat: ghost Time→ch.time binding is ignored; valid sample closure', () => {
+    // A SAVED project (pre-7.12) carries a `Time→ch.time` edge as a binding in
+    // node.inputs — loaded via hydrate, NOT replayed through applyOp (the Op
+    // layer validates sockets; saved bindings are trusted). We construct that
+    // hydrated shape directly: a `time` binding on a socket the node no longer
+    // declares. The evaluator must ignore the ghost binding and still return a
+    // valid sample closure (same mechanism as TransformClip post-7.10).
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'time',
+      nodeType: 'TimeSource',
+      params: {},
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params,
+    }).next;
+    // Inject the ghost binding the way a hydrated saved project would carry it.
+    const ghosted: typeof state = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        ch: {
+          ...state.nodes.ch,
+          inputs: { ...state.nodes.ch.inputs, time: { node: 'time', socket: 'out' } },
+        },
+      },
+    };
+    let v: KeyframeChannelNumberValue | undefined;
+    expect(() => {
+      v = evalAt<KeyframeChannelNumberValue>(ghosted, 'ch', 0);
+    }).not.toThrow();
+    expect(v).toBeDefined();
+    // The closure is valid and produces the correct swept values.
+    expect(v!.sample(0)).toBeCloseTo(0, 6);
+    expect(v!.sample(0.5)).toBeCloseTo(5, 6);
+    expect(v!.sample(1)).toBeCloseTo(10, 6);
   });
 });
 
-describe('P3 — KeyframeChannelVec3 (pure, time-aware)', () => {
+describe('P3 — KeyframeChannelVec3 (pure, function-of-time D-04)', () => {
   const params = {
     name: 'pos',
     target: 'box',
@@ -1013,20 +1089,36 @@ describe('P3 — KeyframeChannelVec3 (pure, time-aware)', () => {
     ],
   };
 
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sample parity)', (t) => {
     const state = buildChannelState('KeyframeChannelVec3', params);
-    const a = evalAt<KeyframeChannelVec3Value>(state, 'ch', t);
-    const b = evalAt<KeyframeChannelVec3Value>(state, 'ch', t);
-    expect(a).toEqual(b);
+    const a = evalAt<KeyframeChannelVec3Value>(state, 'ch', 0);
+    const b = evalAt<KeyframeChannelVec3Value>(state, 'ch', 0);
+    expect(a.sample(t)).toEqual(b.sample(t));
   });
 
   it('per-component lerp at t=0.5 → [5, 10, 15]', () => {
     const state = buildChannelState('KeyframeChannelVec3', params);
-    const v = evalAt<KeyframeChannelVec3Value>(state, 'ch', 0.5);
+    const v = evalAt<KeyframeChannelVec3Value>(state, 'ch', 0);
     expect(v.valueType).toBe('vec3');
-    expect(v.value[0]).toBeCloseTo(5, 6);
-    expect(v.value[1]).toBeCloseTo(10, 6);
-    expect(v.value[2]).toBeCloseTo(15, 6);
+    const s = v.sample(0.5);
+    expect(s[0]).toBeCloseTo(5, 6);
+    expect(s[1]).toBeCloseTo(10, 6);
+    expect(s[2]).toBeCloseTo(15, 6);
+  });
+
+  it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
+    expect(KeyframeChannelVec3Node.inputs).toEqual({});
+  });
+
+  it('D-04: sample(t) reproduces the pre-migration interpolated curve', () => {
+    const state = buildChannelState('KeyframeChannelVec3', params);
+    const v = evalAt<KeyframeChannelVec3Value>(state, 'ch', 0);
+    expect(v.sample(0)).toEqual([0, 0, 0]);
+    expect(v.sample(1)).toEqual([10, 20, 30]);
+    const mid = v.sample(0.5);
+    expect(mid[0]).toBeCloseTo(5, 6);
+    expect(mid[1]).toBeCloseTo(10, 6);
+    expect(mid[2]).toBeCloseTo(15, 6);
   });
 });
 
@@ -1044,20 +1136,25 @@ describe('P3 — KeyframeChannelQuat (pure, time-aware)', () => {
     ],
   };
 
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sample parity)', (t) => {
     const state = buildChannelState('KeyframeChannelQuat', params);
-    const a = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
-    const b = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
-    expect(a).toEqual(b);
+    const a = evalAt<KeyframeChannelQuatValue>(state, 'ch', 0);
+    const b = evalAt<KeyframeChannelQuatValue>(state, 'ch', 0);
+    expect(a.sample(t)).toEqual(b.sample(t));
   });
 
   it('slerp result stays unit-length (V2 invariant for quaternion math)', () => {
     const state = buildChannelState('KeyframeChannelQuat', params);
+    const v = evalAt<KeyframeChannelQuatValue>(state, 'ch', 0);
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
-      const v = evalAt<KeyframeChannelQuatValue>(state, 'ch', t);
-      const len = Math.sqrt(v.value[0] ** 2 + v.value[1] ** 2 + v.value[2] ** 2 + v.value[3] ** 2);
+      const q = v.sample(t);
+      const len = Math.sqrt(q[0] ** 2 + q[1] ** 2 + q[2] ** 2 + q[3] ** 2);
       expect(len).toBeCloseTo(1, 5);
     }
+  });
+
+  it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
+    expect(KeyframeChannelQuatNode.inputs).toEqual({});
   });
 });
 
@@ -1072,25 +1169,30 @@ describe('P3 — KeyframeChannelColor (pure, time-aware)', () => {
     ],
   };
 
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sample parity)', (t) => {
     const state = buildChannelState('KeyframeChannelColor', params);
-    const a = evalAt<KeyframeChannelColorValue>(state, 'ch', t);
-    const b = evalAt<KeyframeChannelColorValue>(state, 'ch', t);
-    expect(a).toEqual(b);
+    const a = evalAt<KeyframeChannelColorValue>(state, 'ch', 0);
+    const b = evalAt<KeyframeChannelColorValue>(state, 'ch', 0);
+    expect(a.sample(t)).toEqual(b.sample(t));
   });
 
   it('hex output is 7-char #rrggbb at every sample', () => {
     const state = buildChannelState('KeyframeChannelColor', params);
+    const v = evalAt<KeyframeChannelColorValue>(state, 'ch', 0);
     for (const t of [0, 0.5, 1]) {
-      const v = evalAt<KeyframeChannelColorValue>(state, 'ch', t);
-      expect(v.value).toMatch(/^#[0-9a-f]{6}$/);
+      expect(v.sample(t)).toMatch(/^#[0-9a-f]{6}$/);
     }
   });
 
   it('endpoints round-trip exactly', () => {
     const state = buildChannelState('KeyframeChannelColor', params);
-    expect(evalAt<KeyframeChannelColorValue>(state, 'ch', 0).value).toBe('#ff0000');
-    expect(evalAt<KeyframeChannelColorValue>(state, 'ch', 1).value).toBe('#0000ff');
+    const v = evalAt<KeyframeChannelColorValue>(state, 'ch', 0);
+    expect(v.sample(0)).toBe('#ff0000');
+    expect(v.sample(1)).toBe('#0000ff');
+  });
+
+  it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
+    expect(KeyframeChannelColorNode.inputs).toEqual({});
   });
 });
 
@@ -1118,11 +1220,7 @@ describe('P3 — AnimationLayer (pure aggregator)', () => {
           ],
         },
       }).next;
-      state = applyOp(state, {
-        type: 'connect',
-        from: { node: 'time', socket: 'out' },
-        to: { node: `ch${i}`, socket: 'time' },
-      }).next;
+      // P7.12 D-04: channels have no `time` socket — no time→ch connect.
     }
     state = applyOp(state, {
       type: 'addNode',
@@ -1151,18 +1249,21 @@ describe('P3 — AnimationLayer (pure aggregator)', () => {
     return state;
   }
 
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sampleTarget parity)', (t) => {
     const state = buildLayer({ name: 'L', weight: 1, mute: false, solo: false, boneMask: [] }, 2);
-    const a = evalAt<AnimationLayerValue>(state, 'layer', t);
-    const b = evalAt<AnimationLayerValue>(state, 'layer', t);
-    expect(a).toEqual(b);
+    const a = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    const b = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    // P7.12 D-04: the patch is function-of-time via sampleTarget(t).
+    expect(a.sampleTarget(t)).toEqual(b.sampleTarget(t));
   });
 
   it('passes channels through when mute=false', () => {
     const state = buildLayer({ name: 'L', weight: 1, mute: false, solo: false, boneMask: [] }, 2);
     const v = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
     expect(v.active).toHaveLength(2);
+    // P7.12 D-04: `target` is the un-patched base; sampleTarget(t) patches it.
     expect(v.target?.kind).toBe('BoxMesh');
+    expect(v.sampleTarget(0.5)?.kind).toBe('BoxMesh');
   });
 
   it('mute=true → active is empty (channel inputs ignored)', () => {
@@ -1305,11 +1406,7 @@ describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
         ],
       },
     }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'time', socket: 'out' },
-      to: { node: 'ch', socket: 'time' },
-    }).next;
+    // P7.12 D-04: channel has no `time` socket — no time→ch connect.
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'layer',
@@ -1329,12 +1426,15 @@ describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
     return s;
   }
 
+  // P7.12 D-04: the patch is sampled at time via sampleTarget(seconds); the
+  // eager `target` is the un-patched base.
   it('patches the wrapped target.position at t=1 (full channel)', () => {
     const state = buildAnimatedBoxState([0, 5, 0]);
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
-    expect(v.target?.kind).toBe('BoxMesh');
-    if (v.target?.kind === 'BoxMesh') {
-      expect(v.target.position).toEqual([0, 5, 0]);
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    const patched = v.sampleTarget(1);
+    expect(patched?.kind).toBe('BoxMesh');
+    if (patched?.kind === 'BoxMesh') {
+      expect(patched.position).toEqual([0, 5, 0]);
     }
   });
 
@@ -1346,10 +1446,11 @@ describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
       paramPath: 'weight',
       value: 0.5,
     }).next;
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
-    if (v.target?.kind === 'BoxMesh') {
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    const patched = v.sampleTarget(1);
+    if (patched?.kind === 'BoxMesh') {
       // Original [0,0,0], channel [0,10,0], weight 0.5 → [0,5,0]
-      expect(v.target.position[1]).toBeCloseTo(5, 6);
+      expect(patched.position[1]).toBeCloseTo(5, 6);
     }
   });
 
@@ -1361,17 +1462,18 @@ describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
       paramPath: 'mute',
       value: true,
     }).next;
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
-    if (v.target?.kind === 'BoxMesh') {
-      expect(v.target.position).toEqual([0, 0, 0]);
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    const patched = v.sampleTarget(1);
+    if (patched?.kind === 'BoxMesh') {
+      expect(patched.position).toEqual([0, 0, 0]);
     }
   });
 
   it('twice-eval bit-exact when patched (channel application is pure)', () => {
     const state = buildAnimatedBoxState([1, 2, 3]);
-    const a = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
-    const b = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
-    expect(a).toEqual(b);
+    const a = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    const b = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    expect(a.sampleTarget(0.5)).toEqual(b.sampleTarget(0.5));
   });
 
   it('empty paramPath is a no-op — target unchanged', () => {
@@ -1383,9 +1485,10 @@ describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
       paramPath: 'paramPath',
       value: '',
     }).next;
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 1);
-    if (v.target?.kind === 'BoxMesh') {
-      expect(v.target.position).toEqual([0, 0, 0]);
+    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
+    const patched = v.sampleTarget(1);
+    if (patched?.kind === 'BoxMesh') {
+      expect(patched.position).toEqual([0, 0, 0]);
     }
   });
 });

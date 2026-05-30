@@ -70,11 +70,7 @@ function buildSceneWithChannel(): DagState {
     nodeType: 'KeyframeChannelVec3',
     params: { name: 'position', target: 'box', paramPath: 'position', keyframes: [] },
   }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_time', socket: 'out' },
-    to: { node: 'box_position_channel', socket: 'time' },
-  }).next;
+  // P7.12 D-04: channel has no `time` socket — no time→channel connect.
   s = applyOp(s, {
     type: 'connect',
     from: { node: 'box_position_channel', socket: 'out' },
@@ -354,5 +350,41 @@ describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
     });
     expect(res).toEqual({ ok: true });
     expect(useDagStore.getState().state.nodes['box_rotation_channel']).toBeDefined();
+  });
+
+  // P7.12 D-04 (FLAG-4): post-migration the composite delegates to the
+  // Time-wire-free addChannel, so its applied DAG must carry ZERO
+  // `socket:'time'` connects landing on the channel, AND no channel input
+  // binds the now-dropped `time` socket. This locks the invariant that the
+  // first-key composite no longer roots/wires a TimeSource into the channel.
+  it('FLAG-4: first-key composite emits NO time wire into the channel (D-04)', () => {
+    useDagStore.getState().hydrate(buildScene());
+    const res = dispatchFirstKeyComposite({
+      targetId: 'box',
+      paramPath: 'position',
+      value: [0, 0, 0],
+      seconds: 0,
+    });
+    expect(res).toEqual({ ok: true });
+
+    // The channel node carries no binding on a `time` input socket.
+    const channel = useDagStore.getState().state.nodes['box_position_channel'];
+    expect(channel).toBeDefined();
+    expect((channel.inputs as Record<string, unknown>).time).toBeUndefined();
+
+    // No node in the resulting DAG wires anything into the channel's `time`.
+    for (const node of Object.values(useDagStore.getState().state.nodes)) {
+      const bindings = Object.values(node.inputs ?? {}).flat();
+      for (const b of bindings) {
+        const ref = b as { node?: string; socket?: string } | undefined;
+        // Nothing should bind the channel via a `time`-named socket on it,
+        // and the channel itself declares no `time` input.
+        if (ref?.node === 'box_position_channel') {
+          // The only legal consumer wiring is layer.animation ← channel.out;
+          // there must be no time edge.
+          expect(node.type === 'AnimationLayer' || node.type === 'KeyframeChannelVec3').toBe(true);
+        }
+      }
+    }
   });
 });

@@ -17,7 +17,7 @@
 
 import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 // #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
@@ -32,6 +32,8 @@ import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { degVec3ToRad } from './rotation';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
+import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
+import type { BakedChannel } from '../app/resolveGltfChildTransform';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -41,6 +43,7 @@ import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
 import type {
   AmbientLightValue,
+  AnimationLayerValue,
   AreaLightValue,
   BoxMeshValue,
   CameraValue,
@@ -418,10 +421,58 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
     case 'Character':
       return <CharacterR value={value} />;
     case 'AnimationLayer':
-      // P3 Wave A — passthrough renderer. Channel application lands in Wave C.
-      return value.target ? <MeshChild value={value.target} override={override} /> : null;
+      // P7.12 D-04 (shape B-lite) — the layer's channels are function-of-time,
+      // so the patched target must be sampled at live time. AnimationLayerR
+      // samples value.sampleTarget(seconds) in a useFrame (time SNAPSHOT, never
+      // a subscription — H48) and renders the patched SceneChild declaratively.
+      return <AnimationLayerR value={value} override={override} />;
   }
 });
+
+// P7.12 D-04 (shape B-lite, FLAG-1 LOCKED) — renderer for the authored
+// AnimationLayer path. The channels are function-of-time (no pre-sampled
+// `.value`), so the layer's patched target must be re-sampled per frame at the
+// live play time. This component:
+//   1. Reads the time SNAPSHOT (`useTimeStore.getState().seconds`) inside a
+//      useFrame — NEVER a subscribed time selector. Subscribing would
+//      re-introduce the per-frame React reconciliation P7.10 removed (H48,
+//      3rd-occurrence risk). The grep-gate asserts no time selector is added
+//      to this render path.
+//   2. Calls value.sampleTarget(seconds) → the patched clone for this frame.
+//   3. Renders the patched SceneChild declaratively. Re-rendering the ONE
+//      authored node per playback frame is the accepted B-lite cost — this is
+//      a single standalone scene node (cube + NPanel diamond), not 64 bones,
+//      and is exactly the pre-7.10 behavior for the authored path. The V24/H49
+//      perf win is for the CHANNELS themselves (pure function-of-time).
+// A `lastApplied` dirty-check on (seconds, sampleTarget ref) keeps the PAUSED
+// case free (no churn when not playing) and re-applies on an edit (a new
+// value ref) or a time change.
+// REF: PLAN 7.12 D-04 (A3 LOCKED B-lite); vyapti V24; hetvabhasa H48/H40.
+function AnimationLayerR({
+  value,
+  override,
+}: {
+  value: AnimationLayerValue;
+  override?: MaterialValue;
+}) {
+  const [patched, setPatched] = useState<SceneChild | null>(() =>
+    value.sampleTarget(useTimeStore.getState().seconds),
+  );
+  const lastApplied = useRef<{ seconds: number; sampleTarget: unknown } | null>(null);
+  useFrame(() => {
+    const seconds = useTimeStore.getState().seconds;
+    if (
+      lastApplied.current !== null &&
+      lastApplied.current.seconds === seconds &&
+      lastApplied.current.sampleTarget === value.sampleTarget
+    ) {
+      return;
+    }
+    lastApplied.current = { seconds, sampleTarget: value.sampleTarget };
+    setPatched(value.sampleTarget(seconds));
+  });
+  return patched ? <MeshChild value={patched} override={override} /> : null;
+}
 
 function applyOverride(
   baseColor: string,
@@ -588,6 +639,18 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     () => childOverridesForAsset(dagNodes, value.assetRef),
     [dagNodes, value.assetRef],
   );
+  // P7.12 (#108, C2) — the BAKED-CHANNEL layer: per-bone KeyframeChannel nodes
+  // materialized by the copy-on-write bake (Wave D). SUBSCRIBED, like
+  // childOverrides — an edit produces a NEW `nodes` object so this memo re-derives
+  // and the next frame re-applies; but it does NOT subscribe to TIME (H48). The
+  // samplers are function-of-time closures (V24); the useFrame below invokes them
+  // at the same `seconds` snapshot it samples the clip at. Keyed by childName,
+  // scoped to this asset by nodeNameMap membership (BLOCK-2). Dormant until the
+  // bake mutator (D1) exists — no baked channel ⇒ empty map ⇒ pure clip behavior.
+  const bakedChannels = useMemo(
+    () => bakedChannelSamplersForAsset(dagNodes, value.nodeNameMap),
+    [dagNodes, value.nodeNameMap],
+  );
   useEffect(() => {
     if (!override) return;
     const mat = applyOverride('#ffffff', override);
@@ -663,13 +726,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // bones are updated in time for this frame's draw. The single-writer
   // V20/H36/H33 invariant still holds (this is still the sole TRS-writer onto
   // the clone). REF: PLAN 7.10 Wave C; H48 + B13 catalogue.
-  const lastApplied = useRef<{ seconds: number; overrides: unknown } | null>(null);
+  const lastApplied = useRef<{ seconds: number; overrides: unknown; baked: unknown } | null>(null);
   useFrame(() => {
     const seconds = useTimeStore.getState().seconds;
     if (
       lastApplied.current !== null &&
       lastApplied.current.seconds === seconds &&
-      lastApplied.current.overrides === childOverrides
+      lastApplied.current.overrides === childOverrides &&
+      lastApplied.current.baked === bakedChannels
     ) {
       return;
     }
@@ -677,10 +741,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     // referentially-equal closure across renders (P7.10 cache invariance);
     // .sample() is a pure call producing a fresh TRS map per invocation.
     const tracks = value.transformClip?.sample(seconds) ?? null;
+    // P7.12 (#108, C2) — sample the baked-channel band at the SAME `seconds`
+    // snapshot, per component, keyed by childName. A present component wins over
+    // the clip (presence, R-4) inside resolveAllChildTrs. No new time
+    // subscription: the samplers are invoked here in the existing useFrame.
+    let bakedByName: Record<string, BakedChannel> | null = null;
+    for (const name of Object.keys(bakedChannels)) {
+      const baked = sampleBakedChannel(bakedChannels[name], seconds);
+      if (baked) (bakedByName ??= {})[name] = baked;
+    }
     const resolved = resolveAllChildTrs({
       names: Object.keys(value.nodeNameMap),
       childByName: childOverrides,
       tracks,
+      bakedByName,
     });
     for (const [name, trs] of Object.entries(resolved)) {
       const child = cloned.getObjectByName(name);
@@ -690,7 +764,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       child.rotation.set(radRot[0], radRot[1], radRot[2]);
       child.scale.set(trs.scale[0], trs.scale[1], trs.scale[2]);
     }
-    lastApplied.current = { seconds, overrides: childOverrides };
+    lastApplied.current = { seconds, overrides: childOverrides, baked: bakedChannels };
   });
   // Re-apply on clone swap (asset reload) — the new clone has bind-pose TRS,
   // and the dirty-check above would short-circuit if clip/overrides happen to

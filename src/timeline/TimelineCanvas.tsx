@@ -69,6 +69,7 @@ import type { Node } from '../core/dag/types';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useTimelineSelection } from './timelineSelection';
+import { useSelectionStore } from '../app/stores/selectionStore';
 import {
   keyframeToRect,
   cullVisibleKeyframes,
@@ -77,7 +78,9 @@ import {
   playheadStripRect,
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
 } from './timelineCanvasGeometry';
-import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
+import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
+import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
+import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
 
 /**
  * Imperative canvas palette — the exact hex constants the 2D context
@@ -126,11 +129,10 @@ const CHANNEL_TYPES = new Set([
   'KeyframeChannelColor',
 ]);
 
-interface ChannelRow {
-  channelId: string;
-  name: string;
-  keyframes: ReadonlyArray<{ time: number }>;
-}
+// ChannelRow now lives in clipChannelRows.ts (B1) so the read-only clip-row
+// flag is shared across the projector + this collector. Re-exported so
+// existing importers of TimelineCanvas's row contract keep working.
+export type { ChannelRow };
 
 /**
  * Flatten the DAG's AnimationLayers + orphan channels into the ordered
@@ -336,13 +338,48 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     fromTime: number;
     pointerClientX: number;
     canvasLeft: number;
+    // P7.12 D2 — set ONLY when the dragged row is a read-only imported clip row
+    // (B2's `clip:` namespace). Its presence routes endDrag through the
+    // copy-on-write bake-then-retime composite instead of the plain retime
+    // (the channel does not exist yet — the bake creates it). null = a real
+    // baked/authored channel drag (the existing path).
+    clipRow?: { assetRef: string; childName: string; component: ClipRowComponent };
   }>(null);
   // The ghost block's OWN idle-guard comparand — a SIBLING of
   // lastPlayheadXRef, never the playhead's. -1 = no ghost / cleared, so
   // the next tick after a commit restores cleanly under the stale ghost.
   const lastGhostXRef = useRef<number>(-1);
 
-  const rows = collectChannelRows(nodes);
+  // P7.12 B2 — when a GltfChild (imported bone) is selected, append its
+  // read-only clip rows so its embedded animation is visible in the dopesheet
+  // without a bake. Suppressed once the bone is baked (FLAG-3 single-row-set).
+  // Pure: appendSelectionClipRows is a function of (baseRows, nodes, selection).
+  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  const rows = useMemo(
+    () =>
+      appendSelectionClipRows({
+        baseRows: collectChannelRows(nodes),
+        nodes,
+        selectedNodeId: primaryNodeId,
+      }),
+    [nodes, primaryNodeId],
+  );
+
+  // P7.12 B2 — selection → active row. `setActiveChannel` had no production
+  // caller before this (research-flagged): selecting a channel row was a
+  // click-only affordance. Wire it for the imported-bone path so selecting a
+  // GltfChild in the viewport/NPanel surfaces its clip curve in the editor
+  // below WITHOUT a manual row click. We set the FIRST clip row (the bone's
+  // position component) active, and only when the current active channel is not
+  // already one of this bone's clip rows (so a user's manual component click is
+  // not stomped on every render).
+  const setActiveChannel = useTimelineSelection((s) => s.setActiveChannel);
+  useEffect(() => {
+    const clipRows = rows.filter((r) => r.readOnly && r.channelId.startsWith('clip:'));
+    if (clipRows.length === 0) return;
+    const alreadyActive = clipRows.some((r) => r.channelId === activeChannelId);
+    if (!alreadyActive) setActiveChannel(clipRows[0].channelId);
+  }, [rows, activeChannelId, setActiveChannel]);
 
   // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
   // contract) is the canvas's visual-correctness surrogate. The JSX used
@@ -730,6 +767,30 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           Math.abs(px - cx) <= DIAMOND_PX / 2 + slop &&
           Math.abs(py - cy) <= DIAMOND_PX / 2 + slop
         ) {
+          // P7.12 D2 — a read-only imported CLIP row (B2's `clip:` namespace)
+          // has no DAG node yet; its keyframe time comes straight off the
+          // projected clip row. Dragging it is the COPY-ON-WRITE trigger: store
+          // the clip-row context so endDrag bakes-then-retimes (R3). The bake +
+          // edit become ONE undo via dispatchBakeThenRetime.
+          const clip = parseClipRowId(row.channelId);
+          if (clip) {
+            const assetRef = assetRefForChild(useDagStore.getState().state.nodes, clip.childName);
+            if (!assetRef) continue;
+            dragRef.current = {
+              channelId: row.channelId,
+              rowIndex: r,
+              fromTime: kf.time, // the projected clip key time (exact)
+              pointerClientX: e.clientX,
+              canvasLeft: box.left,
+              clipRow: { assetRef, childName: clip.childName, component: clip.component },
+            };
+            useTimelineSelection.getState().setActiveKeyframe({
+              channelId: row.channelId,
+              time: kf.time,
+            });
+            canvas.setPointerCapture(e.pointerId);
+            return;
+          }
           // Read the EXACT stored sample time off the LIVE DAG — this
           // float becomes fromTime, the D-03 discriminator (NOT a
           // pointerup-recomputed seconds, or removeKeyframes silently
@@ -782,13 +843,27 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       // An unmoved click is a no-op (exact !== — same discipline as the
       // seam's fromTime match).
       if (toTime !== drag.fromTime) {
-        // ONE seam call → atomic composite → one undo entry. On
-        // {ok:false} the seam aborted atomically; DAG already unchanged.
-        dispatchRetimeKeyframe({
-          channelId: drag.channelId,
-          fromTime: drag.fromTime,
-          toTime,
-        });
+        if (drag.clipRow) {
+          // P7.12 D2 — FIRST edit of a clip-backed bone: bake the clip track
+          // into editable channels AND retime the dragged key, as ONE atomic
+          // undo (K6). The composite re-targets the now-real baked channel by
+          // its deterministic id (D1). On {ok:false} it aborted atomically.
+          dispatchBakeThenRetime({
+            assetRef: drag.clipRow.assetRef,
+            childName: drag.clipRow.childName,
+            component: drag.clipRow.component,
+            fromTime: drag.fromTime,
+            toTime,
+          });
+        } else {
+          // ONE seam call → atomic composite → one undo entry. On
+          // {ok:false} the seam aborted atomically; DAG already unchanged.
+          dispatchRetimeKeyframe({
+            channelId: drag.channelId,
+            fromTime: drag.fromTime,
+            toTime,
+          });
+        }
       }
     }
     // Force the next tick to cleanly restore under the now-stale ghost.

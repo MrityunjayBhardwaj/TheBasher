@@ -82,6 +82,36 @@ function hashId(prefix: string, ...parts: string[]): string {
   return `n_${prefix}_${fnv1a32(parts.join('|'))}`;
 }
 
+/**
+ * The content-addressed DAG id of a glTF child (bone) node. This is the SAME
+ * derivation `buildNodeNameMap` uses at import (:120, `hashId('gltfChild',
+ * assetRef, key)`), exported so the P7.12 copy-on-write bake mutator
+ * (bakeGltfChannel, Wave D) stores `params.target` = the child's dagId without
+ * re-deriving the hash by hand (single source of truth — BLOCK-2). Diverging
+ * derivations would break the renderer's `nodeNameMap[childName] === target`
+ * asset-membership check (bakedGltfChannels.ts) AND paramAnimationState's
+ * `p.target === selectionNodeId` match (the bone's selection id IS this dagId).
+ *
+ * REF: src/core/import/gltfImportChain.ts:120 (the import-time derivation);
+ *      src/app/bakedGltfChannels.ts (the consumer); PLAN 7.12 Wave D (BLOCK-2).
+ */
+export function gltfChildDagId(assetRef: string, childName: string): string {
+  return hashId('gltfChild', assetRef, childName);
+}
+
+/**
+ * The content-addressed DAG id of a P7.12 baked KeyframeChannel for one bone's
+ * TRS component (position/rotation/scale). Deterministic (V22): re-baking the
+ * same bone yields the SAME ids, so the bake is idempotent (D1 guards on
+ * `state.nodes[id]`). Namespaced `gltfChannel` so it can never collide with the
+ * bone's own `gltfChild` id nor an authored channel id.
+ *
+ * REF: PLAN 7.12 Wave D (D1, V22 determinism); bakeGltfChannel.ts.
+ */
+export function gltfChannelDagId(assetRef: string, childName: string, component: string): string {
+  return hashId('gltfChannel', assetRef, childName, component);
+}
+
 interface NameMapResult {
   /** Sanitised + deduped scene-node key → DAG TransformClip target id.
    *  The renderer walks gltf.scene by `Object3D.name`, sanitises to the

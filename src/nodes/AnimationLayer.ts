@@ -4,11 +4,24 @@
 // via the named `animation` input socket. Holds the layer-level controls
 // (weight, boneMask, mute, solo) that gate the channels' contribution.
 //
-// Wave C extension: the evaluator now patches channel values into a
-// deep-cloned target at the channel's paramPath. The renderer (SceneFromDAG)
-// reads the patched target unchanged — no special-case path. weight scales
-// the patched value toward the target's static value (weight=1 = full
-// channel, weight=0 = static).
+// Wave C extension: the evaluator patches channel values into a
+// deep-cloned target at the channel's paramPath. weight scales the patched
+// value toward the target's static value (weight=1 = full channel, weight=0
+// = static).
+//
+// P7.12 D-04 (shape B-lite, V24/H40): the channels are now function-of-time
+// (`ch.sample(seconds)` — no pre-sampled `.value`), so a PURE evaluate (no
+// `time` input) cannot patch a fixed clone. The patch moves INTO a
+// `sampleTarget(seconds)` closure carried on the value; the renderer
+// (`AnimationLayerR` in SceneFromDAG) calls it in a useFrame at the live time
+// SNAPSHOT (never a time subscription — H48) and renders the patched clone
+// declaratively. The read-side (`resolveEvaluatedTransform`) reads
+// `sampleTarget(ctx.time.seconds)` so the gizmo/NPanel evaluated transform
+// equals the render (H40 boundary-pair). One re-render/frame for this single
+// authored node is the accepted cost (B-lite); the V24/H49 win is for the
+// CHANNELS, which stay pure function-of-time regardless of how the layer
+// renders. REF: PLAN 7.12 D-04 (A3, LOCKED B-lite); vyapti V24; hetvabhasa
+// H48/H40.
 //
 // Why a wrapper instead of an animation socket on every target node? Two
 // reasons: (1) keeps target node types unchanged so adding a channel can't
@@ -77,27 +90,34 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
     // aggregator that knows about all layers) — at the single-layer level
     // mute is the only gate that needs to fire.
     const active = params.mute ? [] : rawChannels;
+    const weight = params.weight;
 
-    // Patch channel values into a deep-cloned target. Channels apply
-    // last-write-wins; weight blends toward the original at <1 (so a 0.5
-    // weight gives a half-strength channel, 0 gives the static target).
-    const patched = patchTarget(target, active, params.weight);
+    // P7.12 D-04 (shape B-lite): the patch moves into a function-of-time
+    // closure. evaluate stays pure (no time read here); the renderer's useFrame
+    // / the read-side resolver invoke sampleTarget(seconds) at their cadence.
+    // The closure captures `active` + `target` + `weight` (all pure values).
+    const sampleTarget = (seconds: number): SceneChild | null =>
+      patchTarget(target, active, weight, seconds);
 
     return {
       kind: 'AnimationLayer',
       name: params.name,
       active,
-      weight: params.weight,
+      weight,
       boneMask: params.boneMask,
       mute: params.mute,
       solo: params.solo,
-      target: patched,
+      // The UN-PATCHED base target (D-04). Patching now happens via
+      // sampleTarget(seconds) in the renderer / read-side resolver.
+      target,
+      sampleTarget,
     };
   },
 };
 
 /**
- * Apply each channel's (paramPath, value) onto a deep-cloned copy of target.
+ * Apply each channel's (paramPath, sampled value @ seconds) onto a deep-cloned
+ * copy of target.
  * - Returns target unchanged when active is empty (avoids the clone cost).
  * - paramPath supports dot notation for nested fields (e.g. 'material.color').
  *   Empty paramPath is treated as a no-op — channels carry it as a sentinel.
@@ -105,11 +125,15 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
  *   String / quat values pass through at weight≥0.5; <0.5 falls back to
  *   target. (Quat blending requires slerp toward static; deferred —
  *   single-layer use cases don't need partial weights.)
+ *
+ * P7.12 D-04: channels are function-of-time, so the per-channel value comes
+ * from `ch.sample(seconds)` (was the pre-sampled `ch.value`).
  */
 function patchTarget(
   target: SceneChild | null,
   active: readonly KeyframeChannelValue[],
   weight: number,
+  seconds: number,
 ): SceneChild | null {
   if (!target) return null;
   if (active.length === 0) return target;
@@ -117,7 +141,7 @@ function patchTarget(
   for (const ch of active) {
     if (!ch.paramPath) continue;
     const original = readAt(clone, ch.paramPath);
-    const blended = blend(original, ch.value, ch.valueType, weight);
+    const blended = blend(original, ch.sample(seconds), ch.valueType, weight);
     writeAt(clone, ch.paramPath, blended);
   }
   return clone as unknown as SceneChild;

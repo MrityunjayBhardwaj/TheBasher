@@ -4,6 +4,7 @@ import {
   resolveAllChildTrs,
   type ChildTrs,
   type ChildOverride,
+  type BakedChannel,
 } from './resolveGltfChildTransform';
 
 const base: ChildTrs = {
@@ -163,5 +164,149 @@ describe('resolveAllChildTrs — all children at once (one precedence rule)', ()
       tracks: { legacy: clipTrack },
     });
     expect(result.legacy).toEqual(clipTrack);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P7.12 #108 — the baked-channel band (manual → baked → clip → base).
+// Presence-based (R-4): a field is present iff a baked channel contributed it;
+// the win is NEVER decided by value-equality against clip or base.
+// ---------------------------------------------------------------------------
+
+describe('resolveGltfChildTrs — baked-channel band (P7.12, presence-based)', () => {
+  const bakedTrs: ChildTrs = {
+    position: [7, 7, 7],
+    rotation: [70, 70, 70],
+    scale: [6, 6, 6],
+  };
+  const bakedAll: BakedChannel = { ...bakedTrs };
+
+  it('baked present, no manual → baked beats clip and base', () => {
+    const result = resolveGltfChildTrs({
+      base,
+      clipTrack,
+      childNode: undefined,
+      bakedChannel: bakedAll,
+    });
+    expect(result).toEqual(bakedTrs);
+  });
+
+  it('baked == base value STILL wins over clip (presence, NOT value-equality)', () => {
+    // The whole point of copy-on-write: once a bone is baked, its track is the
+    // KeyframeChannel — a baked value that happens to equal the base pose must
+    // NOT let the clip resurface. (The exact R-4 trap, baked-band edition.)
+    const bakedEqualsBase: BakedChannel = {
+      position: [...base.position] as ChildTrs['position'],
+      rotation: [...base.rotation] as ChildTrs['rotation'],
+      scale: [...base.scale] as ChildTrs['scale'],
+    };
+    const result = resolveGltfChildTrs({
+      base,
+      clipTrack,
+      childNode: undefined,
+      bakedChannel: bakedEqualsBase,
+    });
+    expect(result).toEqual(base);
+    // crucially NOT the clip — the baked band suppressed it:
+    expect(result).not.toEqual(clipTrack);
+  });
+
+  it('manual override still beats baked (manual > baked > clip > base)', () => {
+    const result = resolveGltfChildTrs({
+      base,
+      clipTrack,
+      childNode: override(allTrue),
+      bakedChannel: bakedAll,
+    });
+    expect(result).toEqual(manual);
+  });
+
+  it('per-component mix: manual position, baked rotation, clip scale, base where none', () => {
+    const mixedChild: ChildOverride = {
+      position: [9, 9, 9],
+      rotation: [99, 99, 99],
+      scale: [99, 99, 99],
+      overridden: { position: true, rotation: false, scale: false },
+    };
+    // baked supplies only rotation; clip supplies scale; position is manual.
+    const bakedRotOnly: BakedChannel = { rotation: [70, 70, 70] };
+    const result = resolveGltfChildTrs({
+      base,
+      clipTrack,
+      childNode: mixedChild,
+      bakedChannel: bakedRotOnly,
+    });
+    expect(result.position).toEqual([9, 9, 9]); // manual
+    expect(result.rotation).toEqual([70, 70, 70]); // baked (present) beats clip
+    expect(result.scale).toEqual(clipTrack.scale); // baked absent for scale → clip
+  });
+
+  it('baked absent for a field → falls through to clip, then base', () => {
+    const bakedPosOnly: BakedChannel = { position: [7, 7, 7] };
+    const withClip = resolveGltfChildTrs({
+      base,
+      clipTrack,
+      childNode: undefined,
+      bakedChannel: bakedPosOnly,
+    });
+    expect(withClip.position).toEqual([7, 7, 7]); // baked
+    expect(withClip.rotation).toEqual(clipTrack.rotation); // clip
+    const noClip = resolveGltfChildTrs({
+      base,
+      clipTrack: undefined,
+      childNode: undefined,
+      bakedChannel: bakedPosOnly,
+    });
+    expect(noClip.position).toEqual([7, 7, 7]); // baked
+    expect(noClip.rotation).toEqual(base.rotation); // base (no clip, no baked field)
+  });
+
+  it('no bakedChannel arg at all → unchanged 3-band behavior (compile-staging back-compat)', () => {
+    // Existing callers that do NOT pass bakedChannel must resolve identically to
+    // pre-7.12 (manual → clip → base).
+    expect(resolveGltfChildTrs({ base, clipTrack, childNode: undefined })).toEqual(clipTrack);
+    expect(resolveGltfChildTrs({ base, clipTrack: undefined, childNode: undefined })).toEqual(base);
+  });
+});
+
+describe('resolveAllChildTrs — baked band threaded by name (P7.12)', () => {
+  it('a baked bone uses its baked TRS; an untouched bone keeps the clip', () => {
+    const childByName: Record<string, ChildOverride> = {
+      edited: { ...base, overridden: allFalse },
+      untouched: { ...base, overridden: allFalse },
+    };
+    const tracks = { edited: clipTrack, untouched: clipTrack };
+    const bakedByName = {
+      edited: { position: [7, 7, 7], rotation: [70, 70, 70], scale: [6, 6, 6] } as BakedChannel,
+    };
+    const result = resolveAllChildTrs({
+      names: ['edited', 'untouched'],
+      childByName,
+      tracks,
+      bakedByName,
+    });
+    expect(result.edited).toEqual({
+      position: [7, 7, 7],
+      rotation: [70, 70, 70],
+      scale: [6, 6, 6],
+    }); // baked
+    expect(result.untouched).toEqual(clipTrack); // clip (no baked entry)
+  });
+
+  it('a baked-only bone (no node, no clip) still resolves', () => {
+    const bakedByName = {
+      lonely: { position: [7, 7, 7], rotation: [70, 70, 70], scale: [6, 6, 6] } as BakedChannel,
+    };
+    const result = resolveAllChildTrs({
+      names: ['lonely'],
+      childByName: {},
+      tracks: null,
+      bakedByName,
+    });
+    expect(result.lonely).toEqual({
+      position: [7, 7, 7],
+      rotation: [70, 70, 70],
+      scale: [6, 6, 6],
+    });
   });
 });

@@ -73,9 +73,9 @@ async function evalWalkPosition(
       const scene = out.scene ?? (out as unknown as { children?: unknown[] });
       const children = (scene as { children: Array<Record<string, unknown>> }).children;
       const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { target?: { position?: [number, number, number] } }
+        | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
         | undefined;
-      return layer?.target?.position ?? null;
+      return layer?.sampleTarget?.(s)?.position ?? null;
     },
     { s: seconds },
   );
@@ -164,11 +164,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
         ],
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'seed_pos_ch', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dispatch({
       type: 'connect',
       from: { node: 'seed_pos_ch', socket: 'out' },
@@ -204,9 +200,9 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
       }).value as { scene?: { children: Array<Record<string, unknown>> } };
       const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
       const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { target?: { position?: [number, number, number] } }
+        | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
         | undefined;
-      return layer?.target?.position ?? null;
+      return layer?.sampleTarget?.(s)?.position ?? null;
     };
     return { t0: at(0), t1: at(1) };
   });
@@ -420,8 +416,10 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
           }).value as { scene: { children: Array<Record<string, unknown>> } };
           const layer = out.scene.children.find(
             (c) => (c as { kind?: string }).kind === 'AnimationLayer',
-          ) as { target?: { position?: [number, number, number] } } | undefined;
-          const evalPos = layer?.target?.position ?? null;
+          ) as
+            | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
+            | undefined;
+          const evalPos = layer?.sampleTarget?.(sec)?.position ?? null;
           const proxy = w.__basher_gizmo?.()?.position ?? null;
           if (!evalPos || !proxy) return 'null';
           // Display-follow: proxy tracks eval at the live time. Compare

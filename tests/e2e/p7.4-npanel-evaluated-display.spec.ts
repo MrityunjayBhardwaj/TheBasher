@@ -133,10 +133,15 @@ async function evalWalkPosition(
         }
       }
       if (matchIdx === -1) return null;
-      // Unwrap AnimationLayer → .target (the patched clone — H34).
+      // Unwrap AnimationLayer → sampleTarget(s) (P7.12 D-04: channels are
+      // function-of-time; `.target` is now the UN-PATCHED base — the animated
+      // value comes from sampleTarget(seconds), mirroring
+      // resolveEvaluatedTransform.ts:234).
       let child: Record<string, unknown> | null = children[matchIdx] ?? null;
       if (child && (child as { kind?: string }).kind === 'AnimationLayer') {
-        child = (child as { target?: Record<string, unknown> }).target ?? null;
+        const st = (child as { sampleTarget?: (sec: number) => Record<string, unknown> | null })
+          .sampleTarget;
+        child = typeof st === 'function' ? st(s) : null;
       }
       if (!child) return null;
       const pos = (child as { position?: unknown }).position;
@@ -231,11 +236,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
         ],
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'seed_pos_ch', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dispatch({
       type: 'connect',
       from: { node: 'seed_pos_ch', socket: 'out' },
@@ -266,9 +267,10 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
       }).value as { scene?: { children: Array<Record<string, unknown>> } };
       const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
       const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { target?: { position?: [number, number, number] } }
+        | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
         | undefined;
-      return layer?.target?.position ?? null;
+      // P7.12 D-04: sample the function-of-time patched target at s (was layer.target).
+      return layer?.sampleTarget?.(s)?.position ?? null;
     };
     return { t0: at(0), t1: at(1) };
   });
@@ -653,11 +655,7 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
           ],
         },
       });
-      dispatch({
-        type: 'connect',
-        from: { node: timeId, socket: 'out' },
-        to: { node: 'd6_pos_ch', socket: 'time' },
-      });
+      // P7.12 D-04: channel has no `time` socket — connect removed.
       dispatch({
         type: 'connect',
         from: { node: 'd6_pos_ch', socket: 'out' },
@@ -694,9 +692,10 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
           }).value as { scene?: { children: Array<Record<string, unknown>> } };
           const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
           const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-            | { target?: { position?: [number, number, number] } }
+            | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
             | undefined;
-          const p = layer?.target?.position ?? null;
+          // P7.12 D-04: sample the function-of-time patched target (was layer.target).
+          const p = layer?.sampleTarget?.(s)?.position ?? null;
           return p ? ([p[1], p[2]] as [number, number]) : null;
         },
         { s: label === 't2' ? 1.5 : 1 },

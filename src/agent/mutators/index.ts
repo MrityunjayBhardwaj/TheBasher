@@ -40,6 +40,7 @@ import { addPassMutator } from './builders/addPass';
 import { addAIPassMutator } from './builders/addAIPass';
 import { addStitchMutator } from './builders/addStitch';
 import { randomizeMutator } from './builders/randomize';
+import { bakeGltfChannelMutator } from './builders/bakeGltfChannel';
 
 export {
   rotateMutator,
@@ -59,6 +60,7 @@ export {
   addAIPassMutator,
   addStitchMutator,
   randomizeMutator,
+  bakeGltfChannelMutator,
 };
 
 export function registerAllMutators(): void {
@@ -89,4 +91,7 @@ export function registerAllMutators(): void {
   // P7.2 — issue #26 path B: per-target randomization, N × P ops in
   // one atomic dispatch.
   registerMutator(randomizeMutator);
+  // P7.12 — issue #108 / D1: copy-on-write bake of an imported glTF bone's
+  // clip track into editable per-bone KeyframeChannel nodes (no edges, R4).
+  registerMutator(bakeGltfChannelMutator);
 }
