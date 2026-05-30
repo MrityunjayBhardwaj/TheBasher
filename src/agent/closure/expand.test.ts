@@ -419,16 +419,9 @@ function buildAnimationBaseline(): DagState {
       keyframes: [{ time: 0, value: 0, easing: 'linear' }],
     },
   }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'time', socket: 'out' },
-    to: { node: 'chA', socket: 'time' },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'time', socket: 'out' },
-    to: { node: 'chB', socket: 'time' },
-  }).next;
+  // P7.12 D-04: channels have no `time` socket — time enters via sample(seconds).
+  // The H22 'animation'-edge isolation this fixture tests is unaffected (the
+  // dropped connects were never on the 'animation' edge being walked).
   s = applyOp(s, {
     type: 'addNode',
     nodeId: 'boxA',

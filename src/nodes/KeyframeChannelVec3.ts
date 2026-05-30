@@ -3,11 +3,22 @@
 // per component. Default easing is cubic (smoothstep) — vec3 channels are
 // usually spatial and look stiff under linear interpolation.
 //
-// REF: THESIS §42, project_p3_plan, vyapti V2/V3.
+// P7.12 D-04 — function-of-time value shape (V24/V3 amended, mirrors P7.10
+// TransformClip). No `time` input socket: evaluate is pure over (params) and
+// returns a value carrying `sample(seconds)` (the existing module-private
+// `sample(keyframes, t)` closed over the sorted keyframes). Time enters via
+// the value's method at consumer cadence (AnimationLayer-render useFrame /
+// the resolver band), so the channel's cache hits across playback frames
+// instead of flipping every frame (H48/H49). Pre-7.12 saved projects with a
+// `TimeSource→channel.time` wire become harmless ghost bindings: the
+// evaluator ignores bindings to sockets the node no longer declares.
+//
+// REF: THESIS §42, project_p3_plan, vyapti V2/V3 (amended P7.10)/V24,
+//      hetvabhasa H48/H49, PLAN 7.12 D-04.
 
 import { z } from 'zod';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { Easing, KeyframeChannelVec3Value, TimeValue, Vec3 } from './types';
+import type { NodeDefinition } from '../core/dag/types';
+import type { Easing, KeyframeChannelVec3Value, Vec3 } from './types';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -70,23 +81,21 @@ export const KeyframeChannelVec3Node: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelVec3Params,
-  inputs: {
-    time: { type: 'Time', cardinality: 'single' },
-  },
+  // P7.12 D-04: no `time` input — time enters via value.sample(seconds).
+  inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
-  evaluate(params, inputs: ResolvedInputs) {
-    const time = inputs.time as TimeValue | undefined;
-    const tSeconds = time?.seconds ?? 0;
+  evaluate(params): KeyframeChannelVec3Value {
+    // Sort ONCE in the closure; sample() interpolates per call (function of
+    // time, V24). Shallow copy keeps evaluate pure (params untouched).
     const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-    const value = sample(sorted, tSeconds);
     return {
       kind: 'KeyframeChannel',
       valueType: 'vec3',
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
-      value,
+      sample: (seconds: number) => sample(sorted, seconds),
     };
   },
 };

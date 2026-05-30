@@ -222,9 +222,16 @@ export function resolveEvaluatedTransform(
 
   // 5. Unwrap the AnimationLayer to the patched clone (the H34 mechanism —
   //    THIS is the animated value, NOT a re-evaluate of selectedId).
+  //    P7.12 D-04 (H40 read-side parity): the layer's `target` is now the
+  //    UN-PATCHED base (the channels are function-of-time). The renderer
+  //    (AnimationLayerR) patches via sampleTarget(seconds) in a useFrame; the
+  //    read-side MUST sample at the SAME ctx.time.seconds so the gizmo/NPanel
+  //    evaluated transform equals what renders. Reading the eager `target`
+  //    would show the static base while the viewport shows the animated clone
+  //    (the #68/#77 displayed≠rendered class this resolver exists to prevent).
   let child: SceneChild | null = value.scene.children[matchIdx];
   if (child && child.kind === 'AnimationLayer') {
-    child = child.target;
+    child = child.sampleTarget(ctx.time.seconds);
   }
   if (!child) return null;
 

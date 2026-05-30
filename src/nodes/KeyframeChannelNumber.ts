@@ -5,8 +5,13 @@
 // interpolated value at the input Time. The target + paramPath travel with
 // the value so AnimationLayer / SceneFromDAG can apply it without re-resolving.
 //
-// Pure: same (params, inputs.time) → same value. Time enters via a `Time`
-// input socket (V3); no useFrame, no Math.random.
+// Pure: same (params) → same value-of-time. P7.12 D-04 (V24/V3 amended):
+// no `time` input socket — time enters via the value's `sample(seconds)`
+// closure at consumer cadence, not via an upstream Time edge. This keeps
+// evaluate's cache key stable across playback frames (H48/H49). No useFrame,
+// no Math.random. Pre-7.12 `TimeSource→channel.time` wires in saved projects
+// become harmless ghost bindings (the evaluator ignores bindings to sockets
+// the node no longer declares).
 //
 // Interpolation:
 //   - linear  — simple lerp between adjacent keyframes
@@ -14,11 +19,12 @@
 //               Wave C extends this with full bezier when handle drag lands.
 // Out-of-range times clamp to the first / last keyframe.
 //
-// REF: THESIS §42, project_p3_plan, vyapti V2/V3.
+// REF: THESIS §42, project_p3_plan, vyapti V2/V3 (amended P7.10)/V24,
+//      hetvabhasa H48/H49, PLAN 7.12 D-04.
 
 import { z } from 'zod';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { Easing, KeyframeChannelNumberValue, TimeValue } from './types';
+import type { NodeDefinition } from '../core/dag/types';
+import type { Easing, KeyframeChannelNumberValue } from './types';
 
 const HandleSchema = z
   .object({
@@ -86,26 +92,22 @@ export const KeyframeChannelNumberNode: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelNumberParams,
-  inputs: {
-    time: { type: 'Time', cardinality: 'single' },
-  },
+  // P7.12 D-04: no `time` input — time enters via value.sample(seconds).
+  inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
-  evaluate(params, inputs: ResolvedInputs) {
-    const time = inputs.time as TimeValue | undefined;
-    const tSeconds = time?.seconds ?? 0;
-    // Sort defensively — ops may insert keyframes out of order; sorting at
-    // evaluator time keeps purity (same params → same sorted view) without
-    // requiring callers to sort first. Shallow copy avoids mutating params.
+  evaluate(params): KeyframeChannelNumberValue {
+    // Sort defensively ONCE in the closure — ops may insert keyframes out of
+    // order; sorting at evaluator time keeps purity (same params → same sorted
+    // view). sample() interpolates per call (function of time, V24).
     const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-    const value = sample(sorted, tSeconds);
     return {
       kind: 'KeyframeChannel',
       valueType: 'number',
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
-      value,
+      sample: (seconds: number) => sample(sorted, seconds),
     };
   },
 };

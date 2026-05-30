@@ -98,14 +98,9 @@ function buildAnimatedState(
       from: { node: CHAN_ID, socket: 'out' },
       to: { node: LAYER_ID, socket: 'animation' },
     },
-    // The channel samples inputs.time?.seconds — wire it to the project
-    // clock (n_time, a TimeSource that emits ctx.time) so the resolver's
-    // ctx actually drives the sampled value (mirrors nodes.test.ts).
-    {
-      type: 'connect',
-      from: { node: 'n_time', socket: 'out' },
-      to: { node: CHAN_ID, socket: 'time' },
-    },
+    // P7.12 D-04: channel has no `time` socket — time enters via
+    // value.sample(seconds). The resolver samples the layer via
+    // sampleTarget(ctx.time.seconds). No time→channel connect.
   ];
   if (opts.rotChannel) {
     ops.push(
@@ -128,11 +123,7 @@ function buildAnimatedState(
         from: { node: ROT_CHAN_ID, socket: 'out' },
         to: { node: LAYER_ID, socket: 'animation' },
       },
-      {
-        type: 'connect',
-        from: { node: 'n_time', socket: 'out' },
-        to: { node: ROT_CHAN_ID, socket: 'time' },
-      },
+      // P7.12 D-04: channel has no `time` socket — no time→channel connect.
     );
   }
   for (const op of ops) state = applyOp(state, op).next;

@@ -106,13 +106,9 @@ function buildAnimatedState(): DagState {
       from: { node: CHAN_ID, socket: 'out' },
       to: { node: LAYER_ID, socket: 'animation' },
     },
-    // Channel time wired to the project clock so ctx.time drives the
-    // sampled value (mirrors resolveEvaluatedTransform.test.ts:104-108).
-    {
-      type: 'connect',
-      from: { node: 'n_time', socket: 'out' },
-      to: { node: CHAN_ID, socket: 'time' },
-    },
+    // P7.12 D-04: channel has no `time` socket — time enters via
+    // value.sample(seconds); the resolver samples the layer via
+    // sampleTarget(ctx.time.seconds). No time→channel connect.
   ];
   for (const op of ops) state = applyOp(state, op).next;
   return state;

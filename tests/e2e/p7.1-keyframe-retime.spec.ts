@@ -122,11 +122,7 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
           ],
         },
       },
-      {
-        type: 'connect',
-        from: { node: timeId, socket: 'out' },
-        to: { node: 'ch', socket: 'time' },
-      },
+      // P7.12 D-04: channel has no `time` socket — connect removed.
       {
         type: 'connect',
         from: { node: 'ch', socket: 'out' },

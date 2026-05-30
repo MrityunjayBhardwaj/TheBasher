@@ -7,13 +7,19 @@
 // can reference it from a follow-up keyframe call without an intervening
 // dag.inspect round.
 //
-// Auto-wires Time: the build step finds the project's TimeSource and
-// connects it into the channel's `time` socket. If no TimeSource exists,
-// preconditions fail — addLayer's prerequisite (P2 already seeds Time).
+// P7.12 D-04 — NO Time auto-wire. Pre-7.12 the build step found the project's
+// TimeSource and connected it into the channel's `time` socket, and the
+// preconditions REJECTED when no TimeSource existed. After D-04 the channel
+// nodes have no `time` socket (time enters via the value's sample(seconds)
+// closure), so the connect would target a non-existent socket and the
+// precondition would needlessly reject a freshly-dropped glTF project. Both
+// are removed — mirrors P7.10 Wave B dropping the importer's
+// TimeSource→TransformClip connect. A project with no TimeSource is now legal
+// for channel creation.
 //
-// Closure: rootSelectors = [layerId, timeSourceId]; followedEdges = []
-// (both already exist; channel is a fresh add; connects target the layer
-// + the channel itself which is fresh).
+// Closure: rootSelectors = [layerId]; followedEdges = ['animation'] — the
+// timeSource was never in the closure root here (it was only in the build's
+// connect op), so the closure spec is unchanged by D-04.
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
@@ -51,13 +57,6 @@ const NODE_TYPE_BY_VALUE: Record<ValueType, string> = {
   quat: 'KeyframeChannelQuat',
   color: 'KeyframeChannelColor',
 };
-
-function findTimeSource(state: DagState): NodeId | null {
-  for (const node of Object.values(state.nodes)) {
-    if (node.type === 'TimeSource') return node.id;
-  }
-  return null;
-}
 
 function shapeOk(valueType: ValueType, value: unknown): boolean {
   switch (valueType) {
@@ -118,14 +117,8 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
         reason: `layerId "${spec.layerId}" is ${layer.type}; expected an AnimationLayer.`,
       };
     }
-    if (!findTimeSource(state)) {
-      return {
-        ok: false,
-        reason:
-          'No TimeSource node in DAG. Default projects seed `n_time`; this project has been mutated to remove it. ' +
-          'Add one via `dag.exec` (`addNode` with nodeType "TimeSource") before re-trying.',
-      };
-    }
+    // P7.12 D-04: no TimeSource precondition — the channel has no `time`
+    // socket, so a project without a TimeSource is legal for channel creation.
     if (spec.initialKeyframe && !shapeOk(spec.valueType, spec.initialKeyframe.value)) {
       return {
         ok: false,
@@ -137,8 +130,6 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const usedIds = new Set<NodeId>(Object.keys(state.nodes));
     const channelId = spec.channelId ?? defaultChannelId(spec.target, spec.paramPath, usedIds);
-    const timeSourceId = findTimeSource(state);
-    if (!timeSourceId) throw new Error('TimeSource missing — preconditions should have rejected.');
 
     const nodeType = NODE_TYPE_BY_VALUE[spec.valueType];
     const ops: Op[] = [];
@@ -163,12 +154,8 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
       },
     });
 
-    ops.push({
-      type: 'connect',
-      from: { node: timeSourceId, socket: 'out' },
-      to: { node: channelId, socket: 'time' },
-    });
-
+    // P7.12 D-04: NO `connect TimeSource→channel.time` op — the channel has no
+    // `time` socket. Only the channel→layer.animation edge remains.
     ops.push({
       type: 'connect',
       from: { node: channelId, socket: 'out' },

@@ -102,11 +102,7 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
         ],
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'pos_ch', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dispatch({
       type: 'connect',
       from: { node: 'pos_ch', socket: 'out' },
@@ -131,9 +127,14 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
     const layer1 = layerAt(eval1);
     return {
       kind0: layer0?.kind,
-      target0: layer0?.target?.position,
+      // P7.12 D-04: sample the function-of-time patched target (was layer.target).
+      target0: (
+        layer0 as { sampleTarget?: (s: number) => { position?: number[] } | null } | undefined
+      )?.sampleTarget?.(0)?.position,
       kind1: layer1?.kind,
-      target1: layer1?.target?.position,
+      target1: (
+        layer1 as { sampleTarget?: (s: number) => { position?: number[] } | null } | undefined
+      )?.sampleTarget?.(1)?.position,
     };
   });
 
