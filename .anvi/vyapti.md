@@ -458,7 +458,7 @@ fixes converged on the same pattern within 2 days, lifting it from
 
 ### V24: Time-dependency lives at the value-shape, NOT at the React-prop chain
 
-**Span:** All time-driven values flowing through the renderer chain — currently `TransformClipValue`. Any future impure or impure-rooted value that the React tree consumes during playback.
+**Span:** All time-driven values flowing through the renderer chain — `TransformClipValue` (P7.10) and the `KeyframeChannel{Number,Vec3,Quat,Color}` family + `AnimationLayer` (P7.12 D-04). Any future impure or impure-rooted value that the React tree consumes during playback.
 
 **Statement:** If a value's content depends on time, its TYPE MUST expose time as a typed function parameter on the value itself (e.g., `sample: (seconds: number) => T`). Consumers read live time imperatively at their own cadence (R3F's `useFrame`, or a local time subscription). The React tree itself MUST NEVER subscribe to `useTimeStore.seconds/frame/normalized` at a level where downstream value props would change per frame — most concretely, `SceneFromDAG.tsx` MUST NOT subscribe to time.
 
@@ -469,9 +469,11 @@ fixes converged on the same pattern within 2 days, lifting it from
 - Type system: `TransformClipValue.sample(seconds: number)` is the typed contract; any consumer that reads `.tracks` (the pre-P7.10 shape) fails to typecheck. `src/nodes/types.ts:321` documents the contract; `src/nodes/TransformClip.test.ts` "declares no inputs" is the regression guard against re-adding the Time input socket (which would re-enable per-frame cache-miss propagation).
 - The B13 perf benchmark `tests/e2e/perf-fox-benchmark.spec.ts` asserts `commits = 0` during 5s of playback at every Fox-count level (skinned + animated). A future regression that re-introduces a SceneFromDAG time subscription would fail this assertion immediately.
 
-**Status:** ALIGNED (P7.10). One time-driven value-shape currently exists (`TransformClipValue`). Future impure additions (audio sync, physics, procedural animation) opt into the same pattern by design — no per-node-type wiring needed.
+**Status:** ALIGNED (P7.10, extended P7.12). Time-driven value-shapes now in the codebase: `TransformClipValue` (P7.10) and the `KeyframeChannel{Number,Vec3,Quat,Color}` family + `AnimationLayer` (P7.12 D-04). Future impure additions (audio sync, physics, procedural animation) opt into the same pattern by design — no per-node-type wiring needed.
 
-**REF:** `src/nodes/types.ts:321` (`TransformClipValue.sample`), `src/nodes/TransformClip.ts` (the closure builder), `src/viewport/SceneFromDAG.tsx:73` (the no-time-subscription site), `src/viewport/SceneFromDAG.tsx` `GltfAssetR` `useFrame` (the consumer-local cadence), `tests/e2e/perf-fox-benchmark.spec.ts` (the goal-backward gate), [[H48]], [[H49]], [[B13]]. Issue #114.
+**Amendment (P7.12 D-04):** The `KeyframeChannel{Number,Vec3,Quat,Color}` family migrated to the same function-of-time value shape, joining `TransformClip`. Each channel value carries `sample(seconds)` and drops its Time input socket — consumers sample at their own cadence. `AnimationLayer` carries `sampleTarget(seconds)` (shape B-lite): the value's `.target` is the UN-PATCHED base, and the channel-patched target is produced by `sampleTarget(seconds)`. Any consumer reading `.target` for the animated value reads the base (0/static) — see [[H52]] (the value-shape migration missing test-inlined consumer copies). Back-compat: pre-D-04 `Time → channel` wires hydrate as harmless ghost bindings.
+
+**REF:** `src/nodes/types.ts:321` (`TransformClipValue.sample`), `src/nodes/TransformClip.ts` (the closure builder), `src/nodes/AnimationLayer.ts:99` (`sampleTarget` closure, P7.12 D-04), `src/app/resolveEvaluatedTransform.ts` (read-side `sampleTarget(ctx.time.seconds)`), `src/viewport/SceneFromDAG.tsx:73` (the no-time-subscription site), `src/viewport/SceneFromDAG.tsx` `GltfAssetR` `useFrame` (the consumer-local cadence), `tests/e2e/perf-fox-benchmark.spec.ts` (the goal-backward gate), [[H48]], [[H49]], [[H52]], [[B13]]. Issues #114, #108.
 
 ### V23: Multi-file glTF sibling-path resolution MUST normalize `..`/`.` segments symmetrically on BOTH halves of the importer/renderer boundary, and MUST reject root-escape
 
