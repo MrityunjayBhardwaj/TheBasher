@@ -380,6 +380,46 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   );
 }
 
+export interface RevertGltfChannelArgs {
+  /** The owning GltfAsset's assetRef. */
+  assetRef: string;
+  /** The bone's childName. */
+  childName: string;
+}
+
+/**
+ * Revert a baked glTF bone to its imported clip (Phase 7.12 / D3). Structural,
+ * NOT value-equality (R-4): DELETE the bone's baked KeyframeChannel node(s) →
+ * the resolver's presence-based pick (resolveGltfChildTrs) finds no bakedChannel
+ * present → falls through to the clip on BOTH the renderer (C2) AND the
+ * read-side (C3). The clip was never deleted (D-02 coexist), so revert is
+ * lossless. ONE atomic deleteNode op set = ONE undo (mirrors the import chain's
+ * K6 atomicity).
+ *
+ * The baked-channel ids are deterministic (D1 / gltfChannelDagId), so the
+ * targets are known without a scan — we only delete the ones that actually
+ * exist in the DAG (a bone may carry 1–3 component channels). No-op (ok, zero
+ * ops) when the bone has no baked channels (already on the clip).
+ */
+export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): DispatchResult {
+  const { assetRef, childName } = args;
+  const base = useDagStore.getState().state;
+
+  // Collect the deterministic baked-channel ids that EXIST for this bone.
+  const targets = (['position', 'rotation', 'scale'] as const)
+    .map((component) => gltfChannelDagId(assetRef, childName, component))
+    .filter((id) => base.nodes[id]);
+
+  // Nothing baked → already on the clip; revert is a no-op (not an error).
+  if (targets.length === 0) return { ok: true };
+
+  return dispatchMutatorFromUI(
+    'mutator.deleteNode',
+    { targetSelectors: targets },
+    `Revert ${childName} to imported clip`,
+  );
+}
+
 export interface FirstKeyCompositeArgs {
   /** The SceneChild node whose param is being animated (e.g. n_box). */
   targetId: string;

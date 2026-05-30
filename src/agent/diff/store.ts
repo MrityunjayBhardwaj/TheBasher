@@ -125,6 +125,17 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
           introducedIds.add(op.nodeId);
           continue;
         }
+        // A removeNode deletes its target — by construction the node is gone
+        // from `fork`, so expandClosure(closureSpec, fork) cannot reach it and
+        // the membership check below would falsely reject. The target was
+        // present in the ORIGINAL `state` (a deleteNode mutator roots its
+        // closure ON the node it deletes), so its absence from the post-batch
+        // fork closure is EXPECTED, not a violation. Skip the gate for a
+        // removeNode whose target existed pre-batch (P7.12 D3 — the revert path
+        // deletes an edge-less baked channel; its closure roots on itself).
+        if (op.type === 'removeNode' && state.nodes[op.nodeId]) {
+          continue;
+        }
         const target = opTargetNodeId(op);
         if (target !== null && !closure.nodes.has(target) && !introducedIds.has(target)) {
           throw new ClosurePreservationError(target, closure);
