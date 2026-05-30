@@ -47,7 +47,8 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeRef } from '../core/dag/types';
 import type { GltfAssetValue, RenderOutputValue, SceneChild } from '../nodes/types';
-import { resolveGltfChildTrs, type ChildTrs } from './resolveGltfChildTransform';
+import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolveGltfChildTransform';
+import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
 
 type Vec3 = [number, number, number];
 
@@ -185,6 +186,13 @@ export function resolveEvaluatedTransform(
       // / unevaluable asset simply means "no clip layer" — the override or base
       // still resolves (the child node carries both).
       let clipTrack: ChildTrs | undefined;
+      // P7.12 (#108, C3, BLOCK-1) — the read-side MUST layer the SAME
+      // baked-channel band the renderer (C2) does, or a baked-then-edited bone
+      // renders the baked value while the gizmo/NPanel show clip/base (the
+      // #68/#77 displayed-≠-rendered second-surface class, H40). Use the SAME
+      // shared enumerator (bakedGltfChannels) the renderer uses, sampled at the
+      // SAME ctx.time.seconds the clip is sampled at on the line below.
+      let bakedChannel: BakedChannel | undefined;
       for (const node of Object.values(state.nodes)) {
         if (node.type !== 'GltfAsset') continue;
         const ap = node.params as { assetRef?: unknown };
@@ -196,8 +204,11 @@ export function resolveEvaluatedTransform(
           // this resolver is the gizmo/NPanel static-read path, so the right
           // time is "the current play time" the caller passed in.
           clipTrack = assetVal.transformClip?.sample(ctx.time.seconds)[cp.childName];
+          const bakedSamplers = bakedChannelSamplersForAsset(state.nodes, assetVal.nodeNameMap);
+          bakedChannel = sampleBakedChannel(bakedSamplers[cp.childName], ctx.time.seconds);
         } catch {
           clipTrack = undefined;
+          bakedChannel = undefined;
         }
         break;
       }
@@ -206,6 +217,7 @@ export function resolveEvaluatedTransform(
         base: childTrs,
         clipTrack,
         childNode: { ...childTrs, overridden: cp.overridden },
+        bakedChannel,
       });
       // The child always carries rotation + scale (seeded at import), so unlike
       // the box/size-fallback path these are never null. Copy into mutable

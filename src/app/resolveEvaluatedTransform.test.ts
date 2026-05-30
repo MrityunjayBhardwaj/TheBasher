@@ -283,6 +283,8 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
   const OVERRIDE_POS: [number, number, number] = [5, 6, 7];
   const CLIP_POS: [number, number, number] = [9, 9, 9];
   const CLIP_ROT: [number, number, number] = [0, 45, 0];
+  // P7.12 (#108, C3) — the baked-channel layer (a per-bone KeyframeChannelVec3).
+  const BAKED_POS: [number, number, number] = [3, 3, 3];
 
   /** Build a state with a GltfAsset (optionally carrying a transformClip
    *  track for the child) + a GltfChild node. The GltfChild has NO render
@@ -292,6 +294,7 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
     overridden?: { position: boolean; rotation: boolean; scale: boolean };
     overridePos?: [number, number, number];
     withClip?: boolean;
+    bakedPos?: [number, number, number];
   }): DagState {
     let state = buildDefaultDagState();
     const ops: Op[] = [
@@ -348,6 +351,25 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
         to: { node: ASSET_ID, socket: 'transformClip' },
       }).next;
     }
+
+    if (opts.bakedPos) {
+      // P7.12 (#108) — a baked per-bone KeyframeChannelVec3, keyed by BOTH
+      // params.target (= the GltfChild dagId) AND params.childName (BLOCK-2),
+      // edge-less (no AnimationLayer connect — the resolver enumerates it, R4).
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: 'n_baked_pos',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          name: 'baked',
+          target: CHILD_ID,
+          childName: CHILD_NAME,
+          assetRef: ASSET_REF,
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: opts.bakedPos, easing: 'linear' }],
+        },
+      }).next;
+    }
     return state;
   }
 
@@ -391,6 +413,42 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
     expect(r).not.toBeNull();
     expect(r!.position).toEqual(OVERRIDE_POS); // manual beats clip
     expect(r!.rotation).toEqual(CLIP_ROT); // rotation not overridden → clip wins
+  });
+
+  // P7.12 (#108, C3, BLOCK-1) — the read-side baked-channel band. These mirror
+  // the renderer (C2): the read-side gizmo/NPanel evaluated TRS MUST layer the
+  // baked channel identically, or a baked-then-edited bone shows displayed ≠
+  // rendered (the #68/#77 second-surface class, H40).
+
+  // 2c. baked channel present + active clip → BAKED wins over clip (presence).
+  it('a baked channel wins over the clip on the read-side (presence, R-4)', () => {
+    const state = buildGltfState({ withClip: true, bakedPos: BAKED_POS });
+    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(BAKED_POS); // baked beats clip
+    expect(r!.rotation).toEqual(CLIP_ROT); // rotation has no baked band → clip
+  });
+
+  // 2d. baked value == base STILL beats the clip — presence, never value. A
+  //     director who keys a bone back to its base pose keeps the override.
+  it('a baked channel whose value equals base still beats the clip (presence not value)', () => {
+    const state = buildGltfState({ withClip: true, bakedPos: BASE_POS });
+    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(BASE_POS); // baked(==base) wins; the clip (CLIP_POS) does NOT resurface
+  });
+
+  // 2e. manual override beats the baked channel (the full 4-band order).
+  it('a manual override wins over the baked channel (manual > baked)', () => {
+    const state = buildGltfState({
+      overridden: { position: true, rotation: false, scale: false },
+      overridePos: OVERRIDE_POS,
+      withClip: true,
+      bakedPos: BAKED_POS,
+    });
+    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(OVERRIDE_POS); // manual beats baked + clip
   });
 
   // 3 (regression, H40). A box select still resolves via the EXISTING path —
