@@ -1344,3 +1344,17 @@ Provenance: ORIGIN = P7.12 Wave C (#108), 2026-05-30 — caught while wiring C2'
 **Sibling:** mirrors the existing `introducedIds` exemption for fresh addNodes (a node not in the prior closure), inverted for removal. Cross-ref the validator from-side blind-spot (gates have asymmetric coverage; widen precisely, never broadly).
 
 Provenance: ORIGIN = P7.12 Wave D (#108), 2026-05-30 — D3 revert deletes edge-less baked channels through the dispatch seam; the fork-expanded gate false-rejected. First fix was the broad exemption; self-review tightened it to the original-closure check. WHY = without this entry the next delete-through-dispatch either re-hits the false-reject or copies the broad relaxation. HOW = lazy original-state closure expansion; exempt only in-original-closure removeNode targets. REF: `src/agent/diff/store.ts` (propose, the `closureContainsInOriginal` lazy check), `src/app/animate/dispatchMutator.ts` (dispatchRevertGltfChannel). Issue #108.
+
+### H58 — An e2e that exercises a capability programmatically (not through the user affordance) goes green while the feature is unreachable by users
+
+**Detection signal:** A dispatch helper / mutator / action has full unit + e2e coverage and all gates are green, yet a user cannot actually reach it — there is no button, menu item, or wired event that calls it in production. The capability is "tested" but dead in the shipped UI.
+
+**Root cause:** The e2e proved the LOGIC by calling the function directly (`page.evaluate(() => dispatchX(...))` / importing the module and invoking it), NOT by driving the user-facing affordance (click the button that should call it). Direct-call e2e is a valid LOGIC proof but it is NOT a WIRING proof — it silently substitutes for the missing production caller, so the suite is green while the affordance doesn't exist.
+
+**Trap (wrong fix that looks right):** "There's a green e2e for revert, so revert ships." The e2e dispatched the helper directly; the button was never built. The goal-backward verifier catches this as "no production caller," but a task-completion check ("tests pass") does not.
+
+**Real fix:** For any user-facing capability, the e2e MUST drive it through the real affordance (locate and click the button/menu item), not a programmatic dispatch. If no affordance exists yet, that IS the gap — build the production caller. Reserve direct-call e2e for capabilities with no UI surface (agent-only tools, headless seams). When a helper has ONLY test callers, treat it as unshipped.
+
+**Sibling:** the goal-backward verify discipline (does the codebase DELIVER, not "did tasks run"). Cross-ref [[H40]]/[[H55]] (observe the real surface, not a proxy).
+
+Provenance: ORIGIN = #121 / P7.12 D3 (#108), 2026-05-30 — `dispatchRevertGltfChannel` shipped with unit + e2e coverage, but the e2e dispatched it directly and no UI button existed; the P7.12 verifier flagged "no production caller." Fixed by `RevertImportedClipConnector` (NPanel button) + the p7.12 (c) e2e now CLICKS the button. WHY = without this entry the next "tested but unwired" capability ships green-and-dead. HOW = e2e drives the real affordance; a helper with only test callers is unshipped. REF: `src/app/animate/RevertImportedClipConnector.tsx`, `src/app/NPanel.tsx`, `src/app/animate/dispatchMutator.ts` (`dispatchRevertGltfChannel`), `tests/e2e/p7.12-editable-imported-clips.spec.ts` (sub-case (c), button-driven). Issue #121.
