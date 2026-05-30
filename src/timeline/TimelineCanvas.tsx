@@ -79,7 +79,8 @@ import {
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
 } from './timelineCanvasGeometry';
 import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
-import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
+import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
+import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
 
 /**
  * Imperative canvas palette — the exact hex constants the 2D context
@@ -337,6 +338,12 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     fromTime: number;
     pointerClientX: number;
     canvasLeft: number;
+    // P7.12 D2 — set ONLY when the dragged row is a read-only imported clip row
+    // (B2's `clip:` namespace). Its presence routes endDrag through the
+    // copy-on-write bake-then-retime composite instead of the plain retime
+    // (the channel does not exist yet — the bake creates it). null = a real
+    // baked/authored channel drag (the existing path).
+    clipRow?: { assetRef: string; childName: string; component: ClipRowComponent };
   }>(null);
   // The ghost block's OWN idle-guard comparand — a SIBLING of
   // lastPlayheadXRef, never the playhead's. -1 = no ghost / cleared, so
@@ -760,6 +767,30 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           Math.abs(px - cx) <= DIAMOND_PX / 2 + slop &&
           Math.abs(py - cy) <= DIAMOND_PX / 2 + slop
         ) {
+          // P7.12 D2 — a read-only imported CLIP row (B2's `clip:` namespace)
+          // has no DAG node yet; its keyframe time comes straight off the
+          // projected clip row. Dragging it is the COPY-ON-WRITE trigger: store
+          // the clip-row context so endDrag bakes-then-retimes (R3). The bake +
+          // edit become ONE undo via dispatchBakeThenRetime.
+          const clip = parseClipRowId(row.channelId);
+          if (clip) {
+            const assetRef = assetRefForChild(useDagStore.getState().state.nodes, clip.childName);
+            if (!assetRef) continue;
+            dragRef.current = {
+              channelId: row.channelId,
+              rowIndex: r,
+              fromTime: kf.time, // the projected clip key time (exact)
+              pointerClientX: e.clientX,
+              canvasLeft: box.left,
+              clipRow: { assetRef, childName: clip.childName, component: clip.component },
+            };
+            useTimelineSelection.getState().setActiveKeyframe({
+              channelId: row.channelId,
+              time: kf.time,
+            });
+            canvas.setPointerCapture(e.pointerId);
+            return;
+          }
           // Read the EXACT stored sample time off the LIVE DAG — this
           // float becomes fromTime, the D-03 discriminator (NOT a
           // pointerup-recomputed seconds, or removeKeyframes silently
@@ -812,13 +843,27 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       // An unmoved click is a no-op (exact !== — same discipline as the
       // seam's fromTime match).
       if (toTime !== drag.fromTime) {
-        // ONE seam call → atomic composite → one undo entry. On
-        // {ok:false} the seam aborted atomically; DAG already unchanged.
-        dispatchRetimeKeyframe({
-          channelId: drag.channelId,
-          fromTime: drag.fromTime,
-          toTime,
-        });
+        if (drag.clipRow) {
+          // P7.12 D2 — FIRST edit of a clip-backed bone: bake the clip track
+          // into editable channels AND retime the dragged key, as ONE atomic
+          // undo (K6). The composite re-targets the now-real baked channel by
+          // its deterministic id (D1). On {ok:false} it aborted atomically.
+          dispatchBakeThenRetime({
+            assetRef: drag.clipRow.assetRef,
+            childName: drag.clipRow.childName,
+            component: drag.clipRow.component,
+            fromTime: drag.fromTime,
+            toTime,
+          });
+        } else {
+          // ONE seam call → atomic composite → one undo entry. On
+          // {ok:false} the seam aborted atomically; DAG already unchanged.
+          dispatchRetimeKeyframe({
+            channelId: drag.channelId,
+            fromTime: drag.fromTime,
+            toTime,
+          });
+        }
       }
     }
     // Force the next tick to cleanly restore under the now-stale ghost.

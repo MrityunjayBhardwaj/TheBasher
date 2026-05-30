@@ -26,6 +26,7 @@ import { validatePlan } from '../../agent/mutators/validate';
 import { useDiffStore, acceptSelectedOps } from '../../agent/diff/store';
 import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
+import { gltfChannelDagId } from '../../core/import/gltfImportChain';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -248,6 +249,134 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
     ['user:mutator.timeline.removeKeyframes', 'user:mutator.timeline.keyframe'],
     combinedClosure,
     [...rResult.warnings, ...kResult.warnings],
+  );
+}
+
+export interface BakeThenRetimeArgs {
+  /** The owning GltfAsset's assetRef. */
+  assetRef: string;
+  /** The bone's childName (the clip-track key). */
+  childName: string;
+  /** Which TRS component row was dragged (position/rotation/scale). */
+  component: 'position' | 'rotation' | 'scale';
+  /** The clip keyframe time the drag started FROM (exact, read off the clip). */
+  fromTime: number;
+  /** The sub-frame second to move the key TO. */
+  toTime: number;
+}
+
+/**
+ * Copy-on-write composite (Phase 7.12 / D2): the FIRST timeline edit of a
+ * clip-backed bone BAKES the bone's clip track into editable KeyframeChannel
+ * nodes (D1's `mutator.timeline.bakeGltfChannel`) and THEN retimes the dragged
+ * key on the now-real baked channel — both as ONE atomic undo entry (K6).
+ *
+ * Mirrors dispatchFirstKeyComposite's fork-evolve discipline: bake validates
+ * against the base; the retime (removeKeyframes → keyframe) validates against the
+ * FORKED post-bake state (the baked channel only exists in the fork). The baked
+ * channel id is DETERMINISTIC (D1 / gltfChannelDagId), so the retime references
+ * it without an intervening DAG round-trip. All ops are proposed in ONE diff →
+ * one dispatchAtomic → one Cmd+Z reverts BOTH the bake and the edit.
+ *
+ * Any validate `!ok` → abort, mutate nothing (V13 closure gate fires per step).
+ */
+export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult {
+  const { assetRef, childName, component, fromTime, toTime } = args;
+  const intent = `Edit imported clip: ${childName}.${component}`;
+
+  const base = useDagStore.getState().state;
+
+  const bake = getMutator('mutator.timeline.bakeGltfChannel');
+  const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
+  const keyframe = getMutator('mutator.timeline.keyframe');
+  if (!bake || !removeKeyframes || !keyframe) {
+    return {
+      ok: false,
+      reason: 'Timeline Mutators not registered (bakeGltfChannel / removeKeyframes / keyframe).',
+    };
+  }
+
+  // 1 — validate the bake against the base DAG.
+  const bParsed = bake.spec.safeParse({ assetRef, childName });
+  if (!bParsed.success) {
+    return { ok: false, reason: `bakeGltfChannel spec invalid: ${bParsed.error.message}` };
+  }
+  const bResult = validatePlan(bake, bParsed.data, base, intent);
+  if (!bResult.ok) {
+    return { ok: false, reason: `bakeGltfChannel rejected: ${bResult.reason}` };
+  }
+
+  // 2 — fork1 = base + bake ops (the baked channels now exist in the fork).
+  let fork1: DagState;
+  try {
+    fork1 = createFork(base, bResult.ops).fork;
+  } catch (err) {
+    return { ok: false, reason: `bake fork failed: ${(err as Error).message}` };
+  }
+
+  // 3 — the dragged component's baked channel id (deterministic, D1).
+  const channelId = gltfChannelDagId(assetRef, childName, component);
+  const channel = fork1.nodes[channelId];
+  if (!channel) {
+    return { ok: false, reason: `baked channel "${channelId}" missing after bake.` };
+  }
+  // Read the sample at fromTime off the FORKED baked channel — its keyframes
+  // were seeded from the clip at the clip times, so the dragged key exists.
+  const cParams = (channel.params ?? {}) as {
+    keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
+  };
+  const sample = (cParams.keyframes ?? []).find((k) => k.time === fromTime);
+  if (!sample) {
+    return { ok: false, reason: `no baked keyframe at fromTime ${fromTime} on ${channelId}.` };
+  }
+  const value = sample.value;
+  const easing = sample.easing;
+
+  // 4 — validate removeKeyframes({time:fromTime}) against fork1.
+  const rParsed = removeKeyframes.spec.safeParse({ channelId, scope: { time: fromTime } });
+  if (!rParsed.success) {
+    return { ok: false, reason: `removeKeyframes spec invalid: ${rParsed.error.message}` };
+  }
+  const rResult = validatePlan(removeKeyframes, rParsed.data, fork1, intent);
+  if (!rResult.ok) {
+    return { ok: false, reason: `removeKeyframes rejected: ${rResult.reason}` };
+  }
+
+  // 5 — fork2 = fork1 + removeKeyframes ops.
+  let fork2: DagState;
+  try {
+    fork2 = createFork(fork1, rResult.ops).fork;
+  } catch (err) {
+    return { ok: false, reason: `removeKeyframes fork failed: ${(err as Error).message}` };
+  }
+
+  // 6 — validate keyframe({time:toTime,value,easing}) against fork2.
+  const kParsed = keyframe.spec.safeParse({ channelId, time: toTime, value, easing });
+  if (!kParsed.success) {
+    return { ok: false, reason: `keyframe spec invalid: ${kParsed.error.message}` };
+  }
+  const kResult = validatePlan(keyframe, kParsed.data, fork2, intent);
+  if (!kResult.ok) {
+    return { ok: false, reason: `keyframe rejected: ${kResult.reason}` };
+  }
+
+  // 7 — propose ALL ops (bake + remove + keyframe) as ONE diff with the COMBINED
+  //     closure, then accept → one dispatchAtomic → one Cmd+Z (K6).
+  const combinedClosure = unionClosureSpecs(
+    unionClosureSpecs(bResult.closure.spec, rResult.closure.spec),
+    kResult.closure.spec,
+  );
+  return proposeAndAccept(
+    base,
+    [...bResult.ops, ...rResult.ops, ...kResult.ops],
+    intent,
+    [
+      'user:mutator.timeline.bakeGltfChannel',
+      'user:mutator.timeline.removeKeyframes',
+      'user:mutator.timeline.keyframe',
+    ],
+    combinedClosure,
+    [...bResult.warnings, ...rResult.warnings, ...kResult.warnings],
   );
 }
 
