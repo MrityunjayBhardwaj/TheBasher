@@ -41,6 +41,7 @@ import type { DagState } from '../core/dag/state';
 import { PostFx } from '../render/PostFx';
 import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
+import { resolveMaterialOverrideFields } from './materialOverrideMerge';
 import type {
   AmbientLightValue,
   AnimationLayerValue,
@@ -651,22 +652,75 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     () => bakedChannelSamplersForAsset(dagNodes, value.nodeNameMap),
     [dagNodes, value.nodeNameMap],
   );
+  // #99 (P7.13) — per-clone capture of the IMPORTED material(s), keyed by mesh
+  // uuid. The override effect re-derives from this ORIGINAL every time (never
+  // from an already-overridden clone), so changing/removing the override never
+  // compounds and removal restores faithfully. Reset on clone swap — declared
+  // ABOVE the override effect so on a `[cloned]` change React runs this reset
+  // first, then the override effect captures the new clone's fresh materials.
+  const overrideOriginals = useRef<Map<string, THREE.Material | THREE.Material[]>>(new Map());
   useEffect(() => {
-    if (!override) return;
-    const mat = applyOverride('#ffffff', override);
+    overrideOriginals.current = new Map();
+  }, [cloned]);
+  // #99 (P7.13) — material override applied MATERIAL-FAITHFULLY. The old code
+  // replaced every mesh material with a fresh `new MeshStandardMaterial(7 scalars)`,
+  // which dropped imported maps (.map/.normalMap/.roughnessMap/.metalnessMap/
+  // .aoMap/.emissiveMap) and downgraded a MeshPhysicalMaterial (KHR clearcoat/
+  // transmission/sheen) to a plain MeshStandardMaterial — a textured asset
+  // flattened to a blob the instant any override applied (#99).
+  //
+  // The fix CLONES the source material (Material.clone = `new this.constructor()
+  // .copy(this)` → preserves the subclass AND all map refs; three.js 0.169
+  // Material.js:424 / MeshStandardMaterial.copy L76-104) and overlays ONLY the
+  // override fields that cannot corrupt richer source data (D-01 map-aware tint,
+  // resolveMaterialOverrideFields): color/emissive/opacity always; roughness/
+  // metalness only where the source has no corresponding map (those scalars
+  // multiply their maps).
+  //
+  // We assign a fresh CLONE per mesh and never mutate the source material's
+  // properties — `Mesh.copy` (Mesh.js:60) shares `.material` by reference across
+  // clones + the useGLTF cache, so in-place mutation would corrupt every instance
+  // (V20/H36/H45 single-writer landmine). Cloning + reassigning is the guard.
+  useEffect(() => {
+    const wireframe = useViewportStore.getState().shading === 'wireframe';
+    const tint = (s: THREE.Material): THREE.Material => {
+      const std = s as THREE.MeshStandardMaterial;
+      const fields = resolveMaterialOverrideFields(override as MaterialValue, {
+        roughnessMap: Boolean(std.roughnessMap),
+        metalnessMap: Boolean(std.metalnessMap),
+      });
+      // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal
+      // meshes (all PBR fields present), but KHR_materials_unlit yields a
+      // MeshBasicMaterial — which has `.color`/`.opacity` but NO `.emissive`/
+      // `.roughness`/`.metalness`. Clone preserves that subclass, so set each
+      // field only when it exists; unconditional `.emissive.set()` would throw
+      // and break the whole traverse for an unlit asset (the old wholesale-replace
+      // didn't throw because it always built a fresh Standard material).
+      const next = s.clone() as THREE.MeshStandardMaterial;
+      next.color?.set(fields.color);
+      next.emissive?.set(fields.emissive);
+      if ('emissiveIntensity' in next) next.emissiveIntensity = fields.emissiveIntensity;
+      if ('opacity' in next) next.opacity = fields.opacity;
+      if ('transparent' in next) next.transparent = fields.transparent;
+      if (fields.roughness !== null && 'roughness' in next) next.roughness = fields.roughness;
+      if (fields.metalness !== null && 'metalness' in next) next.metalness = fields.metalness;
+      if ('wireframe' in next) next.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
+      return next;
+    };
     cloned.traverse((child) => {
       const m = child as THREE.Mesh;
-      if (m.isMesh) {
-        m.material = new THREE.MeshStandardMaterial({
-          color: mat.color,
-          roughness: mat.roughness,
-          metalness: mat.metalness,
-          opacity: mat.opacity,
-          emissive: mat.emissive,
-          emissiveIntensity: mat.emissiveIntensity,
-          transparent: mat.transparent,
-        });
+      if (!m.isMesh) return;
+      // Capture the imported material(s) once, before any reassignment.
+      if (!overrideOriginals.current.has(m.uuid)) {
+        overrideOriginals.current.set(m.uuid, m.material);
       }
+      const src = overrideOriginals.current.get(m.uuid)!;
+      if (!override) {
+        // Restore the imported material(s) — fixes the latent no-restore bug.
+        m.material = src;
+        return;
+      }
+      m.material = Array.isArray(src) ? src.map(tint) : tint(src);
     });
   }, [cloned, override]);
   // Wireframe pass — flip every mesh material on the cloned scene. Runs
@@ -837,7 +891,12 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     if (!import.meta.env.DEV) return;
     const w = window as unknown as Record<string, unknown>;
     w.__basher_gltf_meshes = () => {
-      const summary: Array<{ name: string; hasMap: boolean; mapImageOk: boolean }> = [];
+      const summary: Array<{
+        name: string;
+        hasMap: boolean;
+        mapImageOk: boolean;
+        color: string | null;
+      }> = [];
       cloned.traverse((child) => {
         const m = child as THREE.Mesh;
         if (!m.isMesh) return;
@@ -845,10 +904,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         for (const mat of mats) {
           const map = (mat as { map?: THREE.Texture | null } | null)?.map ?? null;
           const image = map?.image as { width?: number } | undefined;
+          // #99 — expose the live material color so the override e2e can prove
+          // the tint LANDED (hasMap survives is only half the goal). `#rrggbb`.
+          const col = (mat as { color?: THREE.Color } | null)?.color;
           summary.push({
             name: m.name ?? '',
             hasMap: map !== null,
             mapImageOk: Boolean(image && (image.width ?? 0) > 0),
+            color: col ? `#${col.getHexString()}` : null,
           });
         }
       });
