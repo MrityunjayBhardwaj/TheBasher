@@ -577,24 +577,27 @@ test('P7.12 (c) REVERT — deleting the baked channel falls back to the clip on 
     'precondition: the edit must have moved the vertex before revert',
   ).toBeGreaterThan(0.05);
 
-  // REVERT (D3) — structural, presence-based (R-4): delete the bone's baked
-  // KeyframeChannel node(s) via dispatchRevertGltfChannel. The resolver finds no
-  // baked band present → falls through to the clip on BOTH surfaces.
-  const reverted = await page.evaluate(
-    async ({ child, asset }) => {
-      const { dispatchRevertGltfChannel } = await import('/src/app/animate/dispatchMutator.ts');
-      const res = dispatchRevertGltfChannel({ assetRef: asset, childName: child });
-      const w = window as unknown as BasherWindow;
-      const nodes = w.__basher_dag.getState().state.nodes;
-      const channelsLeft = Object.values(nodes).filter((n) =>
-        n.type.startsWith('KeyframeChannel'),
-      ).length;
-      return { ok: res.ok, channelsLeft };
-    },
-    { child: ANIMATED_CHILD, asset: ASSET_REF },
-  );
-  expect(reverted.ok, 'revert dispatch failed').toBe(true);
-  expect(reverted.channelsLeft, 'revert must delete the baked channel node(s)').toBe(0);
+  // REVERT (#121) — via the UI affordance, not a programmatic dispatch. The
+  // bone is selected (selectAnimatedBoneRotationRow), so its NPanel inspector
+  // shows a "Revert to imported clip" button (the production caller for D3's
+  // dispatchRevertGltfChannel — RevertImportedClipConnector). Clicking it is
+  // structural + presence-based (R-4): delete the bone's baked node(s) → the
+  // resolver finds no baked band → falls through to the clip on BOTH surfaces.
+  const revertBtn = page.getByTestId('revert-imported-clip');
+  await expect(
+    revertBtn,
+    'a baked bone inspector must surface the "revert to imported clip" button (#121)',
+  ).toBeVisible();
+  await revertBtn.click();
+  await page.waitForTimeout(120);
+  const channelsLeft = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag.getState().state.nodes;
+    return Object.values(nodes).filter((n) => n.type.startsWith('KeyframeChannel')).length;
+  });
+  expect(channelsLeft, 'clicking revert must delete the baked channel node(s)').toBe(0);
+  // The button hides itself once the bone is no longer baked (subscribed state).
+  await expect(revertBtn, 'the revert button hides after the bone reverts').toBeHidden();
 
   // RENDER side: the bone plays the ORIGINAL import again — its vertex matches
   // the pre-edit clip baseline.
