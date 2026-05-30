@@ -155,10 +155,15 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
     page.evaluate(
       ({ sec }) => {
         const w = window as unknown as BasherWindow;
+        // P7.12 D-04: AnimationLayer is shape B-lite — `.target` is the
+        // UN-PATCHED base; the channel-patched value comes from
+        // sampleTarget(seconds). Read the sampled target (H52).
         const v = w.__basher_evaluate!('layer', {
           time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
-        }).value as { target?: { rotation?: [number, number, number] } };
-        return { intensity: v.target?.rotation?.[1] };
+        }).value as {
+          sampleTarget?: (s: number) => { rotation?: [number, number, number] } | null;
+        };
+        return { intensity: v.sampleTarget?.(sec)?.rotation?.[1] };
       },
       { sec: s },
     );
