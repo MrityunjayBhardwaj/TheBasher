@@ -69,6 +69,7 @@ import type { Node } from '../core/dag/types';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useTimelineSelection } from './timelineSelection';
+import { useSelectionStore } from '../app/stores/selectionStore';
 import {
   keyframeToRect,
   cullVisibleKeyframes,
@@ -77,6 +78,7 @@ import {
   playheadStripRect,
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
 } from './timelineCanvasGeometry';
+import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
 import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
 
 /**
@@ -126,11 +128,10 @@ const CHANNEL_TYPES = new Set([
   'KeyframeChannelColor',
 ]);
 
-interface ChannelRow {
-  channelId: string;
-  name: string;
-  keyframes: ReadonlyArray<{ time: number }>;
-}
+// ChannelRow now lives in clipChannelRows.ts (B1) so the read-only clip-row
+// flag is shared across the projector + this collector. Re-exported so
+// existing importers of TimelineCanvas's row contract keep working.
+export type { ChannelRow };
 
 /**
  * Flatten the DAG's AnimationLayers + orphan channels into the ordered
@@ -342,7 +343,36 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // the next tick after a commit restores cleanly under the stale ghost.
   const lastGhostXRef = useRef<number>(-1);
 
-  const rows = collectChannelRows(nodes);
+  // P7.12 B2 — when a GltfChild (imported bone) is selected, append its
+  // read-only clip rows so its embedded animation is visible in the dopesheet
+  // without a bake. Suppressed once the bone is baked (FLAG-3 single-row-set).
+  // Pure: appendSelectionClipRows is a function of (baseRows, nodes, selection).
+  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  const rows = useMemo(
+    () =>
+      appendSelectionClipRows({
+        baseRows: collectChannelRows(nodes),
+        nodes,
+        selectedNodeId: primaryNodeId,
+      }),
+    [nodes, primaryNodeId],
+  );
+
+  // P7.12 B2 — selection → active row. `setActiveChannel` had no production
+  // caller before this (research-flagged): selecting a channel row was a
+  // click-only affordance. Wire it for the imported-bone path so selecting a
+  // GltfChild in the viewport/NPanel surfaces its clip curve in the editor
+  // below WITHOUT a manual row click. We set the FIRST clip row (the bone's
+  // position component) active, and only when the current active channel is not
+  // already one of this bone's clip rows (so a user's manual component click is
+  // not stomped on every render).
+  const setActiveChannel = useTimelineSelection((s) => s.setActiveChannel);
+  useEffect(() => {
+    const clipRows = rows.filter((r) => r.readOnly && r.channelId.startsWith('clip:'));
+    if (clipRows.length === 0) return;
+    const alreadyActive = clipRows.some((r) => r.channelId === activeChannelId);
+    if (!alreadyActive) setActiveChannel(clipRows[0].channelId);
+  }, [rows, activeChannelId, setActiveChannel]);
 
   // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
   // contract) is the canvas's visual-correctness surrogate. The JSX used
