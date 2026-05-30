@@ -689,15 +689,22 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         roughnessMap: Boolean(std.roughnessMap),
         metalnessMap: Boolean(std.metalnessMap),
       });
+      // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal
+      // meshes (all PBR fields present), but KHR_materials_unlit yields a
+      // MeshBasicMaterial — which has `.color`/`.opacity` but NO `.emissive`/
+      // `.roughness`/`.metalness`. Clone preserves that subclass, so set each
+      // field only when it exists; unconditional `.emissive.set()` would throw
+      // and break the whole traverse for an unlit asset (the old wholesale-replace
+      // didn't throw because it always built a fresh Standard material).
       const next = s.clone() as THREE.MeshStandardMaterial;
-      next.color.set(fields.color);
-      next.emissive.set(fields.emissive);
-      next.emissiveIntensity = fields.emissiveIntensity;
-      next.opacity = fields.opacity;
-      next.transparent = fields.transparent;
-      if (fields.roughness !== null) next.roughness = fields.roughness;
-      if (fields.metalness !== null) next.metalness = fields.metalness;
-      next.wireframe = wireframe; // override effect won't re-fire the [cloned, shading] pass
+      next.color?.set(fields.color);
+      next.emissive?.set(fields.emissive);
+      if ('emissiveIntensity' in next) next.emissiveIntensity = fields.emissiveIntensity;
+      if ('opacity' in next) next.opacity = fields.opacity;
+      if ('transparent' in next) next.transparent = fields.transparent;
+      if (fields.roughness !== null && 'roughness' in next) next.roughness = fields.roughness;
+      if (fields.metalness !== null && 'metalness' in next) next.metalness = fields.metalness;
+      if ('wireframe' in next) next.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
       return next;
     };
     cloned.traverse((child) => {
