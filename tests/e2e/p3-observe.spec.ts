@@ -102,11 +102,7 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
         ],
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'pos_ch', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dispatch({
       type: 'connect',
       from: { node: 'pos_ch', socket: 'out' },

@@ -9,11 +9,19 @@
 // schema) — explicit quaternion bezier is rare in user-facing tools and
 // adds substantial math; revisit when a real use case appears.
 //
-// REF: THESIS §42, project_p3_plan, vyapti V2/V3.
+// P7.12 D-04 — function-of-time value shape (V24/V3 amended): no `time` input
+// socket; evaluate is pure over (params) and returns a value carrying
+// `sample(seconds)` (slerp closed over the sorted keyframes). Time enters at
+// consumer cadence, so the channel's cache hits across playback frames
+// (H48/H49). Pre-7.12 `TimeSource→channel.time` wires become harmless ghost
+// bindings.
+//
+// REF: THESIS §42, project_p3_plan, vyapti V2/V3 (amended P7.10)/V24,
+//      hetvabhasa H48/H49, PLAN 7.12 D-04.
 
 import { z } from 'zod';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { Easing, KeyframeChannelQuatValue, Quat, TimeValue } from './types';
+import type { NodeDefinition } from '../core/dag/types';
+import type { Easing, KeyframeChannelQuatValue, Quat } from './types';
 
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
@@ -111,23 +119,20 @@ export const KeyframeChannelQuatNode: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelQuatParams,
-  inputs: {
-    time: { type: 'Time', cardinality: 'single' },
-  },
+  // P7.12 D-04: no `time` input — time enters via value.sample(seconds).
+  inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
-  evaluate(params, inputs: ResolvedInputs) {
-    const time = inputs.time as TimeValue | undefined;
-    const tSeconds = time?.seconds ?? 0;
+  evaluate(params): KeyframeChannelQuatValue {
+    // Sort ONCE in the closure; sample() slerps per call (function of time, V24).
     const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-    const value = sample(sorted, tSeconds);
     return {
       kind: 'KeyframeChannel',
       valueType: 'quat',
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
-      value,
+      sample: (seconds: number) => sample(sorted, seconds),
     };
   },
 };

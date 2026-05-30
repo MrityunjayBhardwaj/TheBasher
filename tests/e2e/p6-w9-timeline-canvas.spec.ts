@@ -104,11 +104,7 @@ async function seedScene(
           nodeType: 'KeyframeChannelNumber',
           params: { name: id, target: 'sun', paramPath: 'intensity', keyframes },
         });
-        ops.push({
-          type: 'connect',
-          from: { node: timeId, socket: 'out' },
-          to: { node: id, socket: 'time' },
-        });
+        // P7.12 D-04: channel has no `time` socket — connect removed.
         ops.push({
           type: 'connect',
           from: { node: id, socket: 'out' },
@@ -208,11 +204,7 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
             ],
           },
         },
-        {
-          type: 'connect',
-          from: { node: timeId, socket: 'out' },
-          to: { node: 'ch_extra', socket: 'time' },
-        },
+        // P7.12 D-04: channel has no `time` socket — connect removed.
         {
           type: 'connect',
           from: { node: 'ch_extra', socket: 'out' },

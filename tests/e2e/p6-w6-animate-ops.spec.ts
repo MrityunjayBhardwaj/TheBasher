@@ -164,11 +164,7 @@ test.beforeEach(async ({ page }) => {
             ],
           },
         },
-        {
-          type: 'connect',
-          from: { node: timeId, socket: 'out' },
-          to: { node: 'ch', socket: 'time' },
-        },
+        // P7.12 D-04: channel has no `time` socket — connect removed.
         {
           type: 'connect',
           from: { node: 'ch', socket: 'out' },

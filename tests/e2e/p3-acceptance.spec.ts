@@ -114,11 +114,7 @@ test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', asyn
         ],
       },
     });
-    dag.dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'box_pos_channel', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dag.dispatch({
       type: 'connect',
       from: { node: 'box_pos_channel', socket: 'out' },
@@ -188,11 +184,7 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
         ],
       },
     });
-    dag.dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'box_pos_channel', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dag.dispatch({
       type: 'connect',
       from: { node: 'box_pos_channel', socket: 'out' },

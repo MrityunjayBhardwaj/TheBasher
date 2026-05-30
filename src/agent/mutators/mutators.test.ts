@@ -1205,7 +1205,7 @@ describe('mutator.timeline.addChannel', () => {
     return s;
   }
 
-  it('creates a KeyframeChannelVec3 wired to layer + time', () => {
+  it('creates a KeyframeChannelVec3 wired to layer (no Time wire, D-04)', () => {
     const state = stateWithLayer();
     const r = validatePlan(
       addChannelMutator,
@@ -1222,16 +1222,24 @@ describe('mutator.timeline.addChannel', () => {
     );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.ops).toHaveLength(3);
+    // P7.12 D-04: 2 ops (addNode + channel→layer.animation). The Time auto-wire
+    // is gone — channels have no `time` socket (time enters via sample(seconds)).
+    expect(r.ops).toHaveLength(2);
     const addNodeOp = r.ops[0];
     expect(addNodeOp.type).toBe('addNode');
     if (addNodeOp.type === 'addNode') {
       expect(addNodeOp.nodeType).toBe('KeyframeChannelVec3');
       expect(addNodeOp.nodeId).toBe('box_pos_channel');
     }
-    // Connects: time → channel, channel → layer.animation
+    // Connects: ONLY channel → layer.animation (no time → channel, D-04).
     const connects = r.ops.filter((o) => o.type === 'connect');
-    expect(connects).toHaveLength(2);
+    expect(connects).toHaveLength(1);
+    if (connects[0].type === 'connect') {
+      expect(connects[0].to).toEqual({ node: 'box_layer', socket: 'animation' });
+    }
+    // FLAG-4: zero `socket:'time'` connects emitted.
+    const timeConnects = r.ops.filter((o) => o.type === 'connect' && o.to.socket === 'time');
+    expect(timeConnects).toHaveLength(0);
   });
 
   it.each([
@@ -1295,7 +1303,11 @@ describe('mutator.timeline.addChannel', () => {
     if (!r.ok) expect(r.gate).toBe(4);
   });
 
-  it('rejects when no TimeSource exists (gate 4)', () => {
+  // P7.12 D-04: a project with NO TimeSource is now legal for channel creation
+  // (was a gate-4 reject pre-7.12). The channel has no `time` socket, so no
+  // TimeSource prerequisite remains. Mirrors 7.10 Wave B dropping the importer's
+  // TimeSource requirement. Replaces the old "rejects when no TimeSource" test.
+  it('accepts a project with NO TimeSource (D-04 — no Time prerequisite)', () => {
     let s = buildScene(); // scene without TimeSource
     s = applyOp(s, {
       type: 'addNode',
@@ -1309,8 +1321,11 @@ describe('mutator.timeline.addChannel', () => {
       s,
       'no time',
     );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.gate).toBe(4);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // No Time connect emitted (FLAG-4).
+    const timeConnects = r.ops.filter((o) => o.type === 'connect' && o.to.socket === 'time');
+    expect(timeConnects).toHaveLength(0);
   });
 });
 

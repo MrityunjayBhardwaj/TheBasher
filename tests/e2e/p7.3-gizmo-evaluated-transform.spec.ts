@@ -164,11 +164,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
         ],
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'seed_pos_ch', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dispatch({
       type: 'connect',
       from: { node: 'seed_pos_ch', socket: 'out' },

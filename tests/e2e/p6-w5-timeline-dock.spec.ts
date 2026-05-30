@@ -177,11 +177,7 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
         ],
       },
     });
-    dag.dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'box_pos_channel', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dag.dispatch({
       type: 'connect',
       from: { node: 'box_pos_channel', socket: 'out' },

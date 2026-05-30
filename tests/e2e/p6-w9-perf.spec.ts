@@ -103,11 +103,7 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
         nodeType: 'KeyframeChannelNumber',
         params: { name: id, target: 'sun', paramPath: 'intensity', keyframes },
       });
-      ops.push({
-        type: 'connect',
-        from: { node: timeId, socket: 'out' },
-        to: { node: id, socket: 'time' },
-      });
+      // P7.12 D-04: channel has no `time` socket — connect removed.
       ops.push({
         type: 'connect',
         from: { node: id, socket: 'out' },

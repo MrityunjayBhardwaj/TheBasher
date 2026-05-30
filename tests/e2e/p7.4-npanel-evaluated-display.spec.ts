@@ -231,11 +231,7 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
         ],
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: 'seed_pos_ch', socket: 'time' },
-    });
+    // P7.12 D-04: channel has no `time` socket — connect removed.
     dispatch({
       type: 'connect',
       from: { node: 'seed_pos_ch', socket: 'out' },
@@ -653,11 +649,7 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
           ],
         },
       });
-      dispatch({
-        type: 'connect',
-        from: { node: timeId, socket: 'out' },
-        to: { node: 'd6_pos_ch', socket: 'time' },
-      });
+      // P7.12 D-04: channel has no `time` socket — connect removed.
       dispatch({
         type: 'connect',
         from: { node: 'd6_pos_ch', socket: 'out' },
