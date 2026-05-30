@@ -1274,3 +1274,73 @@ Provenance: ORIGIN = P7.11 (#100), 2026-05-29 — PLAN FLAG 1; research-grounded
 **Sibling:** [[H49]] (incomplete-consumer-enumeration — the function-of-time type-level fix); this is its TEST-mirror variant. Cross-ref [[H40]] (boundary-pair, why the inlined mirrors exist).
 
 Provenance: ORIGIN = P7.12 Wave A (#108), 2026-05-30 — D-04 migrated KeyframeChannel{Number,Vec3,Quat,Color} to the function-of-time value shape + AnimationLayer to `sampleTarget(seconds)`; the product resolver (`resolveEvaluatedTransform.ts:234`) was correct but 6 hand-inlined mirrors across tests/e2e/{p7.4-npanel-evaluated-display, p7.3-gizmo-evaluated-transform, p3-observe, p7-animation-authoring}.spec.ts read the un-patched `.target` → 0; ~11 e2e failures, ALL this one pattern. WHY = without this entry the next value-shape migration repeats the "product migrated = done" trap and ships a red e2e (or, worse, a green-looking phantom). HOW = grep test-inlined consumer copies during any value-shape migration; full-suite e2e is the catching gate. REF: GROUND_TRUTH_GLTF DEFERRED → interim RESEARCH.md (7.12) + `src/app/resolveEvaluatedTransform.ts`, `src/nodes/AnimationLayer.ts` (sampleTarget), the 4 spec files above. Issue #108. (Interim-grounded until GROUND_TRUTH_GLTF.md exists.)
+
+### H53 — A glTF clip track is keyed by childName, not the GltfChild dagId
+
+**Detection signal:** A clearly-animated imported bone shows an EMPTY dopesheet / a dead (never-driven) baked channel. The display projector or bake mutator queried the clip's tracks by the GltfChild's DAG node id and got zero rows.
+
+**Root cause:** `TransformClip.params.keyframes[].targetNodeId` is the sanitised/deduped **childName** (`gltfImportChain` sets `targetNodeId = keyByGltfNodeIndex[targetIndex]`), and `resolveAllChildTrs` keys `tracks` by that same NAME. The GltfChild DAG node id is a DIFFERENT value, `hashId('gltfChild', assetRef, childName)`. The two are bridged BY `childName`, not interchangeable.
+
+**Trap (wrong fix that looks right):** "The selection gives me a GltfChild node id, so I'll look up its clip track by that id." → zero rows / dead channel, diagnosed as "no animation on this bone" when the animation is right there under the name key.
+
+**Real fix:** Key any clip-track read by `childName` (= `GltfChild.params.childName`). When you need the GltfChild dagId from a childName, derive it via `gltfChildDagId(assetRef, childName)` (the single source, `gltfImportChain.ts`); the asset's `nodeNameMap` (childName → dagId) is the bridge. A baked channel stores BOTH (see [[V26]]).
+
+**Sibling:** [[H50]] (joint-list-vs-node-index spine — the OTHER glTF key-space confusion). Cross-ref [[V26]] (dual-key), [[V22]] (deterministic ids).
+
+Provenance: ORIGIN = P7.12 Wave B/D (#108), 2026-05-30 — the display projector (`clipChannelRows`) and the bake mutator both had to query clip tracks; keying by dagId yields empty. WHY = without this entry the next clip-track consumer (FBX editing, a "convert all" bulk action, an agent tool) repeats the empty-timeline symptom. HOW = key by childName; bridge via gltfChildDagId/nodeNameMap. REF: `src/core/import/gltfImportChain.ts` (targetNodeId = name key + `gltfChildDagId`), `src/timeline/clipChannelRows.ts`, `src/agent/mutators/builders/bakeGltfChannel.ts`, `src/app/bakedGltfChannels.ts`. Issue #108. (Interim-grounded until GROUND_TRUTH_GLTF.md.)
+
+### H54 — An edge-less baked channel must reach the bone via the resolver enumeration, NOT an AnimationLayer edge
+
+**Detection signal:** A baked/edited glTF bone's curve SHOWS in the dopesheet but the bone does NOT move under playback. The channel exists and has keyframes, yet nothing drives the rendered joint.
+
+**Root cause:** A GltfChild is inputless (R-1, [[H45]] architectural lock — three.js owns the skeleton; the DAG node only carries a TRS override). There is NO `animation` edge into it. The copy-on-write bake reaches the bone ONLY because the renderer (and read-side) ENUMERATE baked KeyframeChannel nodes by `params.childName` and feed them into the layering resolver. A reflexive "channel → AnimationLayer.animation" wire (the muscle-memory shape from authored channels) drives nothing — the GltfChild is not the layer's target.
+
+**Trap (wrong fix that looks right):** Bake by reusing the authored-channel path (addChannel-style: emit `connect channel → AnimationLayer.animation`). The dopesheet looks right; the bone is dead. Adding MORE wiring (a second connect) compounds it — the framing is wrong.
+
+**Real fix:** The bake emits ZERO connect ops (R4 edge-less bridge). The channel carries `params.childName` + `params.target` (= GltfChild dagId, [[V26]]); the resolver enumerator (`bakedGltfChannels.ts`) finds it by name and the SOLE useFrame writer applies it (V20/H36). Assert ZERO `connect` ops in the bake unit test; prove the bone visibly moves (vertex delta) in e2e.
+
+**Sibling:** [[H45]] (three.js owns the skeleton — why GltfChild is edge-less). Cross-ref [[V20]]/[[H36]] (single writer), [[V26]].
+
+Provenance: ORIGIN = P7.12 Wave D (#108), 2026-05-30 — the CONTEXT-named trap; bake is a DAG-to-DAG copy with no consumption edge. WHY = without this entry the next "make this importable thing editable" feature wires an edge and ships a silently-dead bone. HOW = zero connects; resolver enumerates by childName. REF: `src/agent/mutators/builders/bakeGltfChannel.ts` (zero connects), `src/app/bakedGltfChannels.ts` (enumeration), `src/viewport/SceneFromDAG.tsx` GltfAssetR useFrame. Issue #108. (Interim-grounded until GROUND_TRUTH_GLTF.md.)
+
+### H55 — A new precedence band on a multi-caller layering primitive must be threaded into ALL callers
+
+**Detection signal:** A baked-then-edited bone renders the edited value in the viewport, but the gizmo/NPanel evaluated transform shows the OLD value (clip/base) — a displayed-≠-rendered split at a specific param.
+
+**Root cause:** `resolveGltfChildTrs` (the one layering primitive) has TWO callers — the renderer (`SceneFromDAG` useFrame) AND the read-side (`resolveEvaluatedTransform`, the gizmo/NPanel source). A new precedence band (here the baked-channel layer) added to the primitive's signature but PASSED by only one caller makes the surface that omits it diverge. The optional arg (added for compile-staging) silently defaults to `undefined` on the un-updated caller.
+
+**Trap (wrong fix that looks right):** "Only the renderer needs the new band; the resolver is a read-only display, it'll be fine." → the #68/#77 second-surface class returns: the displayed value lies about what renders.
+
+**Real fix:** When adding a band/arg to a primitive consumed by N surfaces, thread it into ALL N in the SAME wave, sampled at the SAME time input; an e2e asserts surface-vs-render parity at multiple t. Prefer a SHARED enumerator both callers import (one source) over per-caller re-implementation.
+
+**Sibling:** This is the [[H40]] displayed-≠-rendered class, instantiated at the `resolveGltfChildTrs` two-caller boundary. Cross-ref [[V20]] (one precedence rule).
+
+Provenance: ORIGIN = P7.12 Wave C (#108), 2026-05-30 — plan-checker BLOCK-1; C1 added the `bakedChannel` band, C2 (renderer) + C3 (read-side) both had to thread it. WHY = without this entry the next band added to the primitive ships a one-surface fix and a parity regression. HOW = shared enumerator (`bakedGltfChannels.ts`) consumed by both callers; e2e parity gate (read-side == render at t=0.5, t=1.5). REF: `src/app/resolveGltfChildTransform.ts` (the two-caller header), `src/viewport/SceneFromDAG.tsx` (C2), `src/app/resolveEvaluatedTransform.ts` (C3), `tests/e2e/p7.12-editable-imported-clips.spec.ts` (b2 parity). Issue #108.
+
+### H56 — DAG node params are stored zod-PARSED, so a key not declared on the schema is silently stripped
+
+**Detection signal:** A mutator writes an extra param (e.g. a cross-reference key the renderer enumerates by), but downstream reads of `node.params.<key>` are always `undefined` — the enumeration finds nothing and the feature is silently dead, even though the addNode op clearly carried the key.
+
+**Root cause:** `applyAddNode`/`applySetParam` (`ops.ts`) store `paramSchema.safeParse(op.params).data` — the zod-PARSED output, not the raw op params. A `z.object()` strips unknown keys by default. So any param key NOT declared on the node's `paramSchema` vanishes at write time. This is invisible at the op-construction site (the key is there) and only surfaces as a missing read much later — a cross-wave silent failure.
+
+**Trap (wrong fix that looks right):** "I'm writing `params.childName` in the bake op, so the renderer can read it." It can't — the schema didn't declare `childName`, so it was stripped on store. Debugging the renderer enumeration (the reader) is the wrong end; the data never persisted.
+
+**Real fix:** Declare EVERY param key a node may carry on its `paramSchema` (optional for variant-only keys). For the P7.12 bake variant, `KeyframeChannelVec3Params` gained optional `childName` + `assetRef`. A round-trip unit test (addNode → read `state.nodes[id].params.<key>`) catches the strip.
+
+**Sibling:** Cross-ref [[V26]] (the dual-key this prerequisite protects). General lesson: any value that round-trips through a zod-parsed store loses undeclared fields — applies to params, op payloads, persisted project JSON.
+
+Provenance: ORIGIN = P7.12 Wave C (#108), 2026-05-30 — caught while wiring C2's enumerator: D1's `childName`/`assetRef` would have been stripped at addNode, making the whole copy-on-write band dead. WHY = without this entry the next mutator storing a computed/cross-ref param ships a silently-stripped key. HOW = declare the keys on paramSchema; round-trip test. REF: `src/core/dag/ops.ts` (applyAddNode stores parsed data), `src/nodes/KeyframeChannelVec3.ts` (the optional childName/assetRef declaration). Issue #108.
+
+### H57 — The V13 closure gate expands against the post-batch fork, so a removeNode's deleted target false-rejects
+
+**Detection signal:** A delete-through-dispatch mutator (revert, cleanup) throws `ClosurePreservationError` for the very node it is deleting, even though that node is squarely within the mutator's declared closure.
+
+**Root cause:** `useDiffStore.propose` expands the closureSpec against the FORK (post-batch state) so closure roots on freshly-added ids resolve. But a `removeNode` deletes its target IN that fork, so the fork-expanded closure cannot contain it → the membership check rejects a legitimate delete.
+
+**Trap (wrong fix that looks right):** Exempt ALL removeNodes of any pre-existing node from the gate. It unblocks the delete but WIDENS the V13 hole — a buggy mutator could then delete an out-of-closure node undetected.
+
+**Real fix:** Expand the SAME closureSpec a SECOND time against the ORIGINAL state (where the node still exists, computed lazily only when the batch removes a node) and exempt a removeNode only when its target is in THAT original closure. A deleteNode mutator roots its closure on the node(s) it deletes → legitimate deletes are contained; an out-of-closure removeNode still throws. V13 preserved, not weakened.
+
+**Sibling:** mirrors the existing `introducedIds` exemption for fresh addNodes (a node not in the prior closure), inverted for removal. Cross-ref the validator from-side blind-spot (gates have asymmetric coverage; widen precisely, never broadly).
+
+Provenance: ORIGIN = P7.12 Wave D (#108), 2026-05-30 — D3 revert deletes edge-less baked channels through the dispatch seam; the fork-expanded gate false-rejected. First fix was the broad exemption; self-review tightened it to the original-closure check. WHY = without this entry the next delete-through-dispatch either re-hits the false-reject or copies the broad relaxation. HOW = lazy original-state closure expansion; exempt only in-original-closure removeNode targets. REF: `src/agent/diff/store.ts` (propose, the `closureContainsInOriginal` lazy check), `src/app/animate/dispatchMutator.ts` (dispatchRevertGltfChannel). Issue #108.

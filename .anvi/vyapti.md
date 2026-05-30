@@ -590,3 +590,20 @@ used flat fixtures only). Issue #110.
 **Cross-ref:** [[V20]] (single-writer principle this extends to the projection boundary), [[H36]] (the dual-write trap clause 1 blocks), [[H50]] (joint-index-vs-node-index — the trap clause 2 blocks), [[H51]] (matrix-form bind capture), [[H40]] (the boundary-pair the index spine makes trivial), [[H45]]/[[H46]] (the render-side skin family), [[V2]]/[[V9]]/[[V22]].
 
 **Provenance:** ORIGIN = P7.11 (#100), 2026-05-29 — Wave F closes #100's rig-projection + retarget half. WHY = without this invariant, the next rig consumer (DAG-side skinning, viewport bone-pick #100/D-06, FBX node-indexed clips) re-derives BOTH the no-write-back discipline AND the joints-order spine from scratch; the read-only clause in particular guards against a "just write the pose back here" shortcut reopening [[H36]] on a fourth glTF surface. HOW = a new rig-reading surface checks: does it read captured bind data only (no GltfChild edge, no store write)? does it preserve the `skin.joints[]` spine? — both are grep-/test-enforced here. REF: GROUND_TRUTH_GLTF.md DEFERRED (Wave E2) → interim grounding RESEARCH.md §B1 three.js citations (`GLTFLoader.js:3930-3993` loadSkin, `Skeleton.js:64-78` calculateInverses); `src/nodes/GltfSkeleton.ts`, `src/core/import/projectGltfSkeleton.ts`, `src/core/import/gltfImportChain.ts` `buildSkinMetadata`, `src/nodes/GltfSkeleton.test.ts`, `src/core/import/projectGltfSkeleton.test.ts`, `src/core/import/gltfSkinCapture.test.ts`, `tests/e2e/p7.11-gltf-rig-nodes.spec.ts`. Issue #100. (Interim-grounded until GROUND_TRUTH_GLTF.md exists.)
+
+### V26: A baked GltfChild KeyframeChannel stores BOTH params.target (the dagId) AND params.childName — the two key-spaces are not interchangeable
+
+**Status:** ALIGNED (P7.12 D-04 / Wave D, #108, 2026-05-30).
+
+**Span:** The copy-on-write bake boundary — `src/agent/mutators/builders/bakeGltfChannel.ts` (the writer), `src/app/bakedGltfChannels.ts` (the renderer/read-side enumerator), `src/app/animate/paramAnimationState.ts` (the selection/dopesheet matcher), `src/app/animate/bakeOnEdit.ts` + `dispatchMutator.ts` (the idempotency/exists check). All consume the SAME baked KeyframeChannelVec3 node.
+
+**Statement:** A P7.12 baked glTF-bone channel MUST carry, in its params, BOTH:
+
+- `target` = the GltfChild **dagId** (`gltfChildDagId(assetRef, childName)`) — REQUIRED by `paramAnimationState` (`p.target === selectionNodeId`, where the selection id IS the GltfChild dagId) AND by the bake idempotency / "does a channel already exist for this bone" check.
+- `childName` = the glTF child name — REQUIRED by the renderer/read-side enumerator (`bakedChannelSamplersForAsset`) so it resolves the bone by name with NO per-frame nodeNameMap inverse scan, and as the clip-track key ([[H53]]).
+
+Plus `assetRef` (the owning asset) so the enumerator/B2 display predicate can scope by asset. All three are written by D1 construction and persist only because they are declared on the schema ([[H56]]).
+
+**Why it matters:** the dagId space and the childName space are bridged ONLY by `nodeNameMap` (childName → dagId) and `gltfChildDagId`. Storing one and deriving the other per frame is either O(N) (inverse scan) or wrong (the wrong direction). The renderer's asset-membership test `nodeNameMap[childName] === target` is the cheap consistency assertion that the two stored keys agree.
+
+**Enforcement:** `bakeGltfChannel.test.ts` asserts every baked channel carries BOTH `target === gltfChildDagId(assetRef, childName)` AND `childName`; the enumerator's membership test fails closed (a channel whose keys disagree is excluded). Cross-ref [[H53]] (the childName-not-dagId key trap), [[H54]] (edge-less bridge), [[H56]] (schema-declaration prerequisite), [[V22]] (deterministic ids), [[V20]] (single writer). REF: `src/agent/mutators/builders/bakeGltfChannel.ts`, `src/app/bakedGltfChannels.ts`, `src/app/animate/paramAnimationState.ts`, `src/core/import/gltfImportChain.ts` (`gltfChildDagId`/`gltfChannelDagId`). Issue #108. (Interim-grounded until GROUND_TRUTH_GLTF.md.)
