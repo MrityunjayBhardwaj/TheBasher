@@ -54,6 +54,7 @@ import {
   type SectionId,
 } from './inspectorSections';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
+import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveTransformParam } from './resolveTransformParam';
@@ -564,6 +565,12 @@ export function NPanel() {
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
           ) : null}
+          {(() => {
+            if (node.type !== 'GltfChild') return null;
+            const gp = (node.params ?? {}) as { assetRef?: unknown; childName?: unknown };
+            if (typeof gp.assetRef !== 'string' || typeof gp.childName !== 'string') return null;
+            return <RevertImportedClipConnector assetRef={gp.assetRef} childName={gp.childName} />;
+          })()}
         </>
       )}
     </aside>
