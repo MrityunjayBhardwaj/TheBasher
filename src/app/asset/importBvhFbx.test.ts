@@ -10,6 +10,8 @@
 // p7.14 e2e; here we cover the dispatcher routing + the BVH text path + the
 // silent-failure guard (no TimeSource → banner, no dispatch).
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
@@ -23,8 +25,15 @@ vi.mock('../boot', () => ({
 }));
 
 // Imported AFTER vi.mock so the modules pick up the mocked boot.
-import { importBvhFromOpfs, routeImportByExtension } from './importBvhFbx';
+import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './importBvhFbx';
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
+
+// The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
+// skeleton, the same file the e2e fetches). Read as bytes so we exercise the
+// real binary ArrayBuffer decode path through FBXLoader.
+const RIG_FBX_BYTES = new Uint8Array(
+  readFileSync(resolve(process.cwd(), 'public/fixtures/anim/rig.fbx')),
+);
 
 const SYNTHETIC_BVH = `HIERARCHY
 ROOT Hips
@@ -98,6 +107,26 @@ describe('importBvhFromOpfs', () => {
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(useImportRefreshStore.getState().tick).toBe(0);
     expect(useAssetErrorStore.getState().errors[path]).toMatch(/TimeSource/);
+  });
+});
+
+describe('importFbxFromOpfs', () => {
+  it('decodes the committed ASCII FBX (binary path) into Skeleton + AnimationClip', async () => {
+    const path = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
+    await currentStorage.write(path, RIG_FBX_BYTES);
+
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    await importFbxFromOpfs(path);
+
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    const types = dispatchSpy.mock.calls[0][0]
+      .filter((o) => o.type === 'addNode')
+      .map((o) => o.nodeType);
+    expect(types).toContain('Skeleton');
+    expect(types).toContain('AnimationClip');
+    expect(types).not.toContain('Mesh');
+    expect(useImportRefreshStore.getState().tick).toBe(1);
+    expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
   });
 });
 

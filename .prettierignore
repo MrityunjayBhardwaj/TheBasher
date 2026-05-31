@@ -5,6 +5,11 @@ public/assets/*.glb
 # committed bytes, so they MUST NOT be reflowed by prettier. Same
 # rationale as public/assets/*.gltf above.
 public/fixtures/multifile/
+# Motion fixtures (#111 Phase 7.14) — committed tiny BVH (text) + ASCII FBX
+# (binary-decode path). The e2e/unit tests gate on the exact committed bytes
+# (the FBX especially must not be reflowed — FBXLoader parses a fixed
+# structure), and prettier cannot infer a parser for .bvh/.fbx anyway.
+public/fixtures/anim/
 # Vendored Draco / Basis (KTX2) decoders — third-party JS+WASM wrappers
 # copied from three-stdlib (`node_modules/three/examples/jsm/libs/...`).
 # Not ours; do not reformat. See #80 / src/viewport/gltfLoaderConfig.ts.

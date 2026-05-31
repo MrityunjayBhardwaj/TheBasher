@@ -71,11 +71,23 @@ interface AvailableAsset extends CatalogEntry {
  * draggable shape of `AvailableAsset` (path + name + swatch) but is always
  * `available` — the entry's existence in OPFS is the availability proof. */
 interface MyImportEntry {
-  /** OPFS path of the entry .gltf/.glb (the value passed via DRAG_MIME and
-   * consumed by AssetDropZone's library branch). */
+  /** OPFS path of the entry file — .gltf/.glb (model) or .bvh/.fbx (motion).
+   * The value passed via DRAG_MIME and consumed by AssetDropZone's library
+   * branch (routed by extension). */
   readonly path: string;
   /** Display name — the user-imports subdirectory name (sanitized at ingest). */
   readonly name: string;
+}
+
+/**
+ * Pick the entry file from a directory listing. glTF wins by container priority
+ * (.glb single-file over .gltf), then a single motion file (.bvh/.fbx) — Phase
+ * 7.14 (#111) D-05: BVH/FBX must list in My Imports like glTF. Returns the
+ * matched filename, or null if the listing holds no importable entry.
+ */
+function findEntryFile(files: readonly string[]): string | null {
+  const byExt = (ext: string) => files.find((f) => f.toLowerCase().endsWith(ext));
+  return byExt('.glb') ?? byExt('.gltf') ?? byExt('.bvh') ?? byExt('.fbx') ?? null;
 }
 
 export function AssetsPopover(): ReactNode {
@@ -137,21 +149,19 @@ export function AssetsPopover(): ReactNode {
         for (const name of subdirs) {
           try {
             const files = await storage.list(`${USER_IMPORTS_ROOT}/${name}`);
-            // Resolve the entry file. .glb (single-file container) wins over
-            // .gltf at the same depth. If neither is present at the root of
-            // the subdir, recurse one level (a common shape for nested-entry
-            // exports like `<dir>/gltf/scene.gltf`).
-            const rootGlb = files.find((f) => f.toLowerCase().endsWith('.glb'));
-            const rootGltf = files.find((f) => f.toLowerCase().endsWith('.gltf'));
-            let entryRel: string | null = rootGlb ?? rootGltf ?? null;
+            // Resolve the entry file. glTF: .glb (single-file container) wins
+            // over .gltf at the same depth; if neither is at the root, recurse
+            // one level (nested-entry exports like `<dir>/gltf/scene.gltf`).
+            // Motion (Phase 7.14 #111, D-05): a single .bvh/.fbx is a valid
+            // entry too — BVH/FBX must list in My Imports like glTF.
+            let entryRel: string | null = findEntryFile(files);
             if (!entryRel) {
               for (const sub of files) {
                 try {
                   const innerFiles = await storage.list(`${USER_IMPORTS_ROOT}/${name}/${sub}`);
-                  const innerGlb = innerFiles.find((f) => f.toLowerCase().endsWith('.glb'));
-                  const innerGltf = innerFiles.find((f) => f.toLowerCase().endsWith('.gltf'));
-                  if (innerGlb || innerGltf) {
-                    entryRel = `${sub}/${innerGlb ?? innerGltf}`;
+                  const inner = findEntryFile(innerFiles);
+                  if (inner) {
+                    entryRel = `${sub}/${inner}`;
                     break;
                   }
                 } catch {
@@ -160,7 +170,7 @@ export function AssetsPopover(): ReactNode {
                 }
               }
             }
-            if (!entryRel) continue; // orphan dir (no .gltf/.glb anywhere)
+            if (!entryRel) continue; // orphan dir (no importable file anywhere)
             entries.push({
               path: `${USER_IMPORTS_ROOT}/${name}/${entryRel}`,
               name,
