@@ -331,7 +331,7 @@ export function AssetsPopover(): ReactNode {
             <div
               data-testid="library-popover-delete-banner"
               role="alert"
-              className="mb-1 flex flex-col gap-1 rounded border border-warn/60 bg-warn/10 px-2 py-1.5 text-[11px] text-warn"
+              className="mb-1 flex flex-col gap-1 rounded border border-border-strong bg-warn/10 px-2 py-1.5 text-[11px] text-warn"
             >
               <span>
                 “{deleteBlock.name}” is used by {deleteBlock.refs} node
@@ -342,7 +342,7 @@ export function AssetsPopover(): ReactNode {
                   type="button"
                   data-testid={`library-popover-delete-anyway-${deleteBlock.name}`}
                   onClick={() => doDelete(deleteBlock.name, true)}
-                  className="rounded border border-warn/60 bg-bg-1 px-2 py-0.5 text-warn hover:border-warn hover:bg-bg-2"
+                  className="rounded border border-border bg-bg-1 px-2 py-0.5 text-warn hover:border-accent hover:bg-bg-2"
                 >
                   Delete anyway
                 </button>
