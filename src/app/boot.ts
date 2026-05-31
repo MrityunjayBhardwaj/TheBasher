@@ -31,6 +31,8 @@ import { registerAllMutators } from '../agent/mutators';
 import { registerAllStrategies } from '../agent/strategy';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
 import { ingestGltfFolder, importGltfFromOpfs, type IngestFile } from './asset/importGltf';
+import { ingestSingleFile } from './asset/importCommon';
+import { routeImportByExtension } from './asset/importBvhFbx';
 import { useTimeStore } from './stores/timeStore';
 
 let cachedStorage: StorageCapability | null = null;
@@ -293,6 +295,23 @@ export function boot(): Promise<void> {
       ): Promise<string> => {
         const entryPath = await ingestGltfFolder(files, folderName);
         await importGltfFromOpfs(entryPath);
+        return entryPath;
+      };
+      // Phase 7.14 (#111) — single-file BVH/FBX ingestion seams mirroring the
+      // glTF one above. Drive the SHARED single-file core: ingestSingleFile
+      // (bytes → user-imports/<name>/<name>.<ext>) → routeImportByExtension
+      // (OPFS read → buildBvh/FbxImportOps → dispatchAtomic). The p7.14 e2e
+      // uses these to exercise the full write→ingest→dispatch pipeline; the
+      // existing text/data __basher_importBvh/Fbx seams above are left intact
+      // (Chesterton — P3.1 fixtures use them, no OPFS round-trip).
+      w.__basher_ingestBvhFile = async (bytes: Uint8Array, name: string): Promise<string> => {
+        const entryPath = await ingestSingleFile({ relativePath: `${name}.bvh`, bytes }, name);
+        await routeImportByExtension(entryPath);
+        return entryPath;
+      };
+      w.__basher_ingestFbxFile = async (bytes: Uint8Array, name: string): Promise<string> => {
+        const entryPath = await ingestSingleFile({ relativePath: `${name}.fbx`, bytes }, name);
+        await routeImportByExtension(entryPath);
         return entryPath;
       };
       // P7.3 D-06 — autoKeyStore exposed so the gizmo-grab boundary spec

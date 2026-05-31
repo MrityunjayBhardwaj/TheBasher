@@ -12,8 +12,27 @@ import { useDagStore } from '../core/dag/store';
 import { DRAG_MIME } from './asset/catalog';
 import { buildAssetDropOps } from './asset/dropChain';
 import { importGltfFromOpfs, ingestGltfFolder, type IngestFile } from './asset/importGltf';
+import { ingestSingleFile } from './asset/importCommon';
+import { routeImportByExtension } from './asset/importBvhFbx';
 import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
 import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
+
+/** Lowercased-extension test for the four importable formats (D-04). */
+function isImportableEntry(p: string): boolean {
+  const lower = p.toLowerCase();
+  return (
+    lower.endsWith('.gltf') ||
+    lower.endsWith('.glb') ||
+    lower.endsWith('.bvh') ||
+    lower.endsWith('.fbx')
+  );
+}
+
+/** True for the motion formats that ingest as a single self-contained file. */
+function isMotionEntry(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith('.bvh') || lower.endsWith('.fbx');
+}
 
 interface Props {
   children: ReactNode;
@@ -75,6 +94,15 @@ async function routeIngest(files: IngestFile[], items: DataTransferItem[]): Prom
     folderName = 'imported';
   }
 
+  // BVH/FBX are self-contained motion files — a lone .bvh/.fbx drop ingests
+  // as a single file (no sibling resolution) and routes by extension. A
+  // glTF (or glTF + sibling .bin/textures) keeps the folder-ingest path.
+  if (files.length === 1 && isMotionEntry(files[0].relativePath)) {
+    const entryPath = await ingestSingleFile(files[0], folderName);
+    await routeImportByExtension(entryPath);
+    return;
+  }
+
   const entryPath = await ingestGltfFolder(files, folderName);
   await importGltfFromOpfs(entryPath);
 }
@@ -115,15 +143,13 @@ export function AssetDropZone({ children }: Props) {
         return;
       }
 
-      // P7.5 + #90 + Phase 7.9 — single-path glTF routing (CONTEXT D-02).
-      // Both `.glb` (binary container) and `.gltf` (JSON-only container)
-      // now route through the shared Wave A core `importGltfFromOpfs`,
-      // which is the sole importer call site in `src/app/` (B12
-      // chokepoint). Non-glTF library drops fall through to the catalog
-      // `buildAssetDropOps` path unchanged.
-      const lower = path.toLowerCase();
-      if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-        void importGltfFromOpfs(path);
+      // P7.5 + #90 + Phase 7.9/7.14 — single-path importable-asset routing.
+      // glTF (.glb/.gltf), BVH (.bvh) and FBX (.fbx) all route through the
+      // shared extension dispatcher `routeImportByExtension` (B12 chokepoint:
+      // the sole importer call site in `src/app/`). Non-importable library
+      // drops fall through to the catalog `buildAssetDropOps` path unchanged.
+      if (isImportableEntry(path)) {
+        void routeImportByExtension(path);
         return;
       }
 
