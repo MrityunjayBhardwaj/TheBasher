@@ -24,8 +24,13 @@
 //      chokepoint this generalizes); StorageCapability.ts:17-42 (no move/copy
 //      primitive — the recursive helpers below fill that gap).
 
+import { useDagStore } from '../../core/dag/store';
+import type { Op } from '../../core/dag/types';
+import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
+import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { importPathPrefix, nodesReferencingImport } from './importRefs';
 
 /**
  * One ingested file. All readers (drop entries, webkitdirectory input,
@@ -116,5 +121,201 @@ export async function ingestSingleFile(file: IngestFile, folderName: string): Pr
       useAssetErrorStore.getState().report(desired, `import failed: ${message}`);
     }
     throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// My-Imports management — rename / delete (Phase 7.14 Wave B, issue #112)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively collect every FILE path under `dir`, returned RELATIVE to `dir`
+ * (e.g. `scene.gltf`, `textures/foo.png`). `StorageCapability` has no recursive
+ * list (StorageCapability.ts:17-42), so we walk one level at a time.
+ *
+ * Backend asymmetry handled: `storage.list(filePath)` returns `[]` on
+ * MemoryStorage but THROWS on OpfsStorage — both are caught and treated as
+ * "leaf" (a file), so the walk is backend-agnostic. (Import dirs never contain
+ * empty subdirs, so the leaf-vs-empty-dir ambiguity does not arise.)
+ */
+export async function listFilesDeep(storage: StorageCapability, dir: string): Promise<string[]> {
+  async function walk(prefix: string): Promise<string[]> {
+    let children: string[];
+    try {
+      children = await storage.list(`${dir}/${prefix}`.replace(/\/$/, ''));
+    } catch {
+      return [];
+    }
+    if (children.length === 0) return [];
+    const out: string[] = [];
+    for (const child of children) {
+      const rel = prefix ? `${prefix}/${child}` : child;
+      let grandchildren: string[];
+      try {
+        grandchildren = await storage.list(`${dir}/${rel}`);
+      } catch {
+        grandchildren = [];
+      }
+      if (grandchildren.length === 0) {
+        out.push(rel); // leaf → a file
+      } else {
+        out.push(...(await walk(rel)));
+      }
+    }
+    return out;
+  }
+  return walk('');
+}
+
+/** Result of a delete attempt. `deleted:false` + `referencedBy` means the asset
+ *  was blocked because live nodes reference it (D-06) — the caller surfaces the
+ *  break-refs banner. */
+export interface DeleteImportResult {
+  readonly deleted: boolean;
+  /** GltfAsset node ids still referencing the asset when blocked. */
+  readonly referencedBy?: readonly string[];
+}
+
+/**
+ * Rename a My-Imports asset: move its OPFS folder AND rewrite every glTF
+ * `assetRef` that pointed inside it, atomically. Returns the resolved new name
+ * (suffix-adjusted on collision), or null on failure (reported to the banner).
+ *
+ * FAIL-SAFE ORDER (the central invariant — risk #1):
+ *   copy-all-new → verify-all-new → rewrite-assetRefs (1 dispatchAtomic, K6) →
+ *   delete-old → bump.
+ * NEVER delete-old before new is fully written+verified: a crash mid-rename
+ * then leaves a recoverable DUPLICATE, never a live `assetRef` pointing at a
+ * deleted path. The assetRef rewrite is a single dispatchAtomic so it is
+ * all-or-nothing and Cmd+Z-reversible.
+ *
+ * Asymmetry (D-03): glTF persists `assetRef` → rewrite required. BVH/FBX leave
+ * no persistent ref → `nodesReferencingImport` returns [] → folder move only.
+ */
+export async function renameImportedAsset(
+  oldName: string,
+  newName: string,
+): Promise<string | null> {
+  const oldRoot = `${USER_IMPORTS_ROOT}/${oldName}`;
+  try {
+    const desired = sanitizeFolderName(newName);
+    if (desired === oldName) return oldName; // no-op rename
+    const resolved = await resolveFreeImportName(desired);
+    const newRoot = `${USER_IMPORTS_ROOT}/${resolved}`;
+    const storage = await getStorage();
+
+    // 1. Recursive list of the source tree.
+    const rels = await listFilesDeep(storage, oldRoot);
+    if (rels.length === 0) {
+      useAssetErrorStore.getState().report(oldName, `rename failed: "${oldName}" not found`);
+      return null;
+    }
+
+    // 2. Copy every file to the new root (read + write — no move primitive).
+    for (const rel of rels) {
+      const bytes = await storage.read(`${oldRoot}/${rel}`);
+      await storage.write(`${newRoot}/${rel}`, bytes);
+    }
+
+    // 3. Verify ALL new files exist BEFORE touching the old tree.
+    for (const rel of rels) {
+      if (!(await storage.exists(`${newRoot}/${rel}`))) {
+        throw new Error(`rename failed: verify error for ${rel}`);
+      }
+    }
+
+    // 4. Rewrite assetRefs (glTF only) in ONE dispatchAtomic (K6, undoable).
+    const dag = useDagStore.getState();
+    const refIds = nodesReferencingImport(oldName, dag.state);
+    if (refIds.length > 0) {
+      const oldPrefix = importPathPrefix(oldName);
+      const newPrefix = importPathPrefix(resolved);
+      const ops: Op[] = [];
+      for (const id of refIds) {
+        const ref = (dag.state.nodes[id].params as { assetRef: string }).assetRef;
+        ops.push({
+          type: 'setParam',
+          nodeId: id,
+          paramPath: 'assetRef',
+          value: ref.replace(oldPrefix, newPrefix),
+        });
+      }
+      dag.dispatchAtomic(ops, 'user', `rename import: ${oldName} → ${resolved}`);
+    }
+
+    // 5. Delete the old tree (only now — new is verified + refs repointed).
+    for (const rel of rels) {
+      await storage.delete(`${oldRoot}/${rel}`);
+    }
+
+    // 6. Refresh the My-Imports list.
+    useImportRefreshStore.getState().bump();
+    return resolved;
+  } catch (err) {
+    useAssetErrorStore.getState().report(oldName, `rename failed: ${formatAssetError(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Delete a My-Imports asset.
+ *
+ * If any node references it (glTF assetRef) and `breakRefs` is not set, the
+ * delete is BLOCKED (D-06): returns `{ deleted:false, referencedBy }` and the
+ * caller shows a banner offering "delete anyway". With `breakRefs`, the
+ * referencing GltfAsset nodes are removed first (disconnect-consumers then
+ * removeNode — the op layer rejects removing a still-consumed node) in one
+ * dispatchAtomic, then the OPFS tree is deleted.
+ *
+ * Unreferenced (always true for BVH/FBX — no persistent ref) → delete OPFS now.
+ */
+export async function deleteImportedAsset(
+  name: string,
+  opts: { breakRefs?: boolean } = {},
+): Promise<DeleteImportResult> {
+  try {
+    const dag = useDagStore.getState();
+    const refIds = nodesReferencingImport(name, dag.state);
+
+    if (refIds.length > 0 && !opts.breakRefs) {
+      return { deleted: false, referencedBy: refIds };
+    }
+
+    if (refIds.length > 0) {
+      // Break refs: disconnect every consumer edge into the referencing nodes,
+      // then removeNode them — all in one dispatchAtomic (mirror of the
+      // deleteNode mutator builder; the op layer requires zero consumers).
+      const targets = new Set(refIds);
+      const ops: Op[] = [];
+      for (const consumer of Object.values(dag.state.nodes)) {
+        for (const [socket, binding] of Object.entries(consumer.inputs)) {
+          const refs = Array.isArray(binding) ? binding : [binding];
+          for (const ref of refs) {
+            if (!targets.has(ref.node)) continue;
+            ops.push({
+              type: 'disconnect',
+              from: { node: ref.node, socket: ref.socket },
+              to: { node: consumer.id, socket },
+            });
+          }
+        }
+      }
+      for (const id of refIds) ops.push({ type: 'removeNode', nodeId: id });
+      dag.dispatchAtomic(ops, 'user', `delete import (break refs): ${name}`);
+    }
+
+    // Delete the OPFS tree.
+    const storage = await getStorage();
+    const root = `${USER_IMPORTS_ROOT}/${name}`;
+    const rels = await listFilesDeep(storage, root);
+    for (const rel of rels) {
+      await storage.delete(`${root}/${rel}`);
+    }
+
+    useImportRefreshStore.getState().bump();
+    return { deleted: true };
+  } catch (err) {
+    useAssetErrorStore.getState().report(name, `delete failed: ${formatAssetError(err)}`);
+    return { deleted: false };
   }
 }
