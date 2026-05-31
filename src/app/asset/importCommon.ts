@@ -167,6 +167,40 @@ export async function listFilesDeep(storage: StorageCapability, dir: string): Pr
   return walk('');
 }
 
+/**
+ * Delete an entire import tree from OPFS: every file, then every now-empty
+ * subdirectory (deepest-first), then the root dir itself. `StorageCapability.
+ * delete` maps to `removeEntry`, which removes an EMPTY directory too — so
+ * after the files are gone, removing dirs bottom-up leaves no lingering empty
+ * folder (OpfsStorage.ts:83-90). On MemoryStorage the dir-deletes are harmless
+ * no-ops (it stores files only).
+ *
+ * `rels` is the file list (relative to `root`) — pass the same list captured
+ * before the move so a rename/delete removes exactly what it copied/listed.
+ */
+export async function deleteOpfsTree(
+  storage: StorageCapability,
+  root: string,
+  rels: readonly string[],
+): Promise<void> {
+  for (const rel of rels) {
+    await storage.delete(`${root}/${rel}`);
+  }
+  // Unique ancestor dirs of every file, deepest-first.
+  const dirs = new Set<string>();
+  for (const rel of rels) {
+    const parts = rel.split('/');
+    for (let i = 1; i < parts.length; i += 1) {
+      dirs.add(parts.slice(0, i).join('/'));
+    }
+  }
+  const ordered = [...dirs].sort((a, b) => b.split('/').length - a.split('/').length);
+  for (const dir of ordered) {
+    await storage.delete(`${root}/${dir}`);
+  }
+  await storage.delete(root);
+}
+
 /** Result of a delete attempt. `deleted:false` + `referencedBy` means the asset
  *  was blocked because live nodes reference it (D-06) — the caller surfaces the
  *  break-refs banner. */
@@ -244,9 +278,7 @@ export async function renameImportedAsset(
     }
 
     // 5. Delete the old tree (only now — new is verified + refs repointed).
-    for (const rel of rels) {
-      await storage.delete(`${oldRoot}/${rel}`);
-    }
+    await deleteOpfsTree(storage, oldRoot, rels);
 
     // 6. Refresh the My-Imports list.
     useImportRefreshStore.getState().bump();
@@ -304,13 +336,11 @@ export async function deleteImportedAsset(
       dag.dispatchAtomic(ops, 'user', `delete import (break refs): ${name}`);
     }
 
-    // Delete the OPFS tree.
+    // Delete the OPFS tree (files + now-empty dirs + root).
     const storage = await getStorage();
     const root = `${USER_IMPORTS_ROOT}/${name}`;
     const rels = await listFilesDeep(storage, root);
-    for (const rel of rels) {
-      await storage.delete(`${root}/${rel}`);
-    }
+    await deleteOpfsTree(storage, root, rels);
 
     useImportRefreshStore.getState().bump();
     return { deleted: true };

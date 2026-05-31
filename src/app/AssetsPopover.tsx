@@ -116,6 +116,8 @@ export function AssetsPopover(): ReactNode {
   const [renameValue, setRenameValue] = useState('');
   const [showFilesFor, setShowFilesFor] = useState<{ name: string; files: string[] } | null>(null);
   const [deleteBlock, setDeleteBlock] = useState<{ name: string; refs: number } | null>(null);
+  // Guards the Enter/blur double-commit on the rename field (see commitRename).
+  const renameCommittedRef = useRef(false);
 
   function resetRowState(): void {
     setMenuFor(null);
@@ -126,11 +128,16 @@ export function AssetsPopover(): ReactNode {
   function beginRename(name: string): void {
     setMenuFor(null);
     setShowFilesFor(null);
+    renameCommittedRef.current = false;
     setRenameFor(name);
     setRenameValue(name);
   }
 
   function commitRename(oldName: string): void {
+    // Dedupe Enter + the unmount-`onBlur` that follows it — both call this; the
+    // ref guarantees the rename fires at most once per edit.
+    if (renameCommittedRef.current) return;
+    renameCommittedRef.current = true;
     const next = renameValue.trim();
     setRenameFor(null);
     if (next === '' || next === oldName) return;
