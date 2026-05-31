@@ -28,6 +28,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { ASSET_CATALOG, DRAG_MIME, type CatalogEntry } from './asset/catalog';
+import {
+  deleteImportedAsset,
+  listFilesDeep,
+  renameImportedAsset,
+  USER_IMPORTS_ROOT,
+} from './asset/importCommon';
 import { getStorage } from './boot';
 import { useImportRefreshStore } from './stores/importRefreshStore';
 
@@ -37,10 +43,6 @@ import { useImportRefreshStore } from './stores/importRefreshStore';
  * green so user-imported assets read as "yours" at-a-glance. Lives in the
  * existing palette (`tailwind.config.ts:26`) — no new token introduced. */
 const MY_IMPORT_SWATCH = '#f0b85a';
-
-/** OPFS root for user-imported asset folders (Phase 7.9 Wave A — mirrors
- * `USER_IMPORTS_ROOT` in `src/app/asset/importGltf.ts:74`). */
-const USER_IMPORTS_ROOT = 'user-imports';
 
 interface AssetsPopoverState {
   open: boolean;
@@ -106,6 +108,64 @@ export function AssetsPopover(): ReactNode {
     ASSET_CATALOG.map((c) => ({ ...c, available: false })),
   );
   const [myImports, setMyImports] = useState<MyImportEntry[]>([]);
+  // Per-row management UI state (Phase 7.14 #112). At most one row's ︙ menu /
+  // rename field / file list is active at a time; the delete-block banner is
+  // global to the section.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [renameFor, setRenameFor] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [showFilesFor, setShowFilesFor] = useState<{ name: string; files: string[] } | null>(null);
+  const [deleteBlock, setDeleteBlock] = useState<{ name: string; refs: number } | null>(null);
+
+  function resetRowState(): void {
+    setMenuFor(null);
+    setRenameFor(null);
+    setShowFilesFor(null);
+  }
+
+  function beginRename(name: string): void {
+    setMenuFor(null);
+    setShowFilesFor(null);
+    setRenameFor(name);
+    setRenameValue(name);
+  }
+
+  function commitRename(oldName: string): void {
+    const next = renameValue.trim();
+    setRenameFor(null);
+    if (next === '' || next === oldName) return;
+    void renameImportedAsset(oldName, next);
+  }
+
+  function doDelete(name: string, breakRefs: boolean): void {
+    resetRowState();
+    void deleteImportedAsset(name, { breakRefs }).then((res) => {
+      if (!res.deleted && res.referencedBy && res.referencedBy.length > 0) {
+        // D-06: blocked because live nodes reference it — surface the banner.
+        setDeleteBlock({ name, refs: res.referencedBy.length });
+      } else {
+        setDeleteBlock((cur) => (cur?.name === name ? null : cur));
+      }
+    });
+  }
+
+  async function showFiles(name: string): Promise<void> {
+    setMenuFor(null);
+    setRenameFor(null);
+    const storage = await getStorage();
+    const files = await listFilesDeep(storage, `${USER_IMPORTS_ROOT}/${name}`);
+    setShowFilesFor({ name, files: files.sort() });
+  }
+
+  // Clear all transient per-row state when the popover closes so a re-open
+  // starts clean (no stale menu / rename field / delete banner).
+  useEffect(() => {
+    if (open) return;
+    setMenuFor(null);
+    setRenameFor(null);
+    setShowFilesFor(null);
+    setDeleteBlock(null);
+  }, [open]);
 
   // Lazy-resolve availability whenever the popover opens. Re-checking on
   // every open keeps the indicator honest if the user re-seeded assets
@@ -260,30 +320,135 @@ export function AssetsPopover(): ReactNode {
           <header className="mb-1 mt-2 px-1 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">
             my imports
           </header>
-          <ul className="flex flex-col gap-1" data-testid="library-popover-my-imports">
-            {myImports.map((entry) => (
-              <li key={entry.path}>
+          {deleteBlock && (
+            <div
+              data-testid="library-popover-delete-banner"
+              role="alert"
+              className="mb-1 flex flex-col gap-1 rounded border border-warn/60 bg-warn/10 px-2 py-1.5 text-[11px] text-warn"
+            >
+              <span>
+                “{deleteBlock.name}” is used by {deleteBlock.refs} node
+                {deleteBlock.refs === 1 ? '' : 's'} in the scene.
+              </span>
+              <div className="flex gap-1">
                 <button
                   type="button"
-                  draggable
-                  data-testid={`library-popover-my-import-${entry.path}`}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(DRAG_MIME, entry.path);
-                    e.dataTransfer.setData('text/plain', entry.path);
-                    e.dataTransfer.effectAllowed = 'copy';
-                  }}
-                  onDragEnd={() => close()}
-                  className="flex w-full cursor-grab items-center gap-2 rounded border border-border bg-bg-1/40 px-2 py-1.5 text-left text-fg/90 hover:border-accent hover:bg-bg-1"
-                  title="Drag onto viewport to import"
+                  data-testid={`library-popover-delete-anyway-${deleteBlock.name}`}
+                  onClick={() => doDelete(deleteBlock.name, true)}
+                  className="rounded border border-warn/60 bg-bg-1 px-2 py-0.5 text-warn hover:border-warn hover:bg-bg-2"
                 >
-                  <span
-                    aria-hidden
-                    className="h-5 w-5 shrink-0 rounded border border-border"
-                    style={{ background: MY_IMPORT_SWATCH }}
-                  />
-                  <span className="grow truncate">{entry.name}</span>
-                  <span className="text-[9px] text-fg-mute">user</span>
+                  Delete anyway
                 </button>
+                <button
+                  type="button"
+                  data-testid="library-popover-delete-cancel"
+                  onClick={() => setDeleteBlock(null)}
+                  className="rounded border border-border px-2 py-0.5 text-fg-dim hover:border-accent hover:bg-bg-1"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          <ul className="flex flex-col gap-1" data-testid="library-popover-my-imports">
+            {myImports.map((entry) => (
+              <li key={entry.path} className="relative">
+                {renameFor === entry.name ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    data-testid={`library-popover-rename-input-${entry.name}`}
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitRename(entry.name);
+                      else if (e.key === 'Escape') {
+                        // Reset the value first so the unmount `onBlur` commits
+                        // a no-op (next === oldName) rather than the edited text.
+                        setRenameValue(entry.name);
+                        setRenameFor(null);
+                      }
+                    }}
+                    onBlur={() => commitRename(entry.name)}
+                    className="w-full rounded border border-accent bg-bg-1 px-2 py-1.5 text-fg outline-none"
+                  />
+                ) : (
+                  <div className="flex w-full items-center gap-1">
+                    <button
+                      type="button"
+                      draggable
+                      data-testid={`library-popover-my-import-${entry.path}`}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(DRAG_MIME, entry.path);
+                        e.dataTransfer.setData('text/plain', entry.path);
+                        e.dataTransfer.effectAllowed = 'copy';
+                      }}
+                      onDragEnd={() => close()}
+                      className="flex grow cursor-grab items-center gap-2 rounded border border-border bg-bg-1/40 px-2 py-1.5 text-left text-fg/90 hover:border-accent hover:bg-bg-1"
+                      title="Drag onto viewport to import"
+                    >
+                      <span
+                        aria-hidden
+                        className="h-5 w-5 shrink-0 rounded border border-border"
+                        style={{ background: MY_IMPORT_SWATCH }}
+                      />
+                      <span className="grow truncate">{entry.name}</span>
+                      <span className="text-[9px] text-fg-mute">user</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Manage ${entry.name}`}
+                      data-testid={`library-popover-menu-btn-${entry.name}`}
+                      onClick={() => setMenuFor((cur) => (cur === entry.path ? null : entry.path))}
+                      className="shrink-0 rounded border border-border bg-bg-1/40 px-1.5 py-1.5 text-fg-dim hover:border-accent hover:bg-bg-1"
+                    >
+                      ⋮
+                    </button>
+                  </div>
+                )}
+                {menuFor === entry.path && (
+                  <div
+                    data-testid={`library-popover-menu-${entry.name}`}
+                    className="absolute right-0 z-10 mt-1 flex w-32 flex-col rounded border border-border-strong bg-bg-2 py-1 shadow-md"
+                  >
+                    <button
+                      type="button"
+                      data-testid={`library-popover-menu-rename-${entry.name}`}
+                      onClick={() => beginRename(entry.name)}
+                      className="px-2 py-1 text-left text-fg/90 hover:bg-bg-1"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`library-popover-menu-showfiles-${entry.name}`}
+                      onClick={() => void showFiles(entry.name)}
+                      className="px-2 py-1 text-left text-fg/90 hover:bg-bg-1"
+                    >
+                      Show files
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`library-popover-menu-delete-${entry.name}`}
+                      onClick={() => doDelete(entry.name, false)}
+                      className="px-2 py-1 text-left text-error hover:bg-bg-1"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
+                {showFilesFor?.name === entry.name && (
+                  <ul
+                    data-testid={`library-popover-files-${entry.name}`}
+                    className="mt-1 flex flex-col gap-0.5 rounded border border-border bg-bg-1/40 px-2 py-1 text-[10px] text-fg-dim"
+                  >
+                    {showFilesFor.files.map((f) => (
+                      <li key={f} className="truncate">
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             ))}
           </ul>
