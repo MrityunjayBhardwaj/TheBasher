@@ -25,6 +25,7 @@
 //      primitive — the recursive helpers below fill that gap).
 
 import { getStorage } from '../boot';
+import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 
 /**
  * One ingested file. All readers (drop entries, webkitdirectory input,
@@ -79,4 +80,41 @@ export async function resolveFreeImportName(desired: string): Promise<string> {
   let i = 2;
   while (taken.has(`${desired}-${i}`)) i += 1;
   return `${desired}-${i}`;
+}
+
+/**
+ * Ingest a SINGLE file into OPFS under `user-imports/<resolvedName>/<file>`.
+ *
+ * The simpler sibling of `ingestGltfFolder` (importGltf.ts): BVH and FBX have
+ * no sibling files (a `.bvh` is self-contained text; a `.fbx` is a single
+ * binary), so there is no folder to locate an entry within — one file in, one
+ * OPFS path out. Returns the written file's OPFS path; callers route it through
+ * the per-format importer.
+ *
+ * On a write/quota failure the error is reported to assetErrorStore BEFORE
+ * re-throwing (so callers need no second catch-and-report), mirroring
+ * `ingestGltfFolder`.
+ *
+ * V22: the path is derived purely from folderName + numeric suffix.
+ * V18: no localStorage index — OPFS is enumerated live.
+ */
+export async function ingestSingleFile(file: IngestFile, folderName: string): Promise<string> {
+  const desired = sanitizeFolderName(folderName);
+  try {
+    const resolvedName = await resolveFreeImportName(desired);
+    const storage = await getStorage();
+    // Use only the basename so a `relativePath` like `anim/walk.bvh` (from a
+    // folder-shaped drop) still lands as a flat single file under the import
+    // dir — BVH/FBX never carry siblings, so nesting would be spurious.
+    const base = file.relativePath.split('/').filter(Boolean).pop() ?? file.relativePath;
+    const opfsPath = `${USER_IMPORTS_ROOT}/${resolvedName}/${base}`;
+    await storage.write(opfsPath, file.bytes);
+    return opfsPath;
+  } catch (err) {
+    const message = formatAssetError(err);
+    if (!message.startsWith('import failed:')) {
+      useAssetErrorStore.getState().report(desired, `import failed: ${message}`);
+    }
+    throw err;
+  }
 }
