@@ -31,7 +31,9 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import type { PrimitiveKind } from './addPrimitives';
 import { inputFilesToFiles } from './asset/ingestReaders';
-import { importGltfFromOpfs, ingestGltfFolder } from './asset/importGltf';
+import { importGltfFromOpfs, ingestGltfFolder, type IngestFile } from './asset/importGltf';
+import { ingestSingleFile } from './asset/importCommon';
+import { routeImportByExtension } from './asset/importBvhFbx';
 import { useAssetErrorStore, formatAssetError } from './stores/assetErrorStore';
 
 // ---------------------------------------------------------------------------
@@ -237,18 +239,31 @@ function onExportGltf() {
   window.alert('glTF scene export lands with the render graph (P4).');
 }
 
+/** True iff any picked file is a glTF container (the folder-import trigger). */
+function hasGltfEntry(files: readonly IngestFile[]): boolean {
+  return files.some((f) => {
+    const lower = f.relativePath.toLowerCase();
+    return lower.endsWith('.gltf') || lower.endsWith('.glb');
+  });
+}
+
 /**
- * File → Import glTF… — Phase 7.9 Wave D Task 7 (issue #110).
+ * File → Import… — Phase 7.9 (#110, glTF) extended by Phase 7.14 (#111,
+ * BVH/FBX). Accepts all four importable formats through ONE entry (D-04).
  *
  * Programmatic hidden `<input type="file" webkitdirectory multiple>`:
  * directory pickers ship in Chromium/Firefox/Safari natively
  * (RESEARCH §1), so no `showDirectoryPicker` fallback is needed and no
- * mid-handler branch picks between APIs.
+ * mid-handler branch picks between APIs. The directory picker is kept (do NOT
+ * regress multi-file glTF #82, whose `.bin`/textures siblings live alongside
+ * the `.gltf` in a folder); a lone `.bvh`/`.fbx` placed in a folder routes
+ * through the single-file path. The drag-drop affordance (AssetDropZone)
+ * additionally accepts a bare lone-file BVH/FBX without a folder.
  *
- * Funnels onchange → `inputFilesToFiles` (Wave B reader) →
- * `ingestGltfFolder` (Wave A write-to-OPFS) → `importGltfFromOpfs`
- * (Wave A DAG dispatchAtomic). Same shared core as the AssetDropZone
- * drop path (Wave C) — one ingest chokepoint, three call sites.
+ * Funnels onchange → `inputFilesToFiles` (Wave B reader) → either
+ * `ingestGltfFolder`+`importGltfFromOpfs` (glTF folder) or
+ * `ingestSingleFile`+`routeImportByExtension` (single motion file). Same
+ * shared chokepoint as the AssetDropZone drop path (B12).
  *
  * folderName derivation: the picked-folder root segment of the first
  * file's `webkitRelativePath`. The `slash < 0` fallback (a `webkit-
@@ -260,11 +275,12 @@ function onExportGltf() {
  * Failures route to `useAssetErrorStore` (V14/silent-failure fix), NOT
  * `console.error`.
  */
-function onImportGltf(): void {
+function onImport(): void {
   const input = document.createElement('input');
   input.type = 'file';
   (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
   input.multiple = true;
+  input.accept = '.gltf,.glb,.bvh,.fbx';
   input.style.display = 'none';
   document.body.appendChild(input);
 
@@ -279,7 +295,7 @@ function onImportGltf(): void {
         // (slash < 0 — directory picker yielding a single root-level
         // file) falls back to basename-without-ext so the OPFS layout
         // matches the AssetDropZone single-file drop (checker C5):
-        // user-imports/<basename>/<basename>.glb.
+        // user-imports/<basename>/<basename>.<ext>.
         const first = ingestFiles[0].relativePath;
         const slash = first.indexOf('/');
         let folderName: string;
@@ -289,8 +305,19 @@ function onImportGltf(): void {
           const dot = first.lastIndexOf('.');
           folderName = dot > 0 ? first.slice(0, dot) : first;
         }
-        const entryPath = await ingestGltfFolder(ingestFiles, folderName);
-        await importGltfFromOpfs(entryPath);
+        // glTF (possibly multi-file) → folder ingest. A lone .bvh/.fbx (no
+        // glTF in the set) → single-file ingest + extension routing (D-04).
+        if (hasGltfEntry(ingestFiles)) {
+          const entryPath = await ingestGltfFolder(ingestFiles, folderName);
+          await importGltfFromOpfs(entryPath);
+        } else if (ingestFiles.length === 1) {
+          const entryPath = await ingestSingleFile(ingestFiles[0], folderName);
+          await routeImportByExtension(entryPath);
+        } else {
+          // No glTF entry and not a lone file — let ingestGltfFolder surface
+          // the "no glTF/glb" banner (its existing error path).
+          await ingestGltfFolder(ingestFiles, folderName);
+        }
       } catch (err) {
         useAssetErrorStore.getState().report('menu-import', formatAssetError(err));
       } finally {
@@ -420,7 +447,7 @@ export function MenuBar() {
         />
         <Item label="Export DAG as JSON" onSelect={exportDagJson} testId="menu-file-export-json" />
         <Divider />
-        <Item label="Import glTF…" onSelect={onImportGltf} testId="menu-file-import-gltf" />
+        <Item label="Import…" onSelect={onImport} testId="menu-file-import" />
       </Menu>
 
       <Menu

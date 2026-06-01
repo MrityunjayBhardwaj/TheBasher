@@ -792,6 +792,24 @@ const ROWS: Row[] = [
       note: 'Disabled menu item (asset listed but not yet loaded/available) — WCAG 2.1 SC 1.4.3 exempts inactive UI components.',
     },
   },
+  // Phase 7.14 (#112) — My-Imports per-row ︙ overflow menu (Rename/Show
+  // files/Delete) + delete-referenced banner (D-UX-18). The ︙ button, Rename
+  // input, Show-files list and Cancel button reuse already-audited tokens
+  // (fg-dim/fg/90/fg on bg-1/bg-2 + border-accent focus). The two NEW
+  // foreground pairs are the destructive Delete item (text-error) and the
+  // warn-tinted banner/Delete-anyway (text-warn, already audited elsewhere).
+  {
+    site: 'AssetsPopover ︙ menu Delete item — error on bg-2 (menu surface)',
+    fg: 'error',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'AssetsPopover delete-referenced banner — warn on warn/10 over bg-2/95',
+    fg: 'warn',
+    bgStack: ['warn/10', 'bg-2/95'],
+    textSize: 'small',
+  },
 
   // ─── AddMenu (src/app/AddMenu.tsx) ──────────────────────────────────
   // L119 panel bg-bg/95; L122 header fg/50; L137 group active = bg-muted

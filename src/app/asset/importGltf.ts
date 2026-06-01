@@ -55,63 +55,20 @@ import { getStorage } from '../boot';
 import { opfsSiblingPath } from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import {
+  USER_IMPORTS_ROOT,
+  resolveFreeImportName,
+  sanitizeFolderName,
+  type IngestFile,
+} from './importCommon';
 
-/**
- * One ingested file. All three readers (drop entries, webkitdirectory
- * input, single-file input — Wave B) normalise into this shape.
- *
- * `relativePath` is the in-folder path of the file with ONLY the picked-
- * folder root segment stripped — all deeper nesting preserved verbatim
- * so a nested-entry .gltf (e.g. `gltf/scene.gltf` referencing
- * `../textures/foo.png`) resolves its siblings correctly against its
- * own dir post-write.
- */
-export interface IngestFile {
-  readonly relativePath: string;
-  readonly bytes: Uint8Array;
-}
-
-/** Root OPFS directory for user-imported assets. */
-export const USER_IMPORTS_ROOT = 'user-imports';
-
-/**
- * Sanitise a folder name into an OPFS-safe directory name. Keeps
- * alphanumeric + `-_.`, replaces every other character with `_`,
- * collapses leading/trailing whitespace, and falls back to `import`
- * when the result is empty.
- */
-function sanitizeFolderName(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed === '') return 'import';
-  const safe = trimmed.replace(/[^A-Za-z0-9._-]/g, '_');
-  return safe === '' ? 'import' : safe;
-}
-
-/**
- * Resolve a free subdirectory name under `user-imports/` for `desired`.
- * Suffix-on-collision policy (Task 3): if `<desired>` already exists
- * under `user-imports/`, try `<desired>-2`, `<desired>-3`, … until a
- * free name is found. Returns the chosen name (NOT the full path).
- *
- * NB: `storage.list` THROWS on a missing dir (the first-run case);
- * wrapped in try/catch → [] (mirror the OpfsStorage `exists` pattern).
- *
- * V22 — purely derived (folderName + numeric suffix). No RNG / Date.now.
- */
-async function resolveFreeImportName(desired: string): Promise<string> {
-  let existing: string[];
-  const storage = await getStorage();
-  try {
-    existing = await storage.list(USER_IMPORTS_ROOT);
-  } catch {
-    existing = [];
-  }
-  const taken = new Set(existing);
-  if (!taken.has(desired)) return desired;
-  let i = 2;
-  while (taken.has(`${desired}-${i}`)) i += 1;
-  return `${desired}-${i}`;
-}
+// Format-agnostic helpers (`IngestFile`, `USER_IMPORTS_ROOT`,
+// `sanitizeFolderName`, `resolveFreeImportName`) were lifted to
+// `importCommon.ts` (Phase 7.14 D-07). Re-exported here so existing importers
+// of `./importGltf` (ingestReaders, AssetDropZone, MenuBar, boot, the e2e) keep
+// their import paths unchanged.
+export { USER_IMPORTS_ROOT };
+export type { IngestFile };
 
 /**
  * Locate the entry .gltf / .glb in an ingest set. Returns the file

@@ -1,0 +1,86 @@
+; FBX 7.4.0 project file
+; ----------------------------------------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "basher-test"
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UnitScaleFactor", "double", "Number", "",1
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 6
+	ObjectType: "Model" {
+		Count: 2
+	}
+	ObjectType: "AnimationStack" {
+		Count: 1
+	}
+	ObjectType: "AnimationLayer" {
+		Count: 1
+	}
+	ObjectType: "AnimationCurveNode" {
+		Count: 1
+	}
+	ObjectType: "AnimationCurve" {
+		Count: 1
+	}
+}
+
+Objects:  {
+	Model: 100, "Model::Hips", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,1,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 200, "Model::Spine", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0.5,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	AnimationStack: 1000, "AnimStack::Take 001", "" {
+		Properties70:  {
+			P: "LocalStop", "KTime", "Time", "",46186158000
+		}
+	}
+	AnimationLayer: 1100, "AnimLayer::BaseLayer", "" {
+	}
+	AnimationCurveNode: 1200, "AnimCurveNode::T", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A",0
+			P: "d|Y", "Number", "", "A",0
+			P: "d|Z", "Number", "", "A",0
+		}
+	}
+	AnimationCurve: 1300, "AnimCurve::", "" {
+		Default: 0
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,2
+		}
+	}
+}
+
+Connections:  {
+	C: "OO",200,100
+	C: "OO",100,0
+	C: "OO",1100,1000
+	C: "OO",1200,1100
+	C: "OP",1200,100, "Lcl Translation"
+	C: "OP",1300,1200, "d|X"
+}
