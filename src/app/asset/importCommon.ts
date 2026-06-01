@@ -26,6 +26,7 @@
 
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
+import { importGroupNodeIds } from '../../core/import/gltfImportChain';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
@@ -294,10 +295,12 @@ export async function renameImportedAsset(
  *
  * If any node references it (glTF assetRef) and `breakRefs` is not set, the
  * delete is BLOCKED (D-06): returns `{ deleted:false, referencedBy }` and the
- * caller shows a banner offering "delete anyway". With `breakRefs`, the
- * referencing GltfAsset nodes are removed first (disconnect-consumers then
- * removeNode — the op layer rejects removing a still-consumed node) in one
- * dispatchAtomic, then the OPFS tree is deleted.
+ * caller shows a banner offering "delete anyway". With `breakRefs`, the entire
+ * import footprint of each referencing asset — the GltfAsset PLUS its wrapper
+ * Transform/Group, GltfChild satellites, and TransformClip/ClipSelect nodes
+ * (#127, via importGroupNodeIds) — is removed first (disconnect every incident
+ * edge then removeNode — the op layer rejects removing a still-consumed node)
+ * in one dispatchAtomic, then the OPFS tree is deleted.
  *
  * Unreferenced (always true for BVH/FBX — no persistent ref) → delete OPFS now.
  */
@@ -314,16 +317,34 @@ export async function deleteImportedAsset(
     }
 
     if (refIds.length > 0) {
-      // Break refs: disconnect every consumer edge into the referencing nodes,
-      // then removeNode them — all in one dispatchAtomic (mirror of the
-      // deleteNode mutator builder; the op layer requires zero consumers).
-      const targets = new Set(refIds);
+      // Break refs: remove the WHOLE import footprint, not just the referencing
+      // GltfAsset (#127). Removing only the GltfAsset left orphan ghosts — the
+      // wrapper Transform/Group (an empty group in the scene tree), the inputless
+      // GltfChild satellites, and the TransformClip/ClipSelect clip nodes. Each
+      // referencing node's assetRef expands to its content-addressed import group
+      // (importGroupNodeIds) — never reaching user-wired nodes (their ids don't
+      // match the import scheme) nor the shared Scene anchor (not content-
+      // addressed off assetRef).
+      const targets = new Set<string>();
+      for (const id of refIds) {
+        const assetRef = (dag.state.nodes[id].params as { assetRef?: string }).assetRef;
+        if (!assetRef) {
+          targets.add(id); // defensive: a referencing node with no assetRef
+          continue;
+        }
+        for (const groupId of importGroupNodeIds(assetRef, dag.state)) targets.add(groupId);
+      }
+      // Disconnect EVERY edge incident to a target (internal AND boundary): after
+      // this no target is consumed by anything, so removeNode succeeds in any
+      // order (ops.ts applyRemoveNode rejects a still-consumed node). Boundary
+      // edges — Group.out → Scene.children, or a user node consuming a GltfChild —
+      // are disconnected but their out-of-group endpoint survives.
       const ops: Op[] = [];
       for (const consumer of Object.values(dag.state.nodes)) {
         for (const [socket, binding] of Object.entries(consumer.inputs)) {
           const refs = Array.isArray(binding) ? binding : [binding];
           for (const ref of refs) {
-            if (!targets.has(ref.node)) continue;
+            if (!targets.has(ref.node) && !targets.has(consumer.id)) continue;
             ops.push({
               type: 'disconnect',
               from: { node: ref.node, socket: ref.socket },
@@ -332,7 +353,7 @@ export async function deleteImportedAsset(
           }
         }
       }
-      for (const id of refIds) ops.push({ type: 'removeNode', nodeId: id });
+      for (const id of targets) ops.push({ type: 'removeNode', nodeId: id });
       dag.dispatchAtomic(ops, 'user', `delete import (break refs): ${name}`);
     }
 
