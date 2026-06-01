@@ -117,10 +117,16 @@ test('P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef
   await input.fill('renamed-asset');
   await input.press('Enter');
 
-  // My-Imports row now shows the new path.
+  // My-Imports row now shows the new path. Rename is the heaviest mgmt op —
+  // the new row appears only after the full async chain completes (copy-all →
+  // verify-all → assetRef rewrite → viewport glTF reload → delete-old → bump →
+  // React re-enumerate). That chain is CPU-bound (React + three.js reload), not
+  // IO-bound (the fixture is ~3.5 KB), so on a slow CI runner it routinely
+  // exceeds a 5 s window even though it completes correctly. Poll generously —
+  // the sibling OPFS/assetRef assertions below already use expect.poll.
   await expect(
     page.getByTestId('library-popover-my-import-user-imports/renamed-asset/scene.gltf'),
-  ).toBeVisible({ timeout: 5_000 });
+  ).toBeVisible({ timeout: 15_000 });
 
   // OPFS moved.
   expect(await opfsDirExists(page, 'renamed-asset')).toBe(true);
