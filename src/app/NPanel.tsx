@@ -58,6 +58,112 @@ import { RevertImportedClipConnector } from './animate/RevertImportedClipConnect
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveTransformParam } from './resolveTransformParam';
+import {
+  buildRevertedSet,
+  isFieldOverridden,
+  overrideDescriptor,
+  readOverriddenSet,
+  type OverrideDescriptor,
+} from './overrideDescriptor';
+
+// #130 (D-04) — the per-field override decorator contract threaded into the
+// editable fields. `descriptor` names the set param + covered fields; `marked`
+// is the live authored bit for THIS paramPath. Present only on a node type that
+// carries an override set (MaterialOverride / GltfChild) AND on a covered field.
+interface OverrideInfo {
+  readonly descriptor: OverrideDescriptor;
+  readonly marked: boolean;
+}
+
+// #130 (D-04 / K6) — editing a covered field MARKS it overridden in the SAME
+// atomic as the value write (mirrors Gizmo.writeGltfChildOverride): value +
+// `overridden.<field> = true` land in one dispatch (one Cmd+Z, no snap-back —
+// the [[H40]]/C2 trap). Returns true iff it handled the write (covered field).
+function dispatchOverrideValueEdit(
+  nodeId: string,
+  paramPath: string,
+  value: unknown,
+  info: OverrideInfo | undefined,
+): boolean {
+  if (!info) return false;
+  useDagStore.getState().dispatchAtomic(
+    [
+      { type: 'setParam', nodeId, paramPath, value },
+      {
+        type: 'setParam',
+        nodeId,
+        paramPath: `${info.descriptor.setParamPath}.${paramPath}`,
+        value: true,
+      },
+    ],
+    'user',
+    `edit ${paramPath} (mark overridden)`,
+  );
+  return true;
+}
+
+/**
+ * The per-field override decorator (#130, D-04). A state dot (filled = the
+ * director explicitly authored this field; hollow = inherits source) plus a
+ * ✕/revert button shown only when marked. Revert clears the bit through the
+ * shared `overrideSet` primitive (schema-respecting via `buildRevertedSet`) and
+ * the renderer falls back to source because BOTH consumers branch on the
+ * explicit bit, not value-equality ([[V28]]/R-4) — so the dormant scalar the
+ * field still holds is ignored. Grounded: Blender RMB Add/Remove Override +
+ * colour decorator; Houdini bold + RMB revert.
+ */
+function OverrideDecorator({
+  nodeId,
+  descriptor,
+  field,
+  marked,
+}: {
+  nodeId: string;
+  descriptor: OverrideDescriptor;
+  field: string;
+  marked: boolean;
+}) {
+  const onRevert = () => {
+    const sel = useDagStore.getState().state.nodes[nodeId];
+    const current = readOverriddenSet(
+      sel?.params as Record<string, unknown> | undefined,
+      descriptor.setParamPath,
+    );
+    const next = buildRevertedSet(current, descriptor, field);
+    useDagStore
+      .getState()
+      .dispatch(
+        { type: 'setParam', nodeId, paramPath: descriptor.setParamPath, value: next },
+        'user',
+        `revert ${field} override`,
+      );
+  };
+  return (
+    <span className="flex items-center gap-0.5">
+      <span
+        data-testid={`inspector-override-dot-${nodeId}-${field}`}
+        data-overridden={marked || undefined}
+        aria-label={marked ? `${field} overridden` : `${field} inherits source`}
+        title={marked ? 'Overridden — click ✕ to revert to source' : 'Inherits source'}
+        className={`select-none text-[9px] leading-none ${marked ? 'text-accent' : 'text-fg/30'}`}
+      >
+        {marked ? '●' : '○'}
+      </span>
+      {marked ? (
+        <button
+          type="button"
+          data-testid={`inspector-override-revert-${nodeId}-${field}`}
+          aria-label={`Revert ${field} to source`}
+          title="Revert to source"
+          onClick={onRevert}
+          className="select-none px-0.5 text-[10px] leading-none text-fg/40 hover:text-record focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ✕
+        </button>
+      ) : null}
+    </span>
+  );
+}
 
 // P7.3: `resolveChannel` + `autoKeyCommit` were lifted to the shared
 // `./animate/autoKeyCommit` module (one Auto-Key chokepoint, two callers:
@@ -173,9 +279,10 @@ interface NumericFieldProps {
   paramPath: string;
   label: string;
   value: number;
+  overrideInfo?: OverrideInfo;
 }
 
-function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
+function NumericField({ nodeId, paramPath, label, value, overrideInfo }: NumericFieldProps) {
   const dispatch = useDagStore((s) => s.dispatch);
   const scrub = useDragScrub({
     value,
@@ -186,7 +293,15 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
       // autoKeyCommit. On false (un-animated) the existing path runs
       // unchanged (matrix rows 1-2: the AutoKey-ON first-key composite).
       if (routeAnimatedGrab(nodeId, paramPath, next)) return;
-      dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `scrub ${paramPath}`);
+      // #130 (D-04 / K6): a covered override field marks itself overridden in
+      // the same atomic as the value. Non-override fields keep the single setParam.
+      if (!dispatchOverrideValueEdit(nodeId, paramPath, next, overrideInfo)) {
+        dispatch(
+          { type: 'setParam', nodeId, paramPath, value: next },
+          'user',
+          `scrub ${paramPath}`,
+        );
+      }
       autoKeyCommit(nodeId, paramPath, next);
     },
   });
@@ -205,6 +320,14 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
         <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {overrideInfo ? (
+          <OverrideDecorator
+            nodeId={nodeId}
+            descriptor={overrideInfo.descriptor}
+            field={paramPath}
+            marked={overrideInfo.marked}
+          />
+        ) : null}
         <span
           className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
           onPointerDown={scrub.onPointerDown}
@@ -228,7 +351,10 @@ function NumericField({ nodeId, paramPath, label, value }: NumericFieldProps) {
           // P7.4 D-05 (#77): animated → SHARED seam, skip raw setParam +
           // autoKeyCommit. Un-animated → existing path unchanged.
           if (routeAnimatedGrab(nodeId, paramPath, next)) return;
-          dispatch({ type: 'setParam', nodeId, paramPath, value: next });
+          // #130 (D-04 / K6): covered override field → value + bit in one atomic.
+          if (!dispatchOverrideValueEdit(nodeId, paramPath, next, overrideInfo)) {
+            dispatch({ type: 'setParam', nodeId, paramPath, value: next });
+          }
           autoKeyCommit(nodeId, paramPath, next);
         }}
       />
@@ -244,6 +370,7 @@ function VectorComponent({
   value,
   vec,
   readOnly,
+  overrideInfo,
 }: {
   nodeId: string;
   paramPath: string;
@@ -252,6 +379,7 @@ function VectorComponent({
   value: number;
   vec: readonly number[];
   readOnly?: boolean;
+  overrideInfo?: OverrideInfo;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
   const scrub = useDragScrub({
@@ -264,11 +392,16 @@ function VectorComponent({
       // BEFORE the raw setParam. On true: seam keyed, skip both. On false
       // (un-animated): existing path unchanged.
       if (routeAnimatedGrab(nodeId, paramPath, newVec)) return;
-      dispatch(
-        { type: 'setParam', nodeId, paramPath, value: newVec },
-        'user',
-        `scrub ${paramPath}.${axisLabel}`,
-      );
+      // #130 (D-04 / K6): editing a covered TRS component via the Inspector
+      // marks it overridden in the same atomic — parity with the gizmo's
+      // writeGltfChildOverride (NPanel edits previously did NOT set the bit).
+      if (!dispatchOverrideValueEdit(nodeId, paramPath, newVec, overrideInfo)) {
+        dispatch(
+          { type: 'setParam', nodeId, paramPath, value: newVec },
+          'user',
+          `scrub ${paramPath}.${axisLabel}`,
+        );
+      }
       autoKeyCommit(nodeId, paramPath, newVec);
     },
   });
@@ -300,7 +433,10 @@ function VectorComponent({
           // SHARED seam BEFORE the raw setParam. True → skip both;
           // false (un-animated) → existing path unchanged.
           if (routeAnimatedGrab(nodeId, paramPath, newVec)) return;
-          dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
+          // #130 (D-04 / K6): covered TRS component → value + bit in one atomic.
+          if (!dispatchOverrideValueEdit(nodeId, paramPath, newVec, overrideInfo)) {
+            dispatch({ type: 'setParam', nodeId, paramPath, value: newVec });
+          }
           autoKeyCommit(nodeId, paramPath, newVec);
         }}
       />
@@ -313,11 +449,13 @@ function VectorField({
   paramPath,
   label,
   value,
+  overrideInfo,
 }: {
   nodeId: string;
   paramPath: string;
   label: string;
   value: readonly number[];
+  overrideInfo?: OverrideInfo;
 }) {
   const dims = ['x', 'y', 'z'];
   // P7.4 D-01: field-level resolver call (NOT per-axis — one helper call
@@ -355,6 +493,14 @@ function VectorField({
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
         <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {overrideInfo ? (
+          <OverrideDecorator
+            nodeId={nodeId}
+            descriptor={overrideInfo.descriptor}
+            field={paramPath}
+            marked={overrideInfo.marked}
+          />
+        ) : null}
         <span className="font-mono text-fg/60">{label}</span>
       </span>
       <div className="flex gap-1">
@@ -368,6 +514,7 @@ function VectorField({
             value={v}
             vec={effectiveValue}
             readOnly={readOnly}
+            overrideInfo={overrideInfo}
           />
         ))}
       </div>
@@ -393,18 +540,39 @@ function ParamRow({
   nodeId,
   paramPath,
   value,
+  overrideInfo,
 }: {
   nodeId: string;
   paramPath: string;
   value: unknown;
+  overrideInfo?: OverrideInfo;
 }) {
   if (typeof value === 'number') {
-    return <NumericField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />;
+    return (
+      <NumericField
+        nodeId={nodeId}
+        paramPath={paramPath}
+        label={paramPath}
+        value={value}
+        overrideInfo={overrideInfo}
+      />
+    );
   }
   if (isVec3(value)) {
-    return <VectorField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />;
+    return (
+      <VectorField
+        nodeId={nodeId}
+        paramPath={paramPath}
+        label={paramPath}
+        value={value}
+        overrideInfo={overrideInfo}
+      />
+    );
   }
   if (typeof value === 'string') {
+    // No string param is a covered override field today (the descriptor covers
+    // only numeric roughness/metalness + the vec3 TRS), so the string row needs
+    // no decorator. If a string override field appears, thread overrideInfo here.
     return (
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
         <span className="font-mono text-fg/60">{paramPath}</span>
@@ -484,6 +652,24 @@ export function NPanel() {
   const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
   const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
 
+  // #130 (D-04) — the override-set descriptor for this node type (null for the
+  // ~38 node types that track no overrides). `makeOverrideInfo` returns the
+  // decorator contract for a covered field, else undefined → ParamRow renders
+  // byte-identical to pre-#130. Recomputed on every params change because NPanel
+  // subscribes to the node (the dot re-renders after edit/revert).
+  const overrideDesc = node ? overrideDescriptor(node.type) : null;
+  const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined => {
+    if (!overrideDesc || !node || !overrideDesc.fields.includes(paramPath)) return undefined;
+    return {
+      descriptor: overrideDesc,
+      marked: isFieldOverridden(
+        node.params as Record<string, unknown> | undefined,
+        overrideDesc,
+        paramPath,
+      ),
+    };
+  };
+
   const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
 
   return (
@@ -512,7 +698,13 @@ export function NPanel() {
             <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
               {Object.entries((node.params ?? {}) as Record<string, unknown>).map(
                 ([key, value]) => (
-                  <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+                  <ParamRow
+                    key={key}
+                    nodeId={node.id}
+                    paramPath={key}
+                    value={value}
+                    overrideInfo={makeOverrideInfo(key)}
+                  />
                 ),
               )}
             </div>
@@ -547,14 +739,26 @@ export function NPanel() {
                       declaredSections={declared}
                     >
                       {(grouped.get(sectionId) ?? []).map(([key, value]) => (
-                        <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+                        <ParamRow
+                          key={key}
+                          nodeId={node.id}
+                          paramPath={key}
+                          value={value}
+                          overrideInfo={makeOverrideInfo(key)}
+                        />
                       ))}
                     </SectionCard>
                   ))}
                   {unrouted.length > 0 ? (
                     <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
                       {unrouted.map(([key, value]) => (
-                        <ParamRow key={key} nodeId={node.id} paramPath={key} value={value} />
+                        <ParamRow
+                          key={key}
+                          nodeId={node.id}
+                          paramPath={key}
+                          value={value}
+                          overrideInfo={makeOverrideInfo(key)}
+                        />
                       ))}
                     </div>
                   ) : null}
