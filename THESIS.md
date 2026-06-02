@@ -189,19 +189,19 @@ Right rail. Three tabs:
 
 In Simple mode, the chat is the editor. The user describes; the agent proposes; the user accepts; the viewport reflects.
 
-### 16. The DAG view (Pro mode, read-only in v0.5)
+### 16. The DAG view (Pro mode, read-only)
 
-Force-directed graph visualization of the project's nodes and edges. In v0.5 it is read-only — a debug surface that says _"this is what your project looks like under the hood."_ In v0.6 it becomes editable: a true visual node editor for power users.
+Force-directed graph visualization of the project's nodes and edges. It is read-only — a debug surface that says _"this is what your project looks like under the hood."_ (Originally scoped for v0.5; never built, so it moves to v0.6 — see §58.) It becomes editable in v0.7: a true visual node editor for power users.
 
 The discipline is that **everything is a DAG underneath; authoring surfaces are still familiar.** Showing the graph too early is the failure mode of Houdini-for-everyone. We must not.
 
 ### 17. Mode hierarchy
 
-| Mode         | Default surfaces                                         | DAG visible?         | Primary input              |
-| ------------ | -------------------------------------------------------- | -------------------- | -------------------------- |
-| **Simple**   | Viewport + Timeline + Chat                               | No                   | Natural language           |
-| **Director** | + Scene tree + Library + Inspector                       | No                   | Mixed (chat + direct)      |
-| **Pro**      | + DAG view + Render-graph editor + Theatre Studio + Code | Yes (read-only v0.5) | Direct manipulation + code |
+| Mode         | Default surfaces                                         | DAG visible?          | Primary input              |
+| ------------ | -------------------------------------------------------- | --------------------- | -------------------------- |
+| **Simple**   | Viewport + Timeline + Chat                               | No                    | Natural language           |
+| **Director** | + Scene tree + Library + Inspector                       | No                    | Mixed (chat + direct)      |
+| **Pro**      | + DAG view + Render-graph editor + Theatre Studio + Code | Yes (read-only, v0.6) | Direct manipulation + code |
 
 Mode persists per-project. Onboarding starts in Simple. Director is the default after first project. Pro is opt-in.
 
@@ -697,23 +697,43 @@ We address each in the plan; we revisit each at v0.5 retrospective.
 
 ## Part X — The Roadmap Beyond v0.5
 
-### 58. v0.6 — Visual node editor + cost-down
+**Status (2026-06-03): v0.5 is feature-complete.** Shipped: P0–P5 core (DAG / agent / timeline / AI render bridge), P6 design system, the P7.x animation-authoring arc (skinned glTF, rig nodes, editable clips, material-override fidelity), and the #124 material-override primitive. **Cut from v0.5:** Splats (P6 cut candidate, §452/§457) and PlayCanvas pixel-streaming (P7 cut candidate) — both deferred to v0.7. P8 (Progressive UX) shipped only the mode scaffold; its full ease-of-use scope is promoted to the v0.6 headline below. The read-only DAG view (§16) was never built in v0.5 and moves to v0.6.
 
-- Visual DAG editor in Pro mode (full editing, not read-only).
-- Custom AI workflow node editor (compose ComfyUI workflows in-app).
-- SuperSplat embedded panel for splat editing.
-- One-click ComfyUI installer.
-- WebRTC pixel-streaming export.
-- Worker-based scatter (lift N=5000 cap).
-- AI render preset authoring via meta-prompt.
+**Revised ordering (2026-06-03).** v0.6 now leads with _ease of use_, not the node editor — this is more faithful to §196 ("showing the graph too early is the Houdini-for-everyone failure mode") than the original v0.6 was. The sequence is: material / texture / UV authoring → Spline-grade Director UX (end-to-end, <15-min acceptance) → read-only DAG view. The **editable** node editor and the material node graph move to v0.7, because a specialized graph editor must not precede the general one.
 
-### 59. v0.7 — Animation depth + materials
+### 58. v0.6 — Ease of use (Spline-grade) + materials + cost-down
 
+**The milestone bet:** Basher becomes as approachable as **Spline 3D** — heavily inspired by their polish — _without_ surrendering the agent-first, deterministic, procedural-DAG model that is the actual wedge. Direct manipulation gets Spline-grade polish; the agent stays a co-equal primary surface; every edit is still an `Op`; the graph stays hidden until Pro.
+
+**1. Material + texture authoring** (closes the v0.5 gap — WebGL path, _not_ TSL yet):
+
+- `Texture` / `Image`-loading node — assign albedo / normal / roughness / metalness / emissive / AO maps to procedural materials. Today maps exist only if they rode in on a glTF import.
+- First-class shareable `Material` edge — one material wired into many meshes (today `MaterialOverride` is a Mesh→Mesh decorator and the `Material` socket type carries no edge). Enables a material library.
+- Minimal UV editor — promote the read-only `UVEditor` shell (P2.6) to editing: drag handles + glTF UV preview (needs the geometry registry).
+
+**2. Spline-grade Director experience, end-to-end** (the headline — promotes thesis P8, §47):
+
+- _Borrow from Spline:_ visual hierarchy + calm chrome, property-panel feel + instant feedback, drag / gizmo polish + snapping, asset-browser ergonomics, empty states, the 60-second onboarding tour, the shipped demo project.
+- _Keep as Basher:_ agent/chat as a **co-equal primary surface** (not a sidebar afterthought), Op-backed edits (determinism + undo), Simple→Director defaults, DAG hidden until Pro.
+- _The line we do not cross:_ no Spline pattern that makes the canvas the **only** path to create — the agent is always a peer authoring surface (§196).
+
+**3. Read-only DAG view** (the §16 / §194 debug surface, deferred from v0.5 — last in the milestone):
+
+- Force-directed render of the project's nodes + edges, read-only: _"this is what your project looks like under the hood."_ Pro mode only. De-risks the v0.7 editable editor by building the layout/render layer first.
+
+**Cost-down (carried from the original v0.6):** one-click ComfyUI installer; cloud demo endpoint for first AI render; WebRTC pixel-streaming export; worker-based scatter (lift the N=5000 cap); AI render preset authoring via meta-prompt.
+
+**Acceptance (promoted from P8, §585):** three first-time users, each ships a stylized clip in <15 min from a clean clone — with each end-to-end flow (import → material/texture → animate → render) passing _first-time-user_ observation, not just a developer demo.
+
+### 59. v0.7 — Node-graph power + material depth + animation depth
+
+- **Editable visual DAG editor** in Pro mode — full editing, not read-only (moved from v0.6; rides the v0.6 read-only canvas). The general node editor MUST land before any specialized graph below.
+- **Custom AI workflow node editor** (compose ComfyUI workflows in-app) — a specialization of the general editor.
+- **Material node graph** (PBR + custom shaders) on a **WebGPU + TSL backend.** The deliberate renderer bet: migrate `WebGLRenderer` → `WebGPURenderer` (+ R3F 8→9 + rebuild the `postprocessing` beauty chain as WebGPU node-post). Basher owns the material-graph IR; TSL/WGSL is a _compile target_ — the authoring graph stays renderer-agnostic and determinism holds at the IR layer.
 - Per-bone Blockbench-grade rigging UI.
-- Material node graph (PBR + custom shaders).
-- 4DGS editing (not just playback).
+- 3DGS splat node (cut from v0.5) + 4DGS editing (not just playback) + splat lighting beyond basic shadows.
+- SuperSplat embedded panel for splat editing.
 - VRM support.
-- Splat lighting beyond basic shadows.
 
 ### 60. v0.8 — Agentic director
 
