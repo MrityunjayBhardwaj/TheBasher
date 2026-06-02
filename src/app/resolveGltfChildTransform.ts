@@ -40,12 +40,16 @@
 //      7.12 D-01; vyapti V20; hetvabhasa H40.
 
 import type { Vec3 } from '../nodes/types';
+import { mergeOverridden } from '../core/override/overrideSet';
 
 export interface ChildTrs {
   readonly position: Vec3;
   readonly rotation: Vec3;
   readonly scale: Vec3;
 }
+
+/** The three TRS components, in the canonical order, for the override merge. */
+const TRS_FIELDS = ['position', 'rotation', 'scale'] as const;
 
 /** The manual-override layer: a GltfChild node's TRS params + the dirty flags. */
 export interface ChildOverride extends ChildTrs {
@@ -93,18 +97,28 @@ export function resolveGltfChildTrs(args: {
   bakedChannel?: BakedChannel | undefined;
 }): ChildTrs {
   const { base, clipTrack, childNode, bakedChannel } = args;
-  const pick = (field: 'position' | 'rotation' | 'scale'): Vec3 => {
-    if (childNode && childNode.overridden[field]) return childNode[field]; // manual wins
+  // Lower bands (baked → clip → base), per-component PRESENCE not value (R-4).
+  // This resolves the "source" that the manual override layers on top of.
+  const lower = (field: 'position' | 'rotation' | 'scale'): Vec3 => {
     const baked = bakedChannel?.[field];
     if (baked !== undefined) return baked; // baked channel wins over clip (presence, not value)
     if (clipTrack) return clipTrack[field]; // clip wins
     return base[field]; // static base
   };
-  return {
-    position: pick('position'),
-    rotation: pick('rotation'),
-    scale: pick('scale'),
+  const source: ChildTrs = {
+    position: lower('position'),
+    rotation: lower('rotation'),
+    scale: lower('scale'),
   };
+  // Manual override band via the SHARED primitive (#124, V28): for each field
+  // the node's authored value wins iff `overridden[field]` is set, else the
+  // lower band. Behaviourally identical to the previous inline
+  // `childNode.overridden[field]` short-circuit — the band ORDER (manual →
+  // baked → clip → base) and the presence-not-value rule (R-4) are unchanged.
+  // This is the "2nd consumer justifies the module" retrofit (D-06): GltfChild
+  // is consumer #1, MaterialOverride #2.
+  if (!childNode) return source;
+  return mergeOverridden(source, childNode, childNode.overridden, TRS_FIELDS);
 }
 
 /**
