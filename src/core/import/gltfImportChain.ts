@@ -112,6 +112,56 @@ export function gltfChannelDagId(assetRef: string, childName: string, component:
   return hashId('gltfChannel', assetRef, childName, component);
 }
 
+/**
+ * Every DAG node `buildGltfImportOps` emits for one `assetRef` — the "import
+ * footprint" of a single imported glTF. Used by the My-Imports break-refs
+ * delete (#127) to GC the WHOLE subtree, not just the `GltfAsset` node, so a
+ * referenced-asset delete leaves no orphan wrapper `Transform`/`Group`, no
+ * inputless `GltfChild` satellites, and no `TransformClip`/`ClipSelect` ghosts.
+ *
+ * The membership is recovered WITHOUT a stored provenance tag because every
+ * import id is already content-addressed off `assetRef` (the id IS the
+ * provenance): the assetRef-carrying nodes (`GltfAsset`, the `GltfChild`
+ * satellites) are found by `params.assetRef` (authoritative — survives the
+ * dedup-suffix key rename), and the structural wrappers that carry no assetRef
+ * (`Transform`/`Group`/`ClipSelect`/`TransformClip`) are recomputed via the
+ * same `hashId(prefix, assetRef, …)` derivation `buildGltfImportOps` uses.
+ *
+ * Crucially this NEVER over-reaches into user-wired nodes: a user-created
+ * Transform has a random id, never `hashId('tx', assetRef)`, and never carries
+ * the import's assetRef in params. The shared output anchor (the `Scene` node)
+ * is not content-addressed off assetRef, so it is never in the set. Only ids
+ * that actually exist in `state` are returned (a clip-less import has no
+ * clip/sel nodes; a re-saved older project may lack some).
+ *
+ * REF: src/core/import/gltfImportChain.ts:392 `buildGltfImportOps` (the emitter
+ *      this mirrors); src/app/asset/importCommon.ts `deleteImportedAsset`
+ *      (the break-refs consumer); issue #127.
+ */
+export function importGroupNodeIds(assetRef: string, state: DagState): string[] {
+  const ids = new Set<string>();
+  // Structural wrappers (no assetRef in params) — recompute from the id scheme.
+  ids.add(hashId('gltf', assetRef));
+  ids.add(hashId('tx', assetRef));
+  ids.add(hashId('grp', assetRef));
+  ids.add(hashId('sel', assetRef));
+  // Clips are emitted at contiguous indices 0..N-1.
+  for (let i = 0; state.nodes[hashId('clip', assetRef, String(i))]; i++) {
+    ids.add(hashId('clip', assetRef, String(i)));
+  }
+  // assetRef-carrying nodes (GltfAsset + GltfChild satellites) — find by params,
+  // the authoritative source (independent of the hashId derivation + nameMap).
+  for (const node of Object.values(state.nodes)) {
+    if (
+      (node.type === 'GltfAsset' || node.type === 'GltfChild') &&
+      (node.params as { assetRef?: string } | undefined)?.assetRef === assetRef
+    ) {
+      ids.add(node.id);
+    }
+  }
+  return [...ids].filter((id) => state.nodes[id] !== undefined);
+}
+
 interface NameMapResult {
   /** Sanitised + deduped scene-node key → DAG TransformClip target id.
    *  The renderer walks gltf.scene by `Object3D.name`, sanitises to the

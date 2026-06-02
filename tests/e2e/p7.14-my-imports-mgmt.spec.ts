@@ -79,6 +79,30 @@ async function gltfAssetRefs(page: import('@playwright/test').Page): Promise<str
   });
 }
 
+/** Total DAG node count — used to prove a break-refs delete returns the graph
+ *  to its pre-import size (the whole import footprint removed, #127). */
+async function dagNodeCount(page: import('@playwright/test').Page): Promise<number> {
+  return page.evaluate(
+    () =>
+      Object.keys((window as unknown as BasherWindow).__basher_dag.getState().state.nodes).length,
+  );
+}
+
+/** Count of nodes carrying an assetRef containing `sub` (GltfAsset + the
+ *  GltfChild satellites) — the assetRef-tagged slice of the import footprint. */
+async function importTaggedNodeCount(
+  page: import('@playwright/test').Page,
+  sub: string,
+): Promise<number> {
+  return page.evaluate((s) => {
+    const nodes = (window as unknown as BasherWindow).__basher_dag.getState().state.nodes;
+    return Object.values(nodes).filter((n) => {
+      const ref = (n.params as { assetRef?: string } | undefined)?.assetRef;
+      return typeof ref === 'string' && ref.includes(s);
+    }).length;
+  }, sub);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
@@ -166,11 +190,15 @@ test('P7.14 (delete unreferenced) — ︙ Delete of a BVH (no ref) removes it + 
 test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with a banner, then break-refs', async ({
   page,
 }) => {
+  const baselineNodes = await dagNodeCount(page);
   await ingestGltf(page, 'used-asset');
   // The import created a GltfAsset referencing the asset.
   await expect
     .poll(async () => await gltfAssetRefs(page))
     .toContain('user-imports/used-asset/scene.gltf');
+  // The import added a whole footprint (GltfAsset + wrapper Transform/Group +
+  // GltfChild satellites), so the graph grew past baseline.
+  expect(await dagNodeCount(page)).toBeGreaterThan(baselineNodes);
 
   await page.getByTestId('top-toolbar-assets').click();
   await page.getByTestId('library-popover-menu-btn-used-asset').click();
@@ -187,4 +215,9 @@ test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with 
   await expect
     .poll(async () => await gltfAssetRefs(page))
     .not.toContain('user-imports/used-asset/scene.gltf');
+  // #127: the WHOLE import footprint is gone — no orphan wrapper Transform/Group,
+  // no GltfChild satellites, no clip ghosts. Node count returns to baseline and
+  // zero nodes still carry the deleted asset's ref.
+  await expect.poll(async () => await dagNodeCount(page)).toBe(baselineNodes);
+  expect(await importTaggedNodeCount(page, 'user-imports/used-asset/')).toBe(0);
 });

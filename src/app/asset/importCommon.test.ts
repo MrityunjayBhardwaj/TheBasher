@@ -5,10 +5,13 @@
 // the delete breaks. Asserts the FAIL-SAFE ordering's observable end state:
 // new files present, old gone, assetRef repointed, refresh bumped.
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
 import type { Node } from '../../core/dag/types';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { buildGltfImportOps, importGroupNodeIds } from '../../core/import/gltfImportChain';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
@@ -26,6 +29,12 @@ import {
 } from './importCommon';
 
 const enc = (s: string) => new TextEncoder().encode(s);
+
+/** The committed skinned-bar.glb (a bone hierarchy → multiple GltfChild). */
+function skinnedBarBuffer(): ArrayBuffer {
+  const node = readFileSync(resolve(process.cwd(), 'public/assets/skinned-bar.glb'));
+  return node.buffer.slice(node.byteOffset, node.byteOffset + node.byteLength) as ArrayBuffer;
+}
 
 function gltfAsset(id: string, assetRef: string): Node {
   return { id, type: 'GltfAsset', version: 1, params: { assetRef }, inputs: {} };
@@ -141,5 +150,39 @@ describe('deleteImportedAsset', () => {
     expect(useDagStore.getState().state.nodes['g']).toBeUndefined();
     expect(useDagStore.getState().state.nodes['t']).toBeDefined();
     expect(await currentStorage.exists(`${USER_IMPORTS_ROOT}/used/x.glb`)).toBe(false);
+  });
+
+  it('referenced + breakRefs → removes the WHOLE import footprint, Scene anchor survives (#127)', async () => {
+    const assetRef = `${USER_IMPORTS_ROOT}/rig/scene.gltf`;
+    await currentStorage.write(assetRef, enc('glb'));
+    // Pre-hydrate the shared Scene anchor, then dispatch a REAL import chain so
+    // the content-addressed wrapper Transform/Group + GltfChild satellites
+    // (+ any clip nodes) exist with their true ids and edges. This exercises
+    // the op layer's actual disconnect-then-removeNode constraints — a wrong
+    // order would throw "still consumed" and the OPFS delete would never run.
+    useDagStore.getState().hydrate({
+      nodes: { n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} } },
+      outputs: {},
+    });
+    const built = await buildGltfImportOps(
+      { buffer: skinnedBarBuffer(), assetRef, sceneNodeId: 'n_scene' },
+      useDagStore.getState().state,
+    );
+    useDagStore.getState().dispatchAtomic(built.ops, 'user', 'import rig');
+
+    // The footprint is the whole subtree (GltfAsset + wrappers + N children),
+    // not just the GltfAsset — the #127 bug was leaving all-but-GltfAsset behind.
+    const footprint = importGroupNodeIds(assetRef, useDagStore.getState().state);
+    expect(footprint.length).toBeGreaterThan(2);
+
+    const res = await deleteImportedAsset('rig', { breakRefs: true });
+    expect(res.deleted).toBe(true);
+    // Every footprint node is gone — no orphan Transform/Group/GltfChild/clip ghosts.
+    for (const id of footprint) {
+      expect(useDagStore.getState().state.nodes[id]).toBeUndefined();
+    }
+    // The shared Scene anchor (output-anchored, not content-addressed) survives.
+    expect(useDagStore.getState().state.nodes['n_scene']).toBeDefined();
+    expect(await currentStorage.exists(assetRef)).toBe(false);
   });
 });
