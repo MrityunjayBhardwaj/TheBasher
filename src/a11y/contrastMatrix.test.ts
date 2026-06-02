@@ -10,9 +10,13 @@
 //    the bg STACK (top-to-bottom alpha layers), and the text-size class.
 // 2. Per D-W8-1 (locked 2026-05-15), every bg-stack is composited down
 //    to one opaque RGB against `bg #0a0a0a` — the worst-case fixed
-//    page background. This includes R8 + ModeBadge, which physically
-//    sit over the GL canvas; bright-scene readability for those two
-//    surfaces is an ACKNOWLEDGED known limitation for v0.5.
+//    page background. R8 + ModeBadge physically sit over the GL canvas
+//    (a VARIABLE-color backdrop); for those two surfaces the #0a0a0a
+//    composite is the BEST case, not the worst. #57 closes that gap:
+//    the dedicated `it()` below recomposites the two over-canvas
+//    surfaces against the worst-case BRIGHT backdrop `#ffffff` and the
+//    p57 e2e empirically pixel-samples them over a real bright scene.
+//    (Observed: fg-dim over #ffffff measures #2d2d2d → 5.47:1 ≥ AA.)
 // 3. Each row's contrast ratio is computed against its composited bg.
 //    AA threshold: 4.5 for 'small' text (regular <18px / bold <14px),
 //    3.0 for 'large' or 'ui'.
@@ -650,8 +654,9 @@ const ROWS: Row[] = [
   // L102 active tool bg-1 text-accent; L103 idle tool fg-dim hover→fg
   // bg-1; L134 active shading accent/25 text-accent; L135 idle shading
   // fg-dim; L236 frame input border-border bg-bg text-fg.
-  // D-W8-1 known limitation: bright-scene readability over GL canvas
-  // not audited.
+  // #57: these rows composite against #0a0a0a (BEST case for an
+  // over-canvas surface); the worst-case BRIGHT backdrop is audited by
+  // the `it()` below + the p57 e2e (real-pixel observation).
   {
     site: 'R8 FloatingToolbar container — fg on bg-2/90 (D-W8-1 vs bg only)',
     fg: 'fg',
@@ -726,7 +731,8 @@ const ROWS: Row[] = [
 
   // ─── ModeBadge (src/viewport/ModeBadge.tsx) ─────────────────────────
   // L63 bg-bg-2/90 + text-fg-dim + border-border-strong + uppercase
-  // text-[10px]. D-W8-1 known limitation: actually sits over GL canvas.
+  // text-[10px]. #57: sits over the GL canvas — worst-case bright
+  // backdrop audited by the `it()` below + the p57 e2e.
   {
     site: 'ModeBadge — fg-dim on bg-2/90 (D-W8-1 vs bg only)',
     fg: 'fg-dim',
@@ -1274,6 +1280,57 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
               (f) => `  ${f.name} (${f.fg}) = ${f.ratio.toFixed(2)}:1 vs required ${f.required}:1`,
             )
             .join('\n'),
+      );
+    }
+  });
+
+  // ─── Over-canvas surfaces vs the worst-case BRIGHT backdrop (#57) ────
+  //
+  // D-W8-1 composites every row against the FIXED page bg `#0a0a0a`. That
+  // is the worst case for chrome over an opaque page — but R8
+  // (FloatingViewportToolbar) and ModeBadge sit over the GL canvas, whose
+  // color varies per scene. For them, `#0a0a0a` is the BEST case (it can
+  // only get brighter behind the overlay), so the matrix's PASS for those
+  // two was an INFERENCE, not a worst-case bound (issue #57).
+  //
+  // This recomposites the SAME rows against the worst-case displayable
+  // backdrop `#ffffff` (a white HDRI blowout) and asserts they still clear
+  // AA. The `bg-2/90` (and `bg-1` opaque) layers do the masking: even over
+  // pure white, the worst idle glyph holds ≥ 4.5:1. The p57 e2e
+  // (tests/e2e/p57-bright-scene-contrast.spec.ts) corroborates this on
+  // REAL composited pixels over a real bright scene — formula + observation
+  // agree (measured #2d2d2d → 5.47:1 vs formula 5.44:1).
+  it('R8 + ModeBadge clear AA over a BRIGHT (#ffffff) canvas, not just #0a0a0a (#57)', () => {
+    const WHITE: RGB = parseHex('#ffffff');
+    const overCanvas = ROWS.filter(
+      (r) => r.site.startsWith('R8 ') || r.site.startsWith('ModeBadge'),
+    );
+    // Sanity: the filter must actually match the surfaces it protects (a
+    // future rename must not make this gate vacuous).
+    expect(overCanvas.length, 'expected R8 + ModeBadge rows to exist').toBeGreaterThanOrEqual(5);
+
+    const failures: string[] = [];
+    for (const row of overCanvas) {
+      // Recomposite the bg-stack onto WHITE instead of PAGE_BG. Opaque
+      // layers (bg-1, bg) absorb white entirely; only the bottom-most
+      // translucent layer lets it bleed — exactly the real physics.
+      const bgWhite = compositeStack(row.bgStack.map(token), WHITE);
+      const fgWhite = compositeFg(row.fg, bgWhite);
+      const ratio = contrastRatio(fgWhite, bgWhite);
+      const required = aaThreshold(row.textSize);
+      if (ratio < required) {
+        failures.push(
+          `  ${row.site} | fg=${row.fg} | over #ffffff → bg=${formatHex(bgWhite)} | ` +
+            `${ratio.toFixed(2)}:1 < ${required}:1 (${row.textSize})`,
+        );
+      }
+    }
+    if (failures.length > 0) {
+      expect.fail(
+        `#57: ${failures.length} over-canvas surface(s) fall below AA against a BRIGHT backdrop.\n` +
+          `These sit over the GL canvas; a bright scene washes them out. Fix per D-W8-1 reopen ` +
+          `(opaque bg, raise the /N alpha, or lift the fg token).\n` +
+          failures.join('\n'),
       );
     }
   });
