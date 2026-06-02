@@ -699,31 +699,46 @@ We address each in the plan; we revisit each at v0.5 retrospective.
 
 **Status (2026-06-03): v0.5 is feature-complete.** Shipped: P0–P5 core (DAG / agent / timeline / AI render bridge), P6 design system, the P7.x animation-authoring arc (skinned glTF, rig nodes, editable clips, material-override fidelity), and the #124 material-override primitive. **Cut from v0.5:** Splats (P6 cut candidate, §452/§457) and PlayCanvas pixel-streaming (P7 cut candidate) — both deferred to v0.7. P8 (Progressive UX) shipped only the mode scaffold; its full ease-of-use scope is promoted to the v0.6 headline below. The read-only DAG view (§16) was never built in v0.5 and moves to v0.6.
 
-**Revised ordering (2026-06-03).** v0.6 now leads with _ease of use_, not the node editor — this is more faithful to §196 ("showing the graph too early is the Houdini-for-everyone failure mode") than the original v0.6 was. The sequence is: material / texture / UV authoring → Spline-grade Director UX (end-to-end, <15-min acceptance) → read-only DAG view. The **editable** node editor and the material node graph move to v0.7, because a specialized graph editor must not precede the general one.
+**Revised ordering (2026-06-03).** v0.6 now leads with _ease of use_, not the node editor — this is more faithful to §196 ("showing the graph too early is the Houdini-for-everyone failure mode") than the original v0.6 was. The sequence is: one uniform mesh model (presets = imports) → material / texture / UV authoring on top of it → Spline-grade Director UX (end-to-end, <15-min acceptance) → read-only DAG view. The **editable** node editor and the material node graph move to v0.7, because a specialized graph editor must not precede the general one.
 
 ### 58. v0.6 — Ease of use (Spline-grade) + materials + cost-down
 
 **The milestone bet:** Basher becomes as approachable as **Spline 3D** — heavily inspired by their polish — _without_ surrendering the agent-first, deterministic, procedural-DAG model that is the actual wedge. Direct manipulation gets Spline-grade polish; the agent stays a co-equal primary surface; every edit is still an `Op`; the graph stays hidden until Pro.
 
-**1. Material + texture authoring** (closes the v0.5 gap — WebGL path, _not_ TSL yet):
+**1. One uniform model — presets and imports are equal** (the FOUNDATION; everything below rides on it):
 
-- `Texture` / `Image`-loading node — assign albedo / normal / roughness / metalness / emissive / AO maps to procedural materials. Today maps exist only if they rode in on a glTF import.
+Box and Sphere are just parametric _presets_; an imported glTF is just another producer. Nothing is special about a primitive. Today the code fights this — one invariant ("see / edit any model's geometry, UVs, materials, transform") is split across four islands: distinct value `kind`s (`BoxMesh`/`SphereMesh`/`GltfAsset`/`GltfChild`); transforms that carry full TRS for glTF but only position+rotation (no scale) for primitives; two material engines (`InlineMaterialSpec {name,color}` for primitives vs full-PBR clone-override for imports); and UVs that are generated ad-hoc for primitives but **not extracted at all** for imports. The fix is to unify the **evaluated/consumed** representation, not the authoring nodes:
+
+- Every producer (preset or importer) resolves to one `EvaluatedMesh { geometry, uvs, material (full PBR), transform (full TRS) }` — the "geometry registry" the code already names as the missing prerequisite (`UVEditor.tsx:37`, `uvLayout.ts:4`).
+- Authoring nodes stay distinct (a `BoxMesh` is still re-parametrizable as a box) — only the evaluated mesh and the **surfaces that consume it** (NPanel inspector, gizmo with full TRS, UV editor, material/texture controls) become uniform.
+- Consequence: a primitive gains full-PBR materials, real UVs, and gizmo scale for free; an import becomes a first-class editable mesh, not a second-class clone-override target.
+
+**2. Material + texture authoring** (rides on #1 — WebGL path, _not_ TSL yet):
+
+- `Texture` / `Image`-loading node — albedo / normal / roughness / metalness / emissive / AO maps onto **any** mesh, preset or import (today maps exist only if they rode in on a glTF import).
 - First-class shareable `Material` edge — one material wired into many meshes (today `MaterialOverride` is a Mesh→Mesh decorator and the `Material` socket type carries no edge). Enables a material library.
-- Minimal UV editor — promote the read-only `UVEditor` shell (P2.6) to editing: drag handles + glTF UV preview (needs the geometry registry).
+- Texture placement — tiling / offset / rotation (the real "make the grain bigger" director need; a UV-transform at sample time, no topology editing).
 
-**2. Spline-grade Director experience, end-to-end** (the headline — promotes thesis P8, §47):
+**3. UV — view + transform, not surgery** (rides on #1; granular authoring → Blender):
+
+- See any mesh's real UVs — presets and imports alike (promotes the read-only `UVEditor` shell, P2.6). Island-level transforms at most.
+- Per-vertex editing, mark-seam, and unwrap solvers stay in **Blender** via a glTF round-trip — seams don't even survive the glTF boundary (they compile into UV islands on export; Basher only ever receives baked UVs), so this is a domain boundary, not a deferral of convenience. A _live_ Blender link (the beacon capability is the seed) is v0.7; the v0.6 answer is manual export / re-import.
+
+**4. Spline-grade Director experience, end-to-end** (the headline — promotes thesis P8, §47):
 
 - _Borrow from Spline:_ visual hierarchy + calm chrome, property-panel feel + instant feedback, drag / gizmo polish + snapping, asset-browser ergonomics, empty states, the 60-second onboarding tour, the shipped demo project.
 - _Keep as Basher:_ agent/chat as a **co-equal primary surface** (not a sidebar afterthought), Op-backed edits (determinism + undo), Simple→Director defaults, DAG hidden until Pro.
 - _The line we do not cross:_ no Spline pattern that makes the canvas the **only** path to create — the agent is always a peer authoring surface (§196).
 
-**3. Read-only DAG view** (the §16 / §194 debug surface, deferred from v0.5 — last in the milestone):
+**5. Read-only DAG view** (the §16 / §194 debug surface, deferred from v0.5 — last in the milestone):
 
 - Force-directed render of the project's nodes + edges, read-only: _"this is what your project looks like under the hood."_ Pro mode only. De-risks the v0.7 editable editor by building the layout/render layer first.
 
 **Cost-down (carried from the original v0.6):** one-click ComfyUI installer; cloud demo endpoint for first AI render; WebRTC pixel-streaming export; worker-based scatter (lift the N=5000 cap); AI render preset authoring via meta-prompt.
 
 **Acceptance (promoted from P8, §585):** three first-time users, each ships a stylized clip in <15 min from a clean clone — with each end-to-end flow (import → material/texture → animate → render) passing _first-time-user_ observation, not just a developer demo.
+
+**Uniformity gate (the #1 acceptance):** select _any_ node — a `BoxMesh`, a `SphereMesh`, an imported glTF, a glTF child — and its geometry params, full TRS transform (gizmo translate/rotate/**scale**), material + maps, and UVs are all viewable and editable through the **same** surfaces. No node type is second-class; "it only works on primitives" or "it only works on imports" is a fail.
 
 ### 59. v0.7 — Node-graph power + material depth + animation depth
 
