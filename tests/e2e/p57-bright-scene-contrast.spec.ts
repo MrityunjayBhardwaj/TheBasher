@@ -63,12 +63,12 @@ async function setSceneBg(page: import('@playwright/test').Page, hex: string): P
 }
 
 /** Screenshot a testid's box, decode it IN-PAGE (browser decodes the PNG —
- *  no external decoder dep), and return the measured surface RGB + a
- *  representative bright-glyph RGB + the pixel population stats. */
+ *  no external decoder dep), and return the measured surface RGB + the
+ *  surface/glyph luminances used by the assertions. */
 async function sampleOverlay(
   page: import('@playwright/test').Page,
   testId: string,
-): Promise<{ surface: RGB; brightGlyph: RGB; surfaceLum: number; glyphLum: number }> {
+): Promise<{ surface: RGB; surfaceLum: number; glyphLum: number }> {
   const box = await page.getByTestId(testId).boundingBox();
   if (!box) throw new Error(`no boundingBox for ${testId}`);
   const buf = await page.screenshot({
@@ -126,11 +126,9 @@ async function sampleOverlay(
     // robust to single AA outliers).
     grayLum.sort((a, b) => a.l - b.l);
     const pick = grayLum[Math.floor(grayLum.length * 0.99)] ?? grayLum[grayLum.length - 1];
-    const brightGlyph = { r: pick.r, g: pick.g, b: pick.b };
 
     return {
       surface,
-      brightGlyph,
       surfaceLum: lum(surface.r, surface.g, surface.b),
       glyphLum: lum(pick.r, pick.g, pick.b),
     };

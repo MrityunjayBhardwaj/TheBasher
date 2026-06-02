@@ -153,9 +153,10 @@ export function Viewport() {
           <EditorLights />
           {/* DEV-only #57 seam: exposes window.__basher_setSceneBackground
               so the bright-scene contrast e2e can drive the REAL canvas
-              bright and pixel-sample R8/ModeBadge over it. Tree-shaken in
-              production. */}
-          <SceneBgTestSeam />
+              bright and pixel-sample R8/ModeBadge over it. The mount is
+              gated on import.meta.env.DEV so Rollup eliminates both the
+              component and its import from production builds. */}
+          {import.meta.env.DEV ? <SceneBgTestSeam /> : null}
           <PerfBoundary>
             <SceneFromDAG />
           </PerfBoundary>
