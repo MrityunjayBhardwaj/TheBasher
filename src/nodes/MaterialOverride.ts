@@ -36,6 +36,13 @@ export const MaterialOverrideParams = z.object({
   emissive: z.string().default('#000000'),
   emissiveIntensity: z.number().min(0).default(0),
   overridden: MaterialOverriddenSet,
+  // #131 (D-05): the coarse flatten / clay toggle. `true` ⇒ the renderer
+  // ignores the source material entirely and builds a fresh one from the 7
+  // scalars (source maps + subclass dropped BY INTENT). `false` (default) ⇒
+  // the clone + map-aware merge path (#99 + #124). SEPARATE from `overridden`:
+  // a different-scope primitive (Blender View-Layer Material Override / Houdini
+  // wholesale Assign Material), not a per-field bit.
+  ignoreSourceMaterial: z.boolean().default(false),
 });
 export type MaterialOverrideParams = z.infer<typeof MaterialOverrideParams>;
 
@@ -64,6 +71,8 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
         // #124 (V28): the sparse authored set rides on the MaterialValue so it
         // flows down the `override?: MaterialValue` prop chain to GltfAssetR.
         overridden: params.overridden,
+        // #131 (D-05): the coarse flatten toggle rides the same prop chain.
+        ignoreSourceMaterial: params.ignoreSourceMaterial,
       },
     };
   },

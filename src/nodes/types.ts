@@ -136,6 +136,16 @@ export interface MaterialValue {
    * (color/emissive/opacity) ignore it because their default is map-identity.
    */
   readonly overridden?: OverriddenSet<MaterialOverrideField>;
+  /**
+   * #131 (D-05) — the honest wholesale-replace / clay path. When `true` the
+   * renderer IGNORES the source material entirely and builds a fresh material
+   * from all 7 scalars (the source's maps + subclass are dropped BY INTENT —
+   * the intentional version of the old #99 wholesale-replace bug). Coarse and
+   * SEPARATE from the per-field `overridden` set: in flatten mode the per-field
+   * authored bits are irrelevant (every scalar applies unconditionally).
+   * Absent / `false` ⇒ the clone + map-aware merge path (#99 + #124).
+   */
+  readonly ignoreSourceMaterial?: boolean;
 }
 
 // Inline material spec carried by leaf meshes (BoxMesh ships this from P0).

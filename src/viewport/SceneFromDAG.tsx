@@ -683,6 +683,28 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // (V20/H36/H45 single-writer landmine). Cloning + reassigning is the guard.
   useEffect(() => {
     const wireframe = useViewportStore.getState().shading === 'wireframe';
+    // #131 (D-05) — the coarse flatten / clay path. When the override asks to
+    // ignore the source material, build a FRESH MeshStandardMaterial from the 7
+    // scalars and drop the source's maps + subclass BY INTENT (the honest,
+    // opt-in version of the old #99 wholesale-replace bug). This is a separate
+    // primitive from the per-field `overridden` set (which forces individual
+    // channels while keeping the clone + every other map): flatten ignores the
+    // set entirely and replaces wholesale. Still single-writer (V20/H36/H45):
+    // a fresh material per mesh, never a mutation of the shared source.
+    const flatten = (override as MaterialValue | undefined)?.ignoreSourceMaterial === true;
+    const clay = (o: MaterialValue): THREE.Material => {
+      const next = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(o.color),
+        roughness: o.roughness,
+        metalness: o.metalness,
+        emissive: new THREE.Color(o.emissive),
+        emissiveIntensity: o.emissiveIntensity,
+        opacity: o.opacity,
+        transparent: o.opacity < 1,
+        wireframe,
+      });
+      return next;
+    };
     const tint = (s: THREE.Material): THREE.Material => {
       const std = s as THREE.MeshStandardMaterial;
       const fields = resolveMaterialOverrideFields(
@@ -724,7 +746,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         m.material = src;
         return;
       }
-      m.material = Array.isArray(src) ? src.map(tint) : tint(src);
+      // Flatten ignores the source entirely (fresh clay per slot); the default
+      // path clones the source and overlays only the map-safe fields.
+      const make = flatten ? () => clay(override as MaterialValue) : tint;
+      m.material = Array.isArray(src) ? src.map(make) : make(src);
     });
   }, [cloned, override]);
   // Wireframe pass — flip every mesh material on the cloned scene. Runs
