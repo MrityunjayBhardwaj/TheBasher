@@ -25,6 +25,7 @@ import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
 import { ModeBadge } from './ModeBadge';
+import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
 
 function EditorOrbit() {
@@ -150,6 +151,11 @@ export function Viewport() {
           {/* Editor-only fill rig — gated on viewportStore.shading. Does
               NOT enter the DAG; production renders bypass it. */}
           <EditorLights />
+          {/* DEV-only #57 seam: exposes window.__basher_setSceneBackground
+              so the bright-scene contrast e2e can drive the REAL canvas
+              bright and pixel-sample R8/ModeBadge over it. Tree-shaken in
+              production. */}
+          <SceneBgTestSeam />
           <PerfBoundary>
             <SceneFromDAG />
           </PerfBoundary>
