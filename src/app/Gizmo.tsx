@@ -55,7 +55,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { routeAnimatedGrab } from './animate/autoKeyCommit';
+import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 
 type Vec3 = [number, number, number];
 
@@ -332,6 +332,12 @@ export function Gizmo() {
           'user',
           'gizmo translate',
         );
+      // #141: un-animated first-key path — symmetric with the NPanel inspector
+      // (which commits setParam THEN autoKeyCommit). routeAnimatedGrab returned
+      // false above (un-animated) so this is mutually exclusive with its
+      // animated-param keying — no H36 double-write. autoKeyCommit self-gates on
+      // Auto-Key OFF (returns immediately), so record-off stays byte-identical.
+      autoKeyCommit(selectedId, 'position', value);
       return;
     }
     if (liveMode === 'rotate') {
@@ -347,6 +353,7 @@ export function Gizmo() {
           'user',
           'gizmo rotate',
         );
+      autoKeyCommit(selectedId, 'rotation', value); // #141 un-animated first-key (see translate)
       return;
     }
     // scale
@@ -363,6 +370,7 @@ export function Gizmo() {
         'user',
         `gizmo scale (${manip.scaleParamPath})`,
       );
+    autoKeyCommit(selectedId, manip.scaleParamPath, value); // #141 un-animated first-key (see translate)
   }
 
   // *** D-06 grab observation seam — dev-guarded, NOT user chrome ***
