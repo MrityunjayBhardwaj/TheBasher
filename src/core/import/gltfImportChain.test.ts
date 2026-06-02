@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { Quaternion } from 'three';
 import { quaternionToEulerVec3 } from './threeAdapter';
 import { radVec3ToDeg } from '../../viewport/rotation';
-import { buildGltfImportOps, buildNodeNameMap } from './gltfImportChain';
+import { buildGltfImportOps, buildNodeNameMap, importGroupNodeIds } from './gltfImportChain';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 import type { GltfJson } from './glb';
@@ -631,5 +631,60 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
     // The whole ops array — including the GltfChild addNodes — must be
     // byte-identical. This is the V22 gate: deterministic ids + locked order.
     expect(JSON.stringify(a.ops)).toBe(JSON.stringify(b.ops));
+  });
+});
+
+describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
+  // Build a DagState containing every node `buildGltfImportOps` emits for an
+  // animated single-child glTF, plus the shared Scene and an unrelated
+  // user-created Transform. importGroupNodeIds must select EXACTLY the import
+  // footprint — never the Scene anchor, never the user node.
+  async function importedState(assetRef: string): Promise<{
+    state: DagState;
+    emitted: string[];
+  }> {
+    const result = await buildGltfImportOps(
+      { buffer: singleTranslationClipGlb(), assetRef, sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const nodes: DagState['nodes'] = {
+      n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} },
+      n_user_tx: { id: 'n_user_tx', type: 'Transform', version: 1, params: {}, inputs: {} },
+    };
+    const emitted: string[] = [];
+    for (const op of result.ops) {
+      if (op.type !== 'addNode') continue;
+      nodes[op.nodeId] = {
+        id: op.nodeId,
+        type: op.nodeType,
+        version: 1,
+        params: op.params,
+        inputs: {},
+      };
+      emitted.push(op.nodeId);
+    }
+    return { state: { nodes, outputs: {} } as unknown as DagState, emitted };
+  }
+
+  it('selects every emitted import node (GltfAsset + GltfChild + Transform + Group + TransformClip + ClipSelect)', async () => {
+    const { state, emitted } = await importedState('asset/anim.glb');
+    const group = new Set(importGroupNodeIds('asset/anim.glb', state));
+    for (const id of emitted) expect(group.has(id)).toBe(true);
+    const types = new Set([...group].map((id) => state.nodes[id].type));
+    expect(types).toEqual(
+      new Set(['GltfAsset', 'GltfChild', 'Transform', 'Group', 'TransformClip', 'ClipSelect']),
+    );
+  });
+
+  it('never includes the shared Scene anchor nor an unrelated user node', async () => {
+    const { state } = await importedState('asset/anim.glb');
+    const group = new Set(importGroupNodeIds('asset/anim.glb', state));
+    expect(group.has('n_scene')).toBe(false);
+    expect(group.has('n_user_tx')).toBe(false);
+  });
+
+  it('returns [] for an assetRef with no nodes in the state', async () => {
+    const { state } = await importedState('asset/anim.glb');
+    expect(importGroupNodeIds('asset/other.glb', state)).toEqual([]);
   });
 });
