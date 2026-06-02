@@ -28,7 +28,8 @@
 // the returned fields onto the clone. It must NEVER touch a map reference: maps
 // survive via clone(), not via this helper.
 
-import type { MaterialValue } from '../nodes/types';
+import type { MaterialOverrideField, MaterialValue } from '../nodes/types';
+import { isOverridden, type OverriddenSet } from '../core/override/overrideSet';
 
 /** Which scalar-channel maps the SOURCE (imported) material already carries. */
 export interface MaterialMapPresence {
@@ -52,18 +53,36 @@ export interface MaterialOverrideFields {
 }
 
 /**
- * D-01 map-aware tint. Given the override material spec and the source material's
- * map presence, return only the fields the renderer should overlay onto a clone.
+ * D-01 map-aware tint + #124 per-field force (V28). Given the override material
+ * spec, the source's map presence, and the explicit per-field authored set,
+ * return only the fields the renderer should overlay onto a clone.
+ *
+ * The roughness/metalness rule is "explicit set ∪ map-aware fallback" (D-06):
+ *   - field IN the authored set → FORCE the scalar, even over a source map
+ *     (the director deliberately wants the channel — e.g. flatten a textured
+ *     metal asset with `metalness=0`). This is the #124 capability.
+ *   - field NOT in the set → the #99 map-aware default: apply the scalar only
+ *     where no map defends the channel (a map ⇒ keep source, `null`).
+ *
+ * `overriddenSet` defaults to `undefined`, which makes every field fall to the
+ * map-aware branch — byte-identical to the pre-#124 #99 behaviour (D-03
+ * backward-compat; the unchanged legacy unit cases prove it). color / emissive /
+ * emissiveIntensity / opacity ignore the set: they are always applied because
+ * their default value is map-identity (white tint multiplies a `.map` to itself).
  */
 export function resolveMaterialOverrideFields(
   override: MaterialValue,
   maps: MaterialMapPresence,
+  overriddenSet?: OverriddenSet<MaterialOverrideField>,
 ): MaterialOverrideFields {
+  // A scalar channel is applied when the director explicitly authored it OR no
+  // source map defends it. Forced ⇒ the scalar; otherwise map present ⇒ null.
+  const roughnessForced = isOverridden(overriddenSet, 'roughness') || !maps.roughnessMap;
+  const metalnessForced = isOverridden(overriddenSet, 'metalness') || !maps.metalnessMap;
   return {
     color: override.color,
-    // Scalar channels multiply their maps — overlay only where no map defends the channel.
-    roughness: maps.roughnessMap ? null : override.roughness,
-    metalness: maps.metalnessMap ? null : override.metalness,
+    roughness: roughnessForced ? override.roughness : null,
+    metalness: metalnessForced ? override.metalness : null,
     opacity: override.opacity,
     emissive: override.emissive,
     emissiveIntensity: override.emissiveIntensity,

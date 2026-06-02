@@ -11,6 +11,8 @@
 // types (`Camera` / `Light` / `Mesh`) carry richer variants without the DAG
 // type system needing to grow.
 
+import type { OverriddenSet } from '../core/override/overrideSet';
+
 export type Vec3 = readonly [number, number, number];
 
 /** Quaternion stored as xyzw (THREE convention). */
@@ -107,6 +109,15 @@ export type LightValue =
 // Materials (V9 — preset + scalar/texture only; no shader-as-code in v0.5)
 // ---------------------------------------------------------------------------
 
+/** The per-field keys a MaterialOverride can explicitly author (#124, V28). */
+export type MaterialOverrideField =
+  | 'color'
+  | 'roughness'
+  | 'metalness'
+  | 'opacity'
+  | 'emissive'
+  | 'emissiveIntensity';
+
 export interface MaterialValue {
   readonly kind: 'Material';
   readonly name: string;
@@ -116,6 +127,15 @@ export interface MaterialValue {
   readonly opacity: number;
   readonly emissive: string;
   readonly emissiveIntensity: number;
+  /**
+   * Sparse per-field "authored" set (#124, V28) — which channels the director
+   * EXPLICITLY set, carried as an explicit bit (never derived from value≠default;
+   * the R-4 single-tier trap). Absent / `{}` ⇒ legacy #99 map-aware behaviour
+   * (D-03, backward-compat). Only roughness/metalness consult it (an authored bit
+   * forces the scalar even over a source map); the always-applied tint fields
+   * (color/emissive/opacity) ignore it because their default is map-identity.
+   */
+  readonly overridden?: OverriddenSet<MaterialOverrideField>;
 }
 
 // Inline material spec carried by leaf meshes (BoxMesh ships this from P0).

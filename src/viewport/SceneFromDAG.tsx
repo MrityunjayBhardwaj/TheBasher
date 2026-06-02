@@ -685,10 +685,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     const wireframe = useViewportStore.getState().shading === 'wireframe';
     const tint = (s: THREE.Material): THREE.Material => {
       const std = s as THREE.MeshStandardMaterial;
-      const fields = resolveMaterialOverrideFields(override as MaterialValue, {
-        roughnessMap: Boolean(std.roughnessMap),
-        metalnessMap: Boolean(std.metalnessMap),
-      });
+      const fields = resolveMaterialOverrideFields(
+        override as MaterialValue,
+        {
+          roughnessMap: Boolean(std.roughnessMap),
+          metalnessMap: Boolean(std.metalnessMap),
+        },
+        (override as MaterialValue).overridden, // #124 (V28): per-field force-vs-map
+      );
       // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal
       // meshes (all PBR fields present), but KHR_materials_unlit yields a
       // MeshBasicMaterial — which has `.color`/`.opacity` but NO `.emissive`/

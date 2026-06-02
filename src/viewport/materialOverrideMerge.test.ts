@@ -98,3 +98,61 @@ describe('resolveMaterialOverrideFields (D-01 map-aware tint)', () => {
     );
   });
 });
+
+describe('resolveMaterialOverrideFields — #124 per-field force (V28, explicit set ∪ map-aware)', () => {
+  const allMapped = { roughnessMap: true, metalnessMap: true } as const;
+
+  it('FORCES metalness over a metalnessMap when the field is in the authored set (the #124 GOAL)', () => {
+    // The director deliberately flattens a textured METAL asset: metalness=0
+    // must land the scalar even though a metalnessMap defends the channel.
+    const flat = resolveMaterialOverrideFields({ ...override, metalness: 0 }, allMapped, {
+      metalness: true,
+    });
+    expect(flat.metalness).toBe(0); // forced over the map
+    expect(flat.roughness).toBeNull(); // roughness NOT in the set → map still defends
+  });
+
+  it('FORCES roughness over a roughnessMap when in the set, independently of metalness', () => {
+    const fields = resolveMaterialOverrideFields({ ...override, roughness: 0.9 }, allMapped, {
+      roughness: true,
+    });
+    expect(fields.roughness).toBe(0.9); // forced
+    expect(fields.metalness).toBeNull(); // not forced → map defends
+  });
+
+  it('an UNSET field over a map still returns null (map defends — the #99 default holds, D-03)', () => {
+    const fields = resolveMaterialOverrideFields(override, allMapped, { color: true });
+    // color authored, but roughness/metalness untouched → both fall to map-aware.
+    expect(fields.roughness).toBeNull();
+    expect(fields.metalness).toBeNull();
+  });
+
+  it('an empty set is byte-identical to no set (backward-compat with the legacy signature)', () => {
+    const noArg = resolveMaterialOverrideFields(override, allMapped);
+    const emptySet = resolveMaterialOverrideFields(override, allMapped, {});
+    expect(emptySet).toEqual(noArg);
+    expect(emptySet.roughness).toBeNull();
+    expect(emptySet.metalness).toBeNull();
+  });
+
+  it('a field=false in the set is treated as inherit (not forced) — explicit false ≡ absent', () => {
+    const fields = resolveMaterialOverrideFields(override, allMapped, {
+      metalness: false,
+      roughness: true,
+    });
+    expect(fields.metalness).toBeNull(); // false → map defends
+    expect(fields.roughness).toBe(0.5); // true → forced
+  });
+
+  it('forcing has no effect when there is no map anyway (procedural parity — value applies either way)', () => {
+    const noMaps = { roughnessMap: false, metalnessMap: false } as const;
+    const forced = resolveMaterialOverrideFields(override, noMaps, {
+      roughness: true,
+      metalness: true,
+    });
+    const unforced = resolveMaterialOverrideFields(override, noMaps);
+    expect(forced.roughness).toBe(0.5);
+    expect(forced.metalness).toBe(0);
+    expect(forced).toEqual(unforced); // no map → set is a no-op
+  });
+});
