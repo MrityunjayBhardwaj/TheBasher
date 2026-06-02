@@ -526,6 +526,47 @@ function isVec3(v: unknown): v is [number, number, number] {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 }
 
+/**
+ * Boolean param editor (#136). Before this, every boolean param fell through to
+ * the `(complex — Pro mode)` fallback and was NOT editable in the Inspector —
+ * `MaterialOverride.ignoreSourceMaterial` (the #131 flatten toggle), AnimationClip
+ * /LocomotionState `loop`, AnimationLayer `mute`/`solo`, RenderOutput `smaa`,
+ * ScatterNode `randomYaw`. A checkbox closes that gap. V1/V8: dispatches a single
+ * `setParam` Op, reads nothing else. Controlled `checked` (never `defaultChecked`)
+ * so a Cmd+Z / agent op / external param change stays in sync.
+ */
+function BooleanField({
+  nodeId,
+  paramPath,
+  label,
+  value,
+}: {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: boolean;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{label}</span>
+      <input
+        type="checkbox"
+        checked={value}
+        data-testid={`inspector-toggle-${nodeId}-${paramPath}`}
+        className="h-3.5 w-3.5 accent-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          dispatch(
+            { type: 'setParam', nodeId, paramPath, value: e.target.checked },
+            'user',
+            `toggle ${paramPath}`,
+          )
+        }
+      />
+    </label>
+  );
+}
+
 function isInputBinding(v: unknown): boolean {
   if (!v || typeof v !== 'object') return false;
   const o = v as Partial<NodeRef>;
@@ -568,6 +609,9 @@ function ParamRow({
         overrideInfo={overrideInfo}
       />
     );
+  }
+  if (typeof value === 'boolean') {
+    return <BooleanField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />;
   }
   if (typeof value === 'string') {
     // No string param is a covered override field today (the descriptor covers
