@@ -685,10 +685,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     const wireframe = useViewportStore.getState().shading === 'wireframe';
     const tint = (s: THREE.Material): THREE.Material => {
       const std = s as THREE.MeshStandardMaterial;
-      const fields = resolveMaterialOverrideFields(override as MaterialValue, {
-        roughnessMap: Boolean(std.roughnessMap),
-        metalnessMap: Boolean(std.metalnessMap),
-      });
+      const fields = resolveMaterialOverrideFields(
+        override as MaterialValue,
+        {
+          roughnessMap: Boolean(std.roughnessMap),
+          metalnessMap: Boolean(std.metalnessMap),
+        },
+        (override as MaterialValue).overridden, // #124 (V28): per-field force-vs-map
+      );
       // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal
       // meshes (all PBR fields present), but KHR_materials_unlit yields a
       // MeshBasicMaterial — which has `.color`/`.opacity` but NO `.emissive`/
@@ -896,6 +900,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         hasMap: boolean;
         mapImageOk: boolean;
         color: string | null;
+        metalness: number | null;
+        roughness: number | null;
+        hasMetalnessMap: boolean;
+        hasRoughnessMap: boolean;
       }> = [];
       cloned.traverse((child) => {
         const m = child as THREE.Mesh;
@@ -907,11 +915,26 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           // #99 — expose the live material color so the override e2e can prove
           // the tint LANDED (hasMap survives is only half the goal). `#rrggbb`.
           const col = (mat as { color?: THREE.Color } | null)?.color;
+          // #124 (V28) — expose the live scalar channels + their map presence so
+          // the force-a-mapped-channel e2e can boundary-pair observe the actual
+          // three.js material (H40/H59), not the override node params: forcing
+          // metalness=0 must land `.metalness===0` while `.metalnessMap` survives
+          // (the clone keeps the ref; the forced scalar zeroes its contribution).
+          const std = mat as {
+            metalness?: number;
+            roughness?: number;
+            metalnessMap?: THREE.Texture | null;
+            roughnessMap?: THREE.Texture | null;
+          } | null;
           summary.push({
             name: m.name ?? '',
             hasMap: map !== null,
             mapImageOk: Boolean(image && (image.width ?? 0) > 0),
             color: col ? `#${col.getHexString()}` : null,
+            metalness: typeof std?.metalness === 'number' ? std.metalness : null,
+            roughness: typeof std?.roughness === 'number' ? std.roughness : null,
+            hasMetalnessMap: Boolean(std?.metalnessMap),
+            hasRoughnessMap: Boolean(std?.roughnessMap),
           });
         }
       });
