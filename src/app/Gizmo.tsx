@@ -5,8 +5,14 @@
 //     params expose a `position` vec3 gets a translate gizmo at that
 //     position. The gizmo emits setParam Ops on every objectChange.
 //     Rotate writes to params.rotation when present. Scale writes to
-//     params.scale when present, falling back to params.size for nodes
-//     where the geometry IS the scale (BoxMesh).
+//     params.scale when present.
+//     v0.6 #1 (D-01/D-03): BoxMesh/SphereMesh now carry a real `scale` TRS
+//     band, so `getManipulable` resolves their `scaleParamPath` to 'scale'
+//     (NOT 'size') — the gizmo scale handle drives the non-destructive
+//     transform band, leaving the parametric geometry `size` untouched, with
+//     ZERO node-kind special-casing. The `size` fallback below is now a LEGACY
+//     path retained only for any node that still has size-but-no-scale (none
+//     for primitives after v0.6 #1).
 //   - Character: gizmo position seeds from the upstream LocomotionState;
 //     on drag END, the macro `buildWalkToOps` emits an atomic chain that
 //     walks the character to the new position. Per-frame setParam isn't
