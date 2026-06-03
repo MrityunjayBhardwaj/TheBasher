@@ -1057,7 +1057,48 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         roughness: number | null;
         hasMetalnessMap: boolean;
         hasRoughnessMap: boolean;
+        // P151 Wave 3 t7 (LOKAYATA PROBE) — per-`map` texture-readback diagnostic
+        // on the CLONED child material. The bake (Wave 4) must decide whether it
+        // can copy the ORIGINAL compressed bytes (path 1, lossless) or must fall
+        // back to a canvas readback (path 2). That decision hinges on whether a
+        // source-URI association survives `SkeletonUtils.clone` (RESEARCH §M4 —
+        // a MEDIUM-confidence runtime question). This field reports, for the base
+        // color `map`, which association-bearing surface is actually present so we
+        // OBSERVE the path rather than infer it.
+        mapProbe: {
+          // image dims — the canvas-readback path (2) needs a decoded image.
+          imageWidth: number;
+          imageHeight: number;
+          // path (1) candidates — three.js stores the glTF→texture link in
+          // different places depending on loader/clone behaviour. We report each
+          // independently so the probe shows EXACTLY which survived the clone.
+          hasUserDataSrcUri: boolean; // texture.userData.* sourceURI-ish key
+          hasSourceData: boolean; // texture.source?.data present (Source object)
+          sourceDataUri: string | null; // texture.source.data.src if it is a URI
+          imageSrc: string | null; // texture.image.src if the image is URL-backed
+        } | null;
       }> = [];
+      const probeMap = (map: THREE.Texture | null) => {
+        if (!map) return null;
+        const image = map.image as { width?: number; height?: number; src?: string } | undefined;
+        // three.Texture.userData is an arbitrary bag; a loader/importer may stash
+        // the source URI there. Scan for any key whose name hints at a source URI.
+        const ud = (map.userData ?? {}) as Record<string, unknown>;
+        const udKey = Object.keys(ud).find((k) => /uri|url|src|source|path/i.test(k));
+        // three 0.169 Texture.source is a `Source` wrapper; `.data` is the image.
+        const source = (map as { source?: { data?: { src?: string } } }).source;
+        const sourceData = source?.data;
+        return {
+          imageWidth: image?.width ?? 0,
+          imageHeight: image?.height ?? 0,
+          hasUserDataSrcUri:
+            udKey !== undefined && typeof ud[udKey] === 'string' && (ud[udKey] as string).length > 0,
+          hasSourceData: Boolean(sourceData),
+          sourceDataUri:
+            typeof sourceData?.src === 'string' && sourceData.src.length > 0 ? sourceData.src : null,
+          imageSrc: typeof image?.src === 'string' && image.src.length > 0 ? image.src : null,
+        };
+      };
       cloned.traverse((child) => {
         const m = child as THREE.Mesh;
         if (!m.isMesh) return;
@@ -1088,6 +1129,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             roughness: typeof std?.roughness === 'number' ? std.roughness : null,
             hasMetalnessMap: Boolean(std?.metalnessMap),
             hasRoughnessMap: Boolean(std?.roughnessMap),
+            mapProbe: probeMap(map),
           });
         }
       });
