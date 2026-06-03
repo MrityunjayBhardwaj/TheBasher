@@ -195,11 +195,12 @@ export type GeometryDescriptor =
       readonly widthSegments: number;
       readonly heightSegments: number;
     }
-  | { readonly kind: 'gltf'; readonly assetRef: string; readonly childName: string };
+  | { readonly kind: 'gltf'; readonly assetRef: string; readonly childName: string }
+  | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number };
 
 export interface GeometryRef {
   readonly key: string;
-  readonly kind: 'box' | 'sphere' | 'gltf';
+  readonly kind: 'box' | 'sphere' | 'gltf' | 'baked';
   readonly descriptor: GeometryDescriptor;
 }
 
