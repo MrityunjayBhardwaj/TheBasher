@@ -34,6 +34,12 @@ interface BasherWindow {
     mode: 'translate' | 'rotate' | 'scale',
     target: [number, number, number],
   ) => void;
+  __basher_evaluate?: (
+    nodeId: string,
+    ctx?: { time: { frame: number; seconds: number; normalized: number } },
+  ) => {
+    value: { sampleTarget?: (s: number) => { size?: [number, number, number] } | null };
+  };
 }
 
 /** All KeyframeChannel* nodes in the DAG — the byte-identical motion observable
@@ -87,6 +93,50 @@ async function gizmoGrabTranslate(
   await page.evaluate(
     ({ t }) => (window as unknown as BasherWindow).__basher_gizmo_grab!('translate', t),
     { t: target },
+  );
+}
+
+async function gizmoGrabScale(
+  page: import('@playwright/test').Page,
+  target: [number, number, number],
+) {
+  await page.evaluate(
+    ({ t }) => (window as unknown as BasherWindow).__basher_gizmo_grab!('scale', t),
+    { t: target },
+  );
+}
+
+/** The single AnimationLayer node id (the gizmo first-key composite wraps the
+ *  target in one). The size channel only "works" if it evaluates THROUGH this
+ *  layer — reading the channel's keyframes proves authoring, not playback. */
+async function layerNodeId(page: import('@playwright/test').Page): Promise<string> {
+  return page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    const entry = Object.entries(nodes).find(([, n]) => n.type === 'AnimationLayer');
+    if (!entry) throw new Error('no AnimationLayer node — gizmo first-key did not wrap the target');
+    return entry[0];
+  });
+}
+
+/** Evaluated (rendered) box size at time `s`, read through the AnimationLayer's
+ *  `sampleTarget(seconds)` patched clone — the SAME value the renderer draws
+ *  (`<boxGeometry args={value.size}/>`). This is the observation, not the
+ *  authored channel. */
+async function evaluatedBoxSize(
+  page: import('@playwright/test').Page,
+  layerId: string,
+  s: number,
+): Promise<number[] | undefined> {
+  return page.evaluate(
+    ({ id, sec }) => {
+      const w = window as unknown as BasherWindow;
+      const v = w.__basher_evaluate!(id, {
+        time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
+      }).value;
+      return v.sampleTarget?.(sec)?.size;
+    },
+    { id: layerId, sec: s },
   );
 }
 
@@ -165,5 +215,55 @@ test.describe('Gizmo + Auto-Key — drag-to-record an animation (REPRO: not work
     expect(pos[0]).toBeCloseTo(1, 5);
     expect(pos[1]).toBeCloseTo(2, 5);
     expect(pos[2]).toBeCloseTo(3, 5);
+  });
+
+  // #141 follow-up — the scale branch (Gizmo.tsx:373) was wired symmetrically
+  // with translate/rotate but never OBSERVED end-to-end. For a BoxMesh the
+  // scale gizmo keys `params.size` (scaleParamPath==='size', NOT 'scale').
+  // Recording a keyframe is only half the contract: the question this test
+  // answers is whether a `size` KeyframeChannel actually EVALUATES through the
+  // AnimationLayer — i.e. drives the rendered box, not just sits in the DAG.
+  // The AnimationLayer patch (`patchTarget`/`writeAt`) is paramPath-agnostic,
+  // so a `size` channel patches `clone.size` exactly as `position` patches
+  // `clone.position`; this converts that code-trace into a real observation.
+  test('arm Auto-Key, drag the scale gizmo at two times → records a size channel that EVALUATES through the AnimationLayer', async ({
+    page,
+  }) => {
+    await selectBoxAndArmGizmo(page);
+
+    await page.getByTestId('autokey-toggle').click();
+    await expect(page.getByTestId('timebar')).toHaveAttribute('data-autokey', 'on');
+
+    expect(await channelNodes(page)).toHaveLength(0);
+
+    // t=0 → scale to 2×, t=1 → scale to 4×. The gizmo writes g.scale into the
+    // box's `size` param (the BoxMesh "scale" is its geometry size, pre-unified
+    // TRS — v0.6 #1).
+    await setTime(page, 0);
+    await gizmoGrabScale(page, [2, 2, 2]);
+    await setTime(page, 1);
+    await gizmoGrabScale(page, [4, 4, 4]);
+
+    // Authoring half: exactly one `size` channel on n_box with two keyframes.
+    const chs = await channelNodes(page);
+    expect(chs, 'gizmo scale drag with Auto-Key ON should create a size channel').toHaveLength(1);
+    expect(chs[0].target).toBe('n_box');
+    expect(chs[0].paramPath).toBe('size');
+    expect(chs[0].keyframes).toHaveLength(2);
+    const byTime = [...chs[0].keyframes].sort((a, b) => a.time - b.time);
+    expect((byTime[0].value as number[])[0]).toBeCloseTo(2, 5);
+    expect((byTime[1].value as number[])[0]).toBeCloseTo(4, 5);
+
+    // Evaluation half (the actual follow-up): the size channel must drive the
+    // RENDERED box. Read the evaluated size THROUGH the AnimationLayer at the
+    // two key times and at the midpoint — linear interpolation @0.5 ⇒ 3×.
+    const layerId = await layerNodeId(page);
+    const at0 = await evaluatedBoxSize(page, layerId, 0);
+    const atMid = await evaluatedBoxSize(page, layerId, 0.5);
+    const at1 = await evaluatedBoxSize(page, layerId, 1);
+    expect(at0, 'size channel must evaluate through the layer @t=0').toBeDefined();
+    expect(at0![0]).toBeCloseTo(2, 4);
+    expect(atMid![0]).toBeCloseTo(3, 4);
+    expect(at1![0]).toBeCloseTo(4, 4);
   });
 });
