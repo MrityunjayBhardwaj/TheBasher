@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IndexedDbStorage } from './IndexedDbStorage';
 import { MemoryStorage } from './MemoryStorage';
+import { OpfsStorage } from './OpfsStorage';
 import { TauriStorage } from './TauriStorage';
+import { pickStorage } from './index';
 
 describe('MemoryStorage', () => {
   it('round-trips bytes', async () => {
@@ -46,6 +48,59 @@ describe('IndexedDbStorage (feature-detect)', () => {
     const hasIDB = typeof (globalThis as { indexedDB?: unknown }).indexedDB !== 'undefined';
     if (hasIDB) return; // skip — real path is exercised in E2E
     expect(await new IndexedDbStorage('basher-test').isAvailable()).toBe(false);
+  });
+});
+
+// #146: the OPFS probe must test the CAPABILITY (does getDirectory() run?),
+// not the PRESENCE (does the symbol exist?). `navigator.storage.getDirectory`
+// exists in contexts where calling it rejects with a SecurityError (opaque
+// origins, sandboxed iframes, blocked site-data, some private modes); a
+// presence-only check selected OPFS and killed boot before the fallback chain.
+describe('OpfsStorage.isAvailable (capability probe, not presence) — #146', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const stubStorage = (storage: unknown) => {
+    vi.stubGlobal('navigator', { storage } as unknown as Navigator);
+  };
+
+  it('returns false when getDirectory() REJECTS (SecurityError context)', async () => {
+    stubStorage({
+      getDirectory: () => Promise.reject(new DOMException('denied', 'SecurityError')),
+    });
+    expect(await new OpfsStorage().isAvailable()).toBe(false);
+  });
+
+  it('returns false when getDirectory() throws synchronously', async () => {
+    stubStorage({
+      getDirectory: () => {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    expect(await new OpfsStorage().isAvailable()).toBe(false);
+  });
+
+  it('returns false when getDirectory is absent', async () => {
+    stubStorage({});
+    expect(await new OpfsStorage().isAvailable()).toBe(false);
+  });
+
+  it('returns true when getDirectory() RESOLVES', async () => {
+    stubStorage({
+      getDirectory: () => Promise.resolve({} as FileSystemDirectoryHandle),
+    });
+    expect(await new OpfsStorage().isAvailable()).toBe(true);
+  });
+
+  it('pickStorage does NOT select OPFS when getDirectory() rejects — fallback chain engages', async () => {
+    stubStorage({
+      getDirectory: () => Promise.reject(new DOMException('denied', 'SecurityError')),
+    });
+    const picked = await pickStorage();
+    // The bug: pickStorage returned OpfsStorage anyway and boot died on first
+    // use. The fix: OPFS reports unavailable → IndexedDB (or Memory) serves.
+    expect(picked.kind).not.toBe('opfs');
   });
 });
 
