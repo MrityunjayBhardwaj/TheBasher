@@ -16,7 +16,7 @@
 // REF: THESIS.md §11, vyapti V8.
 
 import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
@@ -152,6 +152,11 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         return (
           <group
             key={`mesh:${i}`}
+            // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer
+            // node id so the DEV scale-probe seam (MeshScaleProbe) can read the
+            // REAL rendered three.js object scale by node id (the H40 side-A
+            // observation: rendered == resolver, not inferred from params).
+            name={pickId ?? undefined}
             onClick={(e) => {
               if (!pickId) return;
               e.stopPropagation();
@@ -164,12 +169,47 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           </group>
         );
       })}
+      <MeshScaleProbe />
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
       <DiffOverlay />
       <PostFx config={value.postFx} />
     </>
   );
+}
+
+// v0.6 #1 (Wave 3, C-3) — the H40 side-A observation seam. Reads the REAL
+// rendered three.js object's WORLD scale by producer node id, so the boundary-
+// pair e2e can assert rendered-scale == resolveEvaluatedMesh(...).transform.scale
+// instead of inferring the render from node params (the #68/H58 trap). DEV-only,
+// read-only (V8 clean — no DAG mutation, no store writes). Lives inside the Canvas
+// (useThree) so it has the live scene root; resolves the object at CALL time so
+// it always reports current state, never a render-time snapshot.
+function MeshScaleProbe() {
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__basher_mesh_world_scale = (nodeId: string): [number, number, number] | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      // The wrapping group is named with the node id; its scale is identity, so
+      // the inner mesh's world scale IS value.scale. Descend to the first Mesh.
+      let target: THREE.Object3D | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o;
+      });
+      const obj: THREE.Object3D = target ?? grp;
+      obj.updateWorldMatrix(true, false);
+      const s = new THREE.Vector3();
+      obj.getWorldScale(s);
+      return [s.x, s.y, s.z];
+    };
+    return () => {
+      delete w.__basher_mesh_world_scale;
+    };
+  }, [scene]);
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +556,11 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      // v0.6 #1 (D-01) — apply the uniform TRS scale band, EXACTLY as TransformR
+      // does on its <group> (line 978). `size` (the geometry below) is the
+      // separate parametric capability; scale is the transform band the gizmo
+      // drives. `?? [1,1,1]` is the C-1 / V10/H14 consumer-side hydrate guard.
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <boxGeometry args={value.size as [number, number, number]} />
       <meshStandardMaterial
@@ -539,6 +584,9 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      // v0.6 #1 (D-01) — uniform TRS scale band (see BoxMeshR). `radius`/segments
+      // stay the parametric capability; scale is the transform band. C-1 guard.
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
       <meshStandardMaterial

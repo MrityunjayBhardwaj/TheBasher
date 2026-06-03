@@ -20,6 +20,10 @@ export const SphereMeshParams = z.object({
   heightSegments: z.number().int().positive().default(16),
   position: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   rotation: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+  // v0.6 #1 (D-01): the non-destructive TRS transform band, SEPARATE from the
+  // parametric geometry `radius`/segments. Default IDENTITY → migrated v1 projects
+  // render byte-identically. (Mirrors BoxMesh.)
+  scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
   material: z
     .object({
       name: z.string().default('default'),
@@ -31,13 +35,17 @@ export type SphereMeshParams = z.infer<typeof SphereMeshParams>;
 
 export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> = {
   type: 'SphereMesh',
-  version: 1,
+  version: 2,
   pure: true,
   cost: 'cheap',
   paramSchema: SphereMeshParams,
   inputs: {},
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material'],
+  // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless (V4 runner, §52).
+  migrations: {
+    1: (old) => ({ ...(old as object), scale: [1, 1, 1] }),
+  },
   evaluate(params) {
     return {
       kind: 'SphereMesh',
@@ -46,6 +54,8 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
       heightSegments: params.heightSegments,
       position: params.position,
       rotation: params.rotation,
+      // C-1 (V10/H14 two-layer guard) — default identity at the evaluator too.
+      scale: params.scale ?? [1, 1, 1],
       material: params.material,
     };
   },

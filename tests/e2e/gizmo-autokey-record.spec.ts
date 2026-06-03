@@ -38,7 +38,12 @@ interface BasherWindow {
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
   ) => {
-    value: { sampleTarget?: (s: number) => { size?: [number, number, number] } | null };
+    value: {
+      sampleTarget?: (s: number) => {
+        size?: [number, number, number];
+        scale?: [number, number, number];
+      } | null;
+    };
   };
 }
 
@@ -140,6 +145,27 @@ async function evaluatedBoxSize(
   );
 }
 
+/** Evaluated (rendered) box SCALE at time `s`, read through the AnimationLayer's
+ *  patched clone — the SAME `value.scale` the renderer applies on the <mesh>
+ *  (v0.6 #1 Wave 3). The scale channel patches `clone.scale` exactly as a
+ *  position channel patches `clone.position` (patchTarget is paramPath-agnostic). */
+async function evaluatedBoxScale(
+  page: import('@playwright/test').Page,
+  layerId: string,
+  s: number,
+): Promise<number[] | undefined> {
+  return page.evaluate(
+    ({ id, sec }) => {
+      const w = window as unknown as BasherWindow;
+      const v = w.__basher_evaluate!(id, {
+        time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
+      }).value;
+      return v.sampleTarget?.(sec)?.scale;
+    },
+    { id: layerId, sec: s },
+  );
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => {
@@ -217,16 +243,18 @@ test.describe('Gizmo + Auto-Key — drag-to-record an animation (REPRO: not work
     expect(pos[2]).toBeCloseTo(3, 5);
   });
 
-  // #141 follow-up — the scale branch (Gizmo.tsx:373) was wired symmetrically
-  // with translate/rotate but never OBSERVED end-to-end. For a BoxMesh the
-  // scale gizmo keys `params.size` (scaleParamPath==='size', NOT 'scale').
-  // Recording a keyframe is only half the contract: the question this test
-  // answers is whether a `size` KeyframeChannel actually EVALUATES through the
-  // AnimationLayer — i.e. drives the rendered box, not just sits in the DAG.
-  // The AnimationLayer patch (`patchTarget`/`writeAt`) is paramPath-agnostic,
-  // so a `size` channel patches `clone.size` exactly as `position` patches
-  // `clone.position`; this converts that code-trace into a real observation.
-  test('arm Auto-Key, drag the scale gizmo at two times → records a size channel that EVALUATES through the AnimationLayer', async ({
+  // #141 follow-up, MIGRATED for v0.6 #1 (#150). DELIBERATE CONTRACT CHANGE, not
+  // a regression: pre-v0.6 the BoxMesh scale gizmo keyed `params.size` (the
+  // geometry WAS the scale). v0.6 #1 unified the mesh model — every primitive now
+  // carries a real `transform.scale` band SEPARATE from `size`, and
+  // `getManipulable` resolves `scaleParamPath` to 'scale' (NOT 'size') because
+  // `p.scale` is now a vec3 (C-5: the param add flips the path automatically; THIS
+  // assertion is the observation that proves the flip). Recording a keyframe is
+  // half the contract; the other half is that the `scale` channel EVALUATES
+  // through the AnimationLayer to drive the rendered box (patchTarget is
+  // paramPath-agnostic → patches `clone.scale`). See PLAN.md Wave 4 (H25/H46
+  // fixture-migration family).
+  test('arm Auto-Key, drag the scale gizmo at two times → records a transform.scale channel that EVALUATES through the AnimationLayer', async ({
     page,
   }) => {
     await selectBoxAndArmGizmo(page);
@@ -236,34 +264,43 @@ test.describe('Gizmo + Auto-Key — drag-to-record an animation (REPRO: not work
 
     expect(await channelNodes(page)).toHaveLength(0);
 
-    // t=0 → scale to 2×, t=1 → scale to 4×. The gizmo writes g.scale into the
-    // box's `size` param (the BoxMesh "scale" is its geometry size, pre-unified
-    // TRS — v0.6 #1).
+    // t=0 → scale to 2×, t=1 → scale to 4×. v0.6 #1: the gizmo writes g.scale into
+    // the box's `scale` transform band, NOT its geometry `size`.
     await setTime(page, 0);
     await gizmoGrabScale(page, [2, 2, 2]);
     await setTime(page, 1);
     await gizmoGrabScale(page, [4, 4, 4]);
 
-    // Authoring half: exactly one `size` channel on n_box with two keyframes.
+    // Authoring half: exactly one `scale` channel on n_box with two keyframes.
     const chs = await channelNodes(page);
-    expect(chs, 'gizmo scale drag with Auto-Key ON should create a size channel').toHaveLength(1);
+    expect(chs, 'gizmo scale drag with Auto-Key ON should create a scale channel').toHaveLength(1);
     expect(chs[0].target).toBe('n_box');
-    expect(chs[0].paramPath).toBe('size');
+    expect(chs[0].paramPath).toBe('scale'); // v0.6 #1 — was 'size'
     expect(chs[0].keyframes).toHaveLength(2);
     const byTime = [...chs[0].keyframes].sort((a, b) => a.time - b.time);
     expect((byTime[0].value as number[])[0]).toBeCloseTo(2, 5);
     expect((byTime[1].value as number[])[0]).toBeCloseTo(4, 5);
 
-    // Evaluation half (the actual follow-up): the size channel must drive the
-    // RENDERED box. Read the evaluated size THROUGH the AnimationLayer at the
-    // two key times and at the midpoint — linear interpolation @0.5 ⇒ 3×.
+    // Evaluation half: the scale channel must drive the RENDERED box. Read the
+    // evaluated transform.scale THROUGH the AnimationLayer at the two key times
+    // and the midpoint — linear interpolation @0.5 ⇒ 3× (same arithmetic, now on
+    // the scale band instead of size).
     const layerId = await layerNodeId(page);
-    const at0 = await evaluatedBoxSize(page, layerId, 0);
-    const atMid = await evaluatedBoxSize(page, layerId, 0.5);
-    const at1 = await evaluatedBoxSize(page, layerId, 1);
-    expect(at0, 'size channel must evaluate through the layer @t=0').toBeDefined();
+    const at0 = await evaluatedBoxScale(page, layerId, 0);
+    const atMid = await evaluatedBoxScale(page, layerId, 0.5);
+    const at1 = await evaluatedBoxScale(page, layerId, 1);
+    expect(at0, 'scale channel must evaluate through the layer @t=0').toBeDefined();
     expect(at0![0]).toBeCloseTo(2, 4);
     expect(atMid![0]).toBeCloseTo(3, 4);
     expect(at1![0]).toBeCloseTo(4, 4);
+
+    // The geometry `size` param is UNCHANGED — the gizmo touched the transform
+    // band, not the geometry capability (the v0.6 #1 size-vs-scale distinction).
+    const size = await page.evaluate(
+      () =>
+        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box'].params
+          .size,
+    );
+    expect(size).toEqual([1, 1, 1]);
   });
 });

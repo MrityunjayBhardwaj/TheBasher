@@ -155,6 +155,67 @@ export interface InlineMaterialSpec {
 }
 
 // ---------------------------------------------------------------------------
+// EvaluatedMesh — the ONE uniform projected/consumed face (v0.6 #1, issue #150)
+// ---------------------------------------------------------------------------
+//
+// Every mesh-producing kind (BoxMesh / SphereMesh / GltfChild) projects to ONE
+// `EvaluatedMesh` via the pure `resolveEvaluatedMesh(node, ctx)` resolver
+// (src/app/resolveEvaluatedMesh.ts) — the single consumed face the renderer,
+// gizmo, and inspector all read (generalizes the proven `resolveEvaluatedTransform`
+// one-producer-many-consumers pattern from transform to the whole mesh).
+//
+// D-03: `evaluate()` signatures are UNCHANGED; the resolver is a projection
+// layer over the existing *Value kinds — box/sphere are consumed as plain
+// meshes with ZERO special privileges (a re-parametrizable Box is a CAPABILITY,
+// not a privilege; no consumer branches on its kind).
+//
+// Interface depth (Ousterhout): `geometry` is a `GeometryRef` HANDLE into the
+// geometry registry (src/app/geometryRegistry.ts), NEVER inlined BufferGeometry
+// — heavy buffers stay out of Ops / undo / hashing.
+
+/** Full TRS transform band (D-01) — separate from the geometry capability. */
+export interface MeshTransform {
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+}
+
+/**
+ * A deterministic handle into the geometry registry (§48). The `key` is built
+ * by the resolver from producer identity + params (deterministic string), so
+ * identical params yield an identical key (cache hit, no false sharing). The
+ * `descriptor` is the minimal data the registry needs to (re)build/lookup the
+ * BufferGeometry — NEVER the buffers themselves.
+ */
+export type GeometryDescriptor =
+  | { readonly kind: 'box'; readonly size: Vec3 }
+  | {
+      readonly kind: 'sphere';
+      readonly radius: number;
+      readonly widthSegments: number;
+      readonly heightSegments: number;
+    }
+  | { readonly kind: 'gltf'; readonly assetRef: string; readonly childName: string };
+
+export interface GeometryRef {
+  readonly key: string;
+  readonly kind: 'box' | 'sphere' | 'gltf';
+  readonly descriptor: GeometryDescriptor;
+}
+
+/**
+ * The uniform consumed mesh face. `uvs` is null now (populated by #3). `material`
+ * carries the producer's inline spec where it has one (box/sphere), else null
+ * (gltf — #2 fills it).
+ */
+export interface EvaluatedMesh {
+  readonly geometry: GeometryRef;
+  readonly uvs: null;
+  readonly material: InlineMaterialSpec | null;
+  readonly transform: MeshTransform;
+}
+
+// ---------------------------------------------------------------------------
 // Meshes (socket type: 'Mesh') — recursive union
 // ---------------------------------------------------------------------------
 
@@ -163,6 +224,8 @@ export interface BoxMeshValue {
   readonly size: Vec3;
   readonly position: Vec3;
   readonly rotation: Vec3;
+  /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `size`. */
+  readonly scale: Vec3;
   readonly material: InlineMaterialSpec;
 }
 
@@ -173,6 +236,8 @@ export interface SphereMeshValue {
   readonly heightSegments: number;
   readonly position: Vec3;
   readonly rotation: Vec3;
+  /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `radius`. */
+  readonly scale: Vec3;
   readonly material: InlineMaterialSpec;
 }
 
