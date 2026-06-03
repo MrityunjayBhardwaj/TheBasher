@@ -377,6 +377,15 @@ export interface GltfAssetValue {
    */
   readonly skins: readonly GltfSkinMetadata[];
   /**
+   * P151 (Apply-Transform, issue #151) — the sanitised child KEYS whose render
+   * is suppressed because the child was baked into a standalone `BakedMesh`.
+   * `GltfAssetR` sets `clone.getObjectByName(key).visible = false` per entry, so
+   * the asset stops rendering that child by name (no double-render). Default `[]`
+   * so pre-151 values are no-ops (V10/H14-clean). Op-backed + undoable via the
+   * Apply atomic composite's inverse `setParam`.
+   */
+  readonly suppressedChildren: readonly string[];
+  /**
    * The selected clip's evaluated TRS at the input Time, sourced from
    * the connected `ClipSelect.out`. `null` when no animation is
    * imported (degenerate path) OR when `selectedClipName` doesn't

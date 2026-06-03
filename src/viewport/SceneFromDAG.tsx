@@ -27,6 +27,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
+import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -991,6 +992,42 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
     });
   }, [cloned, shading]);
+  // P151 (#151, Apply-Transform) — double-render SUPPRESSION. When a glTF child
+  // is baked into a standalone BakedMesh (the Apply atomic composite), the asset
+  // must stop rendering that child by name, or it renders twice. This effect is
+  // the SOLE writer of `.visible` on the clone (a NEW property no TRS/material
+  // writer touches — no V20 collision). It first RESTORES every named child to
+  // visible, then hides the suppressed set, so removing a name (undo) un-hides
+  // the child in the same pass. `Object3D.visible=false` skips render + raycast
+  // for the subtree (three 0.169 propagates down), so a baked parent hides its
+  // descendants too — reversible, no clone surgery. Subscribed to
+  // value.suppressedChildren so the Apply setParam (new array ref) re-fires it.
+  // REF: PLAN.md Wave 4 Task 9; RESEARCH §M7; the GltfChild double-render guard.
+  useEffect(() => {
+    const suppressed = new Set(value.suppressedChildren);
+    for (const name of Object.keys(value.nodeNameMap)) {
+      const child = cloned.getObjectByName(name);
+      if (!child) continue;
+      child.visible = !suppressed.has(name);
+    }
+    // Suppressed names may not be in nodeNameMap (defensive — a baked child's
+    // key always is, but iterate the list too so an out-of-map key still hides).
+    for (const name of suppressed) {
+      const child = cloned.getObjectByName(name);
+      if (child) child.visible = false;
+    }
+  }, [cloned, value.suppressedChildren, value.nodeNameMap]);
+  // P151 (#151, Apply-Transform) — register the mounted, post-override clone in
+  // the PRODUCTION-SAFE live-clone registry so the non-React Apply helper can read
+  // a GltfChild's resolved geometry + material off the exact object the renderer
+  // drew (the bake-what-renders source of truth, H58/H59). NOT DEV-gated (unlike
+  // __basher_gltf_meshes below) — Apply must work in production. Re-registers on
+  // clone swap; unregisters on unmount (guarded so a late unmount can't clobber a
+  // newer asset that re-took the assetRef). REF: gltfCloneRegistry.ts; Wave 4 t10.
+  useEffect(() => {
+    registerGltfClone(value.assetRef, cloned);
+    return () => unregisterGltfClone(value.assetRef, cloned);
+  }, [cloned, value.assetRef]);
   // P7.5 + P7.7 — per-child TRS override (consumer side of the H40
   // boundary-pair). This is the SOLE writer of per-child TRS onto the clone
   // (V20 / H36 / H33 — never add a second). It reads THREE layers and lets the
