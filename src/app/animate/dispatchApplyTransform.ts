@@ -37,6 +37,10 @@ import { paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { useSelectionStore } from '../stores/selectionStore';
+import { getGltfClone } from '../asset/gltfCloneRegistry';
+import { captureBakedMaterial } from './captureBakedMaterial';
+import { evaluate, createEvaluatorCache } from '../../core/dag/evaluator';
+import type { GltfAssetValue } from '../../nodes/types';
 
 export type ApplyMask = 'all' | 'location' | 'rotation' | 'scale';
 
@@ -52,6 +56,9 @@ export interface ApplyDeps {
   currentFrame: number;
   dispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown;
   setSelection: (id: string) => void;
+  /** glTF-child path only — the live render clone (tests inject a fake Group;
+   *  production reads it from the live-clone registry by assetRef). */
+  gltfClone: THREE.Group;
 }
 
 const ANIMATED_MSG = 'Apply unavailable — transform is animated (#153/#149)';
@@ -165,10 +172,25 @@ export async function dispatchApplyTransform(
 
   const node = state.nodes[selectedId];
   if (!node) return { ok: false, reason: `Apply: node "${selectedId}" not found.` };
+
+  // The glTF-child path (the R-1 edge-less satellite) is materially different —
+  // source geometry/material live inside the live render clone, and the asset
+  // must suppress the child by name. It has its own dispatcher below.
+  if (node.type === 'GltfChild') {
+    return dispatchApplyGltfChild(
+      selectedId,
+      mask,
+      state,
+      currentFrame,
+      deps,
+      dagStore.dispatchAtomic.bind(dagStore),
+    );
+  }
+
   if (node.type !== 'BoxMesh' && node.type !== 'SphereMesh') {
     return {
       ok: false,
-      reason: `Apply: "${node.type}" is not a primitive (glTF-child path is Wave 4).`,
+      reason: `Apply: "${node.type}" is not a bakeable mesh.`,
     };
   }
 
@@ -241,6 +263,179 @@ export async function dispatchApplyTransform(
   }
 
   // Move selection to the new baked node.
+  const setSelection =
+    deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id));
+  setSelection(bakedId);
+
+  return { ok: true, bakedId };
+}
+
+/**
+ * Is the owning GltfAsset's active TransformClip driving `childName`? (D-04 — the
+ * clip-driven half of the animated guard, on top of the keyframe-channel check.)
+ * A clip-driven child has a non-identity sampled track for its name at the live
+ * time, so baking a single static pose would silently freeze the animation.
+ */
+function isGltfChildClipDriven(
+  state: DagState,
+  assetRef: string,
+  childName: string,
+  seconds: number,
+): boolean {
+  for (const n of Object.values(state.nodes)) {
+    if (n.type !== 'GltfAsset') continue;
+    if ((n.params as { assetRef?: unknown }).assetRef !== assetRef) continue;
+    try {
+      const val = evaluate(state, n.id, {
+        cache: createEvaluatorCache(),
+        ctx: { time: { frame: seconds * 60, seconds, normalized: 0 } },
+      }).value as GltfAssetValue;
+      const tracks = val.transformClip?.sample(seconds) ?? null;
+      // A track keyed for THIS child means the clip animates it (resolveEvaluated
+      // Transform.ts:206 reads the same `sample(seconds)[childName]`).
+      if (tracks && tracks[childName]) return true;
+    } catch {
+      // Unevaluable asset → treat as no clip layer (the static base still bakes).
+    }
+    break;
+  }
+  return false;
+}
+
+/**
+ * Apply a glTF child's (masked) RESOLVED transform into a standalone BakedMesh,
+ * capturing its resolved geometry + full PBR material off the LIVE render clone
+ * (bake-what-renders, H58/H59), persisting both to OPFS, and — in the SAME atomic
+ * composite — removing the GltfChild node and suppressing the source render by
+ * name so the child renders exactly ONCE. One proposeAndAccept = one Cmd+Z.
+ *
+ * Lifecycle (ORDERED): resolve(sync) → read clone geom+material(sync) →
+ *   clone+matrix(sync) → OPFS writes geom + textures (async, ALL awaited) →
+ *   atomic Op composite (addNode + connect + removeNode + setParam, sync).
+ */
+async function dispatchApplyGltfChild(
+  selectedId: string,
+  mask: ApplyMask,
+  state: DagState,
+  currentFrame: number,
+  deps: Partial<ApplyDeps> | undefined,
+  liveDispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown,
+): Promise<DispatchResult> {
+  const node = state.nodes[selectedId];
+  const p = node.params as { assetRef?: unknown; childName?: unknown };
+  if (typeof p.assetRef !== 'string' || typeof p.childName !== 'string') {
+    return { ok: false, reason: `Apply: GltfChild "${selectedId}" missing assetRef/childName.` };
+  }
+  const assetRef = p.assetRef;
+  const childName = p.childName;
+  const seconds = currentFrame / 60;
+
+  // Animated guard (D-04) — keyframe channels on the child node OR a clip track
+  // for this child on the owning asset. Either means the transform is animated;
+  // baking a single static pose would freeze it.
+  if (
+    isTransformAnimated(state, selectedId, currentFrame) ||
+    isGltfChildClipDriven(state, assetRef, childName, seconds)
+  ) {
+    return { ok: false, reason: ANIMATED_MSG };
+  }
+
+  // 1 — resolve the STATIC transform via the ONE band (Q6). resolveEvaluatedMesh's
+  // GltfChild path funnels through resolveGltfChildTrs (manual → base; clip/baked
+  // are the animated layers, barred by the guard). Compose the masked matrix.
+  const ctx: EvalCtx = {
+    time: { frame: currentFrame, seconds, normalized: 0 },
+  };
+  const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
+  if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${selectedId}".` };
+  const matrix = composeMaskedMatrix(mesh.transform, mask);
+
+  // 2 — read source geometry + RESOLVED material off the LIVE render clone (Q4 —
+  // registry.get returns null for gltf). The clone is the post-override render
+  // state (H58/H59 bake-what-renders), accessed via the production-safe registry.
+  const clone = deps?.gltfClone ?? getGltfClone(assetRef);
+  if (!clone) {
+    return {
+      ok: false,
+      reason: `Apply: glTF asset "${assetRef}" is not currently rendered (no live clone).`,
+    };
+  }
+  const child = clone.getObjectByName(childName) as THREE.Mesh | undefined;
+  if (!child || !(child as THREE.Mesh).isMesh || !child.geometry) {
+    return { ok: false, reason: `Apply: child "${childName}" is not a renderable mesh.` };
+  }
+
+  // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
+  // every other instance/child sharing the buffer.
+  const baked = child.geometry.clone();
+  baked.applyMatrix4(matrix);
+  if (mask !== 'location') baked.computeVertexNormals();
+
+  // 3 — persist baked geometry + every texture map to OPFS (async, ALL AWAITED
+  // before the Op composite so a reload right after Apply finds the bytes).
+  const storage = deps?.storage ?? (await getStorage());
+  const bakedRef = await writeBakedGeometry(storage, baked);
+  baked.dispose();
+
+  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
+  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
+  // for #151; multi-material merge is a later concern). Textures persist inside.
+  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
+  if (!liveMat) return { ok: false, reason: `Apply: child "${childName}" has no material.` };
+  const spec = await captureBakedMaterial(storage, liveMat);
+
+  // 4 — atomic Op composite (Q1, the R-1 edge-less satellite collapses to):
+  //   addNode BakedMesh + connect into Scene.children + removeNode GltfChild +
+  //   setParam GltfAsset.suppressedChildren (append childName). ONE Cmd+Z.
+  const sceneRef = state.outputs.scene;
+  if (!sceneRef) return { ok: false, reason: 'Apply: project has no `scene` output.' };
+
+  // The owning GltfAsset node (to append the suppression key on it).
+  const asset = Object.values(state.nodes).find(
+    (n) => n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef,
+  );
+  if (!asset) return { ok: false, reason: `Apply: owning GltfAsset for "${assetRef}" not found.` };
+  const prevSuppressed = Array.isArray(
+    (asset.params as { suppressedChildren?: unknown }).suppressedChildren,
+  )
+    ? ((asset.params as { suppressedChildren: string[] }).suppressedChildren as string[])
+    : [];
+
+  const bakedId = nextBakedId(state);
+  const ops: Op[] = [
+    {
+      type: 'addNode',
+      nodeId: bakedId,
+      nodeType: 'BakedMesh',
+      params: {
+        geometry: bakedRef,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        material: spec,
+      },
+    },
+    {
+      type: 'connect',
+      from: { node: bakedId, socket: 'out' },
+      to: { node: sceneRef.node, socket: 'children' },
+    },
+    { type: 'removeNode', nodeId: selectedId },
+    {
+      type: 'setParam',
+      nodeId: asset.id,
+      paramPath: 'suppressedChildren',
+      value: [...prevSuppressed, childName],
+    },
+  ];
+
+  const dispatchAtomic = deps?.dispatchAtomic ?? liveDispatchAtomic;
+  try {
+    dispatchAtomic(ops, 'user', `Apply ${mask} → bake glTF child ${childName}`);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+
   const setSelection =
     deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id));
   setSelection(bakedId);
