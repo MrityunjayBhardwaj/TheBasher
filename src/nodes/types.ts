@@ -155,6 +155,61 @@ export interface InlineMaterialSpec {
 }
 
 // ---------------------------------------------------------------------------
+// Baked material (Phase 151 Apply-Transform, D-02 REVISED = lossless) — the ONE
+// rich material face a BakedMesh carries (issue #151).
+// ---------------------------------------------------------------------------
+//
+// A persisted texture handle — OPFS content-hashed image bytes + the three.js
+// colorspace/wrap/flip state needed to rebuild the Texture identically. Map refs
+// are populated in Wave 3 (glTF material capture); a primitive bake leaves all
+// map slots null. (RESEARCH §M3.)
+export interface BakedTextureRef {
+  /** OPFS key: baked-texture/<hash>.<ext>. */
+  readonly hash: string;
+  /** map/emissiveMap = 'srgb'; normal/ao/roughness/metalness = 'srgb-linear'. */
+  readonly colorSpace: 'srgb' | 'srgb-linear' | 'no-colorspace';
+  /** glTF textures are flipY=false; preserve verbatim. */
+  readonly flipY: boolean;
+  readonly wrapS: number;
+  readonly wrapT: number;
+}
+
+/**
+ * The rich PBR material a BakedMesh carries — ONE shape for every source
+ * (box, sphere, AND glTF). Scalar names mirror {@link MaterialValue} 1:1
+ * (Chesterton — the renderer/override/inspector already speak those names).
+ * A primitive bake populates the scalars and leaves all 6 map refs null (M6);
+ * a glTF bake captures the resolved post-override material incl. textures
+ * (Wave 3/4). `materialClass` selects which three.js ctor BakedMeshR rebuilds.
+ */
+export interface BakedMaterialSpec {
+  readonly materialClass: 'standard' | 'physical' | 'basic';
+  readonly color: string;
+  readonly roughness: number;
+  readonly metalness: number;
+  readonly opacity: number;
+  readonly transparent: boolean;
+  readonly emissive: string;
+  readonly emissiveIntensity: number;
+  // map refs — null when the source has none (a Box bake leaves all null).
+  readonly map: BakedTextureRef | null;
+  readonly normalMap: BakedTextureRef | null;
+  readonly roughnessMap: BakedTextureRef | null;
+  readonly metalnessMap: BakedTextureRef | null;
+  readonly aoMap: BakedTextureRef | null;
+  readonly emissiveMap: BakedTextureRef | null;
+  // physical-only extras (captured only when materialClass==='physical', Wave 3).
+  readonly physical?: {
+    readonly clearcoat?: number;
+    readonly clearcoatRoughness?: number;
+    readonly transmission?: number;
+    readonly ior?: number;
+    readonly sheen?: number;
+    readonly specularIntensity?: number;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // EvaluatedMesh — the ONE uniform projected/consumed face (v0.6 #1, issue #150)
 // ---------------------------------------------------------------------------
 //
@@ -206,13 +261,15 @@ export interface GeometryRef {
 
 /**
  * The uniform consumed mesh face. `uvs` is null now (populated by #3). `material`
- * carries the producer's inline spec where it has one (box/sphere), else null
- * (gltf — #2 fills it).
+ * is the ONE material face every consumer reads (M6, Phase 151): an
+ * `InlineMaterialSpec` for un-baked box/sphere, a rich `BakedMaterialSpec` for a
+ * BakedMesh, or null (gltf — #2 fills it). Widening to the union means there is
+ * exactly ONE material shape consumers branch on, never a second render path.
  */
 export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
   readonly uvs: null;
-  readonly material: InlineMaterialSpec | null;
+  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
   readonly transform: MeshTransform;
 }
 
@@ -240,6 +297,29 @@ export interface SphereMeshValue {
   /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `radius`. */
   readonly scale: Vec3;
   readonly material: InlineMaterialSpec;
+}
+
+/**
+ * BakedMesh (Phase 151 Apply-Transform, issue #151) — the product of Apply.
+ *
+ * A standalone scene mesh whose TRS has been composed into its geometry: the
+ * `geometry` is a `GeometryRef{kind:'baked'}` handle into OPFS-persisted bytes
+ * (authoritative, NOT rebuildable from params — bakedGeometryStore.ts), the
+ * transform is IDENTITY (the TRS is baked INTO the verts, so the renderer must
+ * render at identity scale — H40 band-drift guard), and `material` is the ONE
+ * rich {@link BakedMaterialSpec} (scalars + nullable maps).
+ *
+ * The 4th `EvaluatedMesh` producer (V29): no consumer branches on this kind;
+ * `resolveEvaluatedMesh` projects it to the same uniform face as box/sphere/gltf.
+ */
+export interface BakedMeshValue {
+  readonly kind: 'BakedMesh';
+  readonly geometry: GeometryRef;
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  /** Identity post-Apply (the TRS is baked into the geometry verts). */
+  readonly scale: Vec3;
+  readonly material: BakedMaterialSpec;
 }
 
 /**
@@ -540,6 +620,7 @@ export interface CharacterValue {
 export type SceneChild =
   | BoxMeshValue
   | SphereMeshValue
+  | BakedMeshValue
   | GltfAssetValue
   | TransformValue
   | GroupValue
