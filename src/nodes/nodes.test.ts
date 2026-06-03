@@ -46,6 +46,7 @@ const ALL_TYPES = [
   'AnimationClip',
   'AnimationLayer',
   'AreaLight',
+  'BakedMesh',
   'BeautyPass',
   'BoneNameMap',
   'BoxMesh',

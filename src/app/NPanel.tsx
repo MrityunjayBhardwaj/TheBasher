@@ -43,6 +43,11 @@ import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './animate/dispatchMutator';
+import {
+  dispatchApplyTransform,
+  isTransformAnimated,
+  type ApplyMask,
+} from './animate/dispatchApplyTransform';
 import { paramAnimationState } from './animate/paramAnimationState';
 import { autoKeyCommit, resolveChannel, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useDragScrub } from './dragScrub';
@@ -632,6 +637,46 @@ function ParamRow({
   );
 }
 
+/**
+ * Phase 151 — the transform-card Apply control (issue #151). Lives in the
+ * transform section body for a selected primitive (BoxMesh/SphereMesh). Bakes
+ * the TRS into geometry → a BakedMesh (one undo) via the SAME dispatch helper the
+ * Object ▸ Apply menu uses. When the transform is animated it renders DISABLED
+ * with the D-04 message (the dispatch-side guard is the belt; this is the chrome).
+ */
+function ApplyTransformControl({ nodeId }: { nodeId: string }) {
+  const state = useDagStore((s) => s.state);
+  const currentFrame = useTimeStore((s) => s.frame);
+  const animated = isTransformAnimated(state, nodeId, currentFrame);
+  const onApply = (mask: ApplyMask) => {
+    void dispatchApplyTransform(nodeId, mask);
+  };
+  return (
+    <div className="flex flex-col gap-1 px-3 py-1.5" data-testid="npanel-apply-transform">
+      {animated ? (
+        <div className="text-[10px] text-fg/40" data-testid="npanel-apply-animated-msg">
+          Apply unavailable — transform is animated (#153/#149)
+        </div>
+      ) : null}
+      <div className="flex items-center gap-1">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">apply</span>
+        {(['all', 'location', 'rotation', 'scale'] as ApplyMask[]).map((mask) => (
+          <button
+            key={mask}
+            type="button"
+            disabled={animated}
+            onClick={() => onApply(mask)}
+            data-testid={`npanel-apply-${mask}`}
+            className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            {mask === 'all' ? 'All' : mask.charAt(0).toUpperCase() + mask.slice(1)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** A collapsible section card. Header click toggles via
  *  inspectorSectionsStore; visual collapse combines user choice with
  *  the §5.8 default rule via resolveCollapsed. */
@@ -791,6 +836,14 @@ export function NPanel() {
                           overrideInfo={makeOverrideInfo(key)}
                         />
                       ))}
+                      {/* Phase 151 — Apply control in the transform card for a
+                          selected primitive (BoxMesh/SphereMesh). Bakes TRS →
+                          BakedMesh via the same helper the Object ▸ Apply menu
+                          uses (one undo). glTF-child Apply = Wave 4. */}
+                      {sectionId === 'transform' &&
+                      (node.type === 'BoxMesh' || node.type === 'SphereMesh') ? (
+                        <ApplyTransformControl nodeId={node.id} />
+                      ) : null}
                     </SectionCard>
                   ))}
                   {unrouted.length > 0 ? (
