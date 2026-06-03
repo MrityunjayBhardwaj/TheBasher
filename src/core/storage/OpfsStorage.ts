@@ -15,9 +15,25 @@ export class OpfsStorage implements StorageCapability {
   constructor(private readonly rootName = 'basher') {}
 
   async isAvailable(): Promise<boolean> {
-    return (
-      typeof navigator !== 'undefined' && typeof navigator.storage?.getDirectory === 'function'
-    );
+    // Presence is a fast pre-gate, NOT the answer. `navigator.storage
+    // .getDirectory` exists as a symbol in contexts where actually CALLING it
+    // rejects with a SecurityError — opaque origins, sandboxed iframes,
+    // blocked site-data, and some private-browsing modes. A presence-only
+    // check returns true there, pickStorage selects OPFS, and the first real
+    // call (getRoot) dies at boot ("Security error when calling GetDirectory")
+    // — the IndexedDB/Memory fallback never runs. So PROBE the capability:
+    // attempt getDirectory() and catch. Mirrors IndexedDbStorage.isAvailable,
+    // which opens the DB to catch the same class of private-mode throw.
+    // (Capability-detection, not feature-detection — dharana B2.)
+    if (typeof navigator === 'undefined' || typeof navigator.storage?.getDirectory !== 'function') {
+      return false;
+    }
+    try {
+      await navigator.storage.getDirectory();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async getRoot(): Promise<FileSystemDirectoryHandle> {

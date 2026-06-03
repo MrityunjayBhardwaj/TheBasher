@@ -35,9 +35,9 @@
 **ORIGIN:** THESIS.md §33 (capability interfaces) + §38 (P0 storage requirements).
 **WHY:** Basher v0.5 is browser-only OPFS; v0.6 adds Tauri fs. Two impls must be behind one interface. Diverge here and migration is a rewrite.
 **HOW:** `core/storage/StorageCapability.ts` interface; `OpfsStorage.ts` impl in v0.5; `TauriStorage.ts` stub for v0.6. No code outside `core/storage/` touches the storage backend directly.
-**REF:** THESIS.md §33, §52 (migration policy)
-**Silent-failure modes:** save succeeds but truncates large projects; OPFS quota exceeded silently; reload loses last N changes.
-**Observation targets:** write-then-read-back verification on every save in dev; quota percentage shown in dev FPS overlay.
+**REF:** THESIS.md §33, §52 (migration policy); hetvabhasa [[H60]] (no move primitive → orphaned ref / residue), [[H64]] (availability-probe misreport).
+**Silent-failure modes:** save succeeds but truncates large projects; OPFS quota exceeded silently; reload loses last N changes; **a capability `isAvailable()` that feature-DETECTS a symbol instead of capability-PROBING the call selects a present-but-throwing backend, so the fallback chain never engages and boot dies ([[H64]], #146) — `getDirectory`/`open` can throw `SecurityError`/`NotAllowedError` for environmental reasons (opaque origin, sandboxed iframe, blocked site-data, private mode) even when the symbol exists.**
+**Observation targets:** write-then-read-back verification on every save in dev; quota percentage shown in dev FPS overlay; **every `StorageCapability.isAvailable()` must CALL its underlying op in try/catch (not just check `typeof … === 'function'`) — mirror `IndexedDbStorage.isAvailable`; falsify with a pre-boot override that makes the call reject and assert the app still boots (`tests/e2e/opfs-fallback-boot.spec.ts`). This applies to the v0.6 `TauriStorage` impl when it lands.**
 
 ### Boundary B3: Agent (LLM) ↔ DAG (via tool calls)
 
