@@ -224,6 +224,8 @@ export interface BoxMeshValue {
   readonly size: Vec3;
   readonly position: Vec3;
   readonly rotation: Vec3;
+  /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `size`. */
+  readonly scale: Vec3;
   readonly material: InlineMaterialSpec;
 }
 
@@ -234,6 +236,8 @@ export interface SphereMeshValue {
   readonly heightSegments: number;
   readonly position: Vec3;
   readonly rotation: Vec3;
+  /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `radius`. */
+  readonly scale: Vec3;
   readonly material: InlineMaterialSpec;
 }
 
