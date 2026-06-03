@@ -65,7 +65,9 @@ export function isTransformAnimated(
   nodeId: string,
   currentFrame: number,
 ): boolean {
-  return TRS_BANDS.some((band) => paramAnimationState(state, nodeId, band, currentFrame) !== 'none');
+  return TRS_BANDS.some(
+    (band) => paramAnimationState(state, nodeId, band, currentFrame) !== 'none',
+  );
 }
 
 /** Compose a 4×4 from the resolved TRS, including ONLY the masked band(s). */
@@ -77,18 +79,14 @@ function composeMaskedMatrix(
   const includeRot = mask === 'all' || mask === 'rotation';
   const includeScale = mask === 'all' || mask === 'scale';
 
-  const pos = includeLoc
-    ? new THREE.Vector3(...transform.position)
-    : new THREE.Vector3(0, 0, 0);
+  const pos = includeLoc ? new THREE.Vector3(...transform.position) : new THREE.Vector3(0, 0, 0);
   const quat = new THREE.Quaternion();
   if (includeRot) {
     const [rx, ry, rz] = transform.rotation;
     const D2R = Math.PI / 180; // rotation is degrees Euler XYZ (codebase convention)
     quat.setFromEuler(new THREE.Euler(rx * D2R, ry * D2R, rz * D2R, 'XYZ'));
   }
-  const scl = includeScale
-    ? new THREE.Vector3(...transform.scale)
-    : new THREE.Vector3(1, 1, 1);
+  const scl = includeScale ? new THREE.Vector3(...transform.scale) : new THREE.Vector3(1, 1, 1);
   return new THREE.Matrix4().compose(pos, quat, scl);
 }
 
@@ -243,7 +241,8 @@ export async function dispatchApplyTransform(
   }
 
   // Move selection to the new baked node.
-  const setSelection = deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id));
+  const setSelection =
+    deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id));
   setSelection(bakedId);
 
   return { ok: true, bakedId };

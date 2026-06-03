@@ -53,8 +53,12 @@ function makeDispatch(stateRef: { current: DagState }) {
 describe('dispatchApplyTransform (primitives)', () => {
   it('SC-1: Apply a Box scale=[2,1,1] → BakedMesh bbox 2×1×1, transform identity', async () => {
     let state = buildDefaultDagState();
-    state = applyOp(state, { type: 'setParam', nodeId: BOX_ID, paramPath: 'scale', value: [2, 1, 1] })
-      .next;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: BOX_ID,
+      paramPath: 'scale',
+      value: [2, 1, 1],
+    }).next;
 
     const storage = new MemoryStorage();
     const stateRef = { current: state };
