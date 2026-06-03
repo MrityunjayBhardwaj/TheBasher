@@ -25,6 +25,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 // the same module. This is a NEW `clone` named import.)
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
+import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -46,6 +47,7 @@ import type {
   AmbientLightValue,
   AnimationLayerValue,
   AreaLightValue,
+  BakedMeshValue,
   BoxMeshValue,
   CameraValue,
   CharacterValue,
@@ -205,8 +207,31 @@ function MeshScaleProbe() {
       obj.getWorldScale(s);
       return [s.x, s.y, s.z];
     };
+    // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
+    // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
+    // `__basher_mesh_world_scale` always reports [1,1,1] for it. The size now
+    // lives in the geometry bounds. This seam reports the REAL rendered object's
+    // WORLD-space axis-aligned bounding-box DIMENSIONS by node id, so the
+    // boundary-pair e2e asserts rendered bounds == resolver geometry bounds
+    // (side A == side B) instead of inferring from params. Read-only (V8 clean).
+    w.__basher_mesh_world_bounds = (nodeId: string): [number, number, number] | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Mesh | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o as THREE.Mesh;
+      });
+      if (!target) return null;
+      const mesh: THREE.Mesh = target;
+      mesh.updateWorldMatrix(true, false);
+      const box = new THREE.Box3().setFromObject(mesh);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      return [size.x, size.y, size.z];
+    };
     return () => {
       delete w.__basher_mesh_world_scale;
+      delete w.__basher_mesh_world_bounds;
     };
   }, [scene]);
   return null;
@@ -439,6 +464,8 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
       return <BoxMeshR value={value} override={override} />;
     case 'SphereMesh':
       return <SphereMeshR value={value} override={override} />;
+    case 'BakedMesh':
+      return <BakedMeshR value={value} override={override} />;
     case 'GltfAsset':
       // #83 gap 2 — per-asset error boundary. A load/parse failure
       // (bad bytes, unsupported extension, missing #82 sibling, Draco
@@ -589,6 +616,59 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
+      <meshStandardMaterial
+        color={mat.color}
+        roughness={mat.roughness}
+        metalness={mat.metalness}
+        opacity={mat.opacity}
+        emissive={mat.emissive}
+        emissiveIntensity={mat.emissiveIntensity}
+        transparent={mat.transparent}
+        wireframe={shading === 'wireframe'}
+      />
+    </mesh>
+  );
+}
+
+// Phase 151 — BakedMeshR, the renderer for the Apply-Transform product (#151).
+// THE FIRST renderer that reads geometry from the registry (Box/SphereR build
+// inline via <boxGeometry>/<sphereGeometry>). The §48/V29 handle → registry path
+// comes alive here:
+//   - `useBakedGeometry(value.geometry)` suspends on the first render (the OPFS
+//     read), primes geometryRegistry, then returns the cached BufferGeometry.
+//     The viewport already wraps the scene in <Suspense> (glTF uses it).
+//   - The mesh renders at IDENTITY scale [1,1,1] — the TRS is baked INTO the
+//     verts, so applying value.scale would double-transform (H40 band drift).
+//     position/rotation are kept for re-transform-after-Apply (a baked mesh is
+//     first-class), but a fresh Apply produces identity TRS.
+//   - It feeds the SAME wireframe + MaterialOverride path a Box gets (first-class
+//     scene mesh, V20). Wave 2 builds the SCALAR material from the spec; the 6
+//     texture-map slots come online in Wave 3.
+function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: MaterialValue }) {
+  const geom = useBakedGeometry(value.geometry);
+  const shading = useViewportStore((s) => s.shading);
+  const spec = value.material;
+  // The override wins when present (#99/#124); otherwise the baked spec's own
+  // captured scalars drive the material (a Box bake carries Box defaults).
+  const mat = override
+    ? applyOverride(spec.color, override)
+    : {
+        color: spec.color,
+        roughness: spec.roughness,
+        metalness: spec.metalness,
+        opacity: spec.opacity,
+        emissive: spec.emissive,
+        emissiveIntensity: spec.emissiveIntensity,
+        transparent: spec.transparent,
+      };
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      // IDENTITY scale — the transform is baked into the geometry verts (H40).
+      scale={[1, 1, 1]}
+    >
+      <primitive object={geom} attach="geometry" />
       <meshStandardMaterial
         color={mat.color}
         roughness={mat.roughness}
