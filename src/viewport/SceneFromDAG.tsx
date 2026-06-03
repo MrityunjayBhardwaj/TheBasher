@@ -231,9 +231,46 @@ function MeshScaleProbe() {
       box.getSize(size);
       return [size.x, size.y, size.z];
     };
+    // Phase 151 (Wave 4, SC-6) — the H40 material side-A: read the RENDERED
+    // material of a node by id (the BakedMesh's built three.js material). Converts
+    // the lossless-material assertion from inference to observation: a baked
+    // textured glTF child's reloaded BakedMesh must report map.image.width>0 +
+    // srgb colorspace on the base map + the resolved color. Read-only (V8 clean).
+    w.__basher_mesh_material = (
+      nodeId: string,
+    ): {
+      color: string | null;
+      hasMap: boolean;
+      mapImageOk: boolean;
+      mapColorSpace: string | null;
+      roughness: number | null;
+      metalness: number | null;
+    } | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Mesh | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o as THREE.Mesh;
+      });
+      if (!target) return null;
+      const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;
+      if (!mat) return null;
+      const std = mat as THREE.MeshStandardMaterial;
+      const map = std.map ?? null;
+      const image = map?.image as { width?: number } | undefined;
+      return {
+        color: std.color ? `#${std.color.getHexString()}` : null,
+        hasMap: map !== null,
+        mapImageOk: Boolean(image && (image.width ?? 0) > 0),
+        mapColorSpace: map ? map.colorSpace : null,
+        roughness: typeof std.roughness === 'number' ? std.roughness : null,
+        metalness: typeof std.metalness === 'number' ? std.metalness : null,
+      };
+    };
     return () => {
       delete w.__basher_mesh_world_scale;
       delete w.__basher_mesh_world_bounds;
+      delete w.__basher_mesh_material;
     };
   }, [scene]);
   return null;
@@ -1189,6 +1226,11 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         roughness: number | null;
         hasMetalnessMap: boolean;
         hasRoughnessMap: boolean;
+        // P151 Wave 4 t11 — the original child's WORLD-space bounds (three-way
+        // verts boundary-pair: original child == resolver baked == rendered baked)
+        // and its render VISIBILITY (suppression: false after the child is baked).
+        worldBounds: [number, number, number];
+        visible: boolean;
         // P151 Wave 3 t7 (LOKAYATA PROBE) — per-`map` texture-readback diagnostic
         // on the CLONED child material. The bake (Wave 4) must decide whether it
         // can copy the ORIGINAL compressed bytes (path 1, lossless) or must fall
@@ -1256,6 +1298,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             metalnessMap?: THREE.Texture | null;
             roughnessMap?: THREE.Texture | null;
           } | null;
+          // P151 Wave 4 t11 — world bounds of THIS child mesh + its render
+          // visibility (false once suppressed by the bake). `visible` walks up the
+          // parent chain because three skips the subtree when ANY ancestor is
+          // hidden; getObjectByName(name).visible alone would miss that.
+          m.updateWorldMatrix(true, false);
+          const wb = new THREE.Vector3();
+          new THREE.Box3().setFromObject(m).getSize(wb);
+          let vis = true;
+          for (let o: THREE.Object3D | null = m; o; o = o.parent) {
+            if (!o.visible) {
+              vis = false;
+              break;
+            }
+          }
           summary.push({
             name: m.name ?? '',
             hasMap: map !== null,
@@ -1265,6 +1321,8 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             roughness: typeof std?.roughness === 'number' ? std.roughness : null,
             hasMetalnessMap: Boolean(std?.metalnessMap),
             hasRoughnessMap: Boolean(std?.roughnessMap),
+            worldBounds: [wb.x, wb.y, wb.z],
+            visible: vis,
             mapProbe: probeMap(map),
           });
         }
