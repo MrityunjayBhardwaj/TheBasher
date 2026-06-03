@@ -26,6 +26,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
+import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -642,15 +643,37 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
 //     position/rotation are kept for re-transform-after-Apply (a baked mesh is
 //     first-class), but a fresh Apply produces identity TRS.
 //   - It feeds the SAME wireframe + MaterialOverride path a Box gets (first-class
-//     scene mesh, V20). Wave 2 builds the SCALAR material from the spec; the 6
-//     texture-map slots come online in Wave 3.
+//     scene mesh, V20). Wave 2 built the SCALAR material; Wave 3 (t8) brings the
+//     6 texture-map slots online — built imperatively per `materialClass` so a
+//     baked glTF child reloads LOSSLESS (scalars + every map, correct colorspace).
+//
+// Why a built `THREE.Material` (useMemo) rather than the declarative
+// `<meshStandardMaterial>` BoxMeshR uses: BakedMesh must (a) pick the three ctor
+// from `spec.materialClass` (standard / physical / basic — a basic/unlit material
+// has no roughness/metalness/emissive, the M1 in-guard) and (b) assign up to six
+// suspense-loaded textures with EXPLICIT per-slot colorspace (M5 — a map loaded
+// without sRGB washes out). A declarative element cannot select its own ctor or
+// hold the async-loaded textures cleanly. The material is built fresh per node
+// (single writer V20, same as Box's own material).
 function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: MaterialValue }) {
   const geom = useBakedGeometry(value.geometry);
   const shading = useViewportStore((s) => s.shading);
   const spec = value.material;
-  // The override wins when present (#99/#124); otherwise the baked spec's own
-  // captured scalars drive the material (a Box bake carries Box defaults).
-  const mat = override
+
+  // Suspense-load each of the 6 fixed map slots UNCONDITIONALLY (rules-of-hooks
+  // safe — `useBakedTexture(null)` is a no-op; only present refs suspend). The
+  // OPFS read + decode lives in the loader hook, never in the pure resolver (V29).
+  const mapTex = useBakedTexture(spec.map);
+  const normalTex = useBakedTexture(spec.normalMap);
+  const roughnessTex = useBakedTexture(spec.roughnessMap);
+  const metalnessTex = useBakedTexture(spec.metalnessMap);
+  const aoTex = useBakedTexture(spec.aoMap);
+  const emissiveTex = useBakedTexture(spec.emissiveMap);
+
+  // The override wins on scalar color when present (#99/#124); otherwise the
+  // baked spec's own captured scalars drive the material (a Box bake carries Box
+  // defaults; a glTF bake carries the resolved post-override scalars).
+  const scalar = override
     ? applyOverride(spec.color, override)
     : {
         color: spec.color,
@@ -661,6 +684,87 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
         emissiveIntensity: spec.emissiveIntensity,
         transparent: spec.transparent,
       };
+
+  const material = useMemo(() => {
+    // Colorspace per slot (M5): base/emissive maps are sRGB; the data maps
+    // (normal/ao/roughness/metalness) are linear. The texture loader already
+    // restored the captured colorspace from the ref, but assign it AGAIN here so
+    // the render-side contract is explicit and self-documenting at the boundary.
+    const sRGB = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const linear = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
+      return t;
+    };
+
+    if (spec.materialClass === 'basic') {
+      // MeshBasicMaterial (KHR_materials_unlit) — NO roughness/metalness/emissive
+      // (M1 in-guard). Only color + base map + opacity apply.
+      const m = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(scalar.color),
+        opacity: scalar.opacity,
+        transparent: scalar.transparent,
+        wireframe: shading === 'wireframe',
+      });
+      m.map = sRGB(mapTex);
+      return m;
+    }
+
+    const m =
+      spec.materialClass === 'physical'
+        ? new THREE.MeshPhysicalMaterial()
+        : new THREE.MeshStandardMaterial();
+    m.color = new THREE.Color(scalar.color);
+    m.roughness = scalar.roughness;
+    m.metalness = scalar.metalness;
+    m.opacity = scalar.opacity;
+    m.transparent = scalar.transparent;
+    m.emissive = new THREE.Color(scalar.emissive);
+    m.emissiveIntensity = scalar.emissiveIntensity;
+    m.wireframe = shading === 'wireframe';
+    m.map = sRGB(mapTex);
+    m.normalMap = linear(normalTex);
+    m.roughnessMap = linear(roughnessTex);
+    m.metalnessMap = linear(metalnessTex);
+    m.aoMap = linear(aoTex);
+    m.emissiveMap = sRGB(emissiveTex);
+
+    if (spec.materialClass === 'physical' && spec.physical) {
+      const p = m as THREE.MeshPhysicalMaterial;
+      const ph = spec.physical;
+      if (ph.clearcoat !== undefined) p.clearcoat = ph.clearcoat;
+      if (ph.clearcoatRoughness !== undefined) p.clearcoatRoughness = ph.clearcoatRoughness;
+      if (ph.transmission !== undefined) p.transmission = ph.transmission;
+      if (ph.ior !== undefined) p.ior = ph.ior;
+      if (ph.sheen !== undefined) p.sheen = ph.sheen;
+      if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
+    }
+    return m;
+  }, [
+    spec.materialClass,
+    spec.physical,
+    scalar.color,
+    scalar.roughness,
+    scalar.metalness,
+    scalar.opacity,
+    scalar.transparent,
+    scalar.emissive,
+    scalar.emissiveIntensity,
+    shading,
+    mapTex,
+    normalTex,
+    roughnessTex,
+    metalnessTex,
+    aoTex,
+    emissiveTex,
+  ]);
+
+  // Dispose the built material when it is replaced or the node unmounts — it is
+  // owned here (single writer V20), so this renderer owns its lifecycle.
+  useEffect(() => () => material.dispose(), [material]);
+
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -669,16 +773,7 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
       scale={[1, 1, 1]}
     >
       <primitive object={geom} attach="geometry" />
-      <meshStandardMaterial
-        color={mat.color}
-        roughness={mat.roughness}
-        metalness={mat.metalness}
-        opacity={mat.opacity}
-        emissive={mat.emissive}
-        emissiveIntensity={mat.emissiveIntensity}
-        transparent={mat.transparent}
-        wireframe={shading === 'wireframe'}
-      />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
@@ -1092,10 +1187,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           imageWidth: image?.width ?? 0,
           imageHeight: image?.height ?? 0,
           hasUserDataSrcUri:
-            udKey !== undefined && typeof ud[udKey] === 'string' && (ud[udKey] as string).length > 0,
+            udKey !== undefined &&
+            typeof ud[udKey] === 'string' &&
+            (ud[udKey] as string).length > 0,
           hasSourceData: Boolean(sourceData),
           sourceDataUri:
-            typeof sourceData?.src === 'string' && sourceData.src.length > 0 ? sourceData.src : null,
+            typeof sourceData?.src === 'string' && sourceData.src.length > 0
+              ? sourceData.src
+              : null,
           imageSrc: typeof image?.src === 'string' && image.src.length > 0 ? image.src : null,
         };
       };
