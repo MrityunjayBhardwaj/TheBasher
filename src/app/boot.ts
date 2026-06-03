@@ -6,6 +6,7 @@
 // node types are registered).
 
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
+import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -326,6 +327,16 @@ export function boot(): Promise<void> {
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         return evaluateDag(state, nodeId, { ctx });
+      };
+      // v0.6 #1 (Wave 3) — the H40 side-B seam: the EvaluatedMesh the read-side
+      // surfaces consume (`resolveEvaluatedMesh`), so the boundary-pair e2e can
+      // assert rendered scale (side A, __basher_mesh_world_scale) ==
+      // resolver scale (side B, here) at the same ctx.time. Lazy import keeps
+      // boot's static graph lean.
+      w.__basher_evaluated_mesh = (nodeId: NodeId, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        return resolveEvaluatedMesh(state, nodeId, evalCtx);
       };
       // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
       // SphereMesh nodes at `segments` tessellation in a compact grid (kept
