@@ -101,3 +101,48 @@ describe('BoxMesh v1 → v2 scale migration (byte-identical render gate)', () =>
     expect(twice.state.nodes.n_box.version).toBe(2);
   });
 });
+
+/** A serialized pre-#168 (v1) RenderOutput project — NO width/height. */
+const V1_RENDER_PROJECT = {
+  formatVersion: 1,
+  id: 'p168-migration',
+  name: 'pre-resolution render',
+  createdAt: 0,
+  updatedAt: 0,
+  nodeVersions: { RenderOutput: 1 },
+  state: {
+    nodes: {
+      n_render: {
+        id: 'n_render',
+        type: 'RenderOutput',
+        version: 1,
+        params: { postFx: { tonemap: 'ACES', smaa: true } },
+        inputs: {},
+      },
+    },
+    outputs: {},
+  },
+};
+
+describe('RenderOutput v1 → v2 resolution migration (#168 byte-identical gate)', () => {
+  it('steps version 1 → 2 and adds the 1920×1080 default', () => {
+    const migrated = loadFromBytes(V1_RENDER_PROJECT);
+    const render = migrated.state.nodes.n_render;
+    expect(render.version).toBe(2);
+    expect((render.params as { width?: unknown }).width).toBe(1920);
+    expect((render.params as { height?: unknown }).height).toBe(1080);
+  });
+
+  it('leaves postFx byte-identical', () => {
+    const migrated = loadFromBytes(V1_RENDER_PROJECT);
+    const p = migrated.state.nodes.n_render.params as Record<string, unknown>;
+    expect(p.postFx).toEqual(V1_RENDER_PROJECT.state.nodes.n_render.params.postFx);
+  });
+
+  it('is idempotent — re-loading is a stable no-op', () => {
+    const once = loadFromBytes(V1_RENDER_PROJECT);
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_render).toEqual(once.state.nodes.n_render);
+    expect(twice.state.nodes.n_render.version).toBe(2);
+  });
+});
