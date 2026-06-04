@@ -485,11 +485,28 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   const { targetId, paramPath, value, seconds } = args;
   const intent = `Animate ${targetId}.${paramPath}`;
 
-  // 1 — deterministic ids (mirror addLayer.ts:131 / addChannel.ts:181).
-  const layerId = `${targetId}_layer`;
-  const channelId = `${targetId}_${safePath(paramPath)}_channel`;
-
   const base = useDagStore.getState().state;
+
+  // 1 — deterministic channel id (mirror addChannel.ts:181). The LAYER id is
+  //     resolved below: reuse the layer already wrapping the target if one
+  //     exists, else mint the deterministic `${target}_layer`. #149 — keying a
+  //     SECOND band on an already-wrapped target (the whole-transform K, or any
+  //     later diamond key) must ADD a channel to the existing layer, NOT addLayer
+  //     a duplicate (addLayer mints a new node id → collision; addLayer also only
+  //     reuses-vs-rejects on wrapping-a-wrapper). One layer per target.
+  const channelId = `${targetId}_${safePath(paramPath)}_channel`;
+  const existingLayerId = ((): string | null => {
+    for (const node of Object.values(base.nodes)) {
+      if (node.type !== 'AnimationLayer') continue;
+      const tb = (node.inputs ?? {}).target as unknown;
+      const refs = Array.isArray(tb) ? tb : tb ? [tb] : [];
+      if (refs.some((r) => (r as { node?: string } | undefined)?.node === targetId)) {
+        return node.id;
+      }
+    }
+    return null;
+  })();
+  const layerId = existingLayerId ?? `${targetId}_layer`;
 
   const addLayer = getMutator('mutator.timeline.addLayer');
   const addChannel = getMutator('mutator.timeline.addChannel');
@@ -501,30 +518,43 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
     };
   }
 
-  // 2 — validate addLayer against the base DAG.
-  const lParsed = addLayer.spec.safeParse({
-    targetSelectors: [targetId],
-    layerName: 'Layer',
-    layerIds: [layerId],
-  });
-  if (!lParsed.success) {
-    return { ok: false, reason: `addLayer spec invalid: ${lParsed.error.message}` };
-  }
-  const lResult = validatePlan(addLayer, lParsed.data, base, intent);
-  if (!lResult.ok) {
-    return { ok: false, reason: `addLayer rejected: ${lResult.reason}` };
+  // 2 — validate addLayer against the base DAG — ONLY when the target is not yet
+  //     wrapped. When reusing an existing layer, addLayer is skipped entirely
+  //     (empty ops / closure) so addChannel validates against base directly.
+  let lOps: Op[] = [];
+  let lClosureSpec: ReturnType<typeof unionClosureSpecs> | null = null;
+  let lWarnings: string[] = [];
+  let lLabels: string[] = [];
+  if (!existingLayerId) {
+    const lParsed = addLayer.spec.safeParse({
+      targetSelectors: [targetId],
+      layerName: 'Layer',
+      layerIds: [layerId],
+    });
+    if (!lParsed.success) {
+      return { ok: false, reason: `addLayer spec invalid: ${lParsed.error.message}` };
+    }
+    const lResult = validatePlan(addLayer, lParsed.data, base, intent);
+    if (!lResult.ok) {
+      return { ok: false, reason: `addLayer rejected: ${lResult.reason}` };
+    }
+    lOps = lResult.ops;
+    lClosureSpec = lResult.closure.spec;
+    lWarnings = lResult.warnings;
+    lLabels = ['user:mutator.timeline.addLayer'];
   }
 
-  // 3 — fork1 = base + addLayer ops (orchestrator.ts:288 mechanism).
+  // 3 — fork1 = base + addLayer ops (orchestrator.ts:288 mechanism). When the
+  //     layer is reused, lOps is empty → fork1 === base content.
   let fork1: DagState;
   try {
-    fork1 = createFork(base, lResult.ops).fork;
+    fork1 = createFork(base, lOps).fork;
   } catch (err) {
     return { ok: false, reason: `addLayer fork failed: ${(err as Error).message}` };
   }
 
   // 4 — validate addChannel against the FORKED state (its closure roots
-  //     on the freshly-created layer id — A2 lifecycle / RESEARCH risk #2).
+  //     on the layer id — freshly created OR the reused existing one).
   const valueType = inferValueType(value);
   if (!valueType) {
     return {
@@ -550,7 +580,7 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   // 5 — fork2 = base + addLayer ops + addChannel ops.
   let fork2: DagState;
   try {
-    fork2 = createFork(base, [...lResult.ops, ...cResult.ops]).fork;
+    fork2 = createFork(base, [...lOps, ...cResult.ops]).fork;
   } catch (err) {
     return { ok: false, reason: `addChannel fork failed: ${(err as Error).message}` };
   }
@@ -565,23 +595,20 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
     return { ok: false, reason: `keyframe rejected: ${kResult.reason}` };
   }
 
-  // 7 — propose ALL ops as ONE diff with the COMBINED closure (union of
-  //     the three Mutators' declared closure specs — replicate the
-  //     orchestrator's unionClosureSpecs, do not invent), then accept.
-  const combinedClosure = unionClosureSpecs(
-    unionClosureSpecs(lResult.closure.spec, cResult.closure.spec),
-    kResult.closure.spec,
-  );
+  // 7 — propose ALL ops as ONE diff with the COMBINED closure (union of the
+  //     Mutators' declared closure specs — replicate the orchestrator's
+  //     unionClosureSpecs, do not invent), then accept. When the layer was
+  //     reused, the addLayer op set / closure / label are omitted.
+  const channelKeyClosure = unionClosureSpecs(cResult.closure.spec, kResult.closure.spec);
+  const combinedClosure = lClosureSpec
+    ? unionClosureSpecs(lClosureSpec, channelKeyClosure)
+    : channelKeyClosure;
   return proposeAndAccept(
     base,
-    [...lResult.ops, ...cResult.ops, ...kResult.ops],
+    [...lOps, ...cResult.ops, ...kResult.ops],
     intent,
-    [
-      'user:mutator.timeline.addLayer',
-      'user:mutator.timeline.addChannel',
-      'user:mutator.timeline.keyframe',
-    ],
+    [...lLabels, 'user:mutator.timeline.addChannel', 'user:mutator.timeline.keyframe'],
     combinedClosure,
-    [...lResult.warnings, ...cResult.warnings, ...kResult.warnings],
+    [...lWarnings, ...cResult.warnings, ...kResult.warnings],
   );
 }
