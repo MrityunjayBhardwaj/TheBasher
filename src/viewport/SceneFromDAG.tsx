@@ -223,6 +223,27 @@ function MeshScaleProbe() {
       obj.getWorldScale(s);
       return [s.x, s.y, s.z];
     };
+    // #149 (Wave C3) — the H40 side-A observation for the TRANSFORM transient.
+    // Reads the REAL rendered object's WORLD position by group node id (the
+    // wrapping group is named with the scene-child producer id — for an animated
+    // cube that is the AnimationLayer id; the inner mesh carries the overlaid
+    // position). The boundary-pair e2e asserts rendered position (side A) ==
+    // resolveEvaluatedTransform (side B) == the typed transient, PAUSED. The
+    // wrapping group is identity, so the inner mesh's world position IS the
+    // rendered value. Read-only (V8 clean).
+    w.__basher_mesh_world_position = (nodeId: string): [number, number, number] | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Object3D | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o;
+      });
+      const obj: THREE.Object3D = target ?? grp;
+      obj.updateWorldMatrix(true, false);
+      const p = new THREE.Vector3();
+      obj.getWorldPosition(p);
+      return [p.x, p.y, p.z];
+    };
     // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
     // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
     // `__basher_mesh_world_scale` always reports [1,1,1] for it. The size now
@@ -285,6 +306,7 @@ function MeshScaleProbe() {
       delete w.__basher_mesh_world_scale;
       delete w.__basher_mesh_world_bounds;
       delete w.__basher_mesh_material;
+      delete w.__basher_mesh_world_position;
     };
   }, [scene]);
   return null;
