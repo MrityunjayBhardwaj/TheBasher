@@ -415,6 +415,62 @@ describe('dispatchApplyTransform (glTF child)', () => {
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
+  it('SC-8 (C-2): a CLIP-driven child rejects (D-04 clip half), DAG byte-unchanged', async () => {
+    // The keyframe-channel half of the animated guard is covered above; THIS
+    // pins the OTHER half — `isGltfChildClipDriven`. A TransformClip wired into
+    // the owning GltfAsset's `transformClip` socket, carrying a track keyed for
+    // this child's name, drives the child via clip sampling
+    // (resolveEvaluatedTransform.ts:206 reads the SAME `sample(seconds)[name]`).
+    // Baking a single static pose would silently freeze the animation, so Apply
+    // must reject with the animated reason — no OPFS write, no dispatch.
+    let state = gltfChildState();
+    // A TransformClip whose track targets CHILD_NAME ("Cube") — a non-trivial
+    // motion (position 0→5 over 2s) so sampling at a mid-frame is non-identity.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_clip',
+      nodeType: 'TransformClip',
+      params: {
+        name: 'walk',
+        duration: 2,
+        loop: 'clamp',
+        keyframes: [
+          { targetNodeId: CHILD_NAME, time: 0, position: [0, 0, 0] },
+          { targetNodeId: CHILD_NAME, time: 2, position: [5, 0, 0] },
+        ],
+      },
+    }).next;
+    // Wire the clip into the owning GltfAsset's transformClip input — this is
+    // the edge the renderer (GltfAssetR) + the guard both read.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_clip', socket: 'out' },
+      to: { node: 'n_gltf', socket: 'transformClip' },
+    }).next;
+
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    let dispatched = 0;
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state,
+      storage,
+      currentFrame: 60, // 1.0s — mid-clip, the track samples to [2.5,0,0]
+      dispatchAtomic: () => {
+        dispatched++;
+        return [];
+      },
+      setSelection: () => {},
+      gltfClone: fakeClone(),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('animated'); // the clip-driven half fired
+    // No mutation, no OPFS write — proving the reject is BEFORE any side effect.
+    expect(dispatched).toBe(0);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
   it('SC-8 extend: a keyframed child rejects (D-04), DAG byte-unchanged', async () => {
     let state = gltfChildState();
     state = applyOp(state, {

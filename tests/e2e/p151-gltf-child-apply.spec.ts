@@ -349,24 +349,53 @@ test('M8 self-contained: bake → delete source asset → reload → baked still
     ),
   );
 
-  // Delete the source GltfAsset (+ its import subgraph) — simulate the user
-  // removing the original. The baked mesh must survive (OPFS option a, no H60).
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag!.getState() as unknown as {
-      state: { nodes: Record<string, DagNode> };
+  // Delete the source GltfAsset via the SAME path the app uses — the My-Imports
+  // ︙ Delete affordance routes through `deleteImportedAsset(name, {breakRefs})`,
+  // which (1) removes the whole import footprint nodes in one atomic op AND
+  // (2) deletes the `user-imports/<name>/` OPFS tree (the source .gltf/.bin/.png
+  // bytes). After this the source is GONE — no node, no OPFS bytes. This is the
+  // real H60 orphan-avoidance exercise: if the baked texture had referenced back
+  // into `user-imports/`, the reload below would lose its map.
+  const deletion = await page.evaluate(async () => {
+    const importCommon = await import('/src/app/asset/importCommon.ts');
+    const boot = await import('/src/app/boot.ts');
+    const NAME = 'p151-selfcontained';
+    const storage = await boot.getStorage();
+    // The source tree must EXIST before the delete (so the after=0 is a real
+    // transition, not a never-existed dir reading empty).
+    const sourceFilesBefore = (
+      await importCommon.listFilesDeep(storage, `${importCommon.USER_IMPORTS_ROOT}/${NAME}`)
+    ).length;
+    const result = await importCommon.deleteImportedAsset(NAME, { breakRefs: true });
+    // OBSERVE that the source OPFS tree is actually gone (the deletion happened).
+    const sourceFilesAfter = (
+      await importCommon.listFilesDeep(storage, `${importCommon.USER_IMPORTS_ROOT}/${NAME}`)
+    ).length;
+    // And that the baked texture lives under `baked-texture/`, NOT user-imports.
+    const bakedTexFiles = await storage.list('baked-texture').catch(() => [] as string[]);
+    return {
+      deleted: result.deleted,
+      sourceFilesBefore,
+      sourceFilesAfter,
+      bakedTexCount: bakedTexFiles.length,
     };
-    const ids = Object.entries(dag.state.nodes)
-      .filter(([, n]) => n.type === 'GltfAsset' || n.type === 'GltfChild')
-      .map(([id]) => id);
-    // Remove via the live dispatch (best-effort: removeNode each, edges first).
-    const store = (window as unknown as { __basher_dag: { getState: () => unknown } }).__basher_dag;
-    void store;
-    void ids;
   });
+  // The deletion actually removed the source asset + its OPFS bytes — observed as
+  // a real before(>0) → after(0) transition (not a never-existed dir).
+  expect(deletion.deleted).toBe(true);
+  expect(deletion.sourceFilesBefore).toBeGreaterThan(0); // the source bytes existed
+  expect(deletion.sourceFilesAfter).toBe(0); // user-imports/<name> is now empty/gone
+  expect(deletion.bakedTexCount).toBeGreaterThan(0); // baked texture is self-contained
+  // The source GltfAsset/GltfChild nodes are gone from the DAG.
+  const sourceNodesGone = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    return !Object.values(nodes).some((n) => n.type === 'GltfAsset' || n.type === 'GltfChild');
+  });
+  expect(sourceNodesGone).toBe(true);
 
   // Save + reload — the baked geometry + texture bytes live in OPFS, keyed by
-  // hash, independent of the source asset.
+  // hash, independent of the now-deleted source asset.
   await page.evaluate(async () => {
     const boot = await import('/src/app/boot.ts');
     await boot.saveCurrent();
