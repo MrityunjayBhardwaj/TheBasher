@@ -15,7 +15,7 @@
 //
 // REF: THESIS.md §11, vyapti V8.
 
-import { OrthographicCamera, PerspectiveCamera, useGLTF } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -53,7 +53,6 @@ import type {
   AreaLightValue,
   BakedMeshValue,
   BoxMeshValue,
-  CameraValue,
   CharacterValue,
   DirectionalLightValue,
   GltfAssetValue,
@@ -141,7 +140,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
 
   return (
     <>
-      <CameraNode value={value.scene.camera} />
+      {/* #165: the DAG camera no longer mounts a makeDefault render camera
+          here — the editor owns the view (EditorViewCamera) so DAG cameras
+          become selectable frustum objects (CameraHelpers). */}
       {value.scene.lights.map((light, i) => (
         <LightNode key={`light:${i}`} value={light} />
       ))}
@@ -327,65 +328,6 @@ function MeshScaleProbe() {
 // for any pure subtree (no upstream impure dep). Time-driven subtrees
 // (TransformClip-wrapped GltfAsset) still re-render every frame — that's
 // the Pass 2 (imperative playback) lever. REF: [[H48]], dharana [[B13]].
-const CameraNode = memo(function CameraNode({ value }: { value: CameraValue }) {
-  if (value.kind === 'PerspectiveCamera') return <PerspectiveCameraNode value={value} />;
-  return <OrthographicCameraNode value={value} />;
-});
-
-function PerspectiveCameraNode({
-  value,
-}: {
-  value: Extract<CameraValue, { kind: 'PerspectiveCamera' }>;
-}) {
-  const ref = useRef<THREE.PerspectiveCamera | null>(null);
-  // Set initial position once on mount, then let OrbitControls own it.
-  // Without this, every render (e.g. timeStore tick) re-runs the prop
-  // assignment + lookAt, snapping the camera back and fighting the
-  // editor camera. Camera params from the DAG still take effect via
-  // the value-keyed useEffect below — but only when the values
-  // actually change, not on every render.
-  const [px, py, pz] = value.position;
-  const [lx, ly, lz] = value.lookAt;
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.position.set(px, py, pz);
-    ref.current.lookAt(new THREE.Vector3(lx, ly, lz));
-  }, [px, py, pz, lx, ly, lz]);
-  return (
-    <PerspectiveCamera
-      ref={ref as React.MutableRefObject<THREE.PerspectiveCamera>}
-      makeDefault
-      fov={value.fov}
-      near={value.near}
-      far={value.far}
-    />
-  );
-}
-
-function OrthographicCameraNode({
-  value,
-}: {
-  value: Extract<CameraValue, { kind: 'OrthographicCamera' }>;
-}) {
-  const ref = useRef<THREE.OrthographicCamera | null>(null);
-  const [px, py, pz] = value.position;
-  const [lx, ly, lz] = value.lookAt;
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.position.set(px, py, pz);
-    ref.current.lookAt(new THREE.Vector3(lx, ly, lz));
-  }, [px, py, pz, lx, ly, lz]);
-  return (
-    <OrthographicCamera
-      ref={ref as React.MutableRefObject<THREE.OrthographicCamera>}
-      makeDefault
-      zoom={value.zoom}
-      near={value.near}
-      far={value.far}
-    />
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Lights
 // ---------------------------------------------------------------------------

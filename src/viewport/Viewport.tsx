@@ -24,6 +24,7 @@ import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
+import { EditorViewCamera } from './EditorViewCamera';
 import { ModeBadge } from './ModeBadge';
 import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
@@ -33,6 +34,9 @@ function EditorOrbit() {
   // (gizmoStore.dragging). Without this, gizmo + orbit fire simultaneously.
   // Reading via subscription so the prop flips at the right frame.
   const dragging = useGizmoStore((s) => s.dragging);
+  // #165: while looking THROUGH the scene camera, the editor view mirrors the
+  // DAG camera pose — orbit must be off so the user can't drift the preview.
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
   // c-1 (P6 W10 UIR): the real camera-zoom signal. OrbitControls fires
   // `onChange` on every dolly/rotate/pan tick; we read the live
@@ -59,7 +63,7 @@ function EditorOrbit() {
   return (
     <OrbitControls
       makeDefault
-      enabled={!dragging}
+      enabled={!dragging && !lookThrough}
       enableDamping
       dampingFactor={0.08}
       onChange={handleChange}
@@ -163,6 +167,10 @@ export function Viewport() {
           <GpuProbe />
           <GroundClick />
           <Gizmo />
+          {/* #165: the editor owns a free orbit view camera (decoupled from
+              the DAG scene cameras) so cameras render as selectable frustum
+              objects. EditorOrbit drives whatever is the default camera. */}
+          <EditorViewCamera />
           <EditorOrbit />
           <ThreeBridge />
           {/* Blender-style axis-orientation widget in the bottom-right.
