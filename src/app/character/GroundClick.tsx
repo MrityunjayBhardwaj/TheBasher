@@ -56,7 +56,9 @@ export function GroundClick({ halfSize = [10, 10] }: GroundClickProps) {
       // walkTo macro through `__basher_dag.dispatchAtomic` directly (the
       // canonical H3 lesson: bypass headless-Chromium pointer events for
       // anything inside the Canvas).
-      userData={{ basherTestid: 'ground-click' }}
+      // editorChrome: the walk-to ground plane is an editor interaction
+      // surface, never part of a render (#168).
+      userData={{ basherTestid: 'ground-click', editorChrome: true }}
       rotation={[-Math.PI / 2, 0, 0]}
       onPointerDown={(e: ThreeEvent<PointerEvent>) => {
         // Gizmo precedence: don't intercept while a node is selected

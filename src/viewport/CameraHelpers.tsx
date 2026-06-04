@@ -155,7 +155,12 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   };
 
   return (
-    <group position={pose.position as [number, number, number]} quaternion={quat} onClick={onClick}>
+    <group
+      position={pose.position as [number, number, number]}
+      quaternion={quat}
+      onClick={onClick}
+      userData={{ editorChrome: true }}
+    >
       <lineSegments>
         <primitive object={geom} attach="geometry" />
         <lineBasicMaterial color={color} />
