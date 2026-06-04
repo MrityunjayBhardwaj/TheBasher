@@ -30,6 +30,7 @@ import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
+  BakedMaterialSpec,
   EvaluatedMesh,
   GeometryRef,
   InlineMaterialSpec,
@@ -191,5 +192,41 @@ export function resolveEvaluatedMesh(
     return { geometry, uvs: null, material: null, transform };
   }
 
+  if (node.type === 'BakedMesh') {
+    // The 4th EvaluatedMesh producer (Phase 151, V29). NO parallel walk: the
+    // baked GeometryRef is already authoritative (the bytes live in OPFS, keyed
+    // by content hash) and the transform is identity (the TRS is baked INTO the
+    // verts). Return the handle + material verbatim; the renderer (BakedMeshR)
+    // loads the geometry via the suspense hook and applies identity scale (H40
+    // band-drift guard — applying the node scale would double-transform).
+    const p = node.params as {
+      geometry?: unknown;
+      position?: unknown;
+      rotation?: unknown;
+      scale?: unknown;
+      material?: unknown;
+    };
+    if (!isBakedGeometryRef(p.geometry) || !isBakedMaterialSpec(p.material)) return null;
+    const transform: MeshTransform = {
+      position: isVec3(p.position) ? p.position : [0, 0, 0],
+      rotation: isVec3(p.rotation) ? p.rotation : [0, 0, 0],
+      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard
+    };
+    return { geometry: p.geometry, uvs: null, material: p.material, transform };
+  }
+
   return null; // identity-null: not a mesh producer
+}
+
+/** A `GeometryRef{kind:'baked'}` handle carried on a BakedMesh param. */
+function isBakedGeometryRef(v: unknown): v is GeometryRef {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as { kind?: unknown; key?: unknown; descriptor?: { kind?: unknown } };
+  return r.kind === 'baked' && typeof r.key === 'string' && r.descriptor?.kind === 'baked';
+}
+
+/** The rich baked material spec — discriminated by `materialClass`. */
+function isBakedMaterialSpec(v: unknown): v is BakedMaterialSpec {
+  if (typeof v !== 'object' || v === null) return false;
+  return typeof (v as { materialClass?: unknown }).materialClass === 'string';
 }

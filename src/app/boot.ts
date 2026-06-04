@@ -5,8 +5,10 @@
 // mounting — V8/K1 step 6), or stale eval state (DAG hydrated before its
 // node types are registered).
 
+import { Box3, Vector3 } from 'three';
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
+import * as geometryRegistry from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -337,6 +339,30 @@ export function boot(): Promise<void> {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         return resolveEvaluatedMesh(state, nodeId, evalCtx);
+      };
+      // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-B seam for BakedMesh. Reads
+      // the RESOLVER's geometry bounds: resolve the node → take its baked
+      // GeometryRef → read the primed BufferGeometry from geometryRegistry (the
+      // SAME instance BakedMeshR rendered) → return its local bbox dims. The
+      // boundary-pair e2e asserts this == the rendered world bounds (side A,
+      // __basher_mesh_world_bounds). Returns null on a registry miss (not yet
+      // loaded) so the harness can wait for the suspense load to prime the cache.
+      w.__basher_baked_geometry_bounds = (
+        nodeId: NodeId,
+        ctx?: EvalCtx,
+      ): [number, number, number] | null => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
+        if (!mesh || mesh.geometry.kind !== 'baked') return null;
+        const geom = geometryRegistry.get(mesh.geometry);
+        if (!geom) return null; // registry miss — geometry not yet primed
+        geom.computeBoundingBox();
+        const box = geom.boundingBox;
+        if (!box) return null;
+        const size = new Vector3();
+        new Box3(box.min, box.max).getSize(size);
+        return [size.x, size.y, size.z];
       };
       // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
       // SphereMesh nodes at `segments` tessellation in a compact grid (kept

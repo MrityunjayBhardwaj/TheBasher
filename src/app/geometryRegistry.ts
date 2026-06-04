@@ -19,7 +19,18 @@
 //   returns null for a gltf ref — the consumer reads geometry from the asset
 //   clone, not from this registry.
 //
-// REF: PLAN.md Wave 1 Task 3; CONTEXT §C; RESEARCH §C; vyapti V1 (exempt).
+// baked scope (Phase 151): a `baked` geometry is AUTHORITATIVE (the product of
+//   applyMatrix4 on a clone, NOT rebuildable from params) — its bytes live in
+//   OPFS keyed by content hash (bakedGeometryStore.ts). The registry cannot
+//   BUILD it synchronously; the OPFS read is async. So `get()` returns the cached
+//   buffer on a sync hit, else NULL (a cache MISS the renderer resolves by
+//   suspending). `prime(ref, geom)` populates the cache after the async OPFS read
+//   completes (the loader hook, bakedGeometryLoader.ts). The pure resolver stays
+//   sync — it returns the handle only; the async load lives in the renderer hook
+//   (V29 purity preserved; the resolver is NEVER made async).
+//
+// REF: PLAN.md Wave 1 Tasks 2-3; CONTEXT §C; RESEARCH §C/§Q2; vyapti V1 (exempt),
+//      authoritative-baked-store vyapti.
 
 import { BoxGeometry, SphereGeometry, type BufferGeometry } from 'three';
 import type { GeometryRef } from '../nodes/types';
@@ -30,16 +41,35 @@ const cache = new Map<string, BufferGeometry>();
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
  * Returns null for a `gltf` ref (the registry does not own loaded glTF geometry —
- * the asset clone does; see header). Returns the SAME instance for repeated calls
- * with an identical key (cache hit).
+ * the asset clone does; see header). Returns null for a `baked` MISS — the bytes
+ * live in OPFS and must be loaded asynchronously by the renderer hook, then
+ * `prime`d (see header). Returns the SAME instance for repeated calls with an
+ * identical key (cache hit).
  */
 export function get(ref: GeometryRef): BufferGeometry | null {
   if (ref.kind === 'gltf') return null;
   const hit = cache.get(ref.key);
   if (hit) return hit;
+  if (ref.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
   const built = build(ref);
   if (built) cache.set(ref.key, built);
   return built;
+}
+
+/**
+ * Populate the cache with an asynchronously-loaded baked geometry. Called by the
+ * loader hook (bakedGeometryLoader.ts) after the OPFS read resolves, so a
+ * subsequent `get(ref)` is a sync cache hit. Idempotent: a repeat prime for the
+ * same key keeps the first instance (no churn; identical key → identical bytes).
+ */
+export function prime(ref: GeometryRef, geom: BufferGeometry): BufferGeometry {
+  const existing = cache.get(ref.key);
+  if (existing) {
+    if (existing !== geom) geom.dispose();
+    return existing;
+  }
+  cache.set(ref.key, geom);
+  return geom;
 }
 
 function build(ref: GeometryRef): BufferGeometry | null {
@@ -50,7 +80,7 @@ function build(ref: GeometryRef): BufferGeometry | null {
   if (d.kind === 'sphere') {
     return new SphereGeometry(d.radius, d.widthSegments, d.heightSegments);
   }
-  return null; // gltf — not built here
+  return null; // gltf / baked — not built here (gltf in asset clone, baked from OPFS)
 }
 
 /** Test seam: drop every cached geometry (disposing GPU-less CPU buffers). */

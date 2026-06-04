@@ -25,6 +25,9 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 // the same module. This is a NEW `clone` named import.)
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
+import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
+import { useBakedTexture } from '../app/asset/bakedTextureLoader';
+import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -46,6 +49,7 @@ import type {
   AmbientLightValue,
   AnimationLayerValue,
   AreaLightValue,
+  BakedMeshValue,
   BoxMeshValue,
   CameraValue,
   CharacterValue,
@@ -205,8 +209,68 @@ function MeshScaleProbe() {
       obj.getWorldScale(s);
       return [s.x, s.y, s.z];
     };
+    // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
+    // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
+    // `__basher_mesh_world_scale` always reports [1,1,1] for it. The size now
+    // lives in the geometry bounds. This seam reports the REAL rendered object's
+    // WORLD-space axis-aligned bounding-box DIMENSIONS by node id, so the
+    // boundary-pair e2e asserts rendered bounds == resolver geometry bounds
+    // (side A == side B) instead of inferring from params. Read-only (V8 clean).
+    w.__basher_mesh_world_bounds = (nodeId: string): [number, number, number] | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Mesh | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o as THREE.Mesh;
+      });
+      if (!target) return null;
+      const mesh: THREE.Mesh = target;
+      mesh.updateWorldMatrix(true, false);
+      const box = new THREE.Box3().setFromObject(mesh);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      return [size.x, size.y, size.z];
+    };
+    // Phase 151 (Wave 4, SC-6) — the H40 material side-A: read the RENDERED
+    // material of a node by id (the BakedMesh's built three.js material). Converts
+    // the lossless-material assertion from inference to observation: a baked
+    // textured glTF child's reloaded BakedMesh must report map.image.width>0 +
+    // srgb colorspace on the base map + the resolved color. Read-only (V8 clean).
+    w.__basher_mesh_material = (
+      nodeId: string,
+    ): {
+      color: string | null;
+      hasMap: boolean;
+      mapImageOk: boolean;
+      mapColorSpace: string | null;
+      roughness: number | null;
+      metalness: number | null;
+    } | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Mesh | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o as THREE.Mesh;
+      });
+      if (!target) return null;
+      const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;
+      if (!mat) return null;
+      const std = mat as THREE.MeshStandardMaterial;
+      const map = std.map ?? null;
+      const image = map?.image as { width?: number } | undefined;
+      return {
+        color: std.color ? `#${std.color.getHexString()}` : null,
+        hasMap: map !== null,
+        mapImageOk: Boolean(image && (image.width ?? 0) > 0),
+        mapColorSpace: map ? map.colorSpace : null,
+        roughness: typeof std.roughness === 'number' ? std.roughness : null,
+        metalness: typeof std.metalness === 'number' ? std.metalness : null,
+      };
+    };
     return () => {
       delete w.__basher_mesh_world_scale;
+      delete w.__basher_mesh_world_bounds;
+      delete w.__basher_mesh_material;
     };
   }, [scene]);
   return null;
@@ -439,6 +503,8 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
       return <BoxMeshR value={value} override={override} />;
     case 'SphereMesh':
       return <SphereMeshR value={value} override={override} />;
+    case 'BakedMesh':
+      return <BakedMeshR value={value} override={override} />;
     case 'GltfAsset':
       // #83 gap 2 — per-asset error boundary. A load/parse failure
       // (bad bytes, unsupported extension, missing #82 sibling, Draco
@@ -599,6 +665,153 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
         transparent={mat.transparent}
         wireframe={shading === 'wireframe'}
       />
+    </mesh>
+  );
+}
+
+// Phase 151 — BakedMeshR, the renderer for the Apply-Transform product (#151).
+// THE FIRST renderer that reads geometry from the registry (Box/SphereR build
+// inline via <boxGeometry>/<sphereGeometry>). The §48/V29 handle → registry path
+// comes alive here:
+//   - `useBakedGeometry(value.geometry)` suspends on the first render (the OPFS
+//     read), primes geometryRegistry, then returns the cached BufferGeometry.
+//     The viewport already wraps the scene in <Suspense> (glTF uses it).
+//   - The mesh renders at IDENTITY scale [1,1,1] — the TRS is baked INTO the
+//     verts, so applying value.scale would double-transform (H40 band drift).
+//     position/rotation are kept for re-transform-after-Apply (a baked mesh is
+//     first-class), but a fresh Apply produces identity TRS.
+//   - It feeds the SAME wireframe + MaterialOverride path a Box gets (first-class
+//     scene mesh, V20). Wave 2 built the SCALAR material; Wave 3 (t8) brings the
+//     6 texture-map slots online — built imperatively per `materialClass` so a
+//     baked glTF child reloads LOSSLESS (scalars + every map, correct colorspace).
+//
+// Why a built `THREE.Material` (useMemo) rather than the declarative
+// `<meshStandardMaterial>` BoxMeshR uses: BakedMesh must (a) pick the three ctor
+// from `spec.materialClass` (standard / physical / basic — a basic/unlit material
+// has no roughness/metalness/emissive, the M1 in-guard) and (b) assign up to six
+// suspense-loaded textures with EXPLICIT per-slot colorspace (M5 — a map loaded
+// without sRGB washes out). A declarative element cannot select its own ctor or
+// hold the async-loaded textures cleanly. The material is built fresh per node
+// (single writer V20, same as Box's own material).
+function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: MaterialValue }) {
+  const geom = useBakedGeometry(value.geometry);
+  const shading = useViewportStore((s) => s.shading);
+  const spec = value.material;
+
+  // Suspense-load each of the 6 fixed map slots UNCONDITIONALLY (rules-of-hooks
+  // safe — `useBakedTexture(null)` is a no-op; only present refs suspend). The
+  // OPFS read + decode lives in the loader hook, never in the pure resolver (V29).
+  const mapTex = useBakedTexture(spec.map);
+  const normalTex = useBakedTexture(spec.normalMap);
+  const roughnessTex = useBakedTexture(spec.roughnessMap);
+  const metalnessTex = useBakedTexture(spec.metalnessMap);
+  const aoTex = useBakedTexture(spec.aoMap);
+  const emissiveTex = useBakedTexture(spec.emissiveMap);
+
+  // The override wins on scalar color when present (#99/#124); otherwise the
+  // baked spec's own captured scalars drive the material (a Box bake carries Box
+  // defaults; a glTF bake carries the resolved post-override scalars).
+  const scalar = override
+    ? applyOverride(spec.color, override)
+    : {
+        color: spec.color,
+        roughness: spec.roughness,
+        metalness: spec.metalness,
+        opacity: spec.opacity,
+        emissive: spec.emissive,
+        emissiveIntensity: spec.emissiveIntensity,
+        transparent: spec.transparent,
+      };
+
+  const material = useMemo(() => {
+    // Colorspace per slot (M5): base/emissive maps are sRGB; the data maps
+    // (normal/ao/roughness/metalness) are linear. The texture loader already
+    // restored the captured colorspace from the ref, but assign it AGAIN here so
+    // the render-side contract is explicit and self-documenting at the boundary.
+    const sRGB = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const linear = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
+      return t;
+    };
+
+    if (spec.materialClass === 'basic') {
+      // MeshBasicMaterial (KHR_materials_unlit) — NO roughness/metalness/emissive
+      // (M1 in-guard). Only color + base map + opacity apply.
+      const m = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(scalar.color),
+        opacity: scalar.opacity,
+        transparent: scalar.transparent,
+        wireframe: shading === 'wireframe',
+      });
+      m.map = sRGB(mapTex);
+      return m;
+    }
+
+    const m =
+      spec.materialClass === 'physical'
+        ? new THREE.MeshPhysicalMaterial()
+        : new THREE.MeshStandardMaterial();
+    m.color = new THREE.Color(scalar.color);
+    m.roughness = scalar.roughness;
+    m.metalness = scalar.metalness;
+    m.opacity = scalar.opacity;
+    m.transparent = scalar.transparent;
+    m.emissive = new THREE.Color(scalar.emissive);
+    m.emissiveIntensity = scalar.emissiveIntensity;
+    m.wireframe = shading === 'wireframe';
+    m.map = sRGB(mapTex);
+    m.normalMap = linear(normalTex);
+    m.roughnessMap = linear(roughnessTex);
+    m.metalnessMap = linear(metalnessTex);
+    m.aoMap = linear(aoTex);
+    m.emissiveMap = sRGB(emissiveTex);
+
+    if (spec.materialClass === 'physical' && spec.physical) {
+      const p = m as THREE.MeshPhysicalMaterial;
+      const ph = spec.physical;
+      if (ph.clearcoat !== undefined) p.clearcoat = ph.clearcoat;
+      if (ph.clearcoatRoughness !== undefined) p.clearcoatRoughness = ph.clearcoatRoughness;
+      if (ph.transmission !== undefined) p.transmission = ph.transmission;
+      if (ph.ior !== undefined) p.ior = ph.ior;
+      if (ph.sheen !== undefined) p.sheen = ph.sheen;
+      if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
+    }
+    return m;
+  }, [
+    spec.materialClass,
+    spec.physical,
+    scalar.color,
+    scalar.roughness,
+    scalar.metalness,
+    scalar.opacity,
+    scalar.transparent,
+    scalar.emissive,
+    scalar.emissiveIntensity,
+    shading,
+    mapTex,
+    normalTex,
+    roughnessTex,
+    metalnessTex,
+    aoTex,
+    emissiveTex,
+  ]);
+
+  // Dispose the built material when it is replaced or the node unmounts — it is
+  // owned here (single writer V20), so this renderer owns its lifecycle.
+  useEffect(() => () => material.dispose(), [material]);
+
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      // IDENTITY scale — the transform is baked into the geometry verts (H40).
+      scale={[1, 1, 1]}
+    >
+      <primitive object={geom} attach="geometry" />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
@@ -816,6 +1029,42 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
     });
   }, [cloned, shading]);
+  // P151 (#151, Apply-Transform) — double-render SUPPRESSION. When a glTF child
+  // is baked into a standalone BakedMesh (the Apply atomic composite), the asset
+  // must stop rendering that child by name, or it renders twice. This effect is
+  // the SOLE writer of `.visible` on the clone (a NEW property no TRS/material
+  // writer touches — no V20 collision). It first RESTORES every named child to
+  // visible, then hides the suppressed set, so removing a name (undo) un-hides
+  // the child in the same pass. `Object3D.visible=false` skips render + raycast
+  // for the subtree (three 0.169 propagates down), so a baked parent hides its
+  // descendants too — reversible, no clone surgery. Subscribed to
+  // value.suppressedChildren so the Apply setParam (new array ref) re-fires it.
+  // REF: PLAN.md Wave 4 Task 9; RESEARCH §M7; the GltfChild double-render guard.
+  useEffect(() => {
+    const suppressed = new Set(value.suppressedChildren);
+    for (const name of Object.keys(value.nodeNameMap)) {
+      const child = cloned.getObjectByName(name);
+      if (!child) continue;
+      child.visible = !suppressed.has(name);
+    }
+    // Suppressed names may not be in nodeNameMap (defensive — a baked child's
+    // key always is, but iterate the list too so an out-of-map key still hides).
+    for (const name of suppressed) {
+      const child = cloned.getObjectByName(name);
+      if (child) child.visible = false;
+    }
+  }, [cloned, value.suppressedChildren, value.nodeNameMap]);
+  // P151 (#151, Apply-Transform) — register the mounted, post-override clone in
+  // the PRODUCTION-SAFE live-clone registry so the non-React Apply helper can read
+  // a GltfChild's resolved geometry + material off the exact object the renderer
+  // drew (the bake-what-renders source of truth, H58/H59). NOT DEV-gated (unlike
+  // __basher_gltf_meshes below) — Apply must work in production. Re-registers on
+  // clone swap; unregisters on unmount (guarded so a late unmount can't clobber a
+  // newer asset that re-took the assetRef). REF: gltfCloneRegistry.ts; Wave 4 t10.
+  useEffect(() => {
+    registerGltfClone(value.assetRef, cloned);
+    return () => unregisterGltfClone(value.assetRef, cloned);
+  }, [cloned, value.assetRef]);
   // P7.5 + P7.7 — per-child TRS override (consumer side of the H40
   // boundary-pair). This is the SOLE writer of per-child TRS onto the clone
   // (V20 / H36 / H33 — never add a second). It reads THREE layers and lets the
@@ -977,7 +1226,57 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         roughness: number | null;
         hasMetalnessMap: boolean;
         hasRoughnessMap: boolean;
+        // P151 Wave 4 t11 — the original child's WORLD-space bounds (three-way
+        // verts boundary-pair: original child == resolver baked == rendered baked)
+        // and its render VISIBILITY (suppression: false after the child is baked).
+        worldBounds: [number, number, number];
+        visible: boolean;
+        // P151 Wave 3 t7 (LOKAYATA PROBE) — per-`map` texture-readback diagnostic
+        // on the CLONED child material. The bake (Wave 4) must decide whether it
+        // can copy the ORIGINAL compressed bytes (path 1, lossless) or must fall
+        // back to a canvas readback (path 2). That decision hinges on whether a
+        // source-URI association survives `SkeletonUtils.clone` (RESEARCH §M4 —
+        // a MEDIUM-confidence runtime question). This field reports, for the base
+        // color `map`, which association-bearing surface is actually present so we
+        // OBSERVE the path rather than infer it.
+        mapProbe: {
+          // image dims — the canvas-readback path (2) needs a decoded image.
+          imageWidth: number;
+          imageHeight: number;
+          // path (1) candidates — three.js stores the glTF→texture link in
+          // different places depending on loader/clone behaviour. We report each
+          // independently so the probe shows EXACTLY which survived the clone.
+          hasUserDataSrcUri: boolean; // texture.userData.* sourceURI-ish key
+          hasSourceData: boolean; // texture.source?.data present (Source object)
+          sourceDataUri: string | null; // texture.source.data.src if it is a URI
+          imageSrc: string | null; // texture.image.src if the image is URL-backed
+        } | null;
       }> = [];
+      const probeMap = (map: THREE.Texture | null) => {
+        if (!map) return null;
+        const image = map.image as { width?: number; height?: number; src?: string } | undefined;
+        // three.Texture.userData is an arbitrary bag; a loader/importer may stash
+        // the source URI there. Scan for any key whose name hints at a source URI.
+        const ud = (map.userData ?? {}) as Record<string, unknown>;
+        const udKey = Object.keys(ud).find((k) => /uri|url|src|source|path/i.test(k));
+        // three 0.169 Texture.source is a `Source` wrapper; `.data` is the image.
+        const source = (map as { source?: { data?: { src?: string } } }).source;
+        const sourceData = source?.data;
+        return {
+          imageWidth: image?.width ?? 0,
+          imageHeight: image?.height ?? 0,
+          hasUserDataSrcUri:
+            udKey !== undefined &&
+            typeof ud[udKey] === 'string' &&
+            (ud[udKey] as string).length > 0,
+          hasSourceData: Boolean(sourceData),
+          sourceDataUri:
+            typeof sourceData?.src === 'string' && sourceData.src.length > 0
+              ? sourceData.src
+              : null,
+          imageSrc: typeof image?.src === 'string' && image.src.length > 0 ? image.src : null,
+        };
+      };
       cloned.traverse((child) => {
         const m = child as THREE.Mesh;
         if (!m.isMesh) return;
@@ -999,6 +1298,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             metalnessMap?: THREE.Texture | null;
             roughnessMap?: THREE.Texture | null;
           } | null;
+          // P151 Wave 4 t11 — world bounds of THIS child mesh + its render
+          // visibility (false once suppressed by the bake). `visible` walks up the
+          // parent chain because three skips the subtree when ANY ancestor is
+          // hidden; getObjectByName(name).visible alone would miss that.
+          m.updateWorldMatrix(true, false);
+          const wb = new THREE.Vector3();
+          new THREE.Box3().setFromObject(m).getSize(wb);
+          let vis = true;
+          for (let o: THREE.Object3D | null = m; o; o = o.parent) {
+            if (!o.visible) {
+              vis = false;
+              break;
+            }
+          }
           summary.push({
             name: m.name ?? '',
             hasMap: map !== null,
@@ -1008,6 +1321,9 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             roughness: typeof std?.roughness === 'number' ? std.roughness : null,
             hasMetalnessMap: Boolean(std?.metalnessMap),
             hasRoughnessMap: Boolean(std?.roughnessMap),
+            worldBounds: [wb.x, wb.y, wb.z],
+            visible: vis,
+            mapProbe: probeMap(map),
           });
         }
       });

@@ -60,6 +60,22 @@ export const GltfAssetParams = z.object({
       }),
     )
     .default([]),
+  /**
+   * P151 (Apply-Transform, issue #151) — the sanitised child KEYS (same key
+   * space as `nodeNameMap`) whose RENDER is suppressed because the child was
+   * baked into a standalone `BakedMesh`. `GltfAssetR` sets
+   * `clone.getObjectByName(key).visible = false` for each entry, so the asset
+   * stops rendering that child by name (no double-render with the BakedMesh).
+   * This is an Op-backed param: the Apply composite appends the key here in the
+   * SAME atomic `setParam`, and undo's inverse `setParam` un-suppresses (the
+   * child renders again). `Object3D.visible=false` skips render + raycast for
+   * the subtree (three propagates down) — reversible, no clone surgery, and a
+   * NEW writer of `.visible` only (no V20 collision with the TRS/material
+   * writers). `.default([])` makes it additive: pre-151 saves hydrate with an
+   * empty list (V10 / H14-clean — no schema-version bump). Does NOT touch
+   * nodeNameMap / childHierarchy (P7.7 sibling addressing stays intact, M7).
+   */
+  suppressedChildren: z.array(z.string()).default([]),
 });
 export type GltfAssetParams = z.infer<typeof GltfAssetParams>;
 
@@ -84,6 +100,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
       nodeNameMap: params.nodeNameMap,
       childHierarchy: params.childHierarchy,
       skins: params.skins,
+      suppressedChildren: params.suppressedChildren,
       transformClip: (inputs.transformClip as TransformClipValue | undefined) ?? null,
     };
   },

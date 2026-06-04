@@ -10,6 +10,7 @@ import { AnimationLayerNode } from './AnimationLayer';
 // alphabetised so a re-sort doesn't produce noise.
 // (TransformClipNode is imported later in the alphabetical block.)
 import { AreaLightNode } from './AreaLight';
+import { BakedMeshNode } from './BakedMesh';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
@@ -71,6 +72,10 @@ const ALL: NodeDefinition[] = [
   // non-producing addressing satellite; emitted one-per-child at import
   // (gltfImportChain). Must be registered before its addNode validates (V1).
   GltfChildNode as unknown as NodeDefinition,
+  // Phase 151 — the product of Apply-Transform (issue #151). A pure mesh
+  // producer carrying a baked GeometryRef handle + identity TRS + rich material.
+  // Registered in the Meshes block so its addNode validates at Apply time (V1).
+  BakedMeshNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,

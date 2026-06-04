@@ -39,3 +39,26 @@ describe('GltfAsset childHierarchy (#91 A3)', () => {
     expect(params.childHierarchy).toEqual({});
   });
 });
+
+describe('GltfAsset suppressedChildren (#151 W4 t9)', () => {
+  it('threads suppressedChildren through evaluate into the value', () => {
+    const params = GltfAssetParams.parse({
+      assetRef: 'assets/textured.glb',
+      suppressedChildren: ['Cube', 'Plane'],
+    });
+    const value = GltfAssetNode.evaluate(params, {}) as GltfAssetValue;
+    expect(value.suppressedChildren).toEqual(['Cube', 'Plane']);
+  });
+
+  it('pre-151 save (no suppressedChildren) hydrates with an empty list — no throw', () => {
+    // The shape a project saved before 151 carries: assetRef + the 7.x fields,
+    // no suppression. The .default([]) must fill it cleanly (V10/H14 additive).
+    const params = GltfAssetParams.parse({
+      assetRef: 'assets/old.glb',
+      nodeNameMap: { Cube: 'n_x' },
+    });
+    expect(params.suppressedChildren).toEqual([]);
+    const value = GltfAssetNode.evaluate(params, {}) as GltfAssetValue;
+    expect(value.suppressedChildren).toEqual([]);
+  });
+});

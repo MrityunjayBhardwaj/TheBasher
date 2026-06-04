@@ -127,6 +127,48 @@ describe('resolveEvaluatedMesh', () => {
     expect(mesh!.transform.rotation).toEqual([...expected.rotation]);
   });
 
+  it('projects a BakedMesh: verbatim baked handle + identity transform + rich material (4th producer)', () => {
+    let state = buildDefaultDagState();
+    const geometry = {
+      key: 'baked|deadbeef-8',
+      kind: 'baked' as const,
+      descriptor: { kind: 'baked' as const, hash: 'deadbeef', vertexCount: 8 },
+    };
+    const material = {
+      materialClass: 'standard' as const,
+      color: '#5af07a',
+      roughness: 1,
+      metalness: 0,
+      opacity: 1,
+      transparent: false,
+      emissive: '#000000',
+      emissiveIntensity: 1,
+      map: null,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+      aoMap: null,
+      emissiveMap: null,
+    };
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_baked',
+      nodeType: 'BakedMesh',
+      params: { geometry, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], material },
+    }).next;
+
+    const mesh = resolveEvaluatedMesh(state, 'n_baked', ctxAt(0));
+    expect(mesh).not.toBeNull();
+    // The handle is returned VERBATIM — no parallel walk, no re-derivation.
+    expect(mesh!.geometry).toEqual(geometry);
+    expect(mesh!.geometry.kind).toBe('baked');
+    // Identity transform — the TRS is baked into the verts (renderer applies identity).
+    expect(mesh!.transform.position).toEqual([0, 0, 0]);
+    expect(mesh!.transform.scale).toEqual([1, 1, 1]);
+    // The ONE rich material face (M6).
+    expect(mesh!.material).toEqual(material);
+  });
+
   it('returns null for a non-mesh node (identity-null, no crash)', () => {
     const state = buildDefaultDagState();
     expect(resolveEvaluatedMesh(state, 'n_camera', ctxAt(0))).toBeNull();

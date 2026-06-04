@@ -22,6 +22,12 @@ import {
   saveCurrent,
 } from './boot';
 import { addPrimitive } from './AddMenu';
+import {
+  dispatchApplyTransform,
+  isTransformAnimated,
+  type ApplyMask,
+} from './animate/dispatchApplyTransform';
+import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
@@ -349,7 +355,14 @@ function onSettings() {
 // MenuBar
 // ---------------------------------------------------------------------------
 
-type OpenMenu = null | 'file' | 'add' | 'edit' | 'select' | 'view';
+type OpenMenu = null | 'file' | 'add' | 'edit' | 'object' | 'select' | 'view';
+
+const APPLY_MASKS: { mask: ApplyMask; label: string }[] = [
+  { mask: 'all', label: 'All Transforms' },
+  { mask: 'location', label: 'Location' },
+  { mask: 'rotation', label: 'Rotation' },
+  { mask: 'scale', label: 'Scale' },
+];
 
 const ADD_GROUPS: {
   label: string;
@@ -412,6 +425,19 @@ export function MenuBar() {
 
   // Distinct node types for the Select → By Type submenu.
   const distinctTypes = Array.from(new Set(Object.values(dag.nodes).map((n) => n.type))).sort();
+
+  // Phase 151 — the Object ▸ Apply affordance. A single selected primitive
+  // (BoxMesh/SphereMesh) is the only Apply target in Wave 2 (glTF-child = Wave 4).
+  const selectedId = useSelectionStore((s) =>
+    s.selectedNodeIds.size === 1 ? s.selectedNodeId : null,
+  );
+  const currentFrame = useTimeStore((s) => s.frame);
+  const selectedNode = selectedId ? dag.nodes[selectedId] : undefined;
+  const isPrimitive = selectedNode?.type === 'BoxMesh' || selectedNode?.type === 'SphereMesh';
+  const applyAnimated = Boolean(
+    selectedId && isPrimitive && isTransformAnimated(dag, selectedId, currentFrame),
+  );
+  const applyDisabled = !selectedId || !isPrimitive || applyAnimated;
 
   return (
     <div
@@ -520,6 +546,41 @@ export function MenuBar() {
           testId="menu-edit-reset"
         />
         <Item label="Settings…" onSelect={onSettings} testId="menu-edit-settings" />
+      </Menu>
+
+      <Menu
+        label="Object"
+        testId="menu-object"
+        open={open === 'object'}
+        onOpen={() => setOpen('object')}
+        onClose={close}
+      >
+        {/* Phase 151 — Apply ▸ {All / Location / Rotation / Scale}. Bakes the
+            selected primitive's TRS into geometry → a BakedMesh (one undo). The
+            whole submenu disables when no single primitive is selected OR its
+            transform is animated (D-04). Ctrl+A stays select-all (D-03): no
+            keyboard binding here. */}
+        <Submenu label="Apply" testId="menu-object-apply">
+          {applyAnimated ? (
+            <div
+              className="px-3 py-1.5 text-[11px] text-fg/40"
+              data-testid="menu-object-apply-animated-msg"
+            >
+              Apply unavailable — transform is animated (#153/#149)
+            </div>
+          ) : null}
+          {APPLY_MASKS.map(({ mask, label }) => (
+            <Item
+              key={mask}
+              label={label}
+              disabled={applyDisabled}
+              onSelect={() => {
+                if (selectedId) void dispatchApplyTransform(selectedId, mask);
+              }}
+              testId={`menu-object-apply-${mask}`}
+            />
+          ))}
+        </Submenu>
       </Menu>
 
       <Menu
