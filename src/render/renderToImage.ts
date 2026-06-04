@@ -125,7 +125,15 @@ async function rgbaToPngBlob(
  * return a PNG Blob. Always restores renderer state + chrome visibility.
  */
 export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<Blob> {
-  const { gl, scene, pose, width, height, postFx } = opts;
+  const { gl, scene, pose, postFx } = opts;
+  // Clamp the resolution to the GPU's max texture size, preserving aspect — a
+  // user can set width/height to anything ≥1 (the zod bound), and an oversized
+  // WebGLRenderTarget loses the GL context / OOMs. Scale BOTH dims by one
+  // factor so the framing (camera aspect) is unchanged.
+  const maxTex = gl.capabilities.maxTextureSize;
+  const fit = Math.min(1, maxTex / Math.max(opts.width, opts.height));
+  const width = Math.max(1, Math.floor(opts.width * fit));
+  const height = Math.max(1, Math.floor(opts.height * fit));
   const camera = buildRenderCamera(pose, width, height);
 
   // Hide editor chrome — a render shows DAG content only (parity with what
