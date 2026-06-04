@@ -42,7 +42,7 @@ import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
-import { useTransientEditStore } from './stores/transientEditStore';
+import { useTransientEditStore, keyOf } from './stores/transientEditStore';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   dispatchApplyTransform,
@@ -210,14 +210,23 @@ function ParamDiamond({
   const dagState = useDagStore((s) => s.state);
 
   const animState = paramAnimationState(dagState, nodeId, paramPath, frame);
+  // #149 F1 — the 4th color (orange). SUBSCRIBED selector (not a getState
+  // snapshot) so the diamond re-renders the moment the transient is set/cleared
+  // (B12). A transient only exists on an ANIMATED param (routeAnimatedGrab
+  // returns false for un-animated), so it always coincides with animState !==
+  // 'none' — but orange wins display regardless (the unsaved edit is the most
+  // urgent signal, the Blender contract). This is FLAG-A's replacement safety
+  // net: orange = "held but not persisted" (supersedes the removed reject alert).
+  const isTransient = useTransientEditStore((s) => s.edits.has(keyOf(nodeId, paramPath)));
 
-  const glyph = animState === 'none' ? '◇' : '◆';
-  const colorClass =
-    animState === 'on-key'
-      ? 'text-record'
+  const glyph = animState === 'none' && !isTransient ? '◇' : '◆';
+  const colorClass = isTransient
+    ? 'text-warn' // orange — edited-but-not-keyed (transient), TOP of precedence
+    : animState === 'on-key'
+      ? 'text-record' // yellow — keyed here
       : animState === 'animated'
-        ? 'text-accent'
-        : 'text-fg/40 hover:text-accent';
+        ? 'text-accent' // green — animated, no key here
+        : 'text-fg/40 hover:text-accent'; // gray — not animated
 
   const onActivate = (alt: boolean) => {
     // DELETE path (unchanged): an on-key click OR Alt-click on an animated param
@@ -259,6 +268,7 @@ function ParamDiamond({
       type="button"
       data-testid={`inspector-diamond-${nodeId}-${paramPath}`}
       data-anim-state={animState}
+      data-transient={isTransient || undefined}
       aria-label={`Toggle keyframe for ${paramPath} (${animState})`}
       title="Click to key/unkey at the playhead. Alt-click to delete a key."
       className={`select-none px-1 text-[11px] leading-none ${colorClass} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
