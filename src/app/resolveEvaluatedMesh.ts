@@ -10,10 +10,15 @@
 //   CAPABILITY, not a privilege.
 //
 // The ONE band, no drift (H40 / V20):
-//   - box/sphere: the TRS band is the node's Op-backed params
-//     (position/rotation/scale). `scale` defaults to identity ([1,1,1]) so a
-//     pre-migration (Wave 2) node still resolves green (C-1 — the V10/H14 guard
-//     ALSO at the evaluator + every consumer that destructures scale).
+//   - box/sphere: the TRS band is DELEGATED to `resolveEvaluatedTransform` (#153)
+//     — the same animation-tracking walk the renderer/gizmo/inspector use, which
+//     unwraps the AnimationLayer patched clone. When there is no render output to
+//     walk (the bare-node case), we fall back to the node's own Op-backed params
+//     (position/rotation/scale); `scale` defaults to identity ([1,1,1]) so a
+//     pre-migration node still resolves green (C-1 — the V10/H14 guard ALSO at
+//     the evaluator + every consumer that destructures scale). This closes the
+//     latent H40 where a static param-read diverged from an animated render for
+//     the #2/#3 (material/UV) consumers, one indirection deeper. No parallel walk.
 //   - GltfChild: the transform is delegated to `resolveEvaluatedTransform`
 //     (which funnels through the ONE `resolveGltfChildTrs` layering primitive —
 //     manual → baked → clip → base). When there is no render output to walk
@@ -56,6 +61,28 @@ function isMaterialSpec(v: unknown): v is InlineMaterialSpec {
 }
 
 /**
+ * The primitive (Box/Sphere) transform band (#153). Prefer the full evaluated
+ * walk (`resolveEvaluatedTransform` unwraps the AnimationLayer patched clone — the
+ * renderer's exact, animation-tracking transform). When there is no render output
+ * to walk (the bare-node case — node not in the rendered scene), fall back to the
+ * node's own Op-backed params. Mirrors the GltfChild branch; never a parallel walk.
+ * Closes the latent H40 where a static param-read diverged from an animated render.
+ */
+function resolvePrimitiveTransform(
+  state: DagState,
+  selectedId: string,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+  raw: MeshTransform,
+): MeshTransform {
+  const walked = resolveEvaluatedTransform(state, selectedId, ctx, cache);
+  if (walked && walked.rotation && walked.scale) {
+    return { position: walked.position, rotation: walked.rotation, scale: walked.scale };
+  }
+  return raw;
+}
+
+/**
  * Project the selected node into ONE `EvaluatedMesh`, or null when the node is
  * not a mesh producer (identity-null — same no-crash contract as
  * `resolveEvaluatedTransform`). Pure: no store reads; the caller passes
@@ -85,11 +112,11 @@ export function resolveEvaluatedMesh(
       kind: 'box',
       descriptor: { kind: 'box', size },
     };
-    const transform: MeshTransform = {
+    const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
       position: p.position,
       rotation: p.rotation,
-      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard
-    };
+      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard (fallback base)
+    });
     return {
       geometry,
       uvs: null,
@@ -127,11 +154,11 @@ export function resolveEvaluatedMesh(
         heightSegments: p.heightSegments,
       },
     };
-    const transform: MeshTransform = {
+    const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
       position: p.position,
       rotation: p.rotation,
-      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard
-    };
+      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard (fallback base)
+    });
     return {
       geometry,
       uvs: null,
