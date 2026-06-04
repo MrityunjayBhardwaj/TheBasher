@@ -35,6 +35,8 @@ import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
+import { CameraHelper } from './CameraHelpers';
+import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera';
 import { degVec3ToRad } from './rotation';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
@@ -113,6 +115,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // here so the top-level result re-renders when the user toggles modes.
   const shading = useViewportStore((s) => s.shading);
   const showLightHelpers = shading !== 'rendered';
+  // #165: editor-only camera frustums hide in rendered mode (production
+  // parity) and the active camera's own frustum hides while looking through
+  // it (you're inside it — drawing it would clutter the preview).
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
   const target = state.outputs[outputName];
   if (!target) return null;
@@ -138,6 +144,14 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       ? (sceneNode.inputs.lights as { node: string; socket: string }[])
       : [];
 
+  // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
+  // object, not just the active one). They are NOT in value.scene.children —
+  // only one camera is wired to scene.camera — so we read them from state.
+  const cameraNodeIds = Object.values(state.nodes)
+    .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
+    .map((n) => n.id);
+  const activeCameraId = selectActiveCameraNode(state)?.id ?? null;
+
   return (
     <>
       {/* #165: the DAG camera no longer mounts a makeDefault render camera
@@ -153,6 +167,17 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         ? value.scene.lights.map((light, i) => (
             <LightHelper key={`helper:${i}`} value={light} pickId={lightRefs[i]?.node ?? null} />
           ))
+        : null}
+      {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;
+          the active camera's frustum also hides while looking through it. */}
+      {showLightHelpers
+        ? cameraNodeIds.map((id) => {
+            const active = id === activeCameraId;
+            if (active && lookThrough) return null;
+            const pose = cameraPoseFromNode(state.nodes[id]);
+            if (!pose) return null;
+            return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
+          })
         : null}
       {value.scene.children.map((child, i) => {
         const pickId = childRefs[i]?.node ?? null;
