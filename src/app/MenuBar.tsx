@@ -31,6 +31,7 @@ import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
+import { renderActiveProjectToPng } from './renderImageAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -467,6 +468,11 @@ export function MenuBar() {
           testId="menu-file-save"
         />
         <Divider />
+        <Item
+          label="Render Image…"
+          onSelect={() => void renderActiveProjectToPng()}
+          testId="menu-file-render-image"
+        />
         <Item
           label="Export Scene as glTF…"
           onSelect={onExportGltf}

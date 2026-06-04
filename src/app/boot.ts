@@ -162,6 +162,12 @@ export function boot(): Promise<void> {
       const w = window as unknown as Record<string, unknown>;
       w.__basher_dag = useDagStore;
       w.__basher_time = useTimeStore;
+      // #168 render seam — render the production frame to a PNG data URL (no
+      // download) so the falsifiable e2e can decode pixels and assert the
+      // render isn't blank (H68) / is the right size / excludes chrome.
+      void import('./renderImageAction').then((m) => {
+        w.__basher_render_png = m.renderActiveProjectToDataUrl;
+      });
       // Lazy import (top-level cycle would tangle stores into boot's
       // dependency graph). The dynamic import is sync-resolved by Vite at
       // build time; only the shape is needed here.
