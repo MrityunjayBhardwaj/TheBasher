@@ -26,8 +26,9 @@
 
 import * as THREE from 'three';
 import { useDagStore } from '../../core/dag/store';
+import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
-import type { Op, OpSource, EvalCtx } from '../../core/dag/types';
+import type { Op, EvalCtx } from '../../core/dag/types';
 import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/types';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import * as geometryRegistry from '../geometryRegistry';
