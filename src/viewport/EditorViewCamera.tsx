@@ -113,6 +113,15 @@ export function EditorViewCamera() {
         lookThrough: useViewportStore.getState().lookThroughCamera,
       };
     };
+    // Project a world point through the REAL view camera to NDC ([-1,1], with
+    // z<1 meaning in front). The #165 frustum-click e2e uses this to find a
+    // camera node's on-screen position deterministically, then clicks it.
+    w.__basher_project_ndc = (xyz: [number, number, number]) => {
+      const cam = ref.current;
+      if (!cam) return null;
+      const v = new THREE.Vector3(xyz[0], xyz[1], xyz[2]).project(cam);
+      return [v.x, v.y, v.z];
+    };
   }
 
   return (
