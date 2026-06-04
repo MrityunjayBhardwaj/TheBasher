@@ -55,7 +55,7 @@ function toBakedColorSpace(cs: string): BakedTextureRef['colorSpace'] {
 }
 
 /** Inverse of {@link toBakedColorSpace}: the ref token → a three colorspace. */
-function fromBakedColorSpace(cs: BakedTextureRef['colorSpace']): string {
+function fromBakedColorSpace(cs: BakedTextureRef['colorSpace']): THREE.ColorSpace {
   if (cs === 'srgb') return THREE.SRGBColorSpace;
   if (cs === 'srgb-linear') return THREE.LinearSRGBColorSpace;
   return THREE.NoColorSpace;
@@ -230,8 +230,8 @@ export async function loadBakedTexture(
     // NoColorSpace + flipY=true, which is wrong for glTF maps.
     texture.colorSpace = fromBakedColorSpace(ref.colorSpace);
     texture.flipY = ref.flipY;
-    texture.wrapS = ref.wrapS;
-    texture.wrapT = ref.wrapT;
+    texture.wrapS = ref.wrapS as THREE.Wrapping;
+    texture.wrapT = ref.wrapT as THREE.Wrapping;
     texture.needsUpdate = true;
     return texture;
   } finally {
