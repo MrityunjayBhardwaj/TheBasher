@@ -123,6 +123,49 @@ export function resolveChannel(
 }
 
 /**
+ * #149 E1/E2 — commit ONE param's keyframe at the current seconds, capturing the
+ * HELD TRANSIENT value (the orange edit) when present, else the authored value.
+ * The shared insert fork for BOTH the NPanel diamond (per-param) AND the K/I
+ * viewport gesture (per transform band) — so they cannot drift (checker I-6):
+ *   - un-animated (no channel) → dispatchFirstKeyComposite (the first-key path).
+ *   - animated → mutator.timeline.keyframe at the current seconds (add/update).
+ * On success, the slot is released (the field leaves orange; a re-scrub will not
+ * revert because it is now a real keyframe). Reuses the EXISTING insert paths
+ * verbatim — NO new insert path, NO buildKeyframeInsertOp (single-channel).
+ */
+export function keyParamFromTransient(
+  nodeId: string,
+  paramPath: string,
+  authoredValue: unknown,
+): { ok: true } | { ok: false; reason: string } {
+  const seconds = useTimeStore.getState().seconds;
+  const frame = useTimeStore.getState().frame;
+  const dagState = useDagStore.getState().state;
+  const transient = useTransientEditStore.getState().get(nodeId, paramPath);
+  const v = transient ? transient.value : authoredValue;
+
+  let result: { ok: true } | { ok: false; reason: string };
+  if (paramAnimationState(dagState, nodeId, paramPath, frame) === 'none') {
+    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value: v, seconds });
+  } else {
+    const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
+    if (!resolved) {
+      result = { ok: false, reason: `Channel not found for ${nodeId}.${paramPath}.` };
+    } else {
+      result = dispatchMutatorFromUI(
+        'mutator.timeline.keyframe',
+        { channelId: resolved.channelId, time: seconds, value: v },
+        `Key ${nodeId}.${paramPath}`,
+      );
+    }
+  }
+  if (result.ok && transient) {
+    useTransientEditStore.getState().clear(nodeId, paramPath);
+  }
+  return result;
+}
+
+/**
  * THE single Auto-Key commit chokepoint (Phase 7, Wave D / D4).
  *
  * Called by every inspector value-commit handler (NumericField +

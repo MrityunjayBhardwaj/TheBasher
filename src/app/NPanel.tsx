@@ -42,14 +42,20 @@ import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { useTimeStore } from './stores/timeStore';
-import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './animate/dispatchMutator';
+import { useTransientEditStore } from './stores/transientEditStore';
+import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   dispatchApplyTransform,
   isTransformAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
 import { paramAnimationState } from './animate/paramAnimationState';
-import { autoKeyCommit, resolveChannel, routeAnimatedGrab } from './animate/autoKeyCommit';
+import {
+  autoKeyCommit,
+  keyParamFromTransient,
+  resolveChannel,
+  routeAnimatedGrab,
+} from './animate/autoKeyCommit';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -214,51 +220,35 @@ function ParamDiamond({
         : 'text-fg/40 hover:text-accent';
 
   const onActivate = (alt: boolean) => {
-    const seconds = useTimeStore.getState().seconds;
-    let result: { ok: true } | { ok: false; reason: string };
-
-    if (animState === 'none') {
-      result = dispatchFirstKeyComposite({
-        targetId: nodeId,
-        paramPath,
-        value,
-        seconds,
-      });
-    } else {
+    // DELETE path (unchanged): an on-key click OR Alt-click on an animated param
+    // removes the on-key sample (Blender's toggle). Off-key Alt is a silent no-op.
+    if (animState !== 'none' && (animState === 'on-key' || alt)) {
       const resolved = resolveChannel(nodes, nodeId, paramPath, frame);
       if (!resolved) {
-        // Should not happen (animState !== 'none' ⇒ channel exists) but
-        // never mutate-and-pray — surface the inconsistency.
-        result = { ok: false, reason: 'Channel not found for animated param.' };
-      } else if (animState === 'on-key' || alt) {
-        // Delete the on-key sample. Use the channel's exact stored
-        // SECONDS for the sample on this frame (frame-rounded match).
-        const t =
-          resolved.onKeySeconds ??
-          // Alt-click on an off-key frame: nothing to delete here —
-          // Blender Alt-I is a silent no-op off a key.
-          null;
-        if (t === null) {
-          result = { ok: true };
-        } else {
-          result = dispatchMutatorFromUI(
-            'mutator.timeline.removeKeyframes',
-            { channelId: resolved.channelId, scope: { time: t } },
-            `Delete key ${nodeId}.${paramPath}`,
-          );
-        }
-      } else {
-        // 'animated' off-key → add a key at the current seconds.
-        result = dispatchMutatorFromUI(
-          'mutator.timeline.keyframe',
-          { channelId: resolved.channelId, time: seconds, value },
-          `Key ${nodeId}.${paramPath}`,
-        );
+        // eslint-disable-next-line no-alert
+        window.alert?.('Channel not found for animated param.');
+        return;
       }
+      const t = resolved.onKeySeconds ?? null;
+      if (t === null) return; // Alt off-key → silent no-op
+      const del = dispatchMutatorFromUI(
+        'mutator.timeline.removeKeyframes',
+        { channelId: resolved.channelId, scope: { time: t } },
+        `Delete key ${nodeId}.${paramPath}`,
+      );
+      if (!del.ok) {
+        // eslint-disable-next-line no-alert
+        window.alert?.(del.reason);
+      }
+      return;
     }
 
+    // INSERT/KEY path — #149 E1: the SHARED fork (keyParamFromTransient) captures
+    // the HELD TRANSIENT value (the orange edit) when present, else the authored
+    // `value`, then clears the slot on success. The SAME helper K/I uses (E2), so
+    // the diamond and the viewport gesture cannot drift.
+    const result = keyParamFromTransient(nodeId, paramPath, value);
     if (!result.ok) {
-      // Surface the rejection — never silently swallow (C2 constraint).
       // eslint-disable-next-line no-alert
       window.alert?.(result.reason);
     }
