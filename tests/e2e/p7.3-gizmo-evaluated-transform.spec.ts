@@ -51,6 +51,13 @@ interface BasherWindow {
     mode: 'translate' | 'rotate' | 'scale',
     target: [number, number, number],
   ) => void;
+  __basher_transient?: {
+    getState: () => {
+      get: (n: string, p: string) => { value: unknown } | undefined;
+      has: (n: string, p: string) => boolean;
+      clearAll: () => void;
+    };
+  };
 }
 
 const V = (a: number[] | null) => JSON.stringify(a);
@@ -334,19 +341,22 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
     expect(after.boxPos).toEqual(before.boxPos);
   });
 
-  test('grab → Auto-Key OFF rejects: ZERO ops, reason surfaced (NET-NEW, FLAG-A)', async ({
+  test('grab → Auto-Key OFF holds a transient: ZERO ops, NO alert (FLAG-A superseded #149)', async ({
     page,
   }) => {
     await seedAnimatedCube(page);
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
+      w.__basher_transient!.getState().clearAll();
       w.__basher_time!.getState().pause();
       w.__basher_time!.getState().setTime(1);
       w.__basher_selection!.getState().select('n_box');
       const ak = w.__basher_autokey!.getState();
       if (ak.enabled) ak.toggle(); // Auto-Key OFF
     });
-    // Spy window.alert (the NET-NEW OFF reject — NPanel is silent on OFF).
+    // Spy window.alert — issue #149 SUPERSEDES the OFF reject alert with a held
+    // transient. The alert must NOT fire (it would mean the edit is rejected,
+    // not held). The transient + the render overlay are the replacement.
     await page.evaluate(() => {
       const ww = window as unknown as { __alertMsgs: string[]; alert: (m?: string) => void };
       ww.__alertMsgs = [];
@@ -362,24 +372,26 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
       (window as unknown as BasherWindow).__basher_gizmo_grab!('translate', [9, 0, 0]);
     });
 
-    const { dagAfter, alerts } = await page.evaluate(() => {
+    const { dagAfter, alerts, transient } = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       const ww = window as unknown as { __alertMsgs: string[] };
       return {
         dagAfter: JSON.stringify(w.__basher_dag!.getState().state.nodes),
         alerts: ww.__alertMsgs,
+        transient: w.__basher_transient!.getState().get('n_box', 'position')?.value ?? null,
       };
     });
     console.log(
-      `[P7.3 grab-OFF] alerts=${JSON.stringify(alerts)} dagChanged=${dagAfter !== dagBefore}`,
+      `[P7.3 grab-OFF] alerts=${JSON.stringify(alerts)} transient=${JSON.stringify(transient)} dagChanged=${dagAfter !== dagBefore}`,
     );
 
-    // ZERO ops — the DAG is byte-unchanged.
+    // ZERO ops — the DAG is byte-unchanged (the edit is held, not committed; H36).
     expect(dagAfter).toBe(dagBefore);
-    // The reject reason surfaced (the NET-NEW behavior — its absence, e.g.
-    // if the alert were wrongly deleted as "redundant", fails here loudly).
-    expect(alerts.length).toBe(1);
-    expect(alerts[0].toLowerCase()).toMatch(/animated|auto-key/);
+    // NO alert — the reject is superseded by the transient hold (#149). An alert
+    // here would mean the edit was rejected (the old FLAG-A behavior).
+    expect(alerts.length).toBe(0);
+    // The edit is HELD as a transient (the orange dirty state's backing store).
+    expect(transient).toEqual([9, 0, 0]);
   });
 
   test('paused vs playing (D-03): display-follows while playing, grab is a no-op while playing', async ({

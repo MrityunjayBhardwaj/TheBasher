@@ -324,6 +324,13 @@ export function boot(): Promise<void> {
       void import('./stores/autoKeyStore').then((m) => {
         w.__basher_autokey = m.useAutoKeyStore;
       });
+      // #149 — the transient-edit store exposed so the boundary-pair / 4-color
+      // / clear-on-scrub specs can observe the held edit (the orange dirty
+      // state) without depending on the inspector chrome. Same K12 dev-seam
+      // pattern as __basher_autokey.
+      void import('./stores/transientEditStore').then((m) => {
+        w.__basher_transient = m.useTransientEditStore;
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
