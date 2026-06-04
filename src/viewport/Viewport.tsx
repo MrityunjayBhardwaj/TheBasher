@@ -158,19 +158,23 @@ export function Viewport() {
               orient drags and place objects relative to a stable reference.
               cellSize/sectionSize follow Blender's "grid + sub-grid" idiom. */}
           {gridVisible ? (
-            <Grid
-              args={[40, 40]}
-              cellSize={1}
-              cellThickness={0.6}
-              cellColor="#2a2a2a"
-              sectionSize={5}
-              sectionThickness={1.2}
-              sectionColor="#3a3a4a"
-              fadeDistance={40}
-              fadeStrength={1.5}
-              infiniteGrid={false}
-              position={[0, -0.001, 0]}
-            />
+            // editorChrome: the floor grid is an editor orientation aid, never
+            // part of a render (#168).
+            <group userData={{ editorChrome: true }}>
+              <Grid
+                args={[40, 40]}
+                cellSize={1}
+                cellThickness={0.6}
+                cellColor="#2a2a2a"
+                sectionSize={5}
+                sectionThickness={1.2}
+                sectionColor="#3a3a4a"
+                fadeDistance={40}
+                fadeStrength={1.5}
+                infiniteGrid={false}
+                position={[0, -0.001, 0]}
+              />
+            </group>
           ) : null}
           {/* Editor-only fill rig — gated on viewportStore.shading. Does
               NOT enter the DAG; production renders bypass it. */}

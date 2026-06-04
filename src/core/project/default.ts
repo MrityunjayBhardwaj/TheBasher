@@ -45,7 +45,7 @@ const DEFAULT_OPS: Op[] = [
     type: 'addNode',
     nodeId: 'n_render',
     nodeType: 'RenderOutput',
-    params: { postFx: { tonemap: 'ACES', smaa: true } },
+    params: { postFx: { tonemap: 'ACES', smaa: true }, width: 1920, height: 1080 },
   },
   {
     type: 'connect',
