@@ -418,6 +418,7 @@ export function MenuBar() {
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   const shading = useViewportStore((s) => s.shading);
   const setShading = useViewportStore((s) => s.setShading);
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
   const setSpace = useEditorStore((s) => s.setSpace);
   const mode = useModeStore((s) => s.mode);
@@ -644,6 +645,12 @@ export function MenuBar() {
         />
         <Item label="Frame All" shortcut="Home" onSelect={frameAll} testId="menu-view-frame-all" />
         <Divider />
+        <Item
+          label={lookThrough ? '✓ Look Through Camera' : '   Look Through Camera'}
+          shortcut="0"
+          onSelect={() => useViewportStore.getState().toggleLookThroughCamera()}
+          testId="menu-view-look-through"
+        />
         <Item
           label="Camera-from-View"
           shortcut={`${cmdKeyLabel}+Shift+C`}

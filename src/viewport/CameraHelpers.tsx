@@ -121,17 +121,11 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   const selected = pickId != null && pickId === selectedId;
   const color = selected ? COLOR_SELECTED : active ? COLOR_ACTIVE : COLOR_INACTIVE;
 
+  const [px, py, pz] = pose.position;
+  const [lx, ly, lz] = pose.lookAt;
   const quat = useMemo(
-    () => frustumQuaternion(pose.position, pose.lookAt),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      pose.position[0],
-      pose.position[1],
-      pose.position[2],
-      pose.lookAt[0],
-      pose.lookAt[1],
-      pose.lookAt[2],
-    ],
+    () => frustumQuaternion([px, py, pz], [lx, ly, lz]),
+    [px, py, pz, lx, ly, lz],
   );
 
   const segs = useMemo(

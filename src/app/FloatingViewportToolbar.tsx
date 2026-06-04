@@ -165,6 +165,8 @@ export function FloatingViewportToolbar(): ReactNode {
   const snapStep = useViewportStore((s) => s.snapStep);
   const toggleSnapEnabled = useViewportStore((s) => s.toggleSnapEnabled);
   const setSnapStep = useViewportStore((s) => s.setSnapStep);
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
+  const toggleLookThroughCamera = useViewportStore((s) => s.toggleLookThroughCamera);
 
   // D-UX-9 chrome-hide: R8 vanishes in director mode. Self-gated rather
   // than Layout.tsx-gated because R8 is a viewport overlay, not a grid
@@ -223,6 +225,17 @@ export function FloatingViewportToolbar(): ReactNode {
           {s.label}
         </Chip>
       ))}
+      <Divider />
+      {/* #165: look through the active scene camera (Blender Numpad 0). */}
+      <Chip
+        active={lookThrough}
+        title="Look through active camera (0)"
+        ariaLabel={lookThrough ? 'Exit camera view' : 'Look through active camera'}
+        testId="floating-toolbar-look-through"
+        onClick={toggleLookThroughCamera}
+      >
+        cam
+      </Chip>
       <Divider />
       <Chip
         active={snapEnabled}
