@@ -58,8 +58,6 @@ interface BasherWindow {
   __basher_gizmo_grab?: (mode: 'translate' | 'rotate' | 'scale', target: Vec3Tuple) => void;
 }
 
-const ctxAt = (s: number) => ({ time: { frame: Math.round(s * 60), seconds: s, normalized: 0 } });
-
 /** Seed n_box wrapped in an AnimationLayer with a channel on `paramPath`.
  *  Returns { layerId } — the wrapping group's name in the scene. */
 async function seedWrappedAnimatedBox(
