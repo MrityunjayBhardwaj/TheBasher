@@ -53,6 +53,19 @@ export interface ViewportStore {
   axisWidgetVisible: boolean;
   /** Editor shading mode — see ShadingMode for semantics. */
   shading: ShadingMode;
+  /** Whether the viewport renders THROUGH the active DAG scene camera
+   *  (Blender's "camera view", Numpad 0) instead of the free editor orbit
+   *  camera.
+   *
+   *  Default false: the editor owns a free orbit view so DAG cameras can be
+   *  drawn as selectable frustum objects (#165). When true the viewport flips
+   *  the active scene camera to `makeDefault` so the user previews the exact
+   *  production framing.
+   *
+   *  Editor-session projection — like the orbit pose named in this file's
+   *  header it is NOT persisted with the project and NEVER enters the DAG
+   *  (V8). It is which camera you're looking through, not scene data. */
+  lookThroughCamera: boolean;
   /** Whether the timeline drawer (dopesheet + curve editor) is expanded. */
   timelineDrawerOpen: boolean;
   /** Viewport camera zoom as a percentage (100 = default framing).
@@ -96,12 +109,14 @@ export interface ViewportStore {
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
   setShading(shading: ShadingMode): void;
+  setLookThroughCamera(on: boolean): void;
   setTimelineDrawerOpen(open: boolean): void;
   setCameraZoom(zoom: number): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
   toggleSnapEnabled(): void;
   toggleTimelineDrawer(): void;
+  toggleLookThroughCamera(): void;
 }
 
 export const useViewportStore = create<ViewportStore>((set, get) => ({
@@ -113,6 +128,9 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // Default 'studio' so a fresh seed scene with one DirectionalLight still
   // looks lit. Production renders (P4) read 'rendered' to match.
   shading: 'studio',
+  // Default false — the editor owns a free orbit view so DAG cameras render
+  // as selectable frustum objects (#165). Numpad 0 / the toolbar toggles it.
+  lookThroughCamera: false,
   // Default closed — preserves the existing acceptance baselines. Users
   // open the drawer when they want to author keyframes; pixel-diff tests
   // run with the drawer closed so the canvas DIV dimensions don't shift.
@@ -132,6 +150,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
   setShading: (shading) => set({ shading }),
+  setLookThroughCamera: (lookThroughCamera) => set({ lookThroughCamera }),
   setTimelineDrawerOpen: (timelineDrawerOpen) => set({ timelineDrawerOpen }),
   setCameraZoom: (zoom) =>
     set({ cameraZoom: Number.isFinite(zoom) ? Math.max(1, Math.round(zoom)) : 100 }),
@@ -139,6 +158,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
   toggleTimelineDrawer: () => set({ timelineDrawerOpen: !get().timelineDrawerOpen }),
+  toggleLookThroughCamera: () => set({ lookThroughCamera: !get().lookThroughCamera }),
 }));
 
 /** Round `value` to the nearest multiple of `step`. Returns `value` unchanged

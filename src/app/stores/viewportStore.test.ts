@@ -20,6 +20,7 @@ beforeEach(() => {
     gridVisible: true,
     axisWidgetVisible: true,
     shading: 'studio',
+    lookThroughCamera: false,
     cameraZoom: 100,
   });
 });
@@ -77,6 +78,28 @@ describe('viewportStore — toggles', () => {
   it('setShading accepts wireframe mode', () => {
     useViewportStore.getState().setShading('wireframe');
     expect(useViewportStore.getState().shading).toBe('wireframe');
+  });
+
+  // #165 — look-through ("camera view", Numpad 0). Defaults OFF so the
+  // editor owns a free orbit view and DAG cameras render as selectable
+  // frustum objects. The set/toggle drive the Viewport camera flip (Wave B).
+  it('lookThroughCamera defaults to false (editor owns the free orbit view)', () => {
+    expect(useViewportStore.getState().lookThroughCamera).toBe(false);
+  });
+
+  it('setLookThroughCamera sets the flag', () => {
+    useViewportStore.getState().setLookThroughCamera(true);
+    expect(useViewportStore.getState().lookThroughCamera).toBe(true);
+    useViewportStore.getState().setLookThroughCamera(false);
+    expect(useViewportStore.getState().lookThroughCamera).toBe(false);
+  });
+
+  it('toggleLookThroughCamera flips the flag', () => {
+    expect(useViewportStore.getState().lookThroughCamera).toBe(false);
+    useViewportStore.getState().toggleLookThroughCamera();
+    expect(useViewportStore.getState().lookThroughCamera).toBe(true);
+    useViewportStore.getState().toggleLookThroughCamera();
+    expect(useViewportStore.getState().lookThroughCamera).toBe(false);
   });
 });
 
