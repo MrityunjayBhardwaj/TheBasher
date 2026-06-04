@@ -31,6 +31,8 @@ import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRe
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useTransientEditStore } from '../app/stores/transientEditStore';
+import { overlayTransients } from '../app/overlayTransients';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { degVec3ToRad } from './rotation';
@@ -153,6 +155,18 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         : null}
       {value.scene.children.map((child, i) => {
         const pickId = childRefs[i]?.node ?? null;
+        // #149 B2a — for an AnimationLayer scene child, the TRANSIENT is keyed by
+        // the WRAPPED target's node id (the box the gizmo/inspector edits), NOT
+        // the layer's id. Resolve the layer's single-hop target ref EXACTLY as
+        // resolveEvaluatedTransform:135 does (normalizeRefs via addLayer.ts:101's
+        // own shape) so the render overlay node-id == the read overlay node-id
+        // (H40). Threaded into AnimationLayerR; null for any non-layer child.
+        let animationTargetId: string | null = null;
+        if (child.kind === 'AnimationLayer' && pickId) {
+          const tb = state.nodes[pickId]?.inputs.target;
+          const tref = Array.isArray(tb) ? tb[0] : tb;
+          animationTargetId = (tref as { node?: string } | undefined)?.node ?? null;
+        }
         return (
           <group
             key={`mesh:${i}`}
@@ -169,7 +183,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               else sel.select(pickId);
             }}
           >
-            <MeshChild value={child} />
+            <MeshChild value={child} animationTargetId={animationTargetId} />
           </group>
         );
       })}
@@ -208,6 +222,27 @@ function MeshScaleProbe() {
       const s = new THREE.Vector3();
       obj.getWorldScale(s);
       return [s.x, s.y, s.z];
+    };
+    // #149 (Wave C3) — the H40 side-A observation for the TRANSFORM transient.
+    // Reads the REAL rendered object's WORLD position by group node id (the
+    // wrapping group is named with the scene-child producer id — for an animated
+    // cube that is the AnimationLayer id; the inner mesh carries the overlaid
+    // position). The boundary-pair e2e asserts rendered position (side A) ==
+    // resolveEvaluatedTransform (side B) == the typed transient, PAUSED. The
+    // wrapping group is identity, so the inner mesh's world position IS the
+    // rendered value. Read-only (V8 clean).
+    w.__basher_mesh_world_position = (nodeId: string): [number, number, number] | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Object3D | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o;
+      });
+      const obj: THREE.Object3D = target ?? grp;
+      obj.updateWorldMatrix(true, false);
+      const p = new THREE.Vector3();
+      obj.getWorldPosition(p);
+      return [p.x, p.y, p.z];
     };
     // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
     // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
@@ -271,6 +306,7 @@ function MeshScaleProbe() {
       delete w.__basher_mesh_world_scale;
       delete w.__basher_mesh_world_bounds;
       delete w.__basher_mesh_material;
+      delete w.__basher_mesh_world_position;
     };
   }, [scene]);
   return null;
@@ -495,9 +531,15 @@ interface MeshChildProps {
   value: SceneChild;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
+  /** #149 B2a — the wrapped target's node id for an AnimationLayer child, so
+   *  AnimationLayerR can overlay the transient keyed by the SAME id the read
+   *  side uses (H40). Only set by the top-level scene-children map for a
+   *  single-hop AnimationLayer; undefined elsewhere (nested layers are out of
+   *  scope, mirroring the read-side single-hop limit). */
+  animationTargetId?: string | null;
 }
 
-const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value, override, animationTargetId }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
@@ -532,7 +574,7 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
       // so the patched target must be sampled at live time. AnimationLayerR
       // samples value.sampleTarget(seconds) in a useFrame (time SNAPSHOT, never
       // a subscription — H48) and renders the patched SceneChild declaratively.
-      return <AnimationLayerR value={value} override={override} />;
+      return <AnimationLayerR value={value} override={override} targetNodeId={animationTargetId} />;
   }
 });
 
@@ -558,25 +600,50 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
 function AnimationLayerR({
   value,
   override,
+  targetNodeId,
 }: {
   value: AnimationLayerValue;
   override?: MaterialValue;
+  /** #149 B2a — the wrapped target's node id, used to overlay its transient. */
+  targetNodeId?: string | null;
 }) {
+  // #149 B2c (H40 form 2 — LOAD-BEARING): subscribe the transient SET. A PAUSED
+  // edit changes this ref → the component re-renders → a fresh useFrame closure
+  // captures the new edits → the dirty-check below re-fires → the overlay
+  // re-applies. WITHOUT this subscription the paused edit updates the store but
+  // the useFrame is gated out and the viewport freezes at the curve value (the
+  // #68 "snaps right back" class) while the inspector shows the transient.
+  //
+  // H48 SAFETY (checker I-2): this is the FIRST subscribed store selector in
+  // this H48-perf-sensitive render path (it still reads `seconds` as a SNAPSHOT,
+  // never a time subscription). It is safe ONLY because transients are
+  // paused-only + cleared-on-frame-change: during playback `edits` is a stable
+  // (empty) Map ref → zero re-renders → commits=0 holds. The Wave B gate adds a
+  // perf-fox commits=0 check to prove it.
+  const transients = useTransientEditStore((s) => s.edits);
+  const sample = (seconds: number): SceneChild | null =>
+    overlayTransients(value.sampleTarget(seconds), targetNodeId ?? '', transients);
+
   const [patched, setPatched] = useState<SceneChild | null>(() =>
-    value.sampleTarget(useTimeStore.getState().seconds),
+    sample(useTimeStore.getState().seconds),
   );
-  const lastApplied = useRef<{ seconds: number; sampleTarget: unknown } | null>(null);
+  const lastApplied = useRef<{
+    seconds: number;
+    sampleTarget: unknown;
+    transients: unknown;
+  } | null>(null);
   useFrame(() => {
     const seconds = useTimeStore.getState().seconds;
     if (
       lastApplied.current !== null &&
       lastApplied.current.seconds === seconds &&
-      lastApplied.current.sampleTarget === value.sampleTarget
+      lastApplied.current.sampleTarget === value.sampleTarget &&
+      lastApplied.current.transients === transients
     ) {
       return;
     }
-    lastApplied.current = { seconds, sampleTarget: value.sampleTarget };
-    setPatched(value.sampleTarget(seconds));
+    lastApplied.current = { seconds, sampleTarget: value.sampleTarget, transients };
+    setPatched(sample(seconds));
   });
   return patched ? <MeshChild value={patched} override={override} /> : null;
 }

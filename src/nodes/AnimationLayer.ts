@@ -157,7 +157,15 @@ function readAt(obj: Record<string, unknown>, path: string): unknown {
   return cur;
 }
 
-function writeAt(obj: Record<string, unknown>, path: string, value: unknown): void {
+/**
+ * Write `value` at a dot-path on `obj`, IN PLACE. Shared with
+ * `overlayTransients` (issue #149) so the transient overlay writes a paramPath
+ * EXACTLY the way the channel patch does — one path-writer, no drift (H40). A
+ * missing intermediate object is a no-op (the path must already exist; every
+ * animated/transient paramPath does, because routeAnimatedGrab only fires on an
+ * existing animated field and the inspector/gizmo route the whole band).
+ */
+export function writeAt(obj: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('.');
   const last = parts.pop();
   if (last == null) return;

@@ -49,6 +49,8 @@ import type { EvalCtx, NodeRef } from '../core/dag/types';
 import type { GltfAssetValue, RenderOutputValue, SceneChild } from '../nodes/types';
 import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
+import { overlayTransients } from './overlayTransients';
+import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
 
@@ -245,6 +247,18 @@ export function resolveEvaluatedTransform(
   if (child && child.kind === 'AnimationLayer') {
     child = child.sampleTarget(ctx.time.seconds);
   }
+
+  // #149 C1 — overlay the held transient the SAME way the renderer does
+  // (AnimationLayerR/B2): SAME overlayTransients primitive, SAME selectedId,
+  // SAME ctx.time.seconds (transient > channel). This is the READ side of the
+  // H40 boundary-pair — the gizmo proxy + NPanel transform display read THROUGH
+  // here, so they show exactly the edit the viewport shows. The transient SET
+  // is read LIVE (like a ctx, not a hook) — the one UI-store read in this
+  // otherwise-pure resolver, justified by H40 (it MUST reflect the same live
+  // edit the subscribed render reads). Empty store → identity (purity tests
+  // stay green). Gated by the PAUSED transform boundary-pair e2e (C3).
+  child = overlayTransients(child, selectedId, useTransientEditStore.getState().edits);
+
   if (!child) return null;
 
   // 6. Read the transform off the (possibly unwrapped) child value.

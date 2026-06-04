@@ -65,6 +65,13 @@ interface BasherWindow {
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
   ) => { value: unknown; hash: string };
+  __basher_transient?: {
+    getState: () => {
+      get: (n: string, p: string) => { value: unknown } | undefined;
+      has: (n: string, p: string) => boolean;
+      clearAll: () => void;
+    };
+  };
 }
 
 const V = (a: number[] | null) => JSON.stringify(a);
@@ -538,19 +545,21 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
   // dead-wrote the source (the exact #77-class silent failure). D-05 routes
   // it through `routeAnimatedGrab`, whose OFF branch alerts + returns true
   // → ZERO ops. Mirrors p7.3's grab-OFF test (the alert-spy precedent).
-  test('D-05 row 4: animated + paused + Auto-Key OFF inspector edit → alert + ZERO ops (intentional delta)', async ({
+  test('row 4 (#149): animated + paused + Auto-Key OFF inspector edit → transient held, ZERO ops, NO alert', async ({
     page,
   }) => {
     await seedAnimatedCube(page);
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
+      w.__basher_transient!.getState().clearAll();
       w.__basher_time!.getState().pause();
       w.__basher_time!.getState().setTime(1);
       w.__basher_selection!.getState().select('n_box');
       const ak = w.__basher_autokey!.getState();
       if (ak.enabled) ak.toggle(); // Auto-Key OFF
     });
-    // Spy window.alert (the NET-NEW OFF reject — mirrors p7.3:296-303).
+    // Spy window.alert — #149 SUPERSEDES the OFF reject alert with a held
+    // transient. The alert must NOT fire; the edit is held + overlaid instead.
     await page.evaluate(() => {
       const ww = window as unknown as { __alertMsgs: string[]; alert: (m?: string) => void };
       ww.__alertMsgs = [];
@@ -567,25 +576,26 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
     await posX.fill('7');
     await posX.press('Tab');
 
-    const { dagAfter, alerts } = await page.evaluate(() => {
+    const { dagAfter, alerts, transient } = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       const ww = window as unknown as { __alertMsgs: string[] };
       return {
         dagAfter: JSON.stringify(w.__basher_dag!.getState().state.nodes),
         alerts: ww.__alertMsgs,
+        transient: w.__basher_transient!.getState().get('n_box', 'position')?.value ?? null,
       };
     });
     console.log(
-      `[P7.4 #77 row4] alerts=${JSON.stringify(alerts)} dagChanged=${dagAfter !== dagBefore}`,
+      `[P7.4 #149 row4] alerts=${JSON.stringify(alerts)} transient=${JSON.stringify(transient)} dagChanged=${dagAfter !== dagBefore}`,
     );
 
-    // BOUNDARY-PAIR side A — the alert fired (the intentional delta: NPanel
-    // is no longer byte-silent on OFF; it surfaces the rejection like the
-    // gizmo does — D-05 row 4, FLAG-A).
-    expect(alerts.length).toBe(1);
-    expect(alerts[0].toLowerCase()).toMatch(/animated|auto-key/);
-    // BOUNDARY-PAIR side B — ZERO ops: the DAG is byte-unchanged. No
-    // keyframe inserted AND no dead setParam on the source.
+    // NO alert — the reject is superseded by the transient hold (#149).
+    expect(alerts.length).toBe(0);
+    // The edit is HELD as a transient — the inspector routes the WHOLE position
+    // vec through the seam (WYSIWYK), so the held value's X is the typed 7.
+    expect(Array.isArray(transient)).toBe(true);
+    expect((transient as number[])[0]).toBe(7);
+    // ZERO ops — the DAG is byte-unchanged. No keyframe, no dead setParam (H36).
     expect(dagAfter).toBe(dagBefore);
   });
 

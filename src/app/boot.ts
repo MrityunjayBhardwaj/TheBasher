@@ -8,6 +8,8 @@
 import { Box3, Vector3 } from 'three';
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import * as geometryRegistry from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
@@ -324,6 +326,13 @@ export function boot(): Promise<void> {
       void import('./stores/autoKeyStore').then((m) => {
         w.__basher_autokey = m.useAutoKeyStore;
       });
+      // #149 — the transient-edit store exposed so the boundary-pair / 4-color
+      // / clear-on-scrub specs can observe the held edit (the orange dirty
+      // state) without depending on the inspector chrome. Same K12 dev-seam
+      // pattern as __basher_autokey.
+      void import('./stores/transientEditStore').then((m) => {
+        w.__basher_transient = m.useTransientEditStore;
+      });
       // Eval seam for E2E: evaluate any node at a given ctx.time without
       // round-tripping through the viewport. Returns { hash, value }.
       w.__basher_evaluate = (nodeId: NodeId, ctx?: EvalCtx) => {
@@ -339,6 +348,22 @@ export function boot(): Promise<void> {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         return resolveEvaluatedMesh(state, nodeId, evalCtx);
+      };
+      // #149 (Wave C3/C4) — the H40 side-B seams for the transient overlay. The
+      // boundary-pair e2e asserts the RESOLVER value (here) == the REAL rendered
+      // object (__basher_mesh_world_position / scene-walk) == the typed transient,
+      // PAUSED. Both delegate to the SAME overlayTransients the renderer uses, so
+      // equality proves the read overlay == the render overlay (one band, two
+      // callers). Read-only (V8 clean).
+      w.__basher_evaluated_transform = (nodeId: NodeId, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        return resolveEvaluatedTransform(state, nodeId, evalCtx);
+      };
+      w.__basher_evaluated_param = (nodeId: NodeId, paramPath: string, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        return resolveEvaluatedParam(state, nodeId, paramPath, evalCtx);
       };
       // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-B seam for BakedMesh. Reads
       // the RESOLVER's geometry bounds: resolve the node → take its baked

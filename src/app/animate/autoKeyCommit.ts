@@ -9,22 +9,22 @@
 // `autoKeyCommit` depends on it and the NPanel diamond handler also uses it
 // (re-imported there).
 //
-// Strictly gated on `useAutoKeyStore.getState().enabled`: when Auto-Key is
-// OFF this returns IMMEDIATELY, before any seam call. For the NPanel caller
-// that means BYTE-IDENTICAL-to-pre-P7 (the caller already did the raw
-// setParam; nothing else happens). For the Gizmo caller the OFF case is
-// handled EARLIER by an explicit reject-with-alert (Gizmo.tsx) that returns
-// before ever calling this — so this internal OFF guard is the silent
-// shared safety net, not the Gizmo's user-facing path (FLAG-A: NPanel is
-// byte-silent on OFF; the Gizmo's louder OFF reject is net-new behavior).
+// `autoKeyCommit` (the ON-path) stays strictly gated on
+// `useAutoKeyStore.getState().enabled`. `routeAnimatedGrab` handles the OFF
+// path: an animated+paused edit with Auto-Key OFF is now HELD as a transient
+// (issue #149, Blender base-transient edit) — not rejected with an alert. The
+// transient is overlaid by the viewport (Wave B) + the read resolvers (Wave C),
+// shows orange (Wave F), and is discarded on frame change (A2) or keyed
+// explicitly (Wave E).
 //
-// REF: issue #68, CONTEXT D-02, NPanel.tsx P7 Wave D, vyapti V1/V13.
+// REF: issue #68 / #149, CONTEXT D-02, NPanel.tsx P7 Wave D, vyapti V1/V13.
 
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMutator';
 import { paramAnimationState } from './paramAnimationState';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
+import { useTransientEditStore } from '../stores/transientEditStore';
 
 /**
  * THE single animated-param edit-route gate (P7.3 / D-02 — lifted here in
@@ -36,7 +36,7 @@ import { useAutoKeyStore } from '../stores/autoKeyStore';
  *
  * Re-route BEFORE the caller's raw `setParam`. Branch order is load-bearing
  * and must be preserved exactly: animated check → playing gate → AutoKey-OFF
- * alert → AutoKey-ON autoKeyCommit.
+ * transient hold → AutoKey-ON autoKeyCommit.
  *
  *   - un-animated param → false: caller falls through to the EXISTING raw
  *     setParam dispatch, byte-unchanged (today's behavior, D-02). For the
@@ -46,15 +46,14 @@ import { useAutoKeyStore } from '../stores/autoKeyStore';
  *   - animated + playing → handled here, returns true (no op — during
  *     playback the surface is display-follow, D-03; belt-and-suspenders with
  *     the gizmo's enabled={!playing} and the inspector's W2.1 readOnly gate).
- *   - animated + paused + Auto-Key OFF → reject with a surfaced reason,
- *     ZERO ops, returns true. *** NET-NEW BEHAVIOR — DO NOT DELETE
- *     (FLAG-A): pre-D-05 NPanel returned SILENTLY on Auto-Key OFF; there
- *     was NO NPanel OFF-path feedback to be redundant with. A silent edit
- *     that does nothing is the exact #68/#77-class silent failure this
- *     route exists to kill. The window.alert is only the browser PRIMITIVE
- *     reuse, not a reuse of any NPanel OFF behavior. NOTE (D-05 intentional
- *     delta, matrix row 4): routing the inspector through this MEANS NPanel
- *     is no longer byte-silent on OFF — that is expected and desired. ***
+ *   - animated + paused + Auto-Key OFF → HOLD the edit as a transient
+ *     (transientEditStore.set), ZERO ops, returns true. *** FLAG-A SUPERSEDED
+ *     (issue #149): the old window.alert reject replaced a #68/#77-class silent
+ *     no-op; it is now replaced — NOT deleted into silence — by a transient
+ *     edit. The viewport overlays it (Wave B), the field shows orange (Wave F,
+ *     the mandatory safety net), and it is discarded on frame change (A2) or
+ *     keyed explicitly (Wave E). Still ZERO ops, no setParam → H36 single-write
+ *     holds (caller skips both on a true return). ***
  *   - animated + paused + Auto-Key ON → autoKeyCommit (the shared P7 seam
  *     chokepoint — closure-gated V13, Op-only V1), returns true so the raw
  *     setParam does NOT also fire (H36 anti-double-write — the whole point).
@@ -74,13 +73,20 @@ export function routeAnimatedGrab(selectedId: string, paramPath: string, value: 
   if (useTimeStore.getState().playing) return true; // handled: no op
 
   // Auto-Key read LIVE at grab time (never a render closure — staleness
-  // pre-mortem). OFF → reject with a surfaced reason, ZERO ops.
+  // pre-mortem). OFF → hold the edit as a TRANSIENT (Blender's base-transient
+  // edit), ZERO ops, no setParam.
   if (!useAutoKeyStore.getState().enabled) {
-    // *** NET-NEW — DO NOT DELETE (FLAG-A). pre-D-05 NPanel was byte-silent
-    // on OFF; D-05 intentionally surfaces this (matrix row 4). ***
-    // eslint-disable-next-line no-alert
-    window.alert?.(`${paramPath} is animated — enable Auto-Key or edit the curve.`);
-    return true; // handled: rejected, zero ops
+    // *** FLAG-A SUPERSEDED (issue #149). The window.alert here REPLACED a
+    // silent no-op (#68/#77 "snaps right back"). It is now replaced — NOT
+    // deleted into silence — by a transient edit: the value is held in
+    // transientEditStore (the orange dirty indicator, Wave F, is its mandatory
+    // safety net) and the viewport overlays it (Wave B). The edit is discarded
+    // on frame change (A2) or persisted on an explicit key (K/I or the diamond,
+    // Wave E). ZERO Ops, no setParam → H36 single-write holds by construction
+    // (the caller skips both because we return true). See .anvi dharana B1.1
+    // FLAG-A supersession + GROUND_TRUTH_BLENDER_KEYING.md. ***
+    useTransientEditStore.getState().set(selectedId, paramPath, value);
+    return true; // handled: held as transient, zero ops
   }
 
   // Auto-Key ON → the SHARED seam chokepoint (one path, two callers).
@@ -114,6 +120,49 @@ export function resolveChannel(
     return { channelId: node.id, onKeySeconds: onKey ? onKey.time : null };
   }
   return null;
+}
+
+/**
+ * #149 E1/E2 — commit ONE param's keyframe at the current seconds, capturing the
+ * HELD TRANSIENT value (the orange edit) when present, else the authored value.
+ * The shared insert fork for BOTH the NPanel diamond (per-param) AND the K/I
+ * viewport gesture (per transform band) — so they cannot drift (checker I-6):
+ *   - un-animated (no channel) → dispatchFirstKeyComposite (the first-key path).
+ *   - animated → mutator.timeline.keyframe at the current seconds (add/update).
+ * On success, the slot is released (the field leaves orange; a re-scrub will not
+ * revert because it is now a real keyframe). Reuses the EXISTING insert paths
+ * verbatim — NO new insert path, NO buildKeyframeInsertOp (single-channel).
+ */
+export function keyParamFromTransient(
+  nodeId: string,
+  paramPath: string,
+  authoredValue: unknown,
+): { ok: true } | { ok: false; reason: string } {
+  const seconds = useTimeStore.getState().seconds;
+  const frame = useTimeStore.getState().frame;
+  const dagState = useDagStore.getState().state;
+  const transient = useTransientEditStore.getState().get(nodeId, paramPath);
+  const v = transient ? transient.value : authoredValue;
+
+  let result: { ok: true } | { ok: false; reason: string };
+  if (paramAnimationState(dagState, nodeId, paramPath, frame) === 'none') {
+    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value: v, seconds });
+  } else {
+    const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
+    if (!resolved) {
+      result = { ok: false, reason: `Channel not found for ${nodeId}.${paramPath}.` };
+    } else {
+      result = dispatchMutatorFromUI(
+        'mutator.timeline.keyframe',
+        { channelId: resolved.channelId, time: seconds, value: v },
+        `Key ${nodeId}.${paramPath}`,
+      );
+    }
+  }
+  if (result.ok && transient) {
+    useTransientEditStore.getState().clear(nodeId, paramPath);
+  }
+  return result;
 }
 
 /**

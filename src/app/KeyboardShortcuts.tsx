@@ -50,6 +50,8 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
 interface KeyframeSample {
   time: number;
@@ -319,12 +321,46 @@ export function KeyboardShortcuts() {
           useTimeStore.getState().toggle();
           return;
         }
-        // K: insert keyframe at current time into active channel,
-        // reading the target node's live param value.
-        if (e.key === 'k' || e.key === 'K') {
-          const op = buildKeyframeInsertOp();
-          if (op) {
-            useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+        // K / I: insert keyframe(s) at the current time. Context-sensitive
+        // (Blender-faithful):
+        //   - DOPESHEET context (an active timeline channel) → insert on that
+        //     channel, reading the target's live param value (P6 W6 — unchanged).
+        //   - VIEWPORT context (no active channel, an object selected) → #149 E2:
+        //     key the selected object's WHOLE transform (position/rotation/scale)
+        //     from the held transients via the SHARED keyParamFromTransient fork
+        //     (the same the diamond uses — NOT buildKeyframeInsertOp). I is bound
+        //     alongside K (it was free) — Blender's Insert-Keyframe idiom.
+        if (e.key === 'k' || e.key === 'K' || e.key === 'i' || e.key === 'I') {
+          const activeChannel = useTimelineSelection.getState().activeChannelId;
+          if (activeChannel) {
+            const op = buildKeyframeInsertOp();
+            if (op) {
+              useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+            }
+            return;
+          }
+          const selectedId = useSelectionStore.getState().primaryNodeId;
+          if (selectedId) {
+            const state = useDagStore.getState().state;
+            const seconds = useTimeStore.getState().seconds;
+            const frame = useTimeStore.getState().frame;
+            const evalT = resolveEvaluatedTransform(state, selectedId, {
+              time: { frame, seconds, normalized: 0 },
+            });
+            const params = (state.nodes[selectedId]?.params ?? {}) as Record<string, unknown>;
+            // The displayed pose per band: the evaluated value (which already
+            // overlays any transient) when available, else the authored param.
+            // keyParamFromTransient additionally prefers the transient, so a held
+            // edit is captured; an un-edited band keys the current pose (LocRotScale).
+            const bands: Array<['position' | 'rotation' | 'scale', unknown]> = [
+              ['position', evalT?.position ?? params.position],
+              ['rotation', evalT?.rotation ?? params.rotation],
+              ['scale', evalT?.scale ?? params.scale],
+            ];
+            for (const [band, v] of bands) {
+              if (v === undefined || v === null) continue; // band absent → skip
+              keyParamFromTransient(selectedId, band, v);
+            }
           }
           return;
         }
