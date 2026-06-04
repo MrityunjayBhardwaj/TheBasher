@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useTransientEditStore, keyOf } from './transientEditStore';
+import { useTimeStore } from './timeStore';
 
 describe('transientEditStore (A1 — multi-slot V1-exempt UI projection)', () => {
   beforeEach(() => {
@@ -90,5 +91,38 @@ describe('transientEditStore (A1 — multi-slot V1-exempt UI projection)', () =>
     const before = useTransientEditStore.getState().edits;
     useTransientEditStore.getState().clear('ghost', 'nope');
     expect(useTransientEditStore.getState().edits).toBe(before);
+  });
+});
+
+describe('transientEditStore (A2 — frame-INT-change discard, D-149-2)', () => {
+  beforeEach(() => {
+    useTransientEditStore.getState().clearAll();
+    useTimeStore.getState().setTime(0); // frame 0
+  });
+
+  it('crossing a frame boundary clears all transients', () => {
+    useTransientEditStore.getState().set('node-1', 'position.x', 9);
+    expect(useTransientEditStore.getState().has('node-1', 'position.x')).toBe(true);
+    // 0.5s → frame 30 (FRAMES_PER_SECOND=60): a frame change.
+    useTimeStore.getState().setTime(0.5);
+    expect(useTimeStore.getState().frame).toBe(30);
+    expect(useTransientEditStore.getState().has('node-1', 'position.x')).toBe(false);
+    expect(useTransientEditStore.getState().edits.size).toBe(0);
+  });
+
+  it('a sub-frame seconds change (same frame INT) does NOT clear (jitter guard)', () => {
+    useTransientEditStore.getState().set('node-1', 'position.x', 9);
+    // 0.005s → round(0.3) = frame 0 (unchanged from the starting frame 0).
+    useTimeStore.getState().setTime(0.005);
+    expect(useTimeStore.getState().frame).toBe(0);
+    // The edit must survive — clearing on seconds would wipe it mid-edit (R-4).
+    expect(useTransientEditStore.getState().has('node-1', 'position.x')).toBe(true);
+  });
+
+  it('a non-frame timeStore change (play/pause) does NOT clear', () => {
+    useTransientEditStore.getState().set('node-1', 'position.x', 9);
+    useTimeStore.getState().play();
+    useTimeStore.getState().pause();
+    expect(useTransientEditStore.getState().has('node-1', 'position.x')).toBe(true);
   });
 });

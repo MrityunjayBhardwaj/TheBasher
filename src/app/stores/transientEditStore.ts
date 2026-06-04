@@ -28,6 +28,7 @@
 //      (UI-mode-not-DAG discipline); vyapti V1 (the EXEMPTION), V20.
 
 import { create } from 'zustand';
+import { useTimeStore } from './timeStore';
 
 /** A single held edit: the value the user is editing before an explicit key. */
 export interface TransientEdit {
@@ -89,3 +90,30 @@ export const useTransientEditStore = create<TransientEditStore>((set, get) => ({
     });
   },
 }));
+
+// A2 — frame-change discard (D-149-2, the Blender depsgraph re-eval model).
+//
+// A transient edit is "a one-frame un-persisted value" — it survives only on the
+// frame it was made. Crossing to a new frame re-evaluates the scene and discards
+// every transient. CRITICAL: clear on the derived INT `frame`, NOT `seconds` — a
+// sub-frame seconds jitter (e.g. a playhead nudge that does not cross a frame
+// boundary) must NOT wipe an in-progress edit (R-4 / V20 / W9 frame-INT
+// discipline). timeStore is a plain zustand store (no subscribeWithSelector
+// middleware), so we use the plain (state, prev) subscribe and compare the INT
+// ourselves — equivalent to a selector subscribe on `s.frame`.
+//
+// D-149-2 scope: ONLY a frame change clears. Selection-change, undo, and the
+// Auto-Key toggle do NOT clear (they never touch timeStore.frame). The
+// subscription is module-init + idempotent (HMR-safe).
+let unsubscribeFrameClear: (() => void) | null = null;
+
+export function initTransientFrameClear(): void {
+  if (unsubscribeFrameClear) return; // init-once (idempotent under HMR)
+  unsubscribeFrameClear = useTimeStore.subscribe((state, prev) => {
+    if (state.frame !== prev.frame) {
+      useTransientEditStore.getState().clearAll();
+    }
+  });
+}
+
+initTransientFrameClear();
