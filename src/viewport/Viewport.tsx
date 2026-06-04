@@ -19,6 +19,8 @@ import { Gizmo } from '../app/Gizmo';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
+import { saveEditorView } from '../app/editorViewPersistence';
+import { useProjectStore } from '../core/project/store';
 import { useSelectionSummary } from '../app/hooks/useSelectionSummary';
 import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
@@ -60,6 +62,23 @@ function EditorOrbit() {
     useViewportStore.getState().setCameraZoom(cameraDistanceToZoomPercent(distance));
   }, []);
 
+  // #165 Wave E: persist the editor orbit pose per project on drag end (not
+  // on every change tick — localStorage writes are throttled to gesture end).
+  // Skip while looking through the camera: that pose is the DAG camera's, not
+  // the user's free view (orbit is disabled in that mode anyway — belt & braces).
+  // drei types onEnd as (e?: Event) with target: unknown — cast to the controls
+  // impl (the same object onChange receives).
+  const handleEnd = useCallback((e?: { target?: unknown }) => {
+    const controls = e?.target as OrbitControlsImpl | undefined;
+    if (!controls) return;
+    if (useViewportStore.getState().lookThroughCamera) return;
+    const cam = controls.object;
+    saveEditorView(useProjectStore.getState().current?.id ?? null, {
+      position: [cam.position.x, cam.position.y, cam.position.z],
+      target: [controls.target.x, controls.target.y, controls.target.z],
+    });
+  }, []);
+
   return (
     <OrbitControls
       makeDefault
@@ -67,6 +86,7 @@ function EditorOrbit() {
       enableDamping
       dampingFactor={0.08}
       onChange={handleChange}
+      onEnd={handleEnd}
       // Default mouse map: rotate (LMB), zoom (wheel), pan (RMB / two-finger).
     />
   );

@@ -33,24 +33,29 @@ import {
   cameraPoseFromNode,
   DEFAULT_CAMERA_POSE,
   selectActiveCameraNode,
-  type CameraPose,
 } from '../app/activeCamera';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import { useProjectStore } from '../core/project/store';
 import { useViewportStore } from '../app/stores/viewportStore';
+import { loadEditorView } from '../app/editorViewPersistence';
 
-/** Apply a camera pose to a THREE camera + move the OrbitControls target to
- *  its lookAt so orbiting pivots around the right point. */
-function applyPose(cam: THREE.PerspectiveCamera, pose: CameraPose): void {
-  cam.position.set(pose.position[0], pose.position[1], pose.position[2]);
-  cam.lookAt(new THREE.Vector3(pose.lookAt[0], pose.lookAt[1], pose.lookAt[2]));
+/** Point a THREE camera from `position` toward `lookAt` + move the
+ *  OrbitControls target to `lookAt` so orbiting pivots around the right point. */
+function applyView(
+  cam: THREE.PerspectiveCamera,
+  position: readonly [number, number, number],
+  lookAt: readonly [number, number, number],
+): void {
+  cam.position.set(position[0], position[1], position[2]);
+  cam.lookAt(new THREE.Vector3(lookAt[0], lookAt[1], lookAt[2]));
   cam.updateMatrixWorld();
   // controlsTarget is the OrbitControls .target Vector3 (ThreeBridge mirrors
   // it here every frame). Mutate in place — framing.ts uses the same path.
   // Null for the first frame before ThreeBridge runs; the default target is
   // the origin, which matches the seed camera's lookAt, so boot is unaffected.
   const target = useThreeRef.getState().controlsTarget;
-  if (target) target.set(pose.lookAt[0], pose.lookAt[1], pose.lookAt[2]);
+  if (target) target.set(lookAt[0], lookAt[1], lookAt[2]);
 }
 
 export function EditorViewCamera() {
@@ -71,11 +76,14 @@ export function EditorViewCamera() {
     if (lookThrough) {
       // Camera view: continuously adopt the DAG camera's pose. Re-runs when
       // the camera node changes (e.g. gizmo moves it while looking through).
-      applyPose(cam, pose);
+      applyView(cam, pose.position, pose.lookAt);
     } else if (!didInit.current) {
-      // First mount in free mode: place the orbit view at the active camera's
-      // framing so first paint matches the pre-#165 makeDefault behavior.
-      applyPose(cam, pose);
+      // First mount in free mode: restore the user's saved orbit view for this
+      // project (Wave E); fall back to the active camera's framing so first
+      // paint matches the pre-#165 makeDefault behavior when nothing is saved.
+      const saved = loadEditorView(useProjectStore.getState().current?.id ?? null);
+      if (saved) applyView(cam, saved.position, saved.target);
+      else applyView(cam, pose.position, pose.lookAt);
       didInit.current = true;
     }
     // Free mode after init: OrbitControls owns position — do not fight it.
