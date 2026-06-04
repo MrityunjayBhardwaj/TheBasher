@@ -33,6 +33,7 @@ import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
+import { resolveEditTargetId } from '../app/animate/resolveEditTarget';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { degVec3ToRad } from './rotation';
@@ -179,8 +180,19 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               if (!pickId) return;
               e.stopPropagation();
               const sel = useSelectionStore.getState();
-              if (e.shiftKey) sel.selectAdditive(pickId);
-              else sel.select(pickId);
+              // #162 — NEVER select the AnimationLayer wrapper from the viewport.
+              // Grounded in Blender (animation_data is a facet ATTACHED to the
+              // object; the object stays the selected entity) + Houdini (keyed
+              // parms live ON the node; the node stays primary). The layer is a
+              // Basher DAG implementation detail (H34 patchTarget); a viewport
+              // click must land on the wrapped OBJECT so the inspector shows its
+              // transform/material and the gizmo edits it. The layer node itself
+              // stays reachable via the SceneTree (graph view), matching Blender's
+              // NLA pane / Houdini's Animation Layer pane being separate from
+              // object selection. Identity for a non-layer pick (byte-identical).
+              const objId = resolveEditTargetId(state, pickId);
+              if (e.shiftKey) sel.selectAdditive(objId);
+              else sel.select(objId);
             }}
           >
             <MeshChild value={child} animationTargetId={animationTargetId} />
