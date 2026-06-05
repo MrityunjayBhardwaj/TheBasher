@@ -58,6 +58,30 @@ describe('notificationStore', () => {
     expect(toasts.some((t) => t.message === 'm0')).toBe(false);
   });
 
+  it('protects sticky toasts from cap eviction — drops the oldest auto-dismiss first', () => {
+    // A sticky warning (e.g. #148 "won't be saved") must survive render-spam.
+    const sticky = useNotificationStore.getState().notify({
+      severity: 'warn',
+      message: 'sticky warning',
+      durationMs: 0,
+    });
+    for (let i = 0; i < MAX_TOASTS + 2; i++) {
+      useNotificationStore.getState().notify({ message: `m${i}`, durationMs: 5000 });
+    }
+    const { toasts } = useNotificationStore.getState();
+    expect(toasts).toHaveLength(MAX_TOASTS);
+    // The sticky toast survived even though it is the oldest.
+    expect(toasts.some((t) => t.id === sticky)).toBe(true);
+    expect(toasts.find((t) => t.id === sticky)!.message).toBe('sticky warning');
+  });
+
+  it('keeps all toasts when they are all sticky (soft cap — safe direction)', () => {
+    for (let i = 0; i < MAX_TOASTS + 2; i++) {
+      useNotificationStore.getState().notify({ message: `s${i}`, durationMs: 0 });
+    }
+    expect(useNotificationStore.getState().toasts.length).toBe(MAX_TOASTS + 2);
+  });
+
   it('dismiss removes one toast by id and is a no-op for an unknown id', () => {
     const a = useNotificationStore.getState().notify({ message: 'a' });
     useNotificationStore.getState().notify({ message: 'b' });

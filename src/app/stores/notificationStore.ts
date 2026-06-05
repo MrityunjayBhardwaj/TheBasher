@@ -83,8 +83,18 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     if (dup) return dup.id;
     const id = nextId;
     const toast: Toast = { id, severity, message: input.message, durationMs };
-    // Append then trim to the cap (drop oldest).
-    set({ toasts: [...toasts, toast].slice(-MAX_TOASTS), nextId: id + 1 });
+    // Cap the stack, but drop the OLDEST AUTO-DISMISS toast first — never evict
+    // a sticky (durationMs 0) toast just because transient ones piled up. The
+    // #148 "your work won't be saved" warning is sticky and must not be pushed
+    // out by render-spam. If everything is sticky the cap is soft (sticky
+    // toasts are rare + intentional), which is the safe direction.
+    const trimmed = [...toasts, toast];
+    while (trimmed.length > MAX_TOASTS) {
+      const oldestDismissible = trimmed.findIndex((t) => t.durationMs > 0);
+      if (oldestDismissible === -1) break; // all sticky — keep them all
+      trimmed.splice(oldestDismissible, 1);
+    }
+    set({ toasts: trimmed, nextId: id + 1 });
     return id;
   },
   dismiss(id) {
