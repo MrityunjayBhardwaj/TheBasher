@@ -960,6 +960,41 @@ const ROWS: Row[] = [
     bgStack: ['accent'],
     textSize: 'ui',
   },
+  // ─── ToastViewport (src/app/ToastViewport.tsx) — #170/#148 ──────────
+  // Bottom-right toast card: opaque bg-2 panel, border-border-strong
+  // (decorative, classified by the border gate). Severity is a coloured
+  // ICON GLYPH ('ui' graphical object → 3:1), the message is fg ('small'),
+  // the dismiss ✕ is fg-dim ('ui'). No coloured borders.
+  {
+    site: 'Toast message — fg on bg-2',
+    fg: 'fg',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'Toast dismiss ✕ — fg-dim on bg-2',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
+  {
+    site: 'Toast info/success icon — accent on bg-2',
+    fg: 'accent',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
+  {
+    site: 'Toast warn icon — warn on bg-2',
+    fg: 'warn',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
+  {
+    site: 'Toast error icon — error on bg-2',
+    fg: 'error',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
 ];
 
 // ─── WHITELIST (intentionally-skipped patterns) ─────────────────────────

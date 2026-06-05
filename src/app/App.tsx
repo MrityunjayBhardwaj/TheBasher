@@ -5,6 +5,7 @@ import { boot } from './boot';
 import { Clock } from './Clock';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
+import { ToastViewport } from './ToastViewport';
 
 type BootState = 'pending' | 'ready' | 'failed';
 
@@ -55,6 +56,7 @@ export function App() {
       <Layout />
       <AddMenu />
       <AssetsPopover />
+      <ToastViewport />
     </>
   );
 }
