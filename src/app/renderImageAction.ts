@@ -21,6 +21,7 @@ import type { RenderOutputValue } from '../nodes/types';
 import { DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH } from '../nodes/RenderOutput';
 import { renderSceneToPngBlob } from '../render/renderToImage';
 import { useThreeRef } from './character/threeRef';
+import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
 
 /** Frozen evaluation time — we only read RenderOutput's static config here;
  *  animation is already baked into the live three.js objects we render. */
@@ -94,6 +95,36 @@ export async function renderActiveProjectToPng(): Promise<RenderImageResult> {
   const slug = name.replace(/\s+/g, '-').toLowerCase() || 'render';
   downloadBlob(out.blob, `${slug}-${out.width}x${out.height}.png`);
   return { ok: true, width: out.width, height: out.height };
+}
+
+/**
+ * Map a render outcome to a toast (#170). Pure so the success/failure copy is
+ * unit-testable without a live renderer. Before this, the callers `void`-ed
+ * the result, so a failed render (viewport not ready) was a silent no-op.
+ */
+export function renderResultToToast(result: RenderImageResult): NotifyInput {
+  if (result.ok) {
+    return {
+      severity: 'success',
+      message: `Rendered ${result.width}×${result.height} — downloaded.`,
+    };
+  }
+  return {
+    severity: 'error',
+    message: 'Render failed — the viewport isn’t ready yet. Try again in a moment.',
+    durationMs: 8000,
+  };
+}
+
+/**
+ * The user-facing render action wired to feedback (#170): render + download,
+ * then surface the outcome as a toast. The toolbar button and File-menu item
+ * call THIS, not the bare action, so a failure is never silent.
+ */
+export async function renderImageWithFeedback(): Promise<RenderImageResult> {
+  const result = await renderActiveProjectToPng();
+  useNotificationStore.getState().notify(renderResultToToast(result));
+  return result;
 }
 
 /**

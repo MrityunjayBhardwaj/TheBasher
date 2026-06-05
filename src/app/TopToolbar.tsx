@@ -35,7 +35,7 @@
 import type { ReactNode } from 'react';
 import { useAssetsPopoverStore } from './AssetsPopover';
 import { exportDagJson } from './exportDag';
-import { renderActiveProjectToPng } from './renderImageAction';
+import { renderImageWithFeedback } from './renderImageAction';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
@@ -205,7 +205,7 @@ function RightCluster(): ReactNode {
       </button>
       <button
         type="button"
-        onClick={() => void renderActiveProjectToPng()}
+        onClick={() => void renderImageWithFeedback()}
         data-testid="top-toolbar-render"
         title="Render Image — render the production camera to a PNG and download it"
         className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
