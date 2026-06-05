@@ -31,7 +31,7 @@ import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
-import { renderActiveProjectToPng } from './renderImageAction';
+import { renderImageWithFeedback } from './renderImageAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -470,7 +470,7 @@ export function MenuBar() {
         <Divider />
         <Item
           label="Render Image…"
-          onSelect={() => void renderActiveProjectToPng()}
+          onSelect={() => void renderImageWithFeedback()}
           testId="menu-file-render-image"
         />
         <Item
