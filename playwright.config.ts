@@ -17,7 +17,13 @@ export default defineConfig({
   // genuine hangs while iterating. Sibling of hetvabhasa H16's wall-clock
   // meta-pattern (cause here = budget, not a missing await).
   timeout: process.env.CI ? 60_000 : 30_000,
-  expect: { timeout: 5_000 },
+  // Same calibration at the assertion layer: heavy OPFS-mutation polls
+  // (`expect.poll(opfsDirExists)` after break-refs + deleteOpfsTree —
+  // p7.14 delete-referenced) complete in <5s locally but exceed the
+  // default 5s window on the slow software-backed CI OPFS. Proven
+  // slow-but-completes (3/3 local, fast), not a never-deletes bug, so the
+  // poll window — not the logic — was too small. Local keeps 5s fast-fail.
+  expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   use: {
     baseURL: 'http://localhost:5180',
     trace: 'retain-on-failure',
