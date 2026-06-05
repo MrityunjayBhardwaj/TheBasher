@@ -65,10 +65,16 @@ export function EditorViewCamera() {
   // a camera change, not every store tick), derive its pose via useMemo.
   const camNode = useDagStore((s) => selectActiveCameraNode(s.state));
   const pose = useMemo(() => cameraPoseFromNode(camNode) ?? DEFAULT_CAMERA_POSE, [camNode]);
-  // Boot-once guard: after the first placement, OrbitControls owns the camera
-  // in free mode (mirrors the old DAG-camera comment "let OrbitControls own
-  // it"). We re-apply the pose only on the look-through transition / sync.
-  const didInit = useRef(false);
+  // The Canvas (and this component) mounts ONCE for the app lifetime, but the
+  // boot-framing guard's true scope is the PROJECT, not the component: each
+  // project has its own saved view / active camera, and switching projects
+  // in-session must re-frame to the new one (#167). So we latch the project id
+  // we last booted, not a plain boolean — a boolean would stay `true` after the
+  // first project and silently strand the view at the old project's pose. After
+  // the per-project boot, OrbitControls owns the camera in free mode (mirrors
+  // the old DAG-camera comment "let OrbitControls own it").
+  const projectId = useProjectStore((s) => s.current?.id ?? null);
+  const bootedProjectId = useRef<string | null>(null);
 
   useEffect(() => {
     const cam = ref.current;
@@ -77,17 +83,22 @@ export function EditorViewCamera() {
       // Camera view: continuously adopt the DAG camera's pose. Re-runs when
       // the camera node changes (e.g. gizmo moves it while looking through).
       applyView(cam, pose.position, pose.lookAt);
-    } else if (!didInit.current) {
-      // First mount in free mode: restore the user's saved orbit view for this
-      // project (Wave E); fall back to the active camera's framing so first
-      // paint matches the pre-#165 makeDefault behavior when nothing is saved.
-      const saved = loadEditorView(useProjectStore.getState().current?.id ?? null);
+    } else if (bootedProjectId.current !== projectId) {
+      // First free-mode frame for THIS project (initial boot OR an in-session
+      // project switch): restore the user's saved orbit view for the project
+      // (Wave E); fall back to the active camera's framing so first paint
+      // matches the pre-#165 makeDefault behavior when nothing is saved.
+      // switchProject() updates the project store and hydrates the DAG store
+      // synchronously back-to-back (boot.ts), so `projectId` and `pose` are
+      // consistent by the time this effect runs.
+      const saved = loadEditorView(projectId);
       if (saved) applyView(cam, saved.position, saved.target);
       else applyView(cam, pose.position, pose.lookAt);
-      didInit.current = true;
+      bootedProjectId.current = projectId;
     }
-    // Free mode after init: OrbitControls owns position — do not fight it.
-  }, [lookThrough, pose]);
+    // Free mode, same project after boot: OrbitControls owns position — do not
+    // fight it.
+  }, [lookThrough, pose, projectId]);
 
   // Projection: free mode uses the seed camera's fov (captured via `pose` at
   // boot so framing is identical); look-through uses the live DAG fov/near/far.
