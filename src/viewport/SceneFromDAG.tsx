@@ -683,7 +683,7 @@ function applyOverride(
 }
 
 function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
-  const mat = applyOverride(value.material.color, override);
+  const mat = applyOverride(value.material.base.color, override);
   const shading = useViewportStore((s) => s.shading);
   return (
     <mesh
@@ -711,7 +711,7 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
 }
 
 function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
-  const mat = applyOverride(value.material.color, override);
+  const mat = applyOverride(value.material.base.color, override);
   const shading = useViewportStore((s) => s.shading);
   return (
     <mesh

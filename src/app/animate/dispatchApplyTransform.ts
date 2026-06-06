@@ -104,7 +104,8 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     materialClass: 'standard',
     // Primitives expose color only; the remaining scalars take the renderer's
     // un-overridden defaults (applyOverride no-override branch, SceneFromDAG).
-    color: material?.color ?? '#ffffff',
+    // v0.6 #2 (#178): the inline color now lives at base.color (OpenPBR IR).
+    color: material?.base.color ?? '#ffffff',
     roughness: 0.5,
     metalness: 0,
     opacity: 1,

@@ -148,10 +148,63 @@ export interface MaterialValue {
   readonly ignoreSourceMaterial?: boolean;
 }
 
-// Inline material spec carried by leaf meshes (BoxMesh ships this from P0).
+// ---------------------------------------------------------------------------
+// Inline material spec (v0.6 #2, issue #178) — the OpenPBR-named material IR the
+// primitive (Box/Sphere) OWNS and edits directly. Widened from the P0
+// {name,color} to the OpenPBR Surface v1.1.1 core-10 vocabulary, lobe-grouped
+// (base / specular / coat / transmission / emission / geometry). This struct IS
+// the first node of the v0.7 material node graph (THESIS §59/§747) — nothing
+// here gets rewritten, only wrapped. [[V32]] — the IR is renderer-agnostic;
+// `openpbrToThree` (src/app/material/openpbrToThree.ts) compiles it to a three.js
+// `MeshPhysicalMaterial` on the classic WebGLRenderer (D-01); WGSL/TSL is the
+// v0.7 compile target, NOT a different IR.
+//
+// The grouped paramPath is the addressing dimension every surface speaks:
+//   base.color · base.metalness · specular.roughness · specular.ior ·
+//   coat.weight · coat.roughness · transmission.weight · emission.color ·
+//   emission.luminance · geometry.opacity   (e.g. setParam 'material.base.color').
+//
+// LOSSY (documented at the compile site openpbrToThree.ts):
+//   emission.luminance → emissiveIntensity — photometric cd/m² used 1:1 as the
+//   unitless three multiplier; the v0.7 TSL backend re-derives true emission.
+// The IR stays COMPLETE (every lobe stored, off at weight 0); the WebGL compiler
+// emits only the supported subset and tags the rest (`unsupported`) for v0.7.
+// ---------------------------------------------------------------------------
+
+/** The 6 texture-map slots the inline material carries (W5 populates; null = none). */
+export interface InlineMaterialMaps {
+  readonly albedo: BakedTextureRef | null;
+  readonly normal: BakedTextureRef | null;
+  readonly roughness: BakedTextureRef | null;
+  readonly metalness: BakedTextureRef | null;
+  readonly emissive: BakedTextureRef | null;
+  readonly ao: BakedTextureRef | null;
+}
+
 export interface InlineMaterialSpec {
+  /** Legacy display label (kept from the P0 {name,color} shape). */
   readonly name: string;
-  readonly color: string;
+  /** base_color (sRGB hex) + base_metalness [0..1]. */
+  readonly base: { readonly color: string; readonly metalness: number };
+  /** specular_roughness [0..1] + specular_ior [1.0..2.33]. */
+  readonly specular: { readonly roughness: number; readonly ior: number };
+  /** coat_weight [0..1] + coat_roughness [0..1]. */
+  readonly coat: { readonly weight: number; readonly roughness: number };
+  /** transmission_weight [0..1] — auto-sets three `transparent` + `thickness`. */
+  readonly transmission: { readonly weight: number };
+  /** emission_color (sRGB hex) + emission_luminance (cd/m², 1:1 → emissiveIntensity). */
+  readonly emission: { readonly color: string; readonly luminance: number };
+  /** geometry_opacity [0..1] — auto-sets three `transparent` when <1. */
+  readonly geometry: { readonly opacity: number };
+  /** Texture map slots (W5). */
+  readonly maps: InlineMaterialMaps;
+  /**
+   * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
+   * (subsurface*, transmission_scatter*, base_diffuse_roughness,
+   * coat_ior/color/darkening, dispersion Abbe). STORED for the v0.7 TSL backend,
+   * tagged, NOT rendered now.
+   */
+  readonly unsupported?: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------

@@ -87,7 +87,7 @@ Wraps a child mesh and replaces its material. Params:
 
 Use MaterialOverride when you need to drive properties beyond color
 (e.g. metallic surfaces, emissive panels). For simple recolours,
-prefer \`mutator.setMaterialColor\` — it touches \`material.color\`
+prefer \`mutator.setMaterialColor\` — it touches \`material.base.color\`
 directly and runs the closure-preservation gate.`,
 };
 
@@ -292,7 +292,7 @@ Re-keying the same time replaces the existing sample — no need for a
 |--------------------------------------|-----------|
 | \`position\`, \`rotation\`, \`scale\`, \`size\` | \`vec3\`    |
 | \`intensity\`, \`fov\`, \`opacity\`        | \`number\`  |
-| \`material.color\`                     | \`color\`   |
+| \`material.base.color\`                | \`color\`   |
 | (rare; quaternion rigs)              | \`quat\`    |
 
 ## Easing defaults (no need to override unless asked)

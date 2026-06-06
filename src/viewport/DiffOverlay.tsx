@@ -93,7 +93,7 @@ function GhostChild({ value }: { value: SceneChild }) {
           <meshBasicMaterial
             transparent
             opacity={0.35}
-            color={value.material.color}
+            color={value.material.base.color}
             depthWrite={false}
             wireframe
           />
@@ -109,7 +109,7 @@ function GhostChild({ value }: { value: SceneChild }) {
           <meshBasicMaterial
             transparent
             opacity={0.35}
-            color={value.material.color}
+            color={value.material.base.color}
             depthWrite={false}
             wireframe
           />

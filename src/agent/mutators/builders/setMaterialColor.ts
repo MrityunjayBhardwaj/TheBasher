@@ -49,7 +49,7 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
       if (!hasMaterial && !hasColor) {
         return {
           ok: false,
-          reason: `Target "${id}" (${node.type}) has no material.color or color param.`,
+          reason: `Target "${id}" (${node.type}) has no material.base.color or color param.`,
         };
       }
     }
@@ -64,7 +64,8 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
         ops.push({
           type: 'setParam',
           nodeId: id,
-          paramPath: 'material.color',
+          // v0.6 #2 (#178): the inline color now lives at material.base.color.
+          paramPath: 'material.base.color',
           value: spec.color,
         });
       } else if (typeof params.color === 'string') {

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { BoxMeshValue } from './types';
+import {
+  hydrateInlineMaterial,
+  migrateInlineMaterialV2toV3,
+  openpbrMaterialSchema,
+} from './materialSchema';
+
+const BOX_DEFAULT_COLOR = '#5af07a';
 
 export const BoxMeshParams = z.object({
   size: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]),
@@ -12,18 +19,15 @@ export const BoxMeshParams = z.object({
   // migrated v1 project renders byte-identically (the renderer ignored scale until
   // Wave 3 and applies identity as a no-op).
   scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
-  material: z
-    .object({
-      name: z.string().default('default'),
-      color: z.string().default('#5af07a'),
-    })
-    .default({ name: 'default', color: '#5af07a' }),
+  // v0.6 #2 (#178): the OpenPBR core-10 inline material IR (layer 1 — NEW-node
+  // defaults). See materialSchema.ts for the V10/H14 three-layer guard.
+  material: openpbrMaterialSchema(BOX_DEFAULT_COLOR),
 });
 export type BoxMeshParams = z.infer<typeof BoxMeshParams>;
 
 export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
   type: 'BoxMesh',
-  version: 2,
+  version: 3,
   pure: true,
   cost: 'cheap',
   paramSchema: BoxMeshParams,
@@ -33,8 +37,19 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
   // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless: every other param
   // is preserved untouched; scale defaults to identity so the rendered result is
   // unchanged. (V4 migration runner, THESIS §52.)
+  // v0.6 #2 (#178) — v2 ({name,color}) → v3 (OpenPBR IR). migrations[2] seeds the
+  // CURRENT-LOOK constants (roughness 0.5, R1) so a saved project renders
+  // byte-identically — DELIBERATELY different from the zod NEW-node defaults
+  // (roughness 0.3). See materialSchema.ts (the V10/H14 three-layer guard).
   migrations: {
     1: (old) => ({ ...(old as object), scale: [1, 1, 1] }),
+    2: (old) => ({
+      ...(old as object),
+      material: migrateInlineMaterialV2toV3(
+        (old as { material?: unknown }).material,
+        BOX_DEFAULT_COLOR,
+      ),
+    }),
   },
   evaluate(params) {
     return {
@@ -46,7 +61,9 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
       // parse (in-memory state surgery / test fixtures / agent ops), so default
       // identity HERE too, not just in the schema + migration.
       scale: params.scale ?? [1, 1, 1],
-      material: params.material,
+      // v0.6 #2 (#178) layer 3 — hydrate the inline material with `?? default`
+      // per field (dual-accepts a legacy top-level color mid-migration).
+      material: hydrateInlineMaterial(params.material, BOX_DEFAULT_COLOR),
     };
   },
 };

@@ -42,22 +42,31 @@ import type {
   MeshTransform,
   Vec3,
 } from '../nodes/types';
+import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 
+// Last-resort fallback color for a MALFORMED inline material (one carrying
+// neither base.color NOR a legacy top-level color). Real materials always carry
+// base.color via the zod default / migration / hydrate seam, so this only guards
+// a broken in-memory surgery object — it renders gray instead of crashing.
+const FALLBACK_MATERIAL_COLOR = '#808080';
+
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 }
 
+// v0.6 #2 (#178) CAVEAT-1 — DUAL-ACCEPT guard. The widened IR moves `color` to
+// `base.color`; a mid-migration in-memory object may still carry a legacy
+// top-level `color`. Accept EITHER, or the material silently drops to null
+// (resolveEvaluatedMesh returns material:null → mesh renders unlit, no error —
+// the [[V10]]/[[H14]] stale-read class). Junk (no color either way) fails.
 function isMaterialSpec(v: unknown): v is InlineMaterialSpec {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    typeof (v as { name?: unknown }).name === 'string' &&
-    typeof (v as { color?: unknown }).color === 'string'
-  );
+  if (typeof v !== 'object' || v === null) return false;
+  const m = v as { base?: { color?: unknown }; color?: unknown };
+  return typeof m.base?.color === 'string' || typeof m.color === 'string';
 }
 
 /**
@@ -120,7 +129,11 @@ export function resolveEvaluatedMesh(
     return {
       geometry,
       uvs: null,
-      material: isMaterialSpec(p.material) ? p.material : null,
+      // Layer-4 consumer: hydrate to a COMPLETE IR so the renderer (W2) never
+      // reads an undefined sub-field. isMaterialSpec dual-accepts legacy/widened.
+      material: isMaterialSpec(p.material)
+        ? hydrateInlineMaterial(p.material, FALLBACK_MATERIAL_COLOR)
+        : null,
       transform,
     };
   }
@@ -162,7 +175,9 @@ export function resolveEvaluatedMesh(
     return {
       geometry,
       uvs: null,
-      material: isMaterialSpec(p.material) ? p.material : null,
+      material: isMaterialSpec(p.material)
+        ? hydrateInlineMaterial(p.material, FALLBACK_MATERIAL_COLOR)
+        : null,
       transform,
     };
   }
