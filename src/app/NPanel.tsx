@@ -37,7 +37,7 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
@@ -582,6 +582,189 @@ function isInputBinding(v: unknown): boolean {
  *  number / vec3 / string / input-binding / complex. Returns null when
  *  the value is an upstream binding (those render via socket wiring
  *  in C5+, not the Inspector). */
+// v0.6 #2 (#178, W3) — ColorField: a swatch + hex control that dispatches setParam
+// on its color paramPath (e.g. material.base.color). Mirrors NumericField's wiring
+// EXACTLY so a colour ANIMATES like any scalar: ParamDiamond (the Blender field-
+// colour table, free), routeAnimatedGrab + autoKeyCommit on edit (KeyframeColor
+// channels already exist), and the optional override decorator. There is no colour
+// picker anywhere else in the app (grep-confirmed) — this is the one.
+function isHex6(v: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
+interface ColorFieldProps {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: string;
+  overrideInfo?: OverrideInfo;
+}
+
+function ColorField({ nodeId, paramPath, label, value, overrideInfo }: ColorFieldProps) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const [draft, setDraft] = useState(value);
+  // Keep the hex text in sync when the authored value changes outside this field
+  // (undo, animation scrub, agent edit) — the input is otherwise locally edited.
+  useEffect(() => setDraft(value), [value]);
+  const commit = (next: string) => {
+    if (!isHex6(next)) return;
+    // SAME chokepoints as NumericField (H36 anti-double-write): animated → seam,
+    // covered override field → value+bit atomic, else raw setParam; then autoKey.
+    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
+    if (!dispatchOverrideValueEdit(nodeId, paramPath, next, overrideInfo)) {
+      dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `edit ${paramPath}`);
+    }
+    autoKeyCommit(nodeId, paramPath, next);
+  };
+  const swatch = isHex6(draft) ? draft : '#000000';
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {overrideInfo ? (
+          <OverrideDecorator
+            nodeId={nodeId}
+            descriptor={overrideInfo.descriptor}
+            field={paramPath}
+            marked={overrideInfo.marked}
+          />
+        ) : null}
+        <span className="font-mono text-fg/60">{label}</span>
+      </span>
+      <span className="flex items-center gap-1">
+        <input
+          type="color"
+          aria-label={`${label} colour swatch`}
+          value={swatch}
+          data-testid={`inspector-color-${nodeId}-${paramPath}`}
+          className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => {
+            setDraft(e.target.value);
+            commit(e.target.value);
+          }}
+        />
+        <input
+          type="text"
+          aria-label={`${label} hex`}
+          value={draft}
+          data-testid={`inspector-colorhex-${nodeId}-${paramPath}`}
+          className="w-20 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
+// v0.6 #2 (#178, W3) — the lobe-grouped OpenPBR material editor that REPLACES the
+// `(complex — Pro mode)` placeholder (closes NPanel:636 for primitives; the THESIS
+// §741 uniformity gate). Each scalar → a NumericField, each colour → a ColorField,
+// addressing the grouped paramPath `material.<lobe>.<field>` (the primitive owns
+// its material → direct setParam, D-07). Every field carries ParamDiamond + scrub
+// + autoKey for FREE (shared fields). Map rows (W5) attach under base later.
+interface MaterialFieldSpec {
+  key: string;
+  label: string;
+  kind: 'number' | 'color';
+}
+const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[] }[] = [
+  {
+    lobe: 'base',
+    label: 'Base',
+    fields: [
+      { key: 'color', label: 'color', kind: 'color' },
+      { key: 'metalness', label: 'metalness', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'specular',
+    label: 'Specular',
+    fields: [
+      { key: 'roughness', label: 'roughness', kind: 'number' },
+      { key: 'ior', label: 'ior', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'coat',
+    label: 'Coat',
+    fields: [
+      { key: 'weight', label: 'weight', kind: 'number' },
+      { key: 'roughness', label: 'roughness', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'transmission',
+    label: 'Transmission',
+    fields: [{ key: 'weight', label: 'weight', kind: 'number' }],
+  },
+  {
+    lobe: 'emission',
+    label: 'Emission',
+    fields: [
+      { key: 'color', label: 'color', kind: 'color' },
+      { key: 'luminance', label: 'luminance', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'geometry',
+    label: 'Geometry',
+    fields: [{ key: 'opacity', label: 'opacity', kind: 'number' }],
+  },
+];
+
+function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { base?: { color?: unknown } }).base?.color === 'string'
+  );
+}
+
+function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknown }) {
+  if (!isMaterialIR(material)) return null;
+  return (
+    <div data-testid={`inspector-material-editor-${nodeId}`} className="flex flex-col">
+      {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
+        <div key={lobe} className="flex flex-col">
+          <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+            {label}
+          </div>
+          {fields.map(({ key, label: fieldLabel, kind }) => {
+            const paramPath = `material.${lobe}.${key}`;
+            const lobeObj = material[lobe] ?? {};
+            if (kind === 'color') {
+              const cv = typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
+              return (
+                <ColorField
+                  key={key}
+                  nodeId={nodeId}
+                  paramPath={paramPath}
+                  label={fieldLabel}
+                  value={cv}
+                />
+              );
+            }
+            const nv = typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+            return (
+              <NumericField
+                key={key}
+                nodeId={nodeId}
+                paramPath={paramPath}
+                label={fieldLabel}
+                value={nv}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ParamRow({
   nodeId,
   paramPath,
@@ -593,6 +776,11 @@ function ParamRow({
   value: unknown;
   overrideInfo?: OverrideInfo;
 }) {
+  // v0.6 #2 (#178, W3) — the inline material IR renders the lobe-grouped editor
+  // INSTEAD of the (complex — Pro mode) fallback. Closes NPanel:636 for primitives.
+  if (paramPath === 'material' && isMaterialIR(value)) {
+    return <MaterialEditor nodeId={nodeId} material={value} />;
+  }
   if (typeof value === 'number') {
     return (
       <NumericField
