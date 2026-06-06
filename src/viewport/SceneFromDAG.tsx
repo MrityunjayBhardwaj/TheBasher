@@ -27,6 +27,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
+import { openpbrToThree } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -60,6 +61,7 @@ import type {
   GroupValue,
   LightValue,
   MaterialOverrideValue,
+  InlineMaterialSpec,
   MaterialValue,
   PointLightValue,
   RenderOutputValue,
@@ -280,6 +282,10 @@ function MeshScaleProbe() {
       mapColorSpace: string | null;
       roughness: number | null;
       metalness: number | null;
+      type: string | null;
+      opacity: number | null;
+      clearcoat: number | null;
+      transmission: number | null;
     } | null => {
       const grp = scene.getObjectByName(nodeId);
       if (!grp) return null;
@@ -291,15 +297,23 @@ function MeshScaleProbe() {
       const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;
       if (!mat) return null;
       const std = mat as THREE.MeshStandardMaterial;
+      const phys = mat as THREE.MeshPhysicalMaterial;
       const map = std.map ?? null;
       const image = map?.image as { width?: number } | undefined;
       return {
+        type: mat.type ?? null, // v0.6 #2 (W2): 'MeshPhysicalMaterial' for primitives now
         color: std.color ? `#${std.color.getHexString()}` : null,
         hasMap: map !== null,
         mapImageOk: Boolean(image && (image.width ?? 0) > 0),
         mapColorSpace: map ? map.colorSpace : null,
         roughness: typeof std.roughness === 'number' ? std.roughness : null,
         metalness: typeof std.metalness === 'number' ? std.metalness : null,
+        opacity: typeof std.opacity === 'number' ? std.opacity : null,
+        // v0.6 #2 (W2/2.3): the define-gating precondition — at coat/transmission=0
+        // three compiles NO clearcoat/transmission GLSL (WebGLPrograms HAS_* > 0),
+        // so a Physical material ≈ Standard cost. Deterministic, not a timing race.
+        clearcoat: typeof phys.clearcoat === 'number' ? phys.clearcoat : null,
+        transmission: typeof phys.transmission === 'number' ? phys.transmission : null,
       };
     };
     return () => {
@@ -682,9 +696,72 @@ function applyOverride(
   };
 }
 
+// v0.6 #2 (#178, W2) — the ONE shared primitive material builder for Box+Sphere.
+// Mirrors BakedMeshR's imperative useMemo build (single writer V20): compile the
+// OpenPBR IR via openpbrToThree (the one mapping site, V29) → MeshPhysicalMaterial.
+// Standard→Physical is PERF-SAFE: at coat.weight=0/transmission.weight=0 the
+// compiled shader carries no clearcoat/transmission GLSL — three gates the defines
+// on `> 0` (WebGLPrograms.js:130,134 HAS_CLEARCOAT/HAS_TRANSMISSION; the setters
+// MeshPhysicalMaterial.js:104,176 only recompile across the 0 boundary). roughness
+// and clearcoatRoughness are set EXPLICITLY (three defaults are 1 and 0 — D-03).
+// A MaterialOverride decorator (#99/#124) still wins WHOLESALE on its 7 scalars
+// (backward-compat — a primitive has no source map); coat/transmission/ior/maps
+// always come from the IR (the override carries no opinion on them).
+function usePrimitiveMaterial(
+  ir: InlineMaterialSpec,
+  override: MaterialValue | undefined,
+  shading: string,
+): THREE.MeshPhysicalMaterial {
+  const three = openpbrToThree(ir);
+  const color = override ? override.color : three.color;
+  const roughness = override ? override.roughness : three.roughness;
+  const metalness = override ? override.metalness : three.metalness;
+  const opacity = override ? override.opacity : three.opacity;
+  const emissive = override ? override.emissive : three.emissive;
+  const emissiveIntensity = override ? override.emissiveIntensity : three.emissiveIntensity;
+  const transparent = override ? override.opacity < 1 : three.transparent;
+  const wireframe = shading === 'wireframe';
+  const { ior, clearcoat, clearcoatRoughness, transmission, thickness } = three;
+  const material = useMemo(() => {
+    const m = new THREE.MeshPhysicalMaterial();
+    m.color = new THREE.Color(color);
+    m.roughness = roughness; // explicit — three default is 1 (D-03)
+    m.metalness = metalness;
+    m.opacity = opacity;
+    m.transparent = transparent;
+    m.emissive = new THREE.Color(emissive);
+    m.emissiveIntensity = emissiveIntensity;
+    m.ior = ior;
+    m.clearcoat = clearcoat;
+    m.clearcoatRoughness = clearcoatRoughness; // explicit — three default is 0
+    m.transmission = transmission;
+    m.thickness = thickness;
+    m.wireframe = wireframe;
+    // W5 wires the 6 texture-map slots (three.maps.*) via useBakedTexture; null now.
+    return m;
+  }, [
+    color,
+    roughness,
+    metalness,
+    opacity,
+    transparent,
+    emissive,
+    emissiveIntensity,
+    ior,
+    clearcoat,
+    clearcoatRoughness,
+    transmission,
+    thickness,
+    wireframe,
+  ]);
+  // Single writer (V20) owns the material lifecycle — dispose on replace/unmount.
+  useEffect(() => () => material.dispose(), [material]);
+  return material;
+}
+
 function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
-  const mat = applyOverride(value.material.base.color, override);
   const shading = useViewportStore((s) => s.shading);
+  const material = usePrimitiveMaterial(value.material, override, shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -696,23 +773,14 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <boxGeometry args={value.size as [number, number, number]} />
-      <meshStandardMaterial
-        color={mat.color}
-        roughness={mat.roughness}
-        metalness={mat.metalness}
-        opacity={mat.opacity}
-        emissive={mat.emissive}
-        emissiveIntensity={mat.emissiveIntensity}
-        transparent={mat.transparent}
-        wireframe={shading === 'wireframe'}
-      />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
 
 function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
-  const mat = applyOverride(value.material.base.color, override);
   const shading = useViewportStore((s) => s.shading);
+  const material = usePrimitiveMaterial(value.material, override, shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -722,16 +790,7 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
-      <meshStandardMaterial
-        color={mat.color}
-        roughness={mat.roughness}
-        metalness={mat.metalness}
-        opacity={mat.opacity}
-        emissive={mat.emissive}
-        emissiveIntensity={mat.emissiveIntensity}
-        transparent={mat.transparent}
-        wireframe={shading === 'wireframe'}
-      />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
