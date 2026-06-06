@@ -397,7 +397,64 @@ or `aspect: number`; cameras stay aspect-agnostic. Matches every DCC.
 Spec/gloss is dead in mainstream pipelines (deprecated in glTF, removed
 from Substance Designer's defaults).
 
-**Cross-refs:** V9, `src/nodes/MaterialOverride.ts`.
+### 11a. Material PARAMETER MODEL = OpenPBR (v0.6 #2 — DECIDED 2026-06-06)
+
+**Scenario:** which named parameter set / authoring vocabulary the
+editable material uses (the layer above "metalness/roughness BRDF").
+
+**Basher's choice:** **OpenPBR Surface** as the renderer-agnostic
+material IR (OpenPBR-canonical names, lobe-grouped), compiled to THREE
+`MeshPhysicalMaterial` on the classic `WebGLRenderer`. Status: **TBD**
+(phase `v06.2-material-texture-editing`; the IR becomes the first node
+of the v0.7 material graph, THESIS §59/§747).
+
+The standard is converging on OpenPBR across every DCC (grounded
+2026-06, source-level):
+
+| App                     | Surface model (early 2026)                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------------- |
+| OpenPBR Surface         | v1.1.1 (ASWF, a **subproject of MaterialX**); merges Autodesk Standard Surface + Adobe Standard Material |
+| Blender                 | Principled BSDF — node header: _"based on the OpenPBR Surface shading model"_; native merge ~6.0         |
+| Houdini / Karma         | ships `mtlxopenpbr_surface` (H21, OpenPBR v1.1); default once MaterialX 1.39 lands                       |
+| Maya 2025.3+ / Max 2026 | native `openPBRSurface` (default in Max)                                                                 |
+| THREE.js (WebGL)        | no OpenPBR closure; `MeshPhysicalMaterial` is the lossy target                                           |
+| THREE.js (TSL/WebGPU)   | `MeshPhysicalNodeMaterial` = **same lobes** as WebGL; no OpenPBR closure either                          |
+
+**Core-10 that maps loss-free to `MeshPhysicalMaterial`:** `base_color`
+→`color`, `base_metalness`→`metalness`, `specular_roughness`→`roughness`,
+`specular_ior`→`ior`, `coat_weight`→`clearcoat`, `coat_roughness`→
+`clearcoatRoughness`, `transmission_weight`→`transmission`(+thickness/
+transparent), `emission_color`→`emissive`, `emission_luminance`→
+`emissiveIntensity` (unit-lossy, `=×1.0`), `geometry_opacity`→`opacity`.
+Keep the IR COMPLETE; tag unrepresentable lobes (SSS, transmission
+scatter, Oren-Nayar/`base_diffuse_roughness`, `coat_ior/color/darkening`,
+dispersion Abbe) `unsupported-in-webgl` for the v0.7 TSL backend.
+
+**Two findings that overturned the obvious paths (don't re-litigate):**
+
+1. **TSL/WebGPU does NOT buy OpenPBR.** `MeshPhysicalNodeMaterial` has
+   the identical lobes as the WebGL material; three.js ships no OpenPBR
+   closure (only the USD loader's lossy `_applyOpenPBRSurface`→
+   `MeshPhysicalMaterial`). Renderer choice is **orthogonal** to OpenPBR
+   fidelity; real OpenPBR (SSS etc.) needs hand-authored TSL regardless.
+   So WebGL now is no fidelity loss; WebGPU is a v0.7 _renderer_ bet
+   (node-graph/compute/longevity), not a material-fidelity one.
+2. **TSL is a compile target, NOT a serializable IR** (source-verified:
+   `Fn()` is a JS closure with no serialize; `Node.serialize()` has no
+   type-registry to rebuild from cold JSON). So Basher MUST own a
+   serializable material IR (see V32) — exactly THESIS §747. MaterialX
+   is the **interchange** boundary (`.mtlx` I/O, v0.7), not the live IR;
+   the v0.7 node editor is "build-B" (own-IR→TSL over React Flow — no
+   drop-in MaterialX web editor exists).
+
+**Animation field-state colours = Blender's table EXACTLY** (don't
+invent): yellow = keyed on current frame · green = animated, no key
+here · orange = changed-since-key (transient — #149 already ships
+orange) · purple = driver.
+
+**Cross-refs:** V9, V32, dharana B19, `src/nodes/MaterialOverride.ts`,
+memory `project_material_architecture.md`,
+`.planning/phases/v06.2-material-texture-editing/`.
 
 ---
 
