@@ -722,7 +722,26 @@ function usePrimitiveMaterial(
   const transparent = override ? override.opacity < 1 : three.transparent;
   const wireframe = shading === 'wireframe';
   const { ior, clearcoat, clearcoatRoughness, transmission, thickness } = three;
+  // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
+  // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
+  // the loader hook, never in the resolver (V29). The ref carries the colorspace;
+  // re-assert it here per slot (M5 — a data map as sRGB washes out), mirroring
+  // BakedMeshR's sRGB/linear split.
+  const mapTex = useBakedTexture(three.maps.map);
+  const normalTex = useBakedTexture(three.maps.normalMap);
+  const roughnessTex = useBakedTexture(three.maps.roughnessMap);
+  const metalnessTex = useBakedTexture(three.maps.metalnessMap);
+  const aoTex = useBakedTexture(three.maps.aoMap);
+  const emissiveTex = useBakedTexture(three.maps.emissiveMap);
   const material = useMemo(() => {
+    const sRGB = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const linear = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
+      return t;
+    };
     const m = new THREE.MeshPhysicalMaterial();
     m.color = new THREE.Color(color);
     m.roughness = roughness; // explicit — three default is 1 (D-03)
@@ -737,7 +756,13 @@ function usePrimitiveMaterial(
     m.transmission = transmission;
     m.thickness = thickness;
     m.wireframe = wireframe;
-    // W5 wires the 6 texture-map slots (three.maps.*) via useBakedTexture; null now.
+    // The 6 texture-map slots (D-04) — sRGB for colour maps, linear for data maps.
+    m.map = sRGB(mapTex);
+    m.normalMap = linear(normalTex);
+    m.roughnessMap = linear(roughnessTex);
+    m.metalnessMap = linear(metalnessTex);
+    m.aoMap = linear(aoTex);
+    m.emissiveMap = sRGB(emissiveTex);
     return m;
   }, [
     color,
@@ -753,6 +778,12 @@ function usePrimitiveMaterial(
     transmission,
     thickness,
     wireframe,
+    mapTex,
+    normalTex,
+    roughnessTex,
+    metalnessTex,
+    aoTex,
+    emissiveTex,
   ]);
   // Single writer (V20) owns the material lifecycle — dispose on replace/unmount.
   useEffect(() => () => material.dispose(), [material]);

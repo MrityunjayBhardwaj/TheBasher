@@ -37,7 +37,15 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  attachMapFromFile,
+  MATERIAL_MAP_SLOTS,
+  type MaterialMapSlot,
+} from './material/attachMapFromFile';
+import { getStorage } from './boot';
+import { useAssetErrorStore } from './stores/assetErrorStore';
+import type { BakedTextureRef } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
@@ -724,8 +732,88 @@ function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> 
   );
 }
 
+// v0.6 #2 (#178, W5) — one texture-map slot row: pick (file → attachMapFromFile →
+// OPFS → setParam the ref) or clear (setParam null). Maps are NON-animated (D-04)
+// → no ParamDiamond. A decode/persist failure surfaces via assetErrorStore (the
+// MERGED feedback surface), never a silent drop.
+function MapRow({
+  nodeId,
+  slot,
+  mapRef,
+}: {
+  nodeId: string;
+  slot: MaterialMapSlot;
+  mapRef: BakedTextureRef | null;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const paramPath = `material.maps.${slot}`;
+  const onPick = async (file: File) => {
+    try {
+      const storage = await getStorage();
+      const ref = await attachMapFromFile(storage, file, slot);
+      // The setParam recording the ref runs ONLY after the async persist resolves.
+      dispatch({ type: 'setParam', nodeId, paramPath, value: ref }, 'user', `attach ${slot} map`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      useAssetErrorStore.getState().report(`${nodeId}:${slot}`, `${slot} map failed: ${msg}`);
+    }
+  };
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{slot}</span>
+      <span className="flex items-center gap-1">
+        <span
+          className="font-mono text-[10px] text-fg/40"
+          data-testid={`inspector-map-state-${nodeId}-${slot}`}
+        >
+          {mapRef ? '● set' : '— none'}
+        </span>
+        <button
+          type="button"
+          data-testid={`inspector-map-pick-${nodeId}-${slot}`}
+          onClick={() => inputRef.current?.click()}
+          className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {mapRef ? 'replace' : 'pick'}
+        </button>
+        {mapRef ? (
+          <button
+            type="button"
+            data-testid={`inspector-map-clear-${nodeId}-${slot}`}
+            onClick={() =>
+              dispatch(
+                { type: 'setParam', nodeId, paramPath, value: null },
+                'user',
+                `clear ${slot} map`,
+              )
+            }
+            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            clear
+          </button>
+        ) : null}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          aria-label={`${slot} map file`}
+          data-testid={`inspector-map-file-${nodeId}-${slot}`}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onPick(f);
+            e.target.value = '';
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
 function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknown }) {
   if (!isMaterialIR(material)) return null;
+  const maps = (material.maps ?? {}) as Record<string, BakedTextureRef | null>;
   return (
     <div data-testid={`inspector-material-editor-${nodeId}`} className="flex flex-col">
       {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
@@ -761,6 +849,14 @@ function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknow
           })}
         </div>
       ))}
+      <div className="flex flex-col">
+        <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+          Maps
+        </div>
+        {MATERIAL_MAP_SLOTS.map((slot) => (
+          <MapRow key={slot} nodeId={nodeId} slot={slot} mapRef={maps[slot] ?? null} />
+        ))}
+      </div>
     </div>
   );
 }
