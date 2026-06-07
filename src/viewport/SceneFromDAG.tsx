@@ -1151,16 +1151,35 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       if ('wireframe' in next) next.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
       return next;
     };
+    // v0.6 #2 (#178, W6 — D-05/D-07) — per-submesh addressing. A "slot" is the
+    // i-th isMesh in this traverse (the SAME order the `__basher_gltf_meshes`
+    // seam reports, so an e2e's side-A read aligns with this apply). The override
+    // carries an optional `slotIndex`:
+    //   - undefined ⇒ apply to EVERY slot (the #99/#124 whole-child behaviour —
+    //     backward-compat; the p7.13/p124 e2e prove it stays byte-identical).
+    //   - a number ⇒ apply ONLY to that slot; every OTHER slot keeps its imported
+    //     material (so editing slot 1 leaves slot 0 untouched). Out-of-range ⇒ no
+    //     slot matches ⇒ no-op (range-safe).
+    const targetSlot = override ? (override as MaterialValue).slotIndex : undefined;
+    let slotIdx = -1;
     cloned.traverse((child) => {
       const m = child as THREE.Mesh;
       if (!m.isMesh) return;
+      slotIdx += 1;
       // Capture the imported material(s) once, before any reassignment.
       if (!overrideOriginals.current.has(m.uuid)) {
         overrideOriginals.current.set(m.uuid, m.material);
       }
       const src = overrideOriginals.current.get(m.uuid)!;
-      if (!override) {
-        // Restore the imported material(s) — fixes the latent no-restore bug.
+      // The override applies to THIS slot iff it exists AND either it is a
+      // whole-child override (slotIndex undefined) or it addresses this exact
+      // slot. Anything else keeps the imported material — no override, or a
+      // per-slot override aimed at a DIFFERENT slot (the latter is what keeps
+      // slot 0 unchanged when the director edits slot 1).
+      const applies = Boolean(override) && (targetSlot === undefined || targetSlot === slotIdx);
+      if (!applies) {
+        // Restore the imported material(s) — fixes the latent no-restore bug AND
+        // keeps non-addressed slots at their source material.
         m.material = src;
         return;
       }
@@ -1375,6 +1394,12 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     const w = window as unknown as Record<string, unknown>;
     w.__basher_gltf_meshes = () => {
       const summary: Array<{
+        // v0.6 #2 (#178, W6) — the per-MESH slot index, matching the override
+        // effect's `slotIdx` (incremented per isMesh in the SAME traverse). A
+        // MaterialOverride with `slotIndex===slot` addresses exactly this entry.
+        // For a material-ARRAY mesh every entry shares the mesh's slot (the
+        // override treats one mesh = one slot, applying `make` to each array elem).
+        slot: number;
         name: string;
         hasMap: boolean;
         mapImageOk: boolean;
@@ -1434,9 +1459,11 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           imageSrc: typeof image?.src === 'string' && image.src.length > 0 ? image.src : null,
         };
       };
+      let meshSlot = -1;
       cloned.traverse((child) => {
         const m = child as THREE.Mesh;
         if (!m.isMesh) return;
+        meshSlot += 1;
         const mats = Array.isArray(m.material) ? m.material : [m.material];
         for (const mat of mats) {
           const map = (mat as { map?: THREE.Texture | null } | null)?.map ?? null;
@@ -1470,6 +1497,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             }
           }
           summary.push({
+            slot: meshSlot,
             name: m.name ?? '',
             hasMap: map !== null,
             mapImageOk: Boolean(image && (image.width ?? 0) > 0),
