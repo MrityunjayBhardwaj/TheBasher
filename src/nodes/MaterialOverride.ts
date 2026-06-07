@@ -43,6 +43,14 @@ export const MaterialOverrideParams = z.object({
   // a different-scope primitive (Blender View-Layer Material Override / Houdini
   // wholesale Assign Material), not a per-field bit.
   ignoreSourceMaterial: z.boolean().default(false),
+  // v0.6 #2 (#178, W6 — D-05/D-07): the per-submesh addressing dimension for a
+  // MULTI-material glTF target. OPTIONAL — absent ⇒ undefined ⇒ the override
+  // applies to every material slot (the #99/#124 whole-child behaviour;
+  // backward-compat MUST hold). A number `i` targets ONLY the i-th material slot
+  // (the i-th isMesh in the cloned glTF's traverse order). No `.default` so
+  // pre-W6 projects hydrate as undefined = whole-child (V10/H14-clean; no
+  // migration needed). Range-guarded at the renderer, not here.
+  slotIndex: z.number().int().min(0).optional(),
 });
 export type MaterialOverrideParams = z.infer<typeof MaterialOverrideParams>;
 
@@ -73,6 +81,10 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
         overridden: params.overridden,
         // #131 (D-05): the coarse flatten toggle rides the same prop chain.
         ignoreSourceMaterial: params.ignoreSourceMaterial,
+        // v0.6 #2 (#178, W6): the per-submesh slot index rides the same
+        // `override?: MaterialValue` prop chain to GltfAssetR. undefined ⇒
+        // whole-child (every slot); a number ⇒ that slot only.
+        slotIndex: params.slotIndex,
       },
     };
   },

@@ -146,6 +146,20 @@ export interface MaterialValue {
    * Absent / `false` ⇒ the clone + map-aware merge path (#99 + #124).
    */
   readonly ignoreSourceMaterial?: boolean;
+  /**
+   * v0.6 #2 (#178, W6 — D-05/D-07) — per-submesh addressing for a MULTI-material
+   * glTF target. The override carries an optional slot-index addressing dimension
+   * (NOT a new code path — D-05 "submesh index is just an addressing dimension").
+   *   - `undefined` (absent) ⇒ apply to EVERY material slot of the wrapped child —
+   *     the #99/#124 whole-child behaviour, byte-identical (backward-compat MUST
+   *     hold; the p7.13/p124 e2e prove it).
+   *   - `i` (a number) ⇒ apply ONLY to the i-th material slot. A "slot" is the
+   *     i-th `isMesh` in the cloned glTF's traverse order — the SAME order the
+   *     `__basher_gltf_meshes` seam reports, so the e2e's side-A read aligns with
+   *     the renderer's apply. Out-of-range `i` matches no slot ⇒ no-op (range-safe).
+   * Primitives have exactly one slot, so the field is irrelevant for them.
+   */
+  readonly slotIndex?: number;
 }
 
 // ---------------------------------------------------------------------------
