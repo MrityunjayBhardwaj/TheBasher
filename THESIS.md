@@ -205,6 +205,31 @@ The discipline is that **everything is a DAG underneath; authoring surfaces are 
 
 Mode persists per-project. Onboarding starts in Simple. Director is the default after first project. Pro is opt-in.
 
+> **§17a. AMENDMENT (2026-06-07, v0.6 #4) — modes are removed; progressive disclosure replaces them.**
+>
+> The Simple / Director / Pro mode hierarchy above is **superseded.** There are **no app modes.** There
+> is **one editor**; every surface exists for every user; the default view is calm, and complexity is
+> **hidden by default and revealed on demand** — the Spline model (the timeline, the DAG view, the
+> library, advanced inspector sections, and debug/tools are revealable panels, not a tier you unlock).
+> The agent is **always co-equal and present** (this supersedes §15's per-mode chat behavior and removes
+> §16/§192's "Pro mode" gating on the DAG view — it becomes hidden-by-default-but-revealable). The
+> `read-only / copilot / sandbox` control stays — that is **agent autonomy**, not an app mode.
+>
+> **Why (and why it's a net gain).** The mode system's purpose was to not scare newcomers (§674) and to
+> start onboarding simple (§206). Disclosure serves both better: complexity is hidden by default (scares
+> no one) yet always available (no wall — this dissolves §691's "Simple was too simple" problem). It also
+> **eliminates the §809 failure risk** — with no modes there is one pipeline by construction, never an
+> "easy" path and a "real" path. The §196 discipline is unchanged and in fact strengthened: _everything
+> is a DAG underneath; the graph stays hidden by default; showing it is a deliberate reveal, never the
+> on-ramp._
+>
+> **Supersedes / to reconcile inline later:** §12–16 (per-mode surface lists), §17 + §834 (the Mode
+> primitive), §203 (mode table), §206 (mode persistence), §478 (mode-store scaffold), §520 (Tools "Pro
+> only"), §579, §674 (risk row), §691, §702/§706/§730 ("DAG hidden until Pro", "Simple→Director
+> defaults"), §59 ("editable DAG editor in Pro mode" → revealable surface). Design contract:
+> `docs/SPLINE-UI-REFERENCE.md` §6 (D-05). Code: `ModeSwitcher`, `ModeBadge`, `chromeStore`, `Layout`
+> (surface gating), `TopToolbar` (the mode control).
+
 ---
 
 ## Part IV — The Agent
