@@ -286,6 +286,11 @@ function MeshScaleProbe() {
       opacity: number | null;
       clearcoat: number | null;
       transmission: number | null;
+      // v0.6 #3 (#181, W2) — the live map UV placement (side A for the e2e).
+      mapRepeat: [number, number] | null;
+      mapOffset: [number, number] | null;
+      mapRotation: number | null;
+      mapCenter: [number, number] | null;
     } | null => {
       const grp = scene.getObjectByName(nodeId);
       if (!grp) return null;
@@ -306,6 +311,11 @@ function MeshScaleProbe() {
         hasMap: map !== null,
         mapImageOk: Boolean(image && (image.width ?? 0) > 0),
         mapColorSpace: map ? map.colorSpace : null,
+        // v0.6 #3 — read the cloned texture's actual repeat/offset/rotation/center.
+        mapRepeat: map ? [map.repeat.x, map.repeat.y] : null,
+        mapOffset: map ? [map.offset.x, map.offset.y] : null,
+        mapRotation: map ? map.rotation : null,
+        mapCenter: map ? [map.center.x, map.center.y] : null,
         roughness: typeof std.roughness === 'number' ? std.roughness : null,
         metalness: typeof std.metalness === 'number' ? std.metalness : null,
         opacity: typeof std.opacity === 'number' ? std.opacity : null,
@@ -733,14 +743,27 @@ function usePrimitiveMaterial(
   const metalnessTex = useBakedTexture(three.maps.metalnessMap);
   const aoTex = useBakedTexture(three.maps.aoMap);
   const emissiveTex = useBakedTexture(three.maps.emissiveMap);
+  // v0.6 #3 (#181, W2) — the ONE shared UV placement, applied to all 6 maps.
+  const [tilingX, tilingY] = three.uvTransform.tiling;
+  const [offsetX, offsetY] = three.uvTransform.offset;
+  const uvRotation = three.uvTransform.rotation;
   const material = useMemo(() => {
-    const sRGB = (t: THREE.Texture | null) => {
-      if (t) t.colorSpace = THREE.SRGBColorSpace;
-      return t;
-    };
-    const linear = (t: THREE.Texture | null) => {
-      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
-      return t;
+    // v0.6 #3 (A-5): textures are cached & SHARED by hash (bakedTextureLoader),
+    // so we CLONE per material before applying the UV transform — mutating the
+    // shared instance would cross-contaminate every other material using that
+    // image. The clone shares the image source; we own + dispose the clones (V20).
+    const clones: THREE.Texture[] = [];
+    const prep = (t: THREE.Texture | null, colorSpace: THREE.ColorSpace) => {
+      if (!t) return null;
+      const c = t.clone();
+      c.colorSpace = colorSpace; // re-assert per slot (M5 — a data map as sRGB washes out)
+      c.center.set(0.5, 0.5); // rotate/scale about the texture centre (Blender / KHR)
+      c.repeat.set(tilingX, tilingY);
+      c.offset.set(offsetX, offsetY);
+      c.rotation = uvRotation;
+      c.needsUpdate = true;
+      clones.push(c);
+      return c;
     };
     const m = new THREE.MeshPhysicalMaterial();
     m.color = new THREE.Color(color);
@@ -757,12 +780,13 @@ function usePrimitiveMaterial(
     m.thickness = thickness;
     m.wireframe = wireframe;
     // The 6 texture-map slots (D-04) — sRGB for colour maps, linear for data maps.
-    m.map = sRGB(mapTex);
-    m.normalMap = linear(normalTex);
-    m.roughnessMap = linear(roughnessTex);
-    m.metalnessMap = linear(metalnessTex);
-    m.aoMap = linear(aoTex);
-    m.emissiveMap = sRGB(emissiveTex);
+    m.map = prep(mapTex, THREE.SRGBColorSpace);
+    m.normalMap = prep(normalTex, THREE.LinearSRGBColorSpace);
+    m.roughnessMap = prep(roughnessTex, THREE.LinearSRGBColorSpace);
+    m.metalnessMap = prep(metalnessTex, THREE.LinearSRGBColorSpace);
+    m.aoMap = prep(aoTex, THREE.LinearSRGBColorSpace);
+    m.emissiveMap = prep(emissiveTex, THREE.SRGBColorSpace);
+    m.userData.__uvClones = clones; // disposed alongside the material below
     return m;
   }, [
     color,
@@ -784,9 +808,21 @@ function usePrimitiveMaterial(
     metalnessTex,
     aoTex,
     emissiveTex,
+    tilingX,
+    tilingY,
+    offsetX,
+    offsetY,
+    uvRotation,
   ]);
-  // Single writer (V20) owns the material lifecycle — dispose on replace/unmount.
-  useEffect(() => () => material.dispose(), [material]);
+  // Single writer (V20) owns the material AND its cloned textures — dispose both
+  // on replace/unmount (Material.dispose does NOT free textures).
+  useEffect(
+    () => () => {
+      material.dispose();
+      (material.userData.__uvClones as THREE.Texture[] | undefined)?.forEach((t) => t.dispose());
+    },
+    [material],
+  );
   return material;
 }
 

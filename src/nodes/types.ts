@@ -213,6 +213,18 @@ export interface InlineMaterialSpec {
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
   /**
+   * v0.6 #3 (#181) — ONE shared UV placement applied to ALL loaded map textures
+   * (three.js Texture.repeat=tiling / .offset / .rotation, about .center=[.5,.5]).
+   * IDENTITY default (tiling [1,1], offset [0,0], rotation 0) → saved projects
+   * render byte-identically. Mirrors glTF KHR_texture_transform / Blender mapping
+   * node. Per-map transform is a v0.7 follow-up.
+   */
+  readonly uvTransform: {
+    readonly tiling: readonly [number, number];
+    readonly offset: readonly [number, number];
+    readonly rotation: number;
+  };
+  /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
    * coat_ior/color/darkening, dispersion Abbe). STORED for the v0.7 TSL backend,

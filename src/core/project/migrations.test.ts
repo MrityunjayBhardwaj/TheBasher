@@ -70,11 +70,11 @@ function ctxAt(seconds: number) {
   return { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
 }
 
-describe('BoxMesh v1 → v3 migration (byte-identical render gate)', () => {
-  it('steps version 1 → 3 (scale + material) and adds scale=identity', () => {
+describe('BoxMesh v1 → v4 migration (byte-identical render gate)', () => {
+  it('steps version 1 → 4 (scale + material + uvTransform) and adds scale=identity', () => {
     const migrated = loadFromBytes(V1_BOX_PROJECT);
     const box = migrated.state.nodes.n_box;
-    expect(box.version).toBe(3);
+    expect(box.version).toBe(4);
     expect((box.params as { scale?: unknown }).scale).toEqual([1, 1, 1]);
   });
 
@@ -94,6 +94,10 @@ describe('BoxMesh v1 → v3 migration (byte-identical render gate)', () => {
     expect(mat.geometry.opacity).toBe(1);
     expect(mat.emission.color).toBe('#000000');
     expect(mat.maps.albedo).toBeNull();
+    // v0.6 #3 — uvTransform migrates to IDENTITY (no placement) → byte-identical render.
+    expect(mat.uvTransform.tiling).toEqual([1, 1]);
+    expect(mat.uvTransform.offset).toEqual([0, 0]);
+    expect(mat.uvTransform.rotation).toBe(0);
   });
 
   it('renders identically — evaluated material is the CURRENT look (R1: roughness 0.5)', () => {
@@ -126,6 +130,6 @@ describe('BoxMesh v1 → v3 migration (byte-identical render gate)', () => {
     // hits on every subsequent save/load). nodeVersions now records BoxMesh: 3.
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_box).toEqual(once.state.nodes.n_box);
-    expect(twice.state.nodes.n_box.version).toBe(3);
+    expect(twice.state.nodes.n_box.version).toBe(4);
   });
 });

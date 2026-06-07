@@ -27,7 +27,7 @@ export type BoxMeshParams = z.infer<typeof BoxMeshParams>;
 
 export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
   type: 'BoxMesh',
-  version: 3,
+  version: 4,
   pure: true,
   cost: 'cheap',
   paramSchema: BoxMeshParams,
@@ -41,6 +41,9 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
   // CURRENT-LOOK constants (roughness 0.5, R1) so a saved project renders
   // byte-identically — DELIBERATELY different from the zod NEW-node defaults
   // (roughness 0.3). See materialSchema.ts (the V10/H14 three-layer guard).
+  // v0.6 #3 (#181) — v3 → v4 adds the inline material's `uvTransform` (IDENTITY).
+  // hydrateInlineMaterial fills it with identity tiling/offset/rotation, so a
+  // saved #2-era project renders byte-identically (V10/H14 — see materialSchema).
   migrations: {
     1: (old) => ({ ...(old as object), scale: [1, 1, 1] }),
     2: (old) => ({
@@ -49,6 +52,10 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
         (old as { material?: unknown }).material,
         BOX_DEFAULT_COLOR,
       ),
+    }),
+    3: (old) => ({
+      ...(old as object),
+      material: hydrateInlineMaterial((old as { material?: unknown }).material, BOX_DEFAULT_COLOR),
     }),
   },
   evaluate(params) {
