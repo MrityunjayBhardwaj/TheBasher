@@ -811,6 +811,18 @@ Basher's differentiator is **not** "UI is a projection" (Houdini/Blender got the
 
 **Honest bounds (so this stays a thesis, not hype).** (1) This is a framework to _build_ — designing the Layer-2/2.5 vocabulary well is the real intellectual work (Unreal spent years on UTF); it is potential _entailed by_ the architecture, not shipped capability. (2) The elegance is real for the **projectable + composable** slice; truly novel primitives are authored (once) regardless. (3) Inner-platform risk: past the common case, forcing novel interaction through declarations is worse than code — hence the mandatory escape hatch. (4) Today: Layer 1 ~70% on one panel; Layers 2 / 2.5 unbuilt; no public SDK seam yet. "Any UI for any app, just works" is true for the param + composed-interaction layer, and false (by design) for each app's authored identity.
 
+**59b. Unified 2D/3D procedural image domain — the open-whitespace reach (architecture note, 2026-06-08).**
+
+The §59a substrate (one DAG, Op-backed, deterministic, agent-authorable) makes a second consequence possible: **a rendered 3D frame and 2D compositing/image ops can live in the _same_ DAG.** A render is already an evaluated output (`RenderOutput`); an `EvaluatedImage` is just another. Compositing nodes (grade / blur / merge / mask / generate / AI-filter) operate on frames, and the result can flow **back** as a texture onto a 3D material — the loop **3D render → composite → texture → 3D**. This is the back half of §27 ("a film is a graph that evaluates to a sequence of frames"), not a bolt-on.
+
+**The fork (do not blur):** the **compositing / procedural image graph** (Nuke / Substance / Graphite model) is low-stretch, on-wedge (it is _finishing the film_), reuses the substrate wholesale, and rides the v0.7 WebGPU + TSL bet → _when, not if_. A **direct-paint raster app** (Photoshop / PixiEditor) is high-stretch, off-wedge: the DAG makes the _architecture_ free but **not the paint engine** (parallel to "projection frees the inspector, not the renderer"), and it serves a painter, not a director → _probably never_.
+
+**Deep research (2026-06, adversarially verified) — verdict: OPEN GAP.** No shipping product or paper combines all four of {unified 2D/3D in one DAG · web-native · agent-authors-the-graph · deterministic serializable IR}. Closest: **ComfyUI + ComfyGPT/ComfyUI-R1** (3/4 — web + agent + JSON-DAG, but 2D-diffusion only); **Graphite** (2/4 — web + IR, 2D-only/no-agent); **ShapeCraft** (2/4 — agent + DAG-IR, 3D-only/desktop). Threats, all 2/4 and fast: **Figma Weave** (~$200M acq.), **Adobe Project Graph**, **Runway Workflows** — web + node-graph, but 2D-only and human-authored. **Moat = agent-authors-graph × determinism × unified-2D/3D-in-one-web-IR** (the two rarest bars + the feedback loop). Risk is timing, not concept.
+
+**PixiEditor = reference, not base.** PixiEditor 2.0 is genuinely node-based ("layers/effects _are_ nodes") and is the best _design_ reference for modeling the 2D raster domain as a graph — but it is C#/.NET + Avalonia + Skia, LGPL-3.0, desktop; porting it is a rewrite, and embedding it (.NET→WASM) yields a second graph/undo/IR (the §809 two-pipelines failure, which detonates the moat). Adopt a **web-native raster engine the three.js way** (CanvasKit / WebGPU compositor) projected through Basher's Op/DAG instead.
+
+Full detail, matrix, citations, and a standing **research directive** (re-run the deep-research pass before scoping — the landscape moves monthly): `docs/PLATFORM-VISION.md`.
+
 ### 60. v0.8 — Agentic director
 
 - ViMax/OpenMontage-style multi-agent layer: Scriptwriter → Storyboard → Director → Compositor.
