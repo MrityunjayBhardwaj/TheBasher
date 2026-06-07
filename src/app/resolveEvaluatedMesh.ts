@@ -45,6 +45,9 @@ import type {
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
+import { get as getRegistryGeometry } from './geometryRegistry';
+import { extractUVIslands } from './uvIslands';
+import type { EvaluatedUVs } from '../nodes/types';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 
@@ -56,6 +59,17 @@ const FALLBACK_MATERIAL_COLOR = '#808080';
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+}
+
+// v0.6 #3 (#181, W1) — real UV islands for the SYNC producers only (A-2). The
+// geometry registry builds box/sphere on demand (a few hundred verts — trivial,
+// and the resolver is on-demand, never per-frame). glTF/baked geometry is ASYNC
+// (asset clone / OPFS) and outside this pure sync resolver, so those branches
+// return uvs:null and UVEditor resolves them itself via the SAME extractUVIslands
+// (A-3). Mirrors the existing material:null-for-glTF contract.
+function resolveRegistryUVs(geometry: GeometryRef): EvaluatedUVs | null {
+  const g = getRegistryGeometry(geometry);
+  return g ? extractUVIslands(g) : null;
 }
 
 // v0.6 #2 (#178) CAVEAT-1 — DUAL-ACCEPT guard. The widened IR moves `color` to
@@ -128,7 +142,7 @@ export function resolveEvaluatedMesh(
     });
     return {
       geometry,
-      uvs: null,
+      uvs: resolveRegistryUVs(geometry), // v0.6 #3 — real box UV islands (sync)
       // Layer-4 consumer: hydrate to a COMPLETE IR so the renderer (W2) never
       // reads an undefined sub-field. isMaterialSpec dual-accepts legacy/widened.
       material: isMaterialSpec(p.material)
@@ -174,7 +188,7 @@ export function resolveEvaluatedMesh(
     });
     return {
       geometry,
-      uvs: null,
+      uvs: resolveRegistryUVs(geometry), // v0.6 #3 — real sphere UV islands (sync)
       material: isMaterialSpec(p.material)
         ? hydrateInlineMaterial(p.material, FALLBACK_MATERIAL_COLOR)
         : null,

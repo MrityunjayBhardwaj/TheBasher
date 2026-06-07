@@ -10,6 +10,8 @@ import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
+import { resolveMeshUVs } from './resolveMeshUVs';
+import { unionUVBounds } from './uvIslands';
 import * as geometryRegistry from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
@@ -364,6 +366,32 @@ export function boot(): Promise<void> {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         return resolveEvaluatedParam(state, nodeId, paramPath, evalCtx);
+      };
+      // v0.6 #3 (#181, W1) — the H40 side-B seam for the UVEditor. Reads THROUGH
+      // the SAME resolveMeshUVs the panel draws (no drift), reports the island
+      // count / triangle count / union bounds / sampled flag for the selected
+      // node. The e2e asserts these == the REAL BufferGeometry uv attribute (a
+      // BoxGeometry's 6 islands each span [0,0,1,1] — the synthetic cross unfold
+      // could NOT pass). `status` lets the harness wait out an async clone/baked
+      // load. Read-only (V8 clean).
+      w.__basher_uv_islands = (
+        nodeId: NodeId,
+      ): {
+        status: string;
+        islandCount: number;
+        triangleCount: number;
+        bounds: [number, number, number, number] | null;
+        sampled: boolean;
+      } => {
+        const state = useDagStore.getState().state;
+        const src = resolveMeshUVs(state, nodeId);
+        return {
+          status: src.status,
+          islandCount: src.uvs ? src.uvs.islands.length : 0,
+          triangleCount: src.uvs ? src.uvs.triangleCount : 0,
+          bounds: src.uvs ? unionUVBounds(src.uvs) : null,
+          sampled: src.uvs ? src.uvs.sampled : false,
+        };
       };
       // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-B seam for BakedMesh. Reads
       // the RESOLVER's geometry bounds: resolve the node → take its baked

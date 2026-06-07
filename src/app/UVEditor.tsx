@@ -1,41 +1,60 @@
-// UVEditor — 2D HTML canvas editor that shows the UV layout of the
-// currently-selected mesh. Read-only in v1 (P2.6); editing handles land
-// later. Lives in src/app/ (file-rooted V8); never touches the DAG.
+// UVEditor — 2D HTML canvas editor that shows the REAL UV layout of the
+// currently-selected mesh. Read-only (THESIS §58 item 3: "view + transform, not
+// surgery" — per-vertex / seam / unwrap stays in Blender via the glTF round-trip).
+// Lives in src/app/ (file-rooted V8); never touches the DAG.
 //
-// The component is mounted as a sibling to the 3D Viewport in
-// Layout.tsx; visibility flips via display:none so the Canvas (and its
-// GPU state) survives the space toggle (K1 step 6 discipline).
+// v0.6 #3 (#181, W1): promoted from synthetic Box/Sphere unfolds (uvLayout.ts)
+// to REAL islands for EVERY producer, via the ONE source resolver
+// `resolveMeshUVs` (the SAME path the __basher_uv_islands seam reads, so the
+// panel and the seam never drift — H40). Islands are topological connected
+// components (a display grouping; Blender shows islands too), NOT seam/unwrap edit.
 //
-// Implemented in Wave C of P2.6.
+// The component is mounted as a sibling to the 3D Viewport in Layout.tsx;
+// visibility flips via display:none so the Canvas (and its GPU state) survives the
+// space toggle (K1 step 6 discipline).
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
-import { generateBoxUVs, generateSphereUVs, type UVPolygon } from './uvLayout';
+import { resolveMeshUVs } from './resolveMeshUVs';
 
 export function UVEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const primaryId = useSelectionStore((s) => s.primaryNodeId);
-  const node = useDagStore((s) => (primaryId ? s.state.nodes[primaryId] : null));
+  const dagState = useDagStore((s) => s.state);
+  const node = primaryId ? dagState.nodes[primaryId] : null;
+  // Retry trigger: async geometry (glTF clone / baked OPFS) may not be ready on
+  // first render — re-resolve once while loading so it fills in (A-3, no stale).
+  const [retry, setRetry] = useState(0);
 
-  const polygons = useMemo<UVPolygon[]>(() => {
-    if (!node) return [];
-    if (node.type === 'BoxMesh') return generateBoxUVs();
-    if (node.type === 'SphereMesh') {
-      const params = node.params as { widthSegments?: number; heightSegments?: number };
-      return generateSphereUVs(params.widthSegments ?? 24, params.heightSegments ?? 16);
-    }
-    return [];
-  }, [node]);
+  const source = useMemo(
+    () =>
+      primaryId ? resolveMeshUVs(dagState, primaryId) : { uvs: null, status: 'none' as const },
+    // retry forces a re-resolve when async geometry was still loading last pass.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dagState, primaryId, retry],
+  );
+
+  useEffect(() => {
+    if (source.status !== 'loading') return;
+    const id = window.setTimeout(() => setRetry((r) => r + 1), 120);
+    return () => window.clearTimeout(id);
+  }, [source.status, retry]);
+
+  const polygons = useMemo(() => {
+    if (!source.uvs) return [] as (readonly (readonly [number, number])[])[];
+    return source.uvs.islands.flatMap((isl) => isl.polylines);
+  }, [source.uvs]);
+
   const status = !node
     ? 'Select a mesh to view UVs.'
-    : node.type === 'BoxMesh'
-      ? `${node.id} · BoxMesh — canonical cross unfold (read-only).`
-      : node.type === 'SphereMesh'
-        ? `${node.id} · SphereMesh — equirectangular grid (read-only).`
-        : node.type === 'GltfAsset'
-          ? `${node.id} · GltfAsset — UV preview lands when the geometry registry ships.`
-          : `${node.id} · ${node.type} — no UV layout.`;
+    : source.status === 'loading'
+      ? `${node.id} · ${node.type} — loading geometry…`
+      : source.uvs && source.uvs.islands.length > 0
+        ? `${node.id} · ${node.type} — ${source.uvs.islands.length} island${
+            source.uvs.islands.length === 1 ? '' : 's'
+          } · ${source.uvs.triangleCount} tris${source.uvs.sampled ? ' (sampled)' : ''} (read-only).`
+        : `${node.id} · ${node.type} — no UV layout.`;
 
   // ResizeObserver handles three triggers in one place:
   //   - initial mount once the canvas has a layout box,
@@ -93,7 +112,7 @@ function drawUVCanvas(
   ctx: CanvasRenderingContext2D,
   cssW: number,
   cssH: number,
-  polygons: UVPolygon[],
+  polygons: (readonly (readonly [number, number])[])[],
 ) {
   // Background.
   ctx.fillStyle = '#0a0a0a';
@@ -134,7 +153,7 @@ function drawUVCanvas(
   // UV polygons. canvas Y is top-down; UV V is bottom-up — flip vertically
   // so V=0 sits at the bottom of the visible square (matches Blender / glTF).
   ctx.strokeStyle = '#5af07a';
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 1;
   for (const poly of polygons) {
     ctx.beginPath();
     poly.forEach(([u, v], i) => {
