@@ -249,3 +249,113 @@ and a go/no-go on whether the open gap still holds.
   WebGPU + TSL renderer migration. Paint tools deferred indefinitely (off-wedge).
 - **Platform/SDK** — Layers 0–2.5 exposed as a node-UI + node-interaction SDK; the 2D/3D domain is the
   flagship proof that "one deterministic, agent-authorable web graph" spans both worlds.
+
+---
+
+## 9. North Star — what it enables, why it's superlinear, and who it's for
+
+### 9.1 The integrating insight: 6 mechanisms, 1 purpose
+
+The north star is **not a feature list**. It is **one purpose served by six mechanisms, all riding one
+substrate.** The purpose is the last item, not a separate one:
+
+```
+                         ONE SUBSTRATE  (one DAG · one Op · one IR · agent = privileged user)
+                                   │
+        ┌──────────┬──────────┬────┴─────┬──────────┬───────────┐
+   #1 no-cliff  #3 AI-native  #2/#6      #4 AI×CG   #5 renderer  …each a MECHANISM
+   skill ramp   cheap/local   modular    control    as adapter
+                              platform    dial
+                                   │
+                                   ▼
+                    #7  empower the overlooked individual creator
+                        to do the WHOLE creative act  ←  the PURPOSE
+```
+
+**The values and the architecture are the same decision.** Corporate suites gate on price + complexity
+_because_ they lack one substrate — they cannot deliver the full act cheaply or simply. Determinism,
+modularity, and local-AI aren't chosen for elegance; they are the _only_ delivery mechanism for the
+mission. That top-to-bottom coherence (values → architecture) is what no competitor can copy by shipping
+a feature.
+
+### 9.2 The seven enablers (sharpened, each with its mechanism + condition)
+
+1. **No learning cliff — a ramp, not a wall.** Today Spline→Blender is a _cliff_ (different tool, total
+   re-learn, lossy export). Basher's simple and deep controls are the _same objects at different
+   disclosure depths_ (projection + §17a progressive disclosure), so depth opens where you reach for it —
+   no re-learn, no export, no second tool. _Condition:_ "advanced" must be the same graph revealed, never
+   a bolted-on second UI, or the cliff returns.
+2. **Fully modular UI = platform; nobody reinvents the wheel.** New functionality is a node + a
+   projection, not a new app — so a downstream tool inherits inspector, DAG-view, interactions, undo, and
+   agent for free (§59a/§2). The end of rebuilding the same plumbing per creative tool. _Condition:_
+   "near-zero bloat" decays unless substrate purity is defended (engine-vs-plumbing still holds — you
+   don't get a renderer/paint-engine for free).
+3. **AI-native on the graph → cheap, local, no MCP tax.** The agent emits _typed, validated Ops on a
+   compact JSON graph_ — not "drive a GUI" / "write freeform code" / "reason over N MCP schemas." Tiny
+   typed action space + small context → **small/local models succeed**, errors are catchable (zod +
+   deterministic replay → cheap verify-retry), and there is **one** interface (no per-tool integration
+   tax). _Nuance:_ a spectrum — local for mechanical Op-emission, a strong model for high-level creative
+   reasoning. Stays cheap only while the **Op vocabulary stays small** (the load-bearing discipline).
+4. **The AI×CG control dial — the thing nobody has.** Not "AI _or_ manual" but a **continuum on every
+   node**: generate it, hand-tune it, or let the agent do part. Every external model (image-gen, img2img,
+   text-to-motion, image-to-3D) is _just a node_ producing an evaluated output into the same graph, with
+   a human-or-agent dial on each. Target workflows, all without leaving Basher:
+   - **(a)** kitbash + photobash → generate an image (e.g. Nano Banana) → image-to-3D (e.g. Tripo) →
+     manipulate → blend into the scene.
+   - **(b)** short film: storyboard → build scene → animate the actor via text-to-motion + point-and-click
+     → control the camera → render via video-to-video / img2img (e.g. Seedance, or local models), full
+     control end to end.
+   - **(c)** base a vertical app (e.g. auto product-photography editing) on the platform → shippable in
+     **weeks, not months**, with full fidelity (true for the projectable layer; domain adapters still
+     cost).
+   - **THE CRUX to design in:** generative models are _stochastic_ and break pure determinism. Reconcile
+     it the way Basher already content-hashes assets — **pin the seed + cache the generated output as a
+     content-hashed asset.** The _model_ isn't reproducible; the _graph_ is, because it references the
+     pinned result. This single decision is what lets "AI" and "deterministic IR" coexist.
+5. **Renderer as a swappable adapter.** Because the IR is renderer-agnostic (V32 — renderer = compile
+   target), a Rust/native renderer plugs in behind an adapter spec and everything works. The WebGPU + TSL
+   migration is the first proof. _Condition:_ the spec must be complete enough that a new backend covers
+   it without leaking renderer-specific assumptions (determinism-across-backends discipline).
+6. **The ComfyUI community is the warmest beachhead.** ComfyUI proved the appetite for node-based AI; its
+   pain is exactly Basher's fix — powerful graphs, but a fixed/clunky UI, no path from "my workflow" to "a
+   real product," 2D-only. The projection engine turns a graph into a branded, modular app with a real UI
+   for free. (Deep research found ComfyUI+agents is the closest prior art at 3/4.) _Move:_ a ComfyUI
+   import/interop adapter as a deliberate wedge.
+7. **The community of misfits — the purpose, not a feature.** A tool _for the overlooked individual
+   creator_ (no studio, no budget, no pipeline, no permission) is the _sharpest_ version of the strategy,
+   not a softer one: beloved tools built by/for the underserved compound into a moat corporate suites
+   never get. Enablers #1–6 are the means; this is the end.
+
+### 9.3 Why it's superlinear (not additive)
+
+Most tools are **integrations of separately-built subsystems**, so each capability pays an **N×N wiring
+tax** (export seams, a second undo stack, "the agent only works in the chat panel"). Basher collapses N
+subsystems into one substrate → the tax goes to **N×1**: a capability added in one domain is instantly
+expressible in every domain, and every cross-feature interaction is _free_ instead of a new project.
+Concrete multipliers:
+
+- **AI output becomes editable substrate, not a black-box clip** — the render is a node in a deterministic
+  editable graph, so generation becomes _direction_ (the wedge vs flat prompt-to-video, §17 failure-mode
+  A).
+- **The data flywheel** — every film is a reproducible `(intent → Op-sequence → exact frame)` trace across
+  the _whole_ act; uniquely clean agent training/eval data competitors (tool-fragmented, lossy) cannot
+  match. Compounds with usage.
+- **Emergent cross-domain ops with no name today** — "keyframe a composite grade on the same timeline as
+  the 3D camera move"; "mask a 2D grade with a 3D object's depth/ID pass." Trivial with one graph + one
+  time model; a manual roundtrip otherwise.
+- **Incumbents can't follow without re-founding** — their architectures _are_ the N×N tax; copying this is
+  a rewrite, so they bolt AI on instead.
+
+### 9.4 The one condition (and why nothing like this exists yet)
+
+**Superlinearity is conditional on substrate purity.** Every enabler degrades the instant the substrate
+leaks: a domain with a side-channel (state outside the IR), a stochastic AI node left unpinned, a
+ballooning Op set, or an "advanced mode" that's secretly a second UI. **Refusing the expedient shortcut
+_is_ the mission, in code.** Early tells already exist (bespoke `MATERIAL_LOBES` sections = code where
+there should be data).
+
+Why no one has built it yet: **(1) timing** — capable web (WebGPU/OPFS/Wasm) _and_ LLMs-good-enough-to-be-
+a-primary-surface only converged ~2024–26; **(2) incumbent structure** — the big tools can't refactor to
+one substrate without a rewrite; **(3) it's unglamorous** — the value is foundational discipline that
+doesn't demo well early; **(4) it needs a contrarian belief held at once** — hide the graph, agent
+co-equal, determinism everywhere.
