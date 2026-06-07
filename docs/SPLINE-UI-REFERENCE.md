@@ -70,8 +70,10 @@ Direct observation of Basher (`:5180`, v0.6 #3 tip, 2026-06-07), ordered by leve
 - **F1 — Chrome density (dominant).** 4 top bands + left rail + bottom bar; select/move/rotate/scale
   duplicated. → **Target:** Spline's single floating toolbar (region ②).
 - **F2 — Three competing "mode" controls.** `mode: Edit▾` (Simple/Director/Pro) + `EDIT/RUN/ANIMATE/DIRECTOR`
-  workspace tabs + agent `read-only/copilot/sandbox`. Two even reuse "Edit"/"Director." → **Target:**
-  one legible mode hierarchy.
+  workspace tabs + agent `read-only/copilot/sandbox`. Two even reuse "Edit"/"Director." → **Target (D-05):**
+  **remove the Simple/Director/Pro app-mode system entirely** — replace gating with progressive disclosure
+  (see §6). Keep the agent autonomy control (`read-only/copilot/sandbox` — orthogonal). Workspace/advanced
+  surfaces become revealable drawers, not modes.
 - **F3 — Dark, high-contrast developer-tool aesthetic** vs. Spline's calm light/lavender low-contrast
   canvas. → **Target:** calm palette/contrast/spacing.
 - **F4 — ADD is a Blender text submenu (Shift+A)**, not a visual object palette. → **Target:** visual,
@@ -86,6 +88,39 @@ Direct observation of Basher (`:5180`, v0.6 #3 tip, 2026-06-07), ordered by leve
 ## 5. The line we do not cross (§196)
 
 Spline makes the canvas the primary (often only) creation surface. **Basher does not.** The agent/chat
-is a **co-equal primary authoring surface**, every edit is an `Op` (determinism + undo), defaults flow
-Simple → Director, and the raw DAG stays hidden until Pro. Borrow Spline's _polish_; never borrow the
-_canvas-is-the-only-path_ assumption.
+is a **co-equal primary authoring surface**, every edit is an `Op` (determinism + undo), and the raw DAG
+stays **hidden by default** (one reveal away — not behind a mode; see §6). Borrow Spline's _polish_;
+never borrow the _canvas-is-the-only-path_ assumption.
+
+---
+
+## 6. No modes — progressive disclosure (D-05)
+
+**Decision:** Remove the Simple / Director / Pro app-mode system. There are **no app modes.** Every
+surface exists for every user; the default view is calm, and complexity is **hidden by default and
+revealed on demand** — the Spline model (states/events, timeline = panels you open, not a tier you
+unlock).
+
+**Replaces:** the mode-gating model in THESIS §12–17, §203 (mode table), §834 (Mode primitive), and the
+v0.6/v0.7 "DAG hidden until Pro" gating.
+
+- One editor. All surfaces present for everyone.
+- Default = minimal: viewport + outliner + inspector + agent.
+- Hidden-by-default, revealable: **timeline** (already a drawer — `TimelineDrawer` + `timelineDockStore`),
+  **DAG/graph view**, library, advanced inspector sections, debug/tools.
+- The **agent is always co-equal and present** (supersedes §15's per-mode chat behavior; kills §691's
+  "Simple was too simple" wall).
+- **Keep** the agent autonomy control (`read-only / copilot / sandbox`) — that is agent behavior, not an
+  app mode.
+
+**Why it's a net gain (Chesterton):** the mode system's purpose was (a) don't scare newcomers (§674) and
+(b) start onboarding simple (§206). Disclosure serves both better — complexity hidden by default (scares
+no one) yet available (no wall) — and it _eliminates_ §809's stated failure risk (one pipeline by
+construction; no "easy" vs "real" split). The fence comes down; its purpose is preserved.
+
+**Thesis ripple (to reconcile — pending greenlight):** §12 (scene tree "Director+Pro"), §13 (timeline
+"Director+Pro"), §14 (library "Director"), §15 (chat-drawer-per-mode), §16 (DAG "Pro, read-only"),
+§17 + §834 (the Mode primitive), §203 (mode table), §206 (mode persistence/onboarding), §478 (mode
+store scaffold), §520 (Tools "Pro only"), §579, §674 (risk mitigation), §691, §702/§706/§730 ("DAG
+hidden until Pro", "Simple→Director defaults"), §59 ("editable DAG editor in Pro mode"). Code ripple:
+`ModeSwitcher`, `ModeBadge`, `chromeStore`, `Layout` (surface gating), `TopToolbar` (the mode control).
