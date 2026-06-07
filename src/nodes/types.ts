@@ -213,6 +213,18 @@ export interface InlineMaterialSpec {
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
   /**
+   * v0.6 #3 (#181) — ONE shared UV placement applied to ALL loaded map textures
+   * (three.js Texture.repeat=tiling / .offset / .rotation, about .center=[.5,.5]).
+   * IDENTITY default (tiling [1,1], offset [0,0], rotation 0) → saved projects
+   * render byte-identically. Mirrors glTF KHR_texture_transform / Blender mapping
+   * node. Per-map transform is a v0.7 follow-up.
+   */
+  readonly uvTransform: {
+    readonly tiling: readonly [number, number];
+    readonly offset: readonly [number, number];
+    readonly rotation: number;
+  };
+  /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
    * coat_ior/color/darkening, dispersion Abbe). STORED for the v0.7 TSL backend,
@@ -326,16 +338,47 @@ export interface GeometryRef {
   readonly descriptor: GeometryDescriptor;
 }
 
+// ---------------------------------------------------------------------------
+// Evaluated UVs (v0.6 #3, issue #181) — the real UV layout for DISPLAY only
+// ---------------------------------------------------------------------------
+//
+// THESIS §58 item 3: "view + transform, not surgery". This is a READ-ONLY
+// projection of a mesh's UV attribute for the UVEditor panel — never written
+// back, never an unwrap. Islands are topological connected components (faces
+// sharing vertex indices), a display grouping (Blender shows islands too), NOT
+// seam/unwrap editing. The ONE extractor `extractUVIslands` (src/app/uvIslands.ts)
+// builds this; box/sphere are populated by the resolver (sync registry geometry),
+// glTF/baked are resolved async by UVEditor (geometry outside the pure resolver).
+
+export type UVPoint = readonly [number, number];
+
+export interface UVIsland {
+  /** Triangle edges as polyline strokes in 0..1 UV space (the drawer renders these). */
+  readonly polylines: readonly (readonly UVPoint[])[];
+  /** [minU, minV, maxU, maxV] over this island. */
+  readonly bounds: readonly [number, number, number, number];
+}
+
+export interface EvaluatedUVs {
+  readonly islands: readonly UVIsland[];
+  readonly triangleCount: number;
+  /** true when the face cap forced stride-decimation of a large mesh (no silent truncation). */
+  readonly sampled: boolean;
+}
+
 /**
- * The uniform consumed mesh face. `uvs` is null now (populated by #3). `material`
- * is the ONE material face every consumer reads (M6, Phase 151): an
- * `InlineMaterialSpec` for un-baked box/sphere, a rich `BakedMaterialSpec` for a
- * BakedMesh, or null (gltf — #2 fills it). Widening to the union means there is
- * exactly ONE material shape consumers branch on, never a second render path.
+ * The uniform consumed mesh face. `uvs` carries the real UV layout for the SYNC
+ * producers (box/sphere — geometry available in the registry); it is null for
+ * glTF / GltfChild / BakedMesh, whose geometry is ASYNC (asset clone / OPFS) and
+ * outside this pure sync resolver — UVEditor resolves those itself via the SAME
+ * `extractUVIslands` (A-2/A-3). `material` is the ONE material face every consumer
+ * reads (M6, Phase 151): an `InlineMaterialSpec` for un-baked box/sphere, a rich
+ * `BakedMaterialSpec` for a BakedMesh, or null (gltf). Widening to the union means
+ * there is exactly ONE material shape consumers branch on, never a second path.
  */
 export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
-  readonly uvs: null;
+  readonly uvs: EvaluatedUVs | null;
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
   readonly transform: MeshTransform;
 }

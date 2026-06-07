@@ -54,6 +54,23 @@ const mapsSchema = z
   })
   .default({ ...NULL_MAPS });
 
+// v0.6 #3 (#181) — the ONE shared UV placement (tiling/offset/rotation). IDENTITY
+// default so a pre-#3 project renders byte-identically (V10/H14). Every field +
+// the object carry a `.default` so a partial setParam whole-params re-parse refills
+// siblings (R6 — same discipline as the lobes).
+const IDENTITY_UV_TRANSFORM = {
+  tiling: [1, 1] as [number, number],
+  offset: [0, 0] as [number, number],
+  rotation: 0,
+};
+const uvTransformSchema = z
+  .object({
+    tiling: z.tuple([z.number(), z.number()]).default([1, 1]),
+    offset: z.tuple([z.number(), z.number()]).default([0, 0]),
+    rotation: z.number().default(0),
+  })
+  .default({ ...IDENTITY_UV_TRANSFORM });
+
 /**
  * The OpenPBR core-10 inline-material zod schema (layer 1 — NEW-node defaults).
  * Every field AND every nested object carries a `.default` so a partial `setParam`
@@ -99,6 +116,7 @@ export function openpbrMaterialSchema(baseColorDefault: string) {
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
+      uvTransform: uvTransformSchema,
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -124,6 +142,7 @@ export function migrateInlineMaterialV2toV3(
     emission: { color: '#000000', luminance: 0 },
     geometry: { opacity: 1 },
     maps: { ...NULL_MAPS },
+    uvTransform: { ...IDENTITY_UV_TRANSFORM }, // v0.6 #3 — identity (no placement)
   };
 }
 
@@ -142,6 +161,11 @@ function num(v: unknown, fallback: number): number {
 }
 function str(v: unknown, fallback: string): string {
   return typeof v === 'string' ? v : fallback;
+}
+function vec2(v: unknown, fallback: [number, number]): [number, number] {
+  return Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number'
+    ? [v[0], v[1]]
+    : fallback;
 }
 
 /**
@@ -163,6 +187,7 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
     emission?: PartialLobe;
     geometry?: PartialLobe;
     maps?: Partial<InlineMaterialSpec['maps']>;
+    uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -187,6 +212,11 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
       metalness: m.maps?.metalness ?? null,
       emissive: m.maps?.emissive ?? null,
       ao: m.maps?.ao ?? null,
+    },
+    uvTransform: {
+      tiling: vec2(m.uvTransform?.tiling, [1, 1]),
+      offset: vec2(m.uvTransform?.offset, [0, 0]),
+      rotation: num(m.uvTransform?.rotation, 0),
     },
   };
   return m.unsupported ? { ...out, unsupported: m.unsupported } : out;

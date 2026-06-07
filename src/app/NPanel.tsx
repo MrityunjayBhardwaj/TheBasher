@@ -812,9 +812,129 @@ function MapRow({
   );
 }
 
+// v0.6 #3 (#181, W2) — the Texture Placement section: ONE shared uvTransform
+// (tiling/offset/rotation) applied to all 6 map textures. ALWAYS rendered when
+// the material carries a uvTransform (post-migration: always) — never gated on a
+// precondition that could strand a non-identity transform with no reset ([[H75]]).
+// tiling/offset dispatch the WHOLE [x,y] array (setAtPath has no array-index path);
+// rotation is a scalar. NON-animated (D-02).
+function UvTransformSection({
+  nodeId,
+  uvTransform,
+}: {
+  nodeId: string;
+  uvTransform: { tiling: [number, number]; offset: [number, number]; rotation: number };
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const { tiling, offset, rotation } = uvTransform;
+  const setVec = (path: string, axis: 0 | 1, cur: [number, number], v: string) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return;
+    const next: [number, number] = axis === 0 ? [n, cur[1]] : [cur[0], n];
+    dispatch({ type: 'setParam', nodeId, paramPath: path, value: next }, 'user', `set ${path}`);
+  };
+  return (
+    <div className="flex flex-col" data-testid={`inspector-uvtransform-${nodeId}`}>
+      <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        Texture Placement
+      </div>
+      <div className="flex items-center justify-between gap-2 px-3 py-1 text-[11px] text-fg/80">
+        <span className="font-mono text-fg/60">tiling</span>
+        <span className="flex items-center gap-1">
+          <UvNumberInline
+            value={tiling[0]}
+            label="x"
+            testid={`inspector-uvtransform-tilingX-${nodeId}`}
+            ariaPath="material.uvTransform.tiling.x"
+            onCommit={(v) => setVec('material.uvTransform.tiling', 0, tiling, v)}
+          />
+          <UvNumberInline
+            value={tiling[1]}
+            label="y"
+            testid={`inspector-uvtransform-tilingY-${nodeId}`}
+            ariaPath="material.uvTransform.tiling.y"
+            onCommit={(v) => setVec('material.uvTransform.tiling', 1, tiling, v)}
+          />
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-2 px-3 py-1 text-[11px] text-fg/80">
+        <span className="font-mono text-fg/60">offset</span>
+        <span className="flex items-center gap-1">
+          <UvNumberInline
+            value={offset[0]}
+            label="x"
+            testid={`inspector-uvtransform-offsetX-${nodeId}`}
+            ariaPath="material.uvTransform.offset.x"
+            onCommit={(v) => setVec('material.uvTransform.offset', 0, offset, v)}
+          />
+          <UvNumberInline
+            value={offset[1]}
+            label="y"
+            testid={`inspector-uvtransform-offsetY-${nodeId}`}
+            ariaPath="material.uvTransform.offset.y"
+            onCommit={(v) => setVec('material.uvTransform.offset', 1, offset, v)}
+          />
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-2 px-3 py-1 text-[11px] text-fg/80">
+        <span className="font-mono text-fg/60">rotation</span>
+        <UvNumberInline
+          value={rotation}
+          label="rad"
+          testid={`inspector-uvtransform-rotation-${nodeId}`}
+          ariaPath="material.uvTransform.rotation"
+          onCommit={(v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return;
+            dispatch(
+              { type: 'setParam', nodeId, paramPath: 'material.uvTransform.rotation', value: n },
+              'user',
+              'set material.uvTransform.rotation',
+            );
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// A controlled number input for one component of a vec2 (commits via onCommit so
+// the parent merges it into the whole [x,y] array — setAtPath has no index path).
+function UvNumberInline({
+  value,
+  label,
+  testid,
+  ariaPath,
+  onCommit,
+}: {
+  value: number;
+  label: string;
+  testid: string;
+  ariaPath: string;
+  onCommit: (v: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1 text-[10px] text-fg/60">
+      <span className="font-mono">{label}</span>
+      <input
+        type="number"
+        step="0.1"
+        value={value}
+        data-testid={testid}
+        aria-label={ariaPath}
+        onChange={(e) => onCommit(e.target.value)}
+        className="w-14 rounded border border-border bg-muted px-1 py-0.5 text-fg/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      />
+    </label>
+  );
+}
+
 function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknown }) {
   if (!isMaterialIR(material)) return null;
   const maps = (material.maps ?? {}) as Record<string, BakedTextureRef | null>;
+  const uvt = material.uvTransform as
+    | { tiling: [number, number]; offset: [number, number]; rotation: number }
+    | undefined;
   return (
     <div data-testid={`inspector-material-editor-${nodeId}`} className="flex flex-col">
       {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
@@ -858,6 +978,7 @@ function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknow
           <MapRow key={slot} nodeId={nodeId} slot={slot} mapRef={maps[slot] ?? null} />
         ))}
       </div>
+      {uvt ? <UvTransformSection nodeId={nodeId} uvTransform={uvt} /> : null}
     </div>
   );
 }

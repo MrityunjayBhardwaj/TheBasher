@@ -38,7 +38,7 @@ export type SphereMeshParams = z.infer<typeof SphereMeshParams>;
 
 export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> = {
   type: 'SphereMesh',
-  version: 3,
+  version: 4,
   pure: true,
   cost: 'cheap',
   paramSchema: SphereMeshParams,
@@ -47,11 +47,20 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
   inspectorSections: ['mesh', 'transform', 'material'],
   // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless (V4 runner, §52).
   // v0.6 #2 (#178) — v2 ({name,color}) → v3 (OpenPBR IR), seeds current look (R1).
+  // v0.6 #3 (#181) — v3 → v4 adds the material's `uvTransform` (IDENTITY via
+  // hydrate) so a saved #2-era project renders byte-identically (V10/H14).
   migrations: {
     1: (old) => ({ ...(old as object), scale: [1, 1, 1] }),
     2: (old) => ({
       ...(old as object),
       material: migrateInlineMaterialV2toV3(
+        (old as { material?: unknown }).material,
+        SPHERE_DEFAULT_COLOR,
+      ),
+    }),
+    3: (old) => ({
+      ...(old as object),
+      material: hydrateInlineMaterial(
         (old as { material?: unknown }).material,
         SPHERE_DEFAULT_COLOR,
       ),

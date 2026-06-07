@@ -56,6 +56,18 @@ export interface ThreeMaterialParams {
   readonly transmission: number;
   readonly thickness: number;
   readonly maps: ThreeMaterialMaps;
+  /**
+   * v0.6 #3 (#181) — the ONE shared UV placement applied to every loaded map
+   * texture: repeat=tiling, offset, rotation (about center [.5,.5]). IDENTITY
+   * (tiling [1,1] / offset [0,0] / rotation 0) = no-op. The renderer clones each
+   * texture before applying (A-5: textures are shared by hash; mutating a shared
+   * instance would cross-contaminate other materials).
+   */
+  readonly uvTransform: {
+    readonly tiling: readonly [number, number];
+    readonly offset: readonly [number, number];
+    readonly rotation: number;
+  };
 }
 
 /**
@@ -89,6 +101,7 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
       emissiveMap: ir.maps.emissive,
       aoMap: ir.maps.ao,
     },
+    uvTransform: ir.uvTransform, // v0.6 #3 — pass through; the renderer applies it
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).

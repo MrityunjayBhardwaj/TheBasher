@@ -38,7 +38,10 @@ describe('resolveEvaluatedMesh', () => {
     expect(mesh!.transform.scale).toEqual([1, 1, 1]);
     expect(mesh!.transform.position).toEqual([0, 0, 0]);
     expect(mesh!.material).not.toBeNull();
-    expect(mesh!.uvs).toBeNull();
+    // v0.6 #3 — box now carries REAL UV islands from the registry geometry (was
+    // null pre-#3). BoxGeometry → 6 islands, each spanning the full [0,1] square.
+    expect(mesh!.uvs).not.toBeNull();
+    expect(mesh!.uvs!.islands).toHaveLength(6);
   });
 
   it('box geometry key is deterministic (same params → byte-identical key)', () => {
