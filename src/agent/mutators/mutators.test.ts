@@ -320,7 +320,7 @@ describe('setMaterialColor mutator', () => {
     if (result.ok) {
       const op = result.ops[0];
       if (op.type === 'setParam') {
-        expect(op.paramPath).toBe('material.color');
+        expect(op.paramPath).toBe('material.base.color');
         expect(op.value).toBe('#0000ff');
       }
     }
@@ -448,10 +448,10 @@ describe('randomize mutator', () => {
       return { nodeId: op.nodeId, paramPath: op.paramPath };
     });
     expect(opPairs).toEqual([
-      { nodeId: 'box', paramPath: 'material.color' },
+      { nodeId: 'box', paramPath: 'material.base.color' },
       { nodeId: 'box', paramPath: 'rotation' },
       { nodeId: 'box', paramPath: 'size' },
-      { nodeId: 'sibling', paramPath: 'material.color' },
+      { nodeId: 'sibling', paramPath: 'material.base.color' },
       { nodeId: 'sibling', paramPath: 'rotation' },
       { nodeId: 'sibling', paramPath: 'size' },
     ]);

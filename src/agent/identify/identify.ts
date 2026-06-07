@@ -471,8 +471,12 @@ function nodeColorHex(node: Node | undefined): string | null {
   if (!node) return null;
   const params = node.params as Record<string, unknown> | undefined;
   if (!params) return null;
-  // BoxMesh / SphereMesh shape: params.material.color
-  const material = params.material as Record<string, unknown> | undefined;
+  // BoxMesh / SphereMesh shape: params.material.base.color (v0.6 #2 OpenPBR IR).
+  // Dual-accept a legacy top-level color (pre-migration in-memory objects).
+  const material = params.material as { base?: { color?: unknown }; color?: unknown } | undefined;
+  if (typeof material?.base?.color === 'string') {
+    return material.base.color.toLowerCase();
+  }
   if (material && typeof material.color === 'string') {
     return material.color.toLowerCase();
   }

@@ -609,7 +609,7 @@ literal string "scene", "render", "ground" etc. as a node id.
    {"type":"removeNode","nodeId":"box1"}
 
 4. Change a param:
-   {"type":"setParam","nodeId":"box1","paramPath":"material.color","value":"#00ff00"}
+   {"type":"setParam","nodeId":"box1","paramPath":"material.base.color","value":"#00ff00"}
 
 5. Disconnect:
    {"type":"disconnect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
@@ -621,7 +621,7 @@ Context block or from a dag.inspect result.`;
   const paramTips = `
 Quick conventions (full guidance in strategy resources — call agent.getStrategy):
 - Positions/sizes in METERS, rotations in DEGREES, colors as "#rrggbb" hex.
-- setParam paramPath supports dot paths: "material.color", "position", "rotation".
+- setParam paramPath supports dot paths: "material.base.color", "position", "rotation".
 - Scene children use list connections: connect { from: {node: childId, socket: "out"}, to: {node: sceneId, socket: "children"} }
 - mesh.add spawns primitives with NEUTRAL DEFAULTS — color/material/rotation/scale qualifiers go through Mutators in a follow-up agent.proposePlan call. Call agent.getStrategy({ topic: "spawnWithProperties" }) when the user names a property in an "add" prompt.
 - For deeper guidance on units, materials, lighting, cameras, asset choice, spawn-with-properties: agent.listStrategies / agent.getStrategy({ topic }).`;

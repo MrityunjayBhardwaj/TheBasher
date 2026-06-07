@@ -13,6 +13,13 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { SphereMeshValue } from './types';
+import {
+  hydrateInlineMaterial,
+  migrateInlineMaterialV2toV3,
+  openpbrMaterialSchema,
+} from './materialSchema';
+
+const SPHERE_DEFAULT_COLOR = '#88aaff';
 
 export const SphereMeshParams = z.object({
   radius: z.number().positive().default(0.5),
@@ -24,18 +31,14 @@ export const SphereMeshParams = z.object({
   // parametric geometry `radius`/segments. Default IDENTITY → migrated v1 projects
   // render byte-identically. (Mirrors BoxMesh.)
   scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
-  material: z
-    .object({
-      name: z.string().default('default'),
-      color: z.string().default('#88aaff'),
-    })
-    .default({ name: 'default', color: '#88aaff' }),
+  // v0.6 #2 (#178): the OpenPBR core-10 inline material IR (mirrors BoxMesh).
+  material: openpbrMaterialSchema(SPHERE_DEFAULT_COLOR),
 });
 export type SphereMeshParams = z.infer<typeof SphereMeshParams>;
 
 export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> = {
   type: 'SphereMesh',
-  version: 2,
+  version: 3,
   pure: true,
   cost: 'cheap',
   paramSchema: SphereMeshParams,
@@ -43,8 +46,16 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material'],
   // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless (V4 runner, §52).
+  // v0.6 #2 (#178) — v2 ({name,color}) → v3 (OpenPBR IR), seeds current look (R1).
   migrations: {
     1: (old) => ({ ...(old as object), scale: [1, 1, 1] }),
+    2: (old) => ({
+      ...(old as object),
+      material: migrateInlineMaterialV2toV3(
+        (old as { material?: unknown }).material,
+        SPHERE_DEFAULT_COLOR,
+      ),
+    }),
   },
   evaluate(params) {
     return {
@@ -56,7 +67,8 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
       rotation: params.rotation,
       // C-1 (V10/H14 two-layer guard) — default identity at the evaluator too.
       scale: params.scale ?? [1, 1, 1],
-      material: params.material,
+      // v0.6 #2 (#178) layer 3 — hydrate the inline material with `?? default`.
+      material: hydrateInlineMaterial(params.material, SPHERE_DEFAULT_COLOR),
     };
   },
 };

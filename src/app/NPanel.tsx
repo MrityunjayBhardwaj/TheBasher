@@ -37,10 +37,19 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  attachMapFromFile,
+  MATERIAL_MAP_SLOTS,
+  type MaterialMapSlot,
+} from './material/attachMapFromFile';
+import { getStorage } from './boot';
+import { useAssetErrorStore } from './stores/assetErrorStore';
+import type { BakedTextureRef } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
+import { countOverrideSlots } from './resolveOverrideSlots';
 import { useTimeStore } from './stores/timeStore';
 import { useTransientEditStore, keyOf } from './stores/transientEditStore';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
@@ -582,6 +591,277 @@ function isInputBinding(v: unknown): boolean {
  *  number / vec3 / string / input-binding / complex. Returns null when
  *  the value is an upstream binding (those render via socket wiring
  *  in C5+, not the Inspector). */
+// v0.6 #2 (#178, W3) — ColorField: a swatch + hex control that dispatches setParam
+// on its color paramPath (e.g. material.base.color). Mirrors NumericField's wiring
+// EXACTLY so a colour ANIMATES like any scalar: ParamDiamond (the Blender field-
+// colour table, free), routeAnimatedGrab + autoKeyCommit on edit (KeyframeColor
+// channels already exist), and the optional override decorator. There is no colour
+// picker anywhere else in the app (grep-confirmed) — this is the one.
+function isHex6(v: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(v);
+}
+
+interface ColorFieldProps {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: string;
+  overrideInfo?: OverrideInfo;
+}
+
+function ColorField({ nodeId, paramPath, label, value, overrideInfo }: ColorFieldProps) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const [draft, setDraft] = useState(value);
+  // Keep the hex text in sync when the authored value changes outside this field
+  // (undo, animation scrub, agent edit) — the input is otherwise locally edited.
+  useEffect(() => setDraft(value), [value]);
+  const commit = (next: string) => {
+    if (!isHex6(next)) return;
+    // SAME chokepoints as NumericField (H36 anti-double-write): animated → seam,
+    // covered override field → value+bit atomic, else raw setParam; then autoKey.
+    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
+    if (!dispatchOverrideValueEdit(nodeId, paramPath, next, overrideInfo)) {
+      dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `edit ${paramPath}`);
+    }
+    autoKeyCommit(nodeId, paramPath, next);
+  };
+  const swatch = isHex6(draft) ? draft : '#000000';
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {overrideInfo ? (
+          <OverrideDecorator
+            nodeId={nodeId}
+            descriptor={overrideInfo.descriptor}
+            field={paramPath}
+            marked={overrideInfo.marked}
+          />
+        ) : null}
+        <span className="font-mono text-fg/60">{label}</span>
+      </span>
+      <span className="flex items-center gap-1">
+        <input
+          type="color"
+          aria-label={`${label} colour swatch`}
+          value={swatch}
+          data-testid={`inspector-color-${nodeId}-${paramPath}`}
+          className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => {
+            setDraft(e.target.value);
+            commit(e.target.value);
+          }}
+        />
+        <input
+          type="text"
+          aria-label={`${label} hex`}
+          value={draft}
+          data-testid={`inspector-colorhex-${nodeId}-${paramPath}`}
+          className="w-20 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
+// v0.6 #2 (#178, W3) — the lobe-grouped OpenPBR material editor that REPLACES the
+// `(complex — Pro mode)` placeholder (closes NPanel:636 for primitives; the THESIS
+// §741 uniformity gate). Each scalar → a NumericField, each colour → a ColorField,
+// addressing the grouped paramPath `material.<lobe>.<field>` (the primitive owns
+// its material → direct setParam, D-07). Every field carries ParamDiamond + scrub
+// + autoKey for FREE (shared fields). Map rows (W5) attach under base later.
+interface MaterialFieldSpec {
+  key: string;
+  label: string;
+  kind: 'number' | 'color';
+}
+const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[] }[] = [
+  {
+    lobe: 'base',
+    label: 'Base',
+    fields: [
+      { key: 'color', label: 'color', kind: 'color' },
+      { key: 'metalness', label: 'metalness', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'specular',
+    label: 'Specular',
+    fields: [
+      { key: 'roughness', label: 'roughness', kind: 'number' },
+      { key: 'ior', label: 'ior', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'coat',
+    label: 'Coat',
+    fields: [
+      { key: 'weight', label: 'weight', kind: 'number' },
+      { key: 'roughness', label: 'roughness', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'transmission',
+    label: 'Transmission',
+    fields: [{ key: 'weight', label: 'weight', kind: 'number' }],
+  },
+  {
+    lobe: 'emission',
+    label: 'Emission',
+    fields: [
+      { key: 'color', label: 'color', kind: 'color' },
+      { key: 'luminance', label: 'luminance', kind: 'number' },
+    ],
+  },
+  {
+    lobe: 'geometry',
+    label: 'Geometry',
+    fields: [{ key: 'opacity', label: 'opacity', kind: 'number' }],
+  },
+];
+
+function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { base?: { color?: unknown } }).base?.color === 'string'
+  );
+}
+
+// v0.6 #2 (#178, W5) — one texture-map slot row: pick (file → attachMapFromFile →
+// OPFS → setParam the ref) or clear (setParam null). Maps are NON-animated (D-04)
+// → no ParamDiamond. A decode/persist failure surfaces via assetErrorStore (the
+// MERGED feedback surface), never a silent drop.
+function MapRow({
+  nodeId,
+  slot,
+  mapRef,
+}: {
+  nodeId: string;
+  slot: MaterialMapSlot;
+  mapRef: BakedTextureRef | null;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const paramPath = `material.maps.${slot}`;
+  const onPick = async (file: File) => {
+    try {
+      const storage = await getStorage();
+      const ref = await attachMapFromFile(storage, file, slot);
+      // The setParam recording the ref runs ONLY after the async persist resolves.
+      dispatch({ type: 'setParam', nodeId, paramPath, value: ref }, 'user', `attach ${slot} map`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      useAssetErrorStore.getState().report(`${nodeId}:${slot}`, `${slot} map failed: ${msg}`);
+    }
+  };
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{slot}</span>
+      <span className="flex items-center gap-1">
+        <span
+          className="font-mono text-[10px] text-fg/40"
+          data-testid={`inspector-map-state-${nodeId}-${slot}`}
+        >
+          {mapRef ? '● set' : '— none'}
+        </span>
+        <button
+          type="button"
+          data-testid={`inspector-map-pick-${nodeId}-${slot}`}
+          onClick={() => inputRef.current?.click()}
+          className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {mapRef ? 'replace' : 'pick'}
+        </button>
+        {mapRef ? (
+          <button
+            type="button"
+            data-testid={`inspector-map-clear-${nodeId}-${slot}`}
+            onClick={() =>
+              dispatch(
+                { type: 'setParam', nodeId, paramPath, value: null },
+                'user',
+                `clear ${slot} map`,
+              )
+            }
+            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            clear
+          </button>
+        ) : null}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          aria-label={`${slot} map file`}
+          data-testid={`inspector-map-file-${nodeId}-${slot}`}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onPick(f);
+            e.target.value = '';
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
+function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknown }) {
+  if (!isMaterialIR(material)) return null;
+  const maps = (material.maps ?? {}) as Record<string, BakedTextureRef | null>;
+  return (
+    <div data-testid={`inspector-material-editor-${nodeId}`} className="flex flex-col">
+      {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
+        <div key={lobe} className="flex flex-col">
+          <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+            {label}
+          </div>
+          {fields.map(({ key, label: fieldLabel, kind }) => {
+            const paramPath = `material.${lobe}.${key}`;
+            const lobeObj = material[lobe] ?? {};
+            if (kind === 'color') {
+              const cv = typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
+              return (
+                <ColorField
+                  key={key}
+                  nodeId={nodeId}
+                  paramPath={paramPath}
+                  label={fieldLabel}
+                  value={cv}
+                />
+              );
+            }
+            const nv = typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+            return (
+              <NumericField
+                key={key}
+                nodeId={nodeId}
+                paramPath={paramPath}
+                label={fieldLabel}
+                value={nv}
+              />
+            );
+          })}
+        </div>
+      ))}
+      <div className="flex flex-col">
+        <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+          Maps
+        </div>
+        {MATERIAL_MAP_SLOTS.map((slot) => (
+          <MapRow key={slot} nodeId={nodeId} slot={slot} mapRef={maps[slot] ?? null} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ParamRow({
   nodeId,
   paramPath,
@@ -593,6 +873,11 @@ function ParamRow({
   value: unknown;
   overrideInfo?: OverrideInfo;
 }) {
+  // v0.6 #2 (#178, W3) — the inline material IR renders the lobe-grouped editor
+  // INSTEAD of the (complex — Pro mode) fallback. Closes NPanel:636 for primitives.
+  if (paramPath === 'material' && isMaterialIR(value)) {
+    return <MaterialEditor nodeId={nodeId} material={value} />;
+  }
   if (typeof value === 'number') {
     return (
       <NumericField
@@ -672,6 +957,71 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
             {mask === 'all' ? 'All' : mask.charAt(0).toUpperCase() + mask.slice(1)}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a
+ * MaterialOverride that wraps a MULTI-material glTF. Renders ONLY when the
+ * target glTF has >=2 material slots (a primitive / single-material / not-yet-
+ * loaded target shows nothing — the override is whole-child by nature). The
+ * "which-slot" state IS the node's `slotIndex` param (no separate React state):
+ * "All" clears it (undefined ⇒ every slot, backward-compat); a number addresses
+ * that submesh. The SAME flat material controls below the selector author the
+ * override; the selector only changes WHICH slot they target (D-05 — an
+ * addressing dimension, not a second code path).
+ */
+function SlotSelector({ nodeId }: { nodeId: string }) {
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dispatch = useDagStore((s) => s.dispatch);
+  const slotCount = countOverrideSlots(nodes, nodeId);
+  const params = (nodes[nodeId]?.params ?? {}) as { slotIndex?: number };
+  const current = typeof params.slotIndex === 'number' ? params.slotIndex : undefined;
+  // Hide the selector for whole-child targets (primitive / single-material /
+  // not-yet-loaded). EXCEPTION: if a slotIndex is already set, ALWAYS render so a
+  // STALE slotIndex (e.g. the asset later dropped below 2 slots → the override
+  // silently matches no slot) still has an "All" reset affordance. Without this
+  // the override would no-op with no UI to recover it.
+  if (slotCount < 2 && current === undefined) return null;
+  const setSlot = (slot: number | undefined) =>
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'slotIndex', value: slot },
+      'user',
+      slot === undefined ? 'override all slots' : `override slot ${slot}`,
+    );
+  const slotButton = (label: string, slot: number | undefined, testid: string) => {
+    const active = current === slot;
+    return (
+      <button
+        key={testid}
+        type="button"
+        role="radio"
+        aria-checked={active}
+        data-testid={testid}
+        onClick={() => setSlot(slot)}
+        className={`rounded border px-2 py-0.5 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+          active
+            ? 'border-accent bg-accent/15 text-accent'
+            : 'border-border text-fg/70 hover:bg-muted hover:text-fg'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div
+      data-testid={`inspector-slot-selector-${nodeId}`}
+      className="flex flex-col gap-1 px-3 py-1.5"
+    >
+      <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
+      <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
+        {slotButton('All', undefined, `inspector-slot-all-${nodeId}`)}
+        {Array.from({ length: slotCount }, (_, i) =>
+          slotButton(String(i), i, `inspector-slot-${nodeId}-${i}`),
+        )}
       </div>
     </div>
   );
@@ -810,6 +1160,10 @@ export function NPanel() {
                 (node.params ?? {}) as Record<string, unknown>,
               )) {
                 if (isInputBinding(value)) continue; // socket binding, not param
+                // v0.6 #2 (#178, W6): slotIndex is the per-submesh addressing
+                // dimension; it renders as the dedicated SlotSelector chrome at
+                // the top of the material section, NOT as a raw numeric row.
+                if (node.type === 'MaterialOverride' && key === 'slotIndex') continue;
                 const section = paramToSection(key, declared);
                 if (section === null) {
                   unrouted.push([key, value]);
@@ -827,6 +1181,13 @@ export function NPanel() {
                       sectionId={sectionId}
                       declaredSections={declared}
                     >
+                      {/* v0.6 #2 (#178, W6) — per-submesh slot selector at the
+                          top of a glTF MaterialOverride's material section. Only
+                          renders for a >=2-slot glTF target; the flat material
+                          controls below author the override for the chosen slot. */}
+                      {sectionId === 'material' && node.type === 'MaterialOverride' ? (
+                        <SlotSelector nodeId={node.id} />
+                      ) : null}
                       {(grouped.get(sectionId) ?? []).map(([key, value]) => (
                         <ParamRow
                           key={key}

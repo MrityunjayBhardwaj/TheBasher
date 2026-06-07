@@ -27,6 +27,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
+import { openpbrToThree } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -60,6 +61,7 @@ import type {
   GroupValue,
   LightValue,
   MaterialOverrideValue,
+  InlineMaterialSpec,
   MaterialValue,
   PointLightValue,
   RenderOutputValue,
@@ -280,6 +282,10 @@ function MeshScaleProbe() {
       mapColorSpace: string | null;
       roughness: number | null;
       metalness: number | null;
+      type: string | null;
+      opacity: number | null;
+      clearcoat: number | null;
+      transmission: number | null;
     } | null => {
       const grp = scene.getObjectByName(nodeId);
       if (!grp) return null;
@@ -291,15 +297,23 @@ function MeshScaleProbe() {
       const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;
       if (!mat) return null;
       const std = mat as THREE.MeshStandardMaterial;
+      const phys = mat as THREE.MeshPhysicalMaterial;
       const map = std.map ?? null;
       const image = map?.image as { width?: number } | undefined;
       return {
+        type: mat.type ?? null, // v0.6 #2 (W2): 'MeshPhysicalMaterial' for primitives now
         color: std.color ? `#${std.color.getHexString()}` : null,
         hasMap: map !== null,
         mapImageOk: Boolean(image && (image.width ?? 0) > 0),
         mapColorSpace: map ? map.colorSpace : null,
         roughness: typeof std.roughness === 'number' ? std.roughness : null,
         metalness: typeof std.metalness === 'number' ? std.metalness : null,
+        opacity: typeof std.opacity === 'number' ? std.opacity : null,
+        // v0.6 #2 (W2/2.3): the define-gating precondition — at coat/transmission=0
+        // three compiles NO clearcoat/transmission GLSL (WebGLPrograms HAS_* > 0),
+        // so a Physical material ≈ Standard cost. Deterministic, not a timing race.
+        clearcoat: typeof phys.clearcoat === 'number' ? phys.clearcoat : null,
+        transmission: typeof phys.transmission === 'number' ? phys.transmission : null,
       };
     };
     return () => {
@@ -682,9 +696,103 @@ function applyOverride(
   };
 }
 
+// v0.6 #2 (#178, W2) — the ONE shared primitive material builder for Box+Sphere.
+// Mirrors BakedMeshR's imperative useMemo build (single writer V20): compile the
+// OpenPBR IR via openpbrToThree (the one mapping site, V29) → MeshPhysicalMaterial.
+// Standard→Physical is PERF-SAFE: at coat.weight=0/transmission.weight=0 the
+// compiled shader carries no clearcoat/transmission GLSL — three gates the defines
+// on `> 0` (WebGLPrograms.js:130,134 HAS_CLEARCOAT/HAS_TRANSMISSION; the setters
+// MeshPhysicalMaterial.js:104,176 only recompile across the 0 boundary). roughness
+// and clearcoatRoughness are set EXPLICITLY (three defaults are 1 and 0 — D-03).
+// A MaterialOverride decorator (#99/#124) still wins WHOLESALE on its 7 scalars
+// (backward-compat — a primitive has no source map); coat/transmission/ior/maps
+// always come from the IR (the override carries no opinion on them).
+function usePrimitiveMaterial(
+  ir: InlineMaterialSpec,
+  override: MaterialValue | undefined,
+  shading: string,
+): THREE.MeshPhysicalMaterial {
+  const three = openpbrToThree(ir);
+  const color = override ? override.color : three.color;
+  const roughness = override ? override.roughness : three.roughness;
+  const metalness = override ? override.metalness : three.metalness;
+  const opacity = override ? override.opacity : three.opacity;
+  const emissive = override ? override.emissive : three.emissive;
+  const emissiveIntensity = override ? override.emissiveIntensity : three.emissiveIntensity;
+  const transparent = override ? override.opacity < 1 : three.transparent;
+  const wireframe = shading === 'wireframe';
+  const { ior, clearcoat, clearcoatRoughness, transmission, thickness } = three;
+  // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
+  // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
+  // the loader hook, never in the resolver (V29). The ref carries the colorspace;
+  // re-assert it here per slot (M5 — a data map as sRGB washes out), mirroring
+  // BakedMeshR's sRGB/linear split.
+  const mapTex = useBakedTexture(three.maps.map);
+  const normalTex = useBakedTexture(three.maps.normalMap);
+  const roughnessTex = useBakedTexture(three.maps.roughnessMap);
+  const metalnessTex = useBakedTexture(three.maps.metalnessMap);
+  const aoTex = useBakedTexture(three.maps.aoMap);
+  const emissiveTex = useBakedTexture(three.maps.emissiveMap);
+  const material = useMemo(() => {
+    const sRGB = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const linear = (t: THREE.Texture | null) => {
+      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
+      return t;
+    };
+    const m = new THREE.MeshPhysicalMaterial();
+    m.color = new THREE.Color(color);
+    m.roughness = roughness; // explicit — three default is 1 (D-03)
+    m.metalness = metalness;
+    m.opacity = opacity;
+    m.transparent = transparent;
+    m.emissive = new THREE.Color(emissive);
+    m.emissiveIntensity = emissiveIntensity;
+    m.ior = ior;
+    m.clearcoat = clearcoat;
+    m.clearcoatRoughness = clearcoatRoughness; // explicit — three default is 0
+    m.transmission = transmission;
+    m.thickness = thickness;
+    m.wireframe = wireframe;
+    // The 6 texture-map slots (D-04) — sRGB for colour maps, linear for data maps.
+    m.map = sRGB(mapTex);
+    m.normalMap = linear(normalTex);
+    m.roughnessMap = linear(roughnessTex);
+    m.metalnessMap = linear(metalnessTex);
+    m.aoMap = linear(aoTex);
+    m.emissiveMap = sRGB(emissiveTex);
+    return m;
+  }, [
+    color,
+    roughness,
+    metalness,
+    opacity,
+    transparent,
+    emissive,
+    emissiveIntensity,
+    ior,
+    clearcoat,
+    clearcoatRoughness,
+    transmission,
+    thickness,
+    wireframe,
+    mapTex,
+    normalTex,
+    roughnessTex,
+    metalnessTex,
+    aoTex,
+    emissiveTex,
+  ]);
+  // Single writer (V20) owns the material lifecycle — dispose on replace/unmount.
+  useEffect(() => () => material.dispose(), [material]);
+  return material;
+}
+
 function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
-  const mat = applyOverride(value.material.color, override);
   const shading = useViewportStore((s) => s.shading);
+  const material = usePrimitiveMaterial(value.material, override, shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -696,23 +804,14 @@ function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: Materia
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <boxGeometry args={value.size as [number, number, number]} />
-      <meshStandardMaterial
-        color={mat.color}
-        roughness={mat.roughness}
-        metalness={mat.metalness}
-        opacity={mat.opacity}
-        emissive={mat.emissive}
-        emissiveIntensity={mat.emissiveIntensity}
-        transparent={mat.transparent}
-        wireframe={shading === 'wireframe'}
-      />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
 
 function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
-  const mat = applyOverride(value.material.color, override);
   const shading = useViewportStore((s) => s.shading);
+  const material = usePrimitiveMaterial(value.material, override, shading);
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -722,16 +821,7 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
-      <meshStandardMaterial
-        color={mat.color}
-        roughness={mat.roughness}
-        metalness={mat.metalness}
-        opacity={mat.opacity}
-        emissive={mat.emissive}
-        emissiveIntensity={mat.emissiveIntensity}
-        transparent={mat.transparent}
-        wireframe={shading === 'wireframe'}
-      />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
@@ -1061,16 +1151,35 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       if ('wireframe' in next) next.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
       return next;
     };
+    // v0.6 #2 (#178, W6 — D-05/D-07) — per-submesh addressing. A "slot" is the
+    // i-th isMesh in this traverse (the SAME order the `__basher_gltf_meshes`
+    // seam reports, so an e2e's side-A read aligns with this apply). The override
+    // carries an optional `slotIndex`:
+    //   - undefined ⇒ apply to EVERY slot (the #99/#124 whole-child behaviour —
+    //     backward-compat; the p7.13/p124 e2e prove it stays byte-identical).
+    //   - a number ⇒ apply ONLY to that slot; every OTHER slot keeps its imported
+    //     material (so editing slot 1 leaves slot 0 untouched). Out-of-range ⇒ no
+    //     slot matches ⇒ no-op (range-safe).
+    const targetSlot = override ? (override as MaterialValue).slotIndex : undefined;
+    let slotIdx = -1;
     cloned.traverse((child) => {
       const m = child as THREE.Mesh;
       if (!m.isMesh) return;
+      slotIdx += 1;
       // Capture the imported material(s) once, before any reassignment.
       if (!overrideOriginals.current.has(m.uuid)) {
         overrideOriginals.current.set(m.uuid, m.material);
       }
       const src = overrideOriginals.current.get(m.uuid)!;
-      if (!override) {
-        // Restore the imported material(s) — fixes the latent no-restore bug.
+      // The override applies to THIS slot iff it exists AND either it is a
+      // whole-child override (slotIndex undefined) or it addresses this exact
+      // slot. Anything else keeps the imported material — no override, or a
+      // per-slot override aimed at a DIFFERENT slot (the latter is what keeps
+      // slot 0 unchanged when the director edits slot 1).
+      const applies = Boolean(override) && (targetSlot === undefined || targetSlot === slotIdx);
+      if (!applies) {
+        // Restore the imported material(s) — fixes the latent no-restore bug AND
+        // keeps non-addressed slots at their source material.
         m.material = src;
         return;
       }
@@ -1285,6 +1394,12 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     const w = window as unknown as Record<string, unknown>;
     w.__basher_gltf_meshes = () => {
       const summary: Array<{
+        // v0.6 #2 (#178, W6) — the per-MESH slot index, matching the override
+        // effect's `slotIdx` (incremented per isMesh in the SAME traverse). A
+        // MaterialOverride with `slotIndex===slot` addresses exactly this entry.
+        // For a material-ARRAY mesh every entry shares the mesh's slot (the
+        // override treats one mesh = one slot, applying `make` to each array elem).
+        slot: number;
         name: string;
         hasMap: boolean;
         mapImageOk: boolean;
@@ -1344,9 +1459,11 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           imageSrc: typeof image?.src === 'string' && image.src.length > 0 ? image.src : null,
         };
       };
+      let meshSlot = -1;
       cloned.traverse((child) => {
         const m = child as THREE.Mesh;
         if (!m.isMesh) return;
+        meshSlot += 1;
         const mats = Array.isArray(m.material) ? m.material : [m.material];
         for (const mat of mats) {
           const map = (mat as { map?: THREE.Texture | null } | null)?.map ?? null;
@@ -1380,6 +1497,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             }
           }
           summary.push({
+            slot: meshSlot,
             name: m.name ?? '',
             hasMap: map !== null,
             mapImageOk: Boolean(image && (image.width ?? 0) > 0),

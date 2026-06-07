@@ -36,7 +36,9 @@ const DEFAULT_OPS: Op[] = [
       size: [1, 1, 1],
       position: [0, 0, 0],
       rotation: [0, 0, 0],
-      material: { name: 'default', color: '#5af07a' },
+      // v0.6 #2 (#178): OpenPBR IR. base.color explicit; the remaining lobes fill
+      // from the zod NEW-box defaults (specular.roughness 0.3 etc).
+      material: { name: 'default', base: { color: '#5af07a' } },
     },
   },
   { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },

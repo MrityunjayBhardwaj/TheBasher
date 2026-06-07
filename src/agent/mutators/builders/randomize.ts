@@ -277,7 +277,7 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
           return {
             ok: false,
             reason:
-              `Target "${id}" (${node.type}) has no material.color or color param ` +
+              `Target "${id}" (${node.type}) has no material.base.color or color param ` +
               `— incompatible with property "color".`,
           };
         }
@@ -314,13 +314,14 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
 
       for (const prop of spec.properties) {
         if (prop === 'color') {
-          // mirror setMaterialColor.ts:62-77 — material.color vs color paramPath
+          // mirror setMaterialColor.ts — material.base.color vs color paramPath
           const hex = sampleHslToHex(rng, spec.ranges.color!);
           if (params.material && typeof params.material === 'object') {
             ops.push({
               type: 'setParam',
               nodeId: id,
-              paramPath: 'material.color',
+              // v0.6 #2 (#178): the inline color now lives at material.base.color.
+              paramPath: 'material.base.color',
               value: hex,
             });
           } else if (typeof params.color === 'string') {

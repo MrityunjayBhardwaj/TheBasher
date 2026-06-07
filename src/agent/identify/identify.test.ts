@@ -34,7 +34,7 @@ function buildScene(): DagState {
         size: [1, 1, 1],
         position: c.pos,
         rotation: [0, 0, 0],
-        material: { name: 'default', color: c.color },
+        material: { name: 'default', base: { color: c.color } },
       },
     }).next;
   }
@@ -361,7 +361,7 @@ describe('identify — color resolution (#16 + #18)', () => {
         size: [1, 1, 1],
         position: [0, 0, 0],
         rotation: [0, 0, 0],
-        material: { name: 'm', color: '#ff0000' },
+        material: { name: 'm', base: { color: '#ff0000' } },
       },
     }).next;
     s = applyOp(s, {
@@ -372,7 +372,7 @@ describe('identify — color resolution (#16 + #18)', () => {
         size: [1, 1, 1],
         position: [1, 0, 0],
         rotation: [0, 0, 0],
-        material: { name: 'm', color: '#fa0a0a' },
+        material: { name: 'm', base: { color: '#fa0a0a' } },
       },
     }).next;
     s = applyOp(s, {
@@ -383,7 +383,7 @@ describe('identify — color resolution (#16 + #18)', () => {
         size: [1, 1, 1],
         position: [2, 0, 0],
         rotation: [0, 0, 0],
-        material: { name: 'm', color: '#ffaaaa' },
+        material: { name: 'm', base: { color: '#ffaaaa' } },
       },
     }).next;
     s = applyOp(s, {
@@ -394,7 +394,7 @@ describe('identify — color resolution (#16 + #18)', () => {
         size: [1, 1, 1],
         position: [3, 0, 0],
         rotation: [0, 0, 0],
-        material: { name: 'm', color: '#cccccc' },
+        material: { name: 'm', base: { color: '#cccccc' } },
       },
     }).next;
     return s;
@@ -458,7 +458,7 @@ describe('identify — color family saturation bound (#29)', () => {
         size: [1, 1, 1],
         position: [0, 0, 0],
         rotation: [0, 0, 0],
-        material: { name: 'm', color: refHex },
+        material: { name: 'm', base: { color: refHex } },
       },
     }).next;
     s = applyOp(s, {
@@ -469,7 +469,7 @@ describe('identify — color family saturation bound (#29)', () => {
         size: [1, 1, 1],
         position: [1, 0, 0],
         rotation: [0, 0, 0],
-        material: { name: 'm', color: probeHex },
+        material: { name: 'm', base: { color: probeHex } },
       },
     }).next;
     return s;

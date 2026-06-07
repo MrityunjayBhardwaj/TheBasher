@@ -182,10 +182,11 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     page,
   }) => {
     await page.goto('/');
-    // Animate material.color black→white; paused at t=1 the curve samples grey.
+    // Animate material.base.color black→white; paused at t=1 the curve samples
+    // grey. (v0.6 #2 #178 — the inline color paramPath is now material.base.color.)
     await seedWrappedAnimatedBox(page, {
       nodeType: 'KeyframeChannelColor',
-      paramPath: 'material.color',
+      paramPath: 'material.base.color',
       keyframes: [
         { time: 0, value: '#000000' },
         { time: 2, value: '#ffffff' },
@@ -220,7 +221,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
       const ctx = { time: { frame: 60, seconds: 1, normalized: 0.1 } };
       return {
         sideA: w.__basher_mesh_material!('seed_layer')?.color ?? null,
-        sideB: w.__basher_evaluated_param!('n_box', 'material.color', ctx)?.value ?? null,
+        sideB: w.__basher_evaluated_param!('n_box', 'material.base.color', ctx)?.value ?? null,
       };
     });
     console.log(`[p149 C4 channel] sideA=${noTransient.sideA} sideB=${noTransient.sideB}`);
@@ -230,7 +231,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     // (b) WITH a transient — set a held edit, the render + read both overlay it.
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
-      w.__basher_transient!.getState().set('n_box', 'material.color', '#ff0000');
+      w.__basher_transient!.getState().set('n_box', 'material.base.color', '#ff0000');
     });
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
@@ -242,7 +243,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
       const ctx = { time: { frame: 60, seconds: 1, normalized: 0.1 } };
       return {
         sideA: w.__basher_mesh_material!('seed_layer')?.color ?? null,
-        sideB: w.__basher_evaluated_param!('n_box', 'material.color', ctx)?.value ?? null,
+        sideB: w.__basher_evaluated_param!('n_box', 'material.base.color', ctx)?.value ?? null,
       };
     });
     console.log(`[p149 C4 transient] sideA=${withTransient.sideA} sideB=${withTransient.sideB}`);
