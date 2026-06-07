@@ -49,6 +49,7 @@ import type { BakedTextureRef } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
+import { countOverrideSlots } from './resolveOverrideSlots';
 import { useTimeStore } from './stores/timeStore';
 import { useTransientEditStore, keyOf } from './stores/transientEditStore';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
@@ -961,6 +962,66 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   );
 }
 
+/**
+ * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a
+ * MaterialOverride that wraps a MULTI-material glTF. Renders ONLY when the
+ * target glTF has >=2 material slots (a primitive / single-material / not-yet-
+ * loaded target shows nothing — the override is whole-child by nature). The
+ * "which-slot" state IS the node's `slotIndex` param (no separate React state):
+ * "All" clears it (undefined ⇒ every slot, backward-compat); a number addresses
+ * that submesh. The SAME flat material controls below the selector author the
+ * override; the selector only changes WHICH slot they target (D-05 — an
+ * addressing dimension, not a second code path).
+ */
+function SlotSelector({ nodeId }: { nodeId: string }) {
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dispatch = useDagStore((s) => s.dispatch);
+  const slotCount = countOverrideSlots(nodes, nodeId);
+  if (slotCount < 2) return null;
+  const params = (nodes[nodeId]?.params ?? {}) as { slotIndex?: number };
+  const current = typeof params.slotIndex === 'number' ? params.slotIndex : undefined;
+  const setSlot = (slot: number | undefined) =>
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'slotIndex', value: slot },
+      'user',
+      slot === undefined ? 'override all slots' : `override slot ${slot}`,
+    );
+  const slotButton = (label: string, slot: number | undefined, testid: string) => {
+    const active = current === slot;
+    return (
+      <button
+        key={testid}
+        type="button"
+        role="radio"
+        aria-checked={active}
+        data-testid={testid}
+        onClick={() => setSlot(slot)}
+        className={`rounded border px-2 py-0.5 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+          active
+            ? 'border-accent bg-accent/15 text-accent'
+            : 'border-border text-fg/70 hover:bg-muted hover:text-fg'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div
+      data-testid={`inspector-slot-selector-${nodeId}`}
+      className="flex flex-col gap-1 px-3 py-1.5"
+    >
+      <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
+      <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
+        {slotButton('All', undefined, `inspector-slot-all-${nodeId}`)}
+        {Array.from({ length: slotCount }, (_, i) =>
+          slotButton(String(i), i, `inspector-slot-${nodeId}-${i}`),
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** A collapsible section card. Header click toggles via
  *  inspectorSectionsStore; visual collapse combines user choice with
  *  the §5.8 default rule via resolveCollapsed. */
@@ -1094,6 +1155,10 @@ export function NPanel() {
                 (node.params ?? {}) as Record<string, unknown>,
               )) {
                 if (isInputBinding(value)) continue; // socket binding, not param
+                // v0.6 #2 (#178, W6): slotIndex is the per-submesh addressing
+                // dimension; it renders as the dedicated SlotSelector chrome at
+                // the top of the material section, NOT as a raw numeric row.
+                if (node.type === 'MaterialOverride' && key === 'slotIndex') continue;
                 const section = paramToSection(key, declared);
                 if (section === null) {
                   unrouted.push([key, value]);
@@ -1111,6 +1176,13 @@ export function NPanel() {
                       sectionId={sectionId}
                       declaredSections={declared}
                     >
+                      {/* v0.6 #2 (#178, W6) — per-submesh slot selector at the
+                          top of a glTF MaterialOverride's material section. Only
+                          renders for a >=2-slot glTF target; the flat material
+                          controls below author the override for the chosen slot. */}
+                      {sectionId === 'material' && node.type === 'MaterialOverride' ? (
+                        <SlotSelector nodeId={node.id} />
+                      ) : null}
                       {(grouped.get(sectionId) ?? []).map(([key, value]) => (
                         <ParamRow
                           key={key}
