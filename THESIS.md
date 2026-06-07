@@ -775,18 +775,41 @@ Box and Sphere are just parametric _presets_; an imported glTF is just another p
 - SuperSplat embedded panel for splat editing.
 - VRM support.
 
-**59a. UI as a projection of the DAG — the substrate under the node editor (architecture note).**
+**59a. UI as a projection of the DAG — the substrate under the node editor, and the Basher-as-a-platform seam (architecture note, 2026-06-07).**
 
-The inspector already proves the principle: a node's editable parameters _are_ a schema, and the property panel is a pure projection of that schema (`NPanel` renders `node.params` generically; the node-type registry is agent-introspectable). v0.7 generalizes this into a first-class **UI-projection engine**, layered so the elegance is captured _without_ tripping the §196 graph-first failure mode:
+The inspector already proves the principle: a node's editable parameters _are_ a schema, and the property panel is a pure projection of that schema (`NPanel` renders `node.params` generically; the node-type registry is agent-introspectable — today ~70% projection, the rest hand-authored sections). v0.7 generalizes this into a first-class **UI-projection engine**, layered so the elegance is captured _without_ tripping the §196 graph-first failure mode. The layers are not "easy vs hard" — they are "**compose vs author-once**," the same boundary the inspector already lives on (compose fields / author a new widget type):
 
-- **Layer 0 — node param schema.** Exists (Zod, agent-introspectable).
+- **Layer 0 — node param schema.** Exists (Zod, agent-introspectable). The single source of truth.
 - **Layer 1 — inspector = pure projection of the schema.** Exists. The hand-authored sections (material lobes, texture placement, slot selector) are the _signal_ that the projection vocabulary is currently too thin — they are code where they should be data.
-- **Layer 2 — projection vocabulary as DATA.** Grouping, conditional visibility, per-param widget hints, units/ranges, and which params bind to a viewport gizmo. This collapses today's bespoke panels into declarations and gives every new node type — including third-party nodes — an inspector _for free_. The **same engine, retargeted**, renders the read-only DAG view (v0.6 #5) and the editable node editor (the graph is just another projection of the same schema; so is a gizmo).
-- **Layer 3 — the directorial chrome / interaction shell.** Toolbar, gizmo behavior, layout, modes, onboarding. This stays **authored and curated, NOT raw-projected.**
+- **Layer 2 — projection vocabulary as DATA.** Grouping, conditional visibility, per-param widget hints, units/ranges, and which params bind to a viewport gizmo. Collapses today's bespoke panels into declarations; every new node type — including third-party nodes — gets an inspector _for free_. The **same engine, retargeted**, renders the read-only DAG view (v0.6 #5) and the editable node editor (the graph is just another projection of the same schema; so is a gizmo).
+- **Layer 2.5 — interaction-as-composition.** Direct manipulation is _not_ a monolithic authored blob. An interaction decomposes into composable primitives, most of them declarative data bound to the DAG:
 
-**Guardrail (§196).** Fully-procedural projected UI _is_ the Houdini / TouchDesigner model — the exact "everything-is-a-node, graph-first" experience the wedge is defined against. Projection is the _implementation substrate_; the curated directorial surface remains the _product_. The boundary between Layer 2 and Layer 3 is where determinism/modularity ends and authored taste begins.
+  ```
+  Interaction =
+    trigger    ← input behavior: click / drag / hover / key / scroll      (generic, from a library)
+    pick       ← target: node / param / socket / viewport region          (generic raycast service)
+    gesture    ← state machine: down→move→up, thresholds, modifiers        (a state chart — declarable)
+    bind       ← gesture-delta → target param via a transform fn           (affine = pure data)
+    constrain  ← snap / axis-lock / range-clamp                           (data)
+    feedback   ← the affordance widget (gizmo, guide, ghost)              (a small DAG-bound scene)
+    commit     ← emit Op(s)                                               (the existing Op system, §50)
+  ```
 
-**Platform consequence — Basher as a base.** Layers 0–2 are the seam where Basher becomes an engine other 3D apps build on: define a node, and its parameter UI _and_ its DAG-view projection come for free (the Houdini-HDA / Unreal-plugin / Blender-addon pattern, web-native). What does _not_ come for free — and must not, per §196 — is each app's Layer 3 identity: its chrome, its interaction model, its directorial experience. "Any UI for any app, just works" is true for the param layer and false for the directorial layer, by design.
+  Move / rotate / scale / scrub / drag-to-keyframe are the **same machine with different bindings**. Downstream apps **compose** interactions as data; because each commits Ops, every custom interaction inherits undo / redo / replay / multiplayer / **agent-authoring** for free (an agent can emit a binding and a new tool exists). Precedent that modular interaction is real: Unreal's Interactive Tools Framework (`UInputBehavior` / `UInteractiveTool` / composable gizmos), Houdini viewer-states + handles shipped _with_ an HDA, Blender `GizmoGroup` bound to properties.
+
+- **Layer 3 — the thin irreducible residue + curated identity.** Two things genuinely resist declaration: (a) a _genuinely new affordance widget_ (the first spline-edit handle, a bend cage) and a _nonlinear / solver-based_ `bind` (IK, boolean preview, sculpt) — authored as code, but **authored ONCE and registered back as a reusable primitive** (modular at the ecosystem level, exactly like a new node type); and (b) each app's **curated taste** — chrome layout, palette, onboarding, which surfaces are revealed by default. This is the authored product identity, and it _must_ stay authored (§196).
+
+**Guardrail (§196).** Fully-procedural projected UI _is_ the Houdini / TouchDesigner model — the "everything-is-a-node, graph-first" experience the wedge is defined against. Projection is the _implementation substrate_; the curated directorial surface remains the _product_. The discipline is **declarative-by-default with an always-present imperative escape hatch** — a system that can't drop to code hits the no-code ceiling and dies there. (And the §17a corollary: surfaces are revealed by progressive disclosure, never gated behind a mode.)
+
+**Platform consequence — Basher as a base for downstream webapps.** Layers 0–2.5 are the seam where Basher becomes an engine other 3D webapps build on: define a node, get its parameter UI, its DAG-view projection, _and_ composable interactions for free.
+
+- **vs Houdini HDA / Houdini Engine** — also a projection model (parm interface → host-native UI in Unity/Unreal/Maya), but a native C++ engine behind a licensed C-API SDK, desktop, with custom UI living in a _second_ system (Python/Qt).
+- **vs Blender Apps (`.blendx`)** — not a new architecture: a packaging/curation layer over Blender's Python RNA-panel UI, needs the Blender runtime, desktop, experimental/unshipped.
+- **vs Unreal Interactive Tools Framework** — the closest analog for _modular interaction_, but native C++ — not serializable, not deterministic, not web, not agent-authorable.
+
+Basher's differentiator is **not** "UI is a projection" (Houdini/Blender got there first) — it is the **substrate**: web-embeddable (no engine to link, no license), a JSON-serializable + **deterministic** IR, **Op-backed everything** (so any bespoke downstream UI inherits undo/replay/multiplayer/agent-edit), and an **agent-introspectable + agent-authorable** schema.
+
+**Honest bounds (so this stays a thesis, not hype).** (1) This is a framework to _build_ — designing the Layer-2/2.5 vocabulary well is the real intellectual work (Unreal spent years on UTF); it is potential _entailed by_ the architecture, not shipped capability. (2) The elegance is real for the **projectable + composable** slice; truly novel primitives are authored (once) regardless. (3) Inner-platform risk: past the common case, forcing novel interaction through declarations is worse than code — hence the mandatory escape hatch. (4) Today: Layer 1 ~70% on one panel; Layers 2 / 2.5 unbuilt; no public SDK seam yet. "Any UI for any app, just works" is true for the param + composed-interaction layer, and false (by design) for each app's authored identity.
 
 ### 60. v0.8 — Agentic director
 
