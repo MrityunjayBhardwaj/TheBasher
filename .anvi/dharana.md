@@ -1347,3 +1347,34 @@ HOW: Tracks the boundary spanning the new `openpbrToThree` adapter (`src/app/mat
 **STATUS (2026-06-07, branch `feat/v06.3-uv-texture-placement` off `feat/v06.2-material-editing`, v0.6 #3 W1+W2 SHIPPED + falsified, issue #181):** the boundary EXTENDED two ways, both confirming the [[V32]] "IR + one adapter, never a renderer object" rule scales. **W1 — UV display ([[V33]]):** `EvaluatedMesh.uvs` (reserved "populated by #3") now carries real islands via ONE pure `extractUVIslands` + ONE producer-aware `resolveMeshUVs` (panel == `__basher_uv_islands` seam, [[H40]]); box/sphere eager (sync registry geometry), glTF/baked async-resolved by the panel — the resolver stays pure ([[V29]]). Read-only (THESIS §58 "view not surgery"; unwrap → Blender). Falsified: scale the extracted UVs → box [0,0,1,1] bounds go RED. **W2 — texture placement:** `uvTransform {tiling,offset,rotation}` added to `InlineMaterialSpec` + emitted by the ONE `openpbrToThree` + applied in `usePrimitiveMaterial`; v3→v4 node migration at IDENTITY (byte-identical, `migrations.test.ts`). **One pattern promoted:** [[H76]] (mutating a per-consumer property on a SHARED content-cached Texture cross-contaminates → CLONE before mutate; caught at design = CONTEXT A-5, proven by the two-boxes-one-image SC-3). NPanel "Texture Placement" controls render whenever uvTransform present ([[H75]] applied preventively). W8 a11y 8/8 (new controls carry aria-labels + focus rings — no new contrast row). Falsified: drop `repeat.set` → real `map.repeat` assertion RED. **W2 STRETCH deferred** (glTF imported-map placement via the MaterialOverride path) — filed follow-up, kept W2 tight to the primitive IR.
 
 REF: `.planning/phases/v06.2-material-texture-editing/{CONTEXT,RESEARCH,PLAN,VERIFICATION}.md` (D-01..D-07, 8-wave plan, R1-R6, checker PASS-WITH-CAVEATS) + `.planning/phases/v06.3-uv-texture-placement/{CONTEXT,PLAN}.md` (D-01..D-03, A-1..A-5, 3-wave plan); [[V32]] (the IR-is-compile-target invariant), [[V33]] (UV display = read-only projection), DCC-reference §11a (OpenPBR grounding), [[V29]] (one EvaluatedMesh face), [[V10]]/[[H14]] (migration guard), [[V20]]/[[H36]] (single writer), [[V28]]/[[H59]] (override + map-aware), [[H40]] (boundary-pair), [[H73]] (commit-before-falsify), [[H75]] (conditional-render strands a value), [[H76]] (clone shared cached resource before per-consumer mutate), [[B1.1]]/[[B14]] (the resolver/transient lineage this reuses); memory `project_material_architecture.md`; THESIS §58/§59/§741/§747. Issues #178 (v0.6 #2, PR #180), #181 (v0.6 #3).
+
+---
+
+## B-substrate-purity — Boundary: the substrate-purity / leak surface (CROSS-CUTTING, the north-star precondition)
+
+**ORIGIN:** north-star consolidation (2026-06-08, `docs/PLATFORM-VISION.md` §9). The "more than the sum" superlinearity (N×N integration-tax → N×1 on one DAG/Op/IR) is CONDITIONAL — it holds only as far as the substrate stays pure ([[V34]]). This boundary makes the leak surface EXPLICIT so the dhyana check fires CONTEXTUALLY at every Write to a leak-prone seam, not only when someone remembers the thesis.
+
+**WHY:** without this boundary tracked, each new domain (paint, composite, an AI-generative node, an "advanced" UI, a new cache) re-discovers substrate purity one regression at a time — and each leak silently downgrades undo / replay / multiplayer / agent-authoring / the data-flywheel for everything that touches the leaked domain. The class made invisible: "a feature that works in isolation but isn't reproducible / agent-drivable / undoable because its state lives OUTSIDE the IR" ([[H77]]). Removing this entry reopens "diagnose the leak from a support ticket" instead of "catch it at the Write."
+
+**HOW (the leak-prone seams — editing ANY injects the leak-check — + the observation target):**
+
+Seams (the dhyana hook should surface this entry when the edited file is in one of these):
+
+- **New node domain / evaluated output** — `src/core/dag/evaluator.ts`, new `src/nodes/*`, `src/app/resolve*.ts`: the datum MUST reduce to the IR; no authoritative state on the node's runtime object. (faces [[V29]]/[[V30]])
+- **AI / generative / stochastic node (v0.7+)** + render bridge — `src/agent/*`, any model/API-backed node: PIN seed + CONTENT-HASH the output as an asset; NEVER reference a live stochastic call as deterministic. ([[V30]] pattern, [[H77]])
+- **Caches / stores / loaders / registries** — `src/app/asset/*Store.ts`, `*Loader.ts`, `geometryRegistry.ts`, `src/viewport/*`: content-hashed; no authoritative bytes outside the IR ([[V30]]); per-consumer property → CLONE, don't mutate the shared instance ([[H76]]).
+- **Agent Op vocabulary** — `src/agent/mutators/*`, `src/core/dag/ops.ts`: additions stay small + coherent; no agent-private mutation path (§18); a new domain REUSES Ops.
+- **Chrome / "advanced" UI** — `src/app/*` (NPanel, inspector, ToolRail, toolbars): advanced controls are the SAME projected graph (§59a + §17a no-modes/progressive disclosure), never a bolted-on second UI; hand-authored sections (`MATERIAL_LOBES`) are leaks = code where there should be projected data.
+- **Renderer adapter** — `src/app/material/openpbrToThree.ts`, `src/viewport` material/render: renderer reached ONLY via the ONE adapter ([[V32]]).
+
+Observation target — **the leak-check (run at design + at every Write to a seam above), in order:**
+
+1. Does this store authoritative state OUTSIDE the DAG/Op/IR? → if yes it drops out of undo/replay/multiplayer/agent → route through an Op.
+2. Is a stochastic/AI output referenced as if reproducible? → pin seed + content-hash the output as an asset.
+3. Is this an "advanced/mode/pro" UI that renders a DIFFERENT control set rather than MORE of the projection? → it reopens the learning cliff AND isn't agent-drivable → make it the same projected graph revealed.
+4. Does this mint new Ops for one domain? → keep the vocabulary small/coherent (agent reach + small-LLM cost depend on it).
+5. Is this hand-authored where the schema could project it? (the `MATERIAL_LOBES` tell) → move it toward L2 projection data.
+
+If any answer is "yes-leak" → it is [[H77]]; route through the substrate before shipping. **The one question:** "if I undo / reload / let the agent drive / add a 2nd user — does THIS still hold?"
+
+**REF:** `docs/PLATFORM-VISION.md` §9 (north star) / §9.3 (superlinearity) / §9.4 (the one condition + the early `MATERIAL_LOBES` tell); THESIS §59a (projection + L2.5) / §50 (Op = only mutation) / §48–51 (determinism) / §18 (agent = privileged) / §17a (progressive disclosure). Invariant [[V34]]; pattern [[H77]]; faces [[V20]] [[V29]] [[V30]] [[V32]] [[V33]] [[H76]].
