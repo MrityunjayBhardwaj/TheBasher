@@ -977,9 +977,14 @@ function SlotSelector({ nodeId }: { nodeId: string }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dispatch = useDagStore((s) => s.dispatch);
   const slotCount = countOverrideSlots(nodes, nodeId);
-  if (slotCount < 2) return null;
   const params = (nodes[nodeId]?.params ?? {}) as { slotIndex?: number };
   const current = typeof params.slotIndex === 'number' ? params.slotIndex : undefined;
+  // Hide the selector for whole-child targets (primitive / single-material /
+  // not-yet-loaded). EXCEPTION: if a slotIndex is already set, ALWAYS render so a
+  // STALE slotIndex (e.g. the asset later dropped below 2 slots → the override
+  // silently matches no slot) still has an "All" reset affordance. Without this
+  // the override would no-op with no UI to recover it.
+  if (slotCount < 2 && current === undefined) return null;
   const setSlot = (slot: number | undefined) =>
     dispatch(
       { type: 'setParam', nodeId, paramPath: 'slotIndex', value: slot },
