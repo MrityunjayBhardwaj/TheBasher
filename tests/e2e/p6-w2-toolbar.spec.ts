@@ -34,24 +34,6 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible();
 });
 
-test('P6.W2#1 keyboard 1/2/3/4 sets mode = edit/run/animate/director', async ({ page }) => {
-  await page.keyboard.press('3');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'animate');
-  await page.keyboard.press('2');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'run');
-  await page.keyboard.press('4');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
-  await page.keyboard.press('1');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
-});
-
-test('P6.W2#2 TopToolbar mode pill click sets mode', async ({ page }) => {
-  await page.getByTestId('top-toolbar-mode-animate').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'animate');
-  await page.getByTestId('top-toolbar-mode-edit').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
-});
-
 interface EditorWindow {
   __basher_editor: { getState: () => { activeTool: string } };
 }
@@ -59,6 +41,24 @@ interface EditorWindow {
 function readActiveTool(): string {
   return (window as unknown as EditorWindow).__basher_editor.getState().activeTool;
 }
+
+test('P6.W2#1 keys 1/2/3/4 are unbound — the operational mode enum is gone (v0.6 #4)', async ({
+  page,
+}) => {
+  // The mode enum (edit/run/animate/director) was dissolved; keys 1/2/3/4 no
+  // longer bind to anything. Pressing them must NOT enter present or change the
+  // active tool.
+  const before = await page.evaluate(readActiveTool);
+  for (const k of ['1', '2', '3', '4']) await page.keyboard.press(k);
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
+  expect(await page.evaluate(readActiveTool)).toBe(before);
+});
+
+test('P6.W2#2 the operational mode pill is gone (dissolved in v0.6 #4)', async ({ page }) => {
+  await expect(page.getByTestId('top-toolbar-mode-pill')).toHaveCount(0);
+  await expect(page.getByTestId('top-toolbar-mode-animate')).toHaveCount(0);
+  await expect(page.getByTestId('top-toolbar-mode-edit')).toHaveCount(0);
+});
 
 test('P6.W2#3 keyboard Q/W/E/R sets editorStore.activeTool', async ({ page }) => {
   // editorStore is exposed in dev via window.__basher_editor.
@@ -97,14 +97,15 @@ test('P6.W2#6 ComfyStatusIndicator renders with capability-derived state', async
   await expect(ind).toBeVisible();
   // Boot wiring installs StubComfyUICapability for e2e (boot.ts:162-168);
   // initial state should be 'stub' until the first probe (which only
-  // fires on hover or in run mode).
+  // fires on hover or while playback is active).
   await expect(ind).toHaveAttribute('data-state', 'stub');
 });
 
-test('P6.W2#7 Director Cut "Present" button enters director mode', async ({ page }) => {
+test('P6.W2#7 "Present" button enters present mode; Esc exits', async ({ page }) => {
   await page.getByTestId('top-toolbar-present').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
-  // Esc returns to edit (regression on universal Esc handler).
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
+  // Esc dismisses the topmost transient — here, present (regression on the
+  // Esc ladder that replaced the old setMode('edit')).
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
 });

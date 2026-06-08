@@ -114,7 +114,6 @@ test.beforeEach(async ({ page }) => {
       w.__basher_dag && w.__basher_viewport && w.__basher_time && w.__basher_timeline_selection,
     );
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
   // Seed a layer + Number channel with 3 keyframes so all W6 features
   // have something to operate on. Channel targets a DirectionalLight's
   // `intensity` param — DirectionalLight has intensity as a native

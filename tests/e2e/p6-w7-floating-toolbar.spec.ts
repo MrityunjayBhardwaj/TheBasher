@@ -1,5 +1,5 @@
-// P6 W7 acceptance — FloatingViewportToolbar (R8) + ModeBadge + Director
-// chrome-hide. Closes §11 #1 (R8 reachable via testid) + #12 (Director
+// P6 W7 acceptance — FloatingViewportToolbar (R8) + present-mode
+// chrome-hide. Closes §11 #1 (R8 reachable via testid) + #12 (present
 // chrome-hide). Per UI-SPEC §5.6, §5.7, §11.
 //
 // W7 ground truth: R8 carries the most-frequent viewport actions
@@ -8,12 +8,12 @@
 // — same dispatch path as R4 ToolRail and keyboard W/E/R — so every
 // surface highlights in sync (V19 — keyboard/UI shared helper).
 //
-// Director chrome-hide closure: Layout.tsx hides R1/R2/R3/R4/R5/R7 +
-// timeline-slot in director (W1/W3 baseline); R8 self-gates in
-// FloatingViewportToolbar; ModeBadge returns null. Esc → edit
-// (universal handler, KeyboardShortcuts.tsx:435). V11/K1#6 — Canvas
-// DOM identity preserved across the round-trip (display:none, never
-// unmount).
+// Present chrome-hide closure (v0.6 #4 — the `director` mode that drove
+// it is gone; chromeStore.presentMode owns the collapse now): Layout.tsx
+// hides R1/R2/R3/R4/R5/R7 + timeline-slot when presentMode is on; R8
+// self-gates in FloatingViewportToolbar. Esc dismisses the topmost
+// transient (the Esc ladder). V11/K1#6 — Canvas DOM identity preserved
+// across the round-trip (display:none, never unmount).
 //
 // REF: docs/UI-SPEC.md §5.6, §5.7, §11; memory/project_p6_w7_plan.md;
 // vyapti V11 (Canvas mounts once), V19 (single keyboard/UI dispatcher).
@@ -138,7 +138,7 @@ test('P6.W7#7 R8 shading-rendered flips viewportStore.shading to "rendered"', as
   expect(shading).toBe('rendered');
 });
 
-test('P6.W7#8 Director chrome-hide hides R1/R2/R3/R4/R5/R7 + R8 + ModeBadge; Esc restores; Canvas DOM identity stable (closes §11 #12, V11)', async ({
+test('P6.W7#8 Present chrome-hide hides R1/R2/R3/R4/R5/R7 + R8; Esc restores; Canvas DOM identity stable (closes §11 #12, V11)', async ({
   page,
 }) => {
   // Tag the Canvas so we can prove it survives the round-trip.
@@ -150,38 +150,35 @@ test('P6.W7#8 Director chrome-hide hides R1/R2/R3/R4/R5/R7 + R8 + ModeBadge; Esc
   });
   expect(tagInitial).not.toBeNull();
 
-  // Pre-director chrome is visible.
+  // Pre-present chrome is visible.
   await expect(page.getByTestId('top-toolbar')).toBeVisible(); // R3
   await expect(page.getByTestId('tree-slot')).toBeVisible(); // R5
   await expect(page.getByTestId('inspector')).toBeVisible(); // R7
-  await expect(page.getByTestId('mode-badge')).toBeVisible();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
 
-  // Enter director.
+  // Enter present (the re-home for the deleted `director` mode).
   await page.getByTestId('top-toolbar-present').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
 
   // Chrome hidden.
   await expect(page.getByTestId('top-toolbar')).toBeHidden();
   await expect(page.getByTestId('tree-slot')).toBeHidden();
   await expect(page.getByTestId('inspector')).toBeHidden();
-  await expect(page.getByTestId('mode-badge')).toBeHidden();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeHidden();
 
   // R6 viewport stays visible.
   await expect(page.getByTestId('viewport-slot')).toBeVisible();
 
-  // V11: Canvas DOM node identity preserved while in director.
-  const tagInDirector = await page.evaluate(
+  // V11: Canvas DOM node identity preserved while in present.
+  const tagInPresent = await page.evaluate(
     () => document.querySelector('canvas')?.dataset.persistenceTag ?? null,
   );
-  expect(tagInDirector).toBe(tagInitial);
+  expect(tagInPresent).toBe(tagInitial);
 
-  // Esc returns to edit (universal handler).
+  // Esc dismisses the topmost transient (present) — the Esc-ladder regression.
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('top-toolbar')).toBeVisible();
-  await expect(page.getByTestId('mode-badge')).toHaveText('EDIT');
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
 
   // V11: Canvas DOM node identity preserved across the full round-trip.

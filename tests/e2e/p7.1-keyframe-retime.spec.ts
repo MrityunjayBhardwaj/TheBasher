@@ -77,7 +77,6 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_time && w.__basher_evaluate);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
 
   // Seed: DirectionalLight + AnimationLayer + ONE KeyframeChannelNumber
   // on `intensity` with TWO linear samples — value at a probe time

@@ -305,7 +305,7 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  await page.getByTestId('timeline-drawer-toggle').click();
 });
 
 test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (the #69 boundary-pair)', () => {

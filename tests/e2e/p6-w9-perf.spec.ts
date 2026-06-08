@@ -59,7 +59,6 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_time);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
 
   // Seed a realistic-heavy scene: 10 channels × 24 keyframes = 240
   // diamonds across the static layer (exceeds the ≥8×≥20 floor).

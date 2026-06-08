@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_evaluated_mesh && w.__basher_mesh_world_scale);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  await page.getByTestId('timeline-drawer-toggle').click();
   // Select n_box and wait for the gizmo grab seam to mount.
   await page.evaluate(() =>
     (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box'),

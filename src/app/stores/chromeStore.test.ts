@@ -48,6 +48,7 @@ describe('chromeStore', () => {
       toolRailCollapsed: false,
       leftSidebarCollapsed: false,
       inspectorCollapsed: false,
+      presentMode: false,
     });
   });
 
@@ -133,6 +134,38 @@ describe('chromeStore', () => {
     expect(persisted.toolRailCollapsed).toBe(true);
     expect(persisted.leftSidebarCollapsed).toBe(false);
     expect(persisted.inspectorCollapsed).toBe(true);
+  });
+
+  it('togglePresentMode flips presentMode but NEVER persists it', () => {
+    expect(useChromeStore.getState().presentMode).toBe(false);
+    useChromeStore.getState().togglePresentMode();
+    expect(useChromeStore.getState().presentMode).toBe(true);
+    // The toggle must NOT write presentMode into the persisted blob — a reload
+    // must never trap the user in fullscreen with no chrome to escape.
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
+      string,
+      unknown
+    >;
+    expect(persisted).not.toHaveProperty('presentMode');
+  });
+
+  it('presentMode boots false even if a sibling toggle wrote while present was true', async () => {
+    // Enter present, then collapse a panel (which persists). Reconstruct the
+    // store from the persisted blob: presentMode must come back false.
+    useChromeStore.getState().setPresentMode(true);
+    useChromeStore.getState().setToolRailCollapsed(true);
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
+      string,
+      unknown
+    >;
+    // presentMode never made it into storage even though it was true at write time.
+    expect(persisted).not.toHaveProperty('presentMode');
+    expect(persisted.toolRailCollapsed).toBe(true);
+    // Reconstruct from the persisted blob → presentMode is false.
+    vi.resetModules();
+    const mod = await import('./chromeStore');
+    expect(mod.useChromeStore.getState().presentMode).toBe(false);
+    expect(mod.useChromeStore.getState().toolRailCollapsed).toBe(true);
   });
 
   it('first-visit boot defaults: toolRail expanded, leftSidebar collapsed, inspector expanded', async () => {

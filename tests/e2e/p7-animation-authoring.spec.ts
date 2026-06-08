@@ -113,9 +113,10 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_viewport);
   });
-  // Timebar lives in the layout's persistent timeline slot; Animate mode is
-  // where keyframe authoring happens (D-UX-1).
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  // v0.6 #4: the timeline slot is always mounted; keyframe authoring here is
+  // driven through the always-visible inspector diamond, so no drawer-reveal
+  // setup is needed. The one test that checks the dopesheet row opens the
+  // drawer itself.
 });
 
 test.describe('P7 D2 — Auto-Key indicator is unmissable (footgun mitigation)', () => {

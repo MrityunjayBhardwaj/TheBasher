@@ -5,7 +5,7 @@
 // reduced-motion / focus-visible-discrimination implementations that
 // the C1..C5 wave chain shipped land correctly in a real browser.
 //
-// Per D-W8-5 (skip-link), D-W8-7 (reduced motion), D-W8-8 (director
+// Per D-W8-5 (skip-link), D-W8-7 (reduced motion), D-W8-8 (present-mode
 // focus order), D-W8-2 (focus-visible ring), D-W8-4 (per-component
 // aria-label), D-W8-6 (role scope).
 //
@@ -238,14 +238,12 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
   expect(focusedInsideInspector).toBe(true);
 });
 
-// ─── #3 Focus order in director mode ──────────────────────────────────
+// ─── #3 Focus order in present mode ───────────────────────────────────
 
-test('P6.W8#3 director mode removes hidden chrome from the tab order (D-W8-8)', async ({
-  page,
-}) => {
-  // Enter director (same trigger pattern as P6.W7#8).
+test('P6.W8#3 present mode removes hidden chrome from the tab order (D-W8-8)', async ({ page }) => {
+  // Enter present (same trigger pattern as P6.W7#8).
   await page.getByTestId('top-toolbar-present').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
 
   // Skip-link still mounted, still tabbable (D-W8-5: all modes).
   const skipLink = page.getByTestId('skip-link');
@@ -259,7 +257,7 @@ test('P6.W8#3 director mode removes hidden chrome from the tab order (D-W8-8)', 
   // region's grid-area wrapper.
   //
   // The role/testid containers are themselves direct children of the
-  // grid-area divs that switch display:none in director. So a tabbable
+  // grid-area divs that switch display:none when presentMode is on. So a tabbable
   // .querySelectorAll on each region's testid root will return 0 even
   // though the DOM nodes still exist — because display:none on an
   // ancestor disqualifies them from the focus tree.
@@ -287,15 +285,15 @@ test('P6.W8#3 director mode removes hidden chrome from the tab order (D-W8-8)', 
         'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ).length;
     }, id);
-    expect(visibleAndTabbable, `${id} should have 0 tabbable elements in director mode`).toBe(0);
+    expect(visibleAndTabbable, `${id} should have 0 tabbable elements in present mode`).toBe(0);
   }
 
   // R6 viewport-slot remains visible.
   await expect(page.getByTestId('viewport-slot')).toBeVisible();
 
-  // Esc → back to edit, layout restored.
+  // Esc dismisses present, layout restored.
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
 });
 
 // ─── #4 Role attributes present on every region ───────────────────────

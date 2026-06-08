@@ -65,8 +65,9 @@ test.beforeEach(async ({ page }) => {
       w.__basher_timeline_selection,
     );
   });
-  // Switch into Animate so the timeline dock is visible (D-UX-1 gating).
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  // v0.6 #4: the timeline slot is always mounted (no `animate` mode to gate
+  // it), so the toggle bar is always reachable — each test opens the drawer
+  // itself with its own toggle click.
 });
 
 test('P6.W5#1 drawer-open defaults to Dopesheet tab; both panes mount; Curve hidden', async ({
@@ -115,8 +116,7 @@ test('P6.W5#3 active tab persists across reload (D-W5-2)', async ({ page }) => {
     return w.__basher_timeline_dock?.getState().activeTab;
   });
   expect(persisted).toBe('curve');
-  // Re-enter Animate + open drawer; Curve should be the active tab.
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  // Open the drawer after reload; Curve should still be the active tab.
   await page.getByTestId('timeline-drawer-toggle').click();
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'true');

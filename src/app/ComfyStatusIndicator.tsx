@@ -12,23 +12,26 @@
 //   1. Boot read — at mount, resolve the cached capability via
 //      getComfyCapability(); kind tells you the initial state. NO HTTP
 //      probe at boot — pickComfyUI already did one during boot's resolve.
-//   2. 30s probe — only when mode === 'run'. The timer is torn down when
-//      the user leaves run mode so non-rendering sessions don't burn HTTP
-//      requests on a sleeping ComfyUI server.
+//   2. 30s probe — only while playback is active (useTimeStore.playing).
+//      v0.6 #4 dissolved the `run` mode; per D-06 `run` became the Play
+//      transport, so the active-session signal that used to be "mode ===
+//      'run'" is now "the timeline is playing". The timer is torn down when
+//      playback stops so idle/editing sessions don't burn HTTP requests on
+//      a sleeping ComfyUI server (the original intent, preserved).
 //   3. Hover probe — pointer-enter triggers an immediate isAvailable()
-//      check regardless of mode. Lets the user demand a fresh status
-//      without leaving their current mode.
+//      check regardless of playback state. Lets the user demand a fresh
+//      status without starting playback.
 //
 // "Never constant polling" (§11 #12): the only timer in this component is
-// the run-mode interval, which auto-clears on mode change. There is no
+// the playback interval, which auto-clears when playback stops. There is no
 // mount-time interval.
 //
 // Test seam: deps.getCapability is optional and defaults to the boot
 // helper. Tests inject a stub capability so vitest doesn't need a live
 // ComfyUI server or a real boot sequence.
 //
-// V8 file-rooted: src/app/. Reads useModeStore, calls a capability
-// surface (V6). No DAG mutation. Capability calls are read-only.
+// V8 file-rooted: src/app/. Reads useTimeStore (playback transport), calls
+// a capability surface (V6). No DAG mutation. Capability calls are read-only.
 //
 // REF: docs/UI-SPEC.md §5.10, §11 #12 (D-UX-13); THESIS.md §28, §44;
 // project_p5_context D-07.
@@ -37,7 +40,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ComfyUICapability } from '../core/comfy';
 import { getComfyCapability } from './boot';
-import { useModeStore } from './stores/modeStore';
+import { useTimeStore } from './stores/timeStore';
 
 export const PROBE_INTERVAL_MS = 30_000;
 
@@ -104,7 +107,7 @@ export function ComfyStatusIndicator({
   getCapability = getComfyCapability,
   intervalMs = PROBE_INTERVAL_MS,
 }: ComfyStatusIndicatorDeps = {}): ReactNode {
-  const mode = useModeStore((s) => s.mode);
+  const playing = useTimeStore((s) => s.playing);
   const [state, setState] = useState<IndicatorState>('stub');
   const capRef = useRef<ComfyUICapability | null>(null);
 
@@ -138,15 +141,15 @@ export function ComfyStatusIndicator({
     await probeOnce(cap, setState);
   }, []);
 
-  // Run-mode interval (D-UX-13). Mount and tear down with mode changes so
-  // we never poll outside run mode.
+  // Playback interval (D-UX-13). Mount while playback is active and tear
+  // down when it stops, so we never poll an idle/editing session.
   useEffect(() => {
-    if (mode !== 'run') return;
+    if (!playing) return;
     const id = setInterval(() => {
       void probe();
     }, intervalMs);
     return () => clearInterval(id);
-  }, [mode, intervalMs, probe]);
+  }, [playing, intervalMs, probe]);
 
   return (
     <button

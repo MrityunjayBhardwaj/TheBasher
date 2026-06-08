@@ -237,7 +237,7 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  await page.getByTestId('timeline-drawer-toggle').click();
 });
 
 test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 boundary-pair)', () => {

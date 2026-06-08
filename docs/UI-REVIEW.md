@@ -14,13 +14,13 @@
 Scores are 1–5 (5 = at the Spline target). The audit measures the **current implemented chrome**
 against the calm-chrome target, NOT against "is it a working editor" (it is).
 
-| Pillar | Score |
-|--------|-------|
-| 1. Layout | **2 / 5** |
-| 2. Typography | **2 / 5** |
-| 3. Color | **2 / 5** |
-| 4. Spacing | **3 / 5** |
-| 5. Interaction | **4 / 5** |
+| Pillar           | Score     |
+| ---------------- | --------- |
+| 1. Layout        | **2 / 5** |
+| 2. Typography    | **2 / 5** |
+| 3. Color         | **2 / 5** |
+| 4. Spacing       | **3 / 5** |
+| 5. Interaction   | **4 / 5** |
 | 6. Accessibility | **4 / 5** |
 
 ---
@@ -42,8 +42,8 @@ against the calm-chrome target, NOT against "is it a working editor" (it is).
   identical icons and the same `editorStore.setActiveTool` dispatch:
   - `ToolRail.tsx:39-44` — `{select ↖, translate ✥, rotate ⟲, scale ⤢}`
   - `FloatingViewportToolbar.tsx:51-56` — `{select ↖, translate ✥, rotate ⟲, scale ⤢}` (same glyphs)
-  Both route through `setActiveTool` (`ToolRail.tsx:177`, `FloatingViewportToolbar.tsx:189`). A
-  first-timer sees the same four tools twice, on opposite edges of the screen.
+    Both route through `setActiveTool` (`ToolRail.tsx:177`, `FloatingViewportToolbar.tsx:189`). A
+    first-timer sees the same four tools twice, on opposite edges of the screen.
 - **Three competing "mode" controls** are layout-level, not just visual (F2): the mode pill
   (`TopToolbar.tsx:151-178`), the `ModeSwitcher` `<select>` (`ModeSwitcher.tsx:13-29`, mounted in
   `Chrome.tsx:54`), and the `View ▸ Set Mode` submenu (`MenuBar.tsx:691-700`) — **three writers to
@@ -110,7 +110,7 @@ high-contrast. This is the single largest aesthetic distance and is **purely tok
 - Right column is a fixed `280px 280px` pair (inspector + drawer, `Layout.tsx:91`), reasonable but
   rigid.
 
-**Gap vs Spline:** Per-control spacing is fine; the spacing *problem* is band stacking, which is really
+**Gap vs Spline:** Per-control spacing is fine; the spacing _problem_ is band stacking, which is really
 a layout problem (Pillar 1). Whitespace generosity around the canvas is low because chrome crowds it.
 
 ---
@@ -173,31 +173,31 @@ It is NOT `useModeStore` and is NOT listed below. It is agent behavior, not an a
 
 ### Every surface gated by `useModeStore` (the complete reader set, grepped)
 
-| # | Gated surface | Where gated (file:line) | Current rule (which mode shows it) | D-05 disposition |
-|---|---------------|-------------------------|-------------------------------------|------------------|
-| 1 | `ProjectTabs` (R1) | `Layout.tsx:94,118` | hidden when `director` | **ALWAYS-PRESENT** — tabs are not a mode; director-cut hide becomes a UI-toggle (`⌘\`), not a mode |
-| 2 | `MenuBar` (R2) | `Layout.tsx:94,121` | hidden when `director` | **ALWAYS-PRESENT** (hidden only by the chrome-off/present toggle) |
-| 3 | `Chrome` band (R3) | `Layout.tsx:94,124` | hidden when `director` | **DELETED-CONTROL** — band's only unique content is `ModeSwitcher` (row 9) + save; fold save into surviving chrome, drop the band |
-| 4 | `TopToolbar` (R4) | `Layout.tsx:94,127` | hidden when `director` | **ALWAYS-PRESENT** (consolidation target; chrome-off toggle hides it) |
-| 5 | `ToolRail` (R4 col) | `Layout.tsx:70,134,142` | width 0 when `director` OR collapsed | **ALWAYS-PRESENT** (collapse stays user-controlled via chromeStore, not mode) |
-| 6 | `LeftSidebar`/tree col | `Layout.tsx:74,152` | hidden when `director` | **ALWAYS-PRESENT** (collapse user-controlled) |
-| 7 | `NPanel` inspector | `Layout.tsx:216` | hidden when `director` | **ALWAYS-PRESENT** (collapse user-controlled) |
-| 8 | `RightDrawer` (agent) | `Layout.tsx:225` | hidden when `director` | **ALWAYS-PRESENT** — §196: agent is co-equal, must never vanish behind a mode |
-| 9 | `ModeSwitcher` `<select>` | `Chrome.tsx:54`, `ModeSwitcher.tsx:13-29` | always rendered (writes mode) | **DELETED-CONTROL** — redundant 3rd mode writer (F2) |
-| 10 | Mode pill (4 buttons) | `TopToolbar.tsx:151-178,250` | always rendered (writes mode) | **DELETED-CONTROL** — the central F2 offender; Run/Animate/Director become disclosure actions, not a tier pill |
-| 11 | `View ▸ Set Mode` submenu | `MenuBar.tsx:691-700` | always rendered (writes mode) | **DELETED-CONTROL** — redundant menu mode writer |
-| 12 | `TimelineDrawer` mount | `Layout.tsx:237` (`mode === 'animate'`) | visible only in `animate` | **REVEALABLE-DRAWER** — timeline is already a drawer (`timelineDockStore`); reveal it on demand, not by entering a mode |
-| 13 | `ModeBadge` overlay | `ModeBadge.tsx:75-98` | label per mode; null in `director` | **DELETED-CONTROL** — surfaces the mode concept; with no modes, no badge (frame/fps readout can move to timeline/viewport HUD) |
-| 14 | `FloatingViewportToolbar` | `FloatingViewportToolbar.tsx:172` | `null` when `director` | **ALWAYS-PRESENT** (chrome-off toggle hides it; see consolidation) |
-| 15 | `ComfyStatusIndicator` probe | `ComfyStatusIndicator.tsx:144` (`mode !== 'run'`) | probes ComfyUI only in `run` | ⚠️ **AMBIGUOUS** — see flags below |
-| 16 | Tool keys Q/W/E/R gate | `KeyboardShortcuts.tsx:302-304` (`edit`/`animate`) | tool keys only in edit/animate | ⚠️ **AMBIGUOUS** — see flags below |
-| 17 | Mode keys 1/2/3/4 | `KeyboardShortcuts.tsx:171-176,289-292` | sets mode | **DELETED-CONTROL** — no modes → no 1/2/3/4; free the keys (or repurpose to disclosure toggles) |
-| 18 | Esc → `setMode('edit')` | `KeyboardShortcuts.tsx:230,476` | universal Esc returns to edit | ⚠️ **AMBIGUOUS** — see flags below |
-| 19 | `Present` button | `TopToolbar.tsx:215-224` (`setMode('director')`) | enters director | **REVEALABLE-DRAWER** (re-point) — keep the *affordance* ("Present"/chrome-off) but back it with a `chromeStore.presentMode` boolean, not `modeStore` |
+| #   | Gated surface                | Where gated (file:line)                            | Current rule (which mode shows it)   | D-05 disposition                                                                                                                                      |
+| --- | ---------------------------- | -------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `ProjectTabs` (R1)           | `Layout.tsx:94,118`                                | hidden when `director`               | **ALWAYS-PRESENT** — tabs are not a mode; director-cut hide becomes a UI-toggle (`⌘\`), not a mode                                                    |
+| 2   | `MenuBar` (R2)               | `Layout.tsx:94,121`                                | hidden when `director`               | **ALWAYS-PRESENT** (hidden only by the chrome-off/present toggle)                                                                                     |
+| 3   | `Chrome` band (R3)           | `Layout.tsx:94,124`                                | hidden when `director`               | **DELETED-CONTROL** — band's only unique content is `ModeSwitcher` (row 9) + save; fold save into surviving chrome, drop the band                     |
+| 4   | `TopToolbar` (R4)            | `Layout.tsx:94,127`                                | hidden when `director`               | **ALWAYS-PRESENT** (consolidation target; chrome-off toggle hides it)                                                                                 |
+| 5   | `ToolRail` (R4 col)          | `Layout.tsx:70,134,142`                            | width 0 when `director` OR collapsed | **ALWAYS-PRESENT** (collapse stays user-controlled via chromeStore, not mode)                                                                         |
+| 6   | `LeftSidebar`/tree col       | `Layout.tsx:74,152`                                | hidden when `director`               | **ALWAYS-PRESENT** (collapse user-controlled)                                                                                                         |
+| 7   | `NPanel` inspector           | `Layout.tsx:216`                                   | hidden when `director`               | **ALWAYS-PRESENT** (collapse user-controlled)                                                                                                         |
+| 8   | `RightDrawer` (agent)        | `Layout.tsx:225`                                   | hidden when `director`               | **ALWAYS-PRESENT** — §196: agent is co-equal, must never vanish behind a mode                                                                         |
+| 9   | `ModeSwitcher` `<select>`    | `Chrome.tsx:54`, `ModeSwitcher.tsx:13-29`          | always rendered (writes mode)        | **DELETED-CONTROL** — redundant 3rd mode writer (F2)                                                                                                  |
+| 10  | Mode pill (4 buttons)        | `TopToolbar.tsx:151-178,250`                       | always rendered (writes mode)        | **DELETED-CONTROL** — the central F2 offender; Run/Animate/Director become disclosure actions, not a tier pill                                        |
+| 11  | `View ▸ Set Mode` submenu    | `MenuBar.tsx:691-700`                              | always rendered (writes mode)        | **DELETED-CONTROL** — redundant menu mode writer                                                                                                      |
+| 12  | `TimelineDrawer` mount       | `Layout.tsx:237` (`mode === 'animate'`)            | visible only in `animate`            | **REVEALABLE-DRAWER** — timeline is already a drawer (`timelineDockStore`); reveal it on demand, not by entering a mode                               |
+| 13  | `ModeBadge` overlay          | `ModeBadge.tsx:75-98`                              | label per mode; null in `director`   | **DELETED-CONTROL** — surfaces the mode concept; with no modes, no badge (frame/fps readout can move to timeline/viewport HUD)                        |
+| 14  | `FloatingViewportToolbar`    | `FloatingViewportToolbar.tsx:172`                  | `null` when `director`               | **ALWAYS-PRESENT** (chrome-off toggle hides it; see consolidation)                                                                                    |
+| 15  | `ComfyStatusIndicator` probe | `ComfyStatusIndicator.tsx:144` (`mode !== 'run'`)  | probes ComfyUI only in `run`         | ⚠️ **AMBIGUOUS** — see flags below                                                                                                                    |
+| 16  | Tool keys Q/W/E/R gate       | `KeyboardShortcuts.tsx:302-304` (`edit`/`animate`) | tool keys only in edit/animate       | ⚠️ **AMBIGUOUS** — see flags below                                                                                                                    |
+| 17  | Mode keys 1/2/3/4            | `KeyboardShortcuts.tsx:171-176,289-292`            | sets mode                            | **DELETED-CONTROL** — no modes → no 1/2/3/4; free the keys (or repurpose to disclosure toggles)                                                       |
+| 18  | Esc → `setMode('edit')`      | `KeyboardShortcuts.tsx:230,476`                    | universal Esc returns to edit        | ⚠️ **AMBIGUOUS** — see flags below                                                                                                                    |
+| 19  | `Present` button             | `TopToolbar.tsx:215-224` (`setMode('director')`)   | enters director                      | **REVEALABLE-DRAWER** (re-point) — keep the _affordance_ ("Present"/chrome-off) but back it with a `chromeStore.presentMode` boolean, not `modeStore` |
 
 ### Surfaces flagged AMBIGUOUS (must be resolved before the removal is planned)
 
-- **#15 `ComfyStatusIndicator` (`ComfyStatusIndicator.tsx:144`)** — the ComfyUI health probe runs *only*
+- **#15 `ComfyStatusIndicator` (`ComfyStatusIndicator.tsx:144`)** — the ComfyUI health probe runs _only_
   in `run` mode. With no `run` mode, when should it probe? It is real behavior (render-backend
   liveness), not chrome. **Resolve:** bind the probe to the actual condition (a render/run is requested
   or in progress), not to a mode. Needs an explicit trigger decision, else the indicator either never
@@ -209,11 +209,11 @@ It is NOT `useModeStore` and is NOT listed below. It is agent behavior, not an a
   Silently dropping the gate could let tool keys fire during playback.
 - **#18 Esc semantics (`KeyboardShortcuts.tsx:230,476`)** — Esc currently means "return to edit mode."
   Post-removal it has no mode to return to. **Resolve:** redefine Esc precedence (exit present →
-  clear selection) explicitly; leaving the dead `setMode('edit')` call is harmless but the *intended*
+  clear selection) explicitly; leaving the dead `setMode('edit')` call is harmless but the _intended_
   Esc behavior must be re-specified or first-timers lose the universal escape.
 
 > **No surface silently vanishes** if dispositions 1–14 are honored: every panel becomes
-> ALWAYS-PRESENT or a REVEALABLE-DRAWER. The only DELETED items are the mode *controls* themselves
+> ALWAYS-PRESENT or a REVEALABLE-DRAWER. The only DELETED items are the mode _controls_ themselves
 > (#3 band, #9/#10/#11 the three mode writers, #13 badge, #17 mode keys) — surfaces, not content.
 > Director-cut "chrome off" survives as a `chromeStore` boolean (#19), not a mode.
 
@@ -233,27 +233,28 @@ evidence is structural, not aesthetic.
    "why are there two of these?" friction. Only consolidation deletes the redundancy.
 
 2. **The bands are mostly thin or redundant once mode dies.** Of the four bands:
-   - R3 `Chrome` (`Chrome.tsx`) contributes only a breadcrumb + save + the *ModeSwitcher* — and the
+   - R3 `Chrome` (`Chrome.tsx`) contributes only a breadcrumb + save + the _ModeSwitcher_ — and the
      ModeSwitcher is dead under D-05. After D-05, R3 has almost no unique content; fold it, do not
      restyle it.
    - R4 `TopToolbar`'s center third is the **mode pill** (`TopToolbar.tsx:151-178,250`) — also dead
      under D-05. That frees the natural center slot for Spline's single pill.
    - R2 `MenuBar` and R1 `ProjectTabs` are legitimately keepable, but stacking them as separate
      full-width bands above R3+R4 is what produces the "four bands" read (`Layout.tsx:94-102`).
-   So a large fraction of band content is **mode-gated noise that D-05 removes anyway** — consolidation
-   rides the same wave that removes the modes rather than fighting it.
+     So a large fraction of band content is **mode-gated noise that D-05 removes anyway** — consolidation
+     rides the same wave that removes the modes rather than fighting it.
 
 3. **The structure is the bug, not the skin.** Per the project's own organizational-fatality test:
    tool controls duplicated across two surfaces + three writers to one `setMode` is a boundary drawn
    wrong (one concern — "primary tools" / "mode" — split across many surfaces). Restyling leaves the
    wrong boundary in place; consolidation fixes it. The cheap-to-fix part (dark→calm palette) is
-   genuinely restyle-only and should happen *in the same wave* — a `tailwind.config.ts:12-33` token
+   genuinely restyle-only and should happen _in the same wave_ — a `tailwind.config.ts:12-33` token
    swap plus dropping the mono-only/uppercase idiom (Pillars 2/3), with the contrast gate kept on.
 
 **Recommended W1 shape (within §196):**
+
 - Collapse R3 `Chrome` + R4 mode pill into **one floating/top pill** (Spline ②): tools (once), Add,
   Assets, space toggle, zoom %, Export, Present-as-`chromeStore`-toggle.
-- Delete the second tool surface — keep the *floating* one near the canvas (it is the Spline pattern)
+- Delete the second tool surface — keep the _floating_ one near the canvas (it is the Spline pattern)
   and retire `ToolRail`'s duplicate tools, or vice-versa; pick one home for Q/W/E/R.
 - Keep R1 tabs and R2 menu as quiet, thin surfaces (Spline ① tab bar; menus recede).
 - Retire the three mode writers (#9/#10/#11) and the mode badge (#13); back Director-cut with a

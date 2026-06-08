@@ -143,7 +143,7 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_time && w.__basher_viewport);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  // v0.6 #4: timeline slot is always mounted; each test opens the drawer itself.
 });
 
 test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (count constant) incl. the C4 DAG-repaint path', async ({

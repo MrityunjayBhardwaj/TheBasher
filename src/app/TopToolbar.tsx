@@ -2,8 +2,9 @@
 // the editor, three-zone flex layout:
 //
 //   left   — Add menu + Assets popover + space toggle (3D View ↔ UV)
-//   center — 4-button operational-mode pill (Edit / Run / Animate / Director)
-//   right  — live viewport zoom % readout + Export + Director Cut shortcut
+//   center — (empty — the operational-mode pill was dissolved in v0.6 #4;
+//            W1 will move the surviving controls onto the floating pill)
+//   right  — live viewport zoom % readout + Export + Present toggle
 //
 // History note (P6 W7, 2026-05-14): the original W2 implementation
 // nested TransformToolbar in the left zone, carrying gizmo + snap +
@@ -16,15 +17,12 @@
 // preserved verbatim so P2.6 + downstream e2e suites pass through
 // without migration.
 //
-// Mode pill: click sets useModeStore.setMode. Active mode = bg-accent /
-// text-bg, inactive = bg-muted / text-fg-dim. Keyboard 1/2/3/4 cycle
-// the same setMode (wired in KeyboardShortcuts).
-//
 // Export: shares exportDagJson with the File → Export menu item —
 // single source of truth.
 //
-// Director Cut button: a one-click way to enter director mode. Esc
-// returns to edit (per W1's universal-Esc handler).
+// Present button: a one-click way to enter the fullscreen present /
+// director-cut layout (chromeStore.presentMode — the re-home for the
+// deleted `director` mode). Esc returns (KeyboardShortcuts Esc ladder).
 //
 // V8 file-rooted: this component reads + dispatches only UI projection
 // stores. No DAG mutation.
@@ -36,23 +34,9 @@ import type { ReactNode } from 'react';
 import { useAssetsPopoverStore } from './AssetsPopover';
 import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
-import { useModeStore, type Mode } from './stores/modeStore';
 import { useViewportStore } from './stores/viewportStore';
-
-interface ModePillEntry {
-  readonly value: Mode;
-  readonly label: string;
-  readonly icon: string;
-  readonly key: string;
-}
-
-const MODE_PILL: readonly ModePillEntry[] = [
-  { value: 'edit', label: 'Edit', icon: '◐', key: '1' },
-  { value: 'run', label: 'Run', icon: '▶', key: '2' },
-  { value: 'animate', label: 'Animate', icon: '⏱', key: '3' },
-  { value: 'director', label: 'Director', icon: '⛶', key: '4' },
-];
 
 interface SpaceEntry {
   readonly value: SpaceType;
@@ -148,38 +132,8 @@ function SpaceGroup(): ReactNode {
   );
 }
 
-function ModePill(): ReactNode {
-  const mode = useModeStore((s) => s.mode);
-  const setMode = useModeStore((s) => s.setMode);
-  return (
-    <div
-      data-testid="top-toolbar-mode-pill"
-      className="flex items-center gap-0.5 rounded border border-border bg-muted/40 p-0.5"
-    >
-      {MODE_PILL.map((m) => {
-        const active = mode === m.value;
-        return (
-          <button
-            key={m.value}
-            type="button"
-            onClick={() => setMode(m.value)}
-            data-testid={`top-toolbar-mode-${m.value}`}
-            title={`${m.label} (${m.key})`}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              active ? 'bg-accent text-bg' : 'text-fg-dim hover:bg-muted hover:text-fg'
-            }`}
-          >
-            <span aria-hidden>{m.icon}</span>
-            <span>{m.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function RightCluster(): ReactNode {
-  const setMode = useModeStore((s) => s.setMode);
+  const togglePresentMode = useChromeStore((s) => s.togglePresentMode);
   // c-1 (P6 W10 UIR): live viewport zoom %. The signal is the
   // OrbitControls camera→target distance, derived in viewportStore by
   // the Viewport.tsx onChange listener (§5.3 anatomy — the readout is
@@ -214,9 +168,9 @@ function RightCluster(): ReactNode {
       </button>
       <button
         type="button"
-        onClick={() => setMode('director')}
+        onClick={() => togglePresentMode()}
         data-testid="top-toolbar-present"
-        title="Director Cut — chrome-hidden viewport (Esc returns)"
+        title="Present — chrome-hidden viewport (Esc returns)"
         className="flex h-7 items-center gap-1 rounded border border-border bg-muted/40 px-2 text-[11px] font-mono uppercase tracking-wide text-fg/80 hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span aria-hidden>⛚</span>
@@ -228,16 +182,15 @@ function RightCluster(): ReactNode {
 
 export function TopToolbar(): ReactNode {
   // Three-column flex pattern: left (flex-1, justify-start), center
-  // (no flex, fixed width via content), right (flex-1, justify-end).
-  // The two flex-1 outer columns balance on either side of the center
-  // pill, keeping it centered regardless of left content size.
-  const mode = useModeStore((s) => s.mode);
+  // (empty since the mode pill was dissolved in v0.6 #4 — W1 consolidates
+  // the surviving controls onto the floating pill), right (flex-1,
+  // justify-end). The two flex-1 outer columns keep the spacing balanced.
   return (
     <div
       data-testid="top-toolbar"
       role="toolbar"
       aria-orientation="horizontal"
-      aria-label={`Toolbar — mode ${mode ?? 'unknown'}`}
+      aria-label="Editor toolbar"
       className="flex items-center gap-3 border-b border-border bg-bg/95 px-3 py-1 font-mono text-fg"
     >
       {/* Left zone */}
@@ -245,10 +198,6 @@ export function TopToolbar(): ReactNode {
         <AddButton />
         <AssetsButton />
         <SpaceGroup />
-      </div>
-      {/* Center zone — 4-button mode pill (D-UX-6). */}
-      <div className="flex-shrink-0">
-        <ModePill />
       </div>
       {/* Right zone */}
       <div className="flex flex-1 items-center justify-end">

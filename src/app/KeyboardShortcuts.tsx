@@ -47,9 +47,11 @@ import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { useAssetsPopoverStore } from './AssetsPopover';
+import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
-import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
@@ -165,15 +167,32 @@ export {
   findAdjacentKeyframeTime,
 };
 
-// Mode keys 1/2/3/4 → operational mode (UI-SPEC §6.2). Indexed list keeps
-// the binding declarative — adding a fifth mode is one entry, not a new
-// switch case.
-const MODE_KEYS: ReadonlyArray<{ key: string; mode: Mode }> = [
-  { key: '1', mode: 'edit' },
-  { key: '2', mode: 'run' },
-  { key: '3', mode: 'animate' },
-  { key: '4', mode: 'director' },
-];
+// Esc dismisses the topmost transient overlay, in priority order (v0.6 #4 —
+// the operational mode enum is gone, so Esc no longer resets a mode; it reads
+// existing ephemeral flags as a priority ladder, no new store). Keys 1/2/3/4
+// are now unbound (the old MODE_KEYS).
+function dismissTopmostTransient(): void {
+  const chrome = useChromeStore.getState();
+  if (chrome.presentMode) {
+    // 1. Leave the fullscreen present/director-cut first.
+    chrome.setPresentMode(false);
+    return;
+  }
+  if (useAddMenuStore.getState().open) {
+    // 2a. Close an open Add menu.
+    useAddMenuStore.getState().close();
+    return;
+  }
+  if (useAssetsPopoverStore.getState().open) {
+    // 2b. Close an open Assets popover.
+    useAssetsPopoverStore.getState().close();
+    return;
+  }
+  // 3. Floor: clear the selection (the pre-existing Esc behavior). We do NOT
+  // auto-close the docked timeline drawer — dismissing a docked surface on Esc
+  // would surprise; the ladder only dismisses OVERLAY transients.
+  useSelectionStore.getState().clear();
+}
 
 // Tool keys Q/W/E/R → activeTool (UI-SPEC §6.2). 'R' is shared with the
 // G/R/S Blender alias for scale — both routes dispatch through the same
@@ -227,8 +246,7 @@ export function KeyboardShortcuts() {
       // user can't delete characters from the chat input.)
       if (e.key === 'Escape' && isTypingTarget(e.target)) {
         if (e.target instanceof HTMLElement) e.target.blur();
-        useModeStore.getState().setMode('edit');
-        useSelectionStore.getState().clear();
+        dismissTopmostTransient();
         return;
       }
       if (isTypingTarget(e.target)) return;
@@ -284,43 +302,42 @@ export function KeyboardShortcuts() {
       // Single-key shortcuts (only when no mod is held).
       if (cmd || e.altKey || e.shiftKey) return;
 
-      // Mode keys 1/2/3/4 (P6 W2 — UI-SPEC §6.2). Match before the
-      // Blender-alias block so the binding is canonical, not a fallthrough.
-      const modeMatch = MODE_KEYS.find((m) => m.key === e.key);
-      if (modeMatch) {
-        useModeStore.getState().setMode(modeMatch.mode);
+      // Whether the timeline drawer is revealed — the keyframe-editing context
+      // that replaces the deleted `animate` mode (v0.6 #4). Keyframe ops (K/I/
+      // [/]) and the Delete-keyframe override gate on this; Space transport and
+      // the tool keys do NOT (they are generic and mode-free).
+      const timelineDrawerOpen = useViewportStore.getState().timelineDrawerOpen;
+
+      // Tool keys Q/W/E/R (P6 W2). Lowercase the input so capslock-on users get
+      // the same behavior. The G/R/S aliases below stay alive for Blender muscle
+      // memory; both routes funnel through setActiveTool, which propagates to
+      // gizmoStore.mode for translate/rotate/scale. v0.6 #4: the operational
+      // mode enum is gone — tool keys are allowed whenever the user is NOT
+      // typing in a field (the isTypingTarget guard earlier already returned for
+      // typing surfaces, so reaching here means not-typing). Keys 1/2/3/4 are
+      // unbound (the old MODE_KEYS).
+      const toolMatch = TOOL_KEYS.find((t) => t.key === e.key.toLowerCase());
+      if (toolMatch) {
+        useEditorStore.getState().setActiveTool(toolMatch.tool);
         return;
       }
 
-      // Tool keys Q/W/E/R (P6 W2). Lowercase the input so capslock-on
-      // users get the same behavior. The G/R/S aliases below stay alive
-      // for Blender muscle memory; both routes funnel through
-      // setActiveTool, which propagates to gizmoStore.mode for
-      // translate/rotate/scale (the spec gates tool keys on mode ∈
-      // {edit, animate}; we apply the gate here so animate can use them
-      // without leaving keyframe context).
-      const editorMode = useModeStore.getState().mode;
-      const toolKeysAllowed = editorMode === 'edit' || editorMode === 'animate';
-      if (toolKeysAllowed) {
-        const toolMatch = TOOL_KEYS.find((t) => t.key === e.key.toLowerCase());
-        if (toolMatch) {
-          useEditorStore.getState().setActiveTool(toolMatch.tool);
-          return;
-        }
+      // Space — play/pause transport. Generic and ALWAYS-ON (v0.6 #4: the
+      // `animate` mode that used to gate it is gone; Play is a discrete
+      // transport per D-06, the same one the floating-toolbar ▶ drives).
+      // preventDefault so the browser doesn't scroll when viewport-focused.
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        useTimeStore.getState().toggle();
+        return;
       }
 
-      // P6 W6 — Animate-mode shortcuts. Gated so they don't fire in
-      // edit/run/director modes (Space-as-play, K-as-key, [ / ] are
-      // meaningless outside Animate). Matched BEFORE the legacy
-      // switch so K doesn't fall through to anything unintended.
-      if (editorMode === 'animate') {
-        // Space: play/pause toggle. preventDefault so the browser
-        // doesn't scroll when viewport-focused.
-        if (e.key === ' ' || e.code === 'Space') {
-          e.preventDefault();
-          useTimeStore.getState().toggle();
-          return;
-        }
+      // Keyframe ops (K/I/[/]) — gated on the timeline drawer being revealed,
+      // the keyframe-editing context that replaces the deleted `animate` mode.
+      // The K/I logic additionally self-guards on an active channel / selection.
+      // Matched BEFORE the legacy switch so K doesn't fall through to anything
+      // unintended.
+      if (timelineDrawerOpen) {
         // K / I: insert keyframe(s) at the current time. Context-sensitive
         // (Blender-faithful):
         //   - DOPESHEET context (an active timeline channel) → insert on that
@@ -383,11 +400,11 @@ export function KeyboardShortcuts() {
         // path with W's translate).
         case 'g':
         case 'G':
-          if (toolKeysAllowed) useEditorStore.getState().setActiveTool('translate');
+          useEditorStore.getState().setActiveTool('translate');
           return;
         case 's':
         case 'S':
-          if (toolKeysAllowed) useEditorStore.getState().setActiveTool('scale');
+          useEditorStore.getState().setActiveTool('scale');
           return;
         // 'r' / 'R' is already handled by the TOOL_KEYS path above
         // (rotate). The Blender alias for rotate is the same key, so
@@ -400,13 +417,13 @@ export function KeyboardShortcuts() {
           return;
         case 'Delete':
         case 'Backspace':
-          // P6 W6 — Animate mode override (D-W6-2). When a specific
-          // keyframe is selected (Dopesheet diamond click sets
-          // timelineSelection.activeKeyframeId), Delete removes THAT
-          // keyframe via setParam on the channel's keyframes array.
-          // Falls through to node-delete only when no keyframe is
-          // selected. Edit-mode behavior is unchanged.
-          if (editorMode === 'animate') {
+          // P6 W6 — keyframe-delete override (D-W6-2). When the timeline drawer
+          // is revealed AND a specific keyframe is selected (Dopesheet diamond
+          // click sets timelineSelection.activeKeyframeId), Delete removes THAT
+          // keyframe via setParam on the channel's keyframes array. Falls
+          // through to node-delete only when no keyframe is selected. v0.6 #4:
+          // gated on the timeline being open (was the `animate` mode).
+          if (timelineDrawerOpen) {
             const kfOp = buildKeyframeDeleteOp();
             if (kfOp) {
               useDagStore.getState().dispatchAtomic([kfOp], 'user', 'delete keyframe');
@@ -470,11 +487,10 @@ export function KeyboardShortcuts() {
           useEditorStore.getState().toggleSpace();
           return;
         case 'Escape':
-          // UI-SPEC §6.2 / acceptance #4: Esc universally returns mode → edit
-          // and clears selection. The mode reset happens before the selection
-          // clear so any subscribers reading both see a coherent post-Esc state.
-          useModeStore.getState().setMode('edit');
-          useSelectionStore.getState().clear();
+          // UI-SPEC §6.2 / acceptance #4: Esc dismisses the topmost transient.
+          // v0.6 #4: the mode enum is gone, so there is no mode to reset — the
+          // ladder leaves present → closes a popover → else clears selection.
+          dismissTopmostTransient();
           return;
       }
     }

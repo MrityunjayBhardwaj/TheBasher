@@ -24,7 +24,6 @@ import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
-import { ModeBadge } from './ModeBadge';
 import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
 
@@ -153,7 +152,8 @@ export function Viewport() {
           <EditorLights />
           {/* DEV-only #57 seam: exposes window.__basher_setSceneBackground
               so the bright-scene contrast e2e can drive the REAL canvas
-              bright and pixel-sample R8/ModeBadge over it. The mount is
+              bright and pixel-sample R8 (FloatingViewportToolbar) over it.
+              The mount is
               gated on import.meta.env.DEV so Rollup eliminates both the
               component and its import from production builds. */}
           {import.meta.env.DEV ? <SceneBgTestSeam /> : null}
@@ -175,7 +175,6 @@ export function Viewport() {
         </Suspense>
       </Canvas>
       <FpsMeter />
-      <ModeBadge />
       <FloatingViewportToolbar />
     </div>
   );

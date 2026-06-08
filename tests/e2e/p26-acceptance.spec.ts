@@ -298,7 +298,11 @@ test('P2.6#11 UV editor status reflects SphereMesh selection', async ({ page }) 
   // Switch to UV space.
   await page.getByTestId('toolbar-space-uv').click();
   await expect(page.getByTestId('uv-editor-status')).toContainText('SphereMesh');
-  await expect(page.getByTestId('uv-editor-status')).toContainText('equirectangular');
+  // v0.6 #3 reworked the UV editor into a read-only island/tri readout (the
+  // old "equirectangular" projection label is gone). Assert the new contract:
+  // the status reflects the selected mesh's UV islands as a read-only display.
+  await expect(page.getByTestId('uv-editor-status')).toContainText('island');
+  await expect(page.getByTestId('uv-editor-status')).toContainText('read-only');
 });
 
 // ---------------------------------------------------------------------------

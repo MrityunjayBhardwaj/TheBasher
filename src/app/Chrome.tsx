@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useProjectStore } from '../core/project/store';
 import { saveCurrent } from './boot';
-import { ModeSwitcher } from './ModeSwitcher';
 import { ProjectsMenu } from './ProjectsMenu';
 // P6 W3 — ComfyStatusIndicator migrated from this Chrome cluster to
 // ProjectTabs's right edge per UI-SPEC §5.10. The temporary W2 mount
@@ -51,7 +50,6 @@ export function Chrome() {
           </span>
         )}
         <ProjectsMenu />
-        <ModeSwitcher />
       </div>
     </header>
   );

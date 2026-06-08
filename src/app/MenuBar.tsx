@@ -32,7 +32,6 @@ import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
-import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import type { PrimitiveKind } from './addPrimitives';
@@ -420,8 +419,6 @@ export function MenuBar() {
   const setShading = useViewportStore((s) => s.setShading);
   const space = useEditorStore((s) => s.space);
   const setSpace = useEditorStore((s) => s.setSpace);
-  const mode = useModeStore((s) => s.mode);
-  const setMode = useModeStore((s) => s.setMode);
 
   // Distinct node types for the Select → By Type submenu.
   const distinctTypes = Array.from(new Set(Object.values(dag.nodes).map((n) => n.type))).sort();
@@ -684,17 +681,6 @@ export function MenuBar() {
               label={`${s.value === space ? '✓ ' : '   '}${s.label}`}
               onSelect={() => setSpace(s.value)}
               testId={`menu-view-space-${s.value}`}
-            />
-          ))}
-        </Submenu>
-        <Divider />
-        <Submenu label="Set Mode" testId="menu-view-mode">
-          {(['edit', 'run', 'animate', 'director'] as Mode[]).map((m) => (
-            <Item
-              key={m}
-              label={`${m === mode ? '✓ ' : '   '}${m.charAt(0).toUpperCase() + m.slice(1)}`}
-              onSelect={() => setMode(m)}
-              testId={`menu-view-mode-${m}`}
             />
           ))}
         </Submenu>

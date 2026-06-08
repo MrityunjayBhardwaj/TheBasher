@@ -5,14 +5,14 @@
 // HOW IT WORKS
 // ============
 // 1. ROWS hand-curates every Tailwind (text-, bg-stack) pair used by
-//    chrome surfaces R1-R9 + ModeBadge + DiffBar + popovers/menus.
+//    chrome surfaces R1-R9 + DiffBar + popovers/menus.
 //    Each row names the SITE (file:line + UI element), the fg token,
 //    the bg STACK (top-to-bottom alpha layers), and the text-size class.
 // 2. Per D-W8-1 (locked 2026-05-15), every bg-stack is composited down
 //    to one opaque RGB against `bg #0a0a0a` — the worst-case fixed
-//    page background. R8 + ModeBadge physically sit over the GL canvas
-//    (a VARIABLE-color backdrop); for those two surfaces the #0a0a0a
-//    composite is the BEST case, not the worst. #57 closes that gap:
+//    page background. R8 physically sits over the GL canvas (a VARIABLE-
+//    color backdrop); for that surface the #0a0a0a composite is the BEST
+//    case, not the worst. #57 closes that gap:
 //    the dedicated `it()` below recomposites the two over-canvas
 //    surfaces against the worst-case BRIGHT backdrop `#ffffff` and the
 //    p57 e2e empirically pixel-samples them over a real bright scene.
@@ -301,11 +301,12 @@ const ROWS: Row[] = [
   },
 
   // ─── R3 TopToolbar (src/app/TopToolbar.tsx) ─────────────────────────
-  // L231 container bg-bg/95; L84/L204/L214 button chrome muted/40
-  // text-fg/80; L114 active button border-accent bg-accent/15 text-accent;
-  // L131/L156 SpaceGroup muted/40; L140 active cell accent/25 + accent;
-  // L169 mode pill active bg-accent text-bg; L170 inactive fg-dim;
-  // L194 mode pill present-disabled muted/30 text-fg-mute.
+  // Container bg-bg/95; Add/Assets/Export/Present button chrome muted/40
+  // text-fg/80; active button border-accent bg-accent/15 text-accent;
+  // SpaceGroup muted/40, active cell accent/25 + accent; the zoom readout
+  // is a DISABLED button muted/30 text-fg-mute. (v0.6 #4: the operational
+  // mode pill was deleted — its rows are gone; the Present button is now
+  // an always-enabled toggle styled like the other idle buttons.)
   {
     site: 'R3 TopToolbar container — fg on bg/95',
     fg: 'fg',
@@ -325,35 +326,13 @@ const ROWS: Row[] = [
     textSize: 'small',
   },
   {
-    site: 'R3 TopToolbar mode pill active — bg on accent',
-    fg: 'bg',
-    bgStack: ['accent'],
-    textSize: 'small',
-  },
-  {
-    site: 'R3 TopToolbar mode pill inactive — fg-dim on muted/40',
-    fg: 'fg-dim',
-    bgStack: ['muted/40'],
-    textSize: 'small',
-  },
-  {
-    site: 'R3 TopToolbar mode pill present-disabled — fg-mute on muted/30',
+    site: 'R3 TopToolbar zoom readout — fg-mute on muted/30 (disabled)',
     fg: 'fg-mute',
     bgStack: ['muted/30'],
     textSize: 'small',
     exempt: {
       kind: 'sc-1.4.3',
-      note: 'Disabled UI component (mode pill in disabled state when Present is unavailable) — WCAG 2.1 SC 1.4.3 exempts inactive UI components from contrast requirements.',
-    },
-  },
-  {
-    site: 'R3 TopToolbar Present button — fg-mute on muted/30',
-    fg: 'fg-mute',
-    bgStack: ['muted/30'],
-    textSize: 'small',
-    exempt: {
-      kind: 'sc-1.4.3',
-      note: 'Disabled UI component (Present button when no presentation is active) — WCAG 2.1 SC 1.4.3 exemption.',
+      note: 'Disabled UI component (the zoom % readout is a non-interactive disabled button) — WCAG 2.1 SC 1.4.3 exempts inactive UI components from contrast requirements.',
     },
   },
   {
@@ -729,16 +708,9 @@ const ROWS: Row[] = [
   // (canvas palette is not a (fg,bg-stack) Row shape). No Dopesheet
   // ROWS remain — the surface no longer emits Tailwind chrome.
 
-  // ─── ModeBadge (src/viewport/ModeBadge.tsx) ─────────────────────────
-  // L63 bg-bg-2/90 + text-fg-dim + border-border-strong + uppercase
-  // text-[10px]. #57: sits over the GL canvas — worst-case bright
-  // backdrop audited by the `it()` below + the p57 e2e.
-  {
-    site: 'ModeBadge — fg-dim on bg-2/90 (D-W8-1 vs bg only)',
-    fg: 'fg-dim',
-    bgStack: ['bg-2/90'],
-    textSize: 'small',
-  },
+  // (ModeBadge pruned in v0.6 #4 — the component was deleted with the
+  // operational mode enum. R8 is now the sole over-canvas surface; see the
+  // worst-case-bright `it()` below + the p57 e2e.)
 
   // ─── ComfyStatusIndicator (src/app/ComfyStatusIndicator.tsx) ────────
   // Three status colors: connected = bg-accent text-bg, idle = bg-bg-1
@@ -1288,10 +1260,11 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
   //
   // D-W8-1 composites every row against the FIXED page bg `#0a0a0a`. That
   // is the worst case for chrome over an opaque page — but R8
-  // (FloatingViewportToolbar) and ModeBadge sit over the GL canvas, whose
-  // color varies per scene. For them, `#0a0a0a` is the BEST case (it can
-  // only get brighter behind the overlay), so the matrix's PASS for those
-  // two was an INFERENCE, not a worst-case bound (issue #57).
+  // (FloatingViewportToolbar) sits over the GL canvas, whose color varies
+  // per scene. For it, `#0a0a0a` is the BEST case (it can only get brighter
+  // behind the overlay), so the matrix's PASS for that surface was an
+  // INFERENCE, not a worst-case bound (issue #57). (v0.6 #4: ModeBadge, the
+  // other over-canvas surface, was deleted with the operational mode enum.)
   //
   // This recomposites the SAME rows against the worst-case displayable
   // backdrop `#ffffff` (a white HDRI blowout) and asserts they still clear
@@ -1300,14 +1273,13 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
   // (tests/e2e/p57-bright-scene-contrast.spec.ts) corroborates this on
   // REAL composited pixels over a real bright scene — formula + observation
   // agree (measured #2d2d2d → 5.47:1 vs formula 5.44:1).
-  it('R8 + ModeBadge clear AA over a BRIGHT (#ffffff) canvas, not just #0a0a0a (#57)', () => {
+  it('R8 clears AA over a BRIGHT (#ffffff) canvas, not just #0a0a0a (#57)', () => {
     const WHITE: RGB = parseHex('#ffffff');
-    const overCanvas = ROWS.filter(
-      (r) => r.site.startsWith('R8 ') || r.site.startsWith('ModeBadge'),
-    );
+    const overCanvas = ROWS.filter((r) => r.site.startsWith('R8 '));
     // Sanity: the filter must actually match the surfaces it protects (a
-    // future rename must not make this gate vacuous).
-    expect(overCanvas.length, 'expected R8 + ModeBadge rows to exist').toBeGreaterThanOrEqual(5);
+    // future rename must not make this gate vacuous). v0.6 #4: ModeBadge
+    // (the other over-canvas surface) was deleted; R8 is the sole subject.
+    expect(overCanvas.length, 'expected R8 rows to exist').toBeGreaterThanOrEqual(5);
 
     const failures: string[] = [];
     for (const row of overCanvas) {

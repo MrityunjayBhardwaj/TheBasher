@@ -29,11 +29,10 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_viewport);
   });
-  // P6 D-UX-1: timeline dock is mode-gated to Animate. P3's drawer + dopesheet
-  // assertions all require the dock visible; switch into Animate before each
-  // spec. The drawer's internal data-open state (from P3 Wave C) is unchanged
-  // — it still defaults to closed; the toggle still opens it.
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  // v0.6 #4: the timeline slot is ALWAYS mounted now (the `animate` mode that
+  // used to gate it is gone), so its toggle bar is always reachable — no setup
+  // step is needed to reveal it. The drawer's internal data-open state still
+  // defaults to closed; each P3 test drives the toggle itself.
 });
 
 test('P3#1 timeline drawer is closed by default (preserves baseline)', async ({ page }) => {

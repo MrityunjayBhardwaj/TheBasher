@@ -90,28 +90,28 @@ test('#2 default project has the 4-node DAG (5 with RenderOutput) and viewport r
   await expect(page.locator('canvas').first()).toBeVisible();
 });
 
-test('#3 operational mode toggle gates chrome (Director hides chrome; Animate shows timeline)', async ({
+test('#3 chrome affordances: timeline reveal + present-mode chrome-hide (mode-free, v0.6 #4)', async ({
   page,
 }) => {
   await page.goto('/');
-  // Default mode is now 'edit' (D-UX-5: density dropped, full chrome by default).
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
+  // v0.6 #4 dissolved the mode enum — the editor boots with no present collapse.
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('inspector')).toBeVisible();
   await expect(page.getByTestId('tree-slot')).toBeVisible();
-  // Timeline is mode-gated (D-UX-1) — hidden in Edit.
-  await expect(page.getByTestId('timeline-slot')).toBeHidden();
+  // The timeline slot is ALWAYS mounted now (its toggle bar must stay
+  // reachable); the DRAWER BODY is what hides until revealed.
+  await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'false');
 
-  // Animate mode: timeline becomes visible; rest of chrome stays.
-  await page.getByTestId('mode-switcher').selectOption('animate');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'animate');
-  await expect(page.getByTestId('timeline-slot')).toBeVisible();
+  // Reveal the timeline: the drawer body opens; the rest of the chrome stays.
+  await page.getByTestId('timeline-drawer-toggle').click();
+  await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('inspector')).toBeVisible();
 
-  // Director mode (D-UX-9): chrome hides; viewport takes full window.
-  // P6 W2.5: NodeList dropped — tree-slot is the canonical chrome
-  // visibility check (it hides via display:none in director).
-  await page.getByTestId('mode-switcher').selectOption('director');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
+  // Present mode (the re-home for the deleted `director`): chrome hides;
+  // viewport takes the full window. tree-slot is the canonical chrome-
+  // visibility check (it hides via display:none when presentMode is on).
+  await page.getByTestId('top-toolbar-present').click();
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('inspector')).toBeHidden();
   await expect(page.getByTestId('tree-slot')).toBeHidden();
 });
@@ -273,15 +273,14 @@ test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async (
     if (!c) throw new Error('canvas missing');
     (c as unknown as { __basherTag: string }).__basherTag = 'before-switch';
   });
-  // Cycle through every operational mode — Director triggers the most
-  // invasive grid change (chrome hides), Animate reveals the timeline.
-  // Director hides the chrome (incl. ModeSwitcher) so we exit via Esc
-  // (UI-SPEC §6.2 / acceptance #4). If any transition remounts the Canvas,
-  // the tag is gone.
-  await page.getByTestId('mode-switcher').selectOption('animate');
-  await page.getByTestId('mode-switcher').selectOption('director');
+  // Exercise the most invasive grid changes — reveal the timeline, then enter
+  // present (chrome hides). Present hides the chrome so we exit via Esc
+  // (UI-SPEC §6.2 / acceptance #4 — Esc dismisses the topmost transient). If
+  // any transition remounts the Canvas, the tag is gone.
+  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('top-toolbar-present').click();
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'edit');
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
   const tag = await page.evaluate(() => {
     const c = document.querySelector('canvas') as HTMLCanvasElement | null;
     return (c as unknown as { __basherTag?: string } | null)?.__basherTag ?? null;

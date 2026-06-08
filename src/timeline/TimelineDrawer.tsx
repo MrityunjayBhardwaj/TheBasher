@@ -27,7 +27,6 @@
 import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
-import { useModeStore } from '../app/stores/modeStore';
 import { useTimelineDockStore, type TimelineTab } from '../app/stores/timelineDockStore';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
@@ -49,7 +48,6 @@ export function TimelineDrawer() {
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
-  const mode = useModeStore((s) => s.mode);
 
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
 
@@ -58,7 +56,7 @@ export function TimelineDrawer() {
       data-testid="timeline-drawer"
       data-open={open}
       role="region"
-      aria-label={`Timeline — mode ${mode ?? 'unknown'}, frame ${frame}`}
+      aria-label={`Timeline — frame ${frame}`}
       className="flex w-full flex-col"
     >
       {open && (

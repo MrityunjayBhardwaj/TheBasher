@@ -218,4 +218,38 @@ describe('a11y grep gates — P6 W8 C5.4', () => {
     }
     expect(offenders).toHaveLength(0);
   });
+
+  it('mode-removal: no production reference to the deleted modeStore survives (v0.6 #4)', () => {
+    // v0.6 #4 dissolved the operational mode enum (edit/run/animate/director).
+    // modeStore.ts is DELETED; its four meanings re-homed to ephemeral
+    // UI-projection state (chromeStore.presentMode, useTimeStore transport,
+    // viewportStore.timelineDrawerOpen). This gate is the permanent regression
+    // guard that the mode concept never returns: ZERO production references to
+    // `useModeStore` or the `stores/modeStore` import path.
+    //
+    // It keys on those PRECISE tokens, NOT a bare `setMode`, so the two
+    // homonym vocabularies are excluded automatically — neither contains the
+    // substring `useModeStore` or `stores/modeStore`:
+    //   - useAgentSessionStore.setMode          (agent autonomy — KEPT, D-05)
+    //   - useGizmoStore.setMode / gizmoStore.setMode (tool dispatch — V19)
+    // walk() already skips *.test.* sources, which legitimately mention the
+    // removed names in explanatory comments.
+    const files = walk(SRC, ['.ts', '.tsx']);
+    const MODE_RE = /\buseModeStore\b|stores\/modeStore/;
+    const hits: { file: string; line: number; text: string }[] = [];
+    for (const file of files) {
+      const lines = readFileSync(file, 'utf8').split('\n');
+      lines.forEach((text, i) => {
+        if (MODE_RE.test(text)) hits.push({ file, line: i + 1, text: text.trim() });
+      });
+    }
+    if (hits.length > 0) {
+      const detail = hits.map((h) => `  ${relative(SRC, h.file)}:${h.line}  ${h.text}`).join('\n');
+      throw new Error(
+        `Mode enum is dissolved (v0.6 #4) — found ${hits.length} surviving reference(s) to the ` +
+          `deleted modeStore. Re-home to ephemeral UI state; do NOT reintroduce a mode. Hits:\n${detail}`,
+      );
+    }
+    expect(hits).toHaveLength(0);
+  });
 });

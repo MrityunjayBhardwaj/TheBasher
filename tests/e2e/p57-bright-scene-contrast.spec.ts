@@ -4,19 +4,20 @@
 // =======================
 // The contrast-audit matrix (src/a11y/contrastMatrix.test.ts) composites
 // every chrome surface against the worst-case FIXED page bg `#0a0a0a`
-// (D-W8-1). R8 (FloatingViewportToolbar) and ModeBadge are the only two
-// surfaces that sit over the GL canvas — a VARIABLE-color backdrop. For
-// those two, the matrix's PASS was an INFERENCE: it assumed the backdrop
-// is `#0a0a0a` (true for the default dark scene, FALSE for a bright HDRI
-// / matcap). Issue #57 demanded the gap be closed by OBSERVATION on a
-// real bright scene, not more math.
+// (D-W8-1). R8 (FloatingViewportToolbar) is the surface that sits over
+// the GL canvas — a VARIABLE-color backdrop (v0.6 #4: ModeBadge, the
+// other over-canvas surface, was deleted with the mode enum). For R8 the
+// matrix's PASS was an INFERENCE: it assumed the backdrop is `#0a0a0a`
+// (true for the default dark scene, FALSE for a bright HDRI / matcap).
+// Issue #57 demanded the gap be closed by OBSERVATION on a real bright
+// scene, not more math.
 //
 // WHAT THIS TEST OBSERVES
 // =======================
 // Drives the REAL scene background bright via the DEV-only seam
 // `window.__basher_setSceneBackground` (src/viewport/SceneBgTestSeam.tsx),
-// then screenshots the actually-composited R8 + ModeBadge overlays and
-// pixel-samples them. The decomposition that makes this rigorous:
+// then screenshots the actually-composited R8 overlay and pixel-samples
+// it. The decomposition that makes this rigorous:
 //
 //   - The SURFACE (`bg-2/90` composited over the GL canvas) is the ONLY
 //     scene-dependent value — the exact thing #57 doubts. We MEASURE it
@@ -148,7 +149,6 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
-  await expect(page.getByTestId('mode-badge')).toBeVisible();
   // The DEV-only seam must be installed (proves we're in a dev build where
   // the test can drive the scene bright).
   await expect
@@ -158,7 +158,7 @@ test.beforeEach(async ({ page }) => {
     .toBe('function');
 });
 
-// AA small-text threshold. ModeBadge text + R8 idle glyphs are <18px.
+// AA small-text threshold. R8 idle glyphs are <18px.
 const AA = 4.5;
 
 test('P57#1 R8 idle glyphs hold WCAG-AA over a bright GL canvas (real pixels)', async ({
@@ -198,39 +198,14 @@ test('P57#1 R8 idle glyphs hold WCAG-AA over a bright GL canvas (real pixels)', 
   ).toBeGreaterThanOrEqual(AA);
 });
 
-test('P57#2 ModeBadge text holds WCAG-AA over a bright GL canvas (real pixels)', async ({
-  page,
-}) => {
-  // ModeBadge inner span carries text-fg-dim (the audited token).
-  const fg = await computedColor(page, 'mode-badge');
+// (P57#2 deleted in v0.6 #4 — ModeBadge, the other over-canvas surface, was
+// removed with the operational mode enum. R8 remains the sole over-canvas
+// contrast subject; P57#1 + P57#3 cover it.)
 
-  await setSceneBg(page, '#0a0a0a');
-  const dark = await sampleOverlay(page, 'mode-badge');
-  await setSceneBg(page, '#ffffff');
-  const bright = await sampleOverlay(page, 'mode-badge');
-
-  expect(
-    bright.surfaceLum,
-    `white scene must lighten ModeBadge surface (dark=${dark.surfaceLum.toFixed(4)} bright=${bright.surfaceLum.toFixed(4)})`,
-  ).toBeGreaterThan(dark.surfaceLum * 1.3);
-  expect(bright.glyphLum).toBeGreaterThan(bright.surfaceLum * 3);
-
-  const ratio = contrastRatio(fg, bright.surface);
-  expect(
-    ratio,
-    `ModeBadge fg-dim over WHITE scene = ${ratio.toFixed(2)}:1 (surface ${JSON.stringify(bright.surface)})`,
-  ).toBeGreaterThanOrEqual(AA);
-});
-
-test('P57#3 mid-luminance scene (#808080 matcap) also clears AA — R8 + ModeBadge', async ({
-  page,
-}) => {
+test('P57#3 mid-luminance scene (#808080 matcap) also clears AA — R8', async ({ page }) => {
   await setSceneBg(page, '#808080');
   const r8Fg = await computedColor(page, 'floating-toolbar-move');
   const r8 = await sampleOverlay(page, 'floating-viewport-toolbar');
-  const badgeFg = await computedColor(page, 'mode-badge');
-  const badge = await sampleOverlay(page, 'mode-badge');
 
   expect(contrastRatio(r8Fg, r8.surface)).toBeGreaterThanOrEqual(AA);
-  expect(contrastRatio(badgeFg, badge.surface)).toBeGreaterThanOrEqual(AA);
 });

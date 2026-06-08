@@ -184,7 +184,7 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_time);
   });
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  await page.getByTestId('timeline-drawer-toggle').click();
 });
 
 test.describe('Gizmo + Auto-Key — drag-to-record an animation (REPRO: not working)', () => {

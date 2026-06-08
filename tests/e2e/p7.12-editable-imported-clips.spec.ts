@@ -276,8 +276,7 @@ test.beforeEach(async ({ page }) => {
       w.__basher_perf,
     );
   });
-  // The timeline dock is mode-gated to Animate (D-UX-1).
-  await page.getByTestId('mode-switcher').selectOption('animate');
+  // v0.6 #4: the timeline slot is always mounted; each test opens the drawer itself.
 });
 
 test('P7.12 (a) DISPLAY — selecting an imported bone surfaces its clip rows + a read-only curve, NO bake', async ({

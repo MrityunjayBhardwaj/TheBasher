@@ -1,11 +1,12 @@
-// Layout owns the CSS-grid named regions. Mode toggling NEVER changes which
+// Layout owns the CSS-grid named regions. Entering "present" NEVER changes which
 // React component tree owns the viewport — V8/K1 step 6 ("Canvas mounts ONCE,
-// never on mode switch"). The grid template + region visibility shifts via
+// never on a layout shift"). The grid template + region visibility shifts via
 // data attributes; the Canvas DOM node stays put.
 //
 // Per D-UX-5 (UI-SPEC §3.2): density axis dropped. One canonical layout. The
-// only mode-induced grid change is Director (D-UX-9) — chrome regions collapse
-// to 0 width.
+// operational mode enum (edit/run/animate/director) was dissolved in v0.6 #4;
+// the only layout collapse is now `presentMode` (chromeStore, ephemeral) — the
+// fullscreen "present" / director-cut that collapses every chrome region to 0.
 //
 // P6 W2 — TopToolbar replaces TransformToolbar's old slot. New `toolRail`
 // column added to the grid template: 32px expanded, 0 collapsed
@@ -48,14 +49,13 @@ import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
-import { useModeStore } from './stores/modeStore';
 
 export function Layout() {
-  const mode = useModeStore((s) => s.mode);
   const space = useEditorStore((s) => s.space);
   const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
-  const isDirector = mode === 'director';
+  const presentMode = useChromeStore((s) => s.presentMode);
+  const isPresent = presentMode;
   // P6 W10 UIR F-4 — §8.3 R6 = "3D viewport — {selection summary}",
   // debounced 200ms. The <main> below IS the §8.3 R6 region (role=main,
   // skip-link target); its label was the static string
@@ -66,12 +66,12 @@ export function Layout() {
   // 5-column grid (P6 W2.5 dropped the dedicated library column; bundled
   // glTF samples are now reachable from TopToolbar's Assets popover):
   //   tree  |  toolRail  |  viewport  |  inspector  |  drawer
-  // Director collapses everything but viewport.
-  const toolRailWidth = isDirector ? '0' : toolRailCollapsed ? '0' : '32px';
+  // Present collapses everything but viewport.
+  const toolRailWidth = isPresent ? '0' : toolRailCollapsed ? '0' : '32px';
   // P6 W2.6 — SceneTree default-collapsed. When collapsed the tree column
   // shrinks to a 28px chevron strip (toggle stays visible); expanded
   // returns to the full 260px tree.
-  const treeWidth = isDirector ? '0' : leftSidebarCollapsed ? '28px' : '260px';
+  const treeWidth = isPresent ? '0' : leftSidebarCollapsed ? '28px' : '260px';
   // P6 W10 UIR F-3 — §5.4 literally: the rail "collapses to 0". The grid
   // column goes to genuine 0 width when collapsed (was 32px — the spec
   // promise was unmet). The re-expand affordance does NOT live inside the
@@ -81,17 +81,17 @@ export function Layout() {
   return (
     <div
       data-testid="layout"
-      data-mode={mode}
+      data-present={isPresent ? 'true' : undefined}
       data-space={space}
       data-tool-rail-collapsed={toolRailCollapsed ? 'true' : 'false'}
       className="grid h-full w-full bg-bg text-fg"
       style={{
-        gridTemplateColumns: isDirector
+        gridTemplateColumns: isPresent
           ? '0 0 1fr 0 0'
           : `${treeWidth} ${toolRailWidth} 1fr 280px 280px`,
-        // P6 W3 — projectTabs row added at the top (R1 per §5.1). Director
-        // mode collapses it to 0 alongside the other chrome rows.
-        gridTemplateRows: isDirector ? '0 0 0 0 1fr 0' : '32px auto auto auto 1fr auto',
+        // P6 W3 — projectTabs row added at the top (R1 per §5.1). Present
+        // collapses it to 0 alongside the other chrome rows.
+        gridTemplateRows: isPresent ? '0 0 0 0 1fr 0' : '32px auto auto auto 1fr auto',
         gridTemplateAreas: `
           "projectTabs projectTabs projectTabs projectTabs projectTabs"
           "menu menu menu menu menu"
@@ -115,23 +115,23 @@ export function Layout() {
       >
         Skip to viewport
       </a>
-      <div style={{ gridArea: 'projectTabs', display: isDirector ? 'none' : 'block' }}>
+      <div style={{ gridArea: 'projectTabs', display: isPresent ? 'none' : 'block' }}>
         <ProjectTabs />
       </div>
-      <div style={{ gridArea: 'menu', display: isDirector ? 'none' : 'block' }}>
+      <div style={{ gridArea: 'menu', display: isPresent ? 'none' : 'block' }}>
         <MenuBar />
       </div>
-      <div style={{ gridArea: 'chrome', display: isDirector ? 'none' : 'block' }}>
+      <div style={{ gridArea: 'chrome', display: isPresent ? 'none' : 'block' }}>
         <Chrome />
       </div>
-      <div style={{ gridArea: 'toolbar', display: isDirector ? 'none' : 'block' }}>
+      <div style={{ gridArea: 'toolbar', display: isPresent ? 'none' : 'block' }}>
         <TopToolbar />
       </div>
 
       <div
         style={{
           gridArea: 'toolRail',
-          display: isDirector ? 'none' : 'block',
+          display: isPresent ? 'none' : 'block',
           minHeight: 0,
           // F-3: collapsed rail is a 0-width column; the re-expand edge
           // tab must escape it, so the slot must not clip overflow.
@@ -149,7 +149,7 @@ export function Layout() {
       <div
         style={{
           gridArea: 'tree',
-          display: isDirector ? 'none' : 'flex',
+          display: isPresent ? 'none' : 'flex',
           flexDirection: 'column',
           minHeight: 0,
           minWidth: 0,
@@ -213,7 +213,7 @@ export function Layout() {
       <div
         style={{
           gridArea: 'inspector',
-          display: isDirector ? 'none' : 'block',
+          display: isPresent ? 'none' : 'block',
         }}
       >
         <NPanel />
@@ -222,7 +222,7 @@ export function Layout() {
       <div
         style={{
           gridArea: 'drawer',
-          display: isDirector ? 'none' : 'flex',
+          display: isPresent ? 'none' : 'flex',
           flexDirection: 'column',
           minHeight: 0,
         }}
@@ -230,13 +230,16 @@ export function Layout() {
         <RightDrawer />
       </div>
 
-      {/* Timeline is mode-gated (D-UX-1) — visible only in Animate. The
-          subtree stays mounted (V11 Canvas-mounts-once analog: store
-          subscriptions and DOM stay; CSS hides). */}
-      <div
-        style={{ gridArea: 'timeline', display: mode === 'animate' ? 'block' : 'none' }}
-        data-testid="timeline-slot"
-      >
+      {/* Timeline slot is ALWAYS mounted (v0.6 #4 — the `animate` mode that
+          used to gate it is gone). The TimelineDrawer renders just its toggle
+          bar when closed and the full body when `timelineDrawerOpen` (the
+          reveal control lives INSIDE the slot, so the slot must stay reachable).
+          In present mode the slot is hidden by its grid-row height collapsing
+          to 0 (gridTemplateRows last track), not by display:none — so the
+          reveal toggle is always reachable in the normal editor. The subtree
+          stays mounted (V11 Canvas-mounts-once analog: subscriptions + DOM
+          stay; the body collapse is owned by TimelineDrawer). */}
+      <div style={{ gridArea: 'timeline', display: 'block' }} data-testid="timeline-slot">
         <TimelineDrawer />
       </div>
     </div>

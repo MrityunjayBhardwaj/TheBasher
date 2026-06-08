@@ -4,10 +4,11 @@
 // ==============
 // The contrast-audit matrix (src/a11y/contrastMatrix.test.ts, D-W8-1)
 // composites every chrome surface against the worst-case FIXED page bg
-// `#0a0a0a`. R8 (FloatingViewportToolbar) and ModeBadge are the two
-// surfaces that physically sit over the GL canvas — a VARIABLE-color
-// backdrop. The opaque-only audit cannot see that variable bg, so its
-// PASS for those two surfaces was an inference, not an observation (#57).
+// `#0a0a0a`. R8 (FloatingViewportToolbar) is the surface that physically
+// sits over the GL canvas — a VARIABLE-color backdrop (v0.6 #4: ModeBadge,
+// the other over-canvas surface, was deleted with the mode enum). The
+// opaque-only audit cannot see that variable bg, so its PASS for R8 was an
+// inference, not an observation (#57).
 //
 // To OBSERVE the truth (Lokayata) we must drive the REAL scene bright and
 // pixel-sample the actually-composited overlay — including how

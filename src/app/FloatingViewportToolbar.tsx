@@ -21,13 +21,13 @@
 // same setActiveTool path that R4 ToolRail uses, so every Move/Rot/Scl
 // across R4 + R8 + keyboard W/E/R highlights in sync.
 //
-// Director-mode hide: when mode === 'director', returns null. The R8
-// chrome is part of the surfaces D-UX-9 hides; we self-gate here rather
-// than relying on a Layout.tsx grid-slot rule because R8 mounts as a
-// Viewport overlay (sibling of Canvas), not a grid slot.
+// Present-mode hide: when chromeStore.presentMode is on, returns null. The
+// R8 chrome is part of the surfaces the present/director-cut layout hides; we
+// self-gate here rather than relying on a Layout.tsx grid-slot rule because R8
+// mounts as a Viewport overlay (sibling of Canvas), not a grid slot.
 //
 // File-rooted V8: src/app/. Reads + mutates UI projection stores only
-// (editorStore, viewportStore, modeStore, selectionStore via framing).
+// (editorStore, viewportStore, chromeStore, selectionStore via framing).
 // Never the DAG.
 //
 // REF: docs/UI-SPEC.md §5.7, memory/project_p6_w7_context.md (D-W7-1..3),
@@ -35,9 +35,10 @@
 
 import type { ReactNode } from 'react';
 import { frameAll, frameSelected } from './character/framing';
+import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
-import { useModeStore } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useTimeStore } from './stores/timeStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 
 interface ToolDef {
@@ -154,7 +155,9 @@ function Divider(): ReactNode {
 }
 
 export function FloatingViewportToolbar(): ReactNode {
-  const mode = useModeStore((s) => s.mode);
+  const presentMode = useChromeStore((s) => s.presentMode);
+  const playing = useTimeStore((s) => s.playing);
+  const togglePlay = useTimeStore((s) => s.toggle);
   const activeTool = useEditorStore((s) => s.activeTool);
   const setActiveTool = useEditorStore((s) => s.setActiveTool);
   const shading = useViewportStore((s) => s.shading);
@@ -166,10 +169,10 @@ export function FloatingViewportToolbar(): ReactNode {
   const toggleSnapEnabled = useViewportStore((s) => s.toggleSnapEnabled);
   const setSnapStep = useViewportStore((s) => s.setSnapStep);
 
-  // D-UX-9 chrome-hide: R8 vanishes in director mode. Self-gated rather
-  // than Layout.tsx-gated because R8 is a viewport overlay, not a grid
+  // Present-mode chrome-hide: R8 vanishes when presentMode is on. Self-gated
+  // rather than Layout.tsx-gated because R8 is a viewport overlay, not a grid
   // slot — returning null is the simplest and least error-prone path.
-  if (mode === 'director') return null;
+  if (presentMode) return null;
 
   return (
     <div
@@ -191,6 +194,19 @@ export function FloatingViewportToolbar(): ReactNode {
           {t.icon}
         </ToolButton>
       ))}
+      <Divider />
+      {/* Play ▶ transport (v0.6 #4 — the re-home for the deleted `run` mode;
+          D-06: run became playback). Toggles useTimeStore.playing — the same
+          transport Space drives. Ephemeral, no DAG state (V34-clean). */}
+      <ToolButton
+        active={playing}
+        title={playing ? 'Pause (Space)' : 'Play (Space)'}
+        ariaLabel={playing ? 'Pause playback' : 'Play timeline'}
+        testId="floating-toolbar-play"
+        onClick={togglePlay}
+      >
+        {playing ? '⏸' : '▶'}
+      </ToolButton>
       <Divider />
       <ToolButton
         active={false}
