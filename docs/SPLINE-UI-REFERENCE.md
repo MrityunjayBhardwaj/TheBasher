@@ -69,11 +69,14 @@ Direct observation of Basher (`:5180`, v0.6 #3 tip, 2026-06-07), ordered by leve
 
 - **F1 — Chrome density (dominant).** 4 top bands + left rail + bottom bar; select/move/rotate/scale
   duplicated. → **Target:** Spline's single floating toolbar (region ②).
-- **F2 — Three competing "mode" controls.** `mode: Edit▾` (Simple/Director/Pro) + `EDIT/RUN/ANIMATE/DIRECTOR`
-  workspace tabs + agent `read-only/copilot/sandbox`. Two even reuse "Edit"/"Director." → **Target (D-05):**
-  **remove the Simple/Director/Pro app-mode system entirely** — replace gating with progressive disclosure
-  (see §6). Keep the agent autonomy control (`read-only/copilot/sandbox` — orthogonal). Workspace/advanced
-  surfaces become revealable drawers, not modes.
+- **F2 — Competing "mode" controls.** `mode: Edit▾` + `EDIT/RUN/ANIMATE/DIRECTOR` workspace tabs + agent
+  `read-only/copilot/sandbox`. **Audit correction (2026-06-08, `modeStore.ts:23` + header):** the
+  Simple/Director/Pro _density_ modes were **already removed** under D-UX-5 — `modeStore` now holds
+  **operational** modes `edit/run/animate/director`, written by **three duplicate controls** (pill ⊕
+  `ModeSwitcher` ⊕ menu, all → one `setMode`). → **Target (D-05, amended):** **dissolve the operational
+  mode enum entirely** — no mode state at all; each becomes its own discrete affordance (`run`→Play button,
+  `animate`→timeline-drawer reveal, `director`→present/fullscreen toggle), Spline-true (see §6). Keep the
+  agent autonomy control (`read-only/copilot/sandbox` — orthogonal, separate store).
 - **F3 — Dark, high-contrast developer-tool aesthetic** vs. Spline's calm light/lavender low-contrast
   canvas. → **Target:** calm palette/contrast/spacing.
 - **F4 — ADD is a Blender text submenu (Shift+A)**, not a visual object palette. → **Target:** visual,
@@ -94,24 +97,45 @@ never borrow the _canvas-is-the-only-path_ assumption.
 
 ---
 
-## 6. No modes — progressive disclosure (D-05)
+## 6. No modes — progressive disclosure (D-05, amended 2026-06-08)
 
-**Decision:** Remove the Simple / Director / Pro app-mode system. There are **no app modes.** Every
-surface exists for every user; the default view is calm, and complexity is **hidden by default and
-revealed on demand** — the Spline model (states/events, timeline = panels you open, not a tier you
-unlock).
+**Decision:** There are **no modes** — neither density tiers nor operational modes. Every surface exists
+for every user; the default view is calm, and complexity is **hidden by default and revealed on demand** —
+the Spline model (states/events, timeline = panels you open, not a tier you unlock).
 
-**Replaces:** the mode-gating model in THESIS §12–17, §203 (mode table), §834 (Mode primitive), and the
-v0.6/v0.7 "DAG hidden until Pro" gating.
+**Two-part history (grounded in the 2026-06-08 audit, `docs/UI-REVIEW.md`):**
+
+1. **Density modes (Simple/Director/Pro) — already removed** under D-UX-5. `modeStore` was repurposed,
+   not deleted; legacy density values coerce to `edit` (`modeStore.ts:3-16,55-59`).
+2. **Operational modes (`edit/run/animate/director`) — dissolved fully by this phase.** The surviving
+   `Mode` enum (`modeStore.ts:23`) and its three duplicate controls go away entirely. No mode state
+   remains. Each operational mode becomes its own discrete affordance, Spline-true:
+   - `run` → **Play button** (▶ on the floating toolbar; not a workspace tab).
+   - `animate` → **timeline-drawer reveal** (already a drawer — `TimelineDrawer` + `timelineDockStore`).
+   - `director` → **present / fullscreen toggle** (a button, not a tier).
+
+**Replaces:** the mode-gating model in THESIS §12–17, §203 (mode table), §834 (Mode primitive), the
+v0.6/v0.7 "DAG hidden until Pro" gating, **and** D-UX-5's operational-mode state machine (§3.3/§3.4 of
+UI-SPEC — the enum itself retires).
 
 - One editor. All surfaces present for everyone.
 - Default = minimal: viewport + outliner + inspector + agent.
-- Hidden-by-default, revealable: **timeline** (already a drawer — `TimelineDrawer` + `timelineDockStore`),
-  **DAG/graph view**, library, advanced inspector sections, debug/tools.
+- Hidden-by-default, revealable: **timeline** (drawer), **DAG/graph view**, library, advanced inspector
+  sections, debug/tools.
 - The **agent is always co-equal and present** (supersedes §15's per-mode chat behavior; kills §691's
   "Simple was too simple" wall).
 - **Keep** the agent autonomy control (`read-only / copilot / sandbox`) — that is agent behavior, not an
-  app mode.
+  app mode, and lives in a separate store (`useAgentSessionStore`).
+
+**Three surfaces to re-home when the enum retires (audit §ambiguous — must be resolved in the plan, not
+left to strand):**
+
+- **`ComfyStatusIndicator`** (`ComfyStatusIndicator.tsx:144`) — probed ComfyUI only in `run` mode. New
+  trigger: probe on agent/Comfy-feature presence, not a mode.
+- **Q/W/E/R tool-key gate** (`KeyboardShortcuts.tsx:302-304`) — gated to `edit`/`animate`. New gate:
+  "viewport focused + not text-editing", mode-free.
+- **Esc → `setMode('edit')`** (`KeyboardShortcuts.tsx:230,476`) — Esc had a mode to fall back to. New
+  precedence: Esc dismisses the topmost transient surface (drawer/popover/present), no mode reset.
 
 **Why it's a net gain (Chesterton):** the mode system's purpose was (a) don't scare newcomers (§674) and
 (b) start onboarding simple (§206). Disclosure serves both better — complexity hidden by default (scares
