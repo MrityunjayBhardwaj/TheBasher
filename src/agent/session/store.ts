@@ -53,7 +53,13 @@ function newId(): string {
 const INITIAL_SESSION: SessionState = {
   id: `session_${Date.now().toString(36)}`,
   messages: [],
-  mode: 'read-only',
+  // Default to copilot: the single-text-bar chat ("just say the word…") means
+  // the agent ACTS on a request, not just inspects. copilot routes every
+  // mutation through the Diff/DiffBar approval (orchestrator), so "say the word
+  // → it proposes the change → you approve" — the agent never silently mutates.
+  // The read-only / sandbox autonomy levels still exist on the store for
+  // programmatic use; the mode SELECTOR was removed from the chat UI.
+  mode: 'copilot',
   tokenUsage: { input: 0, output: 0, total: 0 },
   isStreaming: false,
   error: null,

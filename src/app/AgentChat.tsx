@@ -1,9 +1,14 @@
-// Agent chat UI — text input + message history + mode selector.
+// Agent chat UI — a single text bar + message history.
 //
 // Sits in the always-on AgentDock (the full-width bottom dock, Spline redesign
 // Wave C — previously the RightDrawer right column). The orchestrator handles
 // the LLM turn and reads fresh DAG state on every round; this component just
 // drives it with the user message + selection.
+//
+// No mode selector: "just say the word" — the agent acts on a request in
+// copilot mode (the session default), routing every mutation through the Diff
+// approval. The read-only / sandbox autonomy levels still live on the session
+// store for programmatic use; they were removed from the chat surface.
 //
 // Styling matches the rest of the editor chrome: mono font, fg/muted/border
 // theme tokens, accent green for active states. No shadcn — the project
@@ -12,7 +17,7 @@
 // REF: THESIS.md §15-17 (editor chrome), §21 (context strategy).
 
 import { useState, useCallback, useRef } from 'react';
-import { useAgentSessionStore, type AgentMode } from '../agent/session/store';
+import { useAgentSessionStore } from '../agent/session/store';
 import { useSelectionStore } from './stores/selectionStore';
 import { runAgentTurn } from '../agent/orchestrator';
 import type { LLMConfig } from '../agent/transport/types';
@@ -20,8 +25,6 @@ import { getComfyCapability, getStorage } from './boot';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
 const DEFAULT_MODEL = 'google/gemma-4-31B-it';
-
-const MODES: AgentMode[] = ['read-only', 'copilot', 'sandbox'];
 
 function getLLMConfig(): LLMConfig {
   const env = import.meta.env;
@@ -39,7 +42,6 @@ function getLLMConfig(): LLMConfig {
 
 export function AgentChat() {
   const session = useAgentSessionStore((s) => s.session);
-  const setMode = useAgentSessionStore((s) => s.setMode);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -102,30 +104,6 @@ export function AgentChat() {
       className="flex h-full min-h-0 flex-col font-mono text-xs text-fg"
       data-testid="agent-chat"
     >
-      {/* Mode selector */}
-      <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-        <span className="mr-1 text-[10px] uppercase tracking-wide text-fg/50">Mode</span>
-        {MODES.map((m) => {
-          const active = session.mode === m;
-          return (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              data-testid={`agent-mode-${m}`}
-              className={[
-                'flex-1 rounded border px-2 py-0.5 text-[10px]',
-                active
-                  ? 'border-accent bg-muted text-accent'
-                  : 'border-border bg-muted text-fg/60 hover:border-accent/60 hover:text-fg/90',
-              ].join(' ')}
-            >
-              {m}
-            </button>
-          );
-        })}
-      </div>
-
       {/* Messages */}
       <div className="flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
         {session.messages.length === 0 && !session.error ? (
@@ -181,7 +159,7 @@ export function AgentChat() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={running ? 'waiting for response…' : 'ask the agent…'}
+            placeholder={running ? 'waiting for response…' : 'just say the word…'}
             disabled={running}
             rows={2}
             data-testid="agent-input"
