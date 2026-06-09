@@ -6,7 +6,10 @@
 //   - NPanel renders the collapse/expand chevrons (side A), and
 //   - Layout consumes the flag → the inspector grid column shrinks (side B).
 // The column-width assertion is the falsifier: it fails if Layout still
-// hardcodes 280px (i.e. the NPanel toggle would flip an unread flag).
+// hardcodes the expanded width (i.e. the NPanel toggle would flip an unread
+// flag). ux-overhall: the Spline redesign made the layout 3-col
+// (tree | viewport | inspector) and the inspector 300px (Wave C), so the
+// inspector is grid column index 2 and the expanded width is 300px.
 //
 // Mirrors the LeftSidebar collapse coverage in p6-w3-leftsidebar.spec.ts#3.
 //
@@ -14,14 +17,14 @@
 
 import { expect, test } from './_fixtures';
 
-// The inspector is the 4th grid column: tree | toolRail | viewport | inspector | drawer.
+// The inspector is the 3rd grid column (Spline 3-col): tree | viewport | inspector.
 async function inspectorColumnPx(page: import('@playwright/test').Page): Promise<string> {
   return page.evaluate(() => {
     const layout = document.querySelector('[data-testid="layout"]') as HTMLElement | null;
     if (!layout) return '';
     const cols = getComputedStyle(layout).gridTemplateColumns.split(' ');
-    // 5 columns; index 3 = inspector.
-    return cols[3] ?? '';
+    // 3 columns; index 2 = inspector.
+    return cols[2] ?? '';
   });
 }
 
@@ -51,12 +54,12 @@ test.beforeEach(async ({ page }) => {
 test('#173 inspector starts expanded with a collapse chevron in the header', async ({ page }) => {
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('inspector-collapse-toggle')).toBeVisible();
-  // Expanded column is the full 280px.
+  // Expanded column is the full 300px (Spline Wave C inspector width).
   const px = await inspectorColumnPx(page);
-  expect(px).toBe('280px');
+  expect(px).toBe('300px');
 });
 
-test('#173 collapse → 28px chevron strip; expand → restores 280px (Layout consumes the flag)', async ({
+test('#173 collapse → 28px chevron strip; expand → restores 300px (Layout consumes the flag)', async ({
   page,
 }) => {
   // Collapse via the header chevron.
@@ -66,14 +69,14 @@ test('#173 collapse → 28px chevron strip; expand → restores 280px (Layout co
   // The expanded header toggle is gone (only the strip's expand chevron remains).
   await expect(page.getByTestId('inspector-collapse-toggle')).toHaveCount(0);
   // SIDE B — the falsifier: the Layout grid column actually shrank to 28px.
-  // If Layout still hardcoded 280px, this fails even though the flag flipped.
+  // If Layout still hardcoded 300px, this fails even though the flag flipped.
   expect(await inspectorColumnPx(page)).toBe('28px');
 
   // Expand via the strip chevron.
   await page.getByTestId('inspector-expand-toggle').click();
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('inspector-collapse-toggle')).toBeVisible();
-  expect(await inspectorColumnPx(page)).toBe('280px');
+  expect(await inspectorColumnPx(page)).toBe('300px');
 });
 
 test('#173 collapse state persists across reload', async ({ page }) => {
@@ -90,11 +93,12 @@ test('#173 collapse state persists across reload', async ({ page }) => {
   expect(await inspectorColumnPx(page)).toBe('28px');
 });
 
-test('#173 Director mode hides the inspector entirely regardless of the flag', async ({ page }) => {
-  // Expanded (default). Switch to Director via the real mode switcher — the
-  // inspector column collapses to 0 (chrome hidden) independent of the flag.
-  await page.getByTestId('mode-switcher').selectOption('director');
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-mode', 'director');
+test('#173 Present mode hides the inspector entirely regardless of the flag', async ({ page }) => {
+  // Expanded (default). Enter Present (the v0.6 #4 re-home for the dissolved
+  // `director` mode) via the floating-pill button — all chrome, the inspector
+  // column included, collapses to 0 independent of the collapse flag.
+  await page.getByTestId('top-toolbar-present').click();
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   const px = await inspectorColumnPx(page);
   expect(px).toBe('0px');
 });
