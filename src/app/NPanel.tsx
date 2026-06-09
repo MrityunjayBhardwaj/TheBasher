@@ -1237,10 +1237,10 @@ export function NPanel() {
       data-testid="inspector"
       role="region"
       aria-label={inspectorLabel}
-      className="flex h-full flex-col overflow-y-auto border-l border-border bg-muted/40 text-xs"
+      className="flex h-full flex-col overflow-y-auto border-l border-border bg-bg-2 text-xs"
     >
-      <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">
-        inspector
+      <header className="flex h-9 shrink-0 items-center border-b border-border px-3 text-[11px] font-medium uppercase tracking-wide text-fg-dim">
+        Inspector
       </header>
       {!node ? (
         // v0.6 #4 W5 (D-09) — first-run empty-state guidance. Plain text only:

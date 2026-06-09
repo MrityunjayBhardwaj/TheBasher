@@ -1,8 +1,9 @@
 // Agent chat UI — text input + message history + mode selector.
 //
-// Sits in the RightDrawer (pro mode) or as a floating panel (simple mode).
-// The orchestrator handles the LLM turn and reads fresh DAG state on every
-// round; this component just drives it with the user message + selection.
+// Sits in the always-on AgentDock (the full-width bottom dock, Spline redesign
+// Wave C — previously the RightDrawer right column). The orchestrator handles
+// the LLM turn and reads fresh DAG state on every round; this component just
+// drives it with the user message + selection.
 //
 // Styling matches the rest of the editor chrome: mono font, fg/muted/border
 // theme tokens, accent green for active states. No shadcn — the project

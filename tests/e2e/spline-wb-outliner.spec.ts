@@ -51,8 +51,9 @@ test('WB#4 §196 — agent surface + Add/Assets create paths survive the redesig
   page,
 }) => {
   // The agent stays first-class: AgentChat is mounted in the always-present
-  // RightDrawer even though the left panel no longer hosts an agent tab.
-  await expect(page.getByTestId('right-drawer')).toBeVisible();
+  // bottom AgentDock (Wave C moved it out of the cramped right column) even
+  // though the left panel no longer hosts an agent tab.
+  await expect(page.getByTestId('agent-dock')).toBeVisible();
   await expect(page.getByTestId('agent-chat')).toBeVisible();
   // Create paths still reachable on the floating toolbar.
   await expect(page.getByTestId('top-toolbar-add')).toBeVisible();

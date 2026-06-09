@@ -32,11 +32,11 @@ import { AssetDropZone } from './AssetDropZone';
 import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
 import { FloatingViewportToolbar } from './FloatingViewportToolbar';
+import { AgentDock } from './AgentDock';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
-import { RightDrawer } from './RightDrawer';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
@@ -74,18 +74,25 @@ export function Layout() {
       data-space={space}
       className="grid h-full w-full bg-bg text-fg"
       style={{
-        gridTemplateColumns: isPresent ? '0 1fr 0 0' : `${treeWidth} 1fr 280px 280px`,
+        // Spline redesign Wave C — the dedicated 280px agent `drawer` column is
+        // gone: the agent moved to a full-width bottom dock (the user's locked
+        // placement), freeing the right column for a FULL-height Spline
+        // inspector (300px). Three columns now: tree | viewport | inspector.
+        gridTemplateColumns: isPresent ? '0 1fr 0' : `${treeWidth} 1fr 300px`,
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
-        // floating pill). Two top rows remain: R1 projectTabs + R2 menu. The
-        // timeline row (`auto`) holds the always-visible Timebar (Auto-Key
-        // indicator) + the drawer body when revealed; present collapses it.
-        gridTemplateRows: isPresent ? '0 0 1fr 0' : '32px auto 1fr auto',
+        // floating pill). Two top rows remain: R1 projectTabs + R2 menu. Wave C
+        // inserts the always-on `agentdock` row (190px) above the timeline; the
+        // timeline row (`auto`) still holds the always-visible Timebar
+        // (Auto-Key indicator) + the drawer body when revealed. Present
+        // collapses every row but the viewport.
+        gridTemplateRows: isPresent ? '0 0 1fr 0 0' : '32px auto 1fr 190px auto',
         gridTemplateAreas: `
-          "projectTabs projectTabs projectTabs projectTabs"
-          "menu menu menu menu"
-          "tree viewport inspector drawer"
-          "timeline timeline timeline timeline"
+          "projectTabs projectTabs projectTabs"
+          "menu menu menu"
+          "tree viewport inspector"
+          "agentdock agentdock agentdock"
+          "timeline timeline timeline"
         `,
       }}
     >
@@ -191,15 +198,19 @@ export function Layout() {
         <NPanel />
       </div>
 
+      {/* Spline redesign Wave C — the agent's always-on home is now this
+          full-width bottom dock (above the timeline), not the old right column.
+          Present hides it with the rest of the chrome. */}
       <div
         style={{
-          gridArea: 'drawer',
+          gridArea: 'agentdock',
           display: isPresent ? 'none' : 'flex',
           flexDirection: 'column',
           minHeight: 0,
         }}
+        data-testid="agentdock-slot"
       >
-        <RightDrawer />
+        <AgentDock />
       </div>
 
       {/* Timeline slot stays ALWAYS mounted/visible (collapsed only in present).
