@@ -230,8 +230,9 @@ test('P2.1#5 SceneTree click selects → Inspector renders that node', async ({ 
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
 
-  // Inspector starts on placeholder.
-  await expect(page.getByTestId('inspector')).toContainText('select a node');
+  // Inspector starts on the empty-state placeholder (v0.6 #4 W5 enriched the
+  // copy from "select a node" → first-run guidance; still non-interactive).
+  await expect(page.getByTestId('inspector')).toContainText('No selection');
   await page.getByTestId(`scene-tree-row-${id}`).click();
   // The Inspector header renders the selected node id once selection lands.
   await expect(page.getByTestId('inspector')).toContainText(id);

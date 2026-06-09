@@ -1243,7 +1243,19 @@ export function NPanel() {
         inspector
       </header>
       {!node ? (
-        <div className="p-4 text-fg/40">select a node</div>
+        // v0.6 #4 W5 (D-09) — first-run empty-state guidance. Plain text only:
+        // the inspector (R7) is the W8 #2-EXCLUDED region precisely because its
+        // empty body has no tabbable controls — keep it that way (no buttons),
+        // so the selection-adaptive contract and the W8 baseline both hold.
+        // Opaque `fg-dim` (not an `fg/N` alpha) so it clears AA on the light
+        // palette (the W3/W4 lesson). Mirrors the viewport empty-state hint.
+        <div data-testid="inspector-empty-hint" className="flex flex-col gap-1 p-4 text-fg-dim">
+          <span>No selection.</span>
+          <span>
+            Click an object in the viewport, or press <span className="text-fg">+ Add</span> to
+            create one.
+          </span>
+        </div>
       ) : (
         <>
           <div className="border-b border-border px-3 py-2 text-fg/60">

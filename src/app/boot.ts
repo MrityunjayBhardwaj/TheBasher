@@ -231,6 +231,14 @@ export function boot(): Promise<void> {
       void import('./stores/selectionStore').then((m) => {
         w.__basher_selection = m.useSelectionStore;
       });
+      // v0.6 #4 W5 — threeRef (editor camera + controls target) exposed so the
+      // click-to-select regression e2e (p6-w5-first-run) can project a box's
+      // world position to canvas pixels and dispatch a REAL viewport click —
+      // observing the actual onClick raycast path, not the selection store
+      // directly. Same UI-projection-store seam pattern as __basher_selection.
+      void import('./character/threeRef').then((m) => {
+        w.__basher_three = m.useThreeRef;
+      });
       // P6 W2.6 — chromeStore exposed so e2e can drive panel collapse
       // state without depending on the order of click-to-toggle tests.
       // SceneTree default-collapsed (leftSidebarCollapsed=true) means

@@ -73,6 +73,17 @@ export function Viewport() {
   const gridVisible = useViewportStore((s) => s.gridVisible);
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
 
+  // v0.6 #4 W5 (D-09) — first-run empty-state hint. Shown only while nothing is
+  // selected (the same condition the NPanel "select a node" empty body uses, so
+  // the two hints appear and disappear together). A first-timer who opens an
+  // example sees how to orbit the scene and where to create — Spline §2 #5. It
+  // is decorative guidance: aria-hidden (the same guidance is announced in the
+  // NPanel, and the selection-summary live region already narrates state), and
+  // pointer-events-none so it NEVER swallows a viewport click — click-to-select
+  // (W5-T3) raycasts straight through it. Positioned top-center, clear of the
+  // bottom floating pill.
+  const selectedId = useSelectionStore((s) => s.selectedNodeId);
+
   // R6 aria-label: selection summary, debounced 200ms so rapid marquee
   // selects don't spam SR announcements. P6 W10 UIR F-4 — promoted to the
   // shared useSelectionSummary hook so the <main> region label (§8.3) and
@@ -101,6 +112,15 @@ export function Viewport() {
       >
         {debouncedSummary}
       </span>
+      {selectedId == null ? (
+        <div
+          data-testid="viewport-empty-hint"
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-md border border-border bg-bg-2/80 px-3 py-1.5 font-mono text-[11px] text-fg-dim shadow-sm backdrop-blur-sm"
+        >
+          Drag to orbit · scroll to zoom · <span className="text-fg">+ Add</span> to create
+        </div>
+      ) : null}
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}

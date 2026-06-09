@@ -259,8 +259,11 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
     // per-pixel threshold so anti-aliasing fringes don't tip the count.
     threshold: 0.2,
     // FPS meter text changes every frame — mask it so the diff only sees
-    // the rendered geometry + PostFx output.
-    mask: [page.getByTestId('fps-meter')],
+    // the rendered geometry + PostFx output. v0.6 #4 W5 added an editor-chrome
+    // empty-state hint that renders over the viewport while nothing is selected
+    // (this test selects nothing) — mask it too (same treatment) so the beauty
+    // baseline stays the pure DAG render, immune to the hint's copy/size (H30).
+    mask: [page.getByTestId('fps-meter'), page.getByTestId('viewport-empty-hint')],
   });
 });
 
