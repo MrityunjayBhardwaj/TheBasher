@@ -18,11 +18,20 @@ import { create } from 'zustand';
 export interface ThreeRefStore {
   camera: THREE.Camera | null;
   controlsTarget: THREE.Vector3 | null;
+  /** Live WebGLRenderer + scene root — pushed by ThreeBridge so out-of-Canvas
+   *  actions (the "Render Image" menu/keybind, #168) can render the scene
+   *  offscreen without a useThree() context. Set once on mount, not per frame. */
+  gl: THREE.WebGLRenderer | null;
+  scene: THREE.Scene | null;
   set: (camera: THREE.Camera | null, target: THREE.Vector3 | null) => void;
+  setRenderRefs: (gl: THREE.WebGLRenderer | null, scene: THREE.Scene | null) => void;
 }
 
 export const useThreeRef = create<ThreeRefStore>((set) => ({
   camera: null,
   controlsTarget: null,
+  gl: null,
+  scene: null,
   set: (camera, controlsTarget) => set({ camera, controlsTarget }),
+  setRenderRefs: (gl, scene) => set({ gl, scene }),
 }));

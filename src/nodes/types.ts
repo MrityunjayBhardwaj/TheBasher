@@ -1047,4 +1047,10 @@ export interface RenderOutputValue {
   readonly kind: 'RenderOutput';
   readonly scene: SceneValue;
   readonly postFx: PostFxConfig;
+  /** Render output resolution in pixels — the size of the offscreen image a
+   *  "Render Image" produces (#168). Decoupled from the viewport/window: a
+   *  render is a deterministic product of the project, not transient view
+   *  state (Blender F12 semantics). Defaults to 1920×1080. */
+  readonly width: number;
+  readonly height: number;
 }

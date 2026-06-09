@@ -919,7 +919,6 @@ const ROWS: Row[] = [
     bgStack: ['accent'],
     textSize: 'ui',
   },
-
   // ─── Home (src/app/Home.tsx) — v0.6 #4 W4 pre-editor launcher ───────
   // bg = page base; cards on bg-2; new-project card on bg-1. Secondary text
   // is the OPAQUE fg-dim (not an fg/N alpha) so it clears AA on the page bg
@@ -935,6 +934,17 @@ const ROWS: Row[] = [
   {
     site: 'Home project card meta — fg-dim on bg-2',
     fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  // ─── ToastViewport (src/app/ToastViewport.tsx) — #170/#148 ──────────
+  // Bottom-right toast card: opaque bg-2 panel, border-border-strong
+  // (decorative, classified by the border gate). Severity is a coloured
+  // ICON GLYPH ('ui' graphical object → 3:1), the message is fg ('small'),
+  // the dismiss ✕ is fg-dim ('ui'). No coloured borders.
+  {
+    site: 'Toast message — fg on bg-2',
+    fg: 'fg',
     bgStack: ['bg-2'],
     textSize: 'small',
   },
@@ -985,6 +995,30 @@ const ROWS: Row[] = [
       rule: 'A',
       note: 'Back-to-home ⌂ icon-button on the ProjectTabs identity bar (W4-T4) — Rule A. aria-labelled "Back to home"; hover lifts to accent. Saves before leaving.',
     },
+  },
+  {
+    site: 'Toast dismiss ✕ — fg-dim on bg-2',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
+  {
+    site: 'Toast info/success icon — accent on bg-2',
+    fg: 'accent',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
+  {
+    site: 'Toast warn icon — warn on bg-2',
+    fg: 'warn',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
+  },
+  {
+    site: 'Toast error icon — error on bg-2',
+    fg: 'error',
+    bgStack: ['bg-2'],
+    textSize: 'ui',
   },
 ];
 

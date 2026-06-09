@@ -7,6 +7,7 @@ import { Home } from './Home';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
 import { useRouteStore } from './stores/routeStore';
+import { ToastViewport } from './ToastViewport';
 
 type BootState = 'pending' | 'ready' | 'failed';
 
@@ -68,6 +69,7 @@ export function App() {
       <Layout />
       <AddMenu />
       <AssetsPopover />
+      <ToastViewport />
     </>
   );
 }

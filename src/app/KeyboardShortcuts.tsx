@@ -478,6 +478,12 @@ export function KeyboardShortcuts() {
         case 'Home':
           frameAll();
           return;
+        case '0':
+          // #165: toggle "look through active camera" (Blender Numpad 0).
+          // e.key is '0' for both the number row and the numpad, so laptop
+          // users (no numpad) get it too. isTypingTarget already guarded above.
+          useViewportStore.getState().toggleLookThroughCamera();
+          return;
         case 'Tab':
           // Toggle 3D Viewport ↔ UV Editor (Blender's Tab idiom). Skip
           // when the user is typing — already handled by isTypingTarget

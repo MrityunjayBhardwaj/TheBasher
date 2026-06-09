@@ -20,13 +20,16 @@ export function EditorLights() {
   const shading = useViewportStore((s) => s.shading);
   if (shading !== 'studio') return null;
   return (
-    <>
+    // editorChrome: a render shows DAG lights ONLY — this fill rig must never
+    // leak into the offscreen render (#168), the same way it never enters the
+    // DAG (V8) or production renders.
+    <group userData={{ editorChrome: true }}>
       {/* Hemisphere — sky-blue → warm ground for soft ambient bath. */}
       <hemisphereLight intensity={0.55} color="#bcd9ff" groundColor="#3a2a1a" />
       {/* Fill from camera-left, slightly above. */}
       <directionalLight intensity={0.35} color="#ffffff" position={[-4, 4, 2]} />
       {/* Back rim from behind, lower — gives silhouette edge separation. */}
       <directionalLight intensity={0.2} color="#dde6ff" position={[2, 2, -5]} />
-    </>
+    </group>
   );
 }

@@ -1,0 +1,182 @@
+// renderToImage — produce a final still PNG of the production scene (#168).
+//
+// The viewport canvas IS the live beauty pass (SceneFromDAG mounts <PostFx>),
+// but a render must be a deterministic product of the PROJECT, not the
+// transient editor view: it goes through the production scene camera at an
+// explicit resolution (RenderOutput.width/height), excludes editor chrome,
+// and applies the same ACES tone-map production sees. So it cannot be a
+// `toDataURL()` of the live canvas (wrong size, wrong camera, chrome visible,
+// and `preserveDrawingBuffer:false` yields a blank buffer anyway — H68).
+//
+// Mechanism (grounded in three 0.169 source):
+//   1. Build a production camera from the active camera node's pose at the
+//      target aspect (reuses #165 `cameraPoseFromNode`).
+//   2. Hide every object flagged `userData.editorChrome` (grid, gizmo, light/
+//      camera helpers, editor fill lights) — a render shows DAG content only.
+//   3. Render the live scene into an offscreen MSAA + sRGB WebGLRenderTarget
+//      at width×height. `render()` auto-resolves the multisample buffer to a
+//      readable texture (WebGLRenderer.js:1273); ACES is applied via a
+//      temporary `renderer.toneMapping` (matches the PostFx ACES curve).
+//   4. Read the resolved pixels, flip GL's bottom-up rows to top-down, encode
+//      a PNG via a 2D canvas. Renderer state + chrome visibility are always
+//      restored (finally), so the live viewport is untouched.
+//
+// SMAA → MSAA is a deliberate, documented divergence: 4× MSAA is higher
+// quality than post-process SMAA for a still, and avoids a second composer.
+//
+// REF: THESIS.md §11 (viewport renders evaluated DAG), §27 (beauty pass);
+// issue #168; hetvabhasa H68 (preserve-drawing-buffer silent-blank).
+
+import * as THREE from 'three';
+import type { CameraPose } from '../app/activeCamera';
+import type { PostFxConfig } from '../nodes/types';
+
+export interface RenderToImageOptions {
+  gl: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  pose: CameraPose;
+  width: number;
+  height: number;
+  postFx: PostFxConfig;
+}
+
+/** PURE — build the production render camera from a camera-node pose at the
+ *  render aspect ratio (independent of the viewport's aspect). */
+export function buildRenderCamera(pose: CameraPose, width: number, height: number): THREE.Camera {
+  const aspect = width / height;
+  let cam: THREE.Camera;
+  if (pose.kind === 'OrthographicCamera') {
+    // Ortho is rare; derive a nominal frustum half-height from the fov+distance
+    // so the framing is sane (cameraPoseFromNode defaults fov=45 for ortho).
+    const dist = Math.hypot(
+      pose.position[0] - pose.lookAt[0],
+      pose.position[1] - pose.lookAt[1],
+      pose.position[2] - pose.lookAt[2],
+    );
+    const halfH = Math.tan((pose.fov * Math.PI) / 360) * dist || 1;
+    cam = new THREE.OrthographicCamera(
+      -halfH * aspect,
+      halfH * aspect,
+      halfH,
+      -halfH,
+      pose.near,
+      pose.far,
+    );
+  } else {
+    cam = new THREE.PerspectiveCamera(pose.fov, aspect, pose.near, pose.far);
+  }
+  cam.position.set(pose.position[0], pose.position[1], pose.position[2]);
+  cam.lookAt(new THREE.Vector3(pose.lookAt[0], pose.lookAt[1], pose.lookAt[2]));
+  cam.updateMatrixWorld(true);
+  return cam;
+}
+
+/** PURE — flip an RGBA pixel buffer vertically. WebGL's readPixels origin is
+ *  bottom-left; canvas ImageData is top-left, so rows must be reversed. */
+export function flipRowsY(buf: Uint8Array, width: number, height: number): Uint8ClampedArray {
+  const rowBytes = width * 4;
+  const out = new Uint8ClampedArray(buf.length);
+  for (let y = 0; y < height; y++) {
+    const srcStart = (height - 1 - y) * rowBytes;
+    out.set(buf.subarray(srcStart, srcStart + rowBytes), y * rowBytes);
+  }
+  return out;
+}
+
+/** PURE — is this RGBA buffer effectively blank (all pixels one colour)? Used
+ *  by the falsification e2e to prove the render isn't the H68 empty-buffer. */
+export function isUniformColor(buf: Uint8Array | Uint8ClampedArray): boolean {
+  if (buf.length < 8) return true;
+  const r = buf[0];
+  const g = buf[1];
+  const b = buf[2];
+  for (let i = 4; i < buf.length; i += 4) {
+    if (buf[i] !== r || buf[i + 1] !== g || buf[i + 2] !== b) return false;
+  }
+  return true;
+}
+
+/** Encode an (already top-down) RGBA buffer as a PNG Blob via a 2D canvas. */
+async function rgbaToPngBlob(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): Promise<Blob> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('renderToImage: 2D context unavailable for PNG encode');
+  // Build an ArrayBuffer-backed ImageData then copy — sidesteps the TS 5.7
+  // typed-array-generics complaint about ArrayBufferLike vs ArrayBuffer.
+  const img = new ImageData(width, height);
+  img.data.set(data);
+  ctx.putImageData(img, 0, 0);
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))),
+      'image/png',
+    );
+  });
+}
+
+/**
+ * IMPURE — render the DAG scene offscreen through the production camera and
+ * return a PNG Blob. Always restores renderer state + chrome visibility.
+ */
+export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<Blob> {
+  const { gl, scene, pose, postFx } = opts;
+  // Clamp the resolution to the GPU's max texture size, preserving aspect — a
+  // user can set width/height to anything ≥1 (the zod bound), and an oversized
+  // WebGLRenderTarget loses the GL context / OOMs. Scale BOTH dims by one
+  // factor so the framing (camera aspect) is unchanged.
+  const maxTex = gl.capabilities.maxTextureSize;
+  const fit = Math.min(1, maxTex / Math.max(opts.width, opts.height));
+  const width = Math.max(1, Math.floor(opts.width * fit));
+  const height = Math.max(1, Math.floor(opts.height * fit));
+  const camera = buildRenderCamera(pose, width, height);
+
+  // Hide editor chrome — a render shows DAG content only (parity with what
+  // production sees). Record only the ones we actually flip, to restore exactly.
+  const hidden: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    // Denylist: explicit editor-chrome flag, OR the drei TransformControls
+    // gizmo (a helper object injected straight into the scene — it can't carry
+    // our userData flag, so catch it by three.js type).
+    const isChrome = o.userData?.editorChrome === true || o.type.startsWith('TransformControls');
+    if (isChrome && o.visible) {
+      o.visible = false;
+      hidden.push(o);
+    }
+  });
+
+  const samples = postFx.smaa ? 4 : 0;
+  const target = new THREE.WebGLRenderTarget(width, height, {
+    samples,
+    colorSpace: THREE.SRGBColorSpace,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
+
+  const prevTarget = gl.getRenderTarget();
+  const prevToneMapping = gl.toneMapping;
+  const prevExposure = gl.toneMappingExposure;
+  try {
+    gl.toneMapping = postFx.tonemap === 'ACES' ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    gl.toneMappingExposure = 1;
+    gl.setRenderTarget(target);
+    gl.clear();
+    gl.render(scene, camera); // auto-resolves MSAA → readable texture (WebGLRenderer.js:1273)
+    const buf = new Uint8Array(width * height * 4);
+    gl.readRenderTargetPixels(target, 0, 0, width, height, buf);
+    const flipped = flipRowsY(buf, width, height);
+    return await rgbaToPngBlob(flipped, width, height);
+  } finally {
+    gl.setRenderTarget(prevTarget);
+    gl.toneMapping = prevToneMapping;
+    gl.toneMappingExposure = prevExposure;
+    target.dispose();
+    for (const o of hidden) o.visible = true;
+  }
+}

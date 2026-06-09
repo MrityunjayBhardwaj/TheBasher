@@ -31,6 +31,7 @@ import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
+import { renderImageWithFeedback } from './renderImageAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
@@ -328,6 +329,7 @@ export function MenuBar() {
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   const shading = useViewportStore((s) => s.shading);
   const setShading = useViewportStore((s) => s.setShading);
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
   const setSpace = useEditorStore((s) => s.setSpace);
 
@@ -374,6 +376,11 @@ export function MenuBar() {
           testId="menu-file-save"
         />
         <Divider />
+        <Item
+          label="Render Image…"
+          onSelect={() => void renderImageWithFeedback()}
+          testId="menu-file-render-image"
+        />
         <Item
           label="Export Scene as glTF…"
           onSelect={onExportGltf}
@@ -552,6 +559,12 @@ export function MenuBar() {
         />
         <Item label="Frame All" shortcut="Home" onSelect={frameAll} testId="menu-view-frame-all" />
         <Divider />
+        <Item
+          label={lookThrough ? '✓ Look Through Camera' : '   Look Through Camera'}
+          shortcut="0"
+          onSelect={() => useViewportStore.getState().toggleLookThroughCamera()}
+          testId="menu-view-look-through"
+        />
         <Item
           label="Camera-from-View"
           shortcut={`${cmdKeyLabel}+Shift+C`}

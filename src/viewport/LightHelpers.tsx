@@ -139,6 +139,7 @@ function DirectionalLightHelper({
       position={value.position as [number, number, number]}
       scale={scale}
       onClick={selectOnClick(pickId)}
+      userData={{ editorChrome: true }}
     >
       <mesh quaternion={ringQuat}>
         <ringGeometry args={[0.18, 0.22, 24]} />

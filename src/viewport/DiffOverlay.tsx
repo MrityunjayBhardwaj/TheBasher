@@ -45,7 +45,9 @@ function DiffOverlayInner({
   const value = result.value as RenderOutputValue;
 
   return (
-    <group>
+    // editorChrome: agent-diff ghost preview is an editor overlay, never part
+    // of a render (#168).
+    <group userData={{ editorChrome: true }}>
       {/* Scene contents with ghost styling */}
       <GhostCamera value={value.scene.camera} />
       {value.scene.lights.map((light, i) => (

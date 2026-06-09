@@ -44,6 +44,25 @@ import { ingestGltfFolder, importGltfFromOpfs, type IngestFile } from './asset/i
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
 import { useTimeStore } from './stores/timeStore';
+import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
+
+/**
+ * The toast to raise for a resolved storage backend, or null when storage is
+ * durable (#148). `memory` means the OPFS → IndexedDB chain BOTH failed, so
+ * nothing survives a reload — warn the user, sticky (durationMs 0) so it can't
+ * scroll past unnoticed. opfs/indexeddb/tauri-fs persist → no warning. Pure +
+ * exported so the policy is unit-testable without booting.
+ */
+export function storageFallbackWarning(kind: StorageCapability['kind']): NotifyInput | null {
+  if (kind === 'memory') {
+    return {
+      severity: 'warn',
+      message: "Storage unavailable — your work won't be saved this session. Export to keep it.",
+      durationMs: 0,
+    };
+  }
+  return null;
+}
 
 let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
@@ -114,6 +133,12 @@ export function boot(): Promise<void> {
     registerAllMutators();
     registerAllStrategies();
     const storage = await getStorage();
+
+    // #148 — if storage degraded all the way to Memory (OPFS + IndexedDB both
+    // unavailable), nothing persists across reload. Tell the user instead of
+    // silently losing their work on refresh.
+    const fallbackWarning = storageFallbackWarning(storage.kind);
+    if (fallbackWarning) useNotificationStore.getState().notify(fallbackWarning);
 
     // K1 step 2.5 — seed bundled sample assets into OPFS on first boot.
     // No-op on subsequent boots; failures are non-fatal (Library will mark
@@ -219,6 +244,12 @@ export function boot(): Promise<void> {
       w.__basher_time = useTimeStore;
       // v0.6 #4 W4 — route store seam so e2e can observe/drive home↔editor.
       w.__basher_route = useRouteStore;
+      // #168 render seam — render the production frame to a PNG data URL (no
+      // download) so the falsifiable e2e can decode pixels and assert the
+      // render isn't blank (H68) / is the right size / excludes chrome.
+      void import('./renderImageAction').then((m) => {
+        w.__basher_render_png = m.renderActiveProjectToDataUrl;
+      });
       // Lazy import (top-level cycle would tangle stores into boot's
       // dependency graph). The dynamic import is sync-resolved by Vite at
       // build time; only the shape is needed here.

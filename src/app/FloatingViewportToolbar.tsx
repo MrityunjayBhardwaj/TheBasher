@@ -244,6 +244,8 @@ export function FloatingViewportToolbar(): ReactNode {
   const cameraZoom = useViewportStore((s) => s.cameraZoom);
   const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
   const toggleTimelineDrawer = useViewportStore((s) => s.toggleTimelineDrawer);
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
+  const toggleLookThroughCamera = useViewportStore((s) => s.toggleLookThroughCamera);
 
   const assetsOpen = useAssetsPopoverStore((s) => s.open);
   const openAssetsAt = useAssetsPopoverStore((s) => s.openAt);
@@ -368,6 +370,17 @@ export function FloatingViewportToolbar(): ReactNode {
           {s.label}
         </Chip>
       ))}
+      <Divider />
+      {/* #165: look through the active scene camera (Blender Numpad 0). */}
+      <Chip
+        active={lookThrough}
+        title="Look through active camera (0)"
+        ariaLabel={lookThrough ? 'Exit camera view' : 'Look through active camera'}
+        testId="floating-toolbar-look-through"
+        onClick={toggleLookThroughCamera}
+      >
+        cam
+      </Chip>
       <Divider />
       <Chip
         active={snapEnabled}
