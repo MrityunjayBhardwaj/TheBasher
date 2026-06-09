@@ -484,6 +484,13 @@ export function KeyboardShortcuts() {
           // users (no numpad) get it too. isTypingTarget already guarded above.
           useViewportStore.getState().toggleLookThroughCamera();
           return;
+        case 'm':
+        case 'M':
+          // Toggle editor-view projection perspective ↔ orthographic (Spline's
+          // M shortcut; Blender uses Numpad 5). Editor-session only (V8/V34) —
+          // EditorViewCamera swaps the one always-default editor camera.
+          useViewportStore.getState().toggleCameraProjection();
+          return;
         case 'Tab':
           // Toggle 3D Viewport ↔ UV Editor (Blender's Tab idiom). Skip
           // when the user is typing — already handled by isTypingTarget

@@ -16,6 +16,7 @@ import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
+import { ProjectionToggle } from '../app/ProjectionToggle';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
@@ -227,6 +228,8 @@ export function Viewport() {
           ) : null}
         </Suspense>
       </Canvas>
+      {/* Bottom-right ortho|persp pill, by the axis-ball nav gizmo (Spline). */}
+      <ProjectionToggle />
       <FpsMeter />
     </div>
   );

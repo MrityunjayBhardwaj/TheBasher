@@ -20,6 +20,7 @@
 // REF: THESIS.md §11; vyapti V1, V8.
 
 import { create } from 'zustand';
+import { capturePendingEditorView } from '../editorViewCapture';
 
 /** Median is the only pivot mode shipped in v0.5 (dharana §3 default). The
  *  type stays open so future modes (individual / 3d-cursor / active) can land
@@ -38,6 +39,18 @@ export type Pivot = 'median' | 'individual' | 'cursor' | 'active';
  *  IMPORTANT: studio lights are a viewport projection. They MUST NOT leak
  *  into the DAG (V8) and MUST NOT influence render-mode evaluation. */
 export type ShadingMode = 'studio' | 'rendered' | 'wireframe';
+
+/** Editor-view projection — whether the free orbit view renders with a
+ *  perspective or orthographic camera (Spline's bottom-right ortho|persp
+ *  pill, Blender's Numpad 5).
+ *
+ *  IMPORTANT: this is which camera the EDITOR looks through, NOT a DAG
+ *  camera's `.type` — mutating a DAG camera node here would be the [[H67]]
+ *  view-IS-scene-object conflation. It is the same editor-session class as
+ *  `cameraZoom` / `gridVisible`: never persisted with the project, never in
+ *  the DAG (V8/V34). `EditorViewCamera` swaps the ONE always-default editor
+ *  camera between projections (no 2nd camera path → no makeDefault race). */
+export type CameraProjection = 'perspective' | 'orthographic';
 
 export interface ViewportStore {
   /** Currently-active pivot. v0.5 ships median-only. */
@@ -66,6 +79,14 @@ export interface ViewportStore {
    *  header it is NOT persisted with the project and NEVER enters the DAG
    *  (V8). It is which camera you're looking through, not scene data. */
   lookThroughCamera: boolean;
+  /** Editor-view projection — perspective vs orthographic free orbit view.
+   *
+   *  Editor-session projection like `cameraZoom`/`lookThroughCamera`: NOT
+   *  persisted with the project, NEVER in the DAG (V8/V34). Read by
+   *  `EditorViewCamera` to pick which drei camera to mount as the ONE
+   *  always-default editor camera. Look-through always uses perspective
+   *  (v1 limit — it mirrors the DAG camera, which is perspective). */
+  cameraProjection: CameraProjection;
   /** Whether the timeline drawer (dopesheet + curve editor) is expanded. */
   timelineDrawerOpen: boolean;
   /** Viewport camera zoom as a percentage (100 = default framing).
@@ -110,6 +131,7 @@ export interface ViewportStore {
   setAxisWidgetVisible(visible: boolean): void;
   setShading(shading: ShadingMode): void;
   setLookThroughCamera(on: boolean): void;
+  setCameraProjection(projection: CameraProjection): void;
   setTimelineDrawerOpen(open: boolean): void;
   setCameraZoom(zoom: number): void;
   toggleGridVisible(): void;
@@ -117,6 +139,7 @@ export interface ViewportStore {
   toggleSnapEnabled(): void;
   toggleTimelineDrawer(): void;
   toggleLookThroughCamera(): void;
+  toggleCameraProjection(): void;
 }
 
 export const useViewportStore = create<ViewportStore>((set, get) => ({
@@ -131,6 +154,9 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // Default false — the editor owns a free orbit view so DAG cameras render
   // as selectable frustum objects (#165). Numpad 0 / the toolbar toggles it.
   lookThroughCamera: false,
+  // Default perspective — the conventional 3D editor view. The bottom-right
+  // ortho|persp pill / M toggle swaps it; EditorViewCamera honors it.
+  cameraProjection: 'perspective',
   // Default closed — preserves the existing acceptance baselines. Users
   // open the drawer when they want to author keyframes; pixel-diff tests
   // run with the drawer closed so the canvas DIV dimensions don't shift.
@@ -151,6 +177,16 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
   setShading: (shading) => set({ shading }),
   setLookThroughCamera: (lookThroughCamera) => set({ lookThroughCamera }),
+  setCameraProjection: (cameraProjection) => {
+    const cur = get();
+    // Snapshot the live free view before the swap so EditorViewCamera re-poses
+    // the new camera exactly where the view already is (skip while looking
+    // through — that pose is the DAG camera's, not the user's free view).
+    if (cur.cameraProjection !== cameraProjection && !cur.lookThroughCamera) {
+      capturePendingEditorView();
+    }
+    set({ cameraProjection });
+  },
   setTimelineDrawerOpen: (timelineDrawerOpen) => set({ timelineDrawerOpen }),
   setCameraZoom: (zoom) =>
     set({ cameraZoom: Number.isFinite(zoom) ? Math.max(1, Math.round(zoom)) : 100 }),
@@ -159,6 +195,13 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
   toggleTimelineDrawer: () => set({ timelineDrawerOpen: !get().timelineDrawerOpen }),
   toggleLookThroughCamera: () => set({ lookThroughCamera: !get().lookThroughCamera }),
+  toggleCameraProjection: () => {
+    const cur = get();
+    if (!cur.lookThroughCamera) capturePendingEditorView();
+    set({
+      cameraProjection: cur.cameraProjection === 'perspective' ? 'orthographic' : 'perspective',
+    });
+  },
 }));
 
 /** Round `value` to the nearest multiple of `step`. Returns `value` unchanged
