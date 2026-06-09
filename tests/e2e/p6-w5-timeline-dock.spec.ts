@@ -209,6 +209,9 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
 test('P6.W5#6 Curve Editor placeholder is visible after explicit tab switch', async ({ page }) => {
   await page.getByTestId('floating-toolbar-timeline').click();
   await page.getByTestId('timeline-tab-curve').click();
-  // No channel selected yet — Curve Editor shows the prompt.
-  await expect(page.getByTestId('curve-editor')).toContainText('Select a channel row');
+  // Fresh scene — no keyframes, so no channel to fall back to (#163): the Curve
+  // Editor shows the empty-state prompt. (Text updated from the pre-#163
+  // "Select a channel row above" — the rows live in the Dopesheet tab, and the
+  // editor now auto-falls-back to the selected object's channel when one exists.)
+  await expect(page.getByTestId('curve-editor')).toContainText('No animated channels');
 });

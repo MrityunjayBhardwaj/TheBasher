@@ -23,6 +23,7 @@ import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMutator';
 import { paramAnimationState } from './paramAnimationState';
+import { resolveEditTargetId } from './resolveEditTarget';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 
@@ -65,8 +66,14 @@ import { useTransientEditStore } from '../stores/transientEditStore';
 export function routeAnimatedGrab(selectedId: string, paramPath: string, value: unknown): boolean {
   if (!selectedId) return false;
   const state = useDagStore.getState().state;
+  // #160 — a keyframed param wraps its node in an AnimationLayer; a viewport
+  // click selects the LAYER (the scene child), not the wrapped node. Resolve to
+  // the wrapped target so the animation check + the transient/keyframe land on
+  // the id the render overlay keys by (else the proxy moves, the object freezes).
+  // Identity for a non-layer selection → byte-identical to pre-#160.
+  const targetId = resolveEditTargetId(state, selectedId);
   const grabFrame = useTimeStore.getState().frame;
-  const animated = paramAnimationState(state, selectedId, paramPath, grabFrame) !== 'none';
+  const animated = paramAnimationState(state, targetId, paramPath, grabFrame) !== 'none';
   if (!animated) return false; // un-animated → raw setParam, byte-identical
 
   // D-03 paused gate: during playback the surface is display-follow only.
@@ -85,13 +92,13 @@ export function routeAnimatedGrab(selectedId: string, paramPath: string, value: 
     // Wave E). ZERO Ops, no setParam → H36 single-write holds by construction
     // (the caller skips both because we return true). See .anvi dharana B1.1
     // FLAG-A supersession + GROUND_TRUTH_BLENDER_KEYING.md. ***
-    useTransientEditStore.getState().set(selectedId, paramPath, value);
+    useTransientEditStore.getState().set(targetId, paramPath, value);
     return true; // handled: held as transient, zero ops
   }
 
   // Auto-Key ON → the SHARED seam chokepoint (one path, two callers).
   // RETURN true so the raw setParam below does NOT also fire (H36).
-  autoKeyCommit(selectedId, paramPath, value);
+  autoKeyCommit(targetId, paramPath, value);
   return true;
 }
 
@@ -186,23 +193,26 @@ export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown)
   const seconds = useTimeStore.getState().seconds;
   const frame = useTimeStore.getState().frame;
   const dagState = useDagStore.getState().state;
+  // #160 — resolve a layer selection to its wrapped target so the key lands on
+  // the animated node, not the AnimationLayer wrapper (identity for non-layer).
+  const targetId = resolveEditTargetId(dagState, nodeId);
 
   // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
-  // this (nodeId, paramPath) — the SAME pure scan the diamond uses (C1).
-  const exists = paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none';
+  // this (targetId, paramPath) — the SAME pure scan the diamond uses (C1).
+  const exists = paramAnimationState(dagState, targetId, paramPath, frame) !== 'none';
 
   let result: { ok: true } | { ok: false; reason: string };
   if (!exists) {
-    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value, seconds });
+    result = dispatchFirstKeyComposite({ targetId, paramPath, value, seconds });
   } else {
-    const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
+    const resolved = resolveChannel(dagState.nodes, targetId, paramPath, frame);
     if (!resolved) {
       result = { ok: false, reason: 'Auto-Key: channel not found for animated param.' };
     } else {
       result = dispatchMutatorFromUI(
         'mutator.timeline.keyframe',
         { channelId: resolved.channelId, time: seconds, value },
-        `Auto-Key ${nodeId}.${paramPath}`,
+        `Auto-Key ${targetId}.${paramPath}`,
       );
     }
   }

@@ -50,6 +50,9 @@ export function Layout() {
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const presentMode = useChromeStore((s) => s.presentMode);
   const isPresent = presentMode;
+  // #173/#174 — Inspector (R7) per-panel collapse flag (modes dissolved in
+  // v0.6 #4 W2, so this rides on presentMode, not the old `director` mode).
+  const inspectorCollapsed = useChromeStore((s) => s.inspectorCollapsed);
   // P6 W10 UIR F-4 — §8.3 R6 = "3D viewport — {selection summary}",
   // debounced 200ms. The <main> below IS the §8.3 R6 region (role=main,
   // skip-link target); its label was the static string
@@ -57,16 +60,23 @@ export function Layout() {
   // state carried zero selection info. Same source as Viewport's
   // aria-live span (shared hook, never diverges).
   const viewportSummary = useSelectionSummary();
-  // 4-column grid (v0.6 #4 W1 dropped the dedicated toolRail column — the
-  // four tools consolidated into the ONE floating pill, Spline region ②):
-  //   tree  |  viewport  |  inspector  |  drawer
-  // Present collapses everything but viewport.
+  // 3-column grid (v0.6 #4 W1 dropped the dedicated toolRail column — the four
+  // tools consolidated into the ONE floating pill, Spline region ②; Wave C
+  // dropped the agent `drawer` column — the agent moved to a full-width bottom
+  // dock): tree | viewport | inspector. Present collapses everything but
+  // viewport.
   //
   // Spline redesign Wave B — the scene outliner is ALWAYS-ON (default
   // expanded). When the user folds it the tree column shrinks to a 28px chevron
   // strip (expand toggle stays visible, V35); expanded returns to the full
   // 260px outliner.
   const treeWidth = isPresent ? '0' : leftSidebarCollapsed ? '28px' : '260px';
+  // #173/#174 — Inspector (R7) per-panel collapse. chromeStore.inspectorCollapsed
+  // has existed since P6 (D-UX-5 / §3.2 promised it); #174 wired it. Collapsed →
+  // 28px chevron strip (mirrors the tree column, V35); NPanel owns the chevron
+  // toggle + the collapsed expand strip. Reconciled with the Spline Wave C
+  // full-height inspector: the 300px column collapses to 28px. Present forces 0.
+  const inspectorWidth = isPresent ? '0' : inspectorCollapsed ? '28px' : '300px';
   return (
     <div
       data-testid="layout"
@@ -78,7 +88,8 @@ export function Layout() {
         // gone: the agent moved to a full-width bottom dock (the user's locked
         // placement), freeing the right column for a FULL-height Spline
         // inspector (300px). Three columns now: tree | viewport | inspector.
-        gridTemplateColumns: isPresent ? '0 1fr 0' : `${treeWidth} 1fr 300px`,
+        // The inspector column honors #174's collapse (`inspectorWidth` → 28px).
+        gridTemplateColumns: isPresent ? '0 1fr 0' : `${treeWidth} 1fr ${inspectorWidth}`,
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu. Wave C
