@@ -51,6 +51,7 @@ import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolve
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
 import { overlayTransients } from './overlayTransients';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { resolveEditTargetId } from './animate/resolveEditTarget';
 
 type Vec3 = [number, number, number];
 
@@ -249,15 +250,24 @@ export function resolveEvaluatedTransform(
   }
 
   // #149 C1 — overlay the held transient the SAME way the renderer does
-  // (AnimationLayerR/B2): SAME overlayTransients primitive, SAME selectedId,
-  // SAME ctx.time.seconds (transient > channel). This is the READ side of the
-  // H40 boundary-pair — the gizmo proxy + NPanel transform display read THROUGH
-  // here, so they show exactly the edit the viewport shows. The transient SET
-  // is read LIVE (like a ctx, not a hook) — the one UI-store read in this
-  // otherwise-pure resolver, justified by H40 (it MUST reflect the same live
-  // edit the subscribed render reads). Empty store → identity (purity tests
-  // stay green). Gated by the PAUSED transform boundary-pair e2e (C3).
-  child = overlayTransients(child, selectedId, useTransientEditStore.getState().edits);
+  // (AnimationLayerR/B2): SAME overlayTransients primitive, SAME ctx.time.seconds
+  // (transient > channel). This is the READ side of the H40 boundary-pair — the
+  // gizmo proxy + NPanel transform display read THROUGH here, so they show
+  // exactly the edit the viewport shows. The transient SET is read LIVE (like a
+  // ctx, not a hook) — the one UI-store read in this otherwise-pure resolver,
+  // justified by H40 (it MUST reflect the same live edit the subscribed render
+  // reads). Empty store → identity (purity tests stay green). Gated by the PAUSED
+  // transform boundary-pair e2e (C3).
+  //
+  // #160 — key the overlay by the EDIT TARGET, not the raw selection. The render
+  // side (AnimationLayerR) keys the transient by the wrapped target id
+  // (`animationTargetId`); when the selection IS the AnimationLayer (a viewport
+  // click on a keyframed cube), the transient lives on the target — so the read
+  // side must unwrap the same way or the gizmo proxy snaps back to the curve
+  // value while the object holds the edit. Identity for a box/glTF selection
+  // (resolveEditTargetId returns selectedId), so the C3 box case is unchanged.
+  const overlayId = resolveEditTargetId(state, selectedId);
+  child = overlayTransients(child, overlayId, useTransientEditStore.getState().edits);
 
   if (!child) return null;
 

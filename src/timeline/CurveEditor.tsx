@@ -8,8 +8,10 @@
 // V8 file-rooted: pure projection. Drag-edit emits setParam Ops via a
 // component imported from src/app/ in a follow-on commit.
 
+import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimelineSelection } from './timelineSelection';
 import { resolveClipRow } from './clipChannelRows';
 
@@ -23,17 +25,37 @@ interface VecKey {
 }
 
 export function CurveEditor({ duration }: { duration: number }) {
-  const channelId = useTimelineSelection((s) => s.activeChannelId);
+  const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
+  const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const nodes = useDagStore((s) => s.state.nodes);
   const seconds = useTimeStore((s) => s.seconds);
+
+  // #163 — when no channel row is explicitly active, fall back to a channel of
+  // the SELECTED object so the curve editor isn't empty after keying. Grounded:
+  // Blender's Graph Editor / Houdini's Animation Editor show the selected
+  // object's curves automatically — you don't tab to the dopesheet to pick one.
+  // READ-ONLY fallback (no store write): an explicit Dopesheet row-pin still
+  // wins, and the pane causes no side-effect while mounted-hidden (it is kept
+  // mounted CSS-hidden when not on the Curve tab / not in Animate mode).
+  const channelId = useMemo(() => {
+    if (activeChannelId != null) return activeChannelId;
+    let firstAny: string | null = null;
+    for (const [id, n] of Object.entries(nodes)) {
+      if (!n.type.startsWith('KeyframeChannel')) continue;
+      if (firstAny == null) firstAny = id;
+      const target = (n.params as { target?: string } | undefined)?.target;
+      if (selectedId && target === selectedId) return id; // prefer the selection's channel
+    }
+    return firstAny; // else the first channel in the project
+  }, [activeChannelId, nodes, selectedId]);
 
   if (channelId == null) {
     return (
       <div
         data-testid="curve-editor"
-        className="flex h-full items-center justify-center text-xs text-mute"
+        className="flex h-full items-center justify-center px-4 text-center text-xs text-mute"
       >
-        Select a channel row above to view its curve.
+        No animated channels yet — keyframe a property (◇ in the inspector) to see its curve.
       </div>
     );
   }

@@ -106,18 +106,17 @@ test('P6.W8#2 every visible region contains at least one tabbable element in edi
   //
   // For each region, count the tabbable elements inside its DOM
   // subtree. Every visible region must have ≥1.
-  // R7 inspector is excluded from this gate intentionally: with no
-  // selection (the default initial state), the NPanel renders a
-  // "no selection" empty body with no interactive controls. The
-  // region IS reachable structurally (it's a role="region" with an
-  // aria-label and lives in the DOM) but has no tabbable descendants
-  // until a node is selected. That's a property of the selection-
-  // adaptive Inspector contract (D-UX-8 / §5.8), not a focus-order
-  // bug. The POPULATED-NPanel tab order — empty here by contract — is
-  // covered by `P6.W8#2b` directly below (#56). (No prior spec
-  // asserted "click node → NPanel populates → ≥1 tabbable in
-  // #inspector"; acceptance.spec.ts #5's `press('Tab')` calls are
-  // commit-on-blur side effects, not tab-order assertions — audited
+  // R7 inspector USED to be excluded here: with no selection the NPanel
+  // rendered a "no selection" empty body with no interactive controls,
+  // so it had 0 tabbable descendants until a node was selected (the
+  // selection-adaptive Inspector contract, D-UX-8 / §5.8). #173 wired the
+  // R7 per-panel collapse — an always-present collapse chevron, exactly
+  // like R5's toggle — so the empty NPanel is now keyboard-reachable and
+  // R7 joins the gate above. The POPULATED-NPanel tab order (content
+  // controls appear on selection) is still covered by `P6.W8#2b` below
+  // (#56), which now asserts the chrome→content delta (baseline 1 chevron
+  // → many on selection). (acceptance.spec.ts #5's `press('Tab')` calls
+  // are commit-on-blur side effects, not tab-order assertions — audited
   // for #56.)
   const regions = [
     'project-tabs', // R1
@@ -127,6 +126,10 @@ test('P6.W8#2 every visible region contains at least one tabbable element in edi
     'left-sidebar', // R5 (the collapse/expand toggle is always tabbable)
     // R6 viewport-slot itself is a tabIndex={-1} jump target — not
     // tabbable, but reachable via skip-link Enter.
+    'inspector', // R7 — #173: now carries an always-present collapse
+    // chevron (like R5's toggle), so it's keyboard-reachable even with no
+    // selection. Previously excluded here because the empty NPanel had no
+    // affordance; the collapse wiring closed that gap, so R7 now joins the gate.
     'floating-viewport-toolbar', // R8
   ];
 
@@ -172,9 +175,11 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
   // populate its sections, and assert the inspector now has tabbable
   // descendants where it had none.
 
-  // Baseline: no selection → inspector has 0 tabbable descendants
-  // (this is the §5.8 contract P6.W8#2 relies on; assert it here so
-  // the post-click delta is observed, not assumed).
+  // Baseline: no selection → inspector has exactly 1 tabbable descendant
+  // — the #173 collapse chevron (an always-present chrome affordance, like
+  // R5's toggle). It had 0 before the collapse wiring; the selection-
+  // adaptive contract still governs CONTENT controls (0 until a node is
+  // selected), which the delta below observes (chrome → chrome+content).
   await expect(page.getByTestId('inspector')).toBeVisible();
   const beforeCount = await page.evaluate(() => {
     const root = document.querySelector('[data-testid="inspector"]');
@@ -183,7 +188,10 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ).length;
   });
-  expect(beforeCount, 'no-selection NPanel should have 0 tabbable (§5.8 contract)').toBe(0);
+  expect(
+    beforeCount,
+    'no-selection NPanel has exactly 1 tabbable — the #173 collapse chevron',
+  ).toBe(1);
 
   // Expand the LeftSidebar so the SceneTree row is interactable, then
   // select the Cube (same dev seam + node id the W4 inspector specs
@@ -218,8 +226,8 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
   });
   expect(
     afterCount,
-    'populated NPanel must expose ≥1 tabbable element (R7 keyboard reachability, #56)',
-  ).toBeGreaterThanOrEqual(1);
+    'populated NPanel adds content tabbables beyond the collapse chrome (R7 keyboard reachability, #56)',
+  ).toBeGreaterThan(beforeCount);
 
   // Stronger: a real input/button is reachable, not just a tabindex
   // container. Focus the first tabbable descendant and confirm it
