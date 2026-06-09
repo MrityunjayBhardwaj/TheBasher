@@ -3,14 +3,17 @@ import { AddMenu } from './AddMenu';
 import { AssetsPopover } from './AssetsPopover';
 import { boot } from './boot';
 import { Clock } from './Clock';
+import { Home } from './Home';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
+import { useRouteStore } from './stores/routeStore';
 
 type BootState = 'pending' | 'ready' | 'failed';
 
 export function App() {
   const [bootState, setBootState] = useState<BootState>('pending');
   const [bootError, setBootError] = useState<string | null>(null);
+  const view = useRouteStore((s) => s.view);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +49,16 @@ export function App() {
         </pre>
       </div>
     );
+  }
+
+  // v0.6 #4 W4 — route branch. boot resolved this to 'home' (first run / stale
+  // resume) or 'editor' (resumed a project). The home open handlers + the
+  // editor's back-to-home affordance flip it thereafter. CRITICAL: branch HERE,
+  // at the App root — the editor tree (Layout → Viewport → R3F Canvas) must NOT
+  // be in the React tree while on the home, so the GL canvas mounts exactly once
+  // (home XOR editor), never double-mounted.
+  if (view === 'home') {
+    return <Home />;
   }
 
   return (

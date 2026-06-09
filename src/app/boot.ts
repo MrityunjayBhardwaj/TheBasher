@@ -23,12 +23,15 @@ import {
   deleteProject as ioDeleteProject,
   duplicateProject as ioDuplicateProject,
   listProjectMetadata,
+  listProjects,
   loadProject,
   renameProject as ioRenameProject,
   saveProject,
   useProjectStore,
   type ProjectMetadata,
 } from '../core/project';
+import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/examples';
+import { useRouteStore } from './stores/routeStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
@@ -121,41 +124,91 @@ export function boot(): Promise<void> {
       console.warn('boot: asset seeding failed', e);
     }
 
-    // Resolve which project to open. Priority:
-    //   1. Last-open project id from localStorage (if it still exists in storage).
-    //   2. Default project id (creates the seed project if absent).
-    const lastId =
-      typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_PROJECT_KEY) : null;
-    let project;
+    // W4-T1 (D-W4-SEED) — seed the curated example projects, idempotently.
+    // Runs AFTER asset seeding (an example could reference a seeded asset; ours
+    // use pure primitives so there is no dependency) and BEFORE project
+    // resolution so the examples are listable on the home. Only writes an
+    // example id that is ABSENT — a user who opened + edited an example keeps
+    // their edits across reloads (re-seeding never clobbers them).
     try {
-      project = await loadProject(storage, lastId ?? DEFAULT_PROJECT_ID);
-    } catch {
-      project = buildDefaultProject();
-      await saveProject(storage, project);
+      const existing = new Set(await listProjects(storage));
+      for (const id of EXAMPLE_PROJECT_IDS) {
+        if (existing.has(id)) continue;
+        await saveProject(storage, buildExampleProject(id));
+      }
+    } catch (e) {
+      console.warn('boot: example seeding failed', e);
     }
 
-    persistLastProjectId(project.id);
-    useProjectStore.getState().setCurrent(project);
-    useDagStore.getState().hydrate({
-      nodes: project.state.nodes,
-      outputs: project.state.outputs,
-    });
+    // P6 W3 — dirty tracking subscription. Registered ONCE per boot regardless
+    // of route (a project opened from the home later must still track dirty).
+    // Installed AFTER hydrate on the resume path so the initial install does
+    // NOT mark dirty. On a first-run home boot the store is empty and the
+    // subscription stays quiet until the user opens a project via
+    // switchProject/createNewProject — both of which reset dirty AFTER their
+    // hydrate (see those funcs), absorbing the one false-positive.
+    const installDirtyTracking = (): void => {
+      let prevDagState = useDagStore.getState().state;
+      useDagStore.subscribe((s) => {
+        if (s.state === prevDagState) return;
+        prevDagState = s.state;
+        useProjectStore.getState().markDirty();
+      });
+    };
 
-    // P6 W3 — dirty tracking subscription. Registered AFTER hydrate so the
-    // initial state install does NOT mark the project dirty. Fires on every
-    // subsequent dag-state transition (Op dispatch via K2). hydrate() in
-    // switchProject/createNewProject/duplicateCurrentProject also triggers
-    // this — but those paths call setCurrent() right before, which resets
-    // dirty=false and lastSavedAt=updatedAt; the subscription then re-flips
-    // dirty=true once if the hydrate produced an object-identity change.
-    // To avoid that single false-positive, switchProject/createNewProject/
-    // duplicateCurrentProject reset dirty AFTER hydrate (see those funcs).
-    let prevDagState = useDagStore.getState().state;
-    useDagStore.subscribe((s) => {
-      if (s.state === prevDagState) return;
-      prevDagState = s.state;
-      useProjectStore.getState().markDirty();
-    });
+    // W4-T3 (D-W4-ROUTE) — first-run routing. The resume contract is the source
+    // of truth: a returning user with a persisted lastProjectId resumes that
+    // project in the EDITOR; only a genuine first run (the key ABSENT) lands on
+    // the pre-editor HOME. First-run is the ABSENCE of LAST_PROJECT_KEY, NOT
+    // storage emptiness (examples are always seeded, so storage is never empty).
+    const lastId =
+      typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_PROJECT_KEY) : null;
+
+    if (lastId == null) {
+      // FIRST RUN → home. Do NOT hydrate a project AND do NOT
+      // persistLastProjectId here — "absence of lastId" must stay true until the
+      // user actually opens something, else the home would show for exactly ONE
+      // boot then never again (the persist-on-boot trap). switchProject /
+      // createNewProject persist the key when the user opens from the home.
+      useRouteStore.getState().goHome();
+    } else {
+      // Returning user → resume the persisted project in the editor.
+      let project = null;
+      try {
+        project = await loadProject(storage, lastId);
+      } catch {
+        if (lastId === DEFAULT_PROJECT_ID) {
+          // The canonical seed is always rebuildable — never strand the user on
+          // home for the default id (it is also the e2e resume anchor). Preserve
+          // the historical build-default-on-miss behavior for THIS id only.
+          project = buildDefaultProject();
+          await saveProject(storage, project);
+        } else {
+          // A persisted but UNLOADABLE custom id (deleted / schema-mismatch).
+          // Clear the stale key and route home so the user picks again — do NOT
+          // silently drop into a blank default editor (Chesterton: the resume
+          // target is gone, not "open default").
+          if (typeof localStorage !== 'undefined') localStorage.removeItem(LAST_PROJECT_KEY);
+          useRouteStore.getState().goHome();
+        }
+      }
+      if (project) {
+        persistLastProjectId(project.id);
+        useProjectStore.getState().setCurrent(project);
+        useDagStore.getState().hydrate({
+          nodes: project.state.nodes,
+          outputs: project.state.outputs,
+        });
+        useRouteStore.getState().openEditor();
+      }
+    }
+
+    // Install dirty tracking ONCE, after any resume hydrate (so the initial
+    // install does not mark dirty) and on the home path too (it stays quiet
+    // until the user opens a project). Execution FALLS THROUGH to the DEV seam
+    // block below on EVERY route, so the __basher_* test seams are always
+    // installed (a first-run-home early return would have stranded them).
+    installDirtyTracking();
 
     // Test affordance — expose the stores in dev only. Production builds
     // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
@@ -164,6 +217,8 @@ export function boot(): Promise<void> {
       const w = window as unknown as Record<string, unknown>;
       w.__basher_dag = useDagStore;
       w.__basher_time = useTimeStore;
+      // v0.6 #4 W4 — route store seam so e2e can observe/drive home↔editor.
+      w.__basher_route = useRouteStore;
       // Lazy import (top-level cycle would tangle stores into boot's
       // dependency graph). The dynamic import is sync-resolved by Vite at
       // build time; only the shape is needed here.

@@ -917,6 +917,73 @@ const ROWS: Row[] = [
     bgStack: ['accent'],
     textSize: 'ui',
   },
+
+  // ─── Home (src/app/Home.tsx) — v0.6 #4 W4 pre-editor launcher ───────
+  // bg = page base; cards on bg-2; new-project card on bg-1. Secondary text
+  // is the OPAQUE fg-dim (not an fg/N alpha) so it clears AA on the page bg
+  // (#ececf2 — the darkest light surface, where a low-alpha fg would fail).
+  { site: 'Home brand/base — fg on bg', fg: 'fg', bgStack: [], textSize: 'small' },
+  {
+    site: 'Home secondary (tagline + section headers) — fg-dim on bg',
+    fg: 'fg-dim',
+    bgStack: [],
+    textSize: 'small',
+  },
+  { site: 'Home project card name — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
+  {
+    site: 'Home project card meta — fg-dim on bg-2',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'Home new-project card label — fg-dim on bg-1',
+    fg: 'fg-dim',
+    bgStack: ['bg-1'],
+    textSize: 'small',
+  },
+  {
+    site: 'Home card thumbnail glyph (user project) — fg/40 on muted',
+    fg: 'fg/40',
+    bgStack: ['muted'],
+    textSize: 'large',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Placeholder thumbnail glyph (the project-name initial) in an aria-hidden thumbnail box (D-W4-THUMB — live render deferred). SC 1.4.3 exempts pure decoration; the card name below renders at full fg.',
+    },
+  },
+  {
+    site: 'Home example thumbnail glyph — accent on accent/15 over bg-2',
+    fg: 'accent',
+    bgStack: ['accent/15', 'bg-2'],
+    textSize: 'large',
+    exempt: {
+      kind: 'sc-1.4.3',
+      note: 'Placeholder thumbnail glyph in an aria-hidden, accent-tinted example thumbnail box. SC 1.4.3 exempts pure decoration; the example name below renders at full fg.',
+    },
+  },
+  {
+    site: 'Home project delete × — fg-mute on bg-2/90 over bg-2 card',
+    fg: 'fg-mute',
+    bgStack: ['bg-2/90', 'bg-2'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'A',
+      note: 'Per-card delete × icon-button — Rule A. aria-labelled "Delete project <name>"; hover lifts to error. Only on user-project cards (examples re-seed).',
+    },
+  },
+  {
+    site: 'Home back-to-home ⌂ (editor-home-button) — fg-mute on bg-2/80',
+    fg: 'fg-mute',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+    exempt: {
+      kind: 'rule',
+      rule: 'A',
+      note: 'Back-to-home ⌂ icon-button on the ProjectTabs identity bar (W4-T4) — Rule A. aria-labelled "Back to home"; hover lifts to accent. Saves before leaving.',
+    },
+  },
 ];
 
 // ─── WHITELIST (intentionally-skipped patterns) ─────────────────────────

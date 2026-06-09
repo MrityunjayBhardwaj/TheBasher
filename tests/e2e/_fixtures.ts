@@ -58,6 +58,23 @@ import { test as base, expect } from '@playwright/test';
 
 export const test = base.extend({
   page: async ({ page }, use) => {
+    // v0.6 #4 W4 — first-run routing. boot now lands a TRUE first run (no
+    // persisted `basher.lastProjectId`) on the pre-editor HOME, not the editor.
+    // Every editor spec does `goto('/')` and expects the editor, so seed the
+    // resume target to the canonical default project. CONDITIONAL — only set it
+    // when ABSENT, so a spec that creates/switches projects and then reloads
+    // still resumes ITS project (we never clobber a persisted value on reload).
+    // The home spec (p6-w4-home) registers a LATER init script that removes /
+    // overrides this to exercise the first-run + stale-id paths.
+    await page.addInitScript(() => {
+      try {
+        if (localStorage.getItem('basher.lastProjectId') == null) {
+          localStorage.setItem('basher.lastProjectId', 'default');
+        }
+      } catch {
+        /* storage disabled — boot falls back to home, the home spec covers it */
+      }
+    });
     const originalScreenshot = page.screenshot.bind(page);
     // Monkey-patch — every `page.screenshot(...)` (and therefore every
     // `expect(page).toHaveScreenshot(...)`) routes through this wrapper.

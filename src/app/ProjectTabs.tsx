@@ -40,6 +40,7 @@ import {
 import { ComfyStatusIndicator } from './ComfyStatusIndicator';
 import { ProjectsMenu } from './ProjectsMenu';
 import { formatTooltip } from './projectTabsHelpers';
+import { useRouteStore } from './stores/routeStore';
 
 const HOVER_TOOLTIP_DELAY_MS = 600;
 
@@ -190,9 +191,28 @@ export function ProjectTabs(): ReactNode {
       className="flex h-8 items-stretch border-b border-border bg-bg-2/80 px-1 font-mono text-[11px] text-fg"
     >
       {/* Brand + project identity (folded from the deleted Chrome band).
-          Leaves room to the right of the identity for W4's back-to-home
-          affordance (W4 owns it — do not add here). */}
+          The back-to-home affordance (v0.6 #4 W4) lives here on the existing
+          identity bar — Spline puts the home/account chip top-left. It does
+          NOT add a new band (section-inventory: no shift). Saves the current
+          project before leaving so in-memory edits aren't lost (the editor tree
+          unmounts when the route flips home → App single-canvas branch). */}
       <div className="flex shrink-0 items-center gap-2 px-2">
+        <button
+          type="button"
+          onClick={() =>
+            void wrap(async () => {
+              await saveCurrent();
+              useRouteStore.getState().goHome();
+            })
+          }
+          disabled={busy}
+          data-testid="editor-home-button"
+          title="Back to home"
+          aria-label="Back to home"
+          className="rounded px-1 text-fg-mute hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
+        >
+          ⌂
+        </button>
         <span className="text-accent">basher</span>
         <span className="text-fg/30">/</span>
         <span className="max-w-[160px] truncate text-fg/80" data-testid="project-name">
