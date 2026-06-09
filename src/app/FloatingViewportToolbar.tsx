@@ -122,7 +122,7 @@ function ToolButton({
   children: ReactNode;
 }): ReactNode {
   const base =
-    'flex h-7 w-7 items-center justify-center rounded text-sm font-mono transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+    'flex h-7 w-7 items-center justify-center rounded-lg text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   const state = active ? 'bg-bg-1 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
   return (
     <button
@@ -155,7 +155,7 @@ function Chip({
   children: ReactNode;
 }): ReactNode {
   const base =
-    'rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+    'rounded-md px-2 py-1 text-[11px] font-medium capitalize transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   // Active fill is OPAQUE `bg-bg-1` (matching the tool buttons), not an
   // `accent/15` wash — this surface sits OVER the GL canvas, and a translucent
   // tint lets a bright scene bleed through, crushing accent-text contrast below
@@ -178,7 +178,7 @@ function Chip({
 }
 
 function Divider(): ReactNode {
-  return <div aria-hidden className="mx-1 h-5 w-px bg-border" />;
+  return <div aria-hidden className="mx-1 h-5 w-px bg-border/60" />;
 }
 
 // Bordered text chip used by the moved-in chrome controls (Add / Assets /
@@ -209,7 +209,7 @@ function BarButton({
       data-testid={testId}
       title={title}
       aria-label={ariaLabel}
-      className={`flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${state}`}
+      className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${state}`}
     >
       {children}
     </button>
@@ -262,7 +262,7 @@ export function FloatingViewportToolbar(): ReactNode {
       role="toolbar"
       aria-orientation="horizontal"
       aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
-      className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-md border border-border-strong bg-bg-2/90 px-2 py-1.5 font-mono text-fg shadow-sm backdrop-blur-sm"
+      className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md"
     >
       {TOOLS.map((t) => (
         <ToolButton
@@ -307,7 +307,7 @@ export function FloatingViewportToolbar(): ReactNode {
       </BarButton>
       <Divider />
       {/* Space toggle 3D View ↔ UV Editor (folded from R3 SpaceGroup). */}
-      <div className="flex items-center gap-0.5 rounded border border-border bg-muted/40 p-0.5">
+      <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
         {SPACES.map((s) => (
           <button
             key={s.value}
@@ -315,7 +315,7 @@ export function FloatingViewportToolbar(): ReactNode {
             onClick={() => setSpace(s.value)}
             data-testid={`toolbar-space-${s.value}`}
             title={`${s.label} (${s.key} to toggle)`}
-            className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+            className={`rounded px-2 py-1 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
               space === s.value ? 'bg-accent/15 text-accent' : 'text-fg/60 hover:text-fg'
             }`}
           >
@@ -389,7 +389,7 @@ export function FloatingViewportToolbar(): ReactNode {
         }}
         data-testid="floating-toolbar-snap-step"
         aria-label="Snap step value"
-        className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right font-mono text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         title="Snap step (world units)"
       />
       <Divider />
@@ -414,7 +414,7 @@ export function FloatingViewportToolbar(): ReactNode {
         data-testid="top-toolbar-zoom"
         title={`Viewport zoom — ${cameraZoom}%`}
         aria-label={`Viewport zoom ${cameraZoom} percent`}
-        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/30 px-2 text-[10px] font-mono uppercase tracking-wide text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="flex h-7 items-center gap-1 rounded-md border border-border bg-muted/30 px-2 text-[11px] font-medium text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <span data-testid="top-toolbar-zoom-value">{cameraZoom}%</span>
         <span aria-hidden>▾</span>
