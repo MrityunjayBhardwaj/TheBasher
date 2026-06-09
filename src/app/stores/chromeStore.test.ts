@@ -58,9 +58,9 @@ describe('chromeStore', () => {
 
   it('isolation reset state matches the documented test fixture', () => {
     // The beforeEach hook above resets every flag to false so individual
-    // toggle tests start from a clean slate. The actual first-visit
-    // boot defaults (which differ — leftSidebarCollapsed defaults true
-    // post-W2.6) are exercised in a dedicated test below; this one
+    // toggle tests start from a clean slate. The first-visit boot defaults
+    // (leftSidebarCollapsed defaults FALSE — always-on outliner, Spline
+    // redesign Wave B) are exercised in a dedicated test below; this one
     // verifies the isolation reset itself.
     const s = useChromeStore.getState();
     expect(s.toolRailCollapsed).toBe(false);
@@ -168,17 +168,18 @@ describe('chromeStore', () => {
     expect(mod.useChromeStore.getState().toolRailCollapsed).toBe(true);
   });
 
-  it('first-visit boot defaults: toolRail expanded, leftSidebar collapsed, inspector expanded', async () => {
+  it('first-visit boot defaults: toolRail expanded, leftSidebar EXPANDED, inspector expanded', async () => {
     // Re-import the module with empty localStorage so zustand's create()
     // re-runs against a fresh DEFAULT_STATE. Verifies the documented
-    // first-visit boot shape (P6 W2.6 — leftSidebar default flipped to
-    // true so the SceneTree gets out of the way until the user expands).
+    // first-visit boot shape (Spline redesign Wave B — leftSidebar default
+    // flipped back to FALSE so the scene outliner is always-on, matching
+    // Spline; reverses the W2.6 default-collapsed call).
     localStorage.clear();
     vi.resetModules();
     const mod = await import('./chromeStore');
     const fresh = mod.useChromeStore.getState();
     expect(fresh.toolRailCollapsed).toBe(false);
-    expect(fresh.leftSidebarCollapsed).toBe(true);
+    expect(fresh.leftSidebarCollapsed).toBe(false);
     expect(fresh.inspectorCollapsed).toBe(false);
   });
 });

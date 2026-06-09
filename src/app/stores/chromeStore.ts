@@ -45,15 +45,16 @@ export interface ChromeStore extends ChromeState {
 // excluded — it must never be written to localStorage (a reload boots it false).
 type PersistedChromeState = Omit<ChromeState, 'presentMode'>;
 
-// First-visit defaults. P6 W2.6: leftSidebarCollapsed defaults to true
-// because (a) the SceneTree gets out of the way until the user needs it,
-// (b) the viewport gets ~232 extra pixels of horizontal space on first
-// load, and (c) chromeStore persists the user's last expand/collapse so
-// returning users see what they chose, not the default. The chevron in
-// the collapsed strip is the always-visible expand affordance.
+// First-visit defaults. Spline redesign Wave B: leftSidebarCollapsed now
+// defaults to FALSE — the scene outliner is ALWAYS-ON, matching Spline (the
+// W2.6 default-collapsed rationale is reversed: Spline keeps the outliner
+// visible at all times; an editor whose first paint hides the scene tree reads
+// as a bare viewport, not a 3D editor). The collapse affordance is preserved
+// (V35) so a user who wants the extra ~232px can still fold it; chromeStore
+// persists their choice, so a returning user sees what they last set.
 const DEFAULT_STATE: ChromeState = {
   toolRailCollapsed: false,
-  leftSidebarCollapsed: true,
+  leftSidebarCollapsed: false,
   inspectorCollapsed: false,
   presentMode: false,
 };

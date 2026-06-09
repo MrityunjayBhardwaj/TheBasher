@@ -62,9 +62,10 @@ export function Layout() {
   //   tree  |  viewport  |  inspector  |  drawer
   // Present collapses everything but viewport.
   //
-  // P6 W2.6 — SceneTree default-collapsed. When collapsed the tree column
-  // shrinks to a 28px chevron strip (toggle stays visible); expanded
-  // returns to the full 260px tree.
+  // Spline redesign Wave B — the scene outliner is ALWAYS-ON (default
+  // expanded). When the user folds it the tree column shrinks to a 28px chevron
+  // strip (expand toggle stays visible, V35); expanded returns to the full
+  // 260px outliner.
   const treeWidth = isPresent ? '0' : leftSidebarCollapsed ? '28px' : '260px';
   return (
     <div

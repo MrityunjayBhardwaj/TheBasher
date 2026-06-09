@@ -11,16 +11,32 @@ import { useMemo, useState, type DragEvent } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
+import { SceneTreeIcon } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
-export function SceneTree() {
+interface SceneTreeProps {
+  /**
+   * Substring filter from the outliner search box (Spline redesign Wave B).
+   * Empty / whitespace = show the full tree. Non-empty = show only rows whose
+   * display name contains the query (case-insensitive); a flat match (depth
+   * indentation kept) — the Scene root row is always shown as the anchor.
+   * Drag-reorder is implicitly inert while filtering because a filtered list
+   * isn't the contiguous sibling set, so a dropped index would be wrong —
+   * gated below by `filtering`.
+   */
+  readonly filter?: string;
+}
+
+export function SceneTree({ filter = '' }: SceneTreeProps) {
   const state = useDagStore((s) => s.state);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   const selected = useSelectionStore((s) => s.selectedNodeId);
   const select = useSelectionStore((s) => s.select);
   const allRows = useMemo(() => buildSceneTreeRows(state), [state]);
+  const query = filter.trim().toLowerCase();
+  const filtering = query.length > 0;
 
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
@@ -50,10 +66,17 @@ export function SceneTree() {
   // Hide projected GltfChild rows whose owning asset is collapsed. The rows
   // (and their GltfChild DAG nodes) still EXIST — this is purely which rows
   // render (projection only, no DAG mutation).
-  const rows = useMemo(
-    () => allRows.filter((r) => !r.gltfAssetOwner || expandedAssets.has(r.gltfAssetOwner)),
-    [allRows, expandedAssets],
-  );
+  const rows = useMemo(() => {
+    const collapsed = allRows.filter(
+      (r) => !r.gltfAssetOwner || expandedAssets.has(r.gltfAssetOwner),
+    );
+    if (!filtering) return collapsed;
+    // While filtering, search the FULL tree (ignore collapse) so a match inside
+    // a collapsed glTF subtree still surfaces. The Scene root (depth 0) stays as
+    // the anchor row so the panel never renders fully empty when the user is
+    // mid-type on a query that hasn't matched a child yet.
+    return allRows.filter((r) => r.depth === 0 || r.display.toLowerCase().includes(query));
+  }, [allRows, expandedAssets, filtering, query]);
 
   function onDragStart(e: DragEvent, row: TreeRow) {
     if (!row.parent) {
@@ -121,31 +144,39 @@ export function SceneTree() {
   }
 
   return (
-    <aside
+    <div
       data-testid="scene-tree"
-      className="flex h-full flex-col overflow-y-auto border-r border-border bg-muted/20 text-xs"
+      data-filtering={filtering || undefined}
+      className="flex h-full flex-col overflow-y-auto text-[13px]"
     >
-      <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">
-        scene tree
-      </header>
-      <ul className="flex flex-col">
+      {filtering && rows.length <= 1 ? (
+        <p data-testid="scene-tree-no-matches" className="px-3 py-2 text-[12px] text-fg-dim">
+          No objects match “{filter.trim()}”.
+        </p>
+      ) : null}
+      <ul className="flex flex-col px-1.5 py-1">
         {rows.map((row) => {
           const isSel = selected === row.nodeId;
           const isDragging = dragKey === row.key;
           const isHover = hoverKey === row.key;
           // GltfAsset rows that own child rows get a collapse/expand chevron
-          // (D2 — the D-05 node-flood toggle). Collapsed by default.
-          const hasChildTree = row.nodeType === 'GltfAsset' && assetsWithChildren.has(row.nodeId);
+          // (D2 — the D-05 node-flood toggle). Collapsed by default. Suppressed
+          // while filtering (the filtered list isn't the contiguous subtree).
+          const hasChildTree =
+            !filtering && row.nodeType === 'GltfAsset' && assetsWithChildren.has(row.nodeId);
           const isExpanded = hasChildTree && expandedAssets.has(row.nodeId);
           return (
             <li
               key={row.key}
               data-testid={`scene-tree-row-${row.nodeId}`}
               data-depth={row.depth}
+              data-selected={isSel || undefined}
               data-dragging={isDragging || undefined}
               data-drop-hover={isHover || undefined}
               data-gltf-expanded={hasChildTree ? isExpanded : undefined}
-              draggable={Boolean(row.parent)}
+              // Drag-reorder is inert while filtering: a filtered list is not the
+              // contiguous sibling set, so a dropped index would be wrong.
+              draggable={Boolean(row.parent) && !filtering}
               onDragStart={(e) => onDragStart(e, row)}
               onDragEnd={onDragEnd}
               onDragOver={(e) => onDragOver(e, row)}
@@ -153,18 +184,20 @@ export function SceneTree() {
               onClick={() => select(row.nodeId)}
             >
               <div
-                className={`flex items-baseline gap-2 border-b border-border/40 px-2 py-1 font-mono ${
-                  isSel ? 'bg-accent/15 text-accent' : 'text-fg/80 hover:bg-muted'
+                className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${
+                  isSel
+                    ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/40'
+                    : 'text-fg-dim hover:bg-bg-1 hover:text-fg'
                 } ${isHover ? 'outline outline-1 outline-accent' : ''}`}
                 style={{ paddingLeft: `${0.5 + row.depth * 0.75}rem` }}
               >
-                {hasChildTree && (
+                {hasChildTree ? (
                   <button
                     type="button"
                     data-testid={`scene-tree-toggle-${row.nodeId}`}
                     aria-label={isExpanded ? 'Collapse children' : 'Expand children'}
                     aria-expanded={isExpanded}
-                    className="shrink-0 text-fg/40 hover:text-fg/80 focus-visible:ring-1 focus-visible:ring-accent"
+                    className="shrink-0 text-[10px] text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onClick={(e) => {
                       e.stopPropagation(); // toggle only — do NOT select the asset
                       toggleAsset(row.nodeId);
@@ -172,14 +205,14 @@ export function SceneTree() {
                   >
                     {isExpanded ? '▾' : '▸'}
                   </button>
-                )}
+                ) : null}
+                <SceneTreeIcon nodeType={row.nodeType} />
                 <span className="grow truncate">{row.display}</span>
-                <span className="text-[10px] text-fg/40">{row.nodeId}</span>
               </div>
             </li>
           );
         })}
       </ul>
-    </aside>
+    </div>
   );
 }

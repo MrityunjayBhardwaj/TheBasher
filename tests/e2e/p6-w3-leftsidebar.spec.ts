@@ -46,65 +46,57 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('P6.W3#1 LeftSidebar default activeTab = scene (D-01)', async ({ page }) => {
-  // Wait for the dev seam.
-  await page.waitForFunction(() =>
-    Boolean((window as unknown as { __basher_left_sidebar?: unknown }).__basher_left_sidebar),
-  );
-  const tab = await page.evaluate(() => {
-    const w = window as unknown as {
-      __basher_left_sidebar: { getState: () => { activeTab: string } };
-    };
-    return w.__basher_left_sidebar.getState().activeTab;
-  });
-  expect(tab).toBe('scene');
-  await expect(page.getByTestId('left-sidebar-tab-scene')).toHaveAttribute('data-active', 'true');
+test('P6.W3#1 Spline outliner is always-on: header + search + Scenes + tree + footer (Wave B)', async ({
+  page,
+}) => {
+  // Spline redesign Wave B: the left panel is a single always-on scene
+  // outliner (the W3 Scene|Agent tab strip is gone). Every structural part is
+  // reachable in the default expanded boot state.
+  await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
+  await expect(page.getByTestId('left-sidebar-header')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-search')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-scenes-label')).toBeVisible();
+  await expect(page.getByTestId('scene-tree')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-footer')).toBeVisible();
+  // Footer wires the existing create/library paths (V34, no second pipeline).
+  await expect(page.getByTestId('left-sidebar-library')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-import')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-help')).toBeVisible();
+  // The old tabbed surfaces no longer exist.
+  await expect(page.getByTestId('left-sidebar-tab-scene')).toHaveCount(0);
+  await expect(page.getByTestId('left-sidebar-tab-agent')).toHaveCount(0);
 });
 
-test('P6.W3#2 tab switch routes through leftSidebarStore + survives reload', async ({ page }) => {
-  await page.getByTestId('left-sidebar-tab-agent').click();
-  // Active tab is now Agent.
-  await expect(page.getByTestId('left-sidebar-tab-agent')).toHaveAttribute('data-active', 'true');
-  // Scene body is hidden via display:none (still in DOM).
-  const sceneBodyDisplay = await page.evaluate(() => {
-    const el = document.querySelector('[data-testid="left-sidebar-body-scene"]');
-    return el ? getComputedStyle(el as HTMLElement).display : null;
-  });
-  expect(sceneBodyDisplay).toBe('none');
-
-  await page.reload();
-  await expect(page.getByTestId('layout')).toBeVisible();
-  await page.waitForFunction(() =>
-    Boolean((window as unknown as { __basher_left_sidebar?: unknown }).__basher_left_sidebar),
-  );
-  // Re-expand chrome so the tab strip is visible after the reload-time
-  // collapse default. The persisted activeTab survives independently.
-  await page.evaluate(() => {
-    const w = window as unknown as {
-      __basher_chrome: { getState: () => { setLeftSidebarCollapsed: (b: boolean) => void } };
-    };
-    w.__basher_chrome.getState().setLeftSidebarCollapsed(false);
-  });
-  const persistedTab = await page.evaluate(() => {
-    const w = window as unknown as {
-      __basher_left_sidebar: { getState: () => { activeTab: string } };
-    };
-    return w.__basher_left_sidebar.getState().activeTab;
-  });
-  expect(persistedTab).toBe('agent');
+test('P6.W3#2 outliner search filters the tree (Wave B)', async ({ page }) => {
+  // The seed project's box is visible unfiltered.
+  await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
+  // A non-matching query hides it and shows the empty-state hint.
+  await page.getByTestId('left-sidebar-search').fill('zzz-no-such-object');
+  await expect(page.getByTestId('scene-tree-row-n_box')).toBeHidden();
+  await expect(page.getByTestId('scene-tree-no-matches')).toBeVisible();
+  // A matching query surfaces it again (the Scene root is the only other row).
+  await page.getByTestId('left-sidebar-search').fill('box');
+  await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
+  await expect(page.getByTestId('scene-tree-no-matches')).toHaveCount(0);
+  // Clearing the search restores the full tree.
+  await page.getByTestId('left-sidebar-search').fill('');
+  await expect(page.getByTestId('scene-tree-row-n_scene')).toBeVisible();
+  await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
 });
 
-test('P6.W3#3 LeftSidebar collapse chevron lives in the tab strip (D-03)', async ({ page }) => {
-  // From expanded state (beforeEach already expanded).
+test('P6.W3#3 collapse chevron lives in the outliner header (V35 reveal stays reachable)', async ({
+  page,
+}) => {
+  // From the always-on expanded state.
   await expect(page.getByTestId('left-sidebar-collapse-toggle')).toBeVisible();
   await page.getByTestId('left-sidebar-collapse-toggle').click();
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'true');
+  // Collapsed: only the expand chevron strip; the outliner body is gone.
   await expect(page.getByTestId('left-sidebar-expand-toggle')).toBeVisible();
-  // The tab strip is hidden when collapsed — only the expand chevron strip.
-  await expect(page.getByTestId('left-sidebar-tab-strip')).toBeHidden();
+  await expect(page.getByTestId('left-sidebar-search')).toHaveCount(0);
   await page.getByTestId('left-sidebar-expand-toggle').click();
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
-  await expect(page.getByTestId('left-sidebar-tab-strip')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-search')).toBeVisible();
 });
 
 test('P6.W3#4 ComfyStatusIndicator migrated from Chrome to ProjectTabs right edge', async ({
