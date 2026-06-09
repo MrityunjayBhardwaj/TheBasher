@@ -14,11 +14,13 @@
 // muted-not-pure-white canvas (SPLINE-UI-REFERENCE §1: "muted, tinted canvas
 // — not pure black"; on a light theme that reads as a soft lavender-gray).
 
-/** The GL canvas background — a calm light lavender-gray stage. */
-export const VIEWPORT_BG = '#d9d9e3';
+/** The GL canvas background — Spline's dark scene stage (~#1E2025 in the
+ *  reference's Scene color readout). A near-black, faintly-cool stage the
+ *  floating panels sit on top of. */
+export const VIEWPORT_BG = '#1a1b20';
 
-/** Floor-grid minor (cell) lines — subtle, just darker than the canvas. */
-export const VIEWPORT_GRID_CELL = '#c4c4d0';
+/** Floor-grid minor (cell) lines — subtle, just lighter than the dark canvas. */
+export const VIEWPORT_GRID_CELL = '#2b2c34';
 
 /** Floor-grid major (section) lines — a touch stronger, faintly cool. */
-export const VIEWPORT_GRID_SECTION = '#aeaec0';
+export const VIEWPORT_GRID_SECTION = '#3a3b45';

@@ -3,11 +3,19 @@
 @tailwind utilities;
 
 :root {
-  /* v0.6 #4 W3 (D-07): calm LIGHT chrome. color-scheme drives native form
-     controls / scrollbars to their light variants so they match the
-     light token palette. */
-  color-scheme: light;
-  font-family: 'JetBrains Mono', 'Geist Mono', ui-monospace, monospace;
+  /* Spline-exact DARK shell (Wave A). color-scheme: dark drives native form
+     controls / scrollbars to their dark variants so they match the near-black
+     token palette. Clean system-sans replaces the monospace dev-tool look. */
+  color-scheme: dark;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
 }
 
 html,
@@ -19,6 +27,18 @@ body,
 
 body {
   overflow: hidden;
+  /* Spline's signature ambient: a near-black page with soft colored blooms
+     glowing in from the corners (purple / warm / teal), barely-there. Painted
+     on the page base (token `bg` #0e0e11) so every floating panel reads as
+     sitting ON a lit dark stage. Fixed so it doesn't scroll with content. */
+  background-color: #0e0e11;
+  background-image:
+    radial-gradient(60rem 40rem at 12% -8%, rgba(99, 102, 241, 0.1), transparent 60%),
+    radial-gradient(55rem 38rem at 105% 8%, rgba(244, 114, 94, 0.07), transparent 60%),
+    radial-gradient(60rem 44rem at 88% 108%, rgba(45, 212, 191, 0.07), transparent 62%),
+    radial-gradient(50rem 40rem at -8% 100%, rgba(168, 85, 247, 0.07), transparent 60%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
 
 /* P6 W8 C5 — Reduced-motion gate (D-W8-7). Scoped to POSITIONAL/SCALE

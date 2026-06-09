@@ -156,7 +156,12 @@ function Chip({
 }): ReactNode {
   const base =
     'rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
-  const state = active ? 'bg-accent/25 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
+  // Active fill is OPAQUE `bg-bg-1` (matching the tool buttons), not an
+  // `accent/15` wash — this surface sits OVER the GL canvas, and a translucent
+  // tint lets a bright scene bleed through, crushing accent-text contrast below
+  // AA over a white/studio scene (#57 over-canvas re-grounding). Opaque = no
+  // bleed = AA holds on any backdrop.
+  const state = active ? 'bg-bg-1 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
   return (
     <button
       type="button"
@@ -311,7 +316,7 @@ export function FloatingViewportToolbar(): ReactNode {
             data-testid={`toolbar-space-${s.value}`}
             title={`${s.label} (${s.key} to toggle)`}
             className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              space === s.value ? 'bg-accent/25 text-accent' : 'text-fg/60 hover:text-fg'
+              space === s.value ? 'bg-accent/15 text-accent' : 'text-fg/60 hover:text-fg'
             }`}
           >
             {s.label}

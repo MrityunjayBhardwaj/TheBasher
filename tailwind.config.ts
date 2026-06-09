@@ -9,44 +9,71 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
-      // v0.6 #4 W3 (D-07) — calm LIGHT palette, Spline-true. The neutral
-      // ramp inverted dark→light (dark ink on light surfaces, low-contrast
-      // and faintly cool/lavender per SPLINE-UI-REFERENCE §1-2). Elevation
-      // reads "lighter = higher": bg (page base) is the softest gray, bg-2
-      // (floating toolbar / popovers / tooltips) is the lightest, muted is a
-      // slightly-recessed input/hover fill. The SEMANTIC hues keep their
-      // MEANING (green=accent, amber=warn, red=error/record) but darkened so
-      // they clear WCAG-AA as text AND SC 1.4.11 3:1 as the focus ring / fill
-      // knockout on a LIGHT background — a neon dark-mode hue lands ~1.3:1 on
-      // light (see contrastMatrix.test.ts). The channel hues (ch-*) are NOT
-      // touched: they paint the timeline 2D canvas, audited against that
-      // surface's own dark CANVAS_BG (TimelineCanvas.tsx), insulated from the
-      // chrome palette. Mirror EVERY change in contrastMatrix.test.ts TOKEN
-      // (the F2 drift gate asserts they match).
+      // Spline-exact DARK palette (the "make it like Spline 3D" redesign — Wave
+      // A). Reverts the W3 calm-LIGHT ramp to a near-black, ambient-lit Spline
+      // shell. Elevation reads "lighter = higher": bg (#0e0e11) is the page base
+      // (the ambient corner-glow is painted on top in index.css), bg-1 a slight
+      // lift, bg-2 (#1c1c22) the floating panels / toolbar / popovers, muted a
+      // recessed input/hover fill. The accent flips dark-green → Spline SELECTION
+      // BLUE (the cursor tool, the selected outliner row, the segmented "Object"
+      // snapping fill in the reference). On dark, a BRIGHT accent clears WCAG-AA
+      // as TEXT on the panels AND ≥3:1 as the focus ring; filled accent buttons
+      // knock out with `text-bg` (near-black) which reads on the bright blue —
+      // the auto-invert mechanism is the same as W3, just flipped polarity
+      // (V36). The channel hues (ch-*) are NOT touched: they paint the timeline
+      // 2D canvas, audited against that surface's own dark CANVAS_BG, insulated
+      // from the chrome palette. Mirror EVERY change in contrastMatrix.test.ts
+      // TOKEN (the F2 drift gate asserts they match).
       colors: {
-        bg: '#ececf2',
-        'bg-1': '#f3f3f8',
-        'bg-2': '#fafafc',
-        fg: '#141419',
-        'fg-dim': '#54555f',
-        'fg-mute': '#9a9ba6',
-        muted: '#e6e6ee',
-        border: '#d6d6e0',
-        'border-strong': '#bcbdc9',
+        bg: '#0e0e11',
+        'bg-1': '#16161a',
+        'bg-2': '#1c1c22',
+        fg: '#ededf2',
+        'fg-dim': '#9b9ca6',
+        'fg-mute': '#65656f',
+        muted: '#22222a',
+        border: '#2a2a33',
+        'border-strong': '#3a3a46',
         accent: {
-          DEFAULT: '#134f27',
-          dim: '#104a24',
+          DEFAULT: '#5c9dff',
+          dim: '#4d8ef0',
         },
-        warn: '#664400',
-        error: '#c01f2b',
-        record: '#cc2222',
+        warn: '#e0a83a',
+        error: '#f0556a',
+        record: '#ff4d4d',
         'ch-x': '#f06464',
         'ch-y': '#64f08c',
         'ch-z': '#6496f0',
         'ch-w': '#c896f0',
       },
       fontFamily: {
-        mono: ['"JetBrains Mono"', '"Geist Mono"', 'ui-monospace', 'monospace'],
+        // Spline uses a clean UI sans, not a monospace. We self-host nothing new
+        // here (THESIS §48 — no CDN): a system-sans stack renders SF Pro on
+        // macOS / Segoe on Windows / Roboto on Linux — clean and Spline-adjacent.
+        // `mono` is repointed to the SAME sans stack so the ~17 existing
+        // `font-mono` chrome classes flip to sans globally without a rename
+        // churn this wave (token name is legacy; a later cleanup renames the
+        // class). A true `mono` is kept available for genuinely numeric/code UI.
+        sans: [
+          'ui-sans-serif',
+          'system-ui',
+          '-apple-system',
+          '"Segoe UI"',
+          'Roboto',
+          '"Helvetica Neue"',
+          'Arial',
+          'sans-serif',
+        ],
+        mono: [
+          'ui-sans-serif',
+          'system-ui',
+          '-apple-system',
+          '"Segoe UI"',
+          'Roboto',
+          '"Helvetica Neue"',
+          'Arial',
+          'sans-serif',
+        ],
       },
     },
   },
