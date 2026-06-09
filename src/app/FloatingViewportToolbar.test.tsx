@@ -88,7 +88,7 @@ describe('TOOLS catalog', () => {
     ]);
   });
 
-  it('declares keyboard shortcuts matching the R4 ToolRail (Q/W/E/R)', () => {
+  it('declares the canonical Q/W/E/R tool shortcuts', () => {
     expect(TOOLS.map((t) => t.shortcut)).toEqual(['Q', 'W', 'E', 'R']);
   });
 });

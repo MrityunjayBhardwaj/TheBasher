@@ -410,7 +410,7 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     //     change rebuilt the static layer — K13 step 3). This is a
     //     no-regression CHECK, NOT the proof of motion (the proof is 4c
     //     above; this row is explicitly NOT asserted as motion — H35).
-    await page.getByTestId('timeline-drawer-toggle').click();
+    await page.getByTestId('floating-toolbar-timeline').click();
     await expect(page.getByTestId('timeline-canvas')).toBeVisible();
   });
 });

@@ -112,7 +112,7 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
     dag.dispatchAtomic(ops, 'user', 'w9-perf-seed');
   });
 
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-canvas')).toBeVisible();
 
   // Drive 240 setTime steps (0 → 4s, i.e. frame 0 → 240) while an

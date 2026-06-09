@@ -98,12 +98,12 @@ test('#3 chrome affordances: timeline reveal + present-mode chrome-hide (mode-fr
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('inspector')).toBeVisible();
   await expect(page.getByTestId('tree-slot')).toBeVisible();
-  // The timeline slot is ALWAYS mounted now (its toggle bar must stay
-  // reachable); the DRAWER BODY is what hides until revealed.
+  // The Timebar row stays visible (it carries the Auto-Key indicator); the
+  // DRAWER BODY is what's closed by default and the pill reveal opens it.
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'false');
 
-  // Reveal the timeline: the drawer body opens; the rest of the chrome stays.
-  await page.getByTestId('timeline-drawer-toggle').click();
+  // Reveal the timeline body via the pill control; rest of chrome stays.
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('inspector')).toBeVisible();
 
@@ -277,7 +277,7 @@ test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async (
   // present (chrome hides). Present hides the chrome so we exit via Esc
   // (UI-SPEC §6.2 / acceptance #4 — Esc dismisses the topmost transient). If
   // any transition remounts the Canvas, the tag is gone.
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await page.getByTestId('top-toolbar-present').click();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');

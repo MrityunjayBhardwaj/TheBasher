@@ -73,7 +73,7 @@ test.beforeEach(async ({ page }) => {
 test('P6.W5#1 drawer-open defaults to Dopesheet tab; both panes mount; Curve hidden', async ({
   page,
 }) => {
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-tab-strip')).toBeVisible();
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'false');
@@ -87,7 +87,7 @@ test('P6.W5#1 drawer-open defaults to Dopesheet tab; both panes mount; Curve hid
 test('P6.W5#2 clicking Curve Editor tab flips visibility; both panes stay mounted', async ({
   page,
 }) => {
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await page.getByTestId('timeline-tab-curve').click();
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'false');
@@ -99,7 +99,7 @@ test('P6.W5#2 clicking Curve Editor tab flips visibility; both panes stay mounte
 });
 
 test('P6.W5#3 active tab persists across reload (D-W5-2)', async ({ page }) => {
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await page.getByTestId('timeline-tab-curve').click();
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'true');
   // localStorage should now carry activeTab=curve. Reload and verify via
@@ -117,13 +117,13 @@ test('P6.W5#3 active tab persists across reload (D-W5-2)', async ({ page }) => {
   });
   expect(persisted).toBe('curve');
   // Open the drawer after reload; Curve should still be the active tab.
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-tab-curve')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'true');
 });
 
 test('P6.W5#4 Frame / total + FPS readouts reflect timeStore', async ({ page }) => {
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   // Default duration is 10s × 60fps = 600 frames; default time = 0.
   await expect(page.getByTestId('timeline-dock-frame-readout')).toHaveText('0 / 600');
   await expect(page.getByTestId('timeline-dock-fps-readout')).toHaveText('60 fps');
@@ -184,7 +184,7 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
       to: { node: 'box_layer', socket: 'animation' },
     });
   });
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'true');
   // P6 W9: select the channel via the timelineSelection seam (the
   // TimelineCanvas paints rows onto a <canvas>; the old DOM
@@ -207,7 +207,7 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
 });
 
 test('P6.W5#6 Curve Editor placeholder is visible after explicit tab switch', async ({ page }) => {
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await page.getByTestId('timeline-tab-curve').click();
   // No channel selected yet — Curve Editor shows the prompt.
   await expect(page.getByTestId('curve-editor')).toContainText('Select a channel row');

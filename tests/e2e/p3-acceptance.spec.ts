@@ -36,6 +36,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('P3#1 timeline drawer is closed by default (preserves baseline)', async ({ page }) => {
+  // The timeline slot (Timebar + reveal toggle) is always visible — it carries
+  // the always-on Auto-Key indicator — but the DRAWER BODY is closed by default.
   await expect(page.getByTestId('timeline-drawer')).toBeVisible();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'false');
   // Dopesheet + curve editor panes are NOT in the DOM when closed (they
@@ -47,7 +49,7 @@ test('P3#1 timeline drawer is closed by default (preserves baseline)', async ({ 
 test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor panes', async ({
   page,
 }) => {
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   // P6 W5 (D-W5-1): both panes mount whenever the drawer is open; the
   // inactive pane is in the DOM but hidden via `display: none` so V8
@@ -125,7 +127,7 @@ test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', asyn
       to: { node: 'box_layer', socket: 'target' },
     });
   });
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   // P6 W9: the SVG Dopesheet rendered a DOM `layer-{id}` group with
   // per-channel `channel-row-{id}` + per-keyframe `keyframe-diamond-*`
   // nodes. TimelineCanvas paints all of that onto a 2D <canvas>
@@ -190,7 +192,7 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
       to: { node: 'box_layer', socket: 'animation' },
     });
   });
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   // P6 W5 (D-W5-3): channel selection happens on the dopesheet (default
   // tab); user must explicitly switch to the Curve Editor tab to see
   // the track. P6 W9: the dopesheet is now a 2D canvas — selecting a

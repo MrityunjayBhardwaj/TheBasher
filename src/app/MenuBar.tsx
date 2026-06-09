@@ -203,9 +203,10 @@ async function onNewProject() {
   await createNewProject(name.trim() || 'Untitled');
 }
 
-/** Programmatically click the Chrome ProjectsMenu toggle so File → Open
- *  surfaces the same panel users get from the chrome's "projects ▾"
- *  button. Avoids re-implementing list/switch/delete in the menu bar. */
+/** Programmatically click the ProjectsMenu toggle so File → Open surfaces
+ *  the same panel users get from the "projects ▾" button (hosted on the
+ *  ProjectTabs identity bar since v0.6 #4 W1). Avoids re-implementing
+ *  list/switch/delete in the menu bar. */
 function onOpenProjects() {
   const btn = document.querySelector(
     '[data-testid="projects-menu-toggle"]',

@@ -163,7 +163,7 @@ test.describe('#149 commit (Wave E)', () => {
     // pressing from a focused inspector input would be swallowed by the typing
     // guard). Keep n_box selected; no timeline channel is active → the #149
     // whole-transform path fires (not the dopesheet active-channel path).
-    await page.getByTestId('timeline-drawer-toggle').click();
+    await page.getByTestId('floating-toolbar-timeline').click();
     await page.evaluate(() => {
       (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
       // Blur the focused <select> — it is a typing target, so the key handler's

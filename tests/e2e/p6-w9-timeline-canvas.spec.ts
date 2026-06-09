@@ -150,7 +150,7 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
   page,
 }) => {
   await seedScene(page, 4, 6, 4);
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-canvas')).toBeVisible();
 
   // The rendered-keyframes count after the static layer first paints.
@@ -234,7 +234,7 @@ test('P6.W9#2 culling — keyframes beyond the visible range are not painted (D-
     const w = window as unknown as BasherWindow;
     w.__basher_time!.getState().setDuration(4);
   });
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-canvas')).toBeVisible();
 
   await expect
@@ -261,7 +261,7 @@ test('P6.W9#3 ref↔store cross-check — playhead frame == frame readout every 
   page,
 }) => {
   await seedScene(page, 2, 5, 4);
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-canvas')).toBeVisible();
 
   for (let f = 0; f <= 6; f++) {
@@ -304,13 +304,13 @@ test('P6.W9#4 R3F Canvas does NOT remount across drawer toggles + Dopesheet↔Cu
     // Open drawer (mounts TimelineCanvas), churn tabs (Curve forces the
     // canvas pane hidden; Dopesheet re-shows it — exercises mount/show
     // churn), close drawer (unmounts TimelineCanvas entirely).
-    await page.getByTestId('timeline-drawer-toggle').click();
+    await page.getByTestId('floating-toolbar-timeline').click();
     await expect(page.getByTestId('timeline-canvas-pane')).toBeVisible();
     await page.getByTestId('timeline-tab-curve').click();
     await expect(page.getByTestId('curve-editor-pane')).toHaveAttribute('data-active', 'true');
     await page.getByTestId('timeline-tab-dopesheet').click();
     await expect(page.getByTestId('timeline-canvas-pane')).toHaveAttribute('data-active', 'true');
-    await page.getByTestId('timeline-drawer-toggle').click();
+    await page.getByTestId('floating-toolbar-timeline').click();
   }
 
   const tagAfter = await page.evaluate(() => {

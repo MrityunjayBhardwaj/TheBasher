@@ -1,15 +1,16 @@
-// P6 W2 acceptance — TopToolbar + ToolRail + ComfyStatusIndicator wiring.
+// P6 W2 acceptance — mode-free keyboard + ComfyStatusIndicator + Present.
+// (v0.6 #4 W2 dissolved the mode enum; W1 deleted the ToolRail/TopToolbar
+// bands — the surviving coverage here is the mode-free keyboard contract,
+// the Comfy indicator, and the Present toggle on the consolidated pill.)
 //
-// Coverage anchored to UI-SPEC §11 #12 + §11 #13 + §5.3 + §5.4:
-//   - keyboard 1/2/3/4 sets mode (canonical, single keyboard layer)
-//   - keyboard Q/W/E/R sets activeTool (when mode ∈ {edit, animate})
-//   - ToolRail click drives the same activeTool path
-//   - ToolRail collapse persists via chromeStore
-//   - ComfyStatusIndicator visible in chrome with capability-derived state
-//   - TopToolbar mode pill click sets mode
-//   - Director Cut "Present" button enters director mode
+// Coverage:
+//   - keyboard 1/2/3/4 are UNBOUND (the operational mode enum is gone)
+//   - the operational mode pill is gone
+//   - keyboard Q/W/E/R sets editorStore.activeTool
+//   - ComfyStatusIndicator visible with capability-derived state
+//   - "Present" button enters present; Esc exits
 //
-// REF: docs/UI-SPEC.md §5.3, §5.4, §5.10, §6.2, §11.
+// REF: docs/UI-SPEC.md §5.3, §5.7, §5.10, §6.2, §11.
 
 import { expect, test } from './_fixtures';
 
@@ -72,25 +73,11 @@ test('P6.W2#3 keyboard Q/W/E/R sets editorStore.activeTool', async ({ page }) =>
   await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('select');
 });
 
-test('P6.W2#4 ToolRail click sets activeTool through the same path', async ({ page }) => {
-  await page.getByTestId('tool-rail-rotate').click();
-  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('rotate');
-  await page.getByTestId('tool-rail-translate').click();
-  await expect.poll(async () => await page.evaluate(readActiveTool)).toBe('translate');
-});
-
-test('P6.W2#5 ToolRail collapse toggles + persists across reload', async ({ page }) => {
-  // Default: expanded.
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-tool-rail-collapsed', 'false');
-  await page.getByTestId('tool-rail-toggle').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-tool-rail-collapsed', 'true');
-  // Reload — collapse should survive (chromeStore persists to localStorage).
-  await page.reload();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-tool-rail-collapsed', 'true');
-  // Toggle back so the next test starts from default.
-  await page.getByTestId('tool-rail-toggle').click();
-  await expect(page.getByTestId('layout')).toHaveAttribute('data-tool-rail-collapsed', 'false');
-});
+// P6.W2#4 / #5 (ToolRail click + collapse) were RETIRED in v0.6 #4 W1: the
+// ToolRail surface was deleted and its four tools consolidated into the ONE
+// floating pill. The single-surface tool dispatch is now covered by
+// p6-w7-floating-toolbar.spec.ts (R8 click + keyboard sync) and the
+// p6-w1-consolidation.spec.ts single-DOM-location gate.
 
 test('P6.W2#6 ComfyStatusIndicator renders with capability-derived state', async ({ page }) => {
   const ind = page.getByTestId('comfy-status-indicator');

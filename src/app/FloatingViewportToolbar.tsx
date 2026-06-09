@@ -1,42 +1,53 @@
-// FloatingViewportToolbar — R8 per UI-SPEC §5.7. Bottom-center overlay
-// inside the viewport, hosting the most-frequent viewport actions in
-// gaze-proximity to the model being edited.
+// FloatingViewportToolbar — the ONE consolidated editor toolbar (Spline
+// region ②). v0.6 #4 W1 collapsed the four top bands + the duplicate
+// ToolRail into this single floating pill, so every authoring affordance
+// lives in one gaze-proximity surface over the viewport.
 //
-// Anatomy (post D-W7-1 amendment — persp/ortho dropped):
+// Anatomy (left → right):
 //
-//   [↖][✥][⟲][⤢] │ [⌂][⊞] │ [studio][wire][rendered] │ [snap][step]
-//   tools           home grid    shading                snap
+//   [↖][✥][⟲][⤢] │ [+ Add][📦 Assets] │ [3D|UV] │ [▶] │ [⌂][⊞] │
+//   tools           create               space      play   view
+//     [studio][wire][rendered] │ [snap][step] │ [☰] │ [100%▾][⬇ Export][⛚ Present]
+//     shading                    snap            timeline  status / export / present
 //
-// Dispatch (D-W7-2 locked — single dispatcher via editorStore):
-//   tools  → editorStore.setActiveTool (translate/rotate/scale propagate
-//            to gizmoStore.mode automatically per editorStore:55-58;
-//            Select leaves gizmoMode untouched).
-//   home   → frameSelected() with fallback to frameAll() when no primary
-//            selection. Reuses existing character/framing helpers.
-//   grid   → viewportStore.toggleGridVisible.
-//   shade  → viewportStore.setShading.
-//   snap   → viewportStore.toggleSnapEnabled + setSnapStep.
-//
-// V19 (keyboard/UI shared helper): tool buttons all route through the
-// same setActiveTool path that R4 ToolRail uses, so every Move/Rot/Scl
-// across R4 + R8 + keyboard W/E/R highlights in sync.
+// Dispatch (single owner per control — no duplication, H27):
+//   tools     → editorStore.setActiveTool (translate/rotate/scale propagate
+//               to gizmoStore.mode per editorStore:55-58; V19 single writer).
+//   Add       → addMenuStore.openAt (Blender-style Add menu; clamps to viewport).
+//   Assets    → assetsPopoverStore (sample-asset / My-Imports popover).
+//   space     → editorStore.setSpace (3D View ↔ UV Editor).
+//   play      → timeStore.toggle (transport; the re-home for `run` mode, D-06).
+//   home      → frameSelected() with frameAll() fallback.
+//   grid      → viewportStore.toggleGridVisible.
+//   shade     → viewportStore.setShading.
+//   snap      → viewportStore.toggleSnapEnabled + setSnapStep.
+//   timeline  → viewportStore.toggleTimelineDrawer (a toolbar-level reveal for
+//               the `animate` drawer BODY; the always-visible Timebar row with
+//               its in-row ▾ toggle stays put — it carries the Auto-Key
+//               indicator and must remain visible).
+//   export    → exportDagJson (shared with File → Export — single source).
+//   present   → chromeStore.togglePresentMode (the re-home for `director`;
+//               Esc returns via the KeyboardShortcuts Esc ladder).
 //
 // Present-mode hide: when chromeStore.presentMode is on, returns null. The
-// R8 chrome is part of the surfaces the present/director-cut layout hides; we
-// self-gate here rather than relying on a Layout.tsx grid-slot rule because R8
-// mounts as a Viewport overlay (sibling of Canvas), not a grid slot.
+// pill is mounted at the Viewport <main> level (Layout.tsx) so it overlays
+// BOTH the 3D and UV slots — the Space toggle must stay reachable in UV
+// mode (where the view3d slot is display:none).
 //
 // File-rooted V8: src/app/. Reads + mutates UI projection stores only
-// (editorStore, viewportStore, chromeStore, selectionStore via framing).
-// Never the DAG.
+// (editorStore, viewportStore, chromeStore, timeStore, selectionStore via
+// framing, addMenuStore, assetsPopoverStore). Never the DAG.
 //
-// REF: docs/UI-SPEC.md §5.7, memory/project_p6_w7_context.md (D-W7-1..3),
-// memory/project_p6_w7_plan.md C1.
+// REF: docs/UI-SPEC.md §5.7, §5.3; .planning/phases/v06.4-director-ux/PLAN.md
+// (W1-T3 — the single-pill inventory); memory/project_p6_w7_plan.md C1.
 
 import type { ReactNode } from 'react';
+import { useAssetsPopoverStore } from './AssetsPopover';
 import { frameAll, frameSelected } from './character/framing';
+import { exportDagJson } from './exportDag';
+import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
-import { useEditorStore, type ActiveTool } from './stores/editorStore';
+import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
@@ -68,6 +79,17 @@ export const SHADING: readonly ShadingDef[] = [
   { value: 'rendered', label: 'rendered', testId: 'floating-toolbar-shading-rendered' },
 ];
 
+interface SpaceEntry {
+  readonly value: SpaceType;
+  readonly label: string;
+  readonly key: string;
+}
+
+const SPACES: readonly SpaceEntry[] = [
+  { value: 'view3d', label: '3D View', key: 'Tab' },
+  { value: 'uv', label: 'UV Editor', key: 'Tab' },
+];
+
 /** Click handler for the Home (⌂) button. frameSelected early-returns
  *  when no node is selected — fall back to frameAll() in that case so
  *  the affordance always does something useful.
@@ -96,7 +118,7 @@ function ToolButton({
   title: string;
   ariaLabel: string;
   testId: string;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   children: ReactNode;
 }): ReactNode {
   const base =
@@ -154,12 +176,58 @@ function Divider(): ReactNode {
   return <div aria-hidden className="mx-1 h-5 w-px bg-border" />;
 }
 
+// Bordered text chip used by the moved-in chrome controls (Add / Assets /
+// Export / Present). Keeps the R3 TopToolbar button styling verbatim so the
+// a11y contrast matrix rows stay valid after the consolidation (W1-T3).
+function BarButton({
+  testId,
+  title,
+  onClick,
+  active,
+  ariaLabel,
+  children,
+}: {
+  testId: string;
+  title: string;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  active?: boolean;
+  ariaLabel?: string;
+  children: ReactNode;
+}): ReactNode {
+  const state = active
+    ? 'border-accent bg-accent/15 text-accent'
+    : 'border-border bg-muted/40 text-fg/80 hover:border-accent hover:text-accent';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      title={title}
+      aria-label={ariaLabel}
+      className={`flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${state}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Anchor the Add menu just above the clicked button. AddMenu clamps its
+ *  own position to the viewport edges, so a bottom-pill anchor opens the
+ *  menu upward automatically. */
+function openAddMenuFrom(e: React.MouseEvent<HTMLButtonElement>): void {
+  const r = e.currentTarget.getBoundingClientRect();
+  useAddMenuStore.getState().openAt(r.left, r.top);
+}
+
 export function FloatingViewportToolbar(): ReactNode {
   const presentMode = useChromeStore((s) => s.presentMode);
+  const togglePresentMode = useChromeStore((s) => s.togglePresentMode);
   const playing = useTimeStore((s) => s.playing);
   const togglePlay = useTimeStore((s) => s.toggle);
   const activeTool = useEditorStore((s) => s.activeTool);
   const setActiveTool = useEditorStore((s) => s.setActiveTool);
+  const space = useEditorStore((s) => s.space);
+  const setSpace = useEditorStore((s) => s.setSpace);
   const shading = useViewportStore((s) => s.shading);
   const setShading = useViewportStore((s) => s.setShading);
   const gridVisible = useViewportStore((s) => s.gridVisible);
@@ -168,10 +236,19 @@ export function FloatingViewportToolbar(): ReactNode {
   const snapStep = useViewportStore((s) => s.snapStep);
   const toggleSnapEnabled = useViewportStore((s) => s.toggleSnapEnabled);
   const setSnapStep = useViewportStore((s) => s.setSnapStep);
+  const cameraZoom = useViewportStore((s) => s.cameraZoom);
+  const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
+  const toggleTimelineDrawer = useViewportStore((s) => s.toggleTimelineDrawer);
 
-  // Present-mode chrome-hide: R8 vanishes when presentMode is on. Self-gated
-  // rather than Layout.tsx-gated because R8 is a viewport overlay, not a grid
-  // slot — returning null is the simplest and least error-prone path.
+  const assetsOpen = useAssetsPopoverStore((s) => s.open);
+  const openAssetsAt = useAssetsPopoverStore((s) => s.openAt);
+  const closeAssets = useAssetsPopoverStore((s) => s.close);
+
+  // Present-mode chrome-hide: the pill vanishes when presentMode is on.
+  // Self-gated rather than Layout.tsx-gated because the pill is a viewport
+  // overlay, not a grid slot — returning null is the simplest path. Esc
+  // (KeyboardShortcuts ladder) is the way back out, since the Present
+  // toggle itself is hidden along with the pill.
   if (presentMode) return null;
 
   return (
@@ -180,7 +257,7 @@ export function FloatingViewportToolbar(): ReactNode {
       role="toolbar"
       aria-orientation="horizontal"
       aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
-      className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-md border border-border-strong bg-bg-2/90 px-2 py-1.5 font-mono text-fg shadow-sm backdrop-blur-sm"
+      className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-md border border-border-strong bg-bg-2/90 px-2 py-1.5 font-mono text-fg shadow-sm backdrop-blur-sm"
     >
       {TOOLS.map((t) => (
         <ToolButton
@@ -194,6 +271,53 @@ export function FloatingViewportToolbar(): ReactNode {
           {t.icon}
         </ToolButton>
       ))}
+      <Divider />
+      {/* Create — Add menu + sample-assets popover (folded from R3/R4 in W1). */}
+      <BarButton
+        testId="top-toolbar-add"
+        title="Add primitive (A or Shift+A)"
+        ariaLabel="Add node menu"
+        onClick={openAddMenuFrom}
+      >
+        <span aria-hidden>+</span>
+        <span>Add</span>
+      </BarButton>
+      <BarButton
+        testId="top-toolbar-assets"
+        title="Sample assets"
+        active={assetsOpen}
+        onClick={(e) => {
+          if (assetsOpen) {
+            closeAssets();
+            return;
+          }
+          const r = e.currentTarget.getBoundingClientRect();
+          // Open anchored at the button; AssetsPopover clamps to the
+          // viewport so a bottom-pill anchor renders the list upward.
+          openAssetsAt(r.left, r.bottom + 4);
+        }}
+      >
+        <span aria-hidden>📦</span>
+        <span>Assets</span>
+      </BarButton>
+      <Divider />
+      {/* Space toggle 3D View ↔ UV Editor (folded from R3 SpaceGroup). */}
+      <div className="flex items-center gap-0.5 rounded border border-border bg-muted/40 p-0.5">
+        {SPACES.map((s) => (
+          <button
+            key={s.value}
+            type="button"
+            onClick={() => setSpace(s.value)}
+            data-testid={`toolbar-space-${s.value}`}
+            title={`${s.label} (${s.key} to toggle)`}
+            className={`rounded px-2 py-1 text-[10px] font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+              space === s.value ? 'bg-accent/25 text-accent' : 'text-fg/60 hover:text-fg'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
       <Divider />
       {/* Play ▶ transport (v0.6 #4 — the re-home for the deleted `run` mode;
           D-06: run became playback). Toggles useTimeStore.playing — the same
@@ -263,6 +387,45 @@ export function FloatingViewportToolbar(): ReactNode {
         className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right font-mono text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         title="Snap step (world units)"
       />
+      <Divider />
+      {/* Timeline reveal — a toolbar-level toggle for the timeline drawer body.
+          The Timebar (with the Auto-Key indicator) stays always-visible below. */}
+      <ToolButton
+        active={timelineDrawerOpen}
+        title={timelineDrawerOpen ? 'Hide timeline' : 'Show timeline'}
+        ariaLabel={timelineDrawerOpen ? 'Hide timeline' : 'Show timeline'}
+        testId="floating-toolbar-timeline"
+        onClick={toggleTimelineDrawer}
+      >
+        ☰
+      </ToolButton>
+      <Divider />
+      {/* Status / export / present (folded from R3 RightCluster). The zoom
+          readout is a disabled button: §5.3 anatomy lists `[100% ▾]` as a
+          display, not an interactive zoom-input. */}
+      <button
+        type="button"
+        disabled
+        data-testid="top-toolbar-zoom"
+        title={`Viewport zoom — ${cameraZoom}%`}
+        aria-label={`Viewport zoom ${cameraZoom} percent`}
+        className="flex h-7 items-center gap-1 rounded border border-border bg-muted/30 px-2 text-[10px] font-mono uppercase tracking-wide text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <span data-testid="top-toolbar-zoom-value">{cameraZoom}%</span>
+        <span aria-hidden>▾</span>
+      </button>
+      <BarButton testId="top-toolbar-export" title="Export DAG as JSON" onClick={exportDagJson}>
+        <span aria-hidden>⬇</span>
+        <span>Export</span>
+      </BarButton>
+      <BarButton
+        testId="top-toolbar-present"
+        title="Present — chrome-hidden viewport (Esc returns)"
+        onClick={() => togglePresentMode()}
+      >
+        <span aria-hidden>⛚</span>
+        <span>Present</span>
+      </BarButton>
     </div>
   );
 }

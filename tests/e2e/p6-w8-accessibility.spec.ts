@@ -120,10 +120,10 @@ test('P6.W8#2 every visible region contains at least one tabbable element in edi
   // commit-on-blur side effects, not tab-order assertions — audited
   // for #56.)
   const regions = [
-    'project-tabs', // R1
+    'project-tabs', // R1 (now also hosts the folded save/identity cluster)
     'menubar', // R2
-    'top-toolbar', // R3
-    'tool-rail', // R4
+    // R3 TopToolbar + R4 ToolRail were deleted in v0.6 #4 W1 — their controls
+    // consolidated into R8 (the floating pill).
     'left-sidebar', // R5 (the collapse/expand toggle is always tabbable)
     // R6 viewport-slot itself is a tabIndex={-1} jump target — not
     // tabbable, but reachable via skip-link Enter.
@@ -261,14 +261,7 @@ test('P6.W8#3 present mode removes hidden chrome from the tab order (D-W8-8)', a
   // .querySelectorAll on each region's testid root will return 0 even
   // though the DOM nodes still exist — because display:none on an
   // ancestor disqualifies them from the focus tree.
-  const hiddenRegions = [
-    'project-tabs',
-    'menubar',
-    'top-toolbar',
-    'tool-rail',
-    'left-sidebar',
-    'inspector',
-  ];
+  const hiddenRegions = ['project-tabs', 'menubar', 'left-sidebar', 'inspector'];
 
   for (const id of hiddenRegions) {
     const visibleAndTabbable = await page.evaluate((regionId: string) => {
@@ -303,10 +296,8 @@ test('P6.W8#4 every chrome region carries its expected role attribute', async ({
   await expect(page.getByTestId('project-tabs')).toHaveAttribute('role', 'tablist');
   // R2 MenuBar → role="menubar"
   await expect(page.getByTestId('menubar')).toHaveAttribute('role', 'menubar');
-  // R3 TopToolbar → role="toolbar"
-  await expect(page.getByTestId('top-toolbar')).toHaveAttribute('role', 'toolbar');
-  // R4 ToolRail → role="toolbar"
-  await expect(page.getByTestId('tool-rail')).toHaveAttribute('role', 'toolbar');
+  // (R3 TopToolbar + R4 ToolRail were deleted in v0.6 #4 W1 — consolidated
+  //  into R8, the floating pill, which still carries role="toolbar" below.)
   // R5 LeftSidebar → role="region"
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('role', 'region');
   // R6 Viewport (the Viewport component itself, NOT the main wrapper)
@@ -331,8 +322,6 @@ test('P6.W8#5 every chrome region has a non-empty aria-label + R6 carries an ari
   const surfaces = [
     'project-tabs',
     'menubar',
-    'top-toolbar',
-    'tool-rail',
     'left-sidebar',
     'viewport',
     'viewport-slot',

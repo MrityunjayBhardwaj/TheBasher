@@ -300,33 +300,27 @@ const ROWS: Row[] = [
     },
   },
 
-  // ─── R3 TopToolbar (src/app/TopToolbar.tsx) ─────────────────────────
-  // Container bg-bg/95; Add/Assets/Export/Present button chrome muted/40
-  // text-fg/80; active button border-accent bg-accent/15 text-accent;
-  // SpaceGroup muted/40, active cell accent/25 + accent; the zoom readout
-  // is a DISABLED button muted/30 text-fg-mute. (v0.6 #4: the operational
-  // mode pill was deleted — its rows are gone; the Present button is now
-  // an always-enabled toggle styled like the other idle buttons.)
+  // ─── Pill chrome controls — Add/Assets/space/zoom/Export/Present ────
+  // (v0.6 #4 W1: folded from the deleted R3 TopToolbar into the R8 floating
+  //  pill. Each button keeps its OWN background chrome — Add/Assets/Export/
+  //  Present muted/40 text-fg/80; active border-accent bg-accent/15 accent;
+  //  SpaceGroup muted/40, active cell accent/25 + accent; the zoom readout is
+  //  a DISABLED button muted/30 text-fg-mute — so the per-button contrast is
+  //  unchanged by the move; only the gone "container on bg/95" row is pruned.)
   {
-    site: 'R3 TopToolbar container — fg on bg/95',
-    fg: 'fg',
-    bgStack: ['bg/95'],
-    textSize: 'small',
-  },
-  {
-    site: 'R3 TopToolbar button idle — fg/80 on muted/40',
+    site: 'Pill chrome button idle — fg/80 on muted/40',
     fg: 'fg/80',
     bgStack: ['muted/40'],
     textSize: 'small',
   },
   {
-    site: 'R3 TopToolbar button hover — accent on muted/40',
+    site: 'Pill chrome button hover — accent on muted/40',
     fg: 'accent',
     bgStack: ['muted/40'],
     textSize: 'small',
   },
   {
-    site: 'R3 TopToolbar zoom readout — fg-mute on muted/30 (disabled)',
+    site: 'Pill chrome zoom readout — fg-mute on muted/30 (disabled)',
     fg: 'fg-mute',
     bgStack: ['muted/30'],
     textSize: 'small',
@@ -336,51 +330,26 @@ const ROWS: Row[] = [
     },
   },
   {
-    site: 'R3 SpaceGroup cell idle — fg/60 on muted/40',
+    site: 'Pill SpaceGroup cell idle — fg/60 on muted/40',
     fg: 'fg/60',
     bgStack: ['muted/40'],
     textSize: 'small',
   },
   {
-    site: 'R3 SpaceGroup cell active — accent on accent/25 over muted/40',
+    site: 'Pill SpaceGroup cell active — accent on accent/25 over muted/40',
     fg: 'accent',
     bgStack: ['accent/25', 'muted/40'],
     textSize: 'small',
   },
   {
-    site: 'R3 TopToolbar active button — accent on accent/15 over muted/40',
+    site: 'Pill chrome active button — accent on accent/15 over muted/40',
     fg: 'accent',
     bgStack: ['accent/15', 'muted/40'],
     textSize: 'small',
   },
 
-  // ─── R4 ToolRail (src/app/ToolRail.tsx) ─────────────────────────────
-  // L123/L142 container bg-bg/95; L92 disabled fg-mute; L94 active bg-1
-  // text-accent; L96/L130/L149 idle fg-dim hover→fg on bg-1.
-  { site: 'R4 ToolRail container — base on bg/95', fg: 'fg', bgStack: ['bg/95'], textSize: 'ui' },
-  {
-    site: 'R4 ToolRail active tool — accent on bg-1',
-    fg: 'accent',
-    bgStack: ['bg-1'],
-    textSize: 'ui',
-  },
-  {
-    site: 'R4 ToolRail idle tool — fg-dim on bg/95',
-    fg: 'fg-dim',
-    bgStack: ['bg/95'],
-    textSize: 'ui',
-  },
-  { site: 'R4 ToolRail hover tool — fg on bg-1', fg: 'fg', bgStack: ['bg-1'], textSize: 'ui' },
-  {
-    site: 'R4 ToolRail disabled tool — fg-mute on bg/95',
-    fg: 'fg-mute',
-    bgStack: ['bg/95'],
-    textSize: 'ui',
-    exempt: {
-      kind: 'sc-1.4.3',
-      note: 'Disabled tool button (e.g. transform tools while a job is running) — WCAG 2.1 SC 1.4.3 exempts inactive UI components.',
-    },
-  },
+  // (v0.6 #4 W1: the R4 ToolRail was deleted — its four tools consolidated
+  //  into the R8 floating pill, whose rows below already cover them.)
 
   // ─── R5 LeftSidebar (src/app/LeftSidebar.tsx) ───────────────────────
   // L81 tab strip bg-bg/95; L94 active tab text-accent + bottom border-
@@ -827,25 +796,37 @@ const ROWS: Row[] = [
   },
   { site: 'AddMenu submenu item — fg/80 on bg', fg: 'fg/80', bgStack: [], textSize: 'small' },
 
-  // ─── Chrome status bar (src/app/Chrome.tsx) ─────────────────────────
-  // L29 bg-bg + text-fg; L32 brand accent; L33 separator fg/30; L34
-  // project name fg/80; L49 save status fg/40.
-  { site: 'Chrome brand — accent on bg', fg: 'accent', bgStack: [], textSize: 'small' },
+  // ─── Identity cluster on the ProjectTabs bar (src/app/ProjectTabs.tsx) ─
+  // (v0.6 #4 W1: the Chrome status bar was deleted — its brand / project
+  //  name / save cluster folded onto the R1 ProjectTabs identity bar, which
+  //  is bg-2/80. Brand accent; "/" separator fg/30; project name fg/80; the
+  //  save status timestamp fg/40.)
   {
-    site: 'Chrome separator — fg/30 on bg',
+    site: 'ProjectTabs brand — accent on bg-2/80',
+    fg: 'accent',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+  },
+  {
+    site: 'ProjectTabs identity separator — fg/30 on bg-2/80',
     fg: 'fg/30',
-    bgStack: [],
+    bgStack: ['bg-2/80'],
     textSize: 'small',
     exempt: {
       kind: 'sc-1.4.3',
       note: 'Decorative "/" glyph separating brand and project name. SC 1.4.3 exemption: pure decoration — no semantic content; the brand+project pair is the readable unit.',
     },
   },
-  { site: 'Chrome project name — fg/80 on bg', fg: 'fg/80', bgStack: [], textSize: 'small' },
   {
-    site: 'Chrome save status — fg/40 on bg',
+    site: 'ProjectTabs identity project name — fg/80 on bg-2/80',
+    fg: 'fg/80',
+    bgStack: ['bg-2/80'],
+    textSize: 'small',
+  },
+  {
+    site: 'ProjectTabs save status — fg/40 on bg-2/80',
     fg: 'fg/40',
-    bgStack: [],
+    bgStack: ['bg-2/80'],
     textSize: 'small',
     exempt: {
       kind: 'rule',

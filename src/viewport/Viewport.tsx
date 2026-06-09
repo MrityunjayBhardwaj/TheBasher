@@ -20,7 +20,6 @@ import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
 import { useSelectionSummary } from '../app/hooks/useSelectionSummary';
-import { FloatingViewportToolbar } from '../app/FloatingViewportToolbar';
 import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
@@ -175,7 +174,6 @@ export function Viewport() {
         </Suspense>
       </Canvas>
       <FpsMeter />
-      <FloatingViewportToolbar />
     </div>
   );
 }

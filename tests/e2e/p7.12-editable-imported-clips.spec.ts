@@ -294,7 +294,7 @@ test('P7.12 (a) DISPLAY — selecting an imported bone surfaces its clip rows + 
 
   await selectAnimatedBoneRotationRow(page, childDagId);
 
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   await expect(host.locator('canvas')).toBeVisible();
@@ -351,7 +351,7 @@ test('P7.12 (b)(b2)(b3) EDIT — first timeline edit bakes copy-on-write; edited
   const baseBefore05 = await readVertexAt(page, BASE_VERTEX, 0.5);
 
   await selectAnimatedBoneRotationRow(page, childDagId);
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const canvas = host.locator('canvas');
@@ -543,7 +543,7 @@ test('P7.12 (c) REVERT — deleting the baked channel falls back to the clip on 
   const tipBaseline = await readVertexAt(page, TIP_VERTEX, 0.5);
 
   await selectAnimatedBoneRotationRow(page, childDagId);
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const canvas = host.locator('canvas');
@@ -649,7 +649,7 @@ test('P7.12 (d) EDIT-WHILE-PAUSED — an edit reflects in the render without pla
   const tipBefore = await readVertexAt(page, TIP_VERTEX, 0.5);
 
   await selectAnimatedBoneRotationRow(page, childDagId);
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const canvas = host.locator('canvas');
@@ -717,7 +717,7 @@ test('P7.12 (e) PERF GUARD — bake + edit several bones, commits===0 across 5s 
   // skinned-bar is far too small to exhibit the ~1000-node React-reconciliation
   // knee. The knee is a DESIGN argument (≤3 channel nodes per baked bone) proven
   // by the manual /tmp Fox harness (perf-fox-benchmark.spec.ts), not here.
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const canvas = host.locator('canvas');

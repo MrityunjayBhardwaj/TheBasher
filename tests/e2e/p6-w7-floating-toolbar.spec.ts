@@ -5,12 +5,13 @@
 // W7 ground truth: R8 carries the most-frequent viewport actions
 // (Sel/Mv/Rot/Scl + Home/Grid + Shading + Snap) in gaze-proximity to
 // the model. All tool buttons route through `editorStore.setActiveTool`
-// — same dispatch path as R4 ToolRail and keyboard W/E/R — so every
-// surface highlights in sync (V19 — keyboard/UI shared helper).
+// — same dispatch path as keyboard W/E/R — so every surface highlights in
+// sync (V19 — keyboard/UI shared helper). (v0.6 #4 W1: R8 absorbed the
+// deleted ToolRail's tools + the TopToolbar chrome; it is now the ONE pill.)
 //
 // Present chrome-hide closure (v0.6 #4 — the `director` mode that drove
 // it is gone; chromeStore.presentMode owns the collapse now): Layout.tsx
-// hides R1/R2/R3/R4/R5/R7 + timeline-slot when presentMode is on; R8
+// hides R1/R2/R5/R7 + timeline-slot when presentMode is on; R8
 // self-gates in FloatingViewportToolbar. Esc dismisses the topmost
 // transient (the Esc ladder). V11/K1#6 — Canvas DOM identity preserved
 // across the round-trip (display:none, never unmount).
@@ -60,36 +61,30 @@ test('P6.W7#1 R8 visible in edit; all 11 testids reachable (closes §11 #1)', as
   }
 });
 
-test('P6.W7#2 click R8 Move → R4 ToolRail Translate highlights synchronously (V19)', async ({
-  page,
-}) => {
+test('P6.W7#2 click R8 Move → store + R8 highlight agree synchronously (V19)', async ({ page }) => {
+  // v0.6 #4 W1: the duplicate R4 ToolRail was deleted — R8 is now the ONE
+  // tool surface, so V19 sync is proven between R8 and the editorStore (and
+  // the keyboard, in #4). The cross-surface duplication this test once
+  // guarded against is structurally gone.
   await page.getByTestId('floating-toolbar-move').click();
   await expect(page.getByTestId('floating-toolbar-move')).toHaveAttribute('data-active', 'true');
-  // R4 ToolRail's Translate button uses `text-accent` for active state.
-  await expect(page.getByTestId('tool-rail-translate')).toHaveClass(/text-accent/);
-  // Store agrees with both UIs.
   const tool = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_editor!.getState().activeTool,
   );
   expect(tool).toBe('translate');
 });
 
-test('P6.W7#3 click R4 ToolRail Rotate → R8 Rot highlights synchronously (V19, other direction)', async ({
-  page,
-}) => {
-  await page.getByTestId('tool-rail-rotate').click();
-  await expect(page.getByTestId('tool-rail-rotate')).toHaveClass(/text-accent/);
-  await expect(page.getByTestId('floating-toolbar-rot')).toHaveAttribute('data-active', 'true');
-});
-
-test('P6.W7#4 keyboard E sets rotate; both R4 + R8 reflect it (V19 — 3-way sync)', async ({
+test('P6.W7#4 keyboard E sets rotate; R8 reflects it (V19 — keyboard ↔ R8 sync)', async ({
   page,
 }) => {
   // Click body to defocus any incidental editable surface.
   await page.locator('body').click({ position: { x: 5, y: 5 } });
   await page.keyboard.press('e');
-  await expect(page.getByTestId('tool-rail-rotate')).toHaveClass(/text-accent/);
   await expect(page.getByTestId('floating-toolbar-rot')).toHaveAttribute('data-active', 'true');
+  const tool = await page.evaluate(
+    () => (window as unknown as BasherWindow).__basher_editor!.getState().activeTool,
+  );
+  expect(tool).toBe('rotate');
 });
 
 test('P6.W7#5 R8 Home button reframes camera on selected node', async ({ page }) => {
@@ -138,7 +133,7 @@ test('P6.W7#7 R8 shading-rendered flips viewportStore.shading to "rendered"', as
   expect(shading).toBe('rendered');
 });
 
-test('P6.W7#8 Present chrome-hide hides R1/R2/R3/R4/R5/R7 + R8; Esc restores; Canvas DOM identity stable (closes §11 #12, V11)', async ({
+test('P6.W7#8 Present chrome-hide hides R1/R2/R5/R7 + R8; Esc restores; Canvas DOM identity stable (closes §11 #12, V11)', async ({
   page,
 }) => {
   // Tag the Canvas so we can prove it survives the round-trip.
@@ -151,17 +146,18 @@ test('P6.W7#8 Present chrome-hide hides R1/R2/R3/R4/R5/R7 + R8; Esc restores; Ca
   expect(tagInitial).not.toBeNull();
 
   // Pre-present chrome is visible.
-  await expect(page.getByTestId('top-toolbar')).toBeVisible(); // R3
+  await expect(page.getByTestId('project-tabs')).toBeVisible(); // R1
   await expect(page.getByTestId('tree-slot')).toBeVisible(); // R5
   await expect(page.getByTestId('inspector')).toBeVisible(); // R7
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
 
-  // Enter present (the re-home for the deleted `director` mode).
+  // Enter present (the re-home for the deleted `director` mode). The Present
+  // toggle now lives on the consolidated floating pill (testid preserved).
   await page.getByTestId('top-toolbar-present').click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
 
   // Chrome hidden.
-  await expect(page.getByTestId('top-toolbar')).toBeHidden();
+  await expect(page.getByTestId('project-tabs')).toBeHidden();
   await expect(page.getByTestId('tree-slot')).toBeHidden();
   await expect(page.getByTestId('inspector')).toBeHidden();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeHidden();
@@ -178,7 +174,7 @@ test('P6.W7#8 Present chrome-hide hides R1/R2/R3/R4/R5/R7 + R8; Esc restores; Ca
   // Esc dismisses the topmost transient (present) — the Esc-ladder regression.
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
-  await expect(page.getByTestId('top-toolbar')).toBeVisible();
+  await expect(page.getByTestId('project-tabs')).toBeVisible();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
 
   // V11: Canvas DOM node identity preserved across the full round-trip.

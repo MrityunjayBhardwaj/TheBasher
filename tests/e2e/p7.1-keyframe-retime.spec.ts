@@ -138,7 +138,7 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
     dag.dispatchAtomic(ops, 'user', 'p7.1-seed');
   });
 
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const canvas = host.locator('canvas');

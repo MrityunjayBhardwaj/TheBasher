@@ -30,8 +30,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useProjectStore } from '../core/project/store';
 import type { ProjectMetadata } from '../core/project/io';
-import { createNewProject, deleteProject, listAllProjectMetadata, switchProject } from './boot';
+import {
+  createNewProject,
+  deleteProject,
+  listAllProjectMetadata,
+  saveCurrent,
+  switchProject,
+} from './boot';
 import { ComfyStatusIndicator } from './ComfyStatusIndicator';
+import { ProjectsMenu } from './ProjectsMenu';
 import { formatTooltip } from './projectTabsHelpers';
 
 const HOVER_TOOLTIP_DELAY_MS = 600;
@@ -58,6 +65,21 @@ export function ProjectTabs(): ReactNode {
   const [busy, setBusy] = useState(false);
   const [tooltip, setTooltip] = useState<TabState | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Save cluster (folded from the deleted Chrome band, v0.6 #4 W1). The
+  // project identity + save live top-left/right, Spline-style; the dirty
+  // dot on the active tab is the live unsaved signal (D-UX-12).
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      await saveCurrent();
+      setSavedAt(Date.now());
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Refresh project list when current project changes (rename / duplicate
   // / new / delete bumps the id or updatedAt).
@@ -167,6 +189,16 @@ export function ProjectTabs(): ReactNode {
       aria-label={ariaLabel}
       className="flex h-8 items-stretch border-b border-border bg-bg-2/80 px-1 font-mono text-[11px] text-fg"
     >
+      {/* Brand + project identity (folded from the deleted Chrome band).
+          Leaves room to the right of the identity for W4's back-to-home
+          affordance (W4 owns it — do not add here). */}
+      <div className="flex shrink-0 items-center gap-2 px-2">
+        <span className="text-accent">basher</span>
+        <span className="text-fg/30">/</span>
+        <span className="max-w-[160px] truncate text-fg/80" data-testid="project-name">
+          {current?.name ?? 'Untitled'}
+        </span>
+      </div>
       <div className="flex flex-1 items-stretch overflow-x-auto">
         {projects.map((p) => {
           const isActive = p.id === current?.id;
@@ -229,7 +261,22 @@ export function ProjectTabs(): ReactNode {
           +
         </button>
       </div>
-      <div className="flex items-center gap-2 pr-2">
+      <div className="flex shrink-0 items-center gap-3 pr-2">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          data-testid="save-button"
+          className="rounded border border-border bg-muted px-2 py-1 text-xs hover:border-accent disabled:opacity-50"
+        >
+          {saving ? 'saving…' : 'save'}
+        </button>
+        {savedAt && (
+          <span data-testid="save-status" className="text-[10px] text-fg/40">
+            saved {new Date(savedAt).toLocaleTimeString()}
+          </span>
+        )}
+        <ProjectsMenu />
         <ComfyStatusIndicator />
       </div>
 

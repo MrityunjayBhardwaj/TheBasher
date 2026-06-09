@@ -174,7 +174,7 @@ test.beforeEach(async ({ page }) => {
       'seed',
     );
   });
-  await page.getByTestId('timeline-drawer-toggle').click();
+  await page.getByTestId('floating-toolbar-timeline').click();
 });
 
 async function readChannelKeyframes(

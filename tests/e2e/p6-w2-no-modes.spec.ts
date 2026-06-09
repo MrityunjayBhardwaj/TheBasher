@@ -38,23 +38,25 @@ test('W2#1 run → Play ▶ toggles the playback transport (no mode)', async ({ 
 
 test('W2#2 animate → the timeline reveal opens the drawer (no mode)', async ({ page }) => {
   const drawer = page.getByTestId('timeline-drawer');
-  // The slot is always mounted; the BODY is closed until revealed.
+  // The drawer BODY is closed by default (the Timebar row stays visible).
   await expect(drawer).toHaveAttribute('data-open', 'false');
-  // The reveal control lives inside the always-mounted slot.
-  await page.getByTestId('timeline-drawer-toggle').click();
+  // The floating pill carries a toolbar-level reveal for the drawer body.
+  await page.getByTestId('floating-toolbar-timeline').click();
   await expect(drawer).toHaveAttribute('data-open', 'true');
 });
 
 test('W2#3 director → Present toggles chrome collapse; Esc exits (no mode)', async ({ page }) => {
-  // Chrome visible before present.
-  await expect(page.getByTestId('top-toolbar')).toBeVisible();
+  // Chrome visible before present (project-tabs is the canonical chrome-band
+  // visibility probe now that the top-toolbar band was consolidated, W1).
+  await expect(page.getByTestId('project-tabs')).toBeVisible();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
 
-  // Present: every chrome band collapses; the over-canvas toolbar self-gates out.
+  // Present: every chrome band collapses; the over-canvas pill self-gates out.
+  // The Present toggle lives on the pill (testid preserved through W1).
   await page.getByTestId('top-toolbar-present').click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
-  await expect(page.getByTestId('top-toolbar')).toBeHidden();
+  await expect(page.getByTestId('project-tabs')).toBeHidden();
   await expect(page.getByTestId('inspector')).toBeHidden();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeHidden();
   // The viewport itself stays.
@@ -63,7 +65,7 @@ test('W2#3 director → Present toggles chrome collapse; Esc exits (no mode)', a
   // Esc dismisses the topmost transient — here present — restoring the chrome.
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
-  await expect(page.getByTestId('top-toolbar')).toBeVisible();
+  await expect(page.getByTestId('project-tabs')).toBeVisible();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
 });
 

@@ -8,16 +8,13 @@
 // the only layout collapse is now `presentMode` (chromeStore, ephemeral) — the
 // fullscreen "present" / director-cut that collapses every chrome region to 0.
 //
-// P6 W2 — TopToolbar replaces TransformToolbar's old slot. New `toolRail`
-// column added to the grid template: 32px expanded, 0 collapsed
-// (chromeStore), 0 in director. This is the first chromeStore consumer.
-//
-// P6 W7 — TransformToolbar deleted; its gizmo + shading + snap controls
-// migrated to FloatingViewportToolbar (R8, viewport overlay). SpaceGroup
-// inlined directly into TopToolbar.tsx so the workspace toggle (3D ↔ UV)
-// remains a top-bar affordance. R8's tool buttons all route through
-// editorStore.setActiveTool — the only writer to gizmoStore.mode outside
-// editorStore's propagation is now gone (V19 honored).
+// v0.6 #4 W1 — the four top bands + two tool surfaces consolidated. Chrome
+// (save/breadcrumb) folded into the ProjectTabs identity bar; TopToolbar +
+// ToolRail folded into the ONE floating pill (FloatingViewportToolbar,
+// mounted at the <main> level so its Space toggle works in UV mode too). The
+// grid is now 4 columns (tree | viewport | inspector | drawer) × 4 rows
+// (projectTabs | menu | content | timeline). All tool buttons route through
+// editorStore.setActiveTool — single writer to gizmoStore.mode (V19 honored).
 //
 // P6 W8 C5 — Skip-link (sr-only until focused) added as first focusable
 // element per D-W8-5. Target: <main id="viewport" tabIndex={-1}> wrapping
@@ -32,17 +29,15 @@
 // §5.3, §5.4, §8.1 (focus order), §8.2 (keyboard-only).
 
 import { AssetDropZone } from './AssetDropZone';
-import { Chrome } from './Chrome';
 import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
+import { FloatingViewportToolbar } from './FloatingViewportToolbar';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { RightDrawer } from './RightDrawer';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
-import { TopToolbar } from './TopToolbar';
-import { ToolRail } from './ToolRail';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
@@ -52,7 +47,6 @@ import { useEditorStore } from './stores/editorStore';
 
 export function Layout() {
   const space = useEditorStore((s) => s.space);
-  const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const presentMode = useChromeStore((s) => s.presentMode);
   const isPresent = presentMode;
@@ -63,42 +57,34 @@ export function Layout() {
   // state carried zero selection info. Same source as Viewport's
   // aria-live span (shared hook, never diverges).
   const viewportSummary = useSelectionSummary();
-  // 5-column grid (P6 W2.5 dropped the dedicated library column; bundled
-  // glTF samples are now reachable from TopToolbar's Assets popover):
-  //   tree  |  toolRail  |  viewport  |  inspector  |  drawer
+  // 4-column grid (v0.6 #4 W1 dropped the dedicated toolRail column — the
+  // four tools consolidated into the ONE floating pill, Spline region ②):
+  //   tree  |  viewport  |  inspector  |  drawer
   // Present collapses everything but viewport.
-  const toolRailWidth = isPresent ? '0' : toolRailCollapsed ? '0' : '32px';
+  //
   // P6 W2.6 — SceneTree default-collapsed. When collapsed the tree column
   // shrinks to a 28px chevron strip (toggle stays visible); expanded
   // returns to the full 260px tree.
   const treeWidth = isPresent ? '0' : leftSidebarCollapsed ? '28px' : '260px';
-  // P6 W10 UIR F-3 — §5.4 literally: the rail "collapses to 0". The grid
-  // column goes to genuine 0 width when collapsed (was 32px — the spec
-  // promise was unmet). The re-expand affordance does NOT live inside the
-  // 0-width column (that would orphan it); ToolRail renders it as an
-  // absolutely-positioned edge tab that escapes the collapsed column via
-  // the slot's `overflow: visible`.
   return (
     <div
       data-testid="layout"
       data-present={isPresent ? 'true' : undefined}
       data-space={space}
-      data-tool-rail-collapsed={toolRailCollapsed ? 'true' : 'false'}
       className="grid h-full w-full bg-bg text-fg"
       style={{
-        gridTemplateColumns: isPresent
-          ? '0 0 1fr 0 0'
-          : `${treeWidth} ${toolRailWidth} 1fr 280px 280px`,
-        // P6 W3 — projectTabs row added at the top (R1 per §5.1). Present
-        // collapses it to 0 alongside the other chrome rows.
-        gridTemplateRows: isPresent ? '0 0 0 0 1fr 0' : '32px auto auto auto 1fr auto',
+        gridTemplateColumns: isPresent ? '0 1fr 0 0' : `${treeWidth} 1fr 280px 280px`,
+        // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
+        // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
+        // floating pill). Two top rows remain: R1 projectTabs + R2 menu. The
+        // timeline row (`auto`) holds the always-visible Timebar (Auto-Key
+        // indicator) + the drawer body when revealed; present collapses it.
+        gridTemplateRows: isPresent ? '0 0 1fr 0' : '32px auto 1fr auto',
         gridTemplateAreas: `
-          "projectTabs projectTabs projectTabs projectTabs projectTabs"
-          "menu menu menu menu menu"
-          "chrome chrome chrome chrome chrome"
-          "toolbar toolbar toolbar toolbar toolbar"
-          "tree toolRail viewport inspector drawer"
-          "timeline timeline timeline timeline timeline"
+          "projectTabs projectTabs projectTabs projectTabs"
+          "menu menu menu menu"
+          "tree viewport inspector drawer"
+          "timeline timeline timeline timeline"
         `,
       }}
     >
@@ -120,26 +106,6 @@ export function Layout() {
       </div>
       <div style={{ gridArea: 'menu', display: isPresent ? 'none' : 'block' }}>
         <MenuBar />
-      </div>
-      <div style={{ gridArea: 'chrome', display: isPresent ? 'none' : 'block' }}>
-        <Chrome />
-      </div>
-      <div style={{ gridArea: 'toolbar', display: isPresent ? 'none' : 'block' }}>
-        <TopToolbar />
-      </div>
-
-      <div
-        style={{
-          gridArea: 'toolRail',
-          display: isPresent ? 'none' : 'block',
-          minHeight: 0,
-          // F-3: collapsed rail is a 0-width column; the re-expand edge
-          // tab must escape it, so the slot must not clip overflow.
-          overflow: 'visible',
-          position: 'relative',
-        }}
-      >
-        <ToolRail />
       </div>
 
       {/* P6 W3 — LeftSidebar (R5) replaces the inline SceneTree + chevron
@@ -208,6 +174,11 @@ export function Layout() {
         >
           <UVEditor />
         </div>
+        {/* v0.6 #4 W1 — the ONE consolidated toolbar (Spline region ②).
+            Mounted at the <main> level (not inside the 3D slot) so its Space
+            toggle stays reachable in UV mode, where view3d-slot is
+            display:none. Self-gates to null in present mode. */}
+        <FloatingViewportToolbar />
       </main>
 
       <div
@@ -230,16 +201,21 @@ export function Layout() {
         <RightDrawer />
       </div>
 
-      {/* Timeline slot is ALWAYS mounted (v0.6 #4 — the `animate` mode that
-          used to gate it is gone). The TimelineDrawer renders just its toggle
-          bar when closed and the full body when `timelineDrawerOpen` (the
-          reveal control lives INSIDE the slot, so the slot must stay reachable).
-          In present mode the slot is hidden by its grid-row height collapsing
-          to 0 (gridTemplateRows last track), not by display:none — so the
-          reveal toggle is always reachable in the normal editor. The subtree
-          stays mounted (V11 Canvas-mounts-once analog: subscriptions + DOM
-          stay; the body collapse is owned by TimelineDrawer). */}
-      <div style={{ gridArea: 'timeline', display: 'block' }} data-testid="timeline-slot">
+      {/* Timeline slot stays ALWAYS mounted/visible (collapsed only in present).
+          We do NOT hide it when the drawer is closed even though the floating
+          pill now carries a reveal: the always-visible Timebar row carries the
+          Auto-Key record indicator (`autokey-dot`/`autokey-toggle`), which is a
+          footgun mitigation DESIGNED to be unmissable + global. Collapsing the
+          slot would hide that indicator and re-open the silent-data-loss footgun
+          it exists to prevent — so the ~39px is load-bearing, not disposable
+          chrome (Chesterton). The pill `floating-toolbar-timeline` reveals the
+          drawer BODY; the always-visible Timebar + its in-row ▾ toggle stay put.
+          (Reclaiming this space would first require relocating the Auto-Key
+          indicator to an always-visible surface — out of W1 scope.) */}
+      <div
+        style={{ gridArea: 'timeline', display: isPresent ? 'none' : 'block' }}
+        data-testid="timeline-slot"
+      >
         <TimelineDrawer />
       </div>
     </div>

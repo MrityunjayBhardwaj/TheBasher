@@ -279,12 +279,21 @@ export function AssetsPopover(): ReactNode {
 
   if (!open) return null;
 
+  // Clamp to the viewport edges (mirrors AddMenu) so an anchor near the
+  // bottom — e.g. the consolidated floating toolbar (v0.6 #4 W1) — opens
+  // the list UPWARD instead of running off-screen. w-56 = 224px wide; the
+  // list height is bounded but variable, so estimate a max for the bottom edge.
+  const W = 224;
+  const H_EST = 360;
+  const cx = Math.max(8, Math.min(x, window.innerWidth - W - 8));
+  const cy = Math.max(8, Math.min(y, window.innerHeight - H_EST - 8));
+
   return (
     <div
       ref={ref}
       data-testid="library-popover"
       className="fixed z-50 w-56 rounded border border-border-strong bg-bg-2/95 p-2 font-mono text-xs text-fg shadow-md backdrop-blur-sm"
-      style={{ left: x, top: y }}
+      style={{ left: cx, top: cy }}
     >
       <header className="mb-1 px-1 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">
         sample assets
