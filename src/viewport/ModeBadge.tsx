@@ -23,6 +23,7 @@
 import type { ReactNode } from 'react';
 import { useModeStore, type Mode } from '../app/stores/modeStore';
 import { FRAMES_PER_SECOND, useTimeStore } from '../app/stores/timeStore';
+import { useViewportStore } from '../app/stores/viewportStore';
 
 /** Pure formatter — given mode + time snapshot, returns the label
  *  string (or null when the badge should be hidden). Exported for the
@@ -76,24 +77,39 @@ export function ModeBadge(): ReactNode {
   const mode = useModeStore((s) => s.mode);
   const frame = useTimeStore((s) => s.frame);
   const durationSeconds = useTimeStore((s) => s.durationSeconds);
+  // #165: "Camera view" indicator while looking through the scene camera
+  // (Blender shows the camera name in the viewport corner in camera view).
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
   const label = formatBadge(mode, frame, durationSeconds, FRAMES_PER_SECOND);
   const ariaLabel = formatBadgeAria(mode, frame, durationSeconds, FRAMES_PER_SECOND);
-  if (label === null) return null;
+  if (label === null) return null; // director mode hides all viewport chrome
 
   return (
-    <div
-      data-testid="mode-badge"
-      data-mode={mode}
-      className="pointer-events-none absolute right-2 top-2 z-10 rounded border border-border-strong bg-bg-2/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-fg-dim backdrop-blur-sm"
-    >
-      {/* aria-live on the inner span (which holds the label text) so SR
-          engines watch the live element for content changes. Wrapping
-          ensures the announcement fires when the label changes (e.g.
-          mode flips edit → animate, or run frame advances). */}
-      <span aria-label={ariaLabel ?? label} aria-live="polite">
-        {label}
-      </span>
-    </div>
+    <>
+      <div
+        data-testid="mode-badge"
+        data-mode={mode}
+        className="pointer-events-none absolute right-2 top-2 z-10 rounded border border-border-strong bg-bg-2/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-fg-dim backdrop-blur-sm"
+      >
+        {/* aria-live on the inner span (which holds the label text) so SR
+            engines watch the live element for content changes. Wrapping
+            ensures the announcement fires when the label changes (e.g.
+            mode flips edit → animate, or run frame advances). */}
+        <span aria-label={ariaLabel ?? label} aria-live="polite">
+          {label}
+        </span>
+      </div>
+      {lookThrough ? (
+        <div
+          data-testid="camera-view-badge"
+          className="pointer-events-none absolute right-2 top-9 z-10 rounded border border-accent/40 bg-bg-2/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-accent backdrop-blur-sm"
+        >
+          <span aria-label="Camera view — press 0 to exit" aria-live="polite">
+            Camera view · 0
+          </span>
+        </div>
+      ) : null}
+    </>
   );
 }

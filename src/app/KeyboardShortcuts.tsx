@@ -50,6 +50,7 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useModeStore, type Mode } from './stores/modeStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
@@ -460,6 +461,12 @@ export function KeyboardShortcuts() {
           return;
         case 'Home':
           frameAll();
+          return;
+        case '0':
+          // #165: toggle "look through active camera" (Blender Numpad 0).
+          // e.key is '0' for both the number row and the numpad, so laptop
+          // users (no numpad) get it too. isTypingTarget already guarded above.
+          useViewportStore.getState().toggleLookThroughCamera();
           return;
         case 'Tab':
           // Toggle 3D Viewport ↔ UV Editor (Blender's Tab idiom). Skip
