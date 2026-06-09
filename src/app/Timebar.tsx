@@ -15,8 +15,9 @@
 // record dot PLUS a tinted header treatment so the mode is impossible to
 // miss regardless of which panel has focus. The toggle is the ONLY writer
 // (it calls autoKeyStore.toggle); the indicator is a pure render of
-// autoKeyStore.enabled — no new state. `record` accent token = UI-SPEC.md:200
-// (#f04a4a), exposed as Tailwind `record` at tailwind.config.ts:32.
+// autoKeyStore.enabled — no new state. `record` accent token = UI-SPEC.md:200,
+// exposed as the Tailwind `record` token (darkened to #cc2222 for the v0.6 #4
+// light palette so the armed border still clears SC 1.4.11 3:1).
 
 import { useAutoKeyStore } from './stores/autoKeyStore';
 import { useTimeStore } from './stores/timeStore';

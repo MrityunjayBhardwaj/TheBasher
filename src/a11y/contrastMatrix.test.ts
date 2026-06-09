@@ -9,14 +9,16 @@
 //    Each row names the SITE (file:line + UI element), the fg token,
 //    the bg STACK (top-to-bottom alpha layers), and the text-size class.
 // 2. Per D-W8-1 (locked 2026-05-15), every bg-stack is composited down
-//    to one opaque RGB against `bg #0a0a0a` — the worst-case fixed
-//    page background. R8 physically sits over the GL canvas (a VARIABLE-
-//    color backdrop); for that surface the #0a0a0a composite is the BEST
-//    case, not the worst. #57 closes that gap:
-//    the dedicated `it()` below recomposites the two over-canvas
-//    surfaces against the worst-case BRIGHT backdrop `#ffffff` and the
-//    p57 e2e empirically pixel-samples them over a real bright scene.
-//    (Observed: fg-dim over #ffffff measures #2d2d2d → 5.47:1 ≥ AA.)
+//    to one opaque RGB against the page background. v0.6 #4 W3 (D-07)
+//    inverted the palette dark→light, so `bg` is now `#ececf2` — the
+//    worst-case fixed page background for chrome over an opaque page
+//    (dark ink on a light surface; a lighter page only raises contrast).
+//    R8 physically sits over the GL canvas (a VARIABLE-color backdrop);
+//    for that surface a LIGHT scene is the BEST case (it lightens the
+//    light overlay) — the WORST case is a DARK scene. #57 closes that gap:
+//    the dedicated `it()` below recomposites the over-canvas surface
+//    against the worst-case DARK backdrop `#000000` and the p57 e2e
+//    empirically pixel-samples it over a real dark scene.
 // 3. Each row's contrast ratio is computed against its composited bg.
 //    AA threshold: 4.5 for 'small' text (regular <18px / bold <14px),
 //    3.0 for 'large' or 'ui'.
@@ -93,21 +95,23 @@ import { PALETTE } from '../timeline/TimelineCanvas';
 // future PR adds a token, the coverage block will surface the missing
 // row before the audit ships.
 
+// v0.6 #4 W3 (D-07): calm LIGHT palette. Mirrors tailwind.config.ts; the
+// F2 drift gate below asserts this table equals the real config exactly.
 const TOKEN: Record<string, RGB> = {
-  bg: parseHex('#0a0a0a'),
-  'bg-1': parseHex('#111111'),
-  'bg-2': parseHex('#161616'),
-  fg: parseHex('#e5e5e5'),
-  'fg-dim': parseHex('#a3a3a3'),
-  'fg-mute': parseHex('#525252'),
-  muted: parseHex('#1a1a1a'),
-  border: parseHex('#262626'),
-  'border-strong': parseHex('#3a3a3a'),
-  accent: parseHex('#5af07a'),
-  'accent-dim': parseHex('#3fa055'),
-  warn: parseHex('#f0b85a'),
-  error: parseHex('#f05a5a'),
-  record: parseHex('#f04a4a'),
+  bg: parseHex('#ececf2'),
+  'bg-1': parseHex('#f3f3f8'),
+  'bg-2': parseHex('#fafafc'),
+  fg: parseHex('#141419'),
+  'fg-dim': parseHex('#54555f'),
+  'fg-mute': parseHex('#9a9ba6'),
+  muted: parseHex('#e6e6ee'),
+  border: parseHex('#d6d6e0'),
+  'border-strong': parseHex('#bcbdc9'),
+  accent: parseHex('#134f27'),
+  'accent-dim': parseHex('#104a24'),
+  warn: parseHex('#664400'),
+  error: parseHex('#c01f2b'),
+  record: parseHex('#cc2222'),
   'ch-x': parseHex('#f06464'),
   'ch-y': parseHex('#64f08c'),
   'ch-z': parseHex('#6496f0'),
@@ -1237,25 +1241,26 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
     }
   });
 
-  // ─── Over-canvas surfaces vs the worst-case BRIGHT backdrop (#57) ────
+  // ─── Over-canvas surfaces vs the worst-case DARK backdrop (#57) ─────
   //
-  // D-W8-1 composites every row against the FIXED page bg `#0a0a0a`. That
-  // is the worst case for chrome over an opaque page — but R8
+  // D-W8-1 composites every row against the FIXED page bg `bg #ececf2`. That
+  // is the worst case for chrome over an opaque LIGHT page — but R8
   // (FloatingViewportToolbar) sits over the GL canvas, whose color varies
-  // per scene. For it, `#0a0a0a` is the BEST case (it can only get brighter
-  // behind the overlay), so the matrix's PASS for that surface was an
-  // INFERENCE, not a worst-case bound (issue #57). (v0.6 #4: ModeBadge, the
-  // other over-canvas surface, was deleted with the operational mode enum.)
+  // per scene. (v0.6 #4: ModeBadge, the other over-canvas surface, was
+  // deleted with the operational mode enum.)
   //
-  // This recomposites the SAME rows against the worst-case displayable
-  // backdrop `#ffffff` (a white HDRI blowout) and asserts they still clear
-  // AA. The `bg-2/90` (and `bg-1` opaque) layers do the masking: even over
-  // pure white, the worst idle glyph holds ≥ 4.5:1. The p57 e2e
-  // (tests/e2e/p57-bright-scene-contrast.spec.ts) corroborates this on
-  // REAL composited pixels over a real bright scene — formula + observation
-  // agree (measured #2d2d2d → 5.47:1 vs formula 5.44:1).
-  it('R8 clears AA over a BRIGHT (#ffffff) canvas, not just #0a0a0a (#57)', () => {
-    const WHITE: RGB = parseHex('#ffffff');
+  // v0.6 #4 W3 (D-07) RE-GROUNDING — the palette inverted dark→light, so the
+  // worst case INVERTED too. R8 now paints DARK ink on a LIGHT translucent
+  // surface (`bg-2/90`). A LIGHT scene behind it can only LIGHTEN the surface
+  // (raising dark-text contrast) — that is the BEST case. The WORST case is a
+  // DARK scene (`#000000` — a black/night HDRI): the ~10% that bleeds through
+  // the 90%-opaque overlay DARKENS the light surface, shrinking the gap to the
+  // dark glyph. So this recomposites the SAME rows against `#000000` and
+  // asserts they still clear AA. The p57 e2e
+  // (tests/e2e/p57-bright-scene-contrast.spec.ts) corroborates this on REAL
+  // composited pixels over a real DARK scene — formula + observation agree.
+  it('R8 clears AA over a DARK (#000000) canvas, not just bg (#57)', () => {
+    const BLACK: RGB = parseHex('#000000');
     const overCanvas = ROWS.filter((r) => r.site.startsWith('R8 '));
     // Sanity: the filter must actually match the surfaces it protects (a
     // future rename must not make this gate vacuous). v0.6 #4: ModeBadge
@@ -1264,25 +1269,26 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
 
     const failures: string[] = [];
     for (const row of overCanvas) {
-      // Recomposite the bg-stack onto WHITE instead of PAGE_BG. Opaque
-      // layers (bg-1, bg) absorb white entirely; only the bottom-most
-      // translucent layer lets it bleed — exactly the real physics.
-      const bgWhite = compositeStack(row.bgStack.map(token), WHITE);
-      const fgWhite = compositeFg(row.fg, bgWhite);
-      const ratio = contrastRatio(fgWhite, bgWhite);
+      // Recomposite the bg-stack onto BLACK instead of PAGE_BG. Opaque
+      // layers (bg-1, bg) absorb black entirely; only the bottom-most
+      // translucent layer lets it bleed — exactly the real physics. On the
+      // light palette this is the worst case (darkest the surface can get).
+      const bgBlack = compositeStack(row.bgStack.map(token), BLACK);
+      const fgBlack = compositeFg(row.fg, bgBlack);
+      const ratio = contrastRatio(fgBlack, bgBlack);
       const required = aaThreshold(row.textSize);
       if (ratio < required) {
         failures.push(
-          `  ${row.site} | fg=${row.fg} | over #ffffff → bg=${formatHex(bgWhite)} | ` +
+          `  ${row.site} | fg=${row.fg} | over #000000 → bg=${formatHex(bgBlack)} | ` +
             `${ratio.toFixed(2)}:1 < ${required}:1 (${row.textSize})`,
         );
       }
     }
     if (failures.length > 0) {
       expect.fail(
-        `#57: ${failures.length} over-canvas surface(s) fall below AA against a BRIGHT backdrop.\n` +
-          `These sit over the GL canvas; a bright scene washes them out. Fix per D-W8-1 reopen ` +
-          `(opaque bg, raise the /N alpha, or lift the fg token).\n` +
+        `#57: ${failures.length} over-canvas surface(s) fall below AA against a DARK backdrop.\n` +
+          `These sit over the GL canvas; a dark/night scene darkens them. Fix per D-W8-1 reopen ` +
+          `(raise the surface /N alpha so less scene bleeds through, or darken the fg token).\n` +
           failures.join('\n'),
       );
     }
@@ -1722,8 +1728,9 @@ describe('contrast matrix — token source drift gates', () => {
       `<body> must carry the \`bg-bg\` class so the page background equals PAGE_BG. Found: ${bodyTag}`,
     ).toBe(true);
     // And `bg-bg` must resolve to the same RGB PAGE_BG composites onto.
+    // v0.6 #4 W3 (D-07): the page base is now the calm-light `bg` token.
     expect(formatHex(TOKEN.bg)).toBe(formatHex(PAGE_BG));
-    expect(formatHex(PAGE_BG)).toBe('#0a0a0a');
+    expect(formatHex(PAGE_BG)).toBe('#ececf2');
   });
 
   // #58 F6 — the issue asks to verify the ContextMenu surface is

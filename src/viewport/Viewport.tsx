@@ -25,6 +25,7 @@ import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
 import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
+import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
 
 function EditorOrbit() {
   // Disable orbit while a TransformControls handle is being dragged
@@ -127,7 +128,7 @@ export function Viewport() {
         }}
       >
         <Suspense fallback={null}>
-          <color attach="background" args={['#0a0a0a']} />
+          <color attach="background" args={[VIEWPORT_BG]} />
           {/* Subtle floor grid — gives the world weight so the user can
               orient drags and place objects relative to a stable reference.
               cellSize/sectionSize follow Blender's "grid + sub-grid" idiom. */}
@@ -136,10 +137,10 @@ export function Viewport() {
               args={[40, 40]}
               cellSize={1}
               cellThickness={0.6}
-              cellColor="#2a2a2a"
+              cellColor={VIEWPORT_GRID_CELL}
               sectionSize={5}
               sectionThickness={1.2}
-              sectionColor="#3a3a4a"
+              sectionColor={VIEWPORT_GRID_SECTION}
               fadeDistance={40}
               fadeStrength={1.5}
               infiniteGrid={false}

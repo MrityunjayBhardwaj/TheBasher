@@ -3,7 +3,10 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  /* v0.6 #4 W3 (D-07): calm LIGHT chrome. color-scheme drives native form
+     controls / scrollbars to their light variants so they match the
+     light token palette. */
+  color-scheme: light;
   font-family: 'JetBrains Mono', 'Geist Mono', ui-monospace, monospace;
 }
 

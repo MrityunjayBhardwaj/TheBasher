@@ -1,46 +1,51 @@
-// P57 — bright-scene contrast gate (Lokayata proof for D-W8-1).
+// P57 — over-canvas contrast gate (Lokayata proof for D-W8-1).
 //
 // THE LIE THIS TEST KILLS
 // =======================
 // The contrast-audit matrix (src/a11y/contrastMatrix.test.ts) composites
-// every chrome surface against the worst-case FIXED page bg `#0a0a0a`
-// (D-W8-1). R8 (FloatingViewportToolbar) is the surface that sits over
-// the GL canvas — a VARIABLE-color backdrop (v0.6 #4: ModeBadge, the
-// other over-canvas surface, was deleted with the mode enum). For R8 the
-// matrix's PASS was an INFERENCE: it assumed the backdrop is `#0a0a0a`
-// (true for the default dark scene, FALSE for a bright HDRI / matcap).
-// Issue #57 demanded the gap be closed by OBSERVATION on a real bright
-// scene, not more math.
+// every chrome surface against the worst-case FIXED page bg (D-W8-1). R8
+// (FloatingViewportToolbar) is the surface that sits over the GL canvas — a
+// VARIABLE-color backdrop (v0.6 #4: ModeBadge, the other over-canvas surface,
+// was deleted with the mode enum). For R8 the matrix's PASS is an INFERENCE:
+// it assumes a fixed backdrop. Issue #57 demanded the gap be closed by
+// OBSERVATION on a real worst-case scene, not more math.
+//
+// v0.6 #4 W3 (D-07) RE-GROUNDING — the chrome palette inverted dark→light.
+// R8 now paints DARK ink on a LIGHT translucent surface (`bg-2/90`). So the
+// worst case INVERTED: a BRIGHT scene can only LIGHTEN the surface (raising
+// dark-text contrast = BEST case); a DARK/night scene (#000000) bleeds ~10%
+// through the 90%-opaque overlay and DARKENS the light surface, shrinking the
+// gap to the dark glyph (WORST case). This test drives the scene DARK and
+// observes that R8 still clears AA on real composited pixels.
 //
 // WHAT THIS TEST OBSERVES
 // =======================
-// Drives the REAL scene background bright via the DEV-only seam
+// Drives the REAL scene background via the DEV-only seam
 // `window.__basher_setSceneBackground` (src/viewport/SceneBgTestSeam.tsx),
-// then screenshots the actually-composited R8 overlay and pixel-samples
-// it. The decomposition that makes this rigorous:
+// then screenshots the actually-composited R8 overlay and pixel-samples it:
 //
 //   - The SURFACE (`bg-2/90` composited over the GL canvas) is the ONLY
-//     scene-dependent value — the exact thing #57 doubts. We MEASURE it
-//     from real pixels (the modal color of the overlay box; the bg fill
-//     dominates the pixel population in a sparse-text toolbar).
-//   - The GLYPH foreground (`text-fg-dim` etc.) is fully OPAQUE, so it
-//     renders at its token color regardless of scene. We read it exactly
-//     via getComputedStyle on a real idle button — observed, not assumed.
+//     scene-dependent value — the exact thing #57 doubts. We MEASURE it from
+//     real pixels (the modal color of the overlay box; the bg fill dominates
+//     a sparse-text toolbar).
+//   - The GLYPH foreground (`text-fg-dim` etc.) is fully OPAQUE, so it renders
+//     at its token color regardless of scene. We read it exactly via
+//     getComputedStyle on a real idle button — observed, not assumed.
 //   - Contrast = contrastRatio(observedFg, measuredSurface), via the SAME
 //     wcag.ts helper the matrix uses (zero formula drift).
 //
 // FALSIFICATION (guards against a vacuous pass)
 // =============================================
-//   - The measured surface under a WHITE scene must be meaningfully
-//     LIGHTER than under the DARK scene — proves the seam actually drove
-//     the canvas bright and we observed the variable bg (not a no-op that
-//     would make every assertion pass trivially).
-//   - The overlay box must contain real light glyph pixels at ~the fg
-//     luminance — proves the text paints at full strength over the bright
-//     surface, i.e. is not blended away.
+//   - The measured surface under a DARK scene must be meaningfully DARKER
+//     than under a BRIGHT scene — proves the seam actually drove the canvas
+//     dark and we observed the variable bg (not a no-op that would make every
+//     assertion pass trivially).
+//   - The overlay box must contain real DARK glyph pixels well below the
+//     surface luminance — proves the dark text paints at full strength over
+//     the light surface, i.e. is not washed away.
 //
 // REF: src/viewport/SceneBgTestSeam.tsx; src/a11y/contrastMatrix.test.ts
-//      (D-W8-1 worst-case-white rows); docs/UI-SPEC.md §8.4.1; issue #57.
+//      (D-W8-1 worst-case-dark rows); docs/UI-SPEC.md §8.4.1; issue #57.
 
 import { contrastRatio, type RGB } from '../../src/a11y/wcag';
 import { expect, test } from './_fixtures';
@@ -102,8 +107,9 @@ async function sampleOverlay(
     // SURFACE = modal color (the bg fill dominates a sparse-text toolbar).
     // Quantize to 5-bit buckets, find the most-populous, average its members.
     const buckets = new Map<number, { r: number; g: number; b: number; n: number }>();
-    // GLYPH = brightest GRAYISH bucket with a real population (excludes the
-    // green accent text of the active tool + AA-edge singletons).
+    // GLYPH = on the LIGHT palette the ink is DARK, so the glyph core is the
+    // DARKEST grayish bucket with a real population (excludes the green accent
+    // text of the active tool + AA-edge singletons).
     const grayLum: { l: number; r: number; g: number; b: number }[] = [];
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
@@ -123,10 +129,11 @@ async function sampleOverlay(
     for (const e of buckets.values()) if (e.n > top.n) top = e;
     const surface = { r: top.r / top.n, g: top.g / top.n, b: top.b / top.n };
 
-    // Brightest grayish pixel at the ~99th percentile (the glyph core,
-    // robust to single AA outliers).
+    // Darkest grayish pixel at the ~1st percentile (the glyph core, robust to
+    // single AA outliers). On the light palette the glyph is darker than the
+    // surface, so we read the bottom of the gray distribution.
     grayLum.sort((a, b) => a.l - b.l);
-    const pick = grayLum[Math.floor(grayLum.length * 0.99)] ?? grayLum[grayLum.length - 1];
+    const pick = grayLum[Math.floor(grayLum.length * 0.01)] ?? grayLum[0];
 
     return {
       surface,
@@ -150,7 +157,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible();
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
   // The DEV-only seam must be installed (proves we're in a dev build where
-  // the test can drive the scene bright).
+  // the test can drive the scene dark).
   await expect
     .poll(() =>
       page.evaluate(() => typeof (window as unknown as SeamWindow).__basher_setSceneBackground),
@@ -161,40 +168,40 @@ test.beforeEach(async ({ page }) => {
 // AA small-text threshold. R8 idle glyphs are <18px.
 const AA = 4.5;
 
-test('P57#1 R8 idle glyphs hold WCAG-AA over a bright GL canvas (real pixels)', async ({
-  page,
-}) => {
+test('P57#1 R8 idle glyphs hold WCAG-AA over a DARK GL canvas (real pixels)', async ({ page }) => {
   // Observed fg: an IDLE tool button (Move) renders text-fg-dim — the exact
   // worst-case glyph #57 names. (Select is active by default → accent;
-  // Move/Rotate/Scale are idle → fg-dim.)
+  // Move/Rotate/Scale are idle → fg-dim.) On the light palette fg-dim is a
+  // DARK gray.
   const fg = await computedColor(page, 'floating-toolbar-move');
 
-  // Baseline (dark scene) — what the matrix already audits.
-  await setSceneBg(page, '#0a0a0a');
-  const dark = await sampleOverlay(page, 'floating-viewport-toolbar');
-
-  // Worst case: a full-white blowout behind the overlay.
+  // Best case (bright scene) — the surface only lightens, raising contrast.
   await setSceneBg(page, '#ffffff');
   const bright = await sampleOverlay(page, 'floating-viewport-toolbar');
 
-  // FALSIFICATION: the white scene must measurably lighten the surface, or
-  // the seam did nothing and every contrast assertion below is vacuous.
+  // Worst case: a full-black/night scene behind the overlay darkens the
+  // light surface through the ~10% bleed.
+  await setSceneBg(page, '#000000');
+  const dark = await sampleOverlay(page, 'floating-viewport-toolbar');
+
+  // FALSIFICATION: the dark scene must measurably DARKEN the surface vs the
+  // bright scene, or the seam did nothing and every contrast assertion below
+  // is vacuous. (The 90%-opaque overlay only lets ~10% bleed, so the swing is
+  // modest — assert a clear, non-vacuous ≥5% drop.)
   expect(
     bright.surfaceLum,
-    `white scene must lighten R8 surface vs dark (dark=${dark.surfaceLum.toFixed(4)} bright=${bright.surfaceLum.toFixed(4)}) — else the seam is a no-op and the test is vacuous`,
-  ).toBeGreaterThan(dark.surfaceLum * 1.3);
+    `bright scene must lighten R8 surface vs dark (dark=${dark.surfaceLum.toFixed(4)} bright=${bright.surfaceLum.toFixed(4)}) — else the seam is a no-op and the test is vacuous`,
+  ).toBeGreaterThan(dark.surfaceLum * 1.05);
 
-  // FALSIFICATION: real light glyphs must paint over the bright surface
-  // (not blended away) — glyph luminance well above the surface.
-  expect(bright.glyphLum).toBeGreaterThan(bright.surfaceLum * 3);
+  // FALSIFICATION: real DARK glyphs must paint over the light surface (not
+  // washed away) — glyph luminance well BELOW the surface.
+  expect(dark.glyphLum).toBeLessThan(dark.surfaceLum / 3);
 
-  // THE PROOF: observed-fg vs measured-bright-surface clears AA.
-  // Observed 2026-06-02: surface measured #2d2d2d over #ffffff → 5.47:1,
-  // matching the wcag.ts formula prediction (5.44:1) to within AA noise.
-  const ratio = contrastRatio(fg, bright.surface);
+  // THE PROOF: observed-fg vs measured-dark-surface clears AA.
+  const ratio = contrastRatio(fg, dark.surface);
   expect(
     ratio,
-    `R8 fg-dim idle glyph over WHITE scene = ${ratio.toFixed(2)}:1 (surface measured ${JSON.stringify(bright.surface)})`,
+    `R8 fg-dim idle glyph over BLACK scene = ${ratio.toFixed(2)}:1 (surface measured ${JSON.stringify(dark.surface)})`,
   ).toBeGreaterThanOrEqual(AA);
 });
 

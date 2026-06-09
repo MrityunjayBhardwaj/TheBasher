@@ -37,11 +37,13 @@ import {
 import { getStorage } from './boot';
 import { useImportRefreshStore } from './stores/importRefreshStore';
 
-/** OPFS swatch for user-imported entries — the `warn` token (#f0b85a, amber).
+/** OPFS swatch for user-imported entries — a standalone amber chip (#f0b85a).
  * Distinct from every bundled-asset swatch (cube #5af07a green, sphere #7aaaff
  * blue, cone #ff8a5a orange, skinned-bar #b07aff purple) AND from the `accent`
- * green so user-imported assets read as "yours" at-a-glance. Lives in the
- * existing palette (`tailwind.config.ts:26`) — no new token introduced. */
+ * green so user-imported assets read as "yours" at-a-glance. These are asset-
+ * identity DATA colors (like the catalog swatches), not chrome tokens — the
+ * `warn` token was darkened for the v0.6 #4 light palette; this bright amber
+ * swatch is independent of it (it is a small color chip, not a text/border). */
 const MY_IMPORT_SWATCH = '#f0b85a';
 
 interface AssetsPopoverState {
