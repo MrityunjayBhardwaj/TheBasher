@@ -67,6 +67,7 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
+import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveTransformParam } from './resolveTransformParam';
 import {
@@ -736,6 +737,14 @@ export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
 
+  // #173 — Inspector (R7) per-panel collapse. Mirrors LeftSidebar's chevron
+  // pattern (the flag/persistence already lived in chromeStore since P6; this
+  // wires it). Collapsed → a 28px chevron-only strip; the Layout column shrinks
+  // to match. Chevrons point the opposite way from the left sidebar because the
+  // inspector is right-docked: `‹` expands leftward, `›` collapses rightward.
+  const collapsed = useChromeStore((s) => s.inspectorCollapsed);
+  const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
+
   // Resolve the node's declared inspectorSections via the registry
   // (the source of truth — V14 alignment). Empty array → raw fallback.
   const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
@@ -761,15 +770,55 @@ export function NPanel() {
 
   const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
 
+  if (collapsed) {
+    // Collapsed strip: 28px wide, chevron-only (mirrors LeftSidebar's collapsed
+    // aside). Clicking re-expands to the full inspector. The Layout column is
+    // already 28px, so this fits without overflow.
+    return (
+      <aside
+        data-testid="inspector"
+        data-collapsed="true"
+        role="region"
+        aria-label={`${inspectorLabel} (collapsed)`}
+        className="flex h-full w-full flex-col border-l border-border bg-muted/40"
+      >
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          data-testid="inspector-expand-toggle"
+          title="Expand inspector"
+          aria-label="Expand inspector"
+          className="flex h-8 w-7 items-center justify-center self-end rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ‹
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside
       data-testid="inspector"
+      data-collapsed="false"
       role="region"
       aria-label={inspectorLabel}
       className="flex h-full flex-col overflow-y-auto border-l border-border bg-muted/40 text-xs"
     >
-      <header className="border-b border-border px-3 py-2 font-mono uppercase tracking-wide text-fg/70">
-        inspector
+      {/* §3.2: the collapse button sits on the Inspector's INSIDE edge — the
+          left (viewport-facing) edge — glyph `›` (collapses rightward), mirroring
+          LeftSidebar's toggle on ITS inside (right) edge. */}
+      <header className="flex items-center gap-1 border-b border-border pl-1 pr-3 py-2 font-mono uppercase tracking-wide text-fg/70">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          data-testid="inspector-collapse-toggle"
+          title="Collapse inspector"
+          aria-label="Collapse inspector"
+          className="flex h-5 w-5 items-center justify-center rounded normal-case text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ›
+        </button>
+        <span className="flex-1">inspector</span>
       </header>
       {!node ? (
         <div className="p-4 text-fg/40">select a node</div>

@@ -55,6 +55,7 @@ export function Layout() {
   const space = useEditorStore((s) => s.space);
   const toolRailCollapsed = useChromeStore((s) => s.toolRailCollapsed);
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
+  const inspectorCollapsed = useChromeStore((s) => s.inspectorCollapsed);
   const isDirector = mode === 'director';
   // P6 W10 UIR F-4 — §8.3 R6 = "3D viewport — {selection summary}",
   // debounced 200ms. The <main> below IS the §8.3 R6 region (role=main,
@@ -72,6 +73,12 @@ export function Layout() {
   // shrinks to a 28px chevron strip (toggle stays visible); expanded
   // returns to the full 260px tree.
   const treeWidth = isDirector ? '0' : leftSidebarCollapsed ? '28px' : '260px';
+  // #173 — Inspector (R7) per-panel collapse. chromeStore.inspectorCollapsed
+  // has existed since P6 (D-UX-5 / §3.2 promised it) but was wired to nothing;
+  // this is the consumer. Collapsed → 28px chevron strip (mirrors the tree
+  // column); NPanel owns the chevron toggle + the collapsed expand strip.
+  // Director still forces 0 (chrome hidden regardless of the flag).
+  const inspectorWidth = isDirector ? '0' : inspectorCollapsed ? '28px' : '280px';
   // P6 W10 UIR F-3 — §5.4 literally: the rail "collapses to 0". The grid
   // column goes to genuine 0 width when collapsed (was 32px — the spec
   // promise was unmet). The re-expand affordance does NOT live inside the
@@ -88,7 +95,7 @@ export function Layout() {
       style={{
         gridTemplateColumns: isDirector
           ? '0 0 1fr 0 0'
-          : `${treeWidth} ${toolRailWidth} 1fr 280px 280px`,
+          : `${treeWidth} ${toolRailWidth} 1fr ${inspectorWidth} 280px`,
         // P6 W3 — projectTabs row added at the top (R1 per §5.1). Director
         // mode collapses it to 0 alongside the other chrome rows.
         gridTemplateRows: isDirector ? '0 0 0 0 1fr 0' : '32px auto auto auto 1fr auto',
