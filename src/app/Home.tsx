@@ -57,7 +57,11 @@ function ProjectCard({ meta, isExample, busy, onOpen, onDelete }: CardProps): Re
     <div
       data-testid={isExample ? 'home-example-card' : 'home-project-card'}
       data-project-id={meta.id}
-      className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-bg-2 text-left shadow-sm"
+      // Glass card on the lit dark stage (Wave A ambient glow shows through the
+      // translucent surface) — elevated + rounded to match the Wave D toolbar
+      // language (shadow-xl/rounded-2xl), with a quiet hover lift. Reuses the
+      // editor's audited panel surface bg-2/90 (R8 contrast ROW) so no new token.
+      className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-bg-2/90 text-left shadow-lg shadow-black/30 backdrop-blur-md transition-colors hover:border-border-strong"
     >
       <button
         type="button"
@@ -67,19 +71,20 @@ function ProjectCard({ meta, isExample, busy, onOpen, onDelete }: CardProps): Re
         data-testid={`home-open-${meta.id}`}
         className="flex flex-1 flex-col focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
       >
-        {/* Thumbnail placeholder (D-W4-THUMB — glyph/gradient now; live
-            render-to-thumbnail deferred). Examples get an accent-tinted wash. */}
+        {/* Thumbnail placeholder (D-W4-THUMB — glyph now; live
+            render-to-thumbnail deferred). Examples get an accent-tinted wash,
+            user projects a neutral muted fill — both audited decorative tokens. */}
         <div
           aria-hidden
-          className={`flex h-24 items-center justify-center text-2xl font-semibold ${
+          className={`flex h-32 items-center justify-center text-3xl font-semibold ${
             isExample ? 'bg-accent/15 text-accent' : 'bg-muted text-fg/40'
           }`}
         >
           {glyph}
         </div>
-        <div className="flex flex-col gap-0.5 px-3 py-2">
-          <span className="truncate text-xs font-medium text-fg">{meta.name}</span>
-          <span className="text-[10px] text-fg-dim">
+        <div className="flex flex-col gap-0.5 px-3.5 py-2.5">
+          <span className="truncate text-sm font-medium text-fg">{meta.name}</span>
+          <span className="text-[11px] text-fg-dim">
             {meta.nodeCount} {meta.nodeCount === 1 ? 'node' : 'nodes'} · edited{' '}
             {relativeTime(meta.updatedAt)}
           </span>
@@ -94,7 +99,7 @@ function ProjectCard({ meta, isExample, busy, onOpen, onDelete }: CardProps): Re
           onClick={() => onDelete(meta.id, meta.name)}
           aria-label={`Delete project ${meta.name}`}
           data-testid={`home-delete-${meta.id}`}
-          className="absolute right-1.5 top-1.5 rounded border border-border bg-bg-2/90 px-1.5 text-fg-mute opacity-0 hover:text-error focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover:opacity-100 disabled:opacity-50"
+          className="absolute right-2 top-2 rounded-md border border-border bg-bg-2/90 px-1.5 text-fg-mute opacity-0 backdrop-blur hover:text-error focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover:opacity-100 disabled:opacity-50"
         >
           ×
         </button>
@@ -163,27 +168,34 @@ export function Home(): ReactNode {
   const mine = projects.filter((p) => !EXAMPLE_IDS.has(p.id));
 
   return (
-    <div data-testid="home-view" className="h-full w-full overflow-y-auto bg-bg font-mono text-fg">
-      <div className="mx-auto flex max-w-5xl flex-col gap-8 px-8 py-10">
-        <header className="flex items-baseline gap-3">
-          <span className="text-lg font-semibold text-accent">basher</span>
-          <span className="text-xs text-fg-dim">director-first 3D</span>
-        </header>
+    // Root is TRANSPARENT (no opaque bg) so the body's fixed ambient glow
+    // (index.css — the Wave A signature blooms) reads through; the home sits on
+    // the SAME lit dark stage as the editor. Sans (not the old dev-tool mono) to
+    // match the Wave A shell. V34: one glow, reused — not a parallel one.
+    <div data-testid="home-view" className="h-full w-full overflow-y-auto text-fg">
+      {/* Quiet top bar — logo + tagline, a thin hairline underline that recedes
+          (Spline region ① "thin, quiet, recedes"). Reuses the editor's audited
+          bg/95 panel surface (R5 ROW). */}
+      <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-bg/95 px-8 py-4 backdrop-blur-md">
+        <span className="text-base font-semibold tracking-tight text-fg">basher</span>
+        <span className="text-xs text-fg-dim">director-first 3D</span>
+      </header>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-fg-dim">Your projects</h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4">
+      <div className="mx-auto flex max-w-6xl flex-col gap-10 px-8 py-12">
+        <section className="flex flex-col gap-4">
+          <h2 className="text-sm font-medium text-fg">Your projects</h2>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-5">
             <button
               type="button"
               disabled={busy}
               onClick={onNew}
               data-testid="home-new-project"
-              className="flex h-[152px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border-strong bg-bg-1 text-fg-dim hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
+              className="flex h-[176px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong bg-bg-1/40 text-fg-dim backdrop-blur-md transition-colors hover:border-accent hover:bg-bg-1 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
             >
               <span aria-hidden className="text-2xl">
                 +
               </span>
-              <span className="text-xs">New project</span>
+              <span className="text-sm">New project</span>
             </button>
             {mine.map((p) => (
               <ProjectCard
@@ -199,9 +211,9 @@ export function Home(): ReactNode {
         </section>
 
         {examples.length > 0 ? (
-          <section className="flex flex-col gap-3">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-fg-dim">Examples</h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4">
+          <section className="flex flex-col gap-4">
+            <h2 className="text-sm font-medium text-fg">Examples</h2>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-5">
               {examples.map((p) => (
                 <ProjectCard
                   key={p.id}
