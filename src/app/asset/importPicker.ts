@@ -21,10 +21,46 @@
 // hetvabhasa B12 (shared ingest chokepoint).
 
 import { inputFilesToFiles } from './ingestReaders';
-import { importGltfFromOpfs, ingestGltfFolder, type IngestFile } from './importGltf';
+import {
+  importGltfFromOpfs,
+  ingestGltfFolder,
+  locateEntryFile,
+  type IngestFile,
+} from './importGltf';
+import { missingGltfSiblings } from './opfsGltfResolver';
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
 import { useAssetErrorStore, formatAssetError } from '../stores/assetErrorStore';
+
+/** The reason a lone FILE pick can't be fulfilled — its missing siblings. */
+export interface GltfFolderNeed {
+  /** Basename of the entry `.gltf` (e.g. `scene.gltf`). */
+  readonly entryName: string;
+  /** Decoded sibling URIs missing from the picked set (`.bin`, textures). */
+  readonly missing: string[];
+}
+
+/**
+ * Decide whether a picked file set is a multi-file `.gltf` that a lone FILE
+ * pick cannot fulfill: its entry is a `.gltf` referencing external siblings
+ * (`.bin`/textures) that are NOT all present in the set. Returns the entry
+ * name + the missing sibling URIs, or null when the set is self-fulfilling —
+ * a `.glb`, a flat `.gltf` selected together with its siblings, or no glTF.
+ *
+ * Pure — this is the auto-escalation trigger, unit-tested independently of the
+ * DOM picker wiring. Reuses `locateEntryFile` + `missingGltfSiblings` (the same
+ * shallowest-entry + sibling-resolution logic the importer uses), so the
+ * decision can never diverge from what `ingestGltfFolder` would later check.
+ */
+export function gltfImportNeedsFolder(files: readonly IngestFile[]): GltfFolderNeed | null {
+  const entry = locateEntryFile(files);
+  if (!entry || !entry.relativePath.toLowerCase().endsWith('.gltf')) return null;
+  const present = new Set(files.map((f) => f.relativePath));
+  const missing = missingGltfSiblings(entry.bytes, entry.relativePath, present);
+  if (missing.length === 0) return null;
+  const entryName = entry.relativePath.split('/').pop() ?? entry.relativePath;
+  return { entryName, missing };
+}
 
 /** True iff the path is a glTF container (the folder-import trigger). */
 function isGltfPath(path: string): boolean {
@@ -87,20 +123,30 @@ function makeHiddenInput(accept: string, directory: boolean): HTMLInputElement {
 }
 
 /**
- * Open the OS DIRECTORY picker and ingest the selection as one model.
+ * Open the OS DIRECTORY picker and ingest the selection as one model. The
+ * shared implementation behind `openImportPicker` AND the file-picker auto-
+ * escalation (`openGltfFilePicker`). Directory pickers ship natively in
+ * Chromium/Firefox/Safari (no `showDirectoryPicker` fallback needed) and are
+ * the only affordance that captures a multi-file glTF's `.bin`/texture siblings
+ * (#82); a lone `.bvh`/`.fbx` placed in a folder routes through the single-file
+ * path.
  *
- * Directory pickers ship in Chromium/Firefox/Safari natively, so no
- * `showDirectoryPicker` fallback is needed. The directory picker is kept (do
- * NOT regress multi-file glTF #82, whose `.bin`/textures siblings live
- * alongside the `.gltf` in a folder); a lone `.bvh`/`.fbx` placed in a folder
- * routes through the single-file path.
+ * `opts.onCancel` fires when the user dismisses the dialog WITHOUT choosing
+ * (the input's `cancel` event — Chrome 113+/Firefox/Safari 16.4+, plus the
+ * empty-selection guard). The escalation path uses it to fall back to an
+ * actionable banner so a dismissed escalation is never a silent no-op (V38).
  */
-export function openImportPicker(): void {
+function openDirectoryImport(opts?: { onCancel?: () => void }): void {
   const input = makeHiddenInput('.gltf,.glb,.bvh,.fbx', true);
+  let handled = false;
   input.onchange = () => {
+    handled = true;
     void (async () => {
       try {
-        if (!input.files || input.files.length === 0) return;
+        if (!input.files || input.files.length === 0) {
+          opts?.onCancel?.();
+          return;
+        }
         const files = await inputFilesToFiles(input.files);
         await ingestOneModel(files);
       } catch (err) {
@@ -115,7 +161,19 @@ export function openImportPicker(): void {
       }
     })();
   };
+  // `cancel` fires when the dialog is dismissed (no `change` event is emitted
+  // on cancel). Without this, a dismissed escalation would leave the user with
+  // nothing — the silent no-op H88/V38 exist to prevent.
+  input.addEventListener('cancel', () => {
+    if (handled) return;
+    opts?.onCancel?.();
+    input.remove();
+  });
   input.click();
+}
+
+export function openImportPicker(): void {
+  openDirectoryImport();
 }
 
 /**
@@ -127,9 +185,11 @@ export function openImportPicker(): void {
  * state, so monotonic ids never collide).
  *
  * A `.gltf` references external `.bin`/texture siblings; a plain file picker
- * can't capture siblings nested in sub-folders, so for those use the directory
- * `openImportPicker` (or drag-drop the folder). A self-contained `.glb` or a
- * flat `.gltf` selected together with its siblings works here.
+ * can't capture siblings nested in sub-folders. Rather than dead-end, picking a
+ * multi-file `.gltf` here AUTO-ESCALATES to the directory picker
+ * (`gltfImportNeedsFolder` → `openDirectoryImport`) so the siblings come along —
+ * the user never has to know which menu item to reach for. A self-contained
+ * `.glb` or a flat `.gltf` selected together with its siblings imports directly.
  */
 export function openGltfFilePicker(): void {
   const input = makeHiddenInput('.gltf,.glb', false);
@@ -138,6 +198,30 @@ export function openGltfFilePicker(): void {
       try {
         if (!input.files || input.files.length === 0) return;
         const files = await inputFilesToFiles(input.files);
+
+        // Auto-escalate (#H88): a multi-file `.gltf` references sibling
+        // `.bin`/textures by relative URI, which a lone FILE pick can't capture
+        // (browser security — a file input never exposes siblings). Rather than
+        // dead-end with an error, re-open as the DIRECTORY picker WITHIN this
+        // same user-activation window so the user grants the whole folder and
+        // the siblings come along. On dismiss, fall back to actionable guidance
+        // (never a silent no-op — V38). Self-contained `.glb` / flat `.gltf`
+        // picked with its siblings return null here and import normally.
+        const need = gltfImportNeedsFolder(files);
+        if (need) {
+          openDirectoryImport({
+            onCancel: () => {
+              useAssetErrorStore
+                .getState()
+                .report(
+                  need.entryName,
+                  `import failed: ${need.entryName} needs ${need.missing.join(', ')} — use File ▸ Import Folder…, or drag the whole folder in`,
+                );
+            },
+          });
+          return;
+        }
+
         const glbs = files.filter((f) => f.relativePath.toLowerCase().endsWith('.glb'));
         // Several self-contained .glb with no .gltf in the set → one model each.
         if (glbs.length > 1 && !files.some((f) => f.relativePath.toLowerCase().endsWith('.gltf'))) {

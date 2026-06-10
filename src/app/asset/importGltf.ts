@@ -79,7 +79,7 @@ export type { IngestFile };
  *
  * Returns null when no .gltf / .glb is present.
  */
-function locateEntryFile(files: readonly IngestFile[]): IngestFile | null {
+export function locateEntryFile(files: readonly IngestFile[]): IngestFile | null {
   let best: IngestFile | null = null;
   let bestDepth = Number.POSITIVE_INFINITY;
   for (const f of files) {
