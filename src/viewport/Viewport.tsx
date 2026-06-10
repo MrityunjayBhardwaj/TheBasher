@@ -141,7 +141,7 @@ export function Viewport() {
         <div
           data-testid="viewport-empty-hint"
           aria-hidden
-          className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-md border border-border bg-bg-2/80 px-3 py-1.5 font-mono text-[11px] text-fg-dim shadow-sm backdrop-blur-sm"
+          className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-border bg-bg-2/80 px-3 py-1.5 font-mono text-[11px] text-fg-dim shadow-sm backdrop-blur-sm"
         >
           Drag to orbit · scroll to zoom · <span className="text-fg">+ Add</span> to create
         </div>

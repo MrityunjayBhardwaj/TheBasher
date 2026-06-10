@@ -49,3 +49,45 @@ test('WD#3 §196 — Add and Assets create paths survive the restyle', async ({ 
   await expect(toolbar.getByTestId('top-toolbar-add')).toBeVisible();
   await expect(toolbar.getByTestId('top-toolbar-assets')).toBeVisible();
 });
+
+test('WD#4 the pill stays one row and scrolls horizontally (no wrap, no bar)', async ({ page }) => {
+  // Narrow the window so the toolbar can't fit — it must overflow-scroll on a
+  // single line, not wrap to a taller stack.
+  await page.setViewportSize({ width: 900, height: 760 });
+  const toolbar = page.getByTestId('floating-viewport-toolbar');
+  await expect(toolbar).toBeVisible();
+  const r = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="floating-viewport-toolbar"]') as HTMLElement;
+    const cs = getComputedStyle(el);
+    el.scrollLeft = 9999;
+    return {
+      flexWrap: cs.flexWrap,
+      overflowX: cs.overflowX,
+      scrollbarWidth: cs.scrollbarWidth,
+      clientH: el.clientHeight,
+      overflowsX: el.scrollWidth > el.clientWidth,
+      scrolledLeft: el.scrollLeft,
+    };
+  });
+  // Single row: re-adding `flex-wrap` makes it stack → clientHeight balloons
+  // past one button row → this fails.
+  expect(r.flexWrap).toBe('nowrap');
+  expect(r.clientH).toBeLessThan(50);
+  // Overflows on X and actually scrolls horizontally (items don't compress).
+  expect(r.overflowX).toBe('auto');
+  expect(r.overflowsX).toBe(true);
+  expect(r.scrolledLeft).toBeGreaterThan(0);
+  // No visible scrollbar — `.no-scrollbar` resolves scrollbar-width to none.
+  expect(r.scrollbarWidth).toBe('none');
+});
+
+test('WD#5 the toolbar sits at the TOP of the viewport, not the bottom', async ({ page }) => {
+  const toolbar = page.getByTestId('floating-viewport-toolbar');
+  const main = page.getByTestId('viewport-slot');
+  const tb = await toolbar.boundingBox();
+  const vp = await main.boundingBox();
+  if (!tb || !vp) throw new Error('missing boxes');
+  // Top-anchored: the pill sits in the upper portion of the viewport.
+  // Reverting to `bottom-4` drops it into the lower half → this fails.
+  expect(tb.y).toBeLessThan(vp.y + vp.height * 0.4);
+});

@@ -263,7 +263,14 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
     // empty-state hint that renders over the viewport while nothing is selected
     // (this test selects nothing) — mask it too (same treatment) so the beauty
     // baseline stays the pure DAG render, immune to the hint's copy/size (H30).
-    mask: [page.getByTestId('fps-meter'), page.getByTestId('viewport-empty-hint')],
+    // The floating viewport toolbar is editor chrome over the viewport (now
+    // top-anchored) — mask it for the same reason, so its position/contents
+    // never tip the pure-DAG beauty diff.
+    mask: [
+      page.getByTestId('fps-meter'),
+      page.getByTestId('viewport-empty-hint'),
+      page.getByTestId('floating-viewport-toolbar'),
+    ],
   });
 });
 

@@ -264,7 +264,7 @@ export function FloatingViewportToolbar(): ReactNode {
       role="toolbar"
       aria-orientation="horizontal"
       aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
-      className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md"
+      className="no-scrollbar absolute top-4 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
     >
       {TOOLS.map((t) => (
         <ToolButton
