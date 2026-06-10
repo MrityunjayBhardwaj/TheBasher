@@ -45,6 +45,16 @@ import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
 import { useTimeStore } from './stores/timeStore';
 import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
+import {
+  SCENE_BUNDLE_VERSION,
+  bundleToProject,
+  bytesToBase64,
+  base64ToBytes,
+  collectAssetRefs,
+  resolveAssetFiles,
+  type SceneBundle,
+} from './sceneBundle';
+import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
 
 /**
  * The toast to raise for a resolved storage backend, or null when storage is
@@ -336,6 +346,27 @@ export function boot(): Promise<void> {
       w.__basher_writeOpfsBytes = async (path: string, bytes: Uint8Array) => {
         const storage = await getStorage();
         await storage.write(path, bytes);
+      };
+      // `.basher` scene-file seams — let the falsifiable e2e round-trip a real
+      // exported scene (export → import) and assert the DAG + embedded assets
+      // survive, without driving the OS file chooser. `__basher_opfs` exposes
+      // read/exists/delete so the asset-rehydrate direction can be proven end to
+      // end (delete the OPFS asset, import the bundle, assert it's back).
+      w.__basher_export_scene_bundle = () => buildSceneBundleForCurrent();
+      w.__basher_import_scene_bundle = (bundle: SceneBundle) => importSceneBundle(bundle);
+      w.__basher_opfs = {
+        read: async (path: string) => {
+          const storage = await getStorage();
+          return storage.read(path);
+        },
+        exists: async (path: string) => {
+          const storage = await getStorage();
+          return storage.exists(path);
+        },
+        delete: async (path: string) => {
+          const storage = await getStorage();
+          await storage.delete(path);
+        },
       };
       // P3.1 Wave A/B — BVH + FBX import demo seams. Library UI
       // integration lands in a follow-on wave; meanwhile the agent
@@ -744,4 +775,102 @@ export async function renameCurrentProject(newName: string): Promise<void> {
   await saveCurrent();
   const renamed = await ioRenameProject(storage, current.id, newName);
   useProjectStore.getState().setCurrent(renamed);
+}
+
+// ---------------------------------------------------------------------------
+// Native `.basher` scene file — export (embed assets) / open (rehydrate + new
+// project). The symmetric counterpart to the DAG-only exportDag.ts. See
+// sceneBundle.ts for the envelope + the deductive asset-ref walk.
+// ---------------------------------------------------------------------------
+
+export interface BuiltSceneBundle {
+  readonly bundle: SceneBundle;
+  /** Referenced OPFS paths that could not be read (an incomplete export — the
+   *  UI surfaces a warning so the user knows the file is not fully portable). */
+  readonly missingAssets: string[];
+}
+
+/**
+ * Build a self-contained `.basher` bundle from the CURRENT project + DAG: the
+ * DAG state plus every OPFS-backed asset it references, embedded as base64. Pure
+ * read (no mutation, no download). A referenced-but-unreadable asset is recorded
+ * in `missingAssets` rather than silently dropped (V38).
+ */
+export async function buildSceneBundleForCurrent(): Promise<BuiltSceneBundle> {
+  const storage = await getStorage();
+  const dag = useDagStore.getState().state;
+  const meta = useProjectStore.getState().current ?? {
+    id: 'untitled',
+    name: 'Untitled',
+    formatVersion: PROJECT_FORMAT_VERSION,
+  };
+
+  const refs = collectAssetRefs(dag);
+  const files = await resolveAssetFiles(storage, refs);
+  const assets: Record<string, string> = {};
+  const missingAssets: string[] = [];
+  for (const path of files) {
+    try {
+      const bytes = await storage.read(path);
+      assets[path] = bytesToBase64(bytes);
+    } catch {
+      missingAssets.push(path);
+    }
+  }
+
+  const bundle: SceneBundle = {
+    formatVersion: meta.formatVersion ?? PROJECT_FORMAT_VERSION,
+    bundleVersion: SCENE_BUNDLE_VERSION,
+    id: meta.id,
+    name: meta.name,
+    exportedAt: Date.now(),
+    state: { nodes: dag.nodes, outputs: dag.outputs },
+    assets: Object.keys(assets).length > 0 ? assets : undefined,
+  };
+  return { bundle, missingAssets };
+}
+
+/**
+ * Open a parsed `.basher` bundle as a NEW project (non-destructive): rehydrate
+ * its embedded assets into OPFS, compose a fresh-id Project through the standard
+ * load+migration ladder, then hydrate the stores (the createNewProject pattern).
+ * The outgoing project is auto-saved first so its edits are not lost. Returns the
+ * new project id.
+ *
+ * Asset rehydrate is WRITE-IF-ABSENT: the baked-* stores are content-addressed
+ * (same hash ⇒ identical bytes, so skipping an existing file is correct), and
+ * user-imports is left intact when a same-named folder already exists (a rare
+ * same-name-different-content collision keeps the existing asset rather than
+ * clobbering another project's import — a known v1 limitation).
+ */
+export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
+  const storage = await getStorage();
+  // Don't lose the project we're leaving.
+  await saveCurrent();
+
+  // 1. Rehydrate embedded assets to OPFS BEFORE hydrating the DAG, so the
+  //    renderer's async loaders find the bytes on first mount.
+  if (bundle.assets) {
+    for (const [path, b64] of Object.entries(bundle.assets)) {
+      if (await storage.exists(path)) continue;
+      await storage.write(path, base64ToBytes(b64));
+    }
+  }
+
+  // 2. Compose a brand-new project (fresh id + timestamps) through the same
+  //    ladder loadProject uses (migrate → validate → migrate-nodes).
+  const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const project = bundleToProject(bundle, newId, Date.now());
+  await saveProject(storage, project);
+  persistLastProjectId(project.id);
+
+  // 3. Hydrate (createNewProject pattern — the double setCurrent clears the
+  //    dirty flag the hydrate subscription raises).
+  useProjectStore.getState().setCurrent(project);
+  useDagStore.getState().hydrate({
+    nodes: project.state.nodes,
+    outputs: project.state.outputs,
+  });
+  useProjectStore.getState().setCurrent(project);
+  return newId;
 }

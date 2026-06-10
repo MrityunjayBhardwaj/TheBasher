@@ -37,6 +37,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import type { PrimitiveKind } from './addPrimitives';
 import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
+import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -387,7 +388,13 @@ export function MenuBar() {
           testId="menu-file-export-gltf"
         />
         <Item label="Export DAG as JSON" onSelect={exportDagJson} testId="menu-file-export-json" />
+        <Item
+          label="Save Scene as .basher…"
+          onSelect={() => void downloadSceneBundle()}
+          testId="menu-file-save-bundle"
+        />
         <Divider />
+        <Item label="Open Scene…" onSelect={openSceneFilePicker} testId="menu-file-open-scene" />
         <Item label="Import glTF…" onSelect={openGltfFilePicker} testId="menu-file-import-gltf" />
         <Item label="Import Folder…" onSelect={openImportPicker} testId="menu-file-import" />
       </Menu>
