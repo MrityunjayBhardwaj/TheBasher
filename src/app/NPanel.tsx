@@ -1273,7 +1273,7 @@ export function NPanel() {
       data-collapsed="false"
       role="region"
       aria-label={inspectorLabel}
-      className="flex h-full flex-col overflow-y-auto border-l border-border bg-bg-2 text-xs"
+      className="no-scrollbar flex h-full flex-col overflow-y-auto border-l border-border bg-bg-2 text-xs"
     >
       {/* Spline Wave C header styling, reconciled with #174's collapse toggle:
           the `›` button sits on the Inspector's INSIDE (viewport-facing, left)

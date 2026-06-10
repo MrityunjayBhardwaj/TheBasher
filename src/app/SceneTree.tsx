@@ -147,7 +147,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     <div
       data-testid="scene-tree"
       data-filtering={filtering || undefined}
-      className="flex h-full flex-col overflow-y-auto text-[13px]"
+      className="no-scrollbar flex h-full flex-col overflow-y-auto text-[13px]"
     >
       {filtering && rows.length <= 1 ? (
         <p data-testid="scene-tree-no-matches" className="px-3 py-2 text-[12px] text-fg-dim">

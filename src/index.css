@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /* Keep an element scrollable but hide the native scrollbar — the outliner and
+     inspector panels stay overflow-scroll while the light gutter bar is gone, so
+     the dark Spline chrome reads clean. Cross-browser: WebKit/Blink via the
+     ::-webkit-scrollbar pseudo-element, Firefox via scrollbar-width, legacy Edge
+     via -ms-overflow-style. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 :root {
   /* Spline-exact DARK shell (Wave A). color-scheme: dark drives native form
      controls / scrollbars to their dark variants so they match the near-black
