@@ -46,3 +46,19 @@ test('WF#4 the send affordance is a labelled icon, not a "send" word', async ({ 
   await expect(send).toHaveAttribute('aria-label', 'Send');
   await expect(send).not.toContainText('send');
 });
+
+test('WF#5 an empty chat collapses the dock to a slim bar — no reserved void', async ({ page }) => {
+  const dock = page.getByTestId('agent-dock');
+  const box = await dock.boundingBox();
+  if (!box) throw new Error('missing dock box');
+  // (a) Slim: re-adding `h-full` to the dock / a flex-1 message list fills the
+  // row → a void above the input → height balloons → this fails.
+  expect(box.height).toBeLessThan(110);
+  // The message list is not even mounted when there's nothing to show.
+  await expect(page.getByTestId('agent-messages')).toHaveCount(0);
+  // (b) Flush above the timeline: reverting the content-sized grid row back to
+  // a fixed 190px leaves a gap between the slim bar and the timeline → fails.
+  const timeline = await page.getByTestId('timeline-slot').boundingBox();
+  if (!timeline) throw new Error('missing timeline box');
+  expect(Math.abs(box.y + box.height - timeline.y)).toBeLessThan(8);
+});

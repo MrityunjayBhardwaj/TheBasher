@@ -93,11 +93,13 @@ export function Layout() {
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu. Wave C
-        // inserts the always-on `agentdock` row (190px) above the timeline; the
-        // timeline row (`auto`) still holds the always-visible Timebar
-        // (Auto-Key indicator) + the drawer body when revealed. Present
-        // collapses every row but the viewport.
-        gridTemplateRows: isPresent ? '0 0 1fr 0 0' : '32px auto 1fr 190px auto',
+        // inserts the always-on `agentdock` row above the timeline; it is
+        // content-sized (`auto`) — an empty chat collapses to just the input
+        // bar (no reserved void), and a conversation grows it once up to the
+        // message list's own capped height. The timeline row (`auto`) still
+        // holds the always-visible Timebar (Auto-Key indicator) + the drawer
+        // body when revealed. Present collapses every row but the viewport.
+        gridTemplateRows: isPresent ? '0 0 1fr 0 0' : '32px auto 1fr auto auto',
         gridTemplateAreas: `
           "projectTabs projectTabs projectTabs"
           "menu menu menu"

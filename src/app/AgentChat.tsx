@@ -100,37 +100,39 @@ export function AgentChat() {
   };
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col font-mono text-xs text-fg"
-      data-testid="agent-chat"
-    >
-      {/* Messages */}
-      <div className="flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
-        {session.messages.map((msg) => {
-          const isAgent = msg.role === 'assistant';
-          return (
-            <div
-              key={msg.id}
-              className={[
-                'mb-1.5 rounded border-l-2 px-2 py-1',
-                isAgent ? 'border-accent/70 bg-muted/60' : 'border-fg/30 bg-muted/30',
-              ].join(' ')}
-            >
-              <div className="mb-0.5 text-[9px] uppercase tracking-wide text-fg/40">
-                {isAgent ? 'agent' : 'you'}
+    <div className="flex flex-col font-mono text-xs text-fg" data-testid="agent-chat">
+      {/* Messages — mounted ONLY when there's a conversation, so an empty chat
+          collapses the dock to just the input bar (the grid row is `auto`, so
+          a zero-height message list reserves no void). Capped height; a long
+          thread scrolls within. */}
+      {session.messages.length > 0 || session.error ? (
+        <div className="max-h-[220px] overflow-auto px-2 py-2" data-testid="agent-messages">
+          {session.messages.map((msg) => {
+            const isAgent = msg.role === 'assistant';
+            return (
+              <div
+                key={msg.id}
+                className={[
+                  'mb-1.5 rounded border-l-2 px-2 py-1',
+                  isAgent ? 'border-accent/70 bg-muted/60' : 'border-fg/30 bg-muted/30',
+                ].join(' ')}
+              >
+                <div className="mb-0.5 text-[9px] uppercase tracking-wide text-fg/40">
+                  {isAgent ? 'agent' : 'you'}
+                </div>
+                <div className="whitespace-pre-wrap break-words text-[11px] text-fg/85">
+                  {msg.content || (session.isStreaming ? '…' : '')}
+                </div>
               </div>
-              <div className="whitespace-pre-wrap break-words text-[11px] text-fg/85">
-                {msg.content || (session.isStreaming ? '…' : '')}
-              </div>
+            );
+          })}
+          {session.error ? (
+            <div className="mt-1 rounded border border-red-500/40 bg-red-500/5 px-2 py-1 text-[11px] text-red-300">
+              {session.error}
             </div>
-          );
-        })}
-        {session.error ? (
-          <div className="mt-1 rounded border border-red-500/40 bg-red-500/5 px-2 py-1 text-[11px] text-red-300">
-            {session.error}
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Token usage footer */}
       {session.tokenUsage.total > 0 ? (
