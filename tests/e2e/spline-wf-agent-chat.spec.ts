@@ -32,3 +32,17 @@ test('WF#2 the single text bar prompts "just say the word…"', async ({ page })
   // Revert the placeholder → 'ask the agent…' → this fails.
   await expect(input).toHaveAttribute('placeholder', 'just say the word…');
 });
+
+test('WF#3 the dock is bare — no "AGENT" header, no empty-state copy', async ({ page }) => {
+  // Revert (re-add the header / the instructional copy) → these reappear → fails.
+  await expect(page.getByTestId('agent-dock-header')).toHaveCount(0);
+  await expect(page.getByText(/Ask the agent to inspect/)).toHaveCount(0);
+});
+
+test('WF#4 the send affordance is a labelled icon, not a "send" word', async ({ page }) => {
+  const send = page.getByTestId('agent-send');
+  await expect(send).toBeVisible();
+  // Revert (text "send", no aria-label) → both assertions fail.
+  await expect(send).toHaveAttribute('aria-label', 'Send');
+  await expect(send).not.toContainText('send');
+});

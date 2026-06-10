@@ -28,12 +28,6 @@ export function AgentDock(): ReactNode {
       aria-label="Agent"
       className="flex h-full min-h-0 flex-col border-t border-border bg-bg-2"
     >
-      <header
-        data-testid="agent-dock-header"
-        className="flex h-7 shrink-0 items-center gap-2 border-b border-border px-3"
-      >
-        <span className="text-[11px] font-medium uppercase tracking-wide text-fg-dim">Agent</span>
-      </header>
       <div className="min-h-0 flex-1">
         <AgentChat />
       </div>

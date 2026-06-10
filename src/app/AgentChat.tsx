@@ -106,12 +106,6 @@ export function AgentChat() {
     >
       {/* Messages */}
       <div className="flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
-        {session.messages.length === 0 && !session.error ? (
-          <div className="px-1 py-3 text-[11px] text-fg/40">
-            Ask the agent to inspect, plan, or modify the scene. Selected nodes are surfaced in the
-            agent's context.
-          </div>
-        ) : null}
         {session.messages.map((msg) => {
           const isAgent = msg.role === 'assistant';
           return (
@@ -170,9 +164,19 @@ export function AgentChat() {
               type="button"
               onClick={handleCancel}
               data-testid="agent-cancel"
-              className="rounded border border-red-500/40 bg-muted px-2 text-[11px] text-red-300 hover:border-red-400 hover:text-red-200"
+              aria-label="Stop"
+              title="Stop"
+              className="flex items-center justify-center rounded border border-red-500/40 bg-muted px-3 text-red-300 hover:border-red-400 hover:text-red-200"
             >
-              cancel
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
             </button>
           ) : (
             <button
@@ -180,9 +184,23 @@ export function AgentChat() {
               onClick={handleSend}
               disabled={!input.trim()}
               data-testid="agent-send"
-              className="rounded border border-border bg-muted px-3 text-[11px] text-fg/80 hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg/80"
+              aria-label="Send"
+              title="Send"
+              className="flex items-center justify-center rounded border border-border bg-muted px-3 text-fg/80 hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg/80"
             >
-              send
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 6l6 6-6 6" />
+              </svg>
             </button>
           )}
         </div>
