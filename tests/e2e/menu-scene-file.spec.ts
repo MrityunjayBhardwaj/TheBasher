@@ -183,3 +183,27 @@ test('embeds a referenced OPFS asset and rehydrates it on open (portable file)',
     )
     .toBe(true);
 });
+
+test('File menu surfaces the affordances: Save downloads a .basher file, Open opens a chooser', async ({
+  page,
+}) => {
+  // Both items are present in the File menu.
+  await page.getByTestId('menu-file-button').click();
+  await expect(page.getByTestId('menu-file-save-bundle')).toBeVisible();
+  await expect(page.getByTestId('menu-file-open-scene')).toBeVisible();
+
+  // Save → a download whose filename is the native .basher extension.
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('menu-file-save-bundle').click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.basher$/);
+
+  // Open → the OS file chooser (the real picker, not a seam).
+  await page.getByTestId('menu-file-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByTestId('menu-file-open-scene').click(),
+  ]);
+  expect(chooser).toBeTruthy();
+});
