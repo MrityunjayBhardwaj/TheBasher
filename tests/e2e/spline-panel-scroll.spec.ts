@@ -1,13 +1,23 @@
 // Spline polish — the outliner (left) and inspector (right) panels overflow-
-// scroll WITHOUT a visible scrollbar (the `.no-scrollbar` utility).
+// scroll WITHIN their own bounds (no page blow-out) and WITHOUT a visible
+// scrollbar.
 //
-// Falsifiable against the real DOM via the COMPUTED `scrollbar-width`: the
-// `.no-scrollbar` rule resolves it to `none`; removing the class from either
-// panel makes it resolve back to `auto` → these assertions fail. (A gutter-
-// width check does NOT bite here — headless Chromium on macOS uses overlay
-// scrollbars that reserve no gutter whether or not the bar is hidden, so the
-// computed property is the platform-independent signal.) Scroll is still
-// proven live (clamp short → scrollHeight overflows → scrollTop moves).
+// Two real-DOM, falsifiable properties per panel, both exercised by injecting a
+// tall (2000px) child so the panel genuinely overflows (the example scene is
+// too short to overflow on its own):
+//
+//   1. BOUNDED + scrolls. The panel's grid/flex wrapper carries min-height:0, so
+//      the panel stays clamped to its track and the overflow scrolls internally
+//      (clientHeight << scrollHeight, scrollTop moves) instead of the panel
+//      growing to its content and dragging the whole layout past the viewport.
+//      Falsifier: drop minHeight:0 from the inspector grid cell / the left
+//      sidebar's min-h-0 → the panel balloons, document.body.scrollHeight blows
+//      past the viewport, and scrollTop can't move → fails.
+//   2. NO visible scrollbar. Computed `scrollbar-width` is `none` (the
+//      `.no-scrollbar` utility). A gutter-width check is INERT here — headless
+//      Chromium on macOS uses overlay scrollbars that reserve no gutter either
+//      way — so the computed property is the platform-independent signal.
+//      Falsifier: remove `.no-scrollbar` → resolves to `auto` → fails.
 
 import { expect, test } from './_fixtures';
 
@@ -25,24 +35,36 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const id of ['scene-tree', 'inspector']) {
-  test(`${id} overflow-scrolls with no visible scrollbar gutter`, async ({ page }) => {
-    const result = await page.evaluate((sel) => {
+  test(`${id} stays bounded and scrolls internally on overflow, no scrollbar`, async ({ page }) => {
+    const r = await page.evaluate((sel) => {
       const el = document.querySelector(`[data-testid="${sel}"]`) as HTMLElement | null;
       if (!el) throw new Error(`missing ${sel}`);
       const scrollbarWidth = getComputedStyle(el).scrollbarWidth;
       const overflowY = getComputedStyle(el).overflowY;
-      // Clamp short so the content must overflow, then prove it scrolls.
-      el.style.height = '60px';
-      el.style.maxHeight = '60px';
-      const scrollable = el.scrollHeight > el.clientHeight;
+      // Inject genuinely tall content so the panel must overflow.
+      const tall = document.createElement('div');
+      tall.style.height = '2000px';
+      tall.style.flex = '0 0 auto';
+      el.appendChild(tall);
       el.scrollTop = 9999;
-      return { scrollbarWidth, overflowY, scrollable, scrolled: el.scrollTop };
+      return {
+        scrollbarWidth,
+        overflowY,
+        clientH: el.clientHeight,
+        scrollH: el.scrollHeight,
+        scrolledTo: el.scrollTop,
+        bodyScrollH: document.body.scrollHeight,
+        viewportH: window.innerHeight,
+      };
     }, id);
-    // Still a scroll container, and it actually scrolls.
-    expect(result.overflowY).toBe('auto');
-    expect(result.scrollable).toBe(true);
-    expect(result.scrolled).toBeGreaterThan(0);
-    // The bar is hidden: removing `.no-scrollbar` flips this to 'auto' → fails.
-    expect(result.scrollbarWidth).toBe('none');
+    // 1. Bounded: the panel is far shorter than its content (clamped to track).
+    expect(r.overflowY).toBe('auto');
+    expect(r.clientH).toBeLessThan(r.scrollH - 500);
+    // ...and it actually scrolled.
+    expect(r.scrolledTo).toBeGreaterThan(0);
+    // ...and the page did NOT blow out past the viewport.
+    expect(r.bodyScrollH).toBeLessThanOrEqual(r.viewportH + 1);
+    // 2. No visible scrollbar.
+    expect(r.scrollbarWidth).toBe('none');
   });
 }

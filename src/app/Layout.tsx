@@ -206,6 +206,14 @@ export function Layout() {
         style={{
           gridArea: 'inspector',
           display: isPresent ? 'none' : 'block',
+          // minHeight:0 lets this grid item shrink to the `1fr` track instead of
+          // growing to NPanel's content. A grid item defaults to min-height:auto
+          // (= min-content), so without this a tall inspector forces the shared
+          // `tree | viewport | inspector` row to grow past the viewport — the
+          // inspector never overflows (so its overflow-y-auto never scrolls) and
+          // it drags the outliner's row height with it. (CSS grid analog of the
+          // flex min-height:0 rule.)
+          minHeight: 0,
         }}
       >
         <NPanel />

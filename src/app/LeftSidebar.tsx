@@ -95,7 +95,7 @@ export function LeftSidebar(): ReactNode {
       data-collapsed="false"
       role="region"
       aria-label="Scene outliner"
-      className="flex h-full w-full flex-col border-r border-border bg-bg-2"
+      className="flex h-full min-h-0 w-full flex-col border-r border-border bg-bg-2"
     >
       {/* Header — project name + collapse chevron. */}
       <header
