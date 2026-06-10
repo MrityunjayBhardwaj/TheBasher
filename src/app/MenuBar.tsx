@@ -36,7 +36,7 @@ import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import type { PrimitiveKind } from './addPrimitives';
-import { openImportPicker } from './asset/importPicker';
+import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -388,7 +388,8 @@ export function MenuBar() {
         />
         <Item label="Export DAG as JSON" onSelect={exportDagJson} testId="menu-file-export-json" />
         <Divider />
-        <Item label="Import…" onSelect={openImportPicker} testId="menu-file-import" />
+        <Item label="Import glTF…" onSelect={openGltfFilePicker} testId="menu-file-import-gltf" />
+        <Item label="Import Folder…" onSelect={openImportPicker} testId="menu-file-import" />
       </Menu>
 
       <Menu
