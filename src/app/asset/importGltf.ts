@@ -52,7 +52,7 @@ import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
-import { opfsSiblingPath } from './opfsGltfResolver';
+import { opfsSiblingPath, missingGltfSiblings } from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import {
@@ -195,6 +195,21 @@ export async function ingestGltfFolder(
       const msg = 'import failed: no glTF/glb in folder';
       useAssetErrorStore.getState().report(desired, msg);
       throw new Error(msg);
+    }
+    // A multi-file `.gltf` references sibling `.bin`/textures by relative URI.
+    // The plain file picker (Import glTF…) captures only the `.gltf`, so detect a
+    // missing sibling and fail EARLY with guidance — instead of writing a partial
+    // asset and dying mid-load on a cryptic NotFoundError ("…could not be found",
+    // a.k.a. "Entry not found" on WebKit). `.glb` is self-contained, so skipped.
+    if (entry.relativePath.toLowerCase().endsWith('.gltf')) {
+      const present = new Set(files.map((f) => f.relativePath));
+      const missing = missingGltfSiblings(entry.bytes, entry.relativePath, present);
+      if (missing.length > 0) {
+        const name = entry.relativePath.split('/').pop() ?? entry.relativePath;
+        const msg = `import failed: ${name} needs ${missing.join(', ')} — pick the .gltf together with those files, or use File ▸ Import Folder…`;
+        useAssetErrorStore.getState().report(desired, msg);
+        throw new Error(msg);
+      }
     }
     const resolvedName = await resolveFreeImportName(desired);
     const storage = await getStorage();

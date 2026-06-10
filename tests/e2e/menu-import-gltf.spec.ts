@@ -70,3 +70,47 @@ test('the file picker is offered alongside the directory picker', async ({ page 
   await expect(page.getByTestId('menu-file-import-gltf')).toBeVisible();
   await expect(page.getByTestId('menu-file-import')).toBeVisible();
 });
+
+test('picking a multi-file .gltf WITHOUT its siblings fails with an actionable message, not a cryptic one', async ({
+  page,
+}) => {
+  expect(await gltfAssetCount(page)).toBe(0);
+
+  // A flat multi-file .gltf references scene.bin + texture.png. Picking only the
+  // .gltf via the file picker (siblings not captured) must fail EARLY with
+  // guidance — no GltfAsset node, no partial asset, no cryptic "not found".
+  await page.getByTestId('menu-file-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByTestId('menu-file-import-gltf').click(),
+  ]);
+  await chooser.setFiles('public/fixtures/multifile/flat/scene.gltf');
+
+  const banner = page.getByTestId('asset-error-banner');
+  await expect(banner).toContainText('scene.gltf needs');
+  await expect(banner).toContainText('scene.bin');
+  await expect(banner).toContainText('Import Folder');
+  // The early-out wrote no node (removing the sibling-presence guard would let
+  // the partial write + cryptic read run → this would not be the message).
+  expect(await gltfAssetCount(page)).toBe(0);
+});
+
+test('picking a multi-file .gltf TOGETHER with its siblings imports successfully', async ({
+  page,
+}) => {
+  expect(await gltfAssetCount(page)).toBe(0);
+
+  await page.getByTestId('menu-file-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByTestId('menu-file-import-gltf').click(),
+  ]);
+  await chooser.setFiles([
+    'public/fixtures/multifile/flat/scene.gltf',
+    'public/fixtures/multifile/flat/scene.bin',
+    'public/fixtures/multifile/flat/texture.png',
+  ]);
+
+  await expect.poll(() => gltfAssetCount(page), { timeout: 10_000 }).toBe(1);
+  await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
+});

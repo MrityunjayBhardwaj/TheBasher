@@ -104,7 +104,12 @@ export function openImportPicker(): void {
         const files = await inputFilesToFiles(input.files);
         await ingestOneModel(files);
       } catch (err) {
-        useAssetErrorStore.getState().report('menu-import', formatAssetError(err));
+        const message = formatAssetError(err);
+        // ingestGltfFolder already reports "import failed:"-prefixed errors to
+        // the banner before re-throwing — don't double-report them here.
+        if (!message.startsWith('import failed:')) {
+          useAssetErrorStore.getState().report('menu-import', message);
+        }
       } finally {
         input.remove();
       }
@@ -143,7 +148,12 @@ export function openGltfFilePicker(): void {
           await ingestOneModel(files);
         }
       } catch (err) {
-        useAssetErrorStore.getState().report('menu-import-gltf', formatAssetError(err));
+        const message = formatAssetError(err);
+        // ingestGltfFolder already reports "import failed:"-prefixed errors to
+        // the banner before re-throwing — don't double-report them here.
+        if (!message.startsWith('import failed:')) {
+          useAssetErrorStore.getState().report('menu-import-gltf', message);
+        }
       } finally {
         input.remove();
       }

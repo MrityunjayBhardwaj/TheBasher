@@ -188,6 +188,40 @@ function uniqueUris(json: GltfJson): string[] {
 }
 
 /**
+ * Given a `.gltf` entry's JSON bytes, its relativePath within a picked file set,
+ * and the relativePaths present in that set, return the external sibling URIs
+ * (decoded, for display) that are MISSING. Empty ⇒ self-contained, or every
+ * sibling is present. Sibling URIs are resolved against the entry's directory
+ * with the SAME join+decode+normalize as `opfsSiblingPath` (so flat AND nested
+ * exports match) — the picked-set check must agree with where the loader will
+ * later look on the OPFS side.
+ *
+ * Used at import time to fail EARLY with an actionable message when a multi-file
+ * `.gltf` is picked WITHOUT its `.bin`/textures (a plain file picker can't
+ * capture siblings) — instead of writing a partial asset and dying mid-load on a
+ * cryptic NotFoundError. A non-parseable .gltf returns [] (let the real loader
+ * surface that error).
+ */
+export function missingGltfSiblings(
+  jsonBytes: Uint8Array,
+  entryRelativePath: string,
+  presentRelativePaths: ReadonlySet<string>,
+): string[] {
+  let json: GltfJson;
+  try {
+    json = JSON.parse(new TextDecoder().decode(jsonBytes)) as GltfJson;
+  } catch {
+    return [];
+  }
+  const missing: string[] = [];
+  for (const uri of uniqueUris(json)) {
+    const sibling = opfsSiblingPath(entryRelativePath, uri);
+    if (!presentRelativePaths.has(sibling)) missing.push(decodeURIComponent(uri));
+  }
+  return missing;
+}
+
+/**
  * Pre-resolve a multi-file `.gltf` and all its siblings into the
  * sentinel-URL cache. Returns the sentinel URL three.js should load
  * as the main asset. The caller is responsible for calling this

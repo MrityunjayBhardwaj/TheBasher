@@ -21,6 +21,7 @@ import {
   gltfReferencesExternalSiblings,
   isBasherOpfsUrl,
   loadMultiFileGltf,
+  missingGltfSiblings,
   opfsSiblingPath,
   opfsUrlFor,
   resolveBasherOpfsUrl,
@@ -340,5 +341,56 @@ describe('relative-path normalization — `..` collapses on both halves (Wave F 
     expect(
       resolveBasherOpfsUrl(`${BASHER_OPFS_SCHEME}user-imports/nested/gltf/../textures/texture.png`),
     ).toMatch(/^blob:/);
+  });
+});
+
+describe('missingGltfSiblings', () => {
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const MULTI = { buffers: [{ uri: 'scene.bin' }], images: [{ uri: 'texture.png' }] };
+
+  it('reports every referenced sibling missing from a single-.gltf pick (flat)', () => {
+    const present = new Set(['scene.gltf']);
+    expect(missingGltfSiblings(enc(MULTI), 'scene.gltf', present)).toEqual([
+      'scene.bin',
+      'texture.png',
+    ]);
+  });
+
+  it('reports none when all siblings are present (flat, file-picker multi-select)', () => {
+    const present = new Set(['scene.gltf', 'scene.bin', 'texture.png']);
+    expect(missingGltfSiblings(enc(MULTI), 'scene.gltf', present)).toEqual([]);
+  });
+
+  it('resolves siblings against the entry directory (folder pick)', () => {
+    const present = new Set(['flat/scene.gltf', 'flat/scene.bin', 'flat/texture.png']);
+    expect(missingGltfSiblings(enc(MULTI), 'flat/scene.gltf', present)).toEqual([]);
+  });
+
+  it('normalizes ../ siblings (nested export) so a present sibling matches', () => {
+    const nested = { buffers: [{ uri: '../buffers/scene.bin' }] };
+    const present = new Set(['nested/gltf/scene.gltf', 'nested/buffers/scene.bin']);
+    expect(missingGltfSiblings(enc(nested), 'nested/gltf/scene.gltf', present)).toEqual([]);
+  });
+
+  it('decodes percent-encoded URIs for both the match and the display name', () => {
+    const spaced = { images: [{ uri: 'my%20texture.png' }] };
+    const present = new Set(['spaced/scene.gltf', 'spaced/my texture.png']);
+    expect(missingGltfSiblings(enc(spaced), 'spaced/scene.gltf', present)).toEqual([]);
+    expect(
+      missingGltfSiblings(enc(spaced), 'spaced/scene.gltf', new Set(['spaced/scene.gltf'])),
+    ).toEqual(['my texture.png']);
+  });
+
+  it('returns [] for a self-contained .gltf (data-URI buffer, no external refs)', () => {
+    const selfContained = { buffers: [{ uri: 'data:application/octet-stream;base64,AAAA' }] };
+    expect(missingGltfSiblings(enc(selfContained), 'scene.gltf', new Set(['scene.gltf']))).toEqual(
+      [],
+    );
+  });
+
+  it('returns [] for non-parseable bytes (let the real loader surface it)', () => {
+    expect(
+      missingGltfSiblings(new TextEncoder().encode('not json'), 'scene.gltf', new Set()),
+    ).toEqual([]);
   });
 });
