@@ -42,10 +42,14 @@ import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera'
 import { degVec3ToRad } from './rotation';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
+import { gltfAssetDepNodes } from '../app/gltfAssetDeps';
+import { bumpRenderCount } from '../perf/renderCounter';
 import type { BakedChannel } from '../app/resolveGltfChildTransform';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 import type { DagState } from '../core/dag/state';
 import { PostFx } from '../render/PostFx';
 import { DiffOverlay } from './DiffOverlay';
@@ -1070,6 +1074,9 @@ function childOverridesForAsset(
 }
 
 function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
+  // H48 4th-occ gate — count this renderer's renders so the perf e2e can prove an
+  // unrelated edit re-renders it 0×. DEV-only no-op in production (renderCounter).
+  bumpRenderCount('GltfAssetR');
   // useResolvedAssetUrl turns OPFS-relative paths (e.g. "assets/cube.gltf")
   // into blob URLs; passthrough URLs (/foo, http://..., blob:) are returned
   // as-is. Both this hook and useGLTF are suspense-driven; the Canvas-root
@@ -1098,19 +1105,39 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // deep clone per component-instance).
   const cloned = useMemo(() => cloneSkinned(gltf.scene) as THREE.Group, [gltf.scene]);
   const shading = useViewportStore((s) => s.shading);
-  // P7.7 (#91) — SUBSCRIBED read of the DAG node table (NOT a getState()
-  // snapshot). The node table is referentially stable until a dispatch, so a
-  // gizmo setParam on a GltfChild produces a NEW `nodes` object → this selector
-  // emits → the per-child effect below re-fires → re-layers → re-applies. A
-  // getState() snapshot would NOT be a React dependency, so a manual override
-  // would silently never re-render (the H40 freeze / C2 snap-back, caused
-  // upstream here). The per-asset child map is derived in a memo keyed on the
-  // subscribed nodes + assetRef so the effect dep is stable across unrelated
-  // dispatches.
-  const dagNodes = useDagStore((s) => s.state.nodes);
+  // P7.7 (#91) — SUBSCRIBED read (NOT a getState() snapshot): a gizmo setParam on
+  // a GltfChild of THIS asset must re-render so the per-child override re-layers
+  // and re-applies. A snapshot would not be a React dependency → the manual
+  // override would silently never re-render (the H40 freeze / C2 snap-back).
+  //
+  // H48 4th-occurrence (#114-lineage) — but the OLD read subscribed to the WHOLE
+  // node table (`s.state.nodes`), whose ref flips on EVERY dispatch (ops.ts
+  // structural sharing replaces the `nodes` object even for an unrelated edit).
+  // So editing ANY node — a sibling box — re-rendered this heavy asset and
+  // re-walked all N nodes twice. On a ~700-node import that IS the "edit anything
+  // → the imported model re-renders at ~16fps" cost. Fix: subscribe to ONLY the
+  // nodes the layers depend on (this asset's GltfChild + baked KeyframeChannelVec3
+  // nodes), compared with zustand `shallow`. Under structural sharing every
+  // unchanged node keeps its ref, so an unrelated edit yields a shallow-EQUAL
+  // array → no emit → no re-render. A relevant edit flips exactly one element's
+  // ref → shallow detects it → re-render → re-layer (freeze guard preserved).
+  // gltfAssetDeps.ts holds the collector + its proof. [[H48]] [[B13]] [[H40]].
+  const depNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => gltfAssetDepNodes(s.state.nodes, value.assetRef, value.nodeNameMap),
+    shallow,
+  );
+  // The pre-filtered node subset the two layer-derivations read. Keying the memos
+  // on `depNodes` (stable across unrelated edits) keeps their results — and the
+  // useFrame dirty-check below — referentially stable too.
+  const depNodeMap = useMemo(() => {
+    const m: Record<string, (typeof depNodes)[number]> = {};
+    for (const n of depNodes) m[n.id] = n;
+    return m;
+  }, [depNodes]);
   const childOverrides = useMemo(
-    () => childOverridesForAsset(dagNodes, value.assetRef),
-    [dagNodes, value.assetRef],
+    () => childOverridesForAsset(depNodeMap, value.assetRef),
+    [depNodeMap, value.assetRef],
   );
   // P7.12 (#108, C2) — the BAKED-CHANNEL layer: per-bone KeyframeChannel nodes
   // materialized by the copy-on-write bake (Wave D). SUBSCRIBED, like
@@ -1121,8 +1148,8 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // scoped to this asset by nodeNameMap membership (BLOCK-2). Dormant until the
   // bake mutator (D1) exists — no baked channel ⇒ empty map ⇒ pure clip behavior.
   const bakedChannels = useMemo(
-    () => bakedChannelSamplersForAsset(dagNodes, value.nodeNameMap),
-    [dagNodes, value.nodeNameMap],
+    () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap),
+    [depNodeMap, value.nodeNameMap],
   );
   // #99 (P7.13) — per-clone capture of the IMPORTED material(s), keyed by mesh
   // uuid. The override effect re-derives from this ORIGINAL every time (never
