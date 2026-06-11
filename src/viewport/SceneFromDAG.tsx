@@ -16,8 +16,8 @@
 // REF: THESIS.md §11, vyapti V8.
 
 import { useGLTF } from '@react-three/drei';
-import { useFrame, useThree } from '@react-three/fiber';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 // #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
@@ -182,51 +182,24 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
           })
         : null}
-      {value.scene.children.map((child, i) => {
-        const pickId = childRefs[i]?.node ?? null;
-        // #149 B2a — for an AnimationLayer scene child, the TRANSIENT is keyed by
-        // the WRAPPED target's node id (the box the gizmo/inspector edits), NOT
-        // the layer's id. Resolve the layer's single-hop target ref EXACTLY as
-        // resolveEvaluatedTransform:135 does (normalizeRefs via addLayer.ts:101's
-        // own shape) so the render overlay node-id == the read overlay node-id
-        // (H40). Threaded into AnimationLayerR; null for any non-layer child.
-        let animationTargetId: string | null = null;
-        if (child.kind === 'AnimationLayer' && pickId) {
-          const tb = state.nodes[pickId]?.inputs.target;
-          const tref = Array.isArray(tb) ? tb[0] : tb;
-          animationTargetId = (tref as { node?: string } | undefined)?.node ?? null;
-        }
-        return (
-          <group
-            key={`mesh:${i}`}
-            // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer
-            // node id so the DEV scale-probe seam (MeshScaleProbe) can read the
-            // REAL rendered three.js object scale by node id (the H40 side-A
-            // observation: rendered == resolver, not inferred from params).
-            name={pickId ?? undefined}
-            onClick={(e) => {
-              if (!pickId) return;
-              e.stopPropagation();
-              const sel = useSelectionStore.getState();
-              // #162 — NEVER select the AnimationLayer wrapper from the viewport.
-              // Grounded in Blender (animation_data is a facet ATTACHED to the
-              // object; the object stays the selected entity) + Houdini (keyed
-              // parms live ON the node; the node stays primary). The layer is a
-              // Basher DAG implementation detail (H34 patchTarget); a viewport
-              // click must land on the wrapped OBJECT so the inspector shows its
-              // transform/material and the gizmo edits it. The layer node itself
-              // stays reachable via the SceneTree (graph view), matching Blender's
-              // NLA pane / Houdini's Animation Layer pane being separate from
-              // object selection. Identity for a non-layer pick (byte-identical).
-              const objId = resolveEditTargetId(state, pickId);
-              if (e.shiftKey) sel.selectAdditive(objId);
-              else sel.select(objId);
-            }}
-          >
-            <MeshChild value={child} animationTargetId={animationTargetId} />
-          </group>
-        );
-      })}
+      {/* #149 B2a — for an AnimationLayer scene child, the transient is keyed by
+          the WRAPPED target's id (the object the gizmo/inspector edits), NOT the
+          layer's id (H40 read/write parity). Index `i` corresponds to the Scene
+          aggregator's `inputs.children[i]` (childRefs) per the comment above.
+          Each child renders through the MEMOIZED SceneChildNode so a single param
+          edit re-renders ONE node, not all N (H48 / B13). */}
+      {value.scene.children.map((child, i) => (
+        <SceneChildNode
+          key={`mesh:${i}`}
+          value={child}
+          pickId={childRefs[i]?.node ?? null}
+          animationTargetId={
+            child.kind === 'AnimationLayer'
+              ? animationLayerTargetId(state, childRefs[i]?.node ?? null)
+              : null
+          }
+        />
+      ))}
       <MeshScaleProbe />
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
@@ -579,6 +552,72 @@ const MeshChild = memo(function MeshChild({ value, override, animationTargetId }
       // a subscription — H48) and renders the patched SceneChild declaratively.
       return <AnimationLayerR value={value} override={override} targetNodeId={animationTargetId} />;
   }
+});
+
+/** Resolve an AnimationLayer child's single-hop target node id (the wrapped
+ *  object the gizmo/inspector edits), mirroring resolveEvaluatedTransform:135.
+ *  Returns a STRING (stable by value across renders) so it is a memo-safe prop.
+ *  null for any non-layer child / missing target. */
+function animationLayerTargetId(state: DagState, pickId: string | null): string | null {
+  if (!pickId) return null;
+  const tb = state.nodes[pickId]?.inputs.target;
+  const tref = Array.isArray(tb) ? tb[0] : tb;
+  return (tref as { node?: string } | undefined)?.node ?? null;
+}
+
+interface SceneChildNodeProps {
+  value: SceneChild;
+  /** Producing DAG node id (for click-to-select + the MeshScaleProbe name). */
+  pickId: string | null;
+  /** AnimationLayer wrapped-target id; null otherwise (H40 read/write parity). */
+  animationTargetId: string | null;
+}
+
+// The per-top-level-child WRAPPER, memoized. This is the lever that makes a
+// single param edit re-render ONE node instead of all N (H48 / B13).
+//
+// Why this exists: SceneFromDAG subscribes to the whole `state`, so ANY edit
+// re-runs its render and rebuilds every child. The leaf MeshChild was already
+// memo'd, but each child was wrapped in an INLINE <group> with a fresh inline
+// `onClick` closure every render — an unstable prop that forced React to
+// reconcile all N wrapper fibers (~0.018ms each → ~13ms at 700 nodes) even
+// though the meshes themselves were skipped. Lifting the wrapper into a memo'd
+// component with a STABLE onClick (closes over `pickId` only; reads live DAG
+// state via getState() at click time, never the render-time `state`) lets
+// React bail out of every unchanged child's subtree.
+//
+// GENERAL over any property: the evaluator cache returns a stable `value` ref
+// for every node that didn't change (SceneFromDAG.tsx:382 — "value.scene.
+// children[i] IS a stable reference" for cache hits), regardless of WHICH param
+// changed. So editing transform, material, colour, geometry, anything →
+// only the edited node's `value` ref flips → only its SceneChildNode re-renders.
+const SceneChildNode = memo(function SceneChildNode({
+  value,
+  pickId,
+  animationTargetId,
+}: SceneChildNodeProps) {
+  const onClick = useCallback(
+    (e: ThreeEvent<MouseEvent>) => {
+      if (!pickId) return;
+      e.stopPropagation();
+      const sel = useSelectionStore.getState();
+      // #162 — NEVER select the AnimationLayer wrapper from the viewport; unwrap
+      // to the edited OBJECT. Read LIVE state (not a render-time closure) so the
+      // handler identity stays stable across SceneFromDAG re-renders.
+      const objId = resolveEditTargetId(useDagStore.getState().state, pickId);
+      if (e.shiftKey) sel.selectAdditive(objId);
+      else sel.select(objId);
+    },
+    [pickId],
+  );
+  return (
+    // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer node id
+    // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
+    // three.js object scale by node id (H40 side-A observation).
+    <group name={pickId ?? undefined} onClick={onClick}>
+      <MeshChild value={value} animationTargetId={animationTargetId} />
+    </group>
+  );
 });
 
 // P7.12 D-04 (shape B-lite, FLAG-1 LOCKED) — renderer for the authored
