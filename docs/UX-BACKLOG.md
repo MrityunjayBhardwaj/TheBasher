@@ -26,8 +26,13 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 
 ## Selection / scene
 
-7. ☐ **Select anything, even inside a group — Blender-style.** Repeated double-clicks drill
-   deeper into groups → sub-groups, selecting the leaf under the cursor.
+7. ☑ **Select anything, even inside a group — Blender/Spline-style.** _(2026-06-13)_ Double-click
+   drills ONE level deeper toward the sub-mesh under the cursor (whole import → body → wheel →
+   leaf); repeat to go deeper; **Esc** pops back up a level. The deep glTF mesh maps to its
+   GltfChild via `GltfAsset.nodeNameMap`; drill depth lives in a dedicated `drillStore` (survives
+   the single-click that precedes every double-click). Single click still selects the whole
+   import. _(Limitation: scopes the asset by hit-name match — multiple imports of the same model
+   with shared child names is a heuristic.)_
 
 ## Materials / textures / lighting
 

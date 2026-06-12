@@ -51,6 +51,7 @@ import { useAssetsPopoverStore } from './AssetsPopover';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
@@ -186,6 +187,16 @@ function dismissTopmostTransient(): void {
   if (useAssetsPopoverStore.getState().open) {
     // 2b. Close an open Assets popover.
     useAssetsPopoverStore.getState().close();
+    return;
+  }
+  // 2c. UX #7 — pop OUT one drill level (leaf → … → asset) before clearing.
+  // When the user has double-click-drilled into a dense glTF hierarchy, Esc
+  // walks back up a level at a time (mirrors the drill-in), selecting the
+  // parent. Only when already at the top (popOut returns null) do we fall
+  // through to the selection clear.
+  const popped = useDrillStore.getState().popOut();
+  if (popped) {
+    useSelectionStore.getState().select(popped);
     return;
   }
   // 3. Floor: clear the selection (the pre-existing Esc behavior). We do NOT

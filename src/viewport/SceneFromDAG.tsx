@@ -35,6 +35,8 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import { resolveEditTargetId } from '../app/animate/resolveEditTarget';
+import { useDrillStore } from '../app/stores/drillStore';
+import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
@@ -611,6 +613,33 @@ const SceneChildNode = memo(function SceneChildNode({
       const objId = resolveEditTargetId(useDagStore.getState().state, pickId);
       if (e.shiftKey) sel.selectAdditive(objId);
       else sel.select(objId);
+      // UX #7: a single click selects the whole top-level node. It deliberately
+      // does NOT reset the drill depth — a browser double-click fires these
+      // clicks FIRST, and resetting here would defeat incremental drilling. The
+      // drill store self-restarts via its chain signature when a NEW object is
+      // double-clicked; empty-space clicks reset it (Viewport onPointerMissed).
+    },
+    [pickId],
+  );
+  // UX #7 (drill-in): double-click drills ONE level deeper into a dense glTF
+  // hierarchy toward the sub-mesh under the cursor (asset → body → wheel → leaf;
+  // repeat to go deeper, Esc to pop out). The hit object reaches this wrapper
+  // handler as `e.object` (R3F sets it to the intersected mesh; `e.eventObject`
+  // is this wrapper) — map it to its GltfChild via the asset's nodeNameMap.
+  const onDoubleClick = useCallback(
+    (e: ThreeEvent<MouseEvent>) => {
+      if (!pickId) return;
+      e.stopPropagation();
+      const state = useDagStore.getState().state;
+      const hit = (e.intersections?.[0]?.object ?? e.object) as unknown as Obj3DLike | null;
+      const chain = buildGltfDrillChain(state, pickId, hit);
+      const sel = useSelectionStore.getState();
+      if (!chain || chain.length <= 1) {
+        // not a drillable glTF hierarchy → behave like a normal select
+        sel.select(resolveEditTargetId(state, pickId));
+        return;
+      }
+      sel.select(useDrillStore.getState().drillInto(chain));
     },
     [pickId],
   );
@@ -618,7 +647,7 @@ const SceneChildNode = memo(function SceneChildNode({
     // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer node id
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
-    <group name={pickId ?? undefined} onClick={onClick}>
+    <group name={pickId ?? undefined} onClick={onClick} onDoubleClick={onDoubleClick}>
       <MeshChild value={value} animationTargetId={animationTargetId} />
     </group>
   );

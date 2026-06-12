@@ -19,6 +19,7 @@ import { Gizmo } from '../app/Gizmo';
 import { ProjectionToggle } from '../app/ProjectionToggle';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { useDrillStore } from '../app/stores/drillStore';
 import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
 import { saveEditorView } from '../app/editorViewPersistence';
 import { useProjectStore } from '../core/project/store';
@@ -170,6 +171,9 @@ export function Viewport() {
         // clean).
         onPointerMissed={() => {
           useSelectionStore.getState().clear();
+          // UX #7 — clicking empty space exits any drill context, so the next
+          // double-click on a model restarts at its first child.
+          useDrillStore.getState().reset();
         }}
       >
         <Suspense fallback={null}>
