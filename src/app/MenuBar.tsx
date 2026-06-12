@@ -18,9 +18,12 @@ import {
   createNewProject,
   deleteProject,
   duplicateCurrentProject,
+  listAllProjectMetadata,
   renameCurrentProject,
   saveCurrent,
+  switchProject,
 } from './boot';
+import type { ProjectMetadata } from '../core/project/io';
 import {
   dispatchApplyTransform,
   isTransformAnimated,
@@ -200,17 +203,6 @@ async function onNewProject() {
   await createNewProject(name.trim() || 'Untitled');
 }
 
-/** Programmatically click the ProjectsMenu toggle so File → Open surfaces
- *  the same panel users get from the "projects ▾" button (hosted on the
- *  ProjectTabs identity bar since v0.6 #4 W1). Avoids re-implementing
- *  list/switch/delete in the menu bar. */
-function onOpenProjects() {
-  const btn = document.querySelector(
-    '[data-testid="projects-menu-toggle"]',
-  ) as HTMLButtonElement | null;
-  btn?.click();
-}
-
 async function onDuplicate() {
   const current = useProjectStore.getState().current;
   if (!current) return;
@@ -291,6 +283,25 @@ export function MenuBar() {
   const space = useEditorStore((s) => s.space);
   const setSpace = useEditorStore((s) => s.setSpace);
   const showFpsMeter = useChromeStore((s) => s.showFpsMeter);
+  const currentProjectId = useProjectStore((s) => s.current?.id);
+  const currentProjectUpdatedAt = useProjectStore((s) => s.current?.updatedAt);
+
+  // Projects list for File ▸ Switch Project (UX backlog #4 — the "projects ▾"
+  // dropdown left the top-right corner; its list now lives under File). Fetched
+  // when the File menu opens and when the current project changes (new /
+  // duplicate / rename / delete bumps id or updatedAt). Same read seam
+  // ProjectsMenu used (listAllProjectMetadata).
+  const [projects, setProjects] = useState<ProjectMetadata[]>([]);
+  useEffect(() => {
+    if (open !== 'file') return;
+    let cancelled = false;
+    void listAllProjectMetadata().then((p) => {
+      if (!cancelled) setProjects(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, currentProjectId, currentProjectUpdatedAt]);
 
   // Distinct node types for the Select → By Type submenu.
   const distinctTypes = Array.from(new Set(Object.values(dag.nodes).map((n) => n.type))).sort();
@@ -323,7 +334,22 @@ export function MenuBar() {
         onClose={close}
       >
         <Item label="New Project…" onSelect={onNewProject} testId="menu-file-new" />
-        <Item label="Open…" onSelect={onOpenProjects} testId="menu-file-open" />
+        <Submenu label="Switch Project" testId="menu-file-switch">
+          {projects.length === 0 ? (
+            <Item label="No projects" onSelect={() => {}} testId="menu-file-switch-empty" />
+          ) : (
+            projects.map((p) => (
+              <Item
+                key={p.id}
+                label={`${p.id === currentProjectId ? '✓ ' : '   '}${p.name}`}
+                onSelect={() => {
+                  if (p.id !== currentProjectId) void switchProject(p.id);
+                }}
+                testId={`menu-file-switch-${p.id}`}
+              />
+            ))
+          )}
+        </Submenu>
         <Item label="Duplicate Current" onSelect={onDuplicate} testId="menu-file-duplicate" />
         <Item label="Rename Current…" onSelect={onRename} testId="menu-file-rename" />
         <Item label="Delete Current…" onSelect={onDelete} testId="menu-file-delete" />

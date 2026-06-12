@@ -99,25 +99,6 @@ test('P6.W3#3 collapse chevron lives in the outliner header (V35 reveal stays re
   await expect(page.getByTestId('left-sidebar-search')).toBeVisible();
 });
 
-test('P6.W3#4 ComfyStatusIndicator migrated from Chrome to ProjectTabs right edge', async ({
-  page,
-}) => {
-  // Lives inside ProjectTabs (R1)…
-  const inProjectTabs = await page.evaluate(() => {
-    const indicator = document.querySelector('[data-testid="comfy-status-indicator"]');
-    const tabs = document.querySelector('[data-testid="project-tabs"]');
-    return Boolean(indicator && tabs && tabs.contains(indicator));
-  });
-  expect(inProjectTabs).toBe(true);
-  // …and NOT inside Chrome (R2 — the W2 temporary home is now empty of it).
-  const inChrome = await page.evaluate(() => {
-    const indicator = document.querySelector('[data-testid="comfy-status-indicator"]');
-    const chrome = document.querySelector('[data-testid="chrome"]');
-    return Boolean(indicator && chrome && chrome.contains(indicator));
-  });
-  expect(inChrome).toBe(false);
-});
-
 test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears after save', async ({
   page,
 }) => {
@@ -158,7 +139,7 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
   await expect(page.getByTestId('project-tab-dirty-dot')).toBeVisible();
 
   // Save and verify dot clears.
-  await page.getByTestId('save-button').click();
+  await page.keyboard.press('ControlOrMeta+s');
   await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
 });
 

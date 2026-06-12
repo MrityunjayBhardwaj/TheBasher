@@ -198,8 +198,8 @@ test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-tri
     );
   });
 
-  await page.getByTestId('save-button').click();
-  await expect(page.getByTestId('save-status')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();

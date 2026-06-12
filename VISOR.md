@@ -6,6 +6,8 @@
 
 **Status:** Draft. The Basher engine is the substrate; Visor is what the substrate looks like when you point it at 2D motion design instead of cinematic 3D.
 
+> **⚠️ SUBSTRATE RECONCILIATION OPEN (2026-06-12).** A MoGraph-DSL/compose brainstorm reached a different substrate conclusion: build Visor's 2D procedural tier **on compose's IR directly** (because that IR already exists AND the compose B.8.6→B.8.8 text work — template+field, scalar-field, channel handlers, dominance recognizer — is a *working, render-verified vertical slice* of the C4D-MoGraph/Cavalry procedural trio, i.e. Visor's proto-core). That SHIFTS this thesis's "Visor on the Basher engine" + the locked "Move A" (compose = emit seam only). The shift is **not yet resolved** — three candidate reconciliations (R1 compose-IR-is-the-2D-substrate / R2 Basher-engine-targets-a-compose-2D-profile / R3 hybrid shared-primitive-library) are spelled out in `~/Documents/projects/MoGraph-DSL/.artifacts/visor-procedural-editor.md` §6. That artifact also locks **D-VIS-01 bake-on-edit** (defer the live procedural engine), D-VIS-02 (procedural IR is a superset above Lottie-parity), D-VIS-03 (LLM authors the procedural tier only, through the typed/refusing Mutator surface), and argues **procedural is the substrate that makes full LLM-authorship work** (LLMs author compact procedural specs, never keyframe soup). Read it alongside this thesis; the substrate question is the gating decision before any Visor code.
+
 ---
 
 ## Part I — The Argument

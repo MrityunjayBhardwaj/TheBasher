@@ -79,15 +79,6 @@ test('P6.W2#3 keyboard Q/W/E/R sets editorStore.activeTool', async ({ page }) =>
 // p6-w7-floating-toolbar.spec.ts (R8 click + keyboard sync) and the
 // p6-w1-consolidation.spec.ts single-DOM-location gate.
 
-test('P6.W2#6 ComfyStatusIndicator renders with capability-derived state', async ({ page }) => {
-  const ind = page.getByTestId('comfy-status-indicator');
-  await expect(ind).toBeVisible();
-  // Boot wiring installs StubComfyUICapability for e2e (boot.ts:162-168);
-  // initial state should be 'stub' until the first probe (which only
-  // fires on hover or while playback is active).
-  await expect(ind).toHaveAttribute('data-state', 'stub');
-});
-
 test('P6.W2#7 "Present" button enters present mode; Esc exits', async ({ page }) => {
   await page.getByTestId('top-toolbar-present').click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');

@@ -485,8 +485,8 @@ test('P2#5 reload restores poses + paths bit-exact (V4 round-trip)', async ({ pa
     };
   });
 
-  await page.getByTestId('save-button').click();
-  await expect(page.getByTestId('save-status')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();

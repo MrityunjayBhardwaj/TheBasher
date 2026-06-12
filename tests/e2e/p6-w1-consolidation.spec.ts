@@ -78,11 +78,12 @@ test('W1#2 every consolidated control has EXACTLY ONE home, inside the floating 
   }
 });
 
-test('W1#3 the save + identity cluster folded onto the ProjectTabs bar', async ({ page }) => {
-  // Chrome's save button + project breadcrumb now live on R1 (ProjectTabs).
+test('W1#3 the identity cluster folded onto the ProjectTabs bar', async ({ page }) => {
+  // The project breadcrumb lives on R1 (ProjectTabs). The save button was
+  // removed from the chrome (UX backlog #4) — Save is File ▸ Save / Cmd+S now.
   const tabs = page.getByTestId('project-tabs');
   await expect(tabs).toBeVisible();
-  for (const id of ['save-button', 'project-name']) {
+  for (const id of ['project-name']) {
     await expect(page.getByTestId(id)).toHaveCount(1);
     const inTabs = await page.evaluate((testId: string) => {
       const el = document.querySelector(`[data-testid="${testId}"]`);

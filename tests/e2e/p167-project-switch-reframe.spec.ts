@@ -64,8 +64,8 @@ test.describe('#167 project-switch reframe', () => {
     // switched to in-session (no reload). This is the exact path that #167
     // regressed. (Duplicate needs no prompt dialog, unlike "+ new".)
     const before = await page.evaluate(() => localStorage.getItem('basher.lastProjectId'));
-    await page.getByTestId('projects-menu-toggle').click();
-    await page.getByTestId('projects-menu-duplicate').click();
+    await page.getByTestId('menu-file').click();
+    await page.getByTestId('menu-file-duplicate').click();
     // Wait for the switch to land: lastProjectId flips to the new project id.
     await page.waitForFunction(
       (prev) => localStorage.getItem('basher.lastProjectId') !== prev,

@@ -249,6 +249,16 @@ export function KeyboardShortcuts() {
         dismissTopmostTransient();
         return;
       }
+      // Cmd/Ctrl + S — save. Handled BEFORE the typing-target guard so it
+      // works even while an Inspector field / chat textarea is focused — a
+      // universal save (the browser's own Cmd+S behaves this way, and the
+      // now-removed chrome save button saved regardless of focus). Without
+      // this, editing a value and hitting Cmd+S would silently save nothing.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        void saveCurrent();
+        return;
+      }
       if (isTypingTarget(e.target)) return;
       const cmd = e.metaKey || e.ctrlKey;
 
@@ -286,12 +296,8 @@ export function KeyboardShortcuts() {
         useDagStore.getState().redo();
         return;
       }
-      // Cmd/Ctrl + S — save
-      if (cmd && (e.key === 's' || e.key === 'S')) {
-        e.preventDefault();
-        void saveCurrent();
-        return;
-      }
+      // (Cmd/Ctrl + S — save — is handled above the typing-target guard so it
+      // fires even while a field is focused.)
       // Cmd/Ctrl + A — select all top-level scene children
       if (cmd && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();

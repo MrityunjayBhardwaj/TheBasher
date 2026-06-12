@@ -134,8 +134,8 @@ test('#4 save → reload restores identical state', async ({ page }) => {
   // Edit a value, save, reload, confirm it persisted.
   await page.getByTestId('inspector-vec-n_camera-position-x').fill('7.5');
   await page.getByTestId('inspector-vec-n_camera-position-x').press('Tab');
-  await page.getByTestId('save-button').click();
-  await expect(page.getByTestId('save-status')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible();
@@ -337,8 +337,8 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
   await expect(xField).toHaveValue('1.25');
 
   // Reload the page and confirm the controlled `value` matches OPFS-loaded state.
-  await page.getByTestId('save-button').click();
-  await expect(page.getByTestId('save-status')).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
   await page.reload();
   await page.waitForFunction(() => {
     type Win = { __basher_selection?: unknown };
