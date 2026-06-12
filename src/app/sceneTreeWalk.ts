@@ -54,8 +54,19 @@ function display(state: DagState, nodeId: NodeId): string {
   const node = state.nodes[nodeId];
   if (!node) return `<missing:${nodeId}>`;
   const params = node.params as Record<string, unknown>;
-  const name = (params?.name as string | undefined) ?? '';
-  return name ? `${node.type} (${name})` : node.type;
+  // Identity, in priority order:
+  //   1. meta.name — the canonical user-facing name (what the inspector header
+  //      and the a11y selection summary resolve to: meta.name ?? id). Honoring
+  //      it first keeps the tree row 1:1 with the inspector identity.
+  //   2. params.name — the SEMANTIC name carried by Shot / AnimationClip /
+  //      Character node params (their domain label, not a generic field).
+  //   3. node.id — the unique, stable fallback. Previously this fell back to
+  //      `node.type`, which rendered every unnamed BoxMesh as the indistinct
+  //      label "BoxMesh"; two boxes were unidentifiable in the tree while the
+  //      inspector showed "n_box_2". The type is conveyed by the row's icon,
+  //      so the label carries identity, not category.
+  const paramName = typeof params?.name === 'string' ? params.name : undefined;
+  return node.meta?.name ?? paramName ?? node.id;
 }
 
 function walkOneAsChild(

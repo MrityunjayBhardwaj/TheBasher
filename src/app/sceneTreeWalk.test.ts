@@ -178,3 +178,54 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
     expect(ta).toEqual(tb);
   });
 });
+
+describe('buildSceneTreeRows — row.display identity (outliner labels)', () => {
+  function sceneWithBox(): DagState {
+    let state = buildSceneOnly();
+    state = applyAll(state, [
+      { type: 'addNode', nodeId: 'n_box_2', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
+      {
+        type: 'connect',
+        from: { node: 'n_box_2', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]);
+    return state;
+  }
+
+  function patchNode(state: DagState, id: string, patch: Record<string, unknown>): DagState {
+    return { ...state, nodes: { ...state.nodes, [id]: { ...state.nodes[id]!, ...patch } } };
+  }
+
+  it('falls back to the node id (NOT the bare type) for an unnamed node', () => {
+    // Two unnamed BoxMesh used to both read "BoxMesh" — indistinct in the tree
+    // while the inspector showed "n_box_2". The label now carries identity.
+    const box = buildSceneTreeRows(sceneWithBox()).find((r) => r.nodeId === 'n_box_2');
+    expect(box?.display).toBe('n_box_2');
+    expect(box?.display).not.toBe('BoxMesh');
+  });
+
+  it('prefers meta.name (matches the inspector identity)', () => {
+    const box = buildSceneTreeRows(
+      patchNode(sceneWithBox(), 'n_box_2', { meta: { name: 'Hero' } }),
+    ).find((r) => r.nodeId === 'n_box_2');
+    expect(box?.display).toBe('Hero');
+  });
+
+  it('uses params.name (Shot / AnimationClip / Character semantic label) over the id', () => {
+    const box = buildSceneTreeRows(
+      patchNode(sceneWithBox(), 'n_box_2', { params: { size: [1, 1, 1], name: 'Intro' } }),
+    ).find((r) => r.nodeId === 'n_box_2');
+    expect(box?.display).toBe('Intro');
+  });
+
+  it('meta.name wins over params.name', () => {
+    const box = buildSceneTreeRows(
+      patchNode(sceneWithBox(), 'n_box_2', {
+        meta: { name: 'Hero' },
+        params: { size: [1, 1, 1], name: 'Intro' },
+      }),
+    ).find((r) => r.nodeId === 'n_box_2');
+    expect(box?.display).toBe('Hero');
+  });
+});
