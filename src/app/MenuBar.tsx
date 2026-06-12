@@ -21,7 +21,6 @@ import {
   renameCurrentProject,
   saveCurrent,
 } from './boot';
-import { addPrimitive } from './AddMenu';
 import {
   dispatchApplyTransform,
   isTransformAnimated,
@@ -36,7 +35,6 @@ import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import { useChromeStore } from './stores/chromeStore';
-import type { PrimitiveKind } from './addPrimitives';
 import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 
@@ -268,55 +266,13 @@ function onSettings() {
 // MenuBar
 // ---------------------------------------------------------------------------
 
-type OpenMenu = null | 'file' | 'add' | 'edit' | 'object' | 'select' | 'view';
+type OpenMenu = null | 'file' | 'edit' | 'object' | 'select' | 'view';
 
 const APPLY_MASKS: { mask: ApplyMask; label: string }[] = [
   { mask: 'all', label: 'All Transforms' },
   { mask: 'location', label: 'Location' },
   { mask: 'rotation', label: 'Rotation' },
   { mask: 'scale', label: 'Scale' },
-];
-
-const ADD_GROUPS: {
-  label: string;
-  testId: string;
-  items: { kind: PrimitiveKind; label: string }[];
-}[] = [
-  {
-    label: 'Mesh',
-    testId: 'menu-add-mesh',
-    items: [
-      { kind: 'Cube', label: 'Cube' },
-      { kind: 'Sphere', label: 'UV Sphere' },
-    ],
-  },
-  {
-    label: 'Light',
-    testId: 'menu-add-light',
-    items: [
-      { kind: 'DirectionalLight', label: 'Sun (Directional)' },
-      { kind: 'PointLight', label: 'Point' },
-      { kind: 'SpotLight', label: 'Spot' },
-      { kind: 'AreaLight', label: 'Area' },
-      { kind: 'AmbientLight', label: 'Ambient' },
-    ],
-  },
-  {
-    label: 'Camera',
-    testId: 'menu-add-camera',
-    items: [
-      { kind: 'PerspectiveCamera', label: 'Perspective' },
-      { kind: 'OrthographicCamera', label: 'Orthographic' },
-    ],
-  },
-  {
-    label: 'Empty',
-    testId: 'menu-add-empty',
-    items: [
-      { kind: 'Group', label: 'Group' },
-      { kind: 'Transform', label: 'Transform' },
-    ],
-  },
 ];
 
 export function MenuBar() {
@@ -401,43 +357,11 @@ export function MenuBar() {
         <Item label="Import Folder…" onSelect={openImportPicker} testId="menu-file-import" />
       </Menu>
 
-      <Menu
-        label="Add"
-        testId="menu-add"
-        open={open === 'add'}
-        onOpen={() => setOpen('add')}
-        onClose={close}
-      >
-        {ADD_GROUPS.map((g) => (
-          <Submenu key={g.label} label={g.label} testId={g.testId}>
-            {g.items.map((item) => (
-              <Item
-                key={item.kind}
-                label={item.label}
-                onSelect={() => addPrimitive(item.kind)}
-                testId={`menu-add-item-${item.kind}`}
-              />
-            ))}
-          </Submenu>
-        ))}
-        <Divider />
-        <Item
-          label="Open Add Menu (Shift+A)"
-          shortcut="⇧A"
-          onSelect={() => {
-            const slot = document.querySelector(
-              '[data-testid="viewport-slot"]',
-            ) as HTMLElement | null;
-            if (slot) {
-              const r = slot.getBoundingClientRect();
-              import('./stores/addMenuStore').then((m) => {
-                m.useAddMenuStore.getState().openAt(r.left + r.width / 2, r.top + r.height / 2);
-              });
-            }
-          }}
-          testId="menu-add-open"
-        />
-      </Menu>
+      {/* No top-level "Add" menu: the floating viewport toolbar's prominent
+          "+ Add" button (and Shift+A) is the SINGLE Add entry — both open the
+          same addMenuStore AddMenu. A second menu-bar path was the redundant
+          surface; one create affordance matches the Spline "one toolbar" target
+          (UI-SPEC §5.7). Add is no longer "in two places". */}
 
       <Menu
         label="Edit"
