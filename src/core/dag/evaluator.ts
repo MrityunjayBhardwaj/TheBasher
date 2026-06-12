@@ -49,6 +49,31 @@ export function createEvaluatorCache(): EvaluatorCache {
 
 const DEPTH_LIMIT = 32;
 
+// Params-hash memo (perf — H48 6th occurrence). `hashValue(node.params)` over a
+// heavy imported asset (e.g. a glTF TransformClip with hundreds of per-bone tracks)
+// measured ~35ms on the cicada, and the evaluator recomputes it on EVERY uncached
+// evaluate — the cache key is built BEFORE the cache lookup (see below), so a warm
+// cache does NOT avoid it. A read-side resolver that re-evaluates per inspector row
+// then pays it 3–6×/commit → the ~458ms edit-lag a selected heavy-asset child shows.
+//
+// node.params is REPLACED on every setParam (ops.ts applySetParam → fresh
+// `parsed.data`) and SHARED by reference for every unchanged node (structural
+// sharing, V42 / ops.ts:278-282). So a WeakMap keyed by the params object identity
+// is exact: a HIT means the params are the same object (byte-identical content); a
+// changed param is a NEW object → miss → recompute for that one node only. This
+// makes per-node param hashing O(changed) instead of O(scene). Module-level so it
+// survives across evaluate() calls and cache instances (the cost is per params
+// object, not per evaluation). GC'd with the params object (WeakMap).
+const paramsHashMemo = new WeakMap<object, ContentHash>();
+function hashParams(params: unknown): ContentHash {
+  if (params === null || typeof params !== 'object') return hashValue(params);
+  const memoed = paramsHashMemo.get(params as object);
+  if (memoed !== undefined) return memoed;
+  const h = hashValue(params);
+  paramsHashMemo.set(params as object, h);
+  return h;
+}
+
 // Optional dev-only instrumentation. Receives the self-time of each node's
 // evaluate() body (0 for a cache hit) and whether the result came from cache.
 // Inert unless armed by the frame profiler (production never sets it), so the
@@ -124,7 +149,7 @@ export function evaluate(
 
     onStack.delete(id);
 
-    const paramsHash = hashValue(node.params);
+    const paramsHash = hashParams(node.params);
     const inputsHashStr = hashValue(inputHashes);
     const timePart = def.pure ? '' : `|t:${ctx.time.frame}.${ctx.time.seconds}`;
     const cacheKey = `${node.id}@${node.type}#${node.version}|p:${paramsHash}|i:${inputsHashStr}${timePart}`;
