@@ -76,7 +76,7 @@ function ProjectCard({ meta, isExample, busy, onOpen, onDelete }: CardProps): Re
             user projects a neutral muted fill — both audited decorative tokens. */}
         <div
           aria-hidden
-          className={`flex h-32 items-center justify-center text-3xl font-semibold ${
+          className={`flex h-40 items-center justify-center text-4xl font-semibold ${
             isExample ? 'bg-accent/15 text-accent' : 'bg-muted text-fg/40'
           }`}
         >
@@ -176,21 +176,27 @@ export function Home(): ReactNode {
       {/* Quiet top bar — logo + tagline, a thin hairline underline that recedes
           (Spline region ① "thin, quiet, recedes"). Reuses the editor's audited
           bg/95 panel surface (R5 ROW). */}
-      <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-bg/95 px-8 py-4 backdrop-blur-md">
-        <span className="text-base font-semibold tracking-tight text-fg">basher</span>
-        <span className="text-xs text-fg-dim">director-first 3D</span>
+      {/* The hairline bar spans full width (Spline region ① "thin, quiet,
+          recedes"), but its CONTENTS align to the SAME centered column as the
+          body below — so the logo sits directly above "Your projects" instead
+          of floating at the far-left edge while the content reads as indented. */}
+      <header className="sticky top-0 z-10 border-b border-border bg-bg/95 backdrop-blur-md">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-8 py-4">
+          <span className="text-base font-semibold tracking-tight text-fg">basher</span>
+          <span className="text-xs text-fg-dim">director-first 3D</span>
+        </div>
       </header>
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-10 px-8 py-12">
+      <div className="mx-auto flex max-w-5xl flex-col gap-10 px-8 py-12">
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-medium text-fg">Your projects</h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-5">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-5">
             <button
               type="button"
               disabled={busy}
               onClick={onNew}
               data-testid="home-new-project"
-              className="flex h-[176px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong bg-bg-1/40 text-fg-dim backdrop-blur-md transition-colors hover:border-accent hover:bg-bg-1 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
+              className="flex h-[208px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong bg-bg-1/40 text-fg-dim backdrop-blur-md transition-colors hover:border-accent hover:bg-bg-1 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50"
             >
               <span aria-hidden className="text-2xl">
                 +
@@ -213,7 +219,7 @@ export function Home(): ReactNode {
         {examples.length > 0 ? (
           <section className="flex flex-col gap-4">
             <h2 className="text-sm font-medium text-fg">Examples</h2>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-5">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-5">
               {examples.map((p) => (
                 <ProjectCard
                   key={p.id}
