@@ -6,7 +6,14 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 
 ## Chrome / layout
 
-1. ☐ **Fix the transform gizmo head.** The translate gizmo arrowheads/handles render wrong.
+1. ☑ **Transform gizmo head — NOT A BUG (closed 2026-06-13).** The "heads only point
+   positive / +Y points down" is stock `three-stdlib` `TransformControls` design: both the
+   `fwd` + `bwd` arrowheads sit at the **+end** of each axis (`TransformControls.js:795-808`);
+   a per-frame `axis·eye` test (`:642-674`, `AXIS_FLIP_TRESHOLD=0`) flips **which** cone lights,
+   never relocating it to the −end — so from below, the +Y cone points back toward centre.
+   Live Playwright intel proved it is **transform-independent** (identical cones across identity /
+   rot180 / mirror-Y / neg-scale on a real GltfChild) → kills every H89 transform hypothesis.
+   Decision: **accept the flip** (it's standard, Blender's Move gizmo is similar). See [[H89]].
 2. ☐ **Floating-island panels (Spline-style).** Make every panel a floating island — outliner,
    inspector, **timeline, and chat box** — detached rounded surfaces over the viewport, not
    docked grid bands.
