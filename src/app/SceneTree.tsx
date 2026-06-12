@@ -74,8 +74,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     // While filtering, search the FULL tree (ignore collapse) so a match inside
     // a collapsed glTF subtree still surfaces. The Scene root (depth 0) stays as
     // the anchor row so the panel never renders fully empty when the user is
-    // mid-type on a query that hasn't matched a child yet.
-    return allRows.filter((r) => r.depth === 0 || r.display.toLowerCase().includes(query));
+    // mid-type on a query that hasn't matched a child yet. Match the row's
+    // display (id/name) OR its node TYPE — display no longer carries the type
+    // (it's the icon now), so searching "BoxMesh" must still match unnamed boxes.
+    return allRows.filter(
+      (r) =>
+        r.depth === 0 ||
+        r.display.toLowerCase().includes(query) ||
+        r.nodeType.toLowerCase().includes(query),
+    );
   }, [allRows, expandedAssets, filtering, query]);
 
   function onDragStart(e: DragEvent, row: TreeRow) {
