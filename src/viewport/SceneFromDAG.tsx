@@ -613,11 +613,15 @@ const SceneChildNode = memo(function SceneChildNode({
       const objId = resolveEditTargetId(useDagStore.getState().state, pickId);
       if (e.shiftKey) sel.selectAdditive(objId);
       else sel.select(objId);
-      // UX #7: a single click selects the whole top-level node. It deliberately
-      // does NOT reset the drill depth — a browser double-click fires these
-      // clicks FIRST, and resetting here would defeat incremental drilling. The
-      // drill store self-restarts via its chain signature when a NEW object is
-      // double-clicked; empty-space clicks reset it (Viewport onPointerMissed).
+      // UX #7: a single click on a DIFFERENT top-level node exits the drill
+      // context, so a later Esc doesn't pop back into the model we left. We key
+      // off the drill chain's ROOT (chain[0] === this pickId) rather than reset
+      // unconditionally — a browser double-click fires two clicks on the SAME
+      // node BEFORE onDoubleClick, and resetting those would defeat incremental
+      // drilling. Same node → keep depth; new node → reset. (Empty-space clicks
+      // reset via Viewport onPointerMissed.)
+      const drill = useDrillStore.getState();
+      if (drill.chain.length > 0 && drill.chain[0] !== pickId) drill.reset();
     },
     [pickId],
   );
