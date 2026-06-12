@@ -1104,6 +1104,23 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // per-instance / mutates-in-place rationale above is unchanged (still one
   // deep clone per component-instance).
   const cloned = useMemo(() => cloneSkinned(gltf.scene) as THREE.Group, [gltf.scene]);
+  // Perf (H48 5th-occ follow-on) — a `name → Object3D` index built ONCE per clone.
+  // The per-frame TRS re-apply + the suppress effect address children BY NAME; the
+  // naive `cloned.getObjectByName(name)` is a recursive O(tree) search, so doing it
+  // for all N children EVERY FRAME is ~N² node-visits (≈500k/frame on a 700-node
+  // import) — the dominant cost when manipulating a child (measured ~415ms/frame on
+  // the cicada). One `traverse` here makes every lookup O(1). First-in-DFS wins, so
+  // it matches getObjectByName's pre-order semantics exactly (names are unique post
+  // sanitization, so this is identical behaviour, just indexed). Rebuilt only on a
+  // clone swap; TRS/visibility mutations never change names or structure, so the
+  // index stays valid for the clone's life.
+  const nameToObject = useMemo(() => {
+    const m = new Map<string, THREE.Object3D>();
+    cloned.traverse((o) => {
+      if (o.name && !m.has(o.name)) m.set(o.name, o);
+    });
+    return m;
+  }, [cloned]);
   const shading = useViewportStore((s) => s.shading);
   // P7.7 (#91) — SUBSCRIBED read (NOT a getState() snapshot): a gizmo setParam on
   // a GltfChild of THIS asset must re-render so the per-child override re-layers
@@ -1300,17 +1317,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   useEffect(() => {
     const suppressed = new Set(value.suppressedChildren);
     for (const name of Object.keys(value.nodeNameMap)) {
-      const child = cloned.getObjectByName(name);
+      const child = nameToObject.get(name);
       if (!child) continue;
       child.visible = !suppressed.has(name);
     }
     // Suppressed names may not be in nodeNameMap (defensive — a baked child's
     // key always is, but iterate the list too so an out-of-map key still hides).
     for (const name of suppressed) {
-      const child = cloned.getObjectByName(name);
+      const child = nameToObject.get(name);
       if (child) child.visible = false;
     }
-  }, [cloned, value.suppressedChildren, value.nodeNameMap]);
+  }, [cloned, nameToObject, value.suppressedChildren, value.nodeNameMap]);
   // P151 (#151, Apply-Transform) — register the mounted, post-override clone in
   // the PRODUCTION-SAFE live-clone registry so the non-React Apply helper can read
   // a GltfChild's resolved geometry + material off the exact object the renderer
@@ -1394,7 +1411,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       bakedByName,
     });
     for (const [name, trs] of Object.entries(resolved)) {
-      const child = cloned.getObjectByName(name);
+      const child = nameToObject.get(name);
       if (!child) continue;
       child.position.set(trs.position[0], trs.position[1], trs.position[2]);
       const radRot = degVec3ToRad(trs.rotation);
