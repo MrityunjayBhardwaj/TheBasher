@@ -49,6 +49,7 @@ describe('chromeStore', () => {
       leftSidebarCollapsed: false,
       inspectorCollapsed: false,
       presentMode: false,
+      showFpsMeter: false,
     });
   });
 
@@ -181,5 +182,23 @@ describe('chromeStore', () => {
     expect(fresh.toolRailCollapsed).toBe(false);
     expect(fresh.leftSidebarCollapsed).toBe(false);
     expect(fresh.inspectorCollapsed).toBe(false);
+    // The dev FPS overlay boots OFF — a clean editor canvas is the default.
+    expect(fresh.showFpsMeter).toBe(false);
+  });
+
+  it('toggleShowFpsMeter flips and persists the dev FPS overlay flag', () => {
+    expect(useChromeStore.getState().showFpsMeter).toBe(false);
+    useChromeStore.getState().toggleShowFpsMeter();
+    expect(useChromeStore.getState().showFpsMeter).toBe(true);
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
+      string,
+      boolean
+    >;
+    // Unlike presentMode, this dev preference DOES persist (survives reload).
+    expect(persisted.showFpsMeter).toBe(true);
+    // The collapse flags ride along untouched.
+    expect(persisted.toolRailCollapsed).toBe(false);
+    useChromeStore.getState().toggleShowFpsMeter();
+    expect(useChromeStore.getState().showFpsMeter).toBe(false);
   });
 });

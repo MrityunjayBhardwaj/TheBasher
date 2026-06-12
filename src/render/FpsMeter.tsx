@@ -6,12 +6,18 @@
 // the V2 purity lint rule does not apply — this is a UI overlay, not a node.
 
 import { useEffect, useRef } from 'react';
+import { useChromeStore } from '../app/stores/chromeStore';
 
 export function FpsMeter() {
   const elRef = useRef<HTMLDivElement | null>(null);
+  // Default OFF: the meter is a dev tool, not director chrome — a clean canvas
+  // is the Spline target. A dev opts in via View ▸ Show FPS Meter. Still
+  // dev-only: in prod it never renders (and the rAF loop never starts).
+  const showFps = useChromeStore((s) => s.showFpsMeter);
+  const visible = import.meta.env.DEV && showFps;
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!visible) return;
     let raf = 0;
     let frames = 0;
     let lastFlush = performance.now();
@@ -37,9 +43,9 @@ export function FpsMeter() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [visible]);
 
-  if (!import.meta.env.DEV) return null;
+  if (!visible) return null;
 
   return (
     <div

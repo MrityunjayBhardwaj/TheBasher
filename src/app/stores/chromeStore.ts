@@ -28,6 +28,12 @@ export interface ChromeState {
   inspectorCollapsed: boolean;
   // Ephemeral, NON-persisted (see header). The re-home for the deleted `director` mode.
   presentMode: boolean;
+  // Dev-only FPS/ms overlay (FpsMeter). Default OFF so the editor canvas stays
+  // clean (the meter is a dev-tool tell, not director chrome); a dev who wants
+  // it flips View ▸ Show FPS Meter. Persisted so the choice survives a reload.
+  // FpsMeter additionally gates on import.meta.env.DEV — in prod it never renders
+  // regardless of this flag.
+  showFpsMeter: boolean;
 }
 
 export interface ChromeStore extends ChromeState {
@@ -39,6 +45,8 @@ export interface ChromeStore extends ChromeState {
   toggleInspector: () => void;
   setPresentMode: (present: boolean) => void;
   togglePresentMode: () => void;
+  setShowFpsMeter: (show: boolean) => void;
+  toggleShowFpsMeter: () => void;
 }
 
 // The subset of ChromeState that actually persists. presentMode is deliberately
@@ -57,6 +65,7 @@ const DEFAULT_STATE: ChromeState = {
   leftSidebarCollapsed: false,
   inspectorCollapsed: false,
   presentMode: false,
+  showFpsMeter: false,
 };
 
 // Defensive against test envs where `localStorage` exists but its methods
@@ -92,6 +101,7 @@ function readPersisted(): ChromeState {
         typeof parsed.leftSidebarCollapsed === 'boolean' ? parsed.leftSidebarCollapsed : false,
       inspectorCollapsed:
         typeof parsed.inspectorCollapsed === 'boolean' ? parsed.inspectorCollapsed : false,
+      showFpsMeter: typeof parsed.showFpsMeter === 'boolean' ? parsed.showFpsMeter : false,
       // Always boots false — never read back from storage (non-persisted).
       presentMode: false,
     };
@@ -109,6 +119,7 @@ function writePersisted(state: PersistedChromeState): void {
       toolRailCollapsed: state.toolRailCollapsed,
       leftSidebarCollapsed: state.leftSidebarCollapsed,
       inspectorCollapsed: state.inspectorCollapsed,
+      showFpsMeter: state.showFpsMeter,
     }),
   );
 }
@@ -149,5 +160,14 @@ export const useChromeStore = create<ChromeStore>((set, get) => ({
   },
   togglePresentMode() {
     set({ presentMode: !get().presentMode });
+  },
+  setShowFpsMeter(show) {
+    set({ showFpsMeter: show });
+    writePersisted({ ...get(), showFpsMeter: show });
+  },
+  toggleShowFpsMeter() {
+    const next = !get().showFpsMeter;
+    set({ showFpsMeter: next });
+    writePersisted({ ...get(), showFpsMeter: next });
   },
 }));

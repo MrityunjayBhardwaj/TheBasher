@@ -353,6 +353,11 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
 
 test('#8 FPS ≥60fps on M1 baseline (≥30fps in CI)', async ({ page }) => {
   test.skip(!!process.env.CI, 'CI runners lack GPU; baseline measured locally');
+  // The FPS meter is dev-only AND default-OFF (clean canvas) — enable it for
+  // this measurement by seeding the persisted chrome flag before first paint.
+  await page.addInitScript(() => {
+    localStorage.setItem('basher.chrome.v1', JSON.stringify({ showFpsMeter: true }));
+  });
   await page.goto('/');
   await expect(page.getByTestId('viewport')).toBeVisible();
   // Wait for the meter to report at least once.

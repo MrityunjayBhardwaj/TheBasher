@@ -35,6 +35,7 @@ import { renderImageWithFeedback } from './renderImageAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
+import { useChromeStore } from './stores/chromeStore';
 import type { PrimitiveKind } from './addPrimitives';
 import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
@@ -333,6 +334,7 @@ export function MenuBar() {
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
   const setSpace = useEditorStore((s) => s.setSpace);
+  const showFpsMeter = useChromeStore((s) => s.showFpsMeter);
 
   // Distinct node types for the Select → By Type submenu.
   const distinctTypes = Array.from(new Set(Object.values(dag.nodes).map((n) => n.type))).sort();
@@ -590,6 +592,15 @@ export function MenuBar() {
           onSelect={() => useViewportStore.getState().toggleAxisWidgetVisible()}
           testId="menu-view-toggle-axis"
         />
+        {/* Dev-only: the FPS/ms overlay is a dev tool (default OFF for a clean
+            canvas). Hidden entirely in production, where FpsMeter never renders. */}
+        {import.meta.env.DEV ? (
+          <Item
+            label={showFpsMeter ? '✓ Show FPS Meter' : '   Show FPS Meter'}
+            onSelect={() => useChromeStore.getState().toggleShowFpsMeter()}
+            testId="menu-view-toggle-fps"
+          />
+        ) : null}
         <Divider />
         <Submenu label="Shading" testId="menu-view-shading">
           {(['studio', 'wireframe', 'rendered'] as ShadingMode[]).map((s) => (
