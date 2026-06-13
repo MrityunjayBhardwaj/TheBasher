@@ -1848,7 +1848,7 @@ describe('contrast matrix — token source drift gates', () => {
     expect(
       fs.existsSync(candidate),
       'src/app/ContextMenu.tsx now exists — add contrast ROWS for its (fg,bg) pairs ' +
-        'like AddMenu/AssetsPopover have, then update this gate (#58 F6).',
+        'like AddMenu/AssetLibrary have, then update this gate (#58 F6).',
     ).toBe(false);
   });
 });
