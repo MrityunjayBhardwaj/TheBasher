@@ -1,9 +1,10 @@
-// Unit tests for leftSidebarStore (P6 W3).
+// Unit tests for leftSidebarStore (Outliner / Assets tabs — UX backlog #6).
 //
 // Covers K11 step compliance:
-//   - first-visit default = 'scene' (D-01)
-//   - persistence round-trip ('scene' ↔ 'agent')
-//   - K11 step 4 legacy-coercion: unknown values fall back to default
+//   - first-visit default = 'outliner'
+//   - persistence round-trip ('outliner' ↔ 'assets')
+//   - K11 step 4 legacy-coercion: unknown values (incl. the old
+//     'scene'/'agent' tab scheme) fall back to default
 //   - corrupt JSON fall back without module-load crash
 //   - safeSet PERSISTABLE filter blocks malformed writes
 //
@@ -46,7 +47,7 @@ const STORAGE_KEY = 'basher.leftSidebar.v1';
 describe('leftSidebarStore', () => {
   beforeEach(() => {
     localStorage.clear();
-    useLeftSidebarStore.setState({ activeTab: 'scene' });
+    useLeftSidebarStore.setState({ activeTab: 'outliner' });
   });
 
   afterEach(() => {
@@ -54,79 +55,79 @@ describe('leftSidebarStore', () => {
   });
 
   it('isolation reset state matches the documented test fixture', () => {
-    expect(useLeftSidebarStore.getState().activeTab).toBe('scene');
+    expect(useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
   it('setActiveTab persists the new value', () => {
-    useLeftSidebarStore.getState().setActiveTab('agent');
-    expect(useLeftSidebarStore.getState().activeTab).toBe('agent');
+    useLeftSidebarStore.getState().setActiveTab('assets');
+    expect(useLeftSidebarStore.getState().activeTab).toBe('assets');
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
       string,
       string
     >;
-    expect(persisted.activeTab).toBe('agent');
+    expect(persisted.activeTab).toBe('assets');
   });
 
-  it('setActiveTab round-trip: scene → agent → scene', () => {
-    useLeftSidebarStore.getState().setActiveTab('agent');
-    useLeftSidebarStore.getState().setActiveTab('scene');
-    expect(useLeftSidebarStore.getState().activeTab).toBe('scene');
+  it('setActiveTab round-trip: outliner → assets → outliner', () => {
+    useLeftSidebarStore.getState().setActiveTab('assets');
+    useLeftSidebarStore.getState().setActiveTab('outliner');
+    expect(useLeftSidebarStore.getState().activeTab).toBe('outliner');
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
       string,
       string
     >;
-    expect(persisted.activeTab).toBe('scene');
+    expect(persisted.activeTab).toBe('outliner');
   });
 
-  it('first-visit default = scene (D-01) when localStorage is empty', async () => {
+  it('first-visit default = outliner when localStorage is empty', async () => {
     localStorage.clear();
     vi.resetModules();
     const mod = await import('./leftSidebarStore');
-    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('scene');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
-  it('persistence: stored agent value rehydrates as agent', async () => {
+  it('persistence: stored assets value rehydrates as assets', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'assets' }));
+    vi.resetModules();
+    const mod = await import('./leftSidebarStore');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('assets');
+  });
+
+  it('K11 step 4 — legacy value (e.g. the old "agent"/"library" tabs) coerces to default', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'agent' }));
     vi.resetModules();
     const mod = await import('./leftSidebarStore');
-    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('agent');
-  });
-
-  it('K11 step 4 — legacy value (e.g. pre-W2.5 "library") coerces to default', async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'library' }));
-    vi.resetModules();
-    const mod = await import('./leftSidebarStore');
-    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('scene');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
   it('corrupt JSON falls back to default without throwing', async () => {
     localStorage.setItem(STORAGE_KEY, '<<<not valid json>>>');
     vi.resetModules();
     const mod = await import('./leftSidebarStore');
-    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('scene');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
   it('non-object JSON (e.g. a plain string) falls back to default', async () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify('agent'));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify('assets'));
     vi.resetModules();
     const mod = await import('./leftSidebarStore');
-    // JSON.parse('"agent"') is the string 'agent', not an object with
+    // JSON.parse('"assets"') is the string 'assets', not an object with
     // activeTab field. activeTab is undefined → isLeftSidebarTab returns
-    // false → falls back to default 'scene'.
-    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('scene');
+    // false → falls back to default 'outliner'.
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
   it('setActiveTab with a non-persistable value is silently rejected', () => {
-    useLeftSidebarStore.getState().setActiveTab('agent');
+    useLeftSidebarStore.getState().setActiveTab('assets');
     // TypeScript would normally prevent this — cast simulates a runtime
     // path that bypassed the type system (e.g. a malformed dev-tools call).
     (useLeftSidebarStore.getState().setActiveTab as (t: string) => void)('library');
-    // No change: still 'agent'.
-    expect(useLeftSidebarStore.getState().activeTab).toBe('agent');
+    // No change: still 'assets'.
+    expect(useLeftSidebarStore.getState().activeTab).toBe('assets');
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
       string,
       string
     >;
-    expect(persisted.activeTab).toBe('agent');
+    expect(persisted.activeTab).toBe('assets');
   });
 });

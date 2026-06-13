@@ -1,18 +1,25 @@
-// LeftSidebar store — persisted active tab (Scene / Agent) for R5
-// LeftSidebar. Per UI-SPEC §5.5 the LeftSidebar carries two tabs in v0.5:
+// LeftSidebar store — persisted active tab (Outliner / Assets) for R5
+// LeftSidebar. The left panel carries two tabs:
 //
-//   - 'scene' — DAG tree projection (existing SceneTree.tsx)
-//   - 'agent' — LLM director chat (existing AgentChat.tsx)
+//   - 'outliner' — DAG tree projection (existing SceneTree.tsx) + search
+//   - 'assets'   — the asset Library (sample assets + my imports + Import…),
+//                  re-homed here from the floating popover / footer (UX
+//                  backlog #6 — the left footer's Library/Import/Help were
+//                  dropped; the library now lives in a tab beside the tree,
+//                  Blender's asset-browser model). The toolbar "Assets"
+//                  button selects this tab.
 //
-// (Library tab was dropped in W2.5 — see §5.5.2. AssetsPopover supplies
-// bundled-asset access from TopToolbar instead.)
+// (History: the Wave B redesign dropped the older Scene|Agent tab strip —
+// the agent moved to the bottom dock — leaving this store dormant. #6
+// repurposes it for Outliner|Assets.)
 //
 // Persistence rules (UI-SPEC §7.3, krama K11):
-//   - Default activeTab on first visit = 'scene' (D-01, locked W3).
+//   - Default activeTab on first visit = 'outliner'.
 //   - Subsequent loads restore the last-chosen tab.
-//   - Legacy or unknown values coerce to 'scene' (K11 step 4 discipline:
-//     when the persisted value isn't in the *current* PERSISTABLE set,
-//     fall back rather than preserve a stale shape).
+//   - Legacy or unknown values coerce to 'outliner' (K11 step 4 discipline:
+//     when the persisted value isn't in the *current* PERSISTABLE set, fall
+//     back rather than preserve a stale shape — old 'scene'/'agent' values
+//     land on the default).
 //   - Corrupt JSON → defaults; no module-load crash.
 //   - localStorage access guarded with safeGet/safeSet wrappers (V18) so
 //     vitest happy-dom partial-stub env (H26) doesn't break module load.
@@ -21,13 +28,13 @@
 // UI projection stores. No DAG dispatch passes through it.
 //
 // REF: docs/UI-SPEC.md §5.5, §7.3, §11 (acceptance); krama K11; vyapti V18;
-// hetvabhasa H26 (the trap V18 prevents).
+// hetvabhasa H26 (the trap V18 prevents); UX-BACKLOG #6.
 
 import { create } from 'zustand';
 
 const STORAGE_KEY = 'basher.leftSidebar.v1';
 
-export type LeftSidebarTab = 'scene' | 'agent';
+export type LeftSidebarTab = 'outliner' | 'assets';
 
 export interface LeftSidebarState {
   activeTab: LeftSidebarTab;
@@ -37,20 +44,20 @@ export interface LeftSidebarStore extends LeftSidebarState {
   setActiveTab: (tab: LeftSidebarTab) => void;
 }
 
-// First-visit defaults. D-01: Scene is the primary surface for the
-// director-first workflow; users flip to Agent when they explicitly
-// want the LLM. After first visit, K11 persistence restores whatever
-// the user last had.
+// First-visit defaults. The Outliner is the primary surface for the
+// director-first workflow; users flip to Assets when they want to browse
+// or import. After first visit, K11 persistence restores whatever the user
+// last had.
 const DEFAULT_STATE: LeftSidebarState = {
-  activeTab: 'scene',
+  activeTab: 'outliner',
 };
 
 // Whitelist of legitimate persistable values. Anything outside this set
-// (legacy 'library' from pre-W2.5 hand-edits, future renames, malformed
-// strings) coerces to the default in readPersisted. PERSISTABLE is also
-// checked before setItem writes — narrows the surface for future
-// type-shape changes.
-const PERSISTABLE: ReadonlySet<LeftSidebarTab> = new Set<LeftSidebarTab>(['scene', 'agent']);
+// (legacy 'scene'/'agent'/'library' from earlier tab schemes, future
+// renames, malformed strings) coerces to the default in readPersisted.
+// PERSISTABLE is also checked before setItem writes — narrows the surface
+// for future type-shape changes.
+const PERSISTABLE: ReadonlySet<LeftSidebarTab> = new Set<LeftSidebarTab>(['outliner', 'assets']);
 
 // V18 — defensive Storage access. The plain `typeof localStorage ===
 // 'undefined'` guard misfires in happy-dom (stub is *defined* but methods

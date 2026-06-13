@@ -713,32 +713,34 @@ const ROWS: Row[] = [
     textSize: 'small',
   },
 
-  // ─── AssetsPopover (src/app/AssetsPopover.tsx) ──────────────────────
-  // L110 panel bg-bg-2/95; L113 header fg-dim; L131 entry bg-bg-1/40 +
-  // border-border; L133 entry available text-fg/90, hover bg-1;
-  // L134/L144 unavailable text-fg-mute.
+  // ─── AssetLibrary (src/app/AssetLibrary.tsx) ────────────────────────
+  // UX backlog #6: the asset library re-homed from the floating popover
+  // (bg-2/95) into the LeftSidebar's "Assets" tab, so it now renders over the
+  // panel's OPAQUE bg-bg-2 (the aside background). Header fg-dim; entry
+  // bg-bg-1/40 + border-border; entry available text-fg/90, hover bg-1;
+  // unavailable text-fg-mute.
   {
-    site: 'AssetsPopover header — fg-dim on bg-2/95',
+    site: 'AssetLibrary header — fg-dim on bg-2',
     fg: 'fg-dim',
-    bgStack: ['bg-2/95'],
+    bgStack: ['bg-2'],
     textSize: 'small',
   },
   {
-    site: 'AssetsPopover entry available — fg/90 on bg-1/40 over bg-2/95',
+    site: 'AssetLibrary entry available — fg/90 on bg-1/40 over bg-2',
     fg: 'fg/90',
-    bgStack: ['bg-1/40', 'bg-2/95'],
+    bgStack: ['bg-1/40', 'bg-2'],
     textSize: 'small',
   },
   {
-    site: 'AssetsPopover entry hover — fg/90 on bg-1 over bg-2/95',
+    site: 'AssetLibrary entry hover — fg/90 on bg-1 over bg-2',
     fg: 'fg/90',
-    bgStack: ['bg-1', 'bg-2/95'],
+    bgStack: ['bg-1', 'bg-2'],
     textSize: 'small',
   },
   {
-    site: 'AssetsPopover entry unavailable — fg-mute on bg-1/40 over bg-2/95',
+    site: 'AssetLibrary entry unavailable — fg-mute on bg-1/40 over bg-2',
     fg: 'fg-mute',
-    bgStack: ['bg-1/40', 'bg-2/95'],
+    bgStack: ['bg-1/40', 'bg-2'],
     textSize: 'small',
     exempt: {
       kind: 'sc-1.4.3',
@@ -752,15 +754,15 @@ const ROWS: Row[] = [
   // foreground pairs are the destructive Delete item (text-error) and the
   // warn-tinted banner/Delete-anyway (text-warn, already audited elsewhere).
   {
-    site: 'AssetsPopover ︙ menu Delete item — error on bg-2 (menu surface)',
+    site: 'AssetLibrary ︙ menu Delete item — error on bg-2 (menu surface)',
     fg: 'error',
     bgStack: ['bg-2'],
     textSize: 'small',
   },
   {
-    site: 'AssetsPopover delete-referenced banner — warn on warn/10 over bg-2/95',
+    site: 'AssetLibrary delete-referenced banner — warn on warn/10 over bg-2',
     fg: 'warn',
-    bgStack: ['warn/10', 'bg-2/95'],
+    bgStack: ['warn/10', 'bg-2'],
     textSize: 'small',
   },
 

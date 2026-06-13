@@ -42,12 +42,12 @@
 // (W1-T3 — the single-pill inventory); memory/project_p6_w7_plan.md C1.
 
 import type { ReactNode } from 'react';
-import { useAssetsPopoverStore } from './AssetsPopover';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
+import { useLeftSidebarStore } from './stores/leftSidebarStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
@@ -258,9 +258,14 @@ export function FloatingViewportToolbar(): ReactNode {
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const toggleLookThroughCamera = useViewportStore((s) => s.toggleLookThroughCamera);
 
-  const assetsOpen = useAssetsPopoverStore((s) => s.open);
-  const openAssetsAt = useAssetsPopoverStore((s) => s.openAt);
-  const closeAssets = useAssetsPopoverStore((s) => s.close);
+  // The asset Library lives in the LeftSidebar's "Assets" tab (UX backlog #6,
+  // one home — V34). The toolbar button selects that tab and expands the
+  // sidebar if it was collapsed.
+  const leftTab = useLeftSidebarStore((s) => s.activeTab);
+  const setLeftTab = useLeftSidebarStore((s) => s.setActiveTab);
+  const leftCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
+  const setLeftCollapsed = useChromeStore((s) => s.setLeftSidebarCollapsed);
+  const assetsActive = leftTab === 'assets' && !leftCollapsed;
 
   // Present-mode chrome-hide: the pill vanishes when presentMode is on.
   // Self-gated rather than Layout.tsx-gated because the pill is a viewport
@@ -302,17 +307,13 @@ export function FloatingViewportToolbar(): ReactNode {
       </BarButton>
       <BarButton
         testId="top-toolbar-assets"
-        title="Sample assets"
-        active={assetsOpen}
-        onClick={(e) => {
-          if (assetsOpen) {
-            closeAssets();
-            return;
-          }
-          // Anchor just below the toolbar pill (shared with the Add menu) so
-          // the list opens cleanly downward, left-aligned to this button.
-          const { x, y } = toolbarMenuAnchor(e);
-          openAssetsAt(x, y);
+        title="Asset library (left panel)"
+        active={assetsActive}
+        onClick={() => {
+          // Reveal the asset Library: expand the sidebar (if folded) and switch
+          // to its Assets tab. One library home (#6) — no floating popover.
+          setLeftCollapsed(false);
+          setLeftTab('assets');
         }}
       >
         <span aria-hidden>📦</span>

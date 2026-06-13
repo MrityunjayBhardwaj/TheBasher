@@ -41,9 +41,13 @@ test('WB#2 clicking a row selects it with the blue-tint marker', async ({ page }
   await expect(row).toHaveAttribute('data-selected', 'true');
 });
 
-test('WB#3 footer Library opens the existing AssetsPopover (V34 — one path)', async ({ page }) => {
+test('WB#3 the asset Library is a left-panel tab (UX #6 — one home, V34)', async ({ page }) => {
+  // Default tab is Outliner → the library is not yet rendered.
   await expect(page.getByTestId('library-popover')).toHaveCount(0);
-  await page.getByTestId('left-sidebar-library').click();
+  // Switching to the Assets tab reveals the library in the left panel
+  // (re-homed from the dropped footer + floating popover).
+  await page.getByTestId('left-sidebar-tab-assets').click();
+  await expect(page.getByTestId('left-sidebar-assets-panel')).toBeVisible();
   await expect(page.getByTestId('library-popover')).toBeVisible();
 });
 

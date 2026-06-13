@@ -1,12 +1,13 @@
 // My-Imports freshness signal — Phase 7.9 Wave A (issue #110).
 //
 // A minimal counter store. Bumped by the shared glTF import core
-// (`importGltf.ts`) on every successful import; the AssetsPopover's
-// "My Imports" section consumes the counter as a useEffect dep so it
-// re-enumerates `user-imports/` immediately, without depending on the
-// popover being closed-and-reopened. This converts the post-import
-// freshness from "best-effort on next [open] effect run" into a
-// NON-optional guarantee (CONTEXT pre-mortem #4, checker C3).
+// (`importGltf.ts`) on every successful import; the AssetLibrary's
+// "My Imports" section (LeftSidebar "Assets" tab — UX backlog #6)
+// consumes the counter as a useEffect dep so it re-enumerates
+// `user-imports/` immediately, without depending on the tab being
+// re-opened. This converts the post-import freshness from
+// "best-effort on next mount" into a NON-optional guarantee
+// (CONTEXT pre-mortem #4, checker C3).
 //
 // V8: app-layer projection. V18 N/A: no persistence — OPFS is the
 // source of truth, the counter only triggers re-reads.

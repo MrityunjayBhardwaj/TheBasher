@@ -1,32 +1,28 @@
-// AssetsPopover — small floating panel listing bundled glTF samples,
-// triggered by a button in TopToolbar. Replaces the dedicated Library
-// panel (which occupied 180px of permanent screen real estate for three
-// tiles).
+// AssetLibrary — the asset browser body (bundled samples + my imports +
+// per-row management), re-homed from the old floating AssetsPopover into the
+// LeftSidebar's "Assets" tab (UX backlog #6 — Blender's asset-browser model:
+// the library lives beside the outliner, not behind a transient popover or a
+// left-footer link).
 //
-// Why a popover and not a panel: the bundled-glTF list is small (3
-// items) and rarely accessed after onboarding. A permanent column is
-// expensive; a popover gives the user one click to reach the list while
-// reclaiming the column for viewport / scene tree.
+// This component is the CONTENT only — it has no open/close/position state.
+// The LeftSidebar mounts it when the "Assets" tab is active; the toolbar
+// "Assets" button selects that tab (leftSidebarStore). Drag a tile onto the
+// viewport to import (same DRAG_MIME contract AssetDropZone already consumes —
+// P1 Wave B unchanged). Test ids are preserved verbatim (`library-popover*`)
+// so the import/management e2e corpus keeps working across the re-home.
 //
-// Drag contract preserved: tiles use the same DRAG_MIME payload the
-// existing Library used, so AssetDropZone needs zero changes — drag a
-// tile from the popover onto the viewport and the existing drop chain
-// fires (P1 Wave B unchanged).
+// Freshness: availability + my-imports re-enumerate on mount AND on every
+// successful import (`importRefreshStore.tick`) — so a same-session import
+// appears immediately in the open tab (the popover used `open` as the trigger;
+// the tab uses mount + tick).
 //
-// State: useAssetsPopoverStore controls open/close + anchor coords.
-// Open state is ephemeral (no persistence). Closes on outside-click,
-// Esc, or drag-end.
+// V6 + V8: reads StorageCapability via the boot helper; no DAG mutation here
+// (node-creation Ops fire from AssetDropZone after a successful drop).
 //
-// V6 + V8: reads StorageCapability via the boot helper to check
-// availability. No DAG mutation here — the actual node-creation Ops
-// fire from AssetDropZone after a successful drop.
-//
-// REF: docs/UI-SPEC.md §5.5 (Library tab dropped — replaced by
-// popover); THESIS.md §14 (asset library); P1 Wave B (drag-drop chain
-// unchanged); P6 W2.5 (Library deletion).
+// REF: docs/UI-SPEC.md §5.5; THESIS.md §14 (asset library); P1 Wave B
+// (drag-drop chain unchanged); UX-BACKLOG #6.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { create } from 'zustand';
 import { ASSET_CATALOG, DRAG_MIME, type CatalogEntry } from './asset/catalog';
 import {
   deleteImportedAsset,
@@ -41,31 +37,8 @@ import { useImportRefreshStore } from './stores/importRefreshStore';
  * Distinct from every bundled-asset swatch (cube #5af07a green, sphere #7aaaff
  * blue, cone #ff8a5a orange, skinned-bar #b07aff purple) AND from the `accent`
  * green so user-imported assets read as "yours" at-a-glance. These are asset-
- * identity DATA colors (like the catalog swatches), not chrome tokens — the
- * `warn` token was darkened for the v0.6 #4 light palette; this bright amber
- * swatch is independent of it (it is a small color chip, not a text/border). */
+ * identity DATA colors (like the catalog swatches), not chrome tokens. */
 const MY_IMPORT_SWATCH = '#f0b85a';
-
-interface AssetsPopoverState {
-  open: boolean;
-  /** Anchor: bottom-left of the trigger button (CSS pixels). */
-  x: number;
-  y: number;
-  openAt: (x: number, y: number) => void;
-  close: () => void;
-}
-
-export const useAssetsPopoverStore = create<AssetsPopoverState>((set) => ({
-  open: false,
-  x: 0,
-  y: 0,
-  openAt(x, y) {
-    set({ open: true, x, y });
-  },
-  close() {
-    set({ open: false });
-  },
-}));
 
 interface AvailableAsset extends CatalogEntry {
   available: boolean;
@@ -94,18 +67,12 @@ function findEntryFile(files: readonly string[]): string | null {
   return byExt('.glb') ?? byExt('.gltf') ?? byExt('.bvh') ?? byExt('.fbx') ?? null;
 }
 
-export function AssetsPopover(): ReactNode {
-  const open = useAssetsPopoverStore((s) => s.open);
-  const x = useAssetsPopoverStore((s) => s.x);
-  const y = useAssetsPopoverStore((s) => s.y);
-  const close = useAssetsPopoverStore((s) => s.close);
+export function AssetLibrary(): ReactNode {
   // My-Imports freshness: every successful import bumps `tick` (the import core
-  // bumps AFTER `dispatchAtomic` returns — see `src/app/asset/importGltf.ts:184`,
-  // pre-mortem #3 mitigation). Including `tick` in the enumeration effect's dep
-  // array makes a same-session import IMMEDIATELY appear in an already-open
-  // popover (checker C3 non-optional freshness guarantee).
+  // bumps AFTER `dispatchAtomic` returns — see `src/app/asset/importGltf.ts:184`).
+  // Including `tick` in the enumeration effect's dep array makes a same-session
+  // import IMMEDIATELY appear in the mounted Assets tab.
   const tick = useImportRefreshStore((s) => s.tick);
-  const ref = useRef<HTMLDivElement | null>(null);
   const [assets, setAssets] = useState<AvailableAsset[]>(
     ASSET_CATALOG.map((c) => ({ ...c, available: false })),
   );
@@ -120,12 +87,6 @@ export function AssetsPopover(): ReactNode {
   const [deleteBlock, setDeleteBlock] = useState<{ name: string; refs: number } | null>(null);
   // Guards the Enter/blur double-commit on the rename field (see commitRename).
   const renameCommittedRef = useRef(false);
-
-  function resetRowState(): void {
-    setMenuFor(null);
-    setRenameFor(null);
-    setShowFilesFor(null);
-  }
 
   function beginRename(name: string): void {
     setMenuFor(null);
@@ -147,7 +108,9 @@ export function AssetsPopover(): ReactNode {
   }
 
   function doDelete(name: string, breakRefs: boolean): void {
-    resetRowState();
+    setMenuFor(null);
+    setRenameFor(null);
+    setShowFilesFor(null);
     void deleteImportedAsset(name, { breakRefs }).then((res) => {
       if (!res.deleted && res.referencedBy && res.referencedBy.length > 0) {
         // D-06: blocked because live nodes reference it — surface the banner.
@@ -166,21 +129,10 @@ export function AssetsPopover(): ReactNode {
     setShowFilesFor({ name, files: files.sort() });
   }
 
-  // Clear all transient per-row state when the popover closes so a re-open
-  // starts clean (no stale menu / rename field / delete banner).
+  // Lazy-resolve bundled-asset availability on mount + whenever a successful
+  // import bumps the tick (re-seeding assets mid-session keeps the indicator
+  // honest).
   useEffect(() => {
-    if (open) return;
-    setMenuFor(null);
-    setRenameFor(null);
-    setShowFilesFor(null);
-    setDeleteBlock(null);
-  }, [open]);
-
-  // Lazy-resolve availability whenever the popover opens. Re-checking on
-  // every open keeps the indicator honest if the user re-seeded assets
-  // mid-session.
-  useEffect(() => {
-    if (!open) return;
     let cancelled = false;
     (async () => {
       const storage = await getStorage();
@@ -191,17 +143,15 @@ export function AssetsPopover(): ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [tick]);
 
-  // My-Imports enumeration. Keyed on `[open, tick]` — every popover open AND
-  // every successful import re-enumerates. The OPFS dir IS the source of truth
-  // (V18 — no localStorage mirror). On first run `user-imports/` does not exist
-  // and `storage.list` THROWS (the same shape as `exists()` in OpfsStorage.ts:72)
-  // so the outer list call is wrapped in try/catch → []. Per-subdir list calls
-  // are independently guarded so a single missing/disappeared entry doesn't
-  // wipe the whole section.
+  // My-Imports enumeration. Keyed on `[tick]` — mount + every successful import
+  // re-enumerate. The OPFS dir IS the source of truth (V18 — no localStorage
+  // mirror). On first run `user-imports/` does not exist and `storage.list`
+  // THROWS (same shape as `exists()` in OpfsStorage.ts:72) so the outer list
+  // call is wrapped in try/catch → []. Per-subdir list calls are independently
+  // guarded so a single missing/disappeared entry doesn't wipe the section.
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -211,7 +161,6 @@ export function AssetsPopover(): ReactNode {
           subdirs = await storage.list(USER_IMPORTS_ROOT);
         } catch {
           // First-run crash mitigation: `user-imports` doesn't exist yet.
-          // Mirror OpfsStorage.exists's try/catch → fall back to empty.
           subdirs = [];
         }
         const entries: MyImportEntry[] = [];
@@ -258,44 +207,12 @@ export function AssetsPopover(): ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [open, tick]);
-
-  // Outside-click + Esc → close. Mirrors AddMenu's dismiss UX.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current) return;
-      if (ref.current.contains(e.target as Node)) return;
-      close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, close]);
-
-  if (!open) return null;
-
-  // Clamp to the viewport edges (mirrors AddMenu) so an anchor near the
-  // bottom — e.g. the consolidated floating toolbar (v0.6 #4 W1) — opens
-  // the list UPWARD instead of running off-screen. w-56 = 224px wide; the
-  // list height is bounded but variable, so estimate a max for the bottom edge.
-  const W = 224;
-  const H_EST = 360;
-  const cx = Math.max(8, Math.min(x, window.innerWidth - W - 8));
-  const cy = Math.max(8, Math.min(y, window.innerHeight - H_EST - 8));
+  }, [tick]);
 
   return (
     <div
-      ref={ref}
       data-testid="library-popover"
-      className="fixed z-50 w-56 rounded border border-border-strong bg-bg-2/95 p-2 font-mono text-xs text-fg shadow-md backdrop-blur-sm"
-      style={{ left: cx, top: cy }}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto font-mono text-xs text-fg"
     >
       <header className="mb-1 px-1 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">
         sample assets
@@ -314,7 +231,6 @@ export function AssetsPopover(): ReactNode {
                 e.dataTransfer.setData('text/plain', a.path);
                 e.dataTransfer.effectAllowed = 'copy';
               }}
-              onDragEnd={() => close()}
               className={`flex w-full items-center gap-2 rounded border border-border bg-bg-1/40 px-2 py-1.5 text-left ${
                 a.available
                   ? 'cursor-grab text-fg/90 hover:bg-bg-1 hover:border-accent'
@@ -401,7 +317,6 @@ export function AssetsPopover(): ReactNode {
                         e.dataTransfer.setData('text/plain', entry.path);
                         e.dataTransfer.effectAllowed = 'copy';
                       }}
-                      onDragEnd={() => close()}
                       className="flex grow cursor-grab items-center gap-2 rounded border border-border bg-bg-1/40 px-2 py-1.5 text-left text-fg/90 hover:border-accent hover:bg-bg-1"
                       title="Drag onto viewport to import"
                     >

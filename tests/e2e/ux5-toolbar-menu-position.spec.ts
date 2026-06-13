@@ -9,12 +9,17 @@
 // that anchor rendered the menu OVER the toolbar row, covering the +Add button
 // (UX backlog #5). The Assets popover was inconsistent (`r.bottom + 4`).
 //
-// The fix anchors BOTH menus to the toolbar element's bottom edge
-// (`toolbarMenuAnchor`), left-aligned to the clicked button, so they open
+// The fix anchors the Add menu to the toolbar element's bottom edge
+// (`toolbarMenuAnchor`), left-aligned to the clicked button, so it opens
 // downward, clear of the pill.
 //
-// Falsifiable: revert either anchor to `r.top` and the menu's top crosses
-// above the toolbar's bottom → these asserts fail.
+// (UX #6 later re-homed the asset Library into the left panel's Assets tab, so
+// the toolbar "Assets" button no longer opens a popover — it selects that tab;
+// its coverage lives in p6-w3-leftsidebar.spec.ts. This spec now guards the Add
+// menu anchor only.)
+//
+// Falsifiable: revert the anchor to `r.top` and the menu's top crosses above
+// the toolbar's bottom → the assert fails.
 //
 // REF: src/app/FloatingViewportToolbar.tsx (toolbarMenuAnchor); UX-BACKLOG #5.
 
@@ -46,19 +51,4 @@ test('#5 the Add menu opens below the toolbar pill (no overlap), left-aligned to
   expect(m.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
   // Left-aligned to the Add button (clamp keeps it on-screen; here it fits).
   expect(Math.abs(m.x - addBtn.x)).toBeLessThan(2);
-});
-
-test('#5 the Assets popover opens below the toolbar pill, consistent with Add', async ({
-  page,
-}) => {
-  const toolbar = await box(page.getByTestId('floating-viewport-toolbar'));
-  const assetsBtn = await box(page.getByTestId('top-toolbar-assets'));
-
-  await page.getByTestId('top-toolbar-assets').click();
-  const pop = page.getByTestId('library-popover');
-  await expect(pop).toBeVisible();
-  const p = await box(pop);
-
-  expect(p.y).toBeGreaterThanOrEqual(toolbar.y + toolbar.height);
-  expect(Math.abs(p.x - assetsBtn.x)).toBeLessThan(2);
 });

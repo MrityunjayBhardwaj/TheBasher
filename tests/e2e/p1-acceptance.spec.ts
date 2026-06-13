@@ -335,6 +335,10 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
     };
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
+  // UX #6 — the left panel is tabbed (Outliner | Assets); the availability
+  // gate above selected the Assets tab. Switch back to Outliner so the scene
+  // tree is rendered before asserting its rows.
+  await page.getByTestId('left-sidebar-tab-outliner').click();
   await expect(page.getByTestId('scene-tree')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4r')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4t')).toBeVisible();

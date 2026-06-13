@@ -46,25 +46,37 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('P6.W3#1 Spline outliner is always-on: header + search + Scenes + tree + footer (Wave B)', async ({
+test('P6.W3#1 left panel: header + Outliner|Assets tabs; Outliner has search + Scenes + tree (UX #6)', async ({
   page,
 }) => {
-  // Spline redesign Wave B: the left panel is a single always-on scene
-  // outliner (the W3 Scene|Agent tab strip is gone). Every structural part is
-  // reachable in the default expanded boot state.
+  // UX backlog #6: the left panel is a two-tab surface (Outliner | Assets).
+  // The Outliner tab (default) holds search + Scenes label + the tree; the
+  // old footer (Library/Import/Help) is gone — Library is the Assets tab,
+  // Import is the Assets-tab button, Help & Feedback was dropped.
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('left-sidebar-header')).toBeVisible();
+  // Tab strip.
+  await expect(page.getByTestId('left-sidebar-tabstrip')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-tab-outliner')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-tab-assets')).toBeVisible();
+  // Outliner tab content (default).
   await expect(page.getByTestId('left-sidebar-search')).toBeVisible();
   await expect(page.getByTestId('left-sidebar-scenes-label')).toBeVisible();
   await expect(page.getByTestId('scene-tree')).toBeVisible();
-  await expect(page.getByTestId('left-sidebar-footer')).toBeVisible();
-  // Footer wires the existing create/library paths (V34, no second pipeline).
-  await expect(page.getByTestId('left-sidebar-library')).toBeVisible();
-  await expect(page.getByTestId('left-sidebar-import')).toBeVisible();
-  await expect(page.getByTestId('left-sidebar-help')).toBeVisible();
-  // The old tabbed surfaces no longer exist.
+  // The dropped footer + its links no longer exist.
+  await expect(page.getByTestId('left-sidebar-footer')).toHaveCount(0);
+  await expect(page.getByTestId('left-sidebar-library')).toHaveCount(0);
+  await expect(page.getByTestId('left-sidebar-help')).toHaveCount(0);
+  // The old Scene|Agent tab scheme is gone.
   await expect(page.getByTestId('left-sidebar-tab-scene')).toHaveCount(0);
   await expect(page.getByTestId('left-sidebar-tab-agent')).toHaveCount(0);
+});
+
+test('P6.W3#1b the Assets tab hosts the library + Import (UX #6)', async ({ page }) => {
+  await page.getByTestId('left-sidebar-tab-assets').click();
+  await expect(page.getByTestId('left-sidebar-assets-panel')).toBeVisible();
+  await expect(page.getByTestId('left-sidebar-import')).toBeVisible();
+  await expect(page.getByTestId('library-popover')).toBeVisible();
 });
 
 test('P6.W3#2 outliner search filters the tree (Wave B)', async ({ page }) => {

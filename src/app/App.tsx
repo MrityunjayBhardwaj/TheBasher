@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { AddMenu } from './AddMenu';
-import { AssetsPopover } from './AssetsPopover';
 import { boot } from './boot';
 import { Clock } from './Clock';
 import { Home } from './Home';
@@ -68,7 +67,6 @@ export function App() {
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />
-      <AssetsPopover />
       <ToastViewport />
     </>
   );
