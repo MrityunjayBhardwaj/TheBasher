@@ -32,7 +32,11 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    GltfChild via `GltfAsset.nodeNameMap`; drill depth lives in a dedicated `drillStore` (survives
    the single-click that precedes every double-click). Single click still selects the whole
    import. _(Limitation: scopes the asset by hit-name match — multiple imports of the same model
-   with shared child names is a heuristic.)_
+   with shared child names is a heuristic.)_ **◐ REOPENED for real models ([[H90]]):** works on the
+   flat fixture but on a real export (cicada/CountryLands, 706 children) only ~72% of meshes map —
+   a dedup-suffix sanitization mismatch (`…_0_003` vs `…_0003`) + material-split unnamed sub-meshes
+   leave ~28% undrillable, and a centre click can land on one. **Fix (next session):** stamp
+   `userData.basherGltfChildId`/`basherAssetId` on clone objects in GltfAssetR and drill by id, not name.
 
 ## Materials / textures / lighting
 
