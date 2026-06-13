@@ -216,12 +216,23 @@ function BarButton({
   );
 }
 
-/** Anchor the Add menu just above the clicked button. AddMenu clamps its
- *  own position to the viewport edges, so a bottom-pill anchor opens the
- *  menu upward automatically. */
+/** Anchor for a menu/popover spawned by a toolbar button: just below the
+ *  WHOLE toolbar pill (not the button), left-aligned to the clicked button.
+ *
+ *  The pill lives at `top-4` (top of the viewport) since v0.6 #4 W1; anchoring
+ *  to the button's TOP made the menu render over the toolbar row (UX backlog
+ *  #5). Anchoring to the toolbar element's bottom edge opens every toolbar
+ *  menu cleanly downward, clear of the pill, regardless of the button's own
+ *  padding — and keeps Add + Assets consistent. */
+function toolbarMenuAnchor(e: React.MouseEvent<HTMLButtonElement>): { x: number; y: number } {
+  const btn = e.currentTarget.getBoundingClientRect();
+  const toolbar = e.currentTarget.closest('[role="toolbar"]')?.getBoundingClientRect();
+  return { x: btn.left, y: (toolbar?.bottom ?? btn.bottom) + 6 };
+}
+
 function openAddMenuFrom(e: React.MouseEvent<HTMLButtonElement>): void {
-  const r = e.currentTarget.getBoundingClientRect();
-  useAddMenuStore.getState().openAt(r.left, r.top);
+  const { x, y } = toolbarMenuAnchor(e);
+  useAddMenuStore.getState().openAt(x, y);
 }
 
 export function FloatingViewportToolbar(): ReactNode {
@@ -298,10 +309,10 @@ export function FloatingViewportToolbar(): ReactNode {
             closeAssets();
             return;
           }
-          const r = e.currentTarget.getBoundingClientRect();
-          // Open anchored at the button; AssetsPopover clamps to the
-          // viewport so a bottom-pill anchor renders the list upward.
-          openAssetsAt(r.left, r.bottom + 4);
+          // Anchor just below the toolbar pill (shared with the Add menu) so
+          // the list opens cleanly downward, left-aligned to this button.
+          const { x, y } = toolbarMenuAnchor(e);
+          openAssetsAt(x, y);
         }}
       >
         <span aria-hidden>📦</span>
