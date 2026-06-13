@@ -20,17 +20,25 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 3. ☑ **Remove the STUB/LIVE toggle** (top-right corner). _(ComfyStatusIndicator unmounted from ProjectTabs.)_
 4. ☑ **Remove Save + Projects from the top-right corner.** Move the projects list under **File**.
    _(Save → File ▸ Save / Cmd+S; projects → File ▸ Switch Project submenu.)_
-5. ◐ **Fix the toolbar menus — position done, behaviour/end-to-end PENDING.**
-   _(Position slice shipped 2026-06-14, `5fd98d1`, [[H91]].)_ The "+ Add" menu anchored at
-   the button's TOP edge (a leftover from when the pill lived at the viewport bottom and
-   "opened upward") so it rendered OVER the toolbar row, covering the +Add button; Assets
-   used a different anchor. Both now share one `toolbarMenuAnchor` helper that opens them
-   just below the WHOLE pill, left-aligned (gate `ux5-toolbar-menu-position.spec.ts`).
-   **REOPENED for an end-to-end menu pass (user, 2026-06-14):** audit + fix EVERY menu
-   surface, position AND behaviour — the **MenuBar** dropdowns (File/Edit/Object/Select/View)
-   + their submenus (right-edge overflow, no edge-flip, no hover-switch between top-level
-   menus, no keyboard nav) and the **Add menu** submenus (also right-edge overflow). Consider
-   a shared edge-aware menu primitive (V34) rather than N per-menu patches.
+5. ☑ **Fix the toolbar menus — DONE end-to-end (2026-06-14).** Three slices:
+   _(a) toolbar-menu OPEN POSITION_ `5fd98d1` [[H91]] — the "+ Add" menu anchored at the
+   button's TOP edge (leftover from the bottom pill that "opened upward") rendered OVER the
+   toolbar row; now a shared `toolbarMenuAnchor` opens it just below the WHOLE pill,
+   left-aligned (gate `ux5-toolbar-menu-position.spec.ts`).
+   _(b) submenu EDGE-AWARE PLACEMENT_ `4f5ead1` — MenuBar's Submenu and AddMenu's group
+   submenus hardcoded `left-full` and ran off the right viewport edge (observed 56px @640w
+   and 191px @1280w near the edge). One shared `useFlyoutSide` hook now measures the trigger
+   on open and places the panel by preference (open right → flip left → clamp to the edge;
+   the left-aligned bar is too near x=0 for a pure flip, so it needs a clamp). AddMenu's root
+   clamp also gained `Math.max(8, …)` lower bounds on both axes (gate
+   `ux5-menu-submenu-edge.spec.ts`). _(c) BEHAVIOUR_ `ee1f9ed` — MenuBar gained hover-switch
+   (once a menu is open, hovering another top-level button switches to it; the first still
+   needs a click) and keyboard navigation (ArrowLeft/Right between top-level menus,
+   ArrowDown/Up/Home/End rove the open panel's enabled items) (gate
+   `ux5-menubar-behaviour.spec.ts`). Shared primitive over N per-menu patches (V34).
+   _Known follow-ups (minor, not observed in use): submenu VERTICAL overflow near the bottom
+   isn't clamped (only horizontal); `src/app/ProjectsMenu.tsx` is dead code superseded by
+   File ▸ Switch Project (#4) and can be removed._
 6. ☑ **Left panel → drop Import/Library/Help & Feedback.** _(2026-06-14, `dd31707`.)_
    Done as a **left-panel tab** (user redirect from the bottom-drawer idea): the left
    panel is now `Outliner | Assets`. The Outliner tab keeps search + Scenes + tree; the
