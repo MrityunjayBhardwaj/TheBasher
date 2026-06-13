@@ -53,9 +53,13 @@ interface MenuProps {
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
+  /** Hover-switch: pointer entered this top-level button — switch to this menu
+   *  IFF some menu is already open (standard menubar behaviour; the parent
+   *  no-ops when nothing is open so the first menu still requires a click). */
+  onHover: () => void;
 }
 
-function Menu({ label, testId, children, open, onOpen, onClose }: MenuProps) {
+function Menu({ label, testId, children, open, onOpen, onClose, onHover }: MenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -82,6 +86,7 @@ function Menu({ label, testId, children, open, onOpen, onClose }: MenuProps) {
         aria-expanded={open}
         aria-label={`${label} menu`}
         onClick={() => (open ? onClose() : onOpen())}
+        onMouseEnter={onHover}
         data-testid={`${testId}-button`}
         className={`rounded px-2 py-1 text-[11px] uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
           open ? 'bg-muted text-accent' : 'text-fg/70 hover:bg-muted/60 hover:text-fg'
@@ -269,6 +274,10 @@ function onSettings() {
 
 type OpenMenu = null | 'file' | 'edit' | 'object' | 'select' | 'view';
 
+// Left-to-right order of the top-level menus — drives ArrowLeft/ArrowRight
+// keyboard navigation between them (standard menubar behaviour).
+const MENU_ORDER = ['file', 'edit', 'object', 'select', 'view'] as const;
+
 const APPLY_MASKS: { mask: ApplyMask; label: string }[] = [
   { mask: 'all', label: 'All Transforms' },
   { mask: 'location', label: 'Location' },
@@ -279,6 +288,50 @@ const APPLY_MASKS: { mask: ApplyMask; label: string }[] = [
 export function MenuBar() {
   const [open, setOpen] = useState<OpenMenu>(null);
   const close = () => setOpen(null);
+
+  // Keyboard navigation across the open menu (standard ARIA menubar). Only
+  // active once a menu is open (opened by click) — the menubar itself is not a
+  // roving-tabindex widget. ArrowLeft/Right switch top-level menus; ArrowUp/
+  // Down/Home/End move focus among the open panel's items. DOM-query based (no
+  // child refs) — submenus are hover-only, so during keyboard use the open
+  // panel exposes exactly its first-level items.
+  function focusButton(id: (typeof MENU_ORDER)[number]): void {
+    document.querySelector<HTMLElement>(`[data-testid="menu-${id}-button"]`)?.focus();
+  }
+  function onMenubarKeyDown(e: React.KeyboardEvent): void {
+    if (open === null) return;
+    const idx = MENU_ORDER.indexOf(open as (typeof MENU_ORDER)[number]);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const delta = e.key === 'ArrowRight' ? 1 : -1;
+      const next = MENU_ORDER[(idx + delta + MENU_ORDER.length) % MENU_ORDER.length];
+      setOpen(next);
+      focusButton(next);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+      const panel = document.querySelector(`[data-testid="menu-${open}-panel"]`);
+      // Skip disabled items — they can't take focus, and landing on one would
+      // strand the roving cursor (e.g. Edit ▸ Undo is disabled on a fresh scene).
+      const items = panel
+        ? Array.from(panel.querySelectorAll<HTMLElement>('button[role="menuitem"]:not([disabled])'))
+        : [];
+      if (items.length === 0) return;
+      e.preventDefault();
+      const cur = items.indexOf(document.activeElement as HTMLElement);
+      let target = 0;
+      if (e.key === 'ArrowDown') target = cur < 0 ? 0 : (cur + 1) % items.length;
+      else if (e.key === 'ArrowUp')
+        target = cur < 0 ? items.length - 1 : (cur - 1 + items.length) % items.length;
+      else if (e.key === 'End') target = items.length - 1;
+      items[target]?.focus();
+    }
+  }
+  // Hover-switch: once any menu is open, pointing at a different top-level
+  // button switches to it. No-op when nothing is open (the functional update
+  // returns `cur` unchanged) so the first menu still requires a click.
+  const hoverSwitch = (id: Exclude<OpenMenu, null>) => () =>
+    setOpen((cur) => (cur !== null ? id : cur));
 
   // Reactive bits used inside menus.
   const dag = useDagStore((s) => s.state);
@@ -333,6 +386,7 @@ export function MenuBar() {
       data-testid="menubar"
       role="menubar"
       aria-label="Menu bar"
+      onKeyDown={onMenubarKeyDown}
       className="flex items-center gap-0.5 border-b border-border bg-bg px-2 py-1 font-mono text-fg"
     >
       <Menu
@@ -341,6 +395,7 @@ export function MenuBar() {
         open={open === 'file'}
         onOpen={() => setOpen('file')}
         onClose={close}
+        onHover={hoverSwitch('file')}
       >
         <Item label="New Project…" onSelect={onNewProject} testId="menu-file-new" />
         <Submenu label="Switch Project" testId="menu-file-switch">
@@ -404,6 +459,7 @@ export function MenuBar() {
         open={open === 'edit'}
         onOpen={() => setOpen('edit')}
         onClose={close}
+        onHover={hoverSwitch('edit')}
       >
         <Item
           label="Undo"
@@ -438,6 +494,7 @@ export function MenuBar() {
         open={open === 'object'}
         onOpen={() => setOpen('object')}
         onClose={close}
+        onHover={hoverSwitch('object')}
       >
         {/* Phase 151 — Apply ▸ {All / Location / Rotation / Scale}. Bakes the
             selected primitive's TRS into geometry → a BakedMesh (one undo). The
@@ -473,6 +530,7 @@ export function MenuBar() {
         open={open === 'select'}
         onOpen={() => setOpen('select')}
         onClose={close}
+        onHover={hoverSwitch('select')}
       >
         <Item
           label="All Top-Level"
@@ -519,6 +577,7 @@ export function MenuBar() {
         open={open === 'view'}
         onOpen={() => setOpen('view')}
         onClose={close}
+        onHover={hoverSwitch('view')}
       >
         <Item
           label="Frame Selected"
