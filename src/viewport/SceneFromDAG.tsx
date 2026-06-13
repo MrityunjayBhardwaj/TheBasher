@@ -1174,10 +1174,13 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // original's node index, and stamp the corresponding clone object. A
   // material-split `<unnamed>` sub-mesh carries a `.meshes` association (no
   // `.nodes`) → no stamp; the drill walk falls back to its nearest stamped
-  // ancestor, which is the right target. Mutation is confined to the per-instance
-  // clone (never the shared drei cache → no substrate leak, B-substrate-purity);
-  // userData.basher* is a new key namespace (no V20 single-writer collision with
-  // the TRS/material/visibility writers). REF: gltfDrillChain.ts; H90.
+  // ancestor, which is the right target. The childId is globally unique
+  // (content-addressed off assetRef), so it alone disambiguates which asset a hit
+  // belongs to — no separate asset stamp is needed. Mutation is confined to the
+  // per-instance clone (never the shared drei cache → no substrate leak,
+  // B-substrate-purity); `basherGltfChildId` is a new userData key (no V20
+  // single-writer collision with the TRS/material/visibility writers).
+  // REF: gltfDrillChain.ts; H90.
   useEffect(() => {
     const assoc = gltf.parser?.associations;
     const keyByIndex = value.keyByGltfNodeIndex;
@@ -1192,10 +1195,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         if (idx !== undefined) {
           const key = keyByIndex[String(idx)];
           const childId = key != null ? value.nodeNameMap[key] : undefined;
-          if (childId) {
-            clone.userData.basherGltfChildId = childId;
-            clone.userData.basherAssetId = value.assetRef;
-          }
+          if (childId) clone.userData.basherGltfChildId = childId;
         }
         const n = Math.min(orig.children.length, clone.children.length);
         for (let i = 0; i < n; i++) stack.push([orig.children[i], clone.children[i]]);
@@ -1207,12 +1207,9 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     // for the unstamped remainder, so this is purely additive.
     for (const [name, childId] of Object.entries(value.nodeNameMap)) {
       const obj = nameToObject.get(name);
-      if (obj) {
-        obj.userData.basherGltfChildId = childId;
-        obj.userData.basherAssetId = value.assetRef;
-      }
+      if (obj) obj.userData.basherGltfChildId = childId;
     }
-  }, [cloned, gltf, nameToObject, value.nodeNameMap, value.keyByGltfNodeIndex, value.assetRef]);
+  }, [cloned, gltf, nameToObject, value.nodeNameMap, value.keyByGltfNodeIndex]);
   const shading = useViewportStore((s) => s.shading);
   // P7.7 (#91) — SUBSCRIBED read (NOT a getState() snapshot): a gizmo setParam on
   // a GltfChild of THIS asset must re-render so the per-child override re-layers
