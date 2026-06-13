@@ -26,8 +26,14 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    covering the +Add button; Assets used a different anchor. Both now share one
    `toolbarMenuAnchor` helper that opens them just below the WHOLE pill,
    left-aligned to the clicked button (gate `ux5-toolbar-menu-position.spec.ts`).
-6. ☐ **Left panel → drop Import/Library/Help & Feedback.** Replace with a **bottom drawer**
-   (like the floating timeline) hosting the asset **Library** — Blender's asset-browser model.
+6. ☑ **Left panel → drop Import/Library/Help & Feedback.** _(2026-06-14, `dd31707`.)_
+   Done as a **left-panel tab** (user redirect from the bottom-drawer idea): the left
+   panel is now `Outliner | Assets`. The Outliner tab keeps search + Scenes + tree; the
+   **Assets** tab hosts the asset **Library** (samples + my imports + per-row manage) plus
+   an **Import…** button — Blender's asset-browser model, a persistent browser beside the
+   tree. The footer (Library/Import/Help & Feedback) is dropped; Help & Feedback (no system
+   behind it) removed. One library home (V34): the floating `AssetsPopover` is deleted —
+   the toolbar **Assets** button now expands the sidebar + selects the Assets tab.
 
 ## Selection / scene
 
