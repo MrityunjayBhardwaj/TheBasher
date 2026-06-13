@@ -20,7 +20,12 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 3. ☑ **Remove the STUB/LIVE toggle** (top-right corner). _(ComfyStatusIndicator unmounted from ProjectTabs.)_
 4. ☑ **Remove Save + Projects from the top-right corner.** Move the projects list under **File**.
    _(Save → File ▸ Save / Cmd+S; projects → File ▸ Switch Project submenu.)_
-5. ☐ **Fix the toolbar menus.** (Menus opening from the toolbar are off — position/behaviour.)
+5. ☑ **Fix the toolbar menus.** _(2026-06-14, `5fd98d1`.)_ The "+ Add" menu
+   anchored at the button's TOP edge (a leftover from when the pill lived at the
+   viewport bottom and "opened upward") so it rendered OVER the toolbar row,
+   covering the +Add button; Assets used a different anchor. Both now share one
+   `toolbarMenuAnchor` helper that opens them just below the WHOLE pill,
+   left-aligned to the clicked button (gate `ux5-toolbar-menu-position.spec.ts`).
 6. ☐ **Left panel → drop Import/Library/Help & Feedback.** Replace with a **bottom drawer**
    (like the floating timeline) hosting the asset **Library** — Blender's asset-browser model.
 
