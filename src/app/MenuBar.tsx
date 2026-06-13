@@ -40,6 +40,7 @@ import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 import { useChromeStore } from './stores/chromeStore';
 import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
+import { useFlyoutSide } from './menu/useFlyoutSide';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -131,6 +132,8 @@ function Item({ label, shortcut, onSelect, disabled, testId }: ItemProps) {
   );
 }
 
+const SUBMENU_WIDTH = 220;
+
 function Submenu({
   label,
   children,
@@ -141,8 +144,13 @@ function Submenu({
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Edge-aware placement: opens to the right by default, flips left when the
+  // right viewport edge would be crossed (UX #5 — a right-side menu's submenu
+  // ran off-screen; shared with AddMenu via useFlyoutSide, H91 family).
+  const { containerRef, style: flyoutStyle } = useFlyoutSide<HTMLDivElement>(open, SUBMENU_WIDTH);
   return (
     <div
+      ref={containerRef}
       className="relative"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
@@ -168,7 +176,8 @@ function Submenu({
         <div
           role="menu"
           aria-label={label}
-          className="absolute left-full top-0 z-50 -mt-1 w-[220px] overflow-hidden rounded border border-border bg-bg shadow-lg"
+          style={{ width: SUBMENU_WIDTH, ...flyoutStyle }}
+          className="absolute top-0 z-50 -mt-1 overflow-hidden rounded border border-border bg-bg shadow-lg"
         >
           {children}
         </div>

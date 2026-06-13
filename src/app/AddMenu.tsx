@@ -20,6 +20,7 @@ import { buildAddPrimitiveOps, type PrimitiveKind } from './addPrimitives';
 import { useThreeRef } from './character/threeRef';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useFlyoutSide } from './menu/useFlyoutSide';
 
 interface MenuGroup {
   label: string;
@@ -76,6 +77,78 @@ export function addPrimitive(kind: PrimitiveKind): void {
   useSelectionStore.getState().select(result.newNodeId);
 }
 
+const SUBMENU_WIDTH = 200;
+
+/** One Add-menu group row + its edge-aware flyout submenu. Extracted so the
+ *  flyout-placement hook runs per group (UX #5 — the submenu flips to the left
+ *  when opening right would cross the viewport edge; shared via useFlyoutSide
+ *  with MenuBar, H91 family). */
+function AddMenuGroup({
+  group,
+  active,
+  onActivate,
+  onDeactivate,
+  close,
+}: {
+  group: MenuGroup;
+  active: boolean;
+  onActivate: () => void;
+  onDeactivate: () => void;
+  close: () => void;
+}) {
+  const { containerRef, style: flyoutStyle } = useFlyoutSide<HTMLLIElement>(active, SUBMENU_WIDTH);
+  return (
+    <li
+      ref={containerRef}
+      role="none"
+      className="relative"
+      onMouseEnter={onActivate}
+      onMouseLeave={onDeactivate}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        data-testid={`add-menu-${group.label.toLowerCase()}`}
+        aria-haspopup="menu"
+        aria-expanded={active}
+        className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] ${
+          active ? 'bg-muted text-accent' : 'text-fg/80 hover:bg-muted'
+        }`}
+      >
+        <span>{group.label}</span>
+        <span aria-hidden className="font-mono text-[10px] text-fg/40">
+          ▸
+        </span>
+      </button>
+      {active ? (
+        <div
+          role="menu"
+          aria-label={group.label}
+          data-testid={`add-menu-${group.label.toLowerCase()}-panel`}
+          style={{ width: SUBMENU_WIDTH, ...flyoutStyle }}
+          className="absolute top-0 z-[101] -mt-1 overflow-hidden rounded border border-border bg-bg shadow-lg"
+        >
+          {group.items.map((item) => (
+            <button
+              key={item.kind}
+              type="button"
+              role="menuitem"
+              data-testid={`add-menu-item-${item.kind}`}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted"
+              onClick={() => {
+                addPrimitive(item.kind);
+                close();
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 export function AddMenu() {
   const open = useAddMenuStore((s) => s.open);
   const x = useAddMenuStore((s) => s.x);
@@ -108,10 +181,15 @@ export function AddMenu() {
 
   if (!open) return null;
 
-  // Clamp position so the menu doesn't escape the viewport edges.
+  // Clamp the root position so the menu stays fully on-screen on BOTH axes.
+  // Math.max(8, …) guards the LOWER bound (a right-click near the top/left edge
+  // must not push the menu off the top/left) as well as the upper bound (near
+  // the bottom/right). MENU_H is a conservative height estimate covering the
+  // header + all groups so the menu's bottom never falls below the viewport.
   const W = 220;
-  const cx = Math.min(x, window.innerWidth - W - 8);
-  const cy = Math.min(y, window.innerHeight - 320);
+  const MENU_H = 320;
+  const cx = Math.max(8, Math.min(x, window.innerWidth - W - 8));
+  const cy = Math.max(8, Math.min(y, window.innerHeight - MENU_H));
   return (
     <div
       ref={ref}
@@ -124,53 +202,14 @@ export function AddMenu() {
       </header>
       <ul role="menu" aria-label="Add primitive" className="flex flex-col">
         {GROUPS.map((g) => (
-          <li
+          <AddMenuGroup
             key={g.label}
-            role="none"
-            className="relative"
-            onMouseEnter={() => setActiveGroup(g.label)}
-            onMouseLeave={() => setActiveGroup((cur) => (cur === g.label ? null : cur))}
-          >
-            <button
-              type="button"
-              role="menuitem"
-              data-testid={`add-menu-${g.label.toLowerCase()}`}
-              aria-haspopup="menu"
-              aria-expanded={activeGroup === g.label}
-              className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] ${
-                activeGroup === g.label ? 'bg-muted text-accent' : 'text-fg/80 hover:bg-muted'
-              }`}
-            >
-              <span>{g.label}</span>
-              <span aria-hidden className="font-mono text-[10px] text-fg/40">
-                ▸
-              </span>
-            </button>
-            {activeGroup === g.label ? (
-              <div
-                role="menu"
-                aria-label={g.label}
-                data-testid={`add-menu-${g.label.toLowerCase()}-panel`}
-                className="absolute left-full top-0 z-[101] -mt-1 w-[200px] overflow-hidden rounded border border-border bg-bg shadow-lg"
-              >
-                {g.items.map((item) => (
-                  <button
-                    key={item.kind}
-                    type="button"
-                    role="menuitem"
-                    data-testid={`add-menu-item-${item.kind}`}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted"
-                    onClick={() => {
-                      addPrimitive(item.kind);
-                      close();
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </li>
+            group={g}
+            active={activeGroup === g.label}
+            onActivate={() => setActiveGroup(g.label)}
+            onDeactivate={() => setActiveGroup((cur) => (cur === g.label ? null : cur))}
+            close={close}
+          />
         ))}
       </ul>
     </div>
