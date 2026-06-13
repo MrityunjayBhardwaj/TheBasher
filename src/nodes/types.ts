@@ -496,6 +496,20 @@ export interface GltfAssetValue {
    */
   readonly suppressedChildren: readonly string[];
   /**
+   * UX #7 / H90 — glTF node INDEX → nodeNameMap KEY, captured at import
+   * (`buildNodeNameMap`). This is the one correspondence the producer and three's
+   * GLTFLoader clone agree on: the producer's KEY space (sanitizeBoneName + `__n`
+   * dedup, `node_i` for unnamed nodes) DIVERGES from the clone's NAME space
+   * (sanitizeNodeName + `_n` dedup, `''` for unnamed) on real exports, so ~28% of
+   * meshes are unaddressable by name. `GltfAssetR` reads it alongside
+   * `gltf.parser.associations` (which records the node index for every loaded
+   * object — GLTFLoader.js:4311) to stamp each clone object's
+   * `userData.basherGltfChildId`, so viewport drill-in addresses children by a
+   * stamped ID, not by name. Default `{}` so pre-UX#7 saves hydrate empty — the
+   * renderer + drill fall back to name-match (V10/H14-clean — no version bump).
+   */
+  readonly keyByGltfNodeIndex: Readonly<Record<string, string>>;
+  /**
    * The selected clip's evaluated TRS at the input Time, sourced from
    * the connected `ClipSelect.out`. `null` when no animation is
    * imported (degenerate path) OR when `selectedClipName` doesn't

@@ -153,6 +153,36 @@ test('UX#7 double-click drills the import → GltfChild; Esc pops back up', asyn
   });
   expect(assetId).not.toBeNull();
 
+  // H90 — the import must persist keyByGltfNodeIndex (the glTF node index → key
+  // map), and GltfAssetR must STAMP the live clone object with its GltfChild id
+  // via that map + gltf.parser.associations. This is the robust drill path that
+  // a real export (dedup suffixes + material-split unnamed meshes) needs; the
+  // flat fixture exercises the wiring even though its single named child also
+  // round-trips by name. Assert both: the persisted map is non-empty, and the
+  // rendered "Box" mesh carries userData.basherGltfChildId pointing at a real
+  // GltfChild node.
+  const stampIntel = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    const asset = Object.values(nodes).find((n) => n.type === 'GltfAsset');
+    const keyByIdx = (asset?.params.keyByGltfNodeIndex ?? {}) as Record<string, string>;
+    const scene = w.__basher_three!.getState().scene!;
+    let stampedId: string | null = null;
+    scene.traverse((o) => {
+      if (stampedId) return;
+      const id = (o.userData as { basherGltfChildId?: string }).basherGltfChildId;
+      if (o.name === 'Box' && id) stampedId = id;
+    });
+    return {
+      keyByIdxSize: Object.keys(keyByIdx).length,
+      stampedId,
+      stampedIsGltfChild: stampedId ? nodes[stampedId]?.type === 'GltfChild' : false,
+    };
+  });
+  expect(stampIntel.keyByIdxSize).toBeGreaterThan(0);
+  expect(stampIntel.stampedId).not.toBeNull();
+  expect(stampIntel.stampedIsGltfChild).toBe(true);
+
   // Project the imported model's actual "Box" mesh (in the live scene clone) to
   // canvas pixels — the distractors are moved far aside, so this point hits only
   // the model. Poll: the clone may still be settling right after import.

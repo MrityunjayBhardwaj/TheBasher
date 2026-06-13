@@ -489,7 +489,7 @@ export async function buildGltfImportOps(
     type: 'addNode',
     nodeId: gltfAssetId,
     nodeType: 'GltfAsset',
-    params: { assetRef: args.assetRef, nodeNameMap, childHierarchy, skins },
+    params: { assetRef: args.assetRef, nodeNameMap, childHierarchy, skins, keyByGltfNodeIndex },
   });
   // P7.7 (#91) — one GltfChild addNode per scene child, in json.nodes
   // INTEGER-INDEX order (NOT Object.keys — that order is incidental today

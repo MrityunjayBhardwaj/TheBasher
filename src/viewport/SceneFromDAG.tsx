@@ -1123,7 +1123,13 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // in size-optimised exports), which drei does NOT wire by default.
   // Meshopt is already drei-default-on; nothing to do for it.
   const extendLoader = useGltfLoaderExtend();
-  const gltf = useGLTF(url, '/draco/', true, extendLoader) as unknown as { scene: THREE.Group };
+  const gltf = useGLTF(url, '/draco/', true, extendLoader) as unknown as {
+    scene: THREE.Group;
+    // UX #7 / H90 — GLTFLoader records each loaded object's source glTF node
+    // index here (every node, named or not — GLTFLoader.js:4311). The drill
+    // stamp pairs it with the persisted keyByGltfNodeIndex.
+    parser?: { associations?: Map<object, { nodes?: number }> };
+  };
   // P7.5 R1: do NOT share the clone across instances — the per-child
   // TRS override below mutates this Object3D in-place. useMemo with
   // gltf.scene as dependency gives one clone per (component-instance,
@@ -1154,6 +1160,59 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     });
     return m;
   }, [cloned]);
+  // UX #7 / H90 — stamp each clone object that maps to a GltfChild with its DAG
+  // node id, so viewport drill-in (buildGltfDrillChain) can address children by a
+  // STAMPED ID rather than by name. The producer's nodeNameMap KEY space
+  // (sanitizeBoneName + `__n` dedup, `node_i` for unnamed nodes) DIVERGES from
+  // three's GLTFLoader clone NAME space (sanitizeNodeName + `_n` dedup, `''` for
+  // unnamed) on real exports — ~28% of a dense model's meshes are unaddressable
+  // by name. The glTF node INDEX is the one correspondence both sides agree on:
+  // GLTFLoader records it on `gltf.parser.associations` for EVERY loaded object
+  // (GLTFLoader.js:4311), and the import persists `keyByGltfNodeIndex` (index →
+  // nodeNameMap key). We map original→clone by lockstep traversal — SkeletonUtils
+  // clones children in array order, so index-paired walk is exact — read each
+  // original's node index, and stamp the corresponding clone object. A
+  // material-split `<unnamed>` sub-mesh carries a `.meshes` association (no
+  // `.nodes`) → no stamp; the drill walk falls back to its nearest stamped
+  // ancestor, which is the right target. Mutation is confined to the per-instance
+  // clone (never the shared drei cache → no substrate leak, B-substrate-purity);
+  // userData.basher* is a new key namespace (no V20 single-writer collision with
+  // the TRS/material/visibility writers). REF: gltfDrillChain.ts; H90.
+  useEffect(() => {
+    const assoc = gltf.parser?.associations;
+    const keyByIndex = value.keyByGltfNodeIndex;
+    // PRIMARY: index-based stamp (robust to the key↔name divergence, H90).
+    if (assoc && Object.keys(keyByIndex).length > 0) {
+      const stack: Array<[THREE.Object3D, THREE.Object3D]> = [[gltf.scene, cloned]];
+      while (stack.length > 0) {
+        const pair = stack.pop();
+        if (!pair) break;
+        const [orig, clone] = pair;
+        const idx = assoc.get(orig)?.nodes;
+        if (idx !== undefined) {
+          const key = keyByIndex[String(idx)];
+          const childId = key != null ? value.nodeNameMap[key] : undefined;
+          if (childId) {
+            clone.userData.basherGltfChildId = childId;
+            clone.userData.basherAssetId = value.assetRef;
+          }
+        }
+        const n = Math.min(orig.children.length, clone.children.length);
+        for (let i = 0; i < n; i++) stack.push([orig.children[i], clone.children[i]]);
+      }
+      return;
+    }
+    // FALLBACK (pre-UX#7 saves: keyByGltfNodeIndex empty; or no associations) —
+    // stamp the subset whose names DO match. Drill keeps a name-match fallback
+    // for the unstamped remainder, so this is purely additive.
+    for (const [name, childId] of Object.entries(value.nodeNameMap)) {
+      const obj = nameToObject.get(name);
+      if (obj) {
+        obj.userData.basherGltfChildId = childId;
+        obj.userData.basherAssetId = value.assetRef;
+      }
+    }
+  }, [cloned, gltf, nameToObject, value.nodeNameMap, value.keyByGltfNodeIndex, value.assetRef]);
   const shading = useViewportStore((s) => s.shading);
   // P7.7 (#91) — SUBSCRIBED read (NOT a getState() snapshot): a gizmo setParam on
   // a GltfChild of THIS asset must re-render so the per-child override re-layers

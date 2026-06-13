@@ -76,6 +76,19 @@ export const GltfAssetParams = z.object({
    * nodeNameMap / childHierarchy (P7.7 sibling addressing stays intact, M7).
    */
   suppressedChildren: z.array(z.string()).default([]),
+  /**
+   * UX #7 / H90 — glTF node INDEX → post-dedup KEY (same key space as
+   * `nodeNameMap`), captured at import by `buildNodeNameMap`. JSON object keys
+   * are strings, so the integer node index serialises as a string key. The
+   * renderer pairs this with `gltf.parser.associations` (node index per loaded
+   * object) to stamp each clone object's `userData.basherGltfChildId`, making
+   * viewport drill-in immune to the producer-key ↔ clone-name divergence that
+   * leaves ~28% of a real export's meshes unaddressable by name (H90).
+   * `.default({})` makes it additive: pre-UX#7 saves hydrate empty and fall back
+   * to name-match (V10/H14-clean — no schema-version bump). Mirrors the
+   * nodeNameMap/childHierarchy/skins additive-param precedent.
+   */
+  keyByGltfNodeIndex: z.record(z.string(), z.string()).default({}),
 });
 export type GltfAssetParams = z.infer<typeof GltfAssetParams>;
 
@@ -101,6 +114,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
       childHierarchy: params.childHierarchy,
       skins: params.skins,
       suppressedChildren: params.suppressedChildren,
+      keyByGltfNodeIndex: params.keyByGltfNodeIndex,
       transformClip: (inputs.transformClip as TransformClipValue | undefined) ?? null,
     };
   },
