@@ -31,12 +31,14 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    leaf); repeat to go deeper; **Esc** pops back up a level. The deep glTF mesh maps to its
    GltfChild via `GltfAsset.nodeNameMap`; drill depth lives in a dedicated `drillStore` (survives
    the single-click that precedes every double-click). Single click still selects the whole
-   import. _(Limitation: scopes the asset by hit-name match — multiple imports of the same model
-   with shared child names is a heuristic.)_ **◐ REOPENED for real models ([[H90]]):** works on the
-   flat fixture but on a real export (cicada/CountryLands, 706 children) only ~72% of meshes map —
-   a dedup-suffix sanitization mismatch (`…_0_003` vs `…_0003`) + material-split unnamed sub-meshes
-   leave ~28% undrillable, and a centre click can land on one. **Fix (next session):** stamp
-   `userData.basherGltfChildId`/`basherAssetId` on clone objects in GltfAssetR and drill by id, not name.
+   import. **✅ Fixed for real models _(2026-06-14, `c5f18fc`, [[H90]] RESOLVED)_:** drill now
+   addresses children by a STAMPED node-INDEX id, not by name. GltfAssetR stamps each clone object's
+   `userData.basherGltfChildId` via `gltf.parser.associations` × the persisted `keyByGltfNodeIndex`;
+   `buildGltfDrillChain` walks the hit's ancestors reading those stamps (name-match kept as a fallback
+   for pre-2026-06-14 saves). Observed on the real cicada: 0 undrillable meshes (was ~28%), a named
+   part drills to its GltfChild. _(Wider follow-up still open: per-child TRS/material OVERRIDES in
+   GltfAssetR also address by name and silently no-op on name-mismatched children — fixable via the
+   same stamp; tracked in [[H90]].)_
 
 ## Materials / textures / lighting
 
