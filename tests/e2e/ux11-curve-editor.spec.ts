@@ -23,7 +23,10 @@ interface BasherWindow {
   __basher_viewport: { getState: () => { setTimelineDrawerOpen: (v: boolean) => void } };
   __basher_timeline_dock: { getState: () => { setActiveTab: (t: string) => void } };
   __basher_timeline_selection: {
-    getState: () => { setActiveChannel: (id: string | null) => void };
+    getState: () => {
+      setActiveChannel: (id: string | null) => void;
+      setActiveKeyframe: (ref: { channelId: string; time: number } | null) => void;
+    };
   };
 }
 
@@ -36,32 +39,40 @@ async function seed(page: import('@playwright/test').Page) {
   );
   await page.evaluate((id) => {
     const w = window as unknown as BasherWindow;
-    w.__basher_dag.getState().dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: id,
-          nodeType: 'KeyframeChannelVec3',
-          params: {
-            name: 'pos',
-            target: '',
-            paramPath: 'position',
-            keyframes: [
-              { time: 0, value: [0, 0, 0], easing: 'linear' },
-              { time: 2, value: [4, 2, -3], easing: 'cubic' },
-              { time: 4, value: [1, 5, 1], easing: 'cubic' },
-            ],
+    const dag = w.__basher_dag.getState();
+    // Idempotent: the `default` project persists in OPFS across tests, so only
+    // add the channel if it isn't already present (re-adding the same id throws).
+    if (!dag.state.nodes[id]) {
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: id,
+            nodeType: 'KeyframeChannelVec3',
+            params: {
+              name: 'pos',
+              target: '',
+              paramPath: 'position',
+              keyframes: [
+                { time: 0, value: [0, 0, 0], easing: 'linear' },
+                { time: 2, value: [4, 2, -3], easing: 'cubic' },
+                { time: 4, value: [1, 5, 1], easing: 'cubic' },
+              ],
+            },
           },
-        },
-      ],
-      'user',
-      'ux11 seed',
-    );
+        ],
+        'user',
+        'ux11 seed',
+      );
+    }
     w.__basher_viewport.getState().setTimelineDrawerOpen(true);
     w.__basher_timeline_dock.getState().setActiveTab('curve');
     w.__basher_timeline_selection.getState().setActiveChannel(id);
   }, CH);
   await expect(page.getByTestId('curve-editor')).toBeVisible();
+  // Wait for the actual curve to paint (the channel resolved + EditableCurve
+  // measured), not just the pane — hardens against the shared-server boot race.
+  await expect(page.getByTestId('curve-track-0')).toBeAttached();
 }
 
 const keyframes = (page: import('@playwright/test').Page) =>
@@ -106,5 +117,37 @@ test.describe('UX #11 — editable curve editor', () => {
     // The other components of the same key are untouched by an x-axis drag.
     expect(after[1].value[1]).toBeCloseTo(before[1].value[1], 5);
     expect(after[1].value[2]).toBeCloseTo(before[1].value[2], 5);
+  });
+
+  test('dragging a bézier OUT handle writes an explicit handle and bends the curve', async ({
+    page,
+  }) => {
+    await seed(page);
+    // Select the middle key so its handles appear.
+    await page.evaluate(
+      (id) =>
+        (window as unknown as BasherWindow).__basher_timeline_selection
+          .getState()
+          .setActiveKeyframe({ channelId: id, time: 2 }),
+      CH,
+    );
+    const handle = page.getByTestId('curve-handle-out-0');
+    await expect(handle).toBeVisible();
+    const trackBefore = await page.getByTestId('curve-track-0').getAttribute('points');
+
+    const box = (await handle.boundingBox())!;
+    // Drag the out-handle up + right → an explicit, non-flat handle.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 18, box.y + box.height / 2 - 30, { steps: 6 });
+    await page.mouse.up();
+
+    const after = await keyframes(page);
+    const oh = (after[1] as { outHandle?: { time: number; value: number[] } }).outHandle;
+    expect(oh, 'an explicit out-handle was written').toBeTruthy();
+    expect(oh!.time, 'out-handle extends forward in time').toBeGreaterThan(0);
+    // The curve x-track is reshaped by the handle.
+    const trackAfter = await page.getByTestId('curve-track-0').getAttribute('points');
+    expect(trackAfter).not.toEqual(trackBefore);
   });
 });

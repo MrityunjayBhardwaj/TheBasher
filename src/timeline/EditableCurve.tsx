@@ -99,7 +99,12 @@ export function EditableCurve({
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
   const [draft, setDraft] = useState<RawKey[] | null>(null);
-  const dragRef = useRef<{ index: number; pointerId: number } | null>(null);
+  const dragRef = useRef<{
+    kind: 'key' | 'in' | 'out';
+    index: number;
+    axis: number;
+    pointerId: number;
+  } | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -188,42 +193,76 @@ export function EditableCurve({
       );
   }
 
-  function onKeyPointerDown(e: React.PointerEvent, index: number) {
+  // keyframes arrives pre-sorted from CurveEditor, so the array index IS the
+  // time order — neighbors are index±1 (no reference findIndex needed).
+  function startDrag(
+    e: React.PointerEvent,
+    index: number,
+    kind: 'key' | 'in' | 'out',
+    axis: number,
+  ) {
     e.stopPropagation();
     (e.target as Element).setPointerCapture?.(e.pointerId);
-    dragRef.current = { index, pointerId: e.pointerId };
+    dragRef.current = { kind, index, axis, pointerId: e.pointerId };
     setDraft(keyframes.map((k) => ({ ...k })));
-    const k = keyframes[index];
-    setActiveKeyframe({ channelId, time: k.time });
+    setActiveKeyframe({ channelId, time: keyframes[index].time });
   }
 
   function onPointerMove(e: React.PointerEvent) {
     const d = dragRef.current;
     if (!d || !draft) return;
     const rect = hostRef.current!.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    // Clamp time strictly between neighbors so the keyframe order never flips
-    // mid-drag (avoids array-reindex bugs); value drags freely.
-    const sorted = [...keyframes].sort((a, b) => a.time - b.time);
-    const orig = draft[d.index];
-    const pos = sorted.findIndex((k) => k === keyframes[d.index]);
-    const lo = pos > 0 ? sorted[pos - 1].time + 1e-3 : 0;
-    const hi = pos < sorted.length - 1 ? sorted[pos + 1].time - 1e-3 : dur;
-    const nextTime = Math.min(Math.max(xToTime(px), lo), hi);
-    const nextVal = yToValue(py);
-    const next = draft.map((k, i) => {
-      if (i !== d.index) return k;
-      if (isVec) {
-        const arr = [...(orig.value as readonly number[])];
-        // Which axis the grabbed dot belongs to is encoded by proximity: pick
-        // the axis whose value is closest to the pointer (the dot under cursor).
-        const a = nearestAxis(orig, py, valueToY);
-        arr[a] = nextVal;
-        return { ...k, time: nextTime, value: arr };
-      }
-      return { ...k, time: nextTime, value: nextVal };
-    });
+    // The <svg> coordinate system is w×h units but CSS stretches it to the
+    // container, so convert client pixels → svg units by the live scale (the
+    // two can differ in the window before the ResizeObserver commits size).
+    const px = (e.clientX - rect.left) * (w / Math.max(rect.width, 1));
+    const py = (e.clientY - rect.top) * (h / Math.max(rect.height, 1));
+    const k = draft[d.index];
+    const spanLeft = d.index > 0 ? k.time - draft[d.index - 1].time : dur / 4;
+    const spanRight = d.index < draft.length - 1 ? draft[d.index + 1].time - k.time : dur / 4;
+
+    let next: RawKey[];
+    if (d.kind === 'key') {
+      // Move the key: time clamped strictly between neighbors (order can't flip);
+      // value of the grabbed AXIS drags freely (other components untouched).
+      const lo = d.index > 0 ? draft[d.index - 1].time + 1e-3 : 0;
+      const hi = d.index < draft.length - 1 ? draft[d.index + 1].time - 1e-3 : dur;
+      const nextTime = Math.min(Math.max(xToTime(px), lo), hi);
+      const nextVal = yToValue(py);
+      next = draft.map((kk, i) =>
+        i !== d.index
+          ? kk
+          : isVec
+            ? {
+                ...kk,
+                time: nextTime,
+                value: setAxis(kk.value as readonly number[], d.axis, nextVal),
+              }
+            : { ...kk, time: nextTime, value: nextVal },
+      );
+    } else {
+      // Drag a bézier handle: x → time offset (clamped to its half-segment so the
+      // curve stays a function of time, V49), y → value offset on this axis.
+      const kvAxis = isVec ? (k.value as readonly number[])[d.axis] : (k.value as number);
+      const span = d.kind === 'out' ? spanRight : spanLeft;
+      let offT = xToTime(px) - k.time;
+      offT =
+        d.kind === 'out'
+          ? Math.min(Math.max(offT, 1e-3), span - 1e-3)
+          : Math.max(Math.min(offT, -1e-3), -(span - 1e-3));
+      const offV = yToValue(py) - kvAxis;
+      const base = fullHandle(k, d.kind, isVec, span);
+      const handle: Handle = isVec
+        ? { time: offT, value: setAxis(base.value as readonly number[], d.axis, offV) }
+        : { time: offT, value: offV };
+      next = draft.map((kk, i) =>
+        i !== d.index
+          ? kk
+          : d.kind === 'out'
+            ? { ...kk, outHandle: handle }
+            : { ...kk, inHandle: handle },
+      );
+    }
     setDraft(next);
   }
 
@@ -325,8 +364,8 @@ export function EditableCurve({
             const kx = timeToX(k.time);
             const ky = valueToY(sk.value);
             const segs: ReactElement[] = [];
-            const out = sk.outHandle ?? autoHandle(sk, span, 'out');
-            const inn = sk.inHandle ?? autoHandle(sk, span, 'in');
+            const out = sk.outHandle ?? autoHandle(span, 'out');
+            const inn = sk.inHandle ?? autoHandle(span, 'in');
             const ox = timeToX(k.time + out.time);
             const oy = valueToY(sk.value + out.value);
             const ix = timeToX(k.time + inn.time);
@@ -352,21 +391,27 @@ export function EditableCurve({
               />,
               <circle
                 key={`hoc-${a}`}
+                data-testid={`curve-handle-out-${a}`}
                 cx={ox}
                 cy={oy}
-                r={2.5}
-                fill="none"
+                r={3}
+                fill="var(--bg)"
                 stroke={colors[a % colors.length]}
-                strokeWidth={1}
+                strokeWidth={1.2}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => startDrag(e, activeIndex, 'out', a)}
               />,
               <circle
                 key={`hic-${a}`}
+                data-testid={`curve-handle-in-${a}`}
                 cx={ix}
                 cy={iy}
-                r={2.5}
-                fill="none"
+                r={3}
+                fill="var(--bg)"
                 stroke={colors[a % colors.length]}
-                strokeWidth={1}
+                strokeWidth={1.2}
+                style={{ cursor: 'grab' }}
+                onPointerDown={(e) => startDrag(e, activeIndex, 'in', a)}
               />,
             );
             return <g key={`h-${a}`}>{segs}</g>;
@@ -388,7 +433,7 @@ export function EditableCurve({
                 stroke={selected ? colors[a % colors.length] : 'none'}
                 strokeWidth={selected ? 1.5 : 0}
                 style={{ cursor: 'grab' }}
-                onPointerDown={(e) => onKeyPointerDown(e, i)}
+                onPointerDown={(e) => startDrag(e, i, 'key', a)}
               />
             );
           }),
@@ -409,39 +454,44 @@ export function EditableCurve({
   );
 }
 
-/** Auto-tangent handle (offset) reproducing the key's easing: flat for cubic,
- *  along the chord for linear. Used for display when no explicit handle exists. */
-function autoHandle(
-  sk: ScalarKey,
-  span: number,
-  which: 'in' | 'out',
-): { time: number; value: number } {
-  const t = which === 'out' ? span / 3 : -span / 3;
-  return { time: t, value: sk.easing === 'cubic' ? 0 : 0 };
+/** A flat display handle (offset) at ±span/3 — the grab affordance shown for a
+ *  selected key that carries no explicit handle yet (dragging it makes it real). */
+function autoHandle(span: number, which: 'in' | 'out'): { time: number; value: number } {
+  return { time: which === 'out' ? span / 3 : -span / 3, value: 0 };
 }
 
 /** Span to the relevant neighbor (for handle length), defaulting to dur/4. */
 function neighborSpan(keys: RawKey[], index: number, dur: number): number {
-  const sorted = [...keys].sort((a, b) => a.time - b.time);
-  const pos = sorted.findIndex((k) => k === keys[index]);
-  const left = pos > 0 ? sorted[pos].time - sorted[pos - 1].time : dur / 4;
-  const right = pos < sorted.length - 1 ? sorted[pos + 1].time - sorted[pos].time : dur / 4;
+  const left = index > 0 ? keys[index].time - keys[index - 1].time : dur / 4;
+  const right = index < keys.length - 1 ? keys[index + 1].time - keys[index].time : dur / 4;
   return Math.max(Math.min(left, right) || dur / 4, 1e-3);
 }
 
-/** Which vec axis dot is nearest the pointer Y (resolves overlapping dots). */
-function nearestAxis(k: RawKey, py: number, valueToY: (v: number) => number): number {
-  const vs = k.value as readonly number[];
-  let best = 0;
-  let bestD = Infinity;
-  for (let a = 0; a < 3; a++) {
-    const d = Math.abs(valueToY(vs[a]) - py);
-    if (d < bestD) {
-      bestD = d;
-      best = a;
-    }
+/** Return a new value tuple with one axis replaced (vec keyframe edits). */
+function setAxis(vec: readonly number[], axis: number, value: number): number[] {
+  const out = [...vec];
+  out[axis] = value;
+  return out;
+}
+
+/** The full (Vec3 or scalar) handle to seed a handle drag from: the explicit
+ *  handle if present, else a flat auto handle so the non-dragged axes keep a
+ *  sensible offset (0) instead of jumping. */
+function fullHandle(
+  k: RawKey,
+  which: 'in' | 'out',
+  isVec: boolean,
+  span: number,
+): { time: number; value: number | number[] } {
+  const ex = which === 'out' ? k.outHandle : k.inHandle;
+  if (ex) {
+    return {
+      time: ex.time,
+      value: isVec ? [...(ex.value as readonly number[])] : (ex.value as number),
+    };
   }
-  return best;
+  const t = which === 'out' ? span / 3 : -span / 3;
+  return { time: t, value: isVec ? [0, 0, 0] : 0 };
 }
 
 /** Human value-axis labels — short integers/decimals depending on magnitude. */
