@@ -10,7 +10,6 @@ export const EnvSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('preset'), name: z.string() }),
   z.object({ kind: z.literal('file'), assetRef: z.string(), name: z.string().optional() }),
 ]);
-export type EnvSource = z.infer<typeof EnvSourceSchema>;
 
 // SceneParams was an empty passthrough. UX #9 adds the env params as DEFAULTED
 // fields: an old project's Scene node (params `{}`) parses to `kind:'none'` —
