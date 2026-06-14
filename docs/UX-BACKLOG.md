@@ -60,13 +60,22 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    `userData.basherGltfChildId` via `gltf.parser.associations` × the persisted `keyByGltfNodeIndex`;
    `buildGltfDrillChain` walks the hit's ancestors reading those stamps (name-match kept as a fallback
    for pre-2026-06-14 saves). Observed on the real cicada: 0 undrillable meshes (was ~28%), a named
-   part drills to its GltfChild. _(Wider follow-up still open: per-child TRS/material OVERRIDES in
-   GltfAssetR also address by name and silently no-op on name-mismatched children — fixable via the
-   same stamp; tracked in [[H90]].)_
+   part drills to its GltfChild. _(Wider follow-up CLOSED 2026-06-14, `54c249e`: per-child TRS +
+   suppression in GltfAssetR now resolve by the stamped `basherGltfChildId` (name fallback for
+   pre-UX#7 saves) via the shared `gltfChildObjects.ts` helper — material overrides were already
+   slot-index based, not by-name. [[H90]] follow-up resolved.)_
 
 ## Materials / textures / lighting
 
-8. ☐ **glTF materials not visible — fix.** Can't see/inspect a glTF model's materials.
+8. ☑ **glTF materials visible/inspectable (read-only) — DONE (2026-06-14, `d28542f`).** A glTF's
+   embedded materials live only on the three.js clone, never in the DAG, so the inspector's MATERIAL
+   section was empty (asset) / absent (child). Now the renderer publishes a read-only per-slot
+   material projection (`readGltfMaterials` → `gltfMaterialStore`, the V33 pattern) and the inspector's
+   MATERIAL section renders it for a GltfAsset (all slots) or GltfChild (its slots): material name,
+   base-color swatch, metalness, roughness, opacity, bound texture maps. Editing stays with the
+   MaterialOverride wrapper (scope chosen: read-only inspect). _(Notes: shows POST-override = what's
+   drawn; a pure-transform parent child shows "No materials on this part"; full editable per-child
+   extraction was the larger option not taken.)_
 9. ☐ **HDRI support.** Add environment/HDRI lighting.
 10. ☐ **Textures in the UV editor.** Show the bound texture under the UV layout, Blender-style.
 
