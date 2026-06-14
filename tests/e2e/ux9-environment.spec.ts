@@ -44,6 +44,11 @@ interface EnvWindow {
   };
   __basher_selection?: { getState: () => { select: (id: string) => void } };
   __basher_importEnvHdri?: (bytes: Uint8Array, filename: string) => Promise<string>;
+  __basher_render_png?: () => Promise<{ width: number; height: number; dataUrl: string } | null>;
+  __basher_export_scene_bundle?: () => Promise<{
+    bundle: { assets?: Record<string, string> };
+    missingAssets: string[];
+  }>;
 }
 
 // `env` = scene.environment is bound (only an env source sets it — default null).
@@ -208,4 +213,83 @@ test('UX #9 — the Scene inspector Environment control imports an .hdr and bind
     null,
     { timeout: 10_000 },
   );
+});
+
+test('UX #9 — the environment flows into the offscreen render (V47 parity)', async ({ page }) => {
+  // Bind a file env source.
+  await page.evaluate(async () => {
+    const w = window as unknown as EnvWindow;
+    const bytes = new Uint8Array(
+      await fetch('/fixtures/env/test.hdr').then((r) => r.arrayBuffer()),
+    );
+    const assetRef = await w.__basher_importEnvHdri!(bytes, 'test.hdr');
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: sceneId,
+          paramPath: 'envSource',
+          value: { kind: 'file', assetRef },
+        },
+      ],
+      'e2e',
+      'set env file',
+    );
+  });
+  await waitEnv(page, { env: true, bg: false });
+
+  // renderToImage reuses the LIVE scene; `scene.environment` is a PROPERTY, not a
+  // traversed object, so the editorChrome hide-pass never touches it. The render
+  // therefore succeeds WITH the env, and the env is still bound afterwards (the
+  // hide-pass restores visibility but cannot affect a scene property).
+  const out = await page.evaluate(() => {
+    const w = window as unknown as EnvWindow;
+    return w.__basher_render_png!();
+  });
+  expect(out).not.toBeNull();
+  expect(out!.dataUrl.startsWith('data:image/png')).toBe(true);
+  // Env survives the render — proves it was NOT hidden as chrome (V47 inverse).
+  expect(await readEnv(page)).toEqual({ env: true, bg: false });
+});
+
+test('UX #9 — an imported HDRI embeds in the .basher bundle (V41 self-contained)', async ({
+  page,
+}) => {
+  // Import + bind a file env source, capturing its assetRef.
+  const assetRef = await page.evaluate(async () => {
+    const w = window as unknown as EnvWindow;
+    const bytes = new Uint8Array(
+      await fetch('/fixtures/env/test.hdr').then((r) => r.arrayBuffer()),
+    );
+    const ref = await w.__basher_importEnvHdri!(bytes, 'test.hdr');
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: sceneId,
+          paramPath: 'envSource',
+          value: { kind: 'file', assetRef: ref },
+        },
+      ],
+      'e2e',
+      'set env file',
+    );
+    return ref;
+  });
+  await waitEnv(page, { env: true, bg: false });
+
+  // The real bundle builder (collectAssetRefs → resolveAssetFiles → embed) must
+  // carry the HDRI bytes — so the .basher opens identically on another machine.
+  const out = await page.evaluate(() => {
+    const w = window as unknown as EnvWindow;
+    return w.__basher_export_scene_bundle!();
+  });
+  expect(out.missingAssets).toEqual([]);
+  expect(out.bundle.assets).toBeTruthy();
+  expect(Object.keys(out.bundle.assets!)).toContain(assetRef);
+  expect((out.bundle.assets![assetRef] ?? '').length).toBeGreaterThan(0);
 });

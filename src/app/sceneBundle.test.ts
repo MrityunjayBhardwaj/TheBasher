@@ -77,6 +77,25 @@ describe('collectAssetRefs', () => {
     expect(collectAssetRefs(state).bakedTextureHashes).toEqual(['deadbeef']);
   });
 
+  it('collects a Scene env file assetRef (env-hdri) as its exact path (UX #9)', () => {
+    const state = stateFromParams({
+      scene: {
+        envSource: { kind: 'file', assetRef: 'env-hdri/b90a6094.hdr', name: 'studio.hdr' },
+        envIntensity: 1,
+      },
+    });
+    const refs = collectAssetRefs(state);
+    expect(refs.envHdri).toEqual(['env-hdri/b90a6094.hdr']);
+    expect(refs.gltfFolders).toEqual([]);
+  });
+
+  it('does NOT collect a preset env source (CDN, not OPFS) — UX #9', () => {
+    const state = stateFromParams({
+      scene: { envSource: { kind: 'preset', name: 'sunset' } },
+    });
+    expect(collectAssetRefs(state).envHdri).toEqual([]);
+  });
+
   it('does NOT collect app-shipped assets/ paths (re-seeded on every instance)', () => {
     const state = stateFromParams({
       g: { assetRef: 'assets/example.glb' },

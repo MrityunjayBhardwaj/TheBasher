@@ -27,6 +27,9 @@
 //                                  (Apply-Transform output, #151).
 //   - BakedTextureRef            → baked-texture/<hash>.<ext> (BakedMesh material
 //                                  maps AND primitive/material `maps.*`, #178).
+//   - Scene env file assetRef    → env-hdri/<hash>.<ext> (imported .hdr/.exr for
+//                                  scene-level HDRI/IBL, UX #9). The assetRef IS
+//                                  the exact path — embedded verbatim.
 // App-shipped `assets/...` (seedOpfs) are intentionally NOT embedded: they are
 // re-seeded on every Basher instance, so they are always present on re-open.
 //
@@ -43,6 +46,7 @@ import { migrateNodes, migrateProjectFormat } from '../core/project/migrations';
 import { USER_IMPORTS_ROOT, listFilesDeep } from './asset/importCommon';
 import { BAKED_GEOMETRY_ROOT, bakedGeometryPath } from './asset/bakedGeometryStore';
 import { BAKED_TEXTURE_ROOT } from './asset/bakedTextureStore';
+import { ENV_HDRI_ROOT } from './asset/envHdriStore';
 
 /** The current `.basher` envelope (bundle) version — distinct from the project
  *  formatVersion. Bumped when the ENVELOPE shape changes (asset encoding etc),
@@ -91,6 +95,10 @@ export interface CollectedAssetRefs {
   /** Content hashes for baked textures (the `.<ext>` is resolved at I/O time
    *  by listing the baked-texture dir, since the ref carries only the hash). */
   readonly bakedTextureHashes: string[];
+  /** Exact OPFS file paths for imported environment HDRIs (the Scene env
+   *  `{kind:'file', assetRef}` — the assetRef IS the `env-hdri/<hash>.<ext>`
+   *  path, so no dir listing is needed). UX #9. */
+  readonly envHdri: string[];
 }
 
 /** Extract `user-imports/<folder>` from any path inside that import, else null. */
@@ -130,6 +138,7 @@ export function collectAssetRefs(state: DagState): CollectedAssetRefs {
   const gltfFolders = new Set<string>();
   const bakedGeometry = new Set<string>();
   const bakedTextureHashes = new Set<string>();
+  const envHdri = new Set<string>();
 
   const visit = (val: unknown): void => {
     if (val == null) return;
@@ -137,6 +146,9 @@ export function collectAssetRefs(state: DagState): CollectedAssetRefs {
       if (val.startsWith(`${USER_IMPORTS_ROOT}/`)) {
         const folder = userImportFolder(val);
         if (folder) gltfFolders.add(folder);
+      } else if (val.startsWith(`${ENV_HDRI_ROOT}/`)) {
+        // The Scene env file source's assetRef is the exact OPFS path.
+        envHdri.add(val);
       }
       return;
     }
@@ -162,6 +174,7 @@ export function collectAssetRefs(state: DagState): CollectedAssetRefs {
     gltfFolders: [...gltfFolders],
     bakedGeometry: [...bakedGeometry],
     bakedTextureHashes: [...bakedTextureHashes],
+    envHdri: [...envHdri],
   };
 }
 
@@ -183,6 +196,9 @@ export async function resolveAssetFiles(
   }
 
   for (const path of refs.bakedGeometry) files.add(path);
+
+  // Imported env HDRIs are exact paths already (the assetRef IS the path).
+  for (const path of refs.envHdri) files.add(path);
 
   if (refs.bakedTextureHashes.length > 0) {
     let texChildren: string[] = [];
