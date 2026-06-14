@@ -44,10 +44,6 @@ export const COLLAPSED_STRIP = 28;
  *  bottom-center agent + timeline stack — none of which the side islands cover. */
 export const BOTTOM_BAND = 140;
 
-/** Horizontal room the side islands consume on each edge (island + its gap),
- *  used to cap the bottom-center stack so it never slides under a side island. */
-export const SIDE_RESERVED = OUTLINER_WIDTH + INSPECTOR_WIDTH + ISLAND_GAP * 4;
-
 /** Width a VIEWPORT-CENTERED surface (the toolbar pill, the bottom-center
  *  stack) must subtract from 100% so it stays clear of BOTH side islands.
  *  Centered on the viewport midpoint (not the inter-island midpoint), so it

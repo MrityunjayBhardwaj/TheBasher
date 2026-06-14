@@ -11,10 +11,14 @@
 // v0.6 #4 W1 — the four top bands + two tool surfaces consolidated. Chrome
 // (save/breadcrumb) folded into the ProjectTabs identity bar; TopToolbar +
 // ToolRail folded into the ONE floating pill (FloatingViewportToolbar,
-// mounted at the <main> level so its Space toggle works in UV mode too). The
-// grid is now 4 columns (tree | viewport | inspector | drawer) × 4 rows
-// (projectTabs | menu | content | timeline). All tool buttons route through
-// editorStore.setActiveTool — single writer to gizmoStore.mode (V19 honored).
+// mounted at the <main> level so its Space toggle works in UV mode too). All
+// tool buttons route through editorStore.setActiveTool — single writer to
+// gizmoStore.mode (V19 honored).
+//
+// UX-BACKLOG #2 — the grid is now a SINGLE full-bleed column × 3 rows
+// (projectTabs | menu | viewport). The outliner, inspector, agent chat, and
+// timeline are no longer grid bands: they float as absolute rounded islands
+// over the viewport (mounted inside <main>; geometry from ./layoutIslands).
 //
 // P6 W8 C5 — Skip-link (sr-only until focused) added as first focusable
 // element per D-W8-5. Target: <main id="viewport" tabIndex={-1}> wrapping
