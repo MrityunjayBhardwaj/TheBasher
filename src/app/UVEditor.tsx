@@ -17,6 +17,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveMeshUVs } from './resolveMeshUVs';
+import { resolveMeshTexture, type MeshTextureSource } from './resolveMeshTexture';
+
+// Opacity of the texture backdrop. Dimmed (Blender default) so the bright island
+// outlines stay readable on top of the image.
+const TEXTURE_DIM = 0.6;
 
 export function UVEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -26,6 +31,9 @@ export function UVEditor() {
   // Retry trigger: async geometry (glTF clone / baked OPFS) may not be ready on
   // first render — re-resolve once while loading so it fills in (A-3, no stale).
   const [retry, setRetry] = useState(0);
+  // User toggle for the texture backdrop (defaults on; only meaningful when a
+  // texture actually resolves — the control hides otherwise).
+  const [showTexture, setShowTexture] = useState(true);
 
   const source = useMemo(
     () =>
@@ -35,16 +43,32 @@ export function UVEditor() {
     [dagState, primaryId, retry],
   );
 
+  // The base-color texture backdrop (UX #10), resolved THROUGH the V33-sibling
+  // resolveMeshTexture — same read-only-projection discipline as the UV layout.
+  const texture: MeshTextureSource = useMemo(
+    () =>
+      primaryId
+        ? resolveMeshTexture(dagState, primaryId)
+        : { image: null, flipY: false, width: 0, height: 0, status: 'none' as const },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dagState, primaryId, retry],
+  );
+
   useEffect(() => {
-    if (source.status !== 'loading') return;
+    // Re-resolve while EITHER the UV geometry or the texture bytes are still
+    // loading (glTF clone register / baked OPFS read) so both fill in (A-3).
+    if (source.status !== 'loading' && texture.status !== 'loading') return;
     const id = window.setTimeout(() => setRetry((r) => r + 1), 120);
     return () => window.clearTimeout(id);
-  }, [source.status, retry]);
+  }, [source.status, texture.status, retry]);
 
   const polygons = useMemo(() => {
     if (!source.uvs) return [] as (readonly (readonly [number, number])[])[];
     return source.uvs.islands.flatMap((isl) => isl.polylines);
   }, [source.uvs]);
+
+  const hasTexture = texture.status === 'ok' && texture.image !== null;
+  const texNote = hasTexture ? ` · ${texture.width}×${texture.height} texture` : '';
 
   const status = !node
     ? 'Select a mesh to view UVs.'
@@ -53,7 +77,9 @@ export function UVEditor() {
       : source.uvs && source.uvs.islands.length > 0
         ? `${node.id} · ${node.type} — ${source.uvs.islands.length} island${
             source.uvs.islands.length === 1 ? '' : 's'
-          } · ${source.uvs.triangleCount} tris${source.uvs.sampled ? ' (sampled)' : ''} (read-only).`
+          } · ${source.uvs.triangleCount} tris${
+            source.uvs.sampled ? ' (sampled)' : ''
+          }${texNote} (read-only).`
         : `${node.id} · ${node.type} — no UV layout.`;
 
   // ResizeObserver handles three triggers in one place:
@@ -79,18 +105,37 @@ export function UVEditor() {
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.scale(dpr, dpr);
-      drawUVCanvas(ctx, r.width, r.height, polygons);
+      const backdrop = showTexture && texture.image ? texture : null;
+      drawUVCanvas(ctx, r.width, r.height, polygons, backdrop);
     };
     repaint();
     const ro = new ResizeObserver(repaint);
     ro.observe(canvas);
     return () => ro.disconnect();
-  }, [polygons]);
+  }, [polygons, texture, showTexture]);
 
   return (
     <div data-testid="uv-editor" className="flex h-full w-full flex-col bg-bg">
-      <header className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-fg/70">
-        <span>UV Editor</span>
+      <header className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-fg/70">
+        <span className="flex items-center gap-2">
+          <span>UV Editor</span>
+          {hasTexture && (
+            <button
+              type="button"
+              data-testid="uv-editor-texture-toggle"
+              aria-pressed={showTexture}
+              onClick={() => setShowTexture((v) => !v)}
+              className={`rounded px-1.5 py-0.5 text-[10px] normal-case transition-colors ${
+                showTexture
+                  ? 'bg-accent/15 text-accent'
+                  : 'bg-transparent text-fg/50 hover:text-fg/70'
+              }`}
+              title="Toggle the bound base-color texture backdrop"
+            >
+              Texture
+            </button>
+          )}
+        </span>
         <span data-testid="uv-editor-status" className="text-fg/50 normal-case">
           {status}
         </span>
@@ -107,12 +152,13 @@ export function UVEditor() {
 }
 
 /** Paint the 2D canvas: 0..1 grid, axis labels, and any polygon outlines.
- *  Pure given (width, height, polygons) — testable separately if needed. */
+ *  Pure given (width, height, polygons, backdrop) — testable separately if needed. */
 function drawUVCanvas(
   ctx: CanvasRenderingContext2D,
   cssW: number,
   cssH: number,
   polygons: (readonly (readonly [number, number])[])[],
+  backdrop: { image: CanvasImageSource | null; flipY: boolean } | null,
 ) {
   // Background.
   ctx.fillStyle = '#0a0a0a';
@@ -123,6 +169,23 @@ function drawUVCanvas(
   const sz = Math.min(cssW, cssH) - pad * 2;
   const ox = (cssW - sz) / 2;
   const oy = (cssH - sz) / 2;
+
+  // Base-color texture backdrop (UX #10), under the grid + islands. The vertical
+  // orientation follows the texture's flipY so the texel a UV vertex samples sits
+  // BEHIND that vertex (V48): islands draw V-up via (1-v); a flipY=false (glTF,
+  // top-left origin) map must be flipped, a flipY=true (OpenGL) map drawn upright.
+  if (backdrop?.image) {
+    ctx.save();
+    ctx.globalAlpha = TEXTURE_DIM;
+    if (backdrop.flipY) {
+      ctx.drawImage(backdrop.image, ox, oy, sz, sz);
+    } else {
+      ctx.translate(ox, oy + sz);
+      ctx.scale(1, -1);
+      ctx.drawImage(backdrop.image, 0, 0, sz, sz);
+    }
+    ctx.restore();
+  }
 
   // Sub-grid (every 0.1).
   ctx.strokeStyle = '#1f1f1f';

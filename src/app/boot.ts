@@ -11,6 +11,7 @@ import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { resolveMeshUVs } from './resolveMeshUVs';
+import { resolveMeshTexture } from './resolveMeshTexture';
 import { unionUVBounds } from './uvIslands';
 import * as geometryRegistry from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
@@ -523,6 +524,25 @@ export function boot(): Promise<void> {
           triangleCount: src.uvs ? src.uvs.triangleCount : 0,
           bounds: src.uvs ? unionUVBounds(src.uvs) : null,
           sampled: src.uvs ? src.uvs.sampled : false,
+        };
+      };
+      // UX-BACKLOG #10 — the side-B seam for the UV-editor texture backdrop.
+      // Reads THROUGH the SAME resolveMeshTexture the panel paints (no drift): is
+      // a base-color map bound for the selected node, what are its dims, and its
+      // flipY (which selects the backdrop's vertical orientation, V48). The image
+      // itself isn't serializable across the seam, so we report `hasImage` + dims;
+      // `status` lets the harness wait out an async clone / baked-OPFS load.
+      w.__basher_uv_texture = (
+        nodeId: NodeId,
+      ): { status: string; hasImage: boolean; width: number; height: number; flipY: boolean } => {
+        const state = useDagStore.getState().state;
+        const t = resolveMeshTexture(state, nodeId);
+        return {
+          status: t.status,
+          hasImage: t.image !== null,
+          width: t.width,
+          height: t.height,
+          flipY: t.flipY,
         };
       };
       // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-B seam for BakedMesh. Reads

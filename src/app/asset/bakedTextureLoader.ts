@@ -54,6 +54,29 @@ export function resolveBakedTexture(ref: BakedTextureRef): Texture {
 }
 
 /**
+ * Non-throwing peek for read-only consumers OUTSIDE a Suspense boundary (the UV
+ * editor's texture backdrop, V48). Returns the decoded Texture on a cache hit;
+ * otherwise kicks off the same OPFS-read+decode (so a later re-poll resolves)
+ * and returns null. A cached decode FAILURE also returns null — the consumer
+ * shows no backdrop rather than crashing (resilience by construction).
+ */
+export function peekBakedTexture(ref: BakedTextureRef): Texture | null {
+  const hit = textureCache.get(ref.hash);
+  if (hit) return hit;
+  if (errorCache.has(ref.hash)) return null;
+  if (!promiseCache.has(ref.hash)) {
+    const p = loadAndCache(ref).then(
+      () => undefined,
+      (err: unknown) => {
+        errorCache.set(ref.hash, err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+    promiseCache.set(ref.hash, p);
+  }
+  return null;
+}
+
+/**
  * React Suspense hook — the BakedMeshR entry point for one map slot. Accepts a
  * nullable ref (a primitive bake / an absent map slot) and returns null for it,
  * so callers can invoke this hook UNCONDITIONALLY for all 6 fixed map slots
