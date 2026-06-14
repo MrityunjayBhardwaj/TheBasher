@@ -25,6 +25,7 @@ import type { PresetsType } from '@react-three/drei/helpers/environment-assets';
 import { Suspense } from 'react';
 import type { EnvironmentValue } from '../nodes/types';
 import { isEnvPresetName } from '../app/envPresets';
+import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { EnvironmentFile } from './EnvironmentFile';
 
 // The preset catalog is shared (src/app/envPresets.ts). Narrow a stored name to
@@ -50,18 +51,25 @@ export function SceneEnvironment({ value }: { value: EnvironmentValue | undefine
   // radians.
   const rotation: [number, number, number] = [0, (env.rotationY * Math.PI) / 180, 0];
 
+  // A bad HDRI (corrupt bytes, an unreachable preset CDN) throws at RENDER time,
+  // past Suspense. Wrap in AssetErrorBoundary so it surfaces in the asset banner
+  // and renders nothing — the rest of the scene survives — instead of nuking the
+  // viewport. Keyed by the source so a re-import / preset change remounts fresh
+  // and re-attempts (mirrors the GltfAssetR boundary at SceneFromDAG.tsx:549).
   if (source.kind === 'preset') {
     const preset = isEnvPreset(source.name) ? source.name : 'studio';
     return (
-      <Suspense fallback={null}>
-        <Environment
-          preset={preset}
-          background={env.background}
-          environmentIntensity={env.intensity}
-          environmentRotation={rotation}
-          backgroundRotation={rotation}
-        />
-      </Suspense>
+      <AssetErrorBoundary assetRef={`env:preset:${source.name}`}>
+        <Suspense fallback={null}>
+          <Environment
+            preset={preset}
+            background={env.background}
+            environmentIntensity={env.intensity}
+            environmentRotation={rotation}
+            backgroundRotation={rotation}
+          />
+        </Suspense>
+      </AssetErrorBoundary>
     );
   }
 
@@ -69,13 +77,15 @@ export function SceneEnvironment({ value }: { value: EnvironmentValue | undefine
   // suspends on the OPFS read + RGBELoader/EXRLoader decode, so the fallback
   // keeps the viewport interactive while the (potentially large) HDRI loads.
   return (
-    <Suspense fallback={null}>
-      <EnvironmentFile
-        assetRef={source.assetRef}
-        background={env.background}
-        intensity={env.intensity}
-        rotation={rotation}
-      />
-    </Suspense>
+    <AssetErrorBoundary assetRef={source.assetRef}>
+      <Suspense fallback={null}>
+        <EnvironmentFile
+          assetRef={source.assetRef}
+          background={env.background}
+          intensity={env.intensity}
+          rotation={rotation}
+        />
+      </Suspense>
+    </AssetErrorBoundary>
   );
 }

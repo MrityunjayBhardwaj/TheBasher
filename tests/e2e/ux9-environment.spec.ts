@@ -293,3 +293,35 @@ test('UX #9 — an imported HDRI embeds in the .basher bundle (V41 self-containe
   expect(Object.keys(out.bundle.assets!)).toContain(assetRef);
   expect((out.bundle.assets![assetRef] ?? '').length).toBeGreaterThan(0);
 });
+
+test('UX #9 — a corrupt HDRI surfaces an error and does NOT crash the viewport', async ({
+  page,
+}) => {
+  // Import bytes that pass the .hdr extension gate but are NOT a valid Radiance
+  // file → RGBELoader throws at decode time (render), past Suspense.
+  await page.evaluate(async () => {
+    const w = window as unknown as EnvWindow;
+    const garbage = new TextEncoder().encode('this is not a radiance hdr file');
+    const assetRef = await w.__basher_importEnvHdri!(garbage, 'broken.hdr');
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: sceneId,
+          paramPath: 'envSource',
+          value: { kind: 'file', assetRef },
+        },
+      ],
+      'e2e',
+      'set bad env',
+    );
+  });
+
+  // The AssetErrorBoundary catches it: the banner surfaces the failure, the
+  // viewport stays alive (layout visible), and scene.environment never binds.
+  await expect(page.getByTestId('asset-error-banner')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('layout')).toBeVisible();
+  expect(await readEnv(page)).toEqual({ env: false, bg: false });
+});
