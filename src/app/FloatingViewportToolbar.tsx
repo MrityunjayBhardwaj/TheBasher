@@ -47,7 +47,8 @@ import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
-import { centerSideReserved } from './layoutIslands';
+import { centerSideReserved, ISLAND_GAP } from './layoutIslands';
+import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useLeftSidebarStore } from './stores/leftSidebarStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
@@ -267,6 +268,10 @@ export function FloatingViewportToolbar(): ReactNode {
   const leftCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const inspectorCollapsed = useChromeStore((s) => s.inspectorCollapsed);
   const setLeftCollapsed = useChromeStore((s) => s.setLeftSidebarCollapsed);
+  // UX #2 follow-up 2 — narrow layout: the side panels are off-canvas drawers,
+  // so the pill can span the full width (minus edge gaps) instead of reserving
+  // for the islands.
+  const isNarrow = useIsNarrowLayout();
   const assetsActive = leftTab === 'assets' && !leftCollapsed;
 
   // Present-mode chrome-hide: the pill vanishes when presentMode is on.
@@ -292,7 +297,9 @@ export function FloatingViewportToolbar(): ReactNode {
       // side panel to its 28px strip lets the pill reclaim that width instead of
       // staying pinned to the expanded footprint.
       style={{
-        maxWidth: `calc(100% - ${centerSideReserved(leftCollapsed, inspectorCollapsed)}px)`,
+        maxWidth: isNarrow
+          ? `calc(100% - ${2 * ISLAND_GAP}px)`
+          : `calc(100% - ${centerSideReserved(leftCollapsed, inspectorCollapsed)}px)`,
       }}
       className="no-scrollbar absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
     >

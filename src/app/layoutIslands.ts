@@ -44,6 +44,21 @@ export const COLLAPSED_STRIP = 28;
  *  bottom-center agent + timeline stack — none of which the side islands cover. */
 export const BOTTOM_BAND = 140;
 
+/** Below this CSS width the island layout switches to its NARROW variant
+ *  (UX-BACKLOG #2 follow-up 2): the side panels become off-canvas overlay
+ *  drawers (closed by default), and the centered surfaces (toolbar pill +
+ *  bottom stack) go full-width instead of reserving columns for the islands.
+ *  At or above it, the desktop side-by-side island layout applies. Spline and
+ *  Blender are desktop tools; rather than let three columns of chrome overlap
+ *  when the window is dragged narrow, the editor re-docks to a single column
+ *  with the panels on demand. The breakpoint lives HERE only (V46: one geometry
+ *  source) — the hook, Layout, and the toolbar all read it from this module. */
+export const LAYOUT_NARROW_MAX = 1024;
+
+/** The matchMedia query the narrow-layout hook subscribes to — derived from
+ *  LAYOUT_NARROW_MAX so the breakpoint is never duplicated as a literal. */
+export const NARROW_LAYOUT_QUERY = `(max-width: ${LAYOUT_NARROW_MAX - 1}px)`;
+
 /** Live width of a side island given its collapse flag: a folded panel is the
  *  28px chevron strip (V35), an open one is its full column width. The ONE
  *  place "how wide is this island right now" is decided, so the islands and the

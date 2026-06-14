@@ -32,6 +32,8 @@
 // REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5,
 // §5.3, §5.4, §8.1 (focus order), §8.2 (keyboard-only).
 
+import type { CSSProperties } from 'react';
+
 import { AssetDropZone } from './AssetDropZone';
 import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
@@ -44,6 +46,7 @@ import { ProjectTabs } from './ProjectTabs';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { UVEditor } from './UVEditor';
 import { Viewport } from '../viewport/Viewport';
+import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
@@ -89,6 +92,52 @@ export function Layout() {
   // toggle stays reachable. Present mode hides the islands entirely.
   const outlinerIslandWidth = sideIslandWidth(leftSidebarCollapsed, OUTLINER_WIDTH);
   const inspectorIslandWidth = sideIslandWidth(inspectorCollapsed, INSPECTOR_WIDTH);
+
+  // UX-BACKLOG #2 follow-up 2 — below LAYOUT_NARROW_MAX the three columns of
+  // chrome won't fit, so the side islands re-dock as OFF-CANVAS OVERLAY DRAWERS
+  // (closed by default; a per-side edge tab reveals one, a scrim dismisses it)
+  // and the centered surfaces (toolbar pill + bottom stack) go full-width. Above
+  // the breakpoint nothing here changes — the desktop side-by-side islands
+  // render byte-identically (every branch below guards on isNarrow).
+  const isNarrow = useIsNarrowLayout();
+  const narrowLeftDrawerOpen = useChromeStore((s) => s.narrowLeftDrawerOpen);
+  const narrowRightDrawerOpen = useChromeStore((s) => s.narrowRightDrawerOpen);
+  const toggleNarrowDrawer = useChromeStore((s) => s.toggleNarrowDrawer);
+  const closeNarrowDrawers = useChromeStore((s) => s.closeNarrowDrawers);
+
+  // ONE source for a side island's box (V46) across both layout modes. Desktop:
+  // top-anchored, bottom-clear column hugging its edge. Narrow: a full-height
+  // overlay drawer hugging its edge, slid off past its own width when closed and
+  // flush when open (the transform animates the slide).
+  const sideIslandStyle = (side: 'left' | 'right', width: number, open: boolean): CSSProperties => {
+    const base: CSSProperties = {
+      position: 'absolute',
+      top: ISLAND_GAP,
+      width,
+      [side]: ISLAND_GAP,
+      display: isPresent ? 'none' : 'flex',
+      // Narrow drawers overlay the bottom stack; desktop islands sit beside it.
+      zIndex: isNarrow ? 40 : 20,
+    };
+    if (!isNarrow) return { ...base, bottom: BOTTOM_BAND };
+    const offscreen =
+      side === 'left'
+        ? `translateX(calc(-100% - ${ISLAND_GAP}px))`
+        : `translateX(calc(100% + ${ISLAND_GAP}px))`;
+    return {
+      ...base,
+      bottom: ISLAND_GAP,
+      transform: open ? 'translateX(0)' : offscreen,
+      transition: 'transform 0.2s ease',
+    };
+  };
+
+  // Centered surfaces (toolbar + bottom stack): full-width minus edge gaps when
+  // narrow (the drawers overlay rather than reserve), else the desktop
+  // collapse-aware reserve (follow-up 1).
+  const centerSurfaceWidth = isNarrow
+    ? `calc(100% - ${2 * ISLAND_GAP}px)`
+    : `min(960px, calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px))`;
   return (
     <div
       data-testid="layout"
@@ -208,34 +257,61 @@ export function Layout() {
         <div
           data-testid="tree-slot"
           data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
+          data-narrow-drawer={isNarrow ? 'true' : 'false'}
           onContextMenu={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            left: ISLAND_GAP,
-            top: ISLAND_GAP,
-            bottom: BOTTOM_BAND,
-            width: outlinerIslandWidth,
-            display: isPresent ? 'none' : 'flex',
-          }}
-          className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          style={sideIslandStyle('left', outlinerIslandWidth, narrowLeftDrawerOpen)}
+          className="flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
         >
           <LeftSidebar />
         </div>
         <div
           data-testid="inspector-slot"
+          data-narrow-drawer={isNarrow ? 'true' : 'false'}
           onContextMenu={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute',
-            right: ISLAND_GAP,
-            top: ISLAND_GAP,
-            bottom: BOTTOM_BAND,
-            width: inspectorIslandWidth,
-            display: isPresent ? 'none' : 'flex',
-          }}
-          className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          style={sideIslandStyle('right', inspectorIslandWidth, narrowRightDrawerOpen)}
+          className="flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
         >
           <NPanel />
         </div>
+
+        {/* UX-BACKLOG #2 follow-up 2 — narrow-layout drawer affordances. Only
+            mounted below the breakpoint (so the desktop DOM is unchanged). A
+            scrim dims + dismisses an open drawer; per-side edge tabs reveal a
+            closed drawer. The tabs sit ABOVE the scrim (z-40) so the still-closed
+            side stays tappable while the other drawer is open. */}
+        {isNarrow && !isPresent ? (
+          <>
+            {narrowLeftDrawerOpen || narrowRightDrawerOpen ? (
+              <div
+                data-testid="narrow-drawer-scrim"
+                onClick={closeNarrowDrawers}
+                className="absolute inset-0 z-30 bg-black/40"
+              />
+            ) : null}
+            {!narrowLeftDrawerOpen ? (
+              <button
+                type="button"
+                data-testid="left-drawer-tab"
+                aria-label="Open outliner"
+                onClick={() => toggleNarrowDrawer('left')}
+                className="absolute left-0 top-1/2 z-40 flex h-14 -translate-y-1/2 items-center rounded-r-lg border border-l-0 border-border bg-bg-2/95 px-1 text-fg-dim shadow-xl shadow-black/40 backdrop-blur-md hover:text-fg"
+              >
+                <span aria-hidden>›</span>
+              </button>
+            ) : null}
+            {!narrowRightDrawerOpen ? (
+              <button
+                type="button"
+                data-testid="right-drawer-tab"
+                aria-label="Open inspector"
+                onClick={() => toggleNarrowDrawer('right')}
+                className="absolute right-0 top-1/2 z-40 flex h-14 -translate-y-1/2 items-center rounded-l-lg border border-r-0 border-border bg-bg-2/95 px-1 text-fg-dim shadow-xl shadow-black/40 backdrop-blur-md hover:text-fg"
+              >
+                <span aria-hidden>‹</span>
+              </button>
+            ) : null}
+          </>
+        ) : null}
 
         {/* UX-BACKLOG #2 slice 2 — the agent chat + timeline float as a
                 STACKED bottom-center island group (the user's chosen layout):
@@ -257,7 +333,7 @@ export function Layout() {
             bottom: ISLAND_GAP,
             left: '50%',
             transform: 'translateX(-50%)',
-            width: `min(960px, calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px))`,
+            width: centerSurfaceWidth,
             display: isPresent ? 'none' : 'flex',
           }}
           className="z-20 flex flex-col gap-2"

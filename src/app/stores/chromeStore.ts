@@ -28,6 +28,15 @@ export interface ChromeState {
   inspectorCollapsed: boolean;
   // Ephemeral, NON-persisted (see header). The re-home for the deleted `director` mode.
   presentMode: boolean;
+  // Ephemeral, NON-persisted. Narrow-layout (<LAYOUT_NARROW_MAX) off-canvas
+  // drawer state for the side panels — below the breakpoint the outliner +
+  // inspector overlay the viewport as drawers instead of reserving columns
+  // (UX-BACKLOG #2 follow-up 2). Default CLOSED so a narrow first paint shows a
+  // full-bleed viewport; like presentMode they never touch localStorage, so a
+  // reload (or a resize back to desktop) boots them closed. At most one is open
+  // at a time (two overlays would collide on a narrow viewport).
+  narrowLeftDrawerOpen: boolean;
+  narrowRightDrawerOpen: boolean;
   // Dev-only FPS/ms overlay (FpsMeter). Default OFF so the editor canvas stays
   // clean (the meter is a dev-tool tell, not director chrome); a dev who wants
   // it flips View ▸ Show FPS Meter. Persisted so the choice survives a reload.
@@ -45,6 +54,8 @@ export interface ChromeStore extends ChromeState {
   toggleInspector: () => void;
   setPresentMode: (present: boolean) => void;
   togglePresentMode: () => void;
+  toggleNarrowDrawer: (side: 'left' | 'right') => void;
+  closeNarrowDrawers: () => void;
   setShowFpsMeter: (show: boolean) => void;
   toggleShowFpsMeter: () => void;
 }
@@ -65,6 +76,8 @@ const DEFAULT_STATE: ChromeState = {
   leftSidebarCollapsed: false,
   inspectorCollapsed: false,
   presentMode: false,
+  narrowLeftDrawerOpen: false,
+  narrowRightDrawerOpen: false,
   showFpsMeter: false,
 };
 
@@ -102,8 +115,10 @@ function readPersisted(): ChromeState {
       inspectorCollapsed:
         typeof parsed.inspectorCollapsed === 'boolean' ? parsed.inspectorCollapsed : false,
       showFpsMeter: typeof parsed.showFpsMeter === 'boolean' ? parsed.showFpsMeter : false,
-      // Always boots false — never read back from storage (non-persisted).
+      // Always boot false — never read back from storage (non-persisted).
       presentMode: false,
+      narrowLeftDrawerOpen: false,
+      narrowRightDrawerOpen: false,
     };
   } catch {
     return DEFAULT_STATE;
@@ -160,6 +175,18 @@ export const useChromeStore = create<ChromeStore>((set, get) => ({
   },
   togglePresentMode() {
     set({ presentMode: !get().presentMode });
+  },
+  // Narrow drawers are EPHEMERAL like presentMode (set() only). Opening one
+  // closes the other — on a narrow viewport two side overlays would collide.
+  toggleNarrowDrawer(side) {
+    if (side === 'left') {
+      set({ narrowLeftDrawerOpen: !get().narrowLeftDrawerOpen, narrowRightDrawerOpen: false });
+    } else {
+      set({ narrowRightDrawerOpen: !get().narrowRightDrawerOpen, narrowLeftDrawerOpen: false });
+    }
+  },
+  closeNarrowDrawers() {
+    set({ narrowLeftDrawerOpen: false, narrowRightDrawerOpen: false });
   },
   setShowFpsMeter(show) {
     set({ showFpsMeter: show });

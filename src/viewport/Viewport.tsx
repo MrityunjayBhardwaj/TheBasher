@@ -17,6 +17,7 @@ import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
 import { ProjectionToggle } from '../app/ProjectionToggle';
+import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useDrillStore } from '../app/stores/drillStore';
@@ -117,6 +118,13 @@ export function Viewport() {
   // the drawer is open (it's first-run guidance, redundant once the user has
   // opened a panel) so the band reads clean.
   const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
+
+  // UX-BACKLOG #2 follow-up 2 — in the narrow layout the bottom-center
+  // agent/timeline stack goes full-width, so the bottom-RIGHT viewport widgets
+  // (orbit axis gizmo + Persp/Ortho pill) have no clear corner to live in. Hide
+  // them there to avoid overlapping the stack (V46): projection still toggles
+  // via the `M` shortcut and orbit still works by dragging.
+  const isNarrow = useIsNarrowLayout();
 
   // R6 aria-label: selection summary, debounced 200ms so rapid marquee
   // selects don't spam SR announcements. P6 W10 UIR F-4 — promoted to the
@@ -238,15 +246,17 @@ export function Viewport() {
           <ThreeBridge />
           {/* Blender-style axis-orientation widget in the bottom-right.
               Click an axis label to snap the camera to that view. */}
-          {axisWidgetVisible ? (
+          {axisWidgetVisible && !isNarrow ? (
             <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
               <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
             </GizmoHelper>
           ) : null}
         </Suspense>
       </Canvas>
-      {/* Bottom-right ortho|persp pill, by the axis-ball nav gizmo (Spline). */}
-      <ProjectionToggle />
+      {/* Bottom-right ortho|persp pill, by the axis-ball nav gizmo (Spline).
+          Hidden in the narrow layout (its corner is taken by the full-width
+          bottom stack); `M` still toggles projection. */}
+      {!isNarrow ? <ProjectionToggle /> : null}
       <FpsMeter />
     </div>
   );
