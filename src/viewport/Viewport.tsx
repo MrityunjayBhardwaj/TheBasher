@@ -110,6 +110,14 @@ export function Viewport() {
   // bottom floating pill.
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
 
+  // UX-BACKLOG #2 follow-up 3 — the hint sits just above the bottom-center
+  // agent/timeline stack (bottom-[104px]). When the timeline drawer is OPEN its
+  // body expands upward into that band; the hint is pointer-events-none so it
+  // never blocks interaction, but it visually overlaps the drawer. Hide it while
+  // the drawer is open (it's first-run guidance, redundant once the user has
+  // opened a panel) so the band reads clean.
+  const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
+
   // R6 aria-label: selection summary, debounced 200ms so rapid marquee
   // selects don't spam SR announcements. P6 W10 UIR F-4 — promoted to the
   // shared useSelectionSummary hook so the <main> region label (§8.3) and
@@ -138,14 +146,15 @@ export function Viewport() {
       >
         {debouncedSummary}
       </span>
-      {selectedId == null ? (
+      {selectedId == null && !timelineDrawerOpen ? (
         <div
           data-testid="viewport-empty-hint"
           aria-hidden
           // UX-BACKLOG #2 — the agent + timeline now float as a bottom-center
           // island stack; the orbit hint sits just ABOVE it (was bottom-4, which
           // the stack now occupies). pointer-events-none, so even when an opened
-          // timeline drawer rises behind it the hint never blocks interaction.
+          // timeline drawer rises behind it the hint never blocks interaction;
+          // the drawer-open guard above also hides it so the band reads clean.
           className="pointer-events-none absolute bottom-[104px] left-1/2 z-10 -translate-x-1/2 rounded-md border border-border bg-bg-2/80 px-3 py-1.5 font-mono text-[11px] text-fg-dim shadow-sm backdrop-blur-sm"
         >
           Drag to orbit · scroll to zoom · <span className="text-fg">+ Add</span> to create

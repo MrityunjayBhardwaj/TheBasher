@@ -143,6 +143,19 @@ test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async
   expect(stackAfter.width).toBeGreaterThan(stackBefore.width + 40);
 });
 
+// Follow-up 3: the first-run orbit hint sits just above the bottom-center stack
+// (bottom-[104px]); an OPEN timeline drawer expands upward into that band. The
+// hint is hidden while the drawer is open so the band reads clean.
+test('#2.9 opening the timeline drawer hides the orbit hint', async ({ page }) => {
+  // Nothing selected on first load → the hint is shown.
+  await expect(page.getByTestId('viewport-empty-hint')).toBeVisible();
+  await page.getByTestId('timeline-drawer-toggle').click();
+  await expect(page.getByTestId('timeline-drawer')).toBeVisible();
+  // Drawer open → the hint is gone (removed, not just behind). Revert the guard
+  // → it stays mounted and overlaps the drawer.
+  await expect(page.getByTestId('viewport-empty-hint')).toHaveCount(0);
+});
+
 test('#2.7 present mode hides every floating island', async ({ page }) => {
   await page.getByTestId('top-toolbar-present').click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
