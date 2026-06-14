@@ -995,6 +995,26 @@ describe('P3 — KeyframeChannelNumber (pure, function-of-time D-04)', () => {
     expect(v.sample(5)).toBe(10);
   });
 
+  // UX-BACKLOG #11 — explicit bézier handles survive the zod parse + flow through
+  // the node's evaluate into sample(), bending the curve (the curve-editor wiring,
+  // V49). A no-handle key on the same span samples the legacy smoothstep value;
+  // the handled key diverges from it.
+  it('bézier handles flow through evaluate and bend the sampled value', () => {
+    const bent = {
+      ...params,
+      keyframes: [
+        { time: 0, value: 0, easing: 'linear' as const, outHandle: { time: 1 / 3, value: 60 } },
+        { time: 1, value: 100, easing: 'linear' as const, inHandle: { time: -1 / 3, value: 0 } },
+      ],
+    };
+    const state = buildChannelState('KeyframeChannelNumber', bent);
+    const v = evalAt<KeyframeChannelNumberValue>(state, 'ch', 0);
+    // endpoints pinned; midpoint pulled ABOVE the straight-line 50 by the out-handle.
+    expect(v.sample(0)).toBeCloseTo(0, 6);
+    expect(v.sample(1)).toBeCloseTo(100, 6);
+    expect(v.sample(0.5)).toBeGreaterThan(50);
+  });
+
   it('empty channel returns 0', () => {
     const state = buildChannelState('KeyframeChannelNumber', { ...params, keyframes: [] });
     expect(evalAt<KeyframeChannelNumberValue>(state, 'ch', 0).sample(0)).toBe(0);

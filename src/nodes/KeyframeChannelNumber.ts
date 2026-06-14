@@ -24,7 +24,8 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { Easing, KeyframeChannelNumberValue } from './types';
+import type { KeyframeChannelNumberValue } from './types';
+import { sampleScalarKeyframes } from './keyframeInterp';
 
 const HandleSchema = z
   .object({
@@ -53,34 +54,14 @@ export const KeyframeChannelNumberParams = z.object({
 });
 export type KeyframeChannelNumberParams = z.infer<typeof KeyframeChannelNumberParams>;
 
-function smoothstep(u: number): number {
-  return u * u * (3 - 2 * u);
-}
-
-function interp(aValue: number, bValue: number, u: number, easing: Easing): number {
-  const t = easing === 'cubic' ? smoothstep(u) : u;
-  return aValue + (bValue - aValue) * t;
-}
-
 /**
  * Sample the channel at clip-time `t`. Empty channels return 0; pre-keyframe
- * times clamp to the first sample, post-keyframe to the last.
+ * times clamp to the first sample, post-keyframe to the last. Interpolation is
+ * the shared `sampleScalarKeyframes` (cubic Bézier when a segment carries
+ * handles, else the exact legacy linear/smoothstep — render parity, V49).
  */
 function sample(keyframes: KeyframeChannelNumberParams['keyframes'], t: number): number {
-  if (keyframes.length === 0) return 0;
-  if (t <= keyframes[0].time) return keyframes[0].value;
-  const last = keyframes[keyframes.length - 1];
-  if (t >= last.time) return last.value;
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const a = keyframes[i];
-    const b = keyframes[i + 1];
-    if (t >= a.time && t <= b.time) {
-      const span = b.time - a.time;
-      const u = span > 0 ? (t - a.time) / span : 0;
-      return interp(a.value, b.value, u, b.easing);
-    }
-  }
-  return last.value;
+  return sampleScalarKeyframes(keyframes, t);
 }
 
 export const KeyframeChannelNumberNode: NodeDefinition<

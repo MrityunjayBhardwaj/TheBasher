@@ -18,7 +18,8 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { Easing, KeyframeChannelVec3Value, Vec3 } from './types';
+import type { KeyframeChannelVec3Value, Vec3 } from './types';
+import { sampleVec3Keyframes } from './keyframeInterp';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -56,42 +57,18 @@ export const KeyframeChannelVec3Params = z.object({
 });
 export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params>;
 
-function smoothstep(u: number): number {
-  return u * u * (3 - 2 * u);
-}
-
-function interp(a: Vec3, b: Vec3, u: number, easing: Easing): Vec3 {
-  const t = easing === 'cubic' ? smoothstep(u) : u;
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-}
-
 /**
  * Build the function-of-time sampler for a vec3 channel (V24): sort the
  * keyframes ONCE, return a closure that interpolates per call. Exported so the
  * P7.12 baked-channel enumerator (`bakedGltfChannels.ts`, the resolver band)
  * reuses the SAME interpolation as the node's evaluate — one source of the
  * sampling math, no per-frame ctx/inputs needed (BLOCK-1 shared logic).
+ * Interpolation is `sampleVec3Keyframes` (cubic Bézier when a segment carries
+ * handles, else the exact legacy linear/smoothstep — render parity, V49).
  */
 export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: number) => Vec3 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  return (seconds: number) => sample(sorted, seconds);
-}
-
-function sample(keyframes: KeyframeChannelVec3Params['keyframes'], t: number): Vec3 {
-  if (keyframes.length === 0) return [0, 0, 0];
-  if (t <= keyframes[0].time) return keyframes[0].value;
-  const last = keyframes[keyframes.length - 1];
-  if (t >= last.time) return last.value;
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const a = keyframes[i];
-    const b = keyframes[i + 1];
-    if (t >= a.time && t <= b.time) {
-      const span = b.time - a.time;
-      const u = span > 0 ? (t - a.time) / span : 0;
-      return interp(a.value, b.value, u, b.easing);
-    }
-  }
-  return last.value;
+  return (seconds: number) => sampleVec3Keyframes(sorted, seconds);
 }
 
 export const KeyframeChannelVec3Node: NodeDefinition<
