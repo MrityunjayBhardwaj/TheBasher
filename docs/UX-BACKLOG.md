@@ -111,8 +111,25 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 
 ## Animation
 
-11. ☐ **Dopesheet / graph-editor timeline** modelled on
-    [reze-studio](https://github.com/AmyangXYZ/reze-studio).
+11. ◐ **Dopesheet / graph-editor timeline** modelled on
+    [reze-studio](https://github.com/AmyangXYZ/reze-studio). **Curve editor DONE
+    (2026-06-15, 3 slices).** Decisions (AskUserQuestion): start with the curve editor;
+    wire REAL cubic-bézier. _(1) `keyframeInterp` — ONE shared sampler: explicit
+    inHandle/outHandle → true cubic bézier; no-handle → exact legacy linear/smoothstep
+    so saved animations render byte-identically (flat handles at ±span/3 == smoothstep,
+    proven). _(2) `EditableCurve` — a reze-style SVG graph editor replacing the read-only
+    curve preview: real bézier curves sampled THROUGH that core (drawn == played, H40),
+    value gutter + frame ruler + grid, per-channel colors (rot→RGB, trs→orange/teal/purple),
+    red playhead, draggable keyframe dots (time+value). _(3) draggable bézier handles —
+    grab a control point to bend the motion (x→time clamped to its half-segment, y→value;
+    materializes an explicit handle on first pull). SVG over canvas: Basher channels hold
+    tens of keys not reze's thousands, so SVG keeps the `curve-track-N` testids + trivial
+    hit-testing. Gates: vitest 1547 / tsc 0 / eslint 0 / e2e ux11-curve-editor 3/3 + the
+    p7 motion gate (render parity). New invariant [[V49]]; SVG-stretch drag bug → [[H94]].
+    **REMAINING:** dopesheet reze-fidelity (ruler/track-rows/drag-retime/box-select/zoom-pan)
+    → unify dopesheet+curve into ONE canvas (reze's single-canvas layout) → curve polish
+    (zoom/pan, value readout, auto-scroll, freeze Y-domain during handle drag); quat/color
+    curve projection still deferred.
 
 ## Camera
 
