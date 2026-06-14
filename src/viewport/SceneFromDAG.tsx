@@ -29,6 +29,7 @@ import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
+import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -1160,6 +1161,12 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     });
     return m;
   }, [cloned]);
+  // childId → clone object, built from the stamps below (the H90/V44 by-id
+  // resolution for the per-child TRS + suppression consumers). A ref, not a
+  // memo: the stamps are applied in the effect below (post-render), so the map
+  // can only be built AFTER stamping — the effect populates it, and the
+  // consumers (later effects + the useFrame) read the populated ref.
+  const childIdToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   // UX #7 / H90 — stamp each clone object that maps to a GltfChild with its DAG
   // node id, so viewport drill-in (buildGltfDrillChain) can address children by a
   // STAMPED ID rather than by name. The producer's nodeNameMap KEY space
@@ -1200,15 +1207,18 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         const n = Math.min(orig.children.length, clone.children.length);
         for (let i = 0; i < n; i++) stack.push([orig.children[i], clone.children[i]]);
       }
-      return;
+    } else {
+      // FALLBACK (pre-UX#7 saves: keyByGltfNodeIndex empty; or no associations) —
+      // stamp the subset whose names DO match. Drill keeps a name-match fallback
+      // for the unstamped remainder, so this is purely additive.
+      for (const [name, childId] of Object.entries(value.nodeNameMap)) {
+        const obj = nameToObject.get(name);
+        if (obj) obj.userData.basherGltfChildId = childId;
+      }
     }
-    // FALLBACK (pre-UX#7 saves: keyByGltfNodeIndex empty; or no associations) —
-    // stamp the subset whose names DO match. Drill keeps a name-match fallback
-    // for the unstamped remainder, so this is purely additive.
-    for (const [name, childId] of Object.entries(value.nodeNameMap)) {
-      const obj = nameToObject.get(name);
-      if (obj) obj.userData.basherGltfChildId = childId;
-    }
+    // Index the stamps so the TRS + suppression consumers can resolve a child by
+    // its STAMPED id (immune to the H90 name divergence), not by `o.name`.
+    childIdToObject.current = buildChildIdToObject(cloned);
   }, [cloned, gltf, nameToObject, value.nodeNameMap, value.keyByGltfNodeIndex]);
   const shading = useViewportStore((s) => s.shading);
   // P7.7 (#91) — SUBSCRIBED read (NOT a getState() snapshot): a gizmo setParam on
@@ -1405,15 +1415,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // REF: PLAN.md Wave 4 Task 9; RESEARCH §M7; the GltfChild double-render guard.
   useEffect(() => {
     const suppressed = new Set(value.suppressedChildren);
+    const resolve = (name: string) =>
+      resolveChildObject(name, value.nodeNameMap, childIdToObject.current, nameToObject);
     for (const name of Object.keys(value.nodeNameMap)) {
-      const child = nameToObject.get(name);
+      const child = resolve(name); // H90/V44 — by stamped id, name fallback
       if (!child) continue;
       child.visible = !suppressed.has(name);
     }
     // Suppressed names may not be in nodeNameMap (defensive — a baked child's
     // key always is, but iterate the list too so an out-of-map key still hides).
     for (const name of suppressed) {
-      const child = nameToObject.get(name);
+      const child = resolve(name);
       if (child) child.visible = false;
     }
   }, [cloned, nameToObject, value.suppressedChildren, value.nodeNameMap]);
@@ -1500,7 +1512,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       bakedByName,
     });
     for (const [name, trs] of Object.entries(resolved)) {
-      const child = nameToObject.get(name);
+      // H90/V44 — resolve by STAMPED id first (survives the producer↔clone name
+      // divergence), name fallback for pre-UX#7 saves.
+      const child = resolveChildObject(
+        name,
+        value.nodeNameMap,
+        childIdToObject.current,
+        nameToObject,
+      );
       if (!child) continue;
       child.position.set(trs.position[0], trs.position[1], trs.position[2]);
       const radRot = degVec3ToRad(trs.rotation);
