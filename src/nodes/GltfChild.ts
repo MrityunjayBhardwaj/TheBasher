@@ -71,7 +71,10 @@ export const GltfChildNode: NodeDefinition<GltfChildParams, GltfChildValue> = {
   // NONE — not a scene producer (R-1). No edge into the render graph.
   inputs: {},
   outputs: {},
-  inspectorSections: ['transform'],
+  // 'material' hosts a READ-ONLY readout of this child's embedded glTF materials
+  // (UX #8) — the child owns no material PARAMS, so the section renders only the
+  // GltfMaterialReadout (NPanel), not editable rows. Editing is via MaterialOverride.
+  inspectorSections: ['transform', 'material'],
   evaluate(params): GltfChildValue {
     return {
       kind: 'GltfChild',

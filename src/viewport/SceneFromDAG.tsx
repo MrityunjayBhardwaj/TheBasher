@@ -30,6 +30,8 @@ import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
+import { readGltfMaterials } from '../app/asset/readGltfMaterials';
+import { useGltfMaterialStore } from '../app/asset/gltfMaterialStore';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -1440,6 +1442,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     registerGltfClone(value.assetRef, cloned);
     return () => unregisterGltfClone(value.assetRef, cloned);
   }, [cloned, value.assetRef]);
+  // UX #8 — publish a READ-ONLY material projection of the clone for the
+  // inspector. The embedded glTF materials live only on this clone (not the
+  // DAG), so the inspector can't see them without this bridge. Reads the
+  // POST-override material (this effect is defined AFTER the override effect, so
+  // it runs after on every shared commit → what's actually drawn, Lokayata) and
+  // after the stamp effect (so each slot carries its childId). Cleared on
+  // unmount. REF: readGltfMaterials.ts, gltfMaterialStore.ts; UX-BACKLOG #8.
+  useEffect(() => {
+    useGltfMaterialStore.getState().publish(value.assetRef, readGltfMaterials(cloned));
+    return () => useGltfMaterialStore.getState().clearAsset(value.assetRef);
+  }, [cloned, override, value.assetRef]);
   // P7.5 + P7.7 — per-child TRS override (consumer side of the H40
   // boundary-pair). This is the SOLE writer of per-child TRS onto the clone
   // (V20 / H36 / H33 — never add a second). It reads THREE layers and lets the

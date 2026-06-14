@@ -47,6 +47,8 @@ import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
 import type { BakedTextureRef } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
+import { useGltfMaterialStore } from './asset/gltfMaterialStore';
+import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
@@ -1149,6 +1151,79 @@ function SlotSelector({ nodeId }: { nodeId: string }) {
   );
 }
 
+/** One read-only row inside the glTF material readout (label · value). */
+function ReadoutRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">{label}</span>
+      <span className="text-[11px] text-fg/70">{children}</span>
+    </div>
+  );
+}
+
+/** One render slot's embedded material, read-only. */
+function GltfMaterialSlotRow({ slot }: { slot: GltfMaterialSlot }) {
+  const num = (n: number | null) => (n == null ? '—' : n.toFixed(2));
+  return (
+    <div
+      data-testid={`gltf-material-slot-${slot.slot}`}
+      className="flex flex-col gap-0.5 rounded border border-border px-2 py-1.5"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-fg/80">{slot.materialName}</span>
+        <span className="font-mono text-[10px] text-fg/40">slot {slot.slot}</span>
+      </div>
+      <ReadoutRow label="base color">
+        {slot.color ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              data-testid={`gltf-material-swatch-${slot.slot}`}
+              className="inline-block h-3 w-3 rounded-sm border border-border"
+              style={{ backgroundColor: slot.color }}
+            />
+            <span className="font-mono text-[10px] text-fg/60">{slot.color}</span>
+          </span>
+        ) : (
+          '—'
+        )}
+      </ReadoutRow>
+      <ReadoutRow label="metalness">{num(slot.metalness)}</ReadoutRow>
+      <ReadoutRow label="roughness">{num(slot.roughness)}</ReadoutRow>
+      {slot.opacity != null && slot.opacity < 1 ? (
+        <ReadoutRow label="opacity">{num(slot.opacity)}</ReadoutRow>
+      ) : null}
+      <ReadoutRow label="maps">{slot.maps.length > 0 ? slot.maps.join(', ') : '—'}</ReadoutRow>
+    </div>
+  );
+}
+
+/** UX #8 — read-only readout of a glTF asset/child's embedded materials, read
+ *  off the rendered clone (gltfMaterialStore, published by GltfAssetR). The
+ *  embedded materials live on the clone, not the DAG, so without this the
+ *  inspector's MATERIAL section is empty. Editing is via the MaterialOverride
+ *  wrapper — this is inspect-only. For a GltfChild, `childId` (the node's own
+ *  id, which equals the stamped basherGltfChildId) filters to that child's
+ *  slots; for the whole asset it is null (all slots). */
+function GltfMaterialReadout({ assetRef, childId }: { assetRef: string; childId: string | null }) {
+  const slots = useGltfMaterialStore((s) => s.byAsset[assetRef]);
+  const visible = (slots ?? []).filter((sl) => childId == null || sl.childId === childId);
+  if (visible.length === 0) {
+    return (
+      <div data-testid="gltf-material-readout-empty" className="px-3 py-1.5 text-[11px] text-fg/40">
+        {slots == null ? 'Materials load with the model…' : 'No materials on this part.'}
+      </div>
+    );
+  }
+  return (
+    <div data-testid="gltf-material-readout" className="flex flex-col gap-2 px-3 py-1.5">
+      {visible.map((sl) => (
+        <GltfMaterialSlotRow key={sl.slot} slot={sl} />
+      ))}
+    </div>
+  );
+}
+
 /** A collapsible section card. Header click toggles via
  *  inspectorSectionsStore; visual collapse combines user choice with
  *  the §5.8 default rule via resolveCollapsed. */
@@ -1369,6 +1444,18 @@ export function NPanel() {
                           controls below author the override for the chosen slot. */}
                       {sectionId === 'material' && node.type === 'MaterialOverride' ? (
                         <SlotSelector nodeId={node.id} />
+                      ) : null}
+                      {/* UX #8 — read-only embedded-material readout for a glTF
+                          asset (all slots) or child (its slots only). The
+                          materials live on the rendered clone, not the DAG, so
+                          this is the only way to SEE them; editing is via a
+                          MaterialOverride. */}
+                      {sectionId === 'material' &&
+                      (node.type === 'GltfAsset' || node.type === 'GltfChild') ? (
+                        <GltfMaterialReadout
+                          assetRef={String((node.params as { assetRef?: unknown }).assetRef ?? '')}
+                          childId={node.type === 'GltfChild' ? node.id : null}
+                        />
                       ) : null}
                       {(grouped.get(sectionId) ?? []).map(([key, value]) => (
                         <ParamRow
