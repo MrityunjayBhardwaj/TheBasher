@@ -14,6 +14,7 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimelineSelection } from './timelineSelection';
 import { resolveClipRow } from './clipChannelRows';
+import { EditableCurve } from './EditableCurve';
 
 const TRACK_COLORS = ['#ef4444', '#22c55e', '#3b82f6']; // x / y / z
 const SAMPLES_PER_SECOND = 30;
@@ -149,79 +150,41 @@ export function CurveEditor({ duration }: { duration: number }) {
   const params = (node.params ?? {}) as { keyframes?: VecKey[]; paramPath?: string };
   const keyframes = (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time);
 
-  const tracks = expandToTracks(node.type, keyframes);
-  const samples = sampleTracks(tracks, duration);
-  const yRange = computeRange(samples);
-
-  if (tracks.length === 0) {
-    // Quat / Color channels — slerp + HSL-lerp curves don't render as a
-    // 1D-y trace. Surface the metadata so the user sees the channel is
-    // selected; full visualization lands when the curve editor grows
-    // a quaternion-arc / color-strip projection.
+  // Authored Number / Vec3 channel → the reze-style editable graph editor
+  // (UX #11). Curves are sampled THROUGH the shared keyframeInterp inside
+  // EditableCurve, so what's drawn is what the renderer plays (H40).
+  if (node.type === 'KeyframeChannelNumber' || node.type === 'KeyframeChannelVec3') {
     return (
-      <div
-        data-testid="curve-editor"
-        className="flex h-full flex-col items-center justify-center gap-1 text-xs text-mute"
-      >
-        <span>
-          {node.type.replace('KeyframeChannel', '')} — {params.paramPath ?? '(no path)'}
-        </span>
-        <span className="text-[10px]">
-          Curve preview not yet implemented for{' '}
-          {node.type === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
-        </span>
-        <span className="text-[10px]">
-          {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}; values shown in dopesheet.
-        </span>
-      </div>
+      <EditableCurve
+        channelId={channelId}
+        channelType={node.type}
+        paramPath={params.paramPath ?? ''}
+        keyframes={keyframes}
+        duration={duration}
+        seconds={seconds}
+      />
     );
   }
 
+  // Quat / Color channels — slerp + HSL-lerp curves don't render as a 1D-y
+  // trace yet. Surface the metadata so the user sees the channel is selected;
+  // full visualization lands when the curve editor grows a quaternion-arc /
+  // color-strip projection.
   return (
-    <div data-testid="curve-editor" className="relative h-full w-full bg-bg">
-      <div className="absolute left-2 top-1 text-[10px] text-mute">
+    <div
+      data-testid="curve-editor"
+      className="flex h-full flex-col items-center justify-center gap-1 text-xs text-mute"
+    >
+      <span>
         {node.type.replace('KeyframeChannel', '')} — {params.paramPath ?? '(no path)'}
-      </div>
-      <svg className="h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
-        <line x1="0" y1="50" x2="100" y2="50" stroke="var(--line)" strokeWidth="0.2" />
-        {samples.map((track, ti) => (
-          <polyline
-            key={ti}
-            data-testid={`curve-track-${ti}`}
-            fill="none"
-            stroke={TRACK_COLORS[ti % TRACK_COLORS.length]}
-            strokeWidth="0.6"
-            points={track
-              .map((p) => {
-                const x = (p.t / Math.max(duration, 0.0001)) * 100;
-                const y = 100 - normalizeY(p.v, yRange) * 100;
-                return `${x},${y}`;
-              })
-              .join(' ')}
-          />
-        ))}
-        {keyframes.map((k, i) => {
-          const x = (k.time / Math.max(duration, 0.0001)) * 100;
-          return tracks.map((track, ti) => (
-            <circle
-              key={`${i}-${ti}`}
-              cx={x}
-              cy={100 - normalizeY(track[i]?.value ?? 0, yRange) * 100}
-              r="0.8"
-              fill="var(--fg)"
-            />
-          ));
-        })}
-        <line
-          data-testid="curve-playhead"
-          x1={(seconds / Math.max(duration, 0.0001)) * 100}
-          y1="0"
-          x2={(seconds / Math.max(duration, 0.0001)) * 100}
-          y2="100"
-          stroke="var(--accent)"
-          strokeWidth="0.3"
-        />
-      </svg>
+      </span>
+      <span className="text-[10px]">
+        Curve preview not yet implemented for{' '}
+        {node.type === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
+      </span>
+      <span className="text-[10px]">
+        {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}; values shown in dopesheet.
+      </span>
     </div>
   );
 }
@@ -230,30 +193,6 @@ interface Track {
   time: number;
   value: number;
   easing: 'linear' | 'cubic';
-}
-
-function expandToTracks(channelType: string, keyframes: VecKey[]): Track[][] {
-  if (keyframes.length === 0) return [];
-  if (channelType === 'KeyframeChannelNumber') {
-    return [
-      keyframes.map((k) => ({
-        time: k.time,
-        value: typeof k.value === 'number' ? k.value : Number(k.value) || 0,
-        easing: k.easing,
-      })),
-    ];
-  }
-  if (channelType === 'KeyframeChannelVec3') {
-    return [0, 1, 2].map((axis) =>
-      keyframes.map((k) => ({
-        time: k.time,
-        value: Array.isArray(k.value) ? Number(k.value[axis] ?? 0) : 0,
-        easing: k.easing,
-      })),
-    );
-  }
-  // Quat / Color: skipped in v0.5 — render no tracks.
-  return [];
 }
 
 function smoothstep(u: number): number {
