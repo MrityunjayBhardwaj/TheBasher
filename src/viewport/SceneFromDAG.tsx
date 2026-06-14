@@ -57,6 +57,7 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { DagState } from '../core/dag/state';
 import { PostFx } from '../render/PostFx';
+import { SceneEnvironment } from './SceneEnvironment';
 import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { resolveMaterialOverrideFields } from './materialOverrideMerge';
@@ -166,6 +167,11 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
 
   return (
     <>
+      {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
+          PROPERTY, not a traversed object), so it survives the renderToImage
+          chrome hide-pass (V37) and lights the production render for free.
+          NEVER mark this editorChrome (V47). */}
+      <SceneEnvironment value={value.scene.environment} />
       {/* #165: the DAG camera no longer mounts a makeDefault render camera
           here — the editor owns the view (EditorViewCamera) so DAG cameras
           become selectable frustum objects (CameraHelpers). */}

@@ -1045,11 +1045,41 @@ export interface JobResultValue {
 // Scene (socket type: 'Scene')
 // ---------------------------------------------------------------------------
 
+// UX #9 — scene-level environment (HDRI/IBL) lighting. The env config is a
+// Scene-node param (decision 2026-06-15: Scene-level, NOT a separate node), so
+// it is one-per-scene by construction. `Scene.evaluate` folds the params into
+// this value; the renderer mounts a drei <Environment> from it, setting
+// `scene.environment` (a scene PROPERTY, never a traversed object → it survives
+// the renderToImage chrome hide-pass and flows into the production render for
+// free). See vyapti V47.
+export type EnvironmentSource =
+  // No environment — the default; the scene stays the dark stage lit only by
+  // explicit Light nodes / EditorLights.
+  | { readonly kind: 'none' }
+  // A drei built-in preset (studio/sunset/…). Fetched from a CDN at runtime →
+  // NOT self-contained in a .basher bundle (only `file` embeds, V41).
+  | { readonly kind: 'preset'; readonly name: string }
+  // An imported .hdr/.exr stored in OPFS and addressed by assetRef → embeds in
+  // the .basher bundle (V41). Loaded via environmentTextureLoader (mirrors
+  // bakedTextureLoader).
+  | { readonly kind: 'file'; readonly assetRef: string };
+
+export interface EnvironmentValue {
+  readonly source: EnvironmentSource;
+  /** Maps to `scene.environmentIntensity` (three r169). */
+  readonly intensity: number;
+  /** Y-axis rotation in DEGREES; maps to `scene.environmentRotation`. */
+  readonly rotationY: number;
+  /** When true, show the environment as the skybox (`scene.background`). */
+  readonly background: boolean;
+}
+
 export interface SceneValue {
   readonly kind: 'Scene';
   readonly camera: CameraValue;
   readonly lights: readonly LightValue[];
   readonly children: readonly SceneChild[];
+  readonly environment: EnvironmentValue;
 }
 
 export interface PostFxConfig {
