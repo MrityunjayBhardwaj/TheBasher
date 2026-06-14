@@ -118,6 +118,31 @@ test('#2.6 agent chat + timeline are a centered stack — chat ABOVE timeline', 
   expect(agent.y + agent.height).toBeLessThanOrEqual(timeline.y + 1);
 });
 
+// Follow-up 1: the centered-surface reserve (toolbar pill + bottom stack) is
+// collapse-AWARE — folding both side panels to their 28px strips frees the
+// centered band, so the toolbar and the bottom stack reclaim the width that was
+// previously reserved for the expanded islands (V46: ONE collapse-aware
+// geometry source, no stale static reserve).
+test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async ({ page }) => {
+  const toolbarBefore = await page.getByTestId('floating-viewport-toolbar').boundingBox();
+  const stackBefore = await page.getByTestId('agentdock-slot').boundingBox();
+  if (!toolbarBefore || !stackBefore) throw new Error('missing boxes');
+
+  // Fold both side islands to their chevron strips.
+  await page.getByTestId('left-sidebar-collapse-toggle').click();
+  await page.getByTestId('inspector-collapse-toggle').click();
+  await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'true');
+
+  const toolbarAfter = await page.getByTestId('floating-viewport-toolbar').boundingBox();
+  const stackAfter = await page.getByTestId('agentdock-slot').boundingBox();
+  if (!toolbarAfter || !stackAfter) throw new Error('missing boxes');
+
+  // Both centered surfaces are now wider. With a STATIC reserve they would be
+  // pinned to the expanded footprint regardless of collapse → these fail.
+  expect(toolbarAfter.width).toBeGreaterThan(toolbarBefore.width + 40);
+  expect(stackAfter.width).toBeGreaterThan(stackBefore.width + 40);
+});
+
 test('#2.7 present mode hides every floating island', async ({ page }) => {
   await page.getByTestId('top-toolbar-present').click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');

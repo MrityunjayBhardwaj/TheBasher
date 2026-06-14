@@ -47,7 +47,7 @@ import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
-import { CENTER_SIDE_RESERVED } from './layoutIslands';
+import { centerSideReserved } from './layoutIslands';
 import { useLeftSidebarStore } from './stores/leftSidebarStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
@@ -265,6 +265,7 @@ export function FloatingViewportToolbar(): ReactNode {
   const leftTab = useLeftSidebarStore((s) => s.activeTab);
   const setLeftTab = useLeftSidebarStore((s) => s.setActiveTab);
   const leftCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
+  const inspectorCollapsed = useChromeStore((s) => s.inspectorCollapsed);
   const setLeftCollapsed = useChromeStore((s) => s.setLeftSidebarCollapsed);
   const assetsActive = leftTab === 'assets' && !leftCollapsed;
 
@@ -286,8 +287,13 @@ export function FloatingViewportToolbar(): ReactNode {
       // midpoint would slide UNDER those islands at narrow widths (its right end
       // disappeared behind the inspector — observed at 1100px). Cap its width so
       // it stays in the clear center band between the islands; it still scrolls
-      // horizontally (overflow-x-auto) when the controls exceed that band.
-      style={{ maxWidth: `calc(100% - ${CENTER_SIDE_RESERVED}px)` }}
+      // horizontally (overflow-x-auto) when the controls exceed that band. The
+      // reserve tracks the LIVE collapse flags (UX #2 follow-up 1) — folding a
+      // side panel to its 28px strip lets the pill reclaim that width instead of
+      // staying pinned to the expanded footprint.
+      style={{
+        maxWidth: `calc(100% - ${centerSideReserved(leftCollapsed, inspectorCollapsed)}px)`,
+      }}
       className="no-scrollbar absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
     >
       {TOOLS.map((t) => (

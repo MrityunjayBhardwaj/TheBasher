@@ -44,11 +44,29 @@ export const COLLAPSED_STRIP = 28;
  *  bottom-center agent + timeline stack — none of which the side islands cover. */
 export const BOTTOM_BAND = 140;
 
+/** Live width of a side island given its collapse flag: a folded panel is the
+ *  28px chevron strip (V35), an open one is its full column width. The ONE
+ *  place "how wide is this island right now" is decided, so the islands and the
+ *  centered-surface reserve below never disagree. */
+export function sideIslandWidth(collapsed: boolean, expandedWidth: number): number {
+  return collapsed ? COLLAPSED_STRIP : expandedWidth;
+}
+
 /** Width a VIEWPORT-CENTERED surface (the toolbar pill, the bottom-center
  *  stack) must subtract from 100% so it stays clear of BOTH side islands.
  *  Centered on the viewport midpoint (not the inter-island midpoint), so it
- *  reserves the WIDER island (inspector) on both sides plus a gap — this gives
- *  a positive clearance regardless of the left/right width asymmetry. Without
+ *  reserves the WIDER island on both sides plus a gap each side — this gives a
+ *  positive clearance regardless of the left/right width asymmetry. Without
  *  this, a full-bleed viewport lets a centered pill slide under a side island
- *  at narrow widths (the H91/V45 floating-overlap trap). */
-export const CENTER_SIDE_RESERVED = 2 * (INSPECTOR_WIDTH + ISLAND_GAP * 2);
+ *  (the H91/V45 floating-overlap trap).
+ *
+ *  RESPONDS to the live collapse flags (V46: ONE geometry source, no stale
+ *  reserve): when a panel is folded to its 28px strip the centered surface
+ *  reclaims that width instead of reserving for the expanded footprint it no
+ *  longer has. Both expanded → 2*(12 + 300 + 12) = 648, identical to the old
+ *  static constant, so the default geometry is unchanged. */
+export function centerSideReserved(leftCollapsed: boolean, inspectorCollapsed: boolean): number {
+  const leftW = sideIslandWidth(leftCollapsed, OUTLINER_WIDTH);
+  const rightW = sideIslandWidth(inspectorCollapsed, INSPECTOR_WIDTH);
+  return 2 * (ISLAND_GAP + Math.max(leftW, rightW) + ISLAND_GAP);
+}

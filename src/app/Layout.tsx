@@ -50,11 +50,11 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import {
   BOTTOM_BAND,
-  CENTER_SIDE_RESERVED,
-  COLLAPSED_STRIP,
+  centerSideReserved,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
   OUTLINER_WIDTH,
+  sideIslandWidth,
 } from './layoutIslands';
 
 export function Layout() {
@@ -87,8 +87,8 @@ export function Layout() {
   // inside <main> below). Their width still honors the per-panel collapse
   // (V35): a collapsed panel shrinks to a chevron-only strip whose expand
   // toggle stays reachable. Present mode hides the islands entirely.
-  const outlinerIslandWidth = leftSidebarCollapsed ? COLLAPSED_STRIP : OUTLINER_WIDTH;
-  const inspectorIslandWidth = inspectorCollapsed ? COLLAPSED_STRIP : INSPECTOR_WIDTH;
+  const outlinerIslandWidth = sideIslandWidth(leftSidebarCollapsed, OUTLINER_WIDTH);
+  const inspectorIslandWidth = sideIslandWidth(inspectorCollapsed, INSPECTOR_WIDTH);
   return (
     <div
       data-testid="layout"
@@ -242,8 +242,10 @@ export function Layout() {
                 agent chat on top, timeline (always-visible Timebar + revealable
                 drawer body that expands upward) below it. Bottom-anchored, so
                 the stack grows UP (agent conversation / opened drawer) without
-                touching the side islands. Width-capped (CENTER_SIDE_RESERVED, as
-                the toolbar) and centered, so it stays in the clear center band —
+                touching the side islands. Width-capped (centerSideReserved, the
+                same collapse-aware reserve as the toolbar — UX #2 follow-up 1:
+                folding a side panel frees the stack to reclaim that width) and
+                centered, so it stays in the clear center band —
                 the bottom-right orbit gizmo + Persp/Ortho pill sit to its right,
                 untouched. Each surface is its own rounded island (same tokens as
                 the side panels); the inner components render their own bg.
@@ -255,7 +257,7 @@ export function Layout() {
             bottom: ISLAND_GAP,
             left: '50%',
             transform: 'translateX(-50%)',
-            width: `min(960px, calc(100% - ${CENTER_SIDE_RESERVED}px))`,
+            width: `min(960px, calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px))`,
             display: isPresent ? 'none' : 'flex',
           }}
           className="z-20 flex flex-col gap-2"
