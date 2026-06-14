@@ -90,7 +90,24 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    drawn; a pure-transform parent child shows "No materials on this part"; full editable per-child
    extraction was the larger option not taken.)_
 9. ☐ **HDRI support.** Add environment/HDRI lighting.
-10. ☐ **Textures in the UV editor.** Show the bound texture under the UV layout, Blender-style.
+10. ☑ **Textures in the UV editor — DONE (2026-06-15).** The UV editor now paints the
+    selected mesh's bound **base-color (albedo)** map as a dimmed backdrop UNDER the UV
+    islands, Blender-style (it used to draw only green island outlines on an empty 0..1
+    grid — the director couldn't see which part of the texture each island maps to).
+    Resolved through ONE pure producer-aware `resolveMeshTexture` — the V33 read-only-
+    projection SIBLING of `resolveMeshUVs`, so the panel and the `__basher_uv_texture`
+    side-B seam never drift (H40): glTF clone `material.map` (sync); BakedMesh / primitive
+    `maps.albedo` via a new non-throwing `peekBakedTexture` (status `loading` reuses the
+    existing retry; a decode failure → grid-only, never a crash). The backdrop's vertical
+    orientation follows the texture's `flipY` so the texel a UV vertex samples sits BEHIND
+    it (glTF maps are flipY=false / top-left origin → drawn flipped to register with the
+    islands' V-up `(1-v)` display — V48). A header **Texture** toggle (shown only when a map
+    resolves) hides/shows it. Observed on a 64×64 asymmetric fixture (UV(0,0)'s green corner
+    lands exactly where glTF sampling predicts) AND the real 100MB cicada (706 children; a
+    textured child shows its 1024×1024 atlas with islands registered). Defaults: base color,
+    UV0, 0.6 dim; an opacity slider + per-map picker are open follow-ups (no observed
+    friction — multi-material whole-asset selection shows only the first map by design).
+    Gates: vitest 1536 / tsc 0 / eslint 0 / prettier / e2e `ux10-uv-texture` 2/2.
 
 ## Animation
 
