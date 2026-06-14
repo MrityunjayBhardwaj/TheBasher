@@ -22,6 +22,7 @@ export type SectionId =
   | 'render'
   | 'animate'
   | 'channel'
+  | 'environment'
   | 'layout';
 
 export const SECTION_IDS: readonly SectionId[] = [
@@ -31,6 +32,7 @@ export const SECTION_IDS: readonly SectionId[] = [
   'render',
   'animate',
   'channel',
+  'environment',
   'layout',
 ];
 
@@ -132,6 +134,19 @@ export function paramToSection(
       paramPath === 'paramPath')
   ) {
     return 'channel';
+  }
+  // Environment params (UX #9) — the scene-level HDRI/IBL config. Routed here so
+  // they group under the Environment section's custom control instead of landing
+  // in the raw-fallback bucket; the custom control (SceneEnvironmentControls)
+  // authors them, so the generic ParamRows for this section are suppressed.
+  if (
+    declaredSections.includes('environment') &&
+    (paramPath === 'envSource' ||
+      paramPath === 'envIntensity' ||
+      paramPath === 'envRotationY' ||
+      paramPath === 'envBackground')
+  ) {
+    return 'environment';
   }
   // Layout params — name / labels / cosmetic positioning.
   if (

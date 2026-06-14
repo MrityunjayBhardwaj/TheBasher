@@ -24,26 +24,14 @@ import { Environment } from '@react-three/drei';
 import type { PresetsType } from '@react-three/drei/helpers/environment-assets';
 import { Suspense } from 'react';
 import type { EnvironmentValue } from '../nodes/types';
+import { isEnvPresetName } from '../app/envPresets';
 import { EnvironmentFile } from './EnvironmentFile';
 
-// drei ships a fixed catalog of preset names; we expose them through the
-// inspector (slice 3). Narrow an arbitrary string back to a PresetsType for the
-// drei prop — an unknown name falls through to 'studio' rather than throwing.
-const PRESET_NAMES: readonly PresetsType[] = [
-  'apartment',
-  'city',
-  'dawn',
-  'forest',
-  'lobby',
-  'night',
-  'park',
-  'studio',
-  'sunset',
-  'warehouse',
-];
-
-export function isEnvPreset(name: string): name is PresetsType {
-  return (PRESET_NAMES as readonly string[]).includes(name);
+// The preset catalog is shared (src/app/envPresets.ts). Narrow a stored name to
+// drei's PresetsType for the drei prop — an unknown name falls through to
+// 'studio' rather than throwing.
+function isEnvPreset(name: string): name is PresetsType {
+  return isEnvPresetName(name);
 }
 
 export function SceneEnvironment({ value }: { value: EnvironmentValue | undefined }) {

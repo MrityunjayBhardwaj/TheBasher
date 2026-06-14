@@ -93,9 +93,15 @@ describe('C2 — inspectorSections declarations', () => {
 
   it('layout-only nodes declare only "layout"', () => {
     const snap = snapshotRegistry();
-    for (const type of ['Group', 'Scene', 'Shot', 'Cut']) {
+    for (const type of ['Group', 'Shot', 'Cut']) {
       expect(snap[type].inspectorSections).toEqual(['layout']);
     }
+  });
+
+  it('Scene declares environment + layout (UX #9 — environment is the primary domain)', () => {
+    const snap = snapshotRegistry();
+    expect(snap.Scene.inspectorSections).toEqual(['environment', 'layout']);
+    expect(snap.Scene.inspectorSections?.[0]).toBe('environment');
   });
 
   it('Transform declares only "transform" (the catalog leader)', () => {

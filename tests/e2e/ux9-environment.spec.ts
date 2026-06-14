@@ -26,7 +26,10 @@ interface Op {
 interface EnvWindow {
   __basher_dag: {
     getState: () => {
-      state: { outputs: { scene?: { node: string } } };
+      state: {
+        outputs: { scene?: { node: string } };
+        nodes: Record<string, { params?: Record<string, unknown> }>;
+      };
       dispatchAtomic: (ops: Op[], source?: string, label?: string) => void;
     };
   };
@@ -35,9 +38,11 @@ interface EnvWindow {
       scene: {
         environment: { isTexture?: boolean } | null;
         background: { isTexture?: boolean } | null;
+        environmentIntensity?: number;
       } | null;
     };
   };
+  __basher_selection?: { getState: () => { select: (id: string) => void } };
   __basher_importEnvHdri?: (bytes: Uint8Array, filename: string) => Promise<string>;
 }
 
@@ -151,4 +156,56 @@ test('UX #9 — an imported .hdr lights the scene via scene.environment, and cle
   });
   await waitEnv(page, { env: false, bg: false });
   expect(await readEnv(page)).toEqual({ env: false, bg: false });
+});
+
+test('UX #9 — the Scene inspector Environment control imports an .hdr and binds it', async ({
+  page,
+}) => {
+  // Select the Scene node so the inspector shows its Environment section.
+  const sceneId = await page.evaluate(() => {
+    const w = window as unknown as EnvWindow;
+    const id = w.__basher_dag.getState().state.outputs.scene!.node;
+    w.__basher_selection!.getState().select(id);
+    return id;
+  });
+
+  // The Environment section + its custom control render for the Scene node.
+  await expect(page.getByTestId(`inspector-environment-${sceneId}`)).toBeVisible({
+    timeout: 10_000,
+  });
+  // Default source = none → mode buttons present, no file bound yet.
+  expect(await readEnv(page)).toEqual({ env: false, bg: false });
+
+  // Drive the inspector's Import path directly: set the (always-mounted) hidden
+  // file input to the fixture .hdr — the real onChange → importEnvironmentHdri →
+  // setParam wiring. (We set the input directly rather than clicking the File
+  // mode button, which would pop a native file chooser and hang the run.)
+  await page
+    .getByTestId(`inspector-env-file-${sceneId}`)
+    .setInputFiles('public/fixtures/env/test.hdr');
+
+  // The env param is now a file source, the inspector shows the file name, and
+  // the equirect texture is bound to scene.environment.
+  await waitEnv(page, { env: true, bg: false });
+  await expect(page.getByTestId(`inspector-env-file-name-${sceneId}`)).toHaveText('test.hdr');
+  const src = await page.evaluate((id) => {
+    const w = window as unknown as EnvWindow;
+    return w.__basher_dag.getState().state.nodes[id].params?.envSource as { kind?: string };
+  }, sceneId);
+  expect(src.kind).toBe('file');
+
+  // Toggle "show as background" → scene.background becomes the env texture.
+  await page.getByTestId(`inspector-env-background-${sceneId}`).check();
+  await waitEnv(page, { env: true, bg: true });
+
+  // Edit intensity → it flows to scene.environmentIntensity.
+  await page.getByTestId(`inspector-env-intensity-${sceneId}`).fill('2.5');
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as EnvWindow;
+      return w.__basher_three.getState().scene?.environmentIntensity === 2.5;
+    },
+    null,
+    { timeout: 10_000 },
+  );
 });

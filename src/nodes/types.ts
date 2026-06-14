@@ -1061,8 +1061,9 @@ export type EnvironmentSource =
   | { readonly kind: 'preset'; readonly name: string }
   // An imported .hdr/.exr stored in OPFS and addressed by assetRef → embeds in
   // the .basher bundle (V41). Loaded via environmentTextureLoader (mirrors
-  // bakedTextureLoader).
-  | { readonly kind: 'file'; readonly assetRef: string };
+  // bakedTextureLoader). `name` is the user's original filename, kept only for
+  // display (the assetRef is the content-hash path); optional for back-compat.
+  | { readonly kind: 'file'; readonly assetRef: string; readonly name?: string };
 
 export interface EnvironmentValue {
   readonly source: EnvironmentSource;

@@ -8,7 +8,7 @@ import type { CameraValue, EnvironmentSource, LightValue, SceneChild, SceneValue
 export const EnvSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }),
   z.object({ kind: z.literal('preset'), name: z.string() }),
-  z.object({ kind: z.literal('file'), assetRef: z.string() }),
+  z.object({ kind: z.literal('file'), assetRef: z.string(), name: z.string().optional() }),
 ]);
 export type EnvSource = z.infer<typeof EnvSourceSchema>;
 
@@ -38,7 +38,7 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     children: { type: 'Mesh', cardinality: 'list' },
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
-  inspectorSections: ['layout'],
+  inspectorSections: ['environment', 'layout'],
   evaluate(params, inputs) {
     // UX #9 — fold the env params into SceneValue.environment. The `?? default`
     // here is the SECOND layer of the V10/H14 two-layer default (the zod

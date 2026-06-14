@@ -77,6 +77,7 @@ import {
 } from './inspectorSections';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
+import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -1457,15 +1458,23 @@ export function NPanel() {
                           childId={node.type === 'GltfChild' ? node.id : null}
                         />
                       ) : null}
-                      {(grouped.get(sectionId) ?? []).map(([key, value]) => (
-                        <ParamRow
-                          key={key}
-                          nodeId={node.id}
-                          paramPath={key}
-                          value={value}
-                          overrideInfo={makeOverrideInfo(key)}
-                        />
-                      ))}
+                      {/* UX #9 — the Environment section is authored by a single
+                          custom control, NOT raw param rows (the env params route
+                          here only to leave the raw-fallback bucket). */}
+                      {sectionId === 'environment' && node.type === 'Scene' ? (
+                        <SceneEnvironmentControls nodeId={node.id} />
+                      ) : null}
+                      {sectionId === 'environment'
+                        ? null
+                        : (grouped.get(sectionId) ?? []).map(([key, value]) => (
+                            <ParamRow
+                              key={key}
+                              nodeId={node.id}
+                              paramPath={key}
+                              value={value}
+                              overrideInfo={makeOverrideInfo(key)}
+                            />
+                          ))}
                       {/* Phase 151 — Apply control in the transform card for a
                           selected primitive (BoxMesh/SphereMesh). Bakes TRS →
                           BakedMesh via the same helper the Object ▸ Apply menu
