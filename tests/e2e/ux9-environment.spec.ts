@@ -1,0 +1,154 @@
+// UX #9 slice 2 — scene-level environment (HDRI/IBL) from an imported .hdr.
+//
+// Observes the WHOLE file pipeline on the LIVE app (Lokayata, not inference):
+//   import .hdr bytes → OPFS (content-hash store) → set the Scene's envSource to
+//   {kind:'file', assetRef} → the renderer's drei <Environment map> assigns the
+//   decoded equirect texture to `scene.environment` (a scene PROPERTY, never a
+//   traversed object — vyapti V47).
+//
+// FALSIFICATION (guards a vacuous pass):
+//   - BEFORE: scene.environment is null (the default `none`).
+//   - AFTER file source: scene.environment is a non-null Texture; with the
+//     background toggle on, scene.background is non-null too.
+//   - CLEAR back to `none`: scene.environment AND scene.background return to
+//     null — proves the binding is driven by the param, not a one-way latch.
+//
+// Uses the .hdr fixture at public/fixtures/env/test.hdr (a tiny flat-RGBE map).
+//
+// REF: src/viewport/SceneEnvironment.tsx; src/app/asset/envHdriStore.ts; V47.
+
+import { expect, test } from './_fixtures';
+
+interface Op {
+  type: string;
+  [k: string]: unknown;
+}
+interface EnvWindow {
+  __basher_dag: {
+    getState: () => {
+      state: { outputs: { scene?: { node: string } } };
+      dispatchAtomic: (ops: Op[], source?: string, label?: string) => void;
+    };
+  };
+  __basher_three: {
+    getState: () => {
+      scene: {
+        environment: { isTexture?: boolean } | null;
+        background: { isTexture?: boolean } | null;
+      } | null;
+    };
+  };
+  __basher_importEnvHdri?: (bytes: Uint8Array, filename: string) => Promise<string>;
+}
+
+// `env` = scene.environment is bound (only an env source sets it — default null).
+// `bg` (skybox) = scene.background is the env TEXTURE; the editor's default dark
+// stage is a Color (`#0a0a0a`), so we test `isTexture` to tell a skybox from it.
+
+/** Read the live scene's env/background binding state. */
+async function readEnv(
+  page: import('@playwright/test').Page,
+): Promise<{ env: boolean; bg: boolean }> {
+  return page.evaluate(() => {
+    const w = window as unknown as EnvWindow;
+    const s = w.__basher_three.getState().scene;
+    return {
+      env: Boolean(s && s.environment),
+      bg: Boolean(s && s.background && s.background.isTexture),
+    };
+  });
+}
+
+/** Wait until the scene env binding matches `want`. */
+async function waitEnv(
+  page: import('@playwright/test').Page,
+  want: { env: boolean; bg: boolean },
+): Promise<void> {
+  await page.waitForFunction(
+    (w2) => {
+      const w = window as unknown as EnvWindow;
+      const s = w.__basher_three.getState().scene;
+      const env = Boolean(s && s.environment);
+      const bg = Boolean(s && s.background && s.background.isTexture);
+      return env === w2.env && bg === w2.bg;
+    },
+    want,
+    { timeout: 15_000 },
+  );
+}
+
+test.beforeEach(async ({ page }) => {
+  // '/' lands on EITHER the home page (fresh state) or the editor (persisted
+  // route). Enter the editor deterministically: race the two possible first
+  // screens, and if it's home, open the Starter Scene example (it has n_scene).
+  await page.goto('/');
+  const layout = page.getByTestId('layout');
+  const starter = page.getByRole('button', { name: /Open example Starter Scene/i });
+  await Promise.race([
+    layout.waitFor({ timeout: 15_000 }).catch(() => undefined),
+    starter.waitFor({ timeout: 15_000 }).catch(() => undefined),
+  ]);
+  if (await starter.isVisible().catch(() => false)) {
+    await starter.click();
+  }
+  await expect(layout).toBeVisible({ timeout: 10_000 });
+  await page.waitForFunction(() => {
+    const w = window as unknown as EnvWindow;
+    return Boolean(
+      w.__basher_dag &&
+      w.__basher_three &&
+      w.__basher_importEnvHdri &&
+      w.__basher_dag.getState().state.outputs.scene,
+    );
+  });
+});
+
+test('UX #9 — an imported .hdr lights the scene via scene.environment, and clears', async ({
+  page,
+}) => {
+  // BEFORE — no environment (default `none`).
+  expect(await readEnv(page)).toEqual({ env: false, bg: false });
+
+  // Import the fixture HDRI to OPFS and bind it as the Scene env (with skybox).
+  await page.evaluate(async () => {
+    const w = window as unknown as EnvWindow;
+    const bytes = new Uint8Array(
+      await fetch('/fixtures/env/test.hdr').then((r) => r.arrayBuffer()),
+    );
+    const assetRef = await w.__basher_importEnvHdri!(bytes, 'test.hdr');
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: sceneId,
+          paramPath: 'envSource',
+          value: { kind: 'file', assetRef },
+        },
+        { type: 'setParam', nodeId: sceneId, paramPath: 'envBackground', value: true },
+      ],
+      'e2e',
+      'set env file',
+    );
+  });
+
+  // AFTER — the equirect texture is bound to scene.environment + scene.background.
+  await waitEnv(page, { env: true, bg: true });
+  expect(await readEnv(page)).toEqual({ env: true, bg: true });
+
+  // CLEAR — set the source back to `none`; both bindings release (falsification:
+  // proves the binding tracks the param, not a one-way latch).
+  await page.evaluate(() => {
+    const w = window as unknown as EnvWindow;
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [{ type: 'setParam', nodeId: sceneId, paramPath: 'envSource', value: { kind: 'none' } }],
+      'e2e',
+      'clear env',
+    );
+  });
+  await waitEnv(page, { env: false, bg: false });
+  expect(await readEnv(page)).toEqual({ env: false, bg: false });
+});

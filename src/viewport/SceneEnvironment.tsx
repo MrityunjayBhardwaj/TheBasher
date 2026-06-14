@@ -24,6 +24,7 @@ import { Environment } from '@react-three/drei';
 import type { PresetsType } from '@react-three/drei/helpers/environment-assets';
 import { Suspense } from 'react';
 import type { EnvironmentValue } from '../nodes/types';
+import { EnvironmentFile } from './EnvironmentFile';
 
 // drei ships a fixed catalog of preset names; we expose them through the
 // inspector (slice 3). Narrow an arbitrary string back to a PresetsType for the
@@ -76,8 +77,17 @@ export function SceneEnvironment({ value }: { value: EnvironmentValue | undefine
     );
   }
 
-  // source.kind === 'file' — the OPFS-backed imported HDRI. Wired in slice 2
-  // (environmentTextureLoader, mirroring bakedTextureLoader). Until then an
-  // imported source renders nothing rather than throwing.
-  return null;
+  // source.kind === 'file' — the OPFS-backed imported HDRI. EnvironmentFile
+  // suspends on the OPFS read + RGBELoader/EXRLoader decode, so the fallback
+  // keeps the viewport interactive while the (potentially large) HDRI loads.
+  return (
+    <Suspense fallback={null}>
+      <EnvironmentFile
+        assetRef={source.assetRef}
+        background={env.background}
+        intensity={env.intensity}
+        rotation={rotation}
+      />
+    </Suspense>
+  );
 }

@@ -347,6 +347,13 @@ export function boot(): Promise<void> {
         const storage = await getStorage();
         await storage.write(path, bytes);
       };
+      // UX #9 — import an .hdr/.exr environment file to OPFS (content-hash
+      // store) and return its assetRef. Mirrors the inspector's Import… button
+      // (slice 3); the env-HDRI e2e drives it without the OS file chooser.
+      void import('./asset/importEnvironmentHdri').then((m) => {
+        w.__basher_importEnvHdri = (bytes: Uint8Array, filename: string) =>
+          m.importEnvironmentHdri(bytes, filename);
+      });
       // `.basher` scene-file seams — let the falsifiable e2e round-trip a real
       // exported scene (export → import) and assert the DAG + embedded assets
       // survive, without driving the OS file chooser. `__basher_opfs` exposes
