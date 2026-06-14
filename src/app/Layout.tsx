@@ -44,6 +44,13 @@ import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
+import {
+  BOTTOM_BAND,
+  COLLAPSED_STRIP,
+  INSPECTOR_WIDTH,
+  ISLAND_GAP,
+  OUTLINER_WIDTH,
+} from './layoutIslands';
 
 export function Layout() {
   const space = useEditorStore((s) => s.space);
@@ -70,13 +77,13 @@ export function Layout() {
   // expanded). When the user folds it the tree column shrinks to a 28px chevron
   // strip (expand toggle stays visible, V35); expanded returns to the full
   // 260px outliner.
-  const treeWidth = isPresent ? '0' : leftSidebarCollapsed ? '28px' : '260px';
-  // #173/#174 — Inspector (R7) per-panel collapse. chromeStore.inspectorCollapsed
-  // has existed since P6 (D-UX-5 / §3.2 promised it); #174 wired it. Collapsed →
-  // 28px chevron strip (mirrors the tree column, V35); NPanel owns the chevron
-  // toggle + the collapsed expand strip. Reconciled with the Spline Wave C
-  // full-height inspector: the 300px column collapses to 28px. Present forces 0.
-  const inspectorWidth = isPresent ? '0' : inspectorCollapsed ? '28px' : '300px';
+  // UX-BACKLOG #2 — the outliner + inspector are no longer grid columns; they
+  // are floating islands over a full-bleed viewport (see the islands mounted
+  // inside <main> below). Their width still honors the per-panel collapse
+  // (V35): a collapsed panel shrinks to a chevron-only strip whose expand
+  // toggle stays reachable. Present mode hides the islands entirely.
+  const outlinerIslandWidth = leftSidebarCollapsed ? COLLAPSED_STRIP : OUTLINER_WIDTH;
+  const inspectorIslandWidth = inspectorCollapsed ? COLLAPSED_STRIP : INSPECTOR_WIDTH;
   return (
     <div
       data-testid="layout"
@@ -84,12 +91,12 @@ export function Layout() {
       data-space={space}
       className="grid h-full w-full bg-bg text-fg"
       style={{
-        // Spline redesign Wave C — the dedicated 280px agent `drawer` column is
-        // gone: the agent moved to a full-width bottom dock (the user's locked
-        // placement), freeing the right column for a FULL-height Spline
-        // inspector (300px). Three columns now: tree | viewport | inspector.
-        // The inspector column honors #174's collapse (`inspectorWidth` → 28px).
-        gridTemplateColumns: isPresent ? '0 1fr 0' : `${treeWidth} 1fr ${inspectorWidth}`,
+        // UX-BACKLOG #2 — the tree | viewport | inspector three-column grid
+        // collapsed to ONE full-bleed column. The outliner + inspector are no
+        // longer reserved columns; they float as absolute islands over the
+        // viewport (mounted inside <main>), so the viewport reads full-width
+        // behind them (Spline ③/④ sidebars float over the canvas).
+        gridTemplateColumns: '1fr',
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu. Wave C
@@ -99,13 +106,14 @@ export function Layout() {
         // message list's own capped height. The timeline row (`auto`) still
         // holds the always-visible Timebar (Auto-Key indicator) + the drawer
         // body when revealed. Present collapses every row but the viewport.
+        // (Slice 2 of #2 will float these bottom rows too.)
         gridTemplateRows: isPresent ? '0 0 1fr 0 0' : '32px auto 1fr auto auto',
         gridTemplateAreas: `
-          "projectTabs projectTabs projectTabs"
-          "menu menu menu"
-          "tree viewport inspector"
-          "agentdock agentdock agentdock"
-          "timeline timeline timeline"
+          "projectTabs"
+          "menu"
+          "viewport"
+          "agentdock"
+          "timeline"
         `,
       }}
     >
@@ -127,24 +135,6 @@ export function Layout() {
       </div>
       <div style={{ gridArea: 'menu', display: isPresent ? 'none' : 'block' }}>
         <MenuBar />
-      </div>
-
-      {/* P6 W3 — LeftSidebar (R5) replaces the inline SceneTree + chevron
-          pattern from W2.6. Tab strip + collapse chevron are owned by
-          LeftSidebar itself (D-03); Layout's role here is just to
-          allocate the grid slot. */}
-      <div
-        style={{
-          gridArea: 'tree',
-          display: isPresent ? 'none' : 'flex',
-          flexDirection: 'column',
-          minHeight: 0,
-          minWidth: 0,
-        }}
-        data-testid="tree-slot"
-        data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
-      >
-        <LeftSidebar />
       </div>
 
       <main
@@ -200,24 +190,53 @@ export function Layout() {
             toggle stays reachable in UV mode, where view3d-slot is
             display:none. Self-gates to null in present mode. */}
         <FloatingViewportToolbar />
-      </main>
 
-      <div
-        style={{
-          gridArea: 'inspector',
-          display: isPresent ? 'none' : 'block',
-          // minHeight:0 lets this grid item shrink to the `1fr` track instead of
-          // growing to NPanel's content. A grid item defaults to min-height:auto
-          // (= min-content), so without this a tall inspector forces the shared
-          // `tree | viewport | inspector` row to grow past the viewport — the
-          // inspector never overflows (so its overflow-y-auto never scrolls) and
-          // it drags the outliner's row height with it. (CSS grid analog of the
-          // flex min-height:0 rule.)
-          minHeight: 0,
-        }}
-      >
-        <NPanel />
-      </div>
+        {/* UX-BACKLOG #2 — the outliner (left) + inspector (right) float as
+            absolute islands OVER the full-bleed viewport (Spline ③/④). They are
+            TOP-anchored and stop short of the bottom (BOTTOM_BAND) so the
+            bottom-right orbit gizmo + Persp/Ortho pill and the bottom-center
+            agent/timeline stack stay clear — no viewport widget has to dodge
+            them (the H91/V45 floating-overlap trap). The wrappers carry the
+            FloatingViewportToolbar surface tokens (rounded-2xl border bg-bg-2/95
+            shadow-xl backdrop-blur-md — V39 over-stage chrome, contrast-matrix
+            covered); the inner panels render transparent so the wrapper surface
+            shows through. onContextMenu stops here so a right-click on a panel
+            does NOT bubble to <main> and pop the viewport Add menu. Hidden in
+            present mode with the rest of the chrome. */}
+        {!isPresent && (
+          <>
+            <div
+              data-testid="tree-slot"
+              data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
+              onContextMenu={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                left: ISLAND_GAP,
+                top: ISLAND_GAP,
+                bottom: BOTTOM_BAND,
+                width: outlinerIslandWidth,
+              }}
+              className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+            >
+              <LeftSidebar />
+            </div>
+            <div
+              data-testid="inspector-slot"
+              onContextMenu={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute',
+                right: ISLAND_GAP,
+                top: ISLAND_GAP,
+                bottom: BOTTOM_BAND,
+                width: inspectorIslandWidth,
+              }}
+              className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+            >
+              <NPanel />
+            </div>
+          </>
+        )}
+      </main>
 
       {/* Spline redesign Wave C — the agent's always-on home is now this
           full-width bottom dock (above the timeline), not the old right column.

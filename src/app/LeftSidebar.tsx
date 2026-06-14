@@ -84,7 +84,7 @@ export function LeftSidebar(): ReactNode {
         data-collapsed="true"
         role="region"
         aria-label="Scene outliner (collapsed)"
-        className="flex h-full w-full flex-col bg-bg-2"
+        className="flex h-full w-full flex-col bg-transparent"
       >
         <button
           type="button"
@@ -107,7 +107,7 @@ export function LeftSidebar(): ReactNode {
       data-active-tab={activeTab}
       role="region"
       aria-label="Scene outliner"
-      className="flex h-full min-h-0 w-full flex-col border-r border-border bg-bg-2"
+      className="flex h-full min-h-0 w-full flex-col bg-transparent"
     >
       {/* Header — project name + collapse chevron. */}
       <header

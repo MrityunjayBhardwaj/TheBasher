@@ -47,6 +47,7 @@ import { exportDagJson } from './exportDag';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
+import { CENTER_SIDE_RESERVED } from './layoutIslands';
 import { useLeftSidebarStore } from './stores/leftSidebarStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
@@ -280,7 +281,14 @@ export function FloatingViewportToolbar(): ReactNode {
       role="toolbar"
       aria-orientation="horizontal"
       aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
-      className="no-scrollbar absolute top-4 left-1/2 z-10 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
+      // UX-BACKLOG #2 — the viewport is now full-bleed and the outliner/inspector
+      // float as side islands over it. A toolbar centered on the viewport
+      // midpoint would slide UNDER those islands at narrow widths (its right end
+      // disappeared behind the inspector — observed at 1100px). Cap its width so
+      // it stays in the clear center band between the islands; it still scrolls
+      // horizontally (overflow-x-auto) when the controls exceed that band.
+      style={{ maxWidth: `calc(100% - ${CENTER_SIDE_RESERVED}px)` }}
+      className="no-scrollbar absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
     >
       {TOOLS.map((t) => (
         <ToolButton

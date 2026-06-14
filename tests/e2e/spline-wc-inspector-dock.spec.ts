@@ -35,18 +35,21 @@ test('WC#1 agent is a full-width bottom dock, not a narrow right column', async 
   expect(dockBox.y).toBeGreaterThan(layoutBox.y + layoutBox.height * 0.5);
 });
 
-test('WC#2 inspector owns the full-height right column', async ({ page }) => {
+test('WC#2 inspector is a tall floating island near the right edge', async ({ page }) => {
+  // UX-BACKLOG #2 — the inspector is no longer a docked right column; it floats
+  // as a rounded island over the full-bleed viewport. It still hugs the right
+  // edge (a small island gap of ~12px, not flush) and stays tall.
   const inspector = page.getByTestId('inspector');
   await expect(inspector).toBeVisible();
   const box = await inspector.boundingBox();
   const layoutBox = await page.getByTestId('layout').boundingBox();
   if (!box || !layoutBox) throw new Error('missing boxes');
-  // Right column: inspector's right edge is near the layout's right edge.
-  expect(box.x + box.width).toBeGreaterThan(layoutBox.x + layoutBox.width - 8);
-  // Full-height: it's much taller than the old side-by-side inspector|drawer
-  // split — at least half the layout height (it now spans the whole content row
-  // instead of sharing it with the agent column).
-  expect(box.height).toBeGreaterThan(layoutBox.height * 0.45);
+  // Right edge sits within the island gap of the layout's right edge (floating,
+  // not flush). Revert to a docked full-bleed column → this still holds, but the
+  // float assertion below would fail.
+  expect(box.x + box.width).toBeGreaterThan(layoutBox.x + layoutBox.width - 24);
+  // Tall: still spans a large fraction of the layout height.
+  expect(box.height).toBeGreaterThan(layoutBox.height * 0.4);
 });
 
 test('WC#3 present mode hides the agent dock', async ({ page }) => {
