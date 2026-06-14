@@ -17,14 +17,15 @@
 
 import { expect, test } from './_fixtures';
 
-// The inspector is the 3rd grid column (Spline 3-col): tree | viewport | inspector.
-async function inspectorColumnPx(page: import('@playwright/test').Page): Promise<string> {
+// UX-BACKLOG #2 — the inspector is no longer a grid column; it floats as an
+// absolute island (`inspector-slot`). The collapse falsifier now reads the
+// island's rendered width: 300px expanded, 28px collapsed, 0 in present
+// (display:none). Rounded border-box width via getBoundingClientRect.
+async function inspectorIslandWidth(page: import('@playwright/test').Page): Promise<number> {
   return page.evaluate(() => {
-    const layout = document.querySelector('[data-testid="layout"]') as HTMLElement | null;
-    if (!layout) return '';
-    const cols = getComputedStyle(layout).gridTemplateColumns.split(' ');
-    // 3 columns; index 2 = inspector.
-    return cols[2] ?? '';
+    const el = document.querySelector('[data-testid="inspector-slot"]') as HTMLElement | null;
+    if (!el) return -1;
+    return Math.round(el.getBoundingClientRect().width);
   });
 }
 
@@ -55,8 +56,8 @@ test('#173 inspector starts expanded with a collapse chevron in the header', asy
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('inspector-collapse-toggle')).toBeVisible();
   // Expanded column is the full 300px (Spline Wave C inspector width).
-  const px = await inspectorColumnPx(page);
-  expect(px).toBe('300px');
+  const px = await inspectorIslandWidth(page);
+  expect(px).toBe(300);
 });
 
 test('#173 collapse → 28px chevron strip; expand → restores 300px (Layout consumes the flag)', async ({
@@ -70,13 +71,13 @@ test('#173 collapse → 28px chevron strip; expand → restores 300px (Layout co
   await expect(page.getByTestId('inspector-collapse-toggle')).toHaveCount(0);
   // SIDE B — the falsifier: the Layout grid column actually shrank to 28px.
   // If Layout still hardcoded 300px, this fails even though the flag flipped.
-  expect(await inspectorColumnPx(page)).toBe('28px');
+  expect(await inspectorIslandWidth(page)).toBe(28);
 
   // Expand via the strip chevron.
   await page.getByTestId('inspector-expand-toggle').click();
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('inspector-collapse-toggle')).toBeVisible();
-  expect(await inspectorColumnPx(page)).toBe('300px');
+  expect(await inspectorIslandWidth(page)).toBe(300);
 });
 
 test('#173 collapse state persists across reload', async ({ page }) => {
@@ -90,7 +91,7 @@ test('#173 collapse state persists across reload', async ({ page }) => {
   );
   // Still collapsed after reload (chromeStore persisted to localStorage).
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-collapsed', 'true');
-  expect(await inspectorColumnPx(page)).toBe('28px');
+  expect(await inspectorIslandWidth(page)).toBe(28);
 });
 
 test('#173 Present mode hides the inspector entirely regardless of the flag', async ({ page }) => {
@@ -99,6 +100,6 @@ test('#173 Present mode hides the inspector entirely regardless of the flag', as
   // column included, collapses to 0 independent of the collapse flag.
   await page.getByTestId('top-toolbar-present').click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
-  const px = await inspectorColumnPx(page);
-  expect(px).toBe('0px');
+  const px = await inspectorIslandWidth(page);
+  expect(px).toBe(0);
 });

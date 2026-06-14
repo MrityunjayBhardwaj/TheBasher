@@ -92,3 +92,41 @@ test('#2.4 V35 — collapsing the outliner island keeps its expand toggle reacha
   await page.getByTestId('left-sidebar-expand-toggle').click();
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
 });
+
+// Slice 2 (bottom islands): the agent chat + timeline float as a STACKED
+// bottom-center island group; the viewport is now full-bleed top→bottom.
+test('#2.5 the viewport is full-bleed vertically — no docked bottom rows', async ({ page }) => {
+  const main = await page.getByTestId('viewport-slot').boundingBox();
+  const layout = await page.getByTestId('layout').boundingBox();
+  if (!main || !layout) throw new Error('missing boxes');
+  // The viewport reaches (essentially) the layout's bottom edge. Revert the
+  // agentdock + timeline grid rows → main shrinks well above the bottom → fails.
+  expect(main.y + main.height).toBeGreaterThan(layout.y + layout.height - 8);
+});
+
+test('#2.6 agent chat + timeline are a centered stack — chat ABOVE timeline', async ({ page }) => {
+  const agent = await page.getByTestId('agentdock-slot').boundingBox();
+  const timeline = await page.getByTestId('timeline-slot').boundingBox();
+  const layout = await page.getByTestId('layout').boundingBox();
+  if (!agent || !timeline || !layout) throw new Error('missing boxes');
+  // Both centered on the layout.
+  const layoutCenter = layout.x + layout.width / 2;
+  expect(Math.abs(agent.x + agent.width / 2 - layoutCenter)).toBeLessThan(24);
+  expect(Math.abs(timeline.x + timeline.width / 2 - layoutCenter)).toBeLessThan(24);
+  // Same width (one stack), and the chat sits directly above the timeline.
+  expect(Math.abs(agent.width - timeline.width)).toBeLessThan(2);
+  expect(agent.y + agent.height).toBeLessThanOrEqual(timeline.y + 1);
+});
+
+test('#2.7 present mode hides every floating island', async ({ page }) => {
+  await page.getByTestId('top-toolbar-present').click();
+  await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
+  // Islands stay MOUNTED (mount-once discipline) but display:none → hidden +
+  // removed from the tab order (D-W8-8). Revert present-hide → these are visible.
+  for (const id of ['tree-slot', 'inspector-slot', 'agentdock-slot', 'timeline-slot']) {
+    await expect(page.getByTestId(id)).toBeHidden();
+  }
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
+  await expect(page.getByTestId('tree-slot')).toBeVisible();
+});

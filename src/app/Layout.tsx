@@ -46,6 +46,7 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import {
   BOTTOM_BAND,
+  CENTER_SIDE_RESERVED,
   COLLAPSED_STRIP,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
@@ -99,21 +100,16 @@ export function Layout() {
         gridTemplateColumns: '1fr',
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
-        // floating pill). Two top rows remain: R1 projectTabs + R2 menu. Wave C
-        // inserts the always-on `agentdock` row above the timeline; it is
-        // content-sized (`auto`) — an empty chat collapses to just the input
-        // bar (no reserved void), and a conversation grows it once up to the
-        // message list's own capped height. The timeline row (`auto`) still
-        // holds the always-visible Timebar (Auto-Key indicator) + the drawer
-        // body when revealed. Present collapses every row but the viewport.
-        // (Slice 2 of #2 will float these bottom rows too.)
-        gridTemplateRows: isPresent ? '0 0 1fr 0 0' : '32px auto 1fr auto auto',
+        // floating pill). Two top rows remain: R1 projectTabs + R2 menu.
+        // UX-BACKLOG #2 slice 2 — the agentdock + timeline rows are GONE: the
+        // agent chat + timeline now float as a stacked bottom-center island over
+        // the full-bleed viewport (mounted inside <main>), so the viewport reads
+        // full-bleed top→bottom. Present collapses every row but the viewport.
+        gridTemplateRows: isPresent ? '0 0 1fr' : '32px auto 1fr',
         gridTemplateAreas: `
           "projectTabs"
           "menu"
           "viewport"
-          "agentdock"
-          "timeline"
         `,
       }}
     >
@@ -201,75 +197,83 @@ export function Layout() {
             shadow-xl backdrop-blur-md — V39 over-stage chrome, contrast-matrix
             covered); the inner panels render transparent so the wrapper surface
             shows through. onContextMenu stops here so a right-click on a panel
-            does NOT bubble to <main> and pop the viewport Add menu. Hidden in
-            present mode with the rest of the chrome. */}
-        {!isPresent && (
-          <>
-            <div
-              data-testid="tree-slot"
-              data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
-              onContextMenu={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                left: ISLAND_GAP,
-                top: ISLAND_GAP,
-                bottom: BOTTOM_BAND,
-                width: outlinerIslandWidth,
-              }}
-              className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-            >
-              <LeftSidebar />
-            </div>
-            <div
-              data-testid="inspector-slot"
-              onContextMenu={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                right: ISLAND_GAP,
-                top: ISLAND_GAP,
-                bottom: BOTTOM_BAND,
-                width: inspectorIslandWidth,
-              }}
-              className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-            >
-              <NPanel />
-            </div>
-          </>
-        )}
+            does NOT bubble to <main> and pop the viewport Add menu. In present
+            mode they stay MOUNTED but display:none (mount-once discipline — the
+            panels keep their state; display:none also removes them from the tab
+            order, the D-W8-8 accessibility contract). */}
+        <div
+          data-testid="tree-slot"
+          data-left-sidebar-collapsed={leftSidebarCollapsed ? 'true' : 'false'}
+          onContextMenu={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            left: ISLAND_GAP,
+            top: ISLAND_GAP,
+            bottom: BOTTOM_BAND,
+            width: outlinerIslandWidth,
+            display: isPresent ? 'none' : 'flex',
+          }}
+          className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+        >
+          <LeftSidebar />
+        </div>
+        <div
+          data-testid="inspector-slot"
+          onContextMenu={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            right: ISLAND_GAP,
+            top: ISLAND_GAP,
+            bottom: BOTTOM_BAND,
+            width: inspectorIslandWidth,
+            display: isPresent ? 'none' : 'flex',
+          }}
+          className="z-20 flex flex-col overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+        >
+          <NPanel />
+        </div>
+
+        {/* UX-BACKLOG #2 slice 2 — the agent chat + timeline float as a
+                STACKED bottom-center island group (the user's chosen layout):
+                agent chat on top, timeline (always-visible Timebar + revealable
+                drawer body that expands upward) below it. Bottom-anchored, so
+                the stack grows UP (agent conversation / opened drawer) without
+                touching the side islands. Width-capped (CENTER_SIDE_RESERVED, as
+                the toolbar) and centered, so it stays in the clear center band —
+                the bottom-right orbit gizmo + Persp/Ortho pill sit to its right,
+                untouched. Each surface is its own rounded island (same tokens as
+                the side panels); the inner components render their own bg.
+                onContextMenu stops here too (it overlaps <main>). */}
+        <div
+          onContextMenu={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            bottom: ISLAND_GAP,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: `min(960px, calc(100% - ${CENTER_SIDE_RESERVED}px))`,
+            display: isPresent ? 'none' : 'flex',
+          }}
+          className="z-20 flex flex-col gap-2"
+        >
+          <div
+            data-testid="agentdock-slot"
+            className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          >
+            <AgentDock />
+          </div>
+          {/* The Timebar carries the always-on Auto-Key record indicator
+                  (footgun mitigation — must stay visible); only the drawer BODY
+                  is revealable. Mounted always (collapsed only in present, which
+                  hides the whole stack). */}
+          <div
+            data-testid="timeline-slot"
+            className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          >
+            <TimelineDrawer />
+          </div>
+        </div>
       </main>
-
-      {/* Spline redesign Wave C — the agent's always-on home is now this
-          full-width bottom dock (above the timeline), not the old right column.
-          Present hides it with the rest of the chrome. */}
-      <div
-        style={{
-          gridArea: 'agentdock',
-          display: isPresent ? 'none' : 'flex',
-          flexDirection: 'column',
-          minHeight: 0,
-        }}
-        data-testid="agentdock-slot"
-      >
-        <AgentDock />
-      </div>
-
-      {/* Timeline slot stays ALWAYS mounted/visible (collapsed only in present).
-          We do NOT hide it when the drawer is closed even though the floating
-          pill now carries a reveal: the always-visible Timebar row carries the
-          Auto-Key record indicator (`autokey-dot`/`autokey-toggle`), which is a
-          footgun mitigation DESIGNED to be unmissable + global. Collapsing the
-          slot would hide that indicator and re-open the silent-data-loss footgun
-          it exists to prevent — so the ~39px is load-bearing, not disposable
-          chrome (Chesterton). The pill `floating-toolbar-timeline` reveals the
-          drawer BODY; the always-visible Timebar + its in-row ▾ toggle stay put.
-          (Reclaiming this space would first require relocating the Auto-Key
-          indicator to an always-visible surface — out of W1 scope.) */}
-      <div
-        style={{ gridArea: 'timeline', display: isPresent ? 'none' : 'block' }}
-        data-testid="timeline-slot"
-      >
-        <TimelineDrawer />
-      </div>
     </div>
   );
 }

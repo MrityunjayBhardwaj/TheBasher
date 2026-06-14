@@ -26,7 +26,7 @@ export function AgentDock(): ReactNode {
       data-testid="agent-dock"
       role="region"
       aria-label="Agent"
-      className="flex flex-col border-t border-border bg-bg-2"
+      className="flex flex-col bg-transparent"
     >
       <AgentChat />
     </aside>

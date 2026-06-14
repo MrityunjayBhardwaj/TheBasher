@@ -14,9 +14,22 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    Live Playwright intel proved it is **transform-independent** (identical cones across identity /
    rot180 / mirror-Y / neg-scale on a real GltfChild) → kills every H89 transform hypothesis.
    Decision: **accept the flip** (it's standard, Blender's Move gizmo is similar). See [[H89]].
-2. ☐ **Floating-island panels (Spline-style).** Make every panel a floating island — outliner,
-   inspector, **timeline, and chat box** — detached rounded surfaces over the viewport, not
-   docked grid bands.
+2. ☑ **Floating-island panels (Spline-style) — DONE (2026-06-14).** Every chrome panel is now a
+   detached, rounded island floating OVER a full-bleed viewport, not a docked grid band. Two slices:
+   _(a) side islands_ — the `tree | viewport | inspector` grid collapsed to one full-bleed column;
+   the outliner (left) + inspector (right) mount as absolute rounded islands inside `<main>`,
+   TOP-anchored and stopping short of a reserved `BOTTOM_BAND` so the already-floating bottom-right
+   orbit gizmo + Persp/Ortho stay clear (no widget has to dodge the inspector — the H91/V45
+   overlap trap). _(b) bottom islands_ — the agentdock + timeline grid rows are gone; the agent chat
+   + timeline float as a **stacked bottom-center** island group (chat above, timeline below;
+   user-chosen arrangement), so the viewport reads full-bleed top→bottom. New `src/app/layoutIslands.ts`
+   is the single source of truth for island geometry. Island wrappers reuse the FloatingViewportToolbar
+   surface tokens (rounded-2xl border bg-bg-2/95 shadow-xl backdrop-blur-md — V39/contrast-matrix
+   covered); inner panels render transparent. The toolbar pill (centered over the full-bleed viewport)
+   is width-capped (`CENTER_SIDE_RESERVED`) so it can't slide under a side island; right-click on a
+   panel stops propagation so it no longer pops the viewport Add menu; the orbit hint moved above the
+   bottom stack. Fixed-position, collapsible (V35), non-draggable. Gates: vitest 1519 / tsc 0 /
+   eslint 0 / prettier / e2e (new `ux2-floating-islands` 7 + updated spline-wc/wf geometry).
 3. ☑ **Remove the STUB/LIVE toggle** (top-right corner). _(ComfyStatusIndicator unmounted from ProjectTabs.)_
 4. ☑ **Remove Save + Projects from the top-right corner.** Move the projects list under **File**.
    _(Save → File ▸ Save / Cmd+S; projects → File ▸ Switch Project submenu.)_

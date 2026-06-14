@@ -56,9 +56,11 @@ test('WF#5 an empty chat collapses the dock to a slim bar — no reserved void',
   expect(box.height).toBeLessThan(110);
   // The message list is not even mounted when there's nothing to show.
   await expect(page.getByTestId('agent-messages')).toHaveCount(0);
-  // (b) Flush above the timeline: reverting the content-sized grid row back to
-  // a fixed 190px leaves a gap between the slim bar and the timeline → fails.
+  // (b) Stacked directly above the timeline: UX-BACKLOG #2 slice 2 floats the
+  // agent + timeline as a stacked bottom-center island group with a small ~8px
+  // island gap between them (no large reserved void). Re-adding a fixed tall
+  // dock height or a big gap → this fails.
   const timeline = await page.getByTestId('timeline-slot').boundingBox();
   if (!timeline) throw new Error('missing timeline box');
-  expect(Math.abs(box.y + box.height - timeline.y)).toBeLessThan(8);
+  expect(Math.abs(box.y + box.height - timeline.y)).toBeLessThanOrEqual(12);
 });

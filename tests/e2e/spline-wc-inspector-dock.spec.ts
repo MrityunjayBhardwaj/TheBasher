@@ -21,7 +21,9 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible();
 });
 
-test('WC#1 agent is a full-width bottom dock, not a narrow right column', async ({ page }) => {
+test('WC#1 agent is a bottom-CENTER floating island, not a narrow right column', async ({
+  page,
+}) => {
   // The old right-column drawer no longer exists.
   await expect(page.getByTestId('right-drawer')).toHaveCount(0);
   const dock = page.getByTestId('agent-dock');
@@ -29,9 +31,17 @@ test('WC#1 agent is a full-width bottom dock, not a narrow right column', async 
   const dockBox = await dock.boundingBox();
   const layoutBox = await page.getByTestId('layout').boundingBox();
   if (!dockBox || !layoutBox) throw new Error('missing boxes');
-  // Full-width: spans far more than the old 280px column (≥60% of the layout).
-  expect(dockBox.width).toBeGreaterThan(layoutBox.width * 0.6);
-  // Bottom: the dock sits in the lower portion of the layout.
+  // UX-BACKLOG #2 slice 2 — the agent is now a CENTERED floating island (capped
+  // width), not the old full-width bottom dock and not the older 280px right
+  // column. Wider than the 280px column it replaced, but well short of full
+  // width (it leaves the side islands clear).
+  expect(dockBox.width).toBeGreaterThan(320);
+  expect(dockBox.width).toBeLessThan(layoutBox.width * 0.78);
+  // Horizontally centered on the layout.
+  const dockCenter = dockBox.x + dockBox.width / 2;
+  const layoutCenter = layoutBox.x + layoutBox.width / 2;
+  expect(Math.abs(dockCenter - layoutCenter)).toBeLessThan(24);
+  // Bottom: the island sits in the lower portion of the layout.
   expect(dockBox.y).toBeGreaterThan(layoutBox.y + layoutBox.height * 0.5);
 });
 
