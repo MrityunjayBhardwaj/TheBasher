@@ -118,6 +118,10 @@ export function EditableCurve({
     axis: number;
     pointerId: number;
   } | null>(null);
+  // The value domain captured at drag start. While a drag is live the domain is
+  // FROZEN to this, so dragging a key past the old extent doesn't rescale the
+  // whole curve under the cursor (the mid-drag wobble). Cleared on release.
+  const frozenDomainRef = useRef<Domain | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -226,13 +230,20 @@ export function EditableCurve({
   // Time axis goes through the SHARED view, so the curve and the dopesheet show
   // the same frame window (seamless tab switch). No inset (the curve has no
   // terminal-diamond clipping concern).
+  // Frozen domain wins while a drag is live (no mid-drag rescale wobble).
+  const activeDomain = draft && frozenDomainRef.current ? frozenDomainRef.current : domain;
+
   const timeToX = (t: number) => frameToX(t * FPS, totalFrames, view, plotX0, plotW, 0);
   const xToTime = (x: number) => xToFrame(x, totalFrames, view, plotX0, plotW, 0) / FPS;
   const valueToY = (v: number) =>
-    plotY1 - PAD_Y - ((v - domain.min) / (domain.max - domain.min)) * (plotY1 - plotY0 - 2 * PAD_Y);
+    plotY1 -
+    PAD_Y -
+    ((v - activeDomain.min) / (activeDomain.max - activeDomain.min)) *
+      (plotY1 - plotY0 - 2 * PAD_Y);
   const yToValue = (y: number) =>
-    domain.min +
-    ((plotY1 - PAD_Y - y) / Math.max(plotY1 - plotY0 - 2 * PAD_Y, 1)) * (domain.max - domain.min);
+    activeDomain.min +
+    ((plotY1 - PAD_Y - y) / Math.max(plotY1 - plotY0 - 2 * PAD_Y, 1)) *
+      (activeDomain.max - activeDomain.min);
 
   // Visible frame window (shared view) → seconds, for sampling + ruler.
   const { startFrame, endFrame } = visibleFrames(totalFrames, view);
@@ -253,7 +264,7 @@ export function EditableCurve({
       return pts.join(' ');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, axes, isVec, dur, domain, w, h, view]);
+  }, [keys, axes, isVec, dur, activeDomain, w, h, view]);
 
   // Ruler ticks across the VISIBLE window, adaptive to its span.
   const spanFrames = Math.max(endFrame - startFrame, 1);
@@ -261,7 +272,7 @@ export function EditableCurve({
   const frameTicks: number[] = [];
   for (let f = Math.ceil(startFrame / frameStep) * frameStep; f <= endFrame; f += frameStep)
     frameTicks.push(f);
-  const valueTicks = niceTicks(domain.min, domain.max, 4);
+  const valueTicks = niceTicks(activeDomain.min, activeDomain.max, 4);
 
   function commit(next: RawKey[]) {
     useDagStore
@@ -284,6 +295,10 @@ export function EditableCurve({
     e.stopPropagation();
     (e.target as Element).setPointerCapture?.(e.pointerId);
     dragRef.current = { kind, index, axis, pointerId: e.pointerId };
+    // Freeze the value domain to its PRE-drag value (the current `domain`,
+    // computed from the unedited keyframes) so the curve doesn't rescale as
+    // the dragged key/handle pushes past the old extent.
+    frozenDomainRef.current = domain;
     setDraft(keyframes.map((k) => ({ ...k })));
     setActiveKeyframe({ channelId, time: keyframes[index].time });
   }
@@ -352,6 +367,7 @@ export function EditableCurve({
       commit(draft.slice().sort((a, b) => a.time - b.time));
     }
     dragRef.current = null;
+    frozenDomainRef.current = null; // unfreeze — domain re-fits to the committed keys
     setDraft(null);
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   }
@@ -371,6 +387,17 @@ export function EditableCurve({
       <div className="pointer-events-none absolute left-12 top-1 z-10 text-[10px] text-mute">
         {channelType.replace('KeyframeChannel', '')} — {paramPath || '(no path)'}
       </div>
+      {activeIndex >= 0 && (
+        <div
+          data-testid="curve-key-readout"
+          className="pointer-events-none absolute right-1 top-0.5 z-10 rounded bg-bg/85 px-1 font-mono text-[10px] text-fg"
+        >
+          f{Math.round(keys[activeIndex].time * FPS)} ·{' '}
+          {isVec
+            ? (keys[activeIndex].value as readonly number[]).map((v) => formatValue(v)).join(', ')
+            : formatValue(keys[activeIndex].value as number)}
+        </div>
+      )}
       <svg
         className="absolute inset-0"
         width={w}
