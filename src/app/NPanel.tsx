@@ -43,6 +43,7 @@ import {
   MATERIAL_MAP_SLOTS,
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
+import { CLEARED_MAP, isClearedMap } from './material/gltfMapOverlay';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
 import type { BakedTextureRef, InlineMaterialSpec } from '../nodes/types';
@@ -1325,6 +1326,19 @@ function GltfMaterialEditor({
       `edit material slot ${slot} ${lobe}.${key}`,
     );
   };
+  // #178 S5 — edit-layer map write: rebuild the whole `materials` array setting
+  // this slot's `maps.<mapSlot>` (null = inherit imported, CLEARED_MAP = remove,
+  // a ref = replace). Same whole-array replace as the scalar `commit`.
+  const commitMap = (mapSlot: MaterialMapSlot, value: BakedTextureRef | null) => {
+    const cur = materials[slot] as unknown as { maps?: Record<string, unknown> };
+    const nextMat = { ...cur, maps: { ...(cur.maps ?? {}), [mapSlot]: value } };
+    const next = materials.map((m, i) => (i === slot ? nextMat : m));
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'materials', value: next },
+      'user',
+      `edit material slot ${slot} maps.${mapSlot}`,
+    );
+  };
   return (
     <div data-testid={`inspector-gltf-material-editor-${nodeId}`} className="flex flex-col">
       {materials.length > 1 ? (
@@ -1387,7 +1401,112 @@ function GltfMaterialEditor({
           })}
         </div>
       ))}
+      {/* #178 S5 — edit-layer texture maps. Each row shows this slot's edit state
+          (imported / replaced / cleared) + lets the director replace (pick a
+          file → bake → ref), clear (remove the imported texture), or revert to
+          the imported texture (null). The renderer's overlay applies it live. */}
+      <div className="flex flex-col">
+        <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+          Maps
+        </div>
+        {MATERIAL_MAP_SLOTS.map((mapSlot) => {
+          const maps = (mat.maps ?? {}) as Record<string, BakedTextureRef | null | undefined>;
+          return (
+            <GltfMapRow
+              key={mapSlot}
+              testid={`${nodeId}-${slot}-${mapSlot}`}
+              slot={mapSlot}
+              value={maps[mapSlot] ?? null}
+              onSet={(next) => commitMap(mapSlot, next)}
+            />
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+// #178 S5 — one edit-layer texture-map row for a glTF material. Three states:
+// null = inherit the imported texture; CLEARED_MAP = removed; a BakedTextureRef =
+// replaced. "replace" bakes a picked file (attachMapFromFile → OPFS) and sets the
+// ref; "clear" sets the sentinel; "revert" sets null. A decode/persist failure
+// surfaces via assetErrorStore (never a silent drop). Non-animated (maps are D-04).
+function GltfMapRow({
+  testid,
+  slot,
+  value,
+  onSet,
+}: {
+  testid: string;
+  slot: MaterialMapSlot;
+  value: BakedTextureRef | null;
+  onSet: (next: BakedTextureRef | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const cleared = isClearedMap(value);
+  const state = value == null ? 'imported' : cleared ? 'cleared' : 'replaced';
+  const onPick = async (file: File) => {
+    try {
+      const storage = await getStorage();
+      const ref = await attachMapFromFile(storage, file, slot);
+      onSet(ref);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      useAssetErrorStore.getState().report(`gltfmap:${slot}`, `${slot} map failed: ${msg}`);
+    }
+  };
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{slot}</span>
+      <span className="flex items-center gap-1">
+        <span
+          className="font-mono text-[10px] text-fg/40"
+          data-testid={`inspector-gltfmap-state-${testid}`}
+        >
+          {state === 'replaced' ? '● replaced' : state === 'cleared' ? '— cleared' : 'imported'}
+        </span>
+        <button
+          type="button"
+          data-testid={`inspector-gltfmap-pick-${testid}`}
+          onClick={() => inputRef.current?.click()}
+          className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {state === 'replaced' ? 'replace' : 'pick'}
+        </button>
+        {state === 'imported' ? (
+          <button
+            type="button"
+            data-testid={`inspector-gltfmap-clear-${testid}`}
+            onClick={() => onSet(CLEARED_MAP)}
+            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            clear
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid={`inspector-gltfmap-revert-${testid}`}
+            onClick={() => onSet(null)}
+            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            revert
+          </button>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          aria-label={`${slot} map file`}
+          data-testid={`inspector-gltfmap-file-${testid}`}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void onPick(f);
+            e.target.value = '';
+          }}
+        />
+      </span>
+    </label>
   );
 }
 
