@@ -32,6 +32,8 @@ import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRe
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
 import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
 import { useGltfMaterialStore } from '../app/asset/gltfMaterialStore';
+import { applyEditedMaps, hasMapEdits } from '../app/material/gltfMapOverlay';
+import { getStorage } from '../app/boot';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -1343,6 +1345,13 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // (V20/H36/H45 single-writer landmine). Cloning + reassigning is the guard.
   useEffect(() => {
     const wireframe = useViewportStore.getState().shading === 'wireframe';
+    // #178 S5 — meshes whose GltfChild material carries EDIT-LAYER texture-map
+    // edits (a replaced or cleared slot). Collected during the synchronous
+    // traverse; the baked textures are loaded + applied to the FINAL assigned
+    // material asynchronously after the traverse (the load can't run inline). The
+    // `cancelled` flag drops a stale load when the effect re-runs first.
+    const mapWork: { mesh: THREE.Mesh; maps: InlineMaterialSpec['maps'] }[] = [];
+    let cancelled = false;
     // #131 (D-05) — the coarse flatten / clay path. When the override asks to
     // ignore the source material, build a FRESH MeshStandardMaterial from the 7
     // scalars and drop the source's maps + subclass BY INTENT (the honest,
@@ -1432,6 +1441,9 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         const irs = depNodeMap[childId]?.params?.materials as InlineMaterialSpec[] | undefined;
         const ir = irs?.[local];
         if (ir) dagBase = overlayDagMaterial(src, ir);
+        // #178 S5 — defer this slot's edit-layer map application (replace/clear)
+        // to the async pass below; it lands on the FINAL material `m.material`.
+        if (ir && hasMapEdits(ir.maps)) mapWork.push({ mesh: m, maps: ir.maps });
       }
       // The override applies to THIS slot iff it exists AND either it is a
       // whole-child override (slotIndex undefined) or it addresses this exact
@@ -1450,8 +1462,30 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       const make = flatten ? () => clay(override as MaterialValue) : tint;
       m.material = Array.isArray(dagBase) ? dagBase.map(make) : make(dagBase);
     });
+    // #178 S5 — apply edit-layer texture maps after the synchronous traverse has
+    // assigned every final material. Loads happen off the React cycle; the
+    // frameloop ("always") repaints once `needsUpdate` is set. `cancelled` (set
+    // by the cleanup below) drops a stale load when the effect re-runs first.
+    if (mapWork.length > 0) {
+      void (async () => {
+        const storage = await getStorage();
+        for (const w of mapWork) {
+          if (cancelled) return;
+          if (Array.isArray(w.mesh.material)) continue;
+          try {
+            await applyEditedMaps(w.mesh.material, w.maps, storage, () => cancelled);
+          } catch {
+            // A missing/corrupt baked texture must not break the whole asset —
+            // the slot keeps its imported texture (the inherit default).
+          }
+        }
+      })();
+    }
     // depNodeMap is a dep: editing a GltfChild's `materials` (S4) re-runs this
     // effect so the new OpenPBR scalars re-overlay onto the clone.
+    return () => {
+      cancelled = true;
+    };
   }, [cloned, override, depNodeMap]);
   // Wireframe pass — flip every mesh material on the cloned scene. Runs
   // independent of override so toggling shading after the override is

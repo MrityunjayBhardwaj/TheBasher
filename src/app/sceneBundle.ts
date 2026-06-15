@@ -121,6 +121,10 @@ function isBakedGeometryDescriptor(
 function isBakedTextureRef(o: Record<string, unknown>): o is { hash: string } {
   return (
     typeof o.hash === 'string' &&
+    // #178 S5 — an EMPTY hash is the glTF "cleared map" sentinel (CLEARED_MAP):
+    // it references no OPFS file, so it is NOT a collectable asset (it round-trips
+    // as plain data in the node params, like null).
+    o.hash !== '' &&
     typeof o.flipY === 'boolean' &&
     (o.colorSpace === 'srgb' || o.colorSpace === 'srgb-linear' || o.colorSpace === 'no-colorspace')
   );
