@@ -112,35 +112,18 @@ export function isUniformColor(buf: Uint8Array | Uint8ClampedArray): boolean {
   return true;
 }
 
-/** Encode an (already top-down) RGBA buffer as a PNG Blob via a 2D canvas. */
-async function rgbaToPngBlob(
-  data: Uint8ClampedArray,
-  width: number,
-  height: number,
-): Promise<Blob> {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('renderToImage: 2D context unavailable for PNG encode');
-  // Build an ArrayBuffer-backed ImageData then copy — sidesteps the TS 5.7
-  // typed-array-generics complaint about ArrayBufferLike vs ArrayBuffer.
-  const img = new ImageData(width, height);
-  img.data.set(data);
-  ctx.putImageData(img, 0, 0);
-  return await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))),
-      'image/png',
-    );
-  });
-}
-
 /**
  * IMPURE — render the DAG scene offscreen through the production camera and
- * return a PNG Blob. Always restores renderer state + chrome visibility.
+ * return a 2D canvas holding the (top-down) RGBA pixels. The SHARED render core:
+ * the still PNG (#168) and the animation render (#189) both consume this ONE
+ * path, so the still and every animation frame have identical production parity
+ * (V37 chrome-exclusion / V47 env / V51 DoF). Always restores renderer state +
+ * chrome visibility (the GL render happens inside a finally; the canvas is built
+ * from the already-captured pixels afterward).
  */
-export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<Blob> {
+export async function renderSceneToImageCanvas(
+  opts: RenderToImageOptions,
+): Promise<HTMLCanvasElement> {
   const { gl, scene, pose, postFx } = opts;
   // Clamp the resolution to the GPU's max texture size, preserving aspect — a
   // user can set width/height to anything ≥1 (the zod bound), and an oversized
@@ -166,6 +149,7 @@ export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<
     }
   });
 
+  let flipped: Uint8ClampedArray;
   try {
     // DoF on → go through the postprocessing EffectComposer so the bokeh
     // matches the live viewport (V37). DoF off → the fast manual MSAA path,
@@ -173,11 +157,37 @@ export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<
     const buf = opts.dof
       ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof)
       : renderViaManual(gl, scene, camera, width, height, postFx);
-    const flipped = flipRowsY(buf, width, height);
-    return await rgbaToPngBlob(flipped, width, height);
+    flipped = flipRowsY(buf, width, height);
   } finally {
     for (const o of hidden) o.visible = true;
   }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('renderToImage: 2D context unavailable for image encode');
+  // Build an ArrayBuffer-backed ImageData then copy — sidesteps the TS 5.7
+  // typed-array-generics complaint about ArrayBufferLike vs ArrayBuffer.
+  const img = new ImageData(width, height);
+  img.data.set(flipped);
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+/**
+ * IMPURE — render the DAG scene offscreen through the production camera and
+ * return a PNG Blob. A thin encode over {@link renderSceneToImageCanvas}, so
+ * #168 output is byte-identical to before the canvas extraction.
+ */
+export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<Blob> {
+  const canvas = await renderSceneToImageCanvas(opts);
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))),
+      'image/png',
+    );
+  });
 }
 
 /** Manual MSAA + tone-map render into an offscreen sRGB target; returns the
