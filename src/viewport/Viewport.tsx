@@ -247,7 +247,12 @@ export function Viewport() {
           {/* Blender-style axis-orientation widget in the bottom-right.
               Click an axis label to snap the camera to that view. */}
           {axisWidgetVisible && !isNarrow ? (
-            <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+            // renderPriority={2} — overlay ONLY (clears depth, keeps color). The
+            // default (1) makes drei's internal <Hud> re-render the raw main
+            // scene every frame, discarding PostFx's beauty pass (ACES / SMAA /
+            // DoF). At 2 it runs AFTER PostFx's composer (priority 1), so the
+            // gizmo composites on top of the post-processed frame.
+            <GizmoHelper alignment="bottom-right" margin={[80, 80]} renderPriority={2}>
               <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
             </GizmoHelper>
           ) : null}

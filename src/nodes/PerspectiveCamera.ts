@@ -10,6 +10,14 @@ export const PerspectiveCameraParams = z.object({
   sensorSize: z.number().positive().default(36),
   near: z.number().positive().default(0.1),
   far: z.number().positive().default(1000),
+  // Depth of field (UX #12 slice 2). All DEFAULTED so pre-DoF projects parse
+  // (dofEnabled=false → no behavior change). focusDistance is in world units;
+  // fStop is the aperture f-number (lower = shallower DoF / more bokeh). The
+  // CoC is derived from these + the lens (cameraDof.ts) and feeds the live
+  // viewport AND the offscreen render identically.
+  dofEnabled: z.boolean().default(false),
+  focusDistance: z.number().positive().default(5),
+  fStop: z.number().positive().default(2.8),
   position: z.tuple([z.number(), z.number(), z.number()]),
   lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
 });

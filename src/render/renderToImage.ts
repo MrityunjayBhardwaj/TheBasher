@@ -28,7 +28,17 @@
 // issue #168; hetvabhasa H68 (preserve-drawing-buffer silent-blank).
 
 import * as THREE from 'three';
+import {
+  DepthOfFieldEffect,
+  EffectComposer,
+  EffectPass,
+  RenderPass,
+  SMAAEffect,
+  ToneMappingEffect,
+  ToneMappingMode,
+} from 'postprocessing';
 import type { CameraPose } from '../app/activeCamera';
+import type { DofEffectSettings } from '../app/cameraDof';
 import type { PostFxConfig } from '../nodes/types';
 
 export interface RenderToImageOptions {
@@ -38,6 +48,12 @@ export interface RenderToImageOptions {
   width: number;
   height: number;
   postFx: PostFxConfig;
+  /** Active camera depth of field (UX #12), or null/undefined when off. When
+   *  present, the still is rendered through a postprocessing EffectComposer
+   *  (DepthOfField + SMAA + ToneMapping) so its bokeh matches the live viewport
+   *  exactly (V37 parity); when absent, the fast manual MSAA path is used
+   *  unchanged (so non-DoF renders — incl. #168 — are byte-for-byte as before). */
+  dof?: DofEffectSettings | null;
 }
 
 /** PURE — build the production render camera from a camera-node pose at the
@@ -150,15 +166,37 @@ export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<
     }
   });
 
-  const samples = postFx.smaa ? 4 : 0;
+  try {
+    // DoF on → go through the postprocessing EffectComposer so the bokeh
+    // matches the live viewport (V37). DoF off → the fast manual MSAA path,
+    // unchanged (non-DoF renders, incl. #168, are byte-for-byte as before).
+    const buf = opts.dof
+      ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof)
+      : renderViaManual(gl, scene, camera, width, height, postFx);
+    const flipped = flipRowsY(buf, width, height);
+    return await rgbaToPngBlob(flipped, width, height);
+  } finally {
+    for (const o of hidden) o.visible = true;
+  }
+}
+
+/** Manual MSAA + tone-map render into an offscreen sRGB target; returns the
+ *  bottom-up RGBA buffer. Restores renderer state in a finally. */
+function renderViaManual(
+  gl: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  width: number,
+  height: number,
+  postFx: PostFxConfig,
+): Uint8Array {
   const target = new THREE.WebGLRenderTarget(width, height, {
-    samples,
+    samples: postFx.smaa ? 4 : 0,
     colorSpace: THREE.SRGBColorSpace,
     minFilter: THREE.LinearFilter,
     magFilter: THREE.LinearFilter,
     depthBuffer: true,
   });
-
   const prevTarget = gl.getRenderTarget();
   const prevToneMapping = gl.toneMapping;
   const prevExposure = gl.toneMappingExposure;
@@ -170,13 +208,83 @@ export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<
     gl.render(scene, camera); // auto-resolves MSAA → readable texture (WebGLRenderer.js:1273)
     const buf = new Uint8Array(width * height * 4);
     gl.readRenderTargetPixels(target, 0, 0, width, height, buf);
-    const flipped = flipRowsY(buf, width, height);
-    return await rgbaToPngBlob(flipped, width, height);
+    return buf;
   } finally {
     gl.setRenderTarget(prevTarget);
     gl.toneMapping = prevToneMapping;
     gl.toneMappingExposure = prevExposure;
     target.dispose();
-    for (const o of hidden) o.visible = true;
+  }
+}
+
+/** DoF render via a postprocessing EffectComposer: RenderPass → EffectPass
+ *  (DepthOfField + SMAA + ToneMapping), into the composer's HalfFloat output
+ *  buffer (autoRenderToScreen off). The DepthOfFieldEffect is built from the
+ *  SAME settings the live <DepthOfField> uses (cameraDof.ts) so the bokeh
+ *  matches. Returns the bottom-up RGBA buffer; restores renderer target + tone
+ *  mapping (the composer drives tone-mapping via the effect, not gl.toneMapping)
+ *  and disposes everything in a finally. */
+function renderViaComposer(
+  gl: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  width: number,
+  height: number,
+  postFx: PostFxConfig,
+  dof: DofEffectSettings,
+): Uint8Array {
+  // 8-bit sRGB buffers (UnsignedByte) so the final outputBuffer reads back
+  // cleanly as Uint8 — matches the manual path's 8-bit sRGB target. (HalfFloat
+  // intermediates would carry HDR further before ACES, but can't be read back
+  // as Uint8; the bokeh — the thing this path exists for — is identical, and a
+  // mild highlight-clamp divergence mirrors the documented SMAA→MSAA one.)
+  const composer = new EffectComposer(gl, {
+    multisampling: postFx.smaa ? 4 : 0,
+  });
+  composer.autoRenderToScreen = false; // keep the result in composer.outputBuffer
+  composer.setSize(width, height);
+
+  const dofEffect = new DepthOfFieldEffect(camera, {
+    worldFocusDistance: dof.focusDistance,
+    worldFocusRange: dof.focusRange,
+    bokehScale: dof.bokehScale,
+  });
+  const effects = [dofEffect];
+  let smaa: SMAAEffect | undefined;
+  if (postFx.smaa) {
+    smaa = new SMAAEffect();
+    effects.push(smaa);
+  }
+  const tonemap = new ToneMappingEffect({
+    mode: postFx.tonemap === 'ACES' ? ToneMappingMode.ACES_FILMIC : ToneMappingMode.LINEAR,
+  });
+  effects.push(tonemap);
+
+  const renderPass = new RenderPass(scene, camera);
+  const effectPass = new EffectPass(camera, ...effects);
+  composer.addPass(renderPass);
+  composer.addPass(effectPass);
+
+  const prevTarget = gl.getRenderTarget();
+  const prevToneMapping = gl.toneMapping;
+  try {
+    // The composer applies tone-mapping via the ToneMappingEffect, so the
+    // renderer itself must stay neutral (else it double-tonemaps).
+    gl.toneMapping = THREE.NoToneMapping;
+    composer.render();
+    // autoRenderToScreen=false leaves the final (tone-mapped, sRGB-encoded)
+    // result in composer.outputBuffer; read it straight as 8-bit RGBA.
+    const buf = new Uint8Array(width * height * 4);
+    gl.readRenderTargetPixels(composer.outputBuffer, 0, 0, width, height, buf);
+    return buf;
+  } finally {
+    gl.setRenderTarget(prevTarget);
+    gl.toneMapping = prevToneMapping;
+    composer.dispose();
+    dofEffect.dispose();
+    smaa?.dispose();
+    tonemap.dispose();
+    renderPass.dispose();
+    effectPass.dispose();
   }
 }

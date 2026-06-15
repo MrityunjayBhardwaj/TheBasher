@@ -44,6 +44,7 @@ import { useViewportStore } from '../app/stores/viewportStore';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera';
+import { resolveCameraDof } from '../app/cameraDof';
 import { degVec3ToRad } from './rotation';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
@@ -164,6 +165,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
     .map((n) => n.id);
   const activeCameraId = selectActiveCameraNode(state)?.id ?? null;
+  // UX #12 — the active camera's depth-of-field, resolved through the SAME pure
+  // helper the offscreen still uses (cameraDof.ts) so the live bokeh matches the
+  // rendered bokeh. null when DoF is off → PostFx mounts no DepthOfField.
+  const activeDof = resolveCameraDof(activeCameraId ? state.nodes[activeCameraId] : null);
 
   return (
     <>
@@ -219,7 +224,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
       <DiffOverlay />
-      <PostFx config={value.postFx} />
+      <PostFx config={value.postFx} dof={activeDof} />
     </>
   );
 }

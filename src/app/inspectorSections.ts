@@ -164,7 +164,10 @@ export function paramToSection(
       paramPath === 'sensorSize' ||
       paramPath === 'near' ||
       paramPath === 'far' ||
-      paramPath === 'zoom')
+      paramPath === 'zoom' ||
+      paramPath === 'dofEnabled' ||
+      paramPath === 'focusDistance' ||
+      paramPath === 'fStop')
   ) {
     return 'camera';
   }

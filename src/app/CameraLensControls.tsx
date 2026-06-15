@@ -42,8 +42,15 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
     near?: number;
     far?: number;
     zoom?: number;
+    dofEnabled?: boolean;
+    focusDistance?: number;
+    fStop?: number;
   };
   const isOrtho = node.type === 'OrthographicCamera';
+
+  const dofEnabled = params.dofEnabled ?? false;
+  const focusDistance = params.focusDistance ?? 5;
+  const fStop = params.fStop ?? 2.8;
 
   const near = params.near ?? 0.1;
   const far = params.far ?? 1000;
@@ -139,6 +146,57 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
               {round(fov)}°
             </span>
           </div>
+
+          {/* Depth of field — real bokeh in the viewport AND the still render
+              (cameraDof.ts derives the CoC, V34/V37 parity). */}
+          <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+            <span className={LABEL}>depth of field</span>
+            <input
+              type="checkbox"
+              checked={dofEnabled}
+              data-testid={`inspector-camera-dof-${nodeId}`}
+              onChange={(e) => setParam('dofEnabled', e.target.checked, 'toggle depth of field')}
+              className="h-3.5 w-3.5 accent-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+          </label>
+          {dofEnabled ? (
+            <>
+              <label className={ROW}>
+                <span className={LABEL}>focus distance</span>
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  value={focusDistance}
+                  data-testid={`inspector-camera-focus-${nodeId}`}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n > 0)
+                      setParam('focusDistance', n, 'set focus distance');
+                  }}
+                  className={NUM}
+                />
+              </label>
+              <label className={ROW}>
+                <span className={LABEL}>aperture f-stop</span>
+                <span className="flex items-center gap-1">
+                  <span className="text-[10px] text-fg/40">f/</span>
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0.1}
+                    value={fStop}
+                    data-testid={`inspector-camera-fstop-${nodeId}`}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n) && n > 0) setParam('fStop', n, 'set aperture f-stop');
+                    }}
+                    className={NUM}
+                  />
+                </span>
+              </label>
+            </>
+          ) : null}
         </>
       )}
 

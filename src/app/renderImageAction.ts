@@ -14,6 +14,7 @@
 // REF: issue #168; THESIS.md §11; activeCamera.ts (#165); renderToImage.ts.
 
 import { cameraPoseFromNode, DEFAULT_CAMERA_POSE, selectActiveCameraNode } from './activeCamera';
+import { resolveCameraDof } from './cameraDof';
 import { useDagStore } from '../core/dag/store';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
@@ -78,8 +79,13 @@ export async function renderActiveProjectBlob(): Promise<{
     postFx = value.postFx ?? postFx;
   }
 
-  const pose = cameraPoseFromNode(selectActiveCameraNode(state)) ?? DEFAULT_CAMERA_POSE;
-  const blob = await renderSceneToPngBlob({ gl, scene, pose, width, height, postFx });
+  const activeCamera = selectActiveCameraNode(state);
+  const pose = cameraPoseFromNode(activeCamera) ?? DEFAULT_CAMERA_POSE;
+  // UX #12 — depth of field, resolved through the SAME pure helper the live
+  // viewport uses (cameraDof.ts) so the still's bokeh matches the screen. null
+  // when off → the fast manual render path.
+  const dof = resolveCameraDof(activeCamera);
+  const blob = await renderSceneToPngBlob({ gl, scene, pose, width, height, postFx, dof });
   return { blob, width, height };
 }
 
