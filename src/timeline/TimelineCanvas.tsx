@@ -453,6 +453,12 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // the next tick after a commit restores cleanly under the stale ghost.
   const lastGhostXRef = useRef<number>(-1);
 
+  // Ruler-scrub gesture: pointer-down in the frame ruler band scrubs time
+  // (the playhead follows seconds via setTime — the timeStore chokepoint that
+  // also mirrors currentFrameRef). A SIBLING of dragRef: a ruler scrub never
+  // touches the DAG, only timeStore. `true` while a scrub pointer is captured.
+  const scrubbingRef = useRef(false);
+
   // P7.12 B2 — when a GltfChild (imported bone) is selected, append its
   // read-only clip rows so its embedded animation is visible in the dopesheet
   // without a bake. Suppressed once the bone is baked (FLAG-3 single-row-set).
@@ -871,6 +877,16 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     return xToSeconds(localX, durationSeconds, trackWidth, DIAMOND_PX);
   }
 
+  /** Ruler x → seconds — the INVERSE of the playhead's secondsToX (NOT the
+   *  inset diamond inverse): a ruler scrub drives the playhead, which the rAF
+   *  loop positions with secondsToX (no inset). Clamped to [0, duration]. */
+  function rulerXToSeconds(clientX: number, box: DOMRect): number {
+    const trackWidth = Math.max(box.width - LABEL_GUTTER_PX, 1);
+    const rel = clientX - box.left - LABEL_GUTTER_PX;
+    const clamped = rel < 0 ? 0 : rel > trackWidth ? trackWidth : rel;
+    return (clamped / trackWidth) * durationSeconds;
+  }
+
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -878,6 +894,15 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     const px = e.clientX - box.left;
     const py = e.clientY - box.top;
     const trackWidth = Math.max(box.width - LABEL_GUTTER_PX, 0);
+
+    // Ruler-band click/drag → SCRUB time (reze's col-resize scrub). Takes
+    // priority over diamond hit-testing (the ruler sits above the rows).
+    if (py <= RULER_H && px >= LABEL_GUTTER_PX) {
+      scrubbingRef.current = true;
+      useTimeStore.getState().setTime(rulerXToSeconds(e.clientX, box));
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
 
     // Hit-test every row's every keyframe with the SAME geometry +
     // gutter offset paintStaticLayer:285-293 uses (do NOT re-derive a
@@ -955,6 +980,14 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    // Ruler scrub: drive time as the cursor moves. setTime is the chokepoint
+    // that also mirrors currentFrameRef, so the rAF playhead follows.
+    if (scrubbingRef.current) {
+      const canvas = canvasRef.current;
+      if (canvas)
+        useTimeStore.getState().setTime(rulerXToSeconds(e.clientX, canvas.getBoundingClientRect()));
+      return;
+    }
     const drag = dragRef.current;
     if (!drag) return;
     // O(1): write the only mutable per-move datum. NO setState, NO DAG,
@@ -963,6 +996,16 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   }
 
   function endDrag(e: React.PointerEvent<HTMLCanvasElement>, commit: boolean) {
+    // End a ruler scrub (no DAG commit — scrub only moved time).
+    if (scrubbingRef.current) {
+      scrubbingRef.current = false;
+      try {
+        canvasRef.current?.releasePointerCapture(e.pointerId);
+      } catch {
+        /* capture may already be gone */
+      }
+      return;
+    }
     const drag = dragRef.current;
     if (!drag) return;
     dragRef.current = null;
