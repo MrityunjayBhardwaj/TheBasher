@@ -22,23 +22,12 @@ import type { RenderOutputValue } from '../nodes/types';
 import { DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH } from '../nodes/RenderOutput';
 import { renderSceneToPngBlob } from '../render/renderToImage';
 import { useThreeRef } from './character/threeRef';
+import { downloadBlob } from './downloadBlob';
 import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
 
 /** Frozen evaluation time — we only read RenderOutput's static config here;
  *  animation is already baked into the live three.js objects we render. */
 const FROZEN_TIME = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Revoke on the next tick so the click has consumed the URL.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
 
 export interface RenderImageResult {
   ok: boolean;

@@ -34,6 +34,7 @@ import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
 import { renderImageWithFeedback } from './renderImageAction';
+import { renderAnimationWithFeedback } from './renderAnimationAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
@@ -430,6 +431,18 @@ export function MenuBar() {
           onSelect={() => void renderImageWithFeedback()}
           testId="menu-file-render-image"
         />
+        <Submenu label="Render Animation" testId="menu-file-render-animation">
+          <Item
+            label="MP4 video…"
+            onSelect={() => void renderAnimationWithFeedback('mp4')}
+            testId="menu-file-render-animation-mp4"
+          />
+          <Item
+            label="PNG sequence (.zip)…"
+            onSelect={() => void renderAnimationWithFeedback('png-sequence')}
+            testId="menu-file-render-animation-png"
+          />
+        </Submenu>
         <Item
           label="Export Scene as glTF…"
           onSelect={onExportGltf}

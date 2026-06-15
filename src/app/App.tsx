@@ -7,6 +7,7 @@ import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
 import { useRouteStore } from './stores/routeStore';
 import { ToastViewport } from './ToastViewport';
+import { RenderAnimationProgress } from './RenderAnimationProgress';
 
 type BootState = 'pending' | 'ready' | 'failed';
 
@@ -67,6 +68,7 @@ export function App() {
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />
+      <RenderAnimationProgress />
       <ToastViewport />
     </>
   );
