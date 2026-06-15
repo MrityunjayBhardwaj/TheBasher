@@ -27,8 +27,14 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { GltfChildValue } from './types';
+import { openpbrMaterialSchema } from './materialSchema';
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+
+/** Schema default base colour for a captured glTF material slot — never actually
+ *  used (the importer always seeds explicit values from json.materials[]); a
+ *  neutral grey only matters for a partial setParam re-parse. */
+const GLTF_MATERIAL_DEFAULT_COLOR = '#cccccc';
 
 export const GltfChildParams = z.object({
   /**
@@ -59,6 +65,15 @@ export const GltfChildParams = z.object({
   assetRef: z.string().min(1),
   /** The sanitised name key — the SAME key nodeNameMap uses. */
   childName: z.string(),
+  /**
+   * #178 (S2) — the OpenPBR material captured from the glTF at import, ONE per
+   * mesh primitive (slot) in primitive order, so the renderer (S3) and inspector
+   * (S4) treat a glTF material exactly like a native Box/Sphere material. OPTIONAL
+   * (no default): absent = a pre-#178 save OR a node with no mesh (an empty/bone)
+   * → the renderer falls back to the clone's embedded material (V10/H14 backward-
+   * compat — a saved project renders byte-identically until the user edits).
+   */
+  materials: z.array(openpbrMaterialSchema(GLTF_MATERIAL_DEFAULT_COLOR)).optional(),
 });
 export type GltfChildParams = z.infer<typeof GltfChildParams>;
 

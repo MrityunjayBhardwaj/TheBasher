@@ -29,6 +29,8 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
 import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
+import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import type { InlineMaterialSpec } from '../../nodes/types';
 import {
   parseGltfContainer,
   resolveBuffers,
@@ -439,6 +441,32 @@ function buildClipKeyframes(
 // `buildGltfImportOps` is preserved for signature stability across the
 // boot.ts caller; flagged unused via the underscore prefix.
 
+/**
+ * #178 (S2) — capture a glTF node's materials → OpenPBR IR, ONE per mesh
+ * primitive (slot) in primitive order (the SAME order three.js builds child
+ * meshes, so slot i ↔ the i-th sub-mesh under the node). Returns undefined when
+ * the node has no mesh (an empty/bone — correctly no materials) so the GltfChild
+ * omits the param and the renderer keeps the clone's embedded material. A
+ * primitive with no `material` index uses the glTF default material (the
+ * converter's no-arg defaults: white, metallic 1, rough 1).
+ */
+function captureChildMaterials(
+  node: { mesh?: number },
+  json: {
+    meshes?: { primitives?: { material?: number }[] }[];
+    materials?: Parameters<typeof gltfJsonMaterialToOpenpbr>[0][];
+  },
+): InlineMaterialSpec[] | undefined {
+  if (typeof node.mesh !== 'number') return undefined;
+  const mesh = json.meshes?.[node.mesh];
+  const prims = mesh?.primitives;
+  if (!Array.isArray(prims) || prims.length === 0) return undefined;
+  const mats = json.materials ?? [];
+  return prims.map((p) =>
+    gltfJsonMaterialToOpenpbr(typeof p.material === 'number' ? (mats[p.material] ?? {}) : {}),
+  );
+}
+
 export async function buildGltfImportOps(
   args: GltfImportChainArgs,
   _state: DagState,
@@ -507,6 +535,10 @@ export async function buildGltfImportOps(
     const key = keyByGltfNodeIndex[i];
     const dagId = nodeNameMap[key];
     const base = defaultTRS(childNodes[i]);
+    // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR so
+    // the renderer/inspector treat them like native materials. Omitted (undefined)
+    // for an empty/bone node → renderer keeps the clone's embedded material.
+    const materials = captureChildMaterials(childNodes[i], json);
     ops.push({
       type: 'addNode',
       nodeId: dagId,
@@ -518,6 +550,7 @@ export async function buildGltfImportOps(
         rotation: base.rotation,
         scale: base.scale,
         overridden: { position: false, rotation: false, scale: false },
+        ...(materials ? { materials } : {}),
       },
     });
   }
