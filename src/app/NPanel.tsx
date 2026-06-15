@@ -1460,8 +1460,21 @@ function GltfMapRow({
       useAssetErrorStore.getState().report(`gltfmap:${slot}`, `${slot} map failed: ${msg}`);
     }
   };
+  // The row is a `role=group` (NOT a `<label>`): a label wraps a single labelable
+  // control, but this row holds several buttons + a hidden file input — a label
+  // would associate with the file input, so clicking the slot name / state text
+  // would spuriously open the OS file chooser. The group's aria-label names the
+  // slot so the (otherwise generic) "pick"/"clear"/"revert" buttons read in
+  // context; each button ALSO carries a slot-specific aria-label so it is
+  // unambiguous on its own (6 map slots otherwise read identically).
+  const stateLabel =
+    state === 'replaced' ? 'replaced' : state === 'cleared' ? 'cleared' : 'imported';
   return (
-    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+    <div
+      role="group"
+      aria-label={`${slot} map (${stateLabel})`}
+      className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
+    >
       <span className="font-mono text-fg/60">{slot}</span>
       <span className="flex items-center gap-1">
         <span
@@ -1472,6 +1485,7 @@ function GltfMapRow({
         </span>
         <button
           type="button"
+          aria-label={`${state === 'replaced' ? 'Replace' : 'Pick'} ${slot} map`}
           data-testid={`inspector-gltfmap-pick-${testid}`}
           onClick={() => inputRef.current?.click()}
           className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
@@ -1481,6 +1495,7 @@ function GltfMapRow({
         {state === 'imported' ? (
           <button
             type="button"
+            aria-label={`Clear ${slot} map`}
             data-testid={`inspector-gltfmap-clear-${testid}`}
             onClick={() => onSet(CLEARED_MAP)}
             className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
@@ -1490,6 +1505,7 @@ function GltfMapRow({
         ) : (
           <button
             type="button"
+            aria-label={`Revert ${slot} map to imported`}
             data-testid={`inspector-gltfmap-revert-${testid}`}
             onClick={() => onSet(null)}
             className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
@@ -1511,7 +1527,7 @@ function GltfMapRow({
           }}
         />
       </span>
-    </label>
+    </div>
   );
 }
 
