@@ -89,7 +89,11 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    MaterialOverride wrapper (scope chosen: read-only inspect). _(Notes: shows POST-override = what's
    drawn; a pure-transform parent child shows "No materials on this part"; full editable per-child
    extraction was the larger option not taken.)_
-9. ☐ **HDRI support.** Add environment/HDRI lighting.
+9. ☑ **HDRI support — DONE (2026-06-15).** Scene-level environment/IBL: an
+   `envSource` (none / preset / .hdr·.exr file) with intensity / Y-rotation /
+   show-as-background, mounted as drei `<Environment>` outside editor chrome so
+   it lights the offscreen render for free (V47); content-hash OPFS store +
+   `.basher` embed; `AssetErrorBoundary`-wrapped. See [[ux9-hdri-design-decisions]].
 10. ☑ **Textures in the UV editor — DONE (2026-06-15).** The UV editor now paints the
     selected mesh's bound **base-color (albedo)** map as a dimmed backdrop UNDER the UV
     islands, Blender-style (it used to draw only green island outlines on an empty 0..1
@@ -149,7 +153,28 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 
 ## Camera
 
-12. ☐ **Blender-grade camera.** Full properties — FOV, depth of field, etc.
+12. ☑ **Blender-grade camera — DONE (2026-06-15, 2 slices).** Full lens + DoF.
+    _Slice 1 (lens):_ a dedicated Camera inspector section — focal length (mm) +
+    sensor size as the primary control with the resulting FOV as a derived
+    readout (Blender semantics: changing the sensor keeps the lens fixed and
+    re-derives FOV), plus near/far clipping; ortho shows zoom. The focal↔FOV math
+    is a pure, unit-tested `cameraLens.ts`; `fov` stays the rendered source of
+    truth so it already drives the live view (look-through + free orbit), the
+    frustum helper, and the offscreen render. _Slice 2 (DoF):_ real bokeh in the
+    viewport AND the downloadable still — `dofEnabled` / focus distance / f-stop
+    params → one pure `cameraDof.ts` mapping (→ DepthOfFieldEffect
+    worldFocusDistance / worldFocusRange / bokehScale) feeds both surfaces, so the
+    live preview and the render match (V37). The still renders through a
+    postprocessing EffectComposer when DoF is on (manual MSAA path unchanged when
+    off). **Underlying fix:** the viewport's post-processing had been entirely
+    inert — the bottom-right `<GizmoHelper>` (drei `<Hud renderPriority=1>`)
+    re-rendered the raw scene over the composer every frame, discarding SMAA/ACES.
+    PostFx now drives an imperative composer at priority 1 and GizmoHelper
+    overlays at renderPriority 2; this also restored the long-broken SMAA + ACES.
+    New invariants [[V51]] (camera-lens-and-DoF parity) + [[V52]] (single
+    main-scene render owner); the GizmoHelper-Hud overwrite trap → [[H96]].
+    Gates: vitest 1574 / tsc 0 / eslint 0 / prettier / e2e ux12-camera-lens 2 +
+    ux12-depth-of-field 2.
 
 ---
 
