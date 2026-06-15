@@ -136,6 +136,12 @@ const DIAMOND_PX = 10;
  *  unified curve/value gutter is reconciled at the unify slice. */
 const LABEL_GUTTER_PX = 84;
 const FPS = 60;
+/** Half-width (CSS px) of the playhead's red glow — the rAF strip-restore must
+ *  cover this so the glow leaves no trail. reze's glow is ~28px wide → 14 each
+ *  side + AA slack. */
+const PLAYHEAD_GLOW_HALF_PX = 16;
+/** Playhead triangle-head half-width (CSS px), sitting in the ruler band. */
+const PLAYHEAD_HEAD_HALF_PX = 5;
 
 /** Adaptive frame step for ruler labels / grid columns so labels never crowd
  *  (mirrors EditableCurve.frameStep). */
@@ -700,7 +706,9 @@ export function TimelineCanvas({ duration }: { duration: number }) {
             //    e2e: data-rendered-keyframes constant across a scrub).
             //    Skip on the first paint (oldX < 0): nothing drawn yet.
             if (oldX >= 0) {
-              const strip = playheadStripRect(oldX, PLAYHEAD_STRIP_HALF_WIDTH_PX, cssH);
+              // Restore a strip wide enough for the GLOW (not just the 1px
+              // line), else the glow trails behind the moving playhead.
+              const strip = playheadStripRect(oldX, PLAYHEAD_GLOW_HALF_PX, cssH);
               if (strip.w > 0 && strip.h > 0) {
                 // 1:1 backing-px blit: src rect == dst rect, both scaled
                 // CSS→backing by dprNow. The offscreen is the
@@ -715,17 +723,46 @@ export function TimelineCanvas({ duration }: { duration: number }) {
               }
             }
 
-            // 2. Stroke the playhead at the NEW x — DRAWN LAST, on top
+            // 2. Draw the reze playhead at the NEW x — DRAWN LAST, on top
             //    of the restored static layer (D-W9-3 "playhead always
-            //    drawn last"). Backing-px space: x scaled by dprNow,
-            //    line width = dprNow so it stays a crisp ~1 CSS px.
+            //    drawn last"). Backing-px space (×dprNow). Order: a soft
+            //    red GLOW (transparent→red→transparent horizontal gradient),
+            //    then the crisp 1px line, then a triangle HEAD in the ruler.
+            const bxCss = newX;
             const bx = newX * dprNow + 0.5;
+
+            const glow = visCtx.createLinearGradient(
+              (bxCss - PLAYHEAD_GLOW_HALF_PX) * dprNow,
+              0,
+              (bxCss + PLAYHEAD_GLOW_HALF_PX) * dprNow,
+              0,
+            );
+            glow.addColorStop(0, 'rgba(216,56,56,0)');
+            glow.addColorStop(0.5, 'rgba(216,56,56,0.22)');
+            glow.addColorStop(1, 'rgba(216,56,56,0)');
+            visCtx.fillStyle = glow;
+            visCtx.fillRect(
+              (bxCss - PLAYHEAD_GLOW_HALF_PX) * dprNow,
+              0,
+              PLAYHEAD_GLOW_HALF_PX * 2 * dprNow,
+              cssH * dprNow,
+            );
+
             visCtx.strokeStyle = PALETTE.PLAYHEAD;
             visCtx.lineWidth = dprNow;
             visCtx.beginPath();
             visCtx.moveTo(bx, 0);
             visCtx.lineTo(bx, cssH * dprNow);
             visCtx.stroke();
+
+            // Triangle head pointing down, seated in the ruler band.
+            visCtx.fillStyle = PALETTE.PLAYHEAD;
+            visCtx.beginPath();
+            visCtx.moveTo((bxCss - PLAYHEAD_HEAD_HALF_PX) * dprNow, 0);
+            visCtx.lineTo((bxCss + PLAYHEAD_HEAD_HALF_PX) * dprNow, 0);
+            visCtx.lineTo(bx, (PLAYHEAD_HEAD_HALF_PX + 3) * dprNow);
+            visCtx.closePath();
+            visCtx.fill();
 
             lastPlayheadXRef.current = newX;
 
