@@ -11,7 +11,7 @@ import {
 } from './inspectorSections';
 
 describe('SECTION_IDS', () => {
-  it('contains the documented v0.5 sections from §5.8 plus environment (UX #9)', () => {
+  it('contains the documented v0.5 sections from §5.8 plus environment (UX #9) + camera (UX #12)', () => {
     expect(SECTION_IDS).toEqual([
       'transform',
       'mesh',
@@ -20,6 +20,7 @@ describe('SECTION_IDS', () => {
       'animate',
       'channel',
       'environment',
+      'camera',
       'layout',
     ]);
   });

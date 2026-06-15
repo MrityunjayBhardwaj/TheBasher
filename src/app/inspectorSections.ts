@@ -23,6 +23,7 @@ export type SectionId =
   | 'animate'
   | 'channel'
   | 'environment'
+  | 'camera'
   | 'layout';
 
 export const SECTION_IDS: readonly SectionId[] = [
@@ -33,6 +34,7 @@ export const SECTION_IDS: readonly SectionId[] = [
   'animate',
   'channel',
   'environment',
+  'camera',
   'layout',
 ];
 
@@ -66,10 +68,14 @@ export function paramToSection(
   paramPath: string,
   declaredSections: readonly SectionId[],
 ): SectionId | null {
-  // Transform params — position / rotation / scale.
+  // Transform params — position / rotation / scale. lookAt (camera aim target)
+  // is positional, so it groups with Transform too (UX #12).
   if (
     declaredSections.includes('transform') &&
-    (paramPath === 'position' || paramPath === 'rotation' || paramPath === 'scale')
+    (paramPath === 'position' ||
+      paramPath === 'rotation' ||
+      paramPath === 'scale' ||
+      paramPath === 'lookAt')
   ) {
     return 'transform';
   }
@@ -147,6 +153,20 @@ export function paramToSection(
       paramPath === 'envBackground')
   ) {
     return 'environment';
+  }
+  // Camera params (UX #12) — fov / sensorSize / near / far / zoom (ortho). Routed
+  // here so they group under the Camera section's custom control instead of the
+  // raw-fallback bucket; the custom control (CameraLensControls) authors them, so
+  // the generic ParamRows for this section are suppressed (mirrors Environment).
+  if (
+    declaredSections.includes('camera') &&
+    (paramPath === 'fov' ||
+      paramPath === 'sensorSize' ||
+      paramPath === 'near' ||
+      paramPath === 'far' ||
+      paramPath === 'zoom')
+  ) {
+    return 'camera';
   }
   // Layout params — name / labels / cosmetic positioning.
   if (

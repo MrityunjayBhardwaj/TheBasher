@@ -22,7 +22,8 @@ export const OrthographicCameraNode: NodeDefinition<
   paramSchema: OrthographicCameraParams,
   inputs: {},
   outputs: { out: { type: 'Camera', cardinality: 'single' } },
-  inspectorSections: ['transform'],
+  // UX #12 — Camera (lens) primary, Transform secondary (mirrors PerspectiveCamera).
+  inspectorSections: ['camera', 'transform'],
   evaluate(params) {
     return {
       kind: 'OrthographicCamera',

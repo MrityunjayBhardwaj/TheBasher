@@ -78,6 +78,7 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
+import { CameraLensControls } from './CameraLensControls';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -1464,7 +1465,15 @@ export function NPanel() {
                       {sectionId === 'environment' && node.type === 'Scene' ? (
                         <SceneEnvironmentControls nodeId={node.id} />
                       ) : null}
-                      {sectionId === 'environment'
+                      {/* UX #12 — the Camera (lens) section is authored by a
+                          single custom control (focal length / sensor / clipping),
+                          NOT raw param rows; the lens params route here only to
+                          leave the raw-fallback bucket. */}
+                      {sectionId === 'camera' &&
+                      (node.type === 'PerspectiveCamera' || node.type === 'OrthographicCamera') ? (
+                        <CameraLensControls nodeId={node.id} />
+                      ) : null}
+                      {sectionId === 'environment' || sectionId === 'camera'
                         ? null
                         : (grouped.get(sectionId) ?? []).map(([key, value]) => (
                             <ParamRow
