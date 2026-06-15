@@ -18,6 +18,15 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { sampleScalarKeyframes, type ScalarKey } from '../nodes/keyframeInterp';
 import { useTimelineSelection } from './timelineSelection';
+import { useTimelineViewStore } from './timelineViewStore';
+import {
+  frameToX,
+  xToFrame,
+  visibleFrames,
+  zoomAtFrame,
+  panByPixels,
+  MIN_ZOOM,
+} from './timelineView';
 
 // reze palette — rotation channels read R/G/B, translation/scale read
 // orange/teal/purple; a scalar channel reads a single accent.
@@ -96,6 +105,10 @@ export function EditableCurve({
   const [size, setSize] = useState({ w: 600, h: 200 });
   const activeKeyframe = useTimelineSelection((s) => s.activeKeyframeId);
   const setActiveKeyframe = useTimelineSelection((s) => s.setActiveKeyframe);
+  // The SHARED time axis (same store the dopesheet reads) → switching tabs
+  // holds the same window. `valueZoom` is the curve-only value-axis scale.
+  const view = useTimelineViewStore((s) => s.view);
+  const valueZoom = useTimelineViewStore((s) => s.valueZoom);
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
   const [draft, setDraft] = useState<RawKey[] | null>(null);
@@ -119,6 +132,47 @@ export function EditableCurve({
     return () => ro.disconnect();
   }, []);
 
+  // Latest duration/seconds for the wheel listener (mounted once; reads fresh).
+  const wheelCtxRef = useRef({ duration, seconds });
+  wheelCtxRef.current = { duration, seconds };
+
+  // Wheel zoom/pan — the SAME shared view the dopesheet drives, plus Shift =
+  // value-axis zoom (curve only). Native non-passive listener so preventDefault
+  // reliably stops page scroll (React onWheel can be passive).
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    function onWheelNative(e: WheelEvent) {
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      const plotWNow = Math.max(rect.width - LABEL_W, 1);
+      const { duration: dnow, seconds: snow } = wheelCtxRef.current;
+      const total = Math.max(1, Math.round(Math.max(dnow, 0.0001) * FPS));
+      const store = useTimelineViewStore.getState();
+      const current = store.view;
+      if (e.shiftKey) {
+        e.preventDefault();
+        const d = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        store.setValueZoom(store.valueZoom * (d < 0 ? 1.15 : 1 / 1.15));
+      } else if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const next = current.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15);
+        if (next <= MIN_ZOOM && current.zoom <= MIN_ZOOM) return;
+        store.setView(zoomAtFrame(current, total, snow * FPS, next));
+      } else {
+        const deltaPx = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        if (deltaPx === 0) return;
+        const next = panByPixels(current, total, deltaPx, plotWNow);
+        if (next !== current) {
+          e.preventDefault();
+          store.setView(next);
+        }
+      }
+    }
+    host.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => host.removeEventListener('wheel', onWheelNative);
+  }, []);
+
   const isVec = isVec3Channel(channelType);
   const axes = useMemo(() => (isVec ? [0, 1, 2] : [0]), [isVec]);
   const colors = axisColors(channelType, paramPath);
@@ -130,8 +184,11 @@ export function EditableCurve({
   const plotY0 = RULER_H;
   const plotY1 = h;
   const dur = Math.max(duration, 0.0001);
+  const totalFrames = Math.max(1, Math.round(dur * FPS));
+  const plotW = Math.max(plotX1 - plotX0, 1);
 
-  // Value domain over every axis's keyframe values + handle extents, padded.
+  // Value domain over every axis's keyframe values + handle extents, padded,
+  // then scaled by the shared valueZoom (zoom about the domain center).
   const domain: Domain = useMemo(() => {
     let min = Infinity;
     let max = -Infinity;
@@ -147,40 +204,63 @@ export function EditableCurve({
         if (sk.inHandle) visit(sk.value + sk.inHandle.value);
       }
     }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: -1, max: 1 };
-    if (Math.abs(max - min) < 1e-6) return { min: min - 1, max: max + 1 };
-    const pad = (max - min) * 0.12;
-    return { min: min - pad, max: max + pad };
-  }, [keys, axes, isVec]);
+    let lo: number;
+    let hi: number;
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      lo = -1;
+      hi = 1;
+    } else if (Math.abs(max - min) < 1e-6) {
+      lo = min - 1;
+      hi = max + 1;
+    } else {
+      const pad = (max - min) * 0.12;
+      lo = min - pad;
+      hi = max + pad;
+    }
+    // valueZoom>1 zooms into the value axis about its center.
+    const center = (lo + hi) / 2;
+    const half = (hi - lo) / 2 / Math.max(valueZoom, 1e-6);
+    return { min: center - half, max: center + half };
+  }, [keys, axes, isVec, valueZoom]);
 
-  const timeToX = (t: number) => plotX0 + (t / dur) * (plotX1 - plotX0);
-  const xToTime = (x: number) => ((x - plotX0) / Math.max(plotX1 - plotX0, 1)) * dur;
+  // Time axis goes through the SHARED view, so the curve and the dopesheet show
+  // the same frame window (seamless tab switch). No inset (the curve has no
+  // terminal-diamond clipping concern).
+  const timeToX = (t: number) => frameToX(t * FPS, totalFrames, view, plotX0, plotW, 0);
+  const xToTime = (x: number) => xToFrame(x, totalFrames, view, plotX0, plotW, 0) / FPS;
   const valueToY = (v: number) =>
     plotY1 - PAD_Y - ((v - domain.min) / (domain.max - domain.min)) * (plotY1 - plotY0 - 2 * PAD_Y);
   const yToValue = (y: number) =>
     domain.min +
     ((plotY1 - PAD_Y - y) / Math.max(plotY1 - plotY0 - 2 * PAD_Y, 1)) * (domain.max - domain.min);
 
-  // Per-axis sampled polylines (real bézier via the shared core).
+  // Visible frame window (shared view) → seconds, for sampling + ruler.
+  const { startFrame, endFrame } = visibleFrames(totalFrames, view);
+  const visStartSec = startFrame / FPS;
+  const visEndSec = endFrame / FPS;
+
+  // Per-axis sampled polylines (real bézier via the shared core). Sampled
+  // across the VISIBLE window so a zoomed curve keeps full resolution.
   const polylines = useMemo(() => {
     const steps = Math.max(8, Math.round(plotX1 - plotX0) >> 1);
     return axes.map((a) => {
       const sk = keys.map((k) => projectAxis(k, a, isVec)).sort((p, q) => p.time - q.time);
       const pts: string[] = [];
       for (let i = 0; i <= steps; i++) {
-        const t = (i / steps) * dur;
+        const t = visStartSec + (i / steps) * (visEndSec - visStartSec);
         pts.push(`${timeToX(t).toFixed(2)},${valueToY(sampleScalarKeyframes(sk, t)).toFixed(2)}`);
       }
       return pts.join(' ');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, axes, isVec, dur, domain, w, h]);
+  }, [keys, axes, isVec, dur, domain, w, h, view]);
 
-  // Gridlines / ruler ticks every N frames so labels don't crowd.
-  const totalFrames = Math.max(1, Math.round(dur * FPS));
-  const frameStep = totalFrames > 240 ? 60 : totalFrames > 60 ? 30 : 10;
+  // Ruler ticks across the VISIBLE window, adaptive to its span.
+  const spanFrames = Math.max(endFrame - startFrame, 1);
+  const frameStep = spanFrames > 240 ? 60 : spanFrames > 60 ? 30 : spanFrames > 30 ? 10 : 5;
   const frameTicks: number[] = [];
-  for (let f = 0; f <= totalFrames; f += frameStep) frameTicks.push(f);
+  for (let f = Math.ceil(startFrame / frameStep) * frameStep; f <= endFrame; f += frameStep)
+    frameTicks.push(f);
   const valueTicks = niceTicks(domain.min, domain.max, 4);
 
   function commit(next: RawKey[]) {
