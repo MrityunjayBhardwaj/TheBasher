@@ -125,4 +125,64 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
       )
       .toBe(0.7);
   });
+
+  test('a multi-slot child offers a slot selector; editing slot 1 writes that slot only', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.waitForFunction(
+      () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
+    );
+    // The two-material quad → ONE GltfChild owning 2 material slots.
+    await page.evaluate(async () => {
+      const w = window as unknown as BasherWindow & {
+        __basher_importGltf: (b: ArrayBuffer, ref: string) => Promise<unknown>;
+        __basher_writeOpfsBytes: (p: string, b: Uint8Array) => Promise<void>;
+      };
+      const ref = 'assets/two-material-textured-quad.gltf';
+      const buf = await fetch('/assets/two-material-textured-quad.gltf').then((r) =>
+        r.arrayBuffer(),
+      );
+      await w.__basher_writeOpfsBytes(ref, new Uint8Array(buf));
+      await w.__basher_importGltf(buf, ref);
+    });
+    const twoSlotChild = () =>
+      page.evaluate(() => {
+        const w = window as unknown as BasherWindow;
+        const c = Object.values(w.__basher_dag.getState().state.nodes).find(
+          (n) =>
+            n.type === 'GltfChild' &&
+            Array.isArray(n.params.materials) &&
+            (n.params.materials as unknown[]).length === 2,
+        );
+        return c?.id ?? null;
+      });
+    await expect.poll(twoSlotChild).not.toBeNull();
+    const childId = await twoSlotChild();
+
+    await page.evaluate((id) => {
+      (window as unknown as BasherWindow).__basher_selection.getState().select(id);
+    }, childId);
+    await page.getByTestId('inspector-section-toggle-material').click();
+
+    // Two slot buttons; switch to slot 1, then edit its base colour.
+    await expect(page.getByTestId(`inspector-gltfmat-slot-${childId}-0`)).toBeVisible();
+    await page.getByTestId(`inspector-gltfmat-slot-${childId}-1`).click();
+    const hex = page.getByTestId(`inspector-gltfmat-colorhex-${childId}-1-base-color`);
+    await hex.fill('#00ff00');
+    await hex.press('Enter');
+
+    // Slot 1 changed; slot 0 is untouched (the whole-array replace edits only the
+    // active slot).
+    await expect
+      .poll(() =>
+        page.evaluate((id) => {
+          const w = window as unknown as BasherWindow;
+          const c = w.__basher_dag.getState().state.nodes[id as string];
+          const mats = c.params.materials as { base: { color: string } }[];
+          return [mats[0].base.color, mats[1].base.color];
+        }, childId),
+      )
+      .toEqual(['#ff0000', '#00ff00']);
+  });
 });
