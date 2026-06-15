@@ -322,6 +322,12 @@ export function boot(): Promise<void> {
       void import('../timeline/timelineSelection').then((m) => {
         w.__basher_timeline_selection = m.useTimelineSelection;
       });
+      // UX #11 — timelineViewStore exposed so e2e/observation can drive the
+      // SHARED zoom/pan (dopesheet + curve editor read it) without synthesising
+      // Ctrl-wheel gestures. K12 dev-seam pattern.
+      void import('../timeline/timelineViewStore').then((m) => {
+        w.__basher_timeline_view = m.useTimelineViewStore;
+      });
       // Agent session store — used by E2E to verify chat UI layout.
       void import('../agent/session/store').then((m) => {
         w.__basher_agent_session = m.useAgentSessionStore;

@@ -26,6 +26,12 @@ interface BasherWindow {
   __basher_time: {
     getState: () => { seconds: number; durationSeconds: number; setTime: (s: number) => void };
   };
+  __basher_timeline_view: {
+    getState: () => {
+      setView: (v: { zoom: number; scroll: number }) => void;
+      reset: () => void;
+    };
+  };
 }
 
 const CH = 'n_ch_ux11_dope';
@@ -64,6 +70,7 @@ async function seed(page: import('@playwright/test').Page) {
     w.__basher_viewport.getState().setTimelineDrawerOpen(true);
     w.__basher_timeline_dock.getState().setActiveTab('dopesheet');
     w.__basher_time.getState().setTime(0);
+    w.__basher_timeline_view.getState().reset(); // start at fit (no prior zoom)
   }, CH);
   await expect(page.getByTestId('timeline-canvas')).toBeVisible();
 }
@@ -96,5 +103,27 @@ test.describe('UX #11 — reze dopesheet ruler scrub', () => {
     await page.mouse.move(box.x + LABEL_GUTTER + trackW * 0.8, rulerY, { steps: 6 });
     await page.mouse.up();
     await expect.poll(() => seconds(page)).toBeGreaterThan(half);
+  });
+
+  test('time zoom narrows the visible window — off-window keys cull (shared view)', async ({
+    page,
+  }) => {
+    await seed(page);
+    const host = page.getByTestId('timeline-canvas');
+    const rendered = () => host.getAttribute('data-rendered-keyframes').then((v) => Number(v));
+    // Default view (zoom 1) shows the whole timeline → all 3 keys (0/2/4s).
+    await expect.poll(rendered).toBe(3);
+    // Zoom 3× at scroll 0 → visible ≈ [0, 3.33s]; the 4s key falls off-window.
+    await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_timeline_view
+        .getState()
+        .setView({ zoom: 3, scroll: 0 }),
+    );
+    await expect.poll(rendered).toBe(2);
+    // Reset restores the fit view → all keys visible again.
+    await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_timeline_view.getState().reset(),
+    );
+    await expect.poll(rendered).toBe(3);
   });
 });

@@ -71,13 +71,21 @@ import { useViewportStore } from '../app/stores/viewportStore';
 import { useTimelineSelection } from './timelineSelection';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import {
-  keyframeToRect,
   cullVisibleKeyframes,
-  secondsToX,
-  xToSeconds,
   playheadStripRect,
   PLAYHEAD_STRIP_HALF_WIDTH_PX,
 } from './timelineCanvasGeometry';
+import {
+  frameToX,
+  xToFrame,
+  visibleFrames,
+  zoomAtFrame,
+  panByPixels,
+  DEFAULT_VIEW,
+  MIN_ZOOM,
+  type TimelineView,
+} from './timelineView';
+import { useTimelineViewStore } from './timelineViewStore';
 import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
@@ -130,6 +138,10 @@ const RULER_H = 17;
 const ROW_HEIGHT_PX = 24;
 /** Diamond box (CSS px) — reze's 45° diamond (~5px half-diagonal). */
 const DIAMOND_PX = 10;
+/** Edge inset (CSS px) reserved each side of the track so a terminal keyframe
+ *  lands flush. Baked into frameToX so default-view geometry === keyframeToRect
+ *  (the e2e-safety parity invariant — see timelineView.ts). */
+const DIAMOND_INSET_PX = Math.max(4, DIAMOND_PX / 2);
 /** Left gutter (CSS px) for channel labels. reze's gutter is 36px because it
  *  holds value-axis NUMBERS for one object's curves; Basher's dopesheet is
  *  multi-channel and must show readable channel NAMES, so it's wider. The
@@ -143,10 +155,12 @@ const PLAYHEAD_GLOW_HALF_PX = 16;
 /** Playhead triangle-head half-width (CSS px), sitting in the ruler band. */
 const PLAYHEAD_HEAD_HALF_PX = 5;
 
-/** Adaptive frame step for ruler labels / grid columns so labels never crowd
- *  (mirrors EditableCurve.frameStep). */
-function rulerFrameStep(totalFrames: number): number {
-  return totalFrames > 240 ? 60 : totalFrames > 60 ? 30 : 10;
+/** Adaptive frame step for ruler labels / grid columns so labels never crowd.
+ *  Driven by the VISIBLE span (not the whole timeline) so zooming in reveals
+ *  finer ticks, mirroring reze. */
+function rulerFrameStep(visibleSpanFrames: number): number {
+  const s = visibleSpanFrames;
+  return s > 240 ? 60 : s > 60 ? 30 : s > 30 ? 10 : s > 10 ? 5 : 1;
 }
 
 /** devicePixelRatio capped to [1,2] — copied verbatim from the
@@ -246,6 +260,7 @@ export function paintStaticLayer(
   durationSeconds: number,
   activeChannelId: string | null,
   activeKeyframe?: { channelId: string; time: number } | null,
+  view: TimelineView = DEFAULT_VIEW,
 ): number {
   const { cssW, cssH } = dims;
   ctx.clearRect(0, 0, cssW, cssH);
@@ -257,23 +272,28 @@ export function paintStaticLayer(
   const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
   const rowsTop = RULER_H; // rows start BELOW the frame ruler.
 
-  // Visible seconds range = the whole track (no zoom yet; zoom is a later
-  // slice). Culling still runs so the mirror attr is honest and the
-  // culling e2e has a real code path to exercise.
-  const visibleStartSec = 0;
-  const visibleEndSec = durationSeconds;
-
   const totalFrames = Math.max(1, Math.round(durationSeconds * FPS));
-  const frameStep = rulerFrameStep(totalFrames);
+  // Visible frame window for the shared view (zoom/scroll). At the default
+  // view this is [0, totalFrames] → the cull contract (p6-w9) is preserved.
+  const { startFrame, endFrame } = visibleFrames(totalFrames, view);
+  const visibleStartSec = startFrame / FPS;
+  const visibleEndSec = endFrame / FPS;
+  const spanFrames = Math.max(endFrame - startFrame, 1);
+  const frameStep = rulerFrameStep(spanFrames);
+
+  // x for a frame on this surface (shared zoom/pan + the diamond inset baked
+  // in, so default-view geometry === keyframeToRect — the parity invariant).
+  const fx = (frame: number) =>
+    frameToX(frame, totalFrames, view, LABEL_GUTTER_PX, trackWidth, DIAMOND_INSET_PX);
 
   // ── Frame-column grid (drawn first, BEHIND rows) ──────────────────────
-  // Vertical lines at each ruler frame step over the track area, so the
-  // dopesheet shares the curve editor's time grid. Minor at every step,
-  // major (brighter) at every 4th step — a light visual cadence.
+  // Vertical lines at each ruler frame step over the VISIBLE window, so the
+  // dopesheet shares the curve editor's time grid. Major (brighter) at every
+  // 4th step — a light visual cadence.
   ctx.lineWidth = 1;
-  for (let f = 0; f <= totalFrames; f += frameStep) {
-    const rect = keyframeToRect(f / FPS, 0, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
-    const x = Math.round(LABEL_GUTTER_PX + rect.x + rect.w / 2) + 0.5;
+  const firstGrid = Math.ceil(startFrame / frameStep) * frameStep;
+  for (let f = Math.max(0, firstGrid); f <= endFrame; f += frameStep) {
+    const x = Math.round(fx(f)) + 0.5;
     ctx.strokeStyle = f % (frameStep * 4) === 0 ? GRID_COL_MAJOR : GRID_COL_MINOR;
     ctx.beginPath();
     ctx.moveTo(x, rowsTop);
@@ -309,9 +329,7 @@ export function paintStaticLayer(
     ctx.textBaseline = 'middle';
     ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 7);
 
-    // Diamonds — geometry comes from C2 (consumed, NOT re-derived inline;
-    // re-deriving was the D-W9-4 anti-pattern). Cull first so the count
-    // is the honest rendered count.
+    // Diamonds — cull to the visible window first so the count is honest.
     const culled = cullVisibleKeyframes(
       row.keyframes.map((k) => ({ timeSeconds: k.time })),
       visibleStartSec,
@@ -320,12 +338,8 @@ export function paintStaticLayer(
 
     for (const { index } of culled) {
       const t = row.keyframes[index].time;
-      // C2 keyframeToRect maps time -> CSS-px rect; offset x by the label
-      // gutter so diamonds sit in the track area, not under the labels,
-      // and y by the ruler band so they sit in their row.
-      const rect = keyframeToRect(t, r, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
-      const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
-      const cy = rowsTop + rect.y + rect.h / 2;
+      const cx = fx(t * FPS);
+      const cy = rowsTop + r * ROW_HEIGHT_PX + ROW_HEIGHT_PX / 2;
       const selected =
         !!activeKeyframe &&
         activeKeyframe.channelId === row.channelId &&
@@ -369,9 +383,9 @@ export function paintStaticLayer(
   ctx.stroke();
 
   const minorStep = Math.max(1, Math.round(frameStep / 2));
-  for (let f = 0; f <= totalFrames; f += minorStep) {
-    const rect = keyframeToRect(f / FPS, 0, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
-    const x = Math.round(LABEL_GUTTER_PX + rect.x + rect.w / 2) + 0.5;
+  const firstTick = Math.ceil(startFrame / minorStep) * minorStep;
+  for (let f = Math.max(0, firstTick); f <= endFrame; f += minorStep) {
+    const x = Math.round(fx(f)) + 0.5;
     const major = f % frameStep === 0;
     ctx.strokeStyle = major ? RULER_TICK_MAJOR : RULER_TICK_MINOR;
     ctx.beginPath();
@@ -393,6 +407,8 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
   const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
+  // Shared zoom/pan view (read by the curve editor too — seamless tab switch).
+  const view = useTimelineViewStore((s) => s.view);
   // Read (do not subscribe-render on) durationSeconds as a fallback when
   // the prop is absent; the prop is the contract Dopesheet had, kept
   // identical so the C5 drawer swap is a one-line import change.
@@ -497,20 +513,22 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // saw a false `0`. Derive the real culled total from the SAME cull the
   // effect uses so the pre-first-paint attribute already matches. NOT a
   // pixel test (H30 / D-W9-4) — the mirror-attr value IS the contract.
-  const renderedKeyframeTotal = useMemo(
-    () =>
-      rows.reduce(
-        (n, row) =>
-          n +
-          cullVisibleKeyframes(
-            row.keyframes.map((k) => ({ timeSeconds: k.time })),
-            0,
-            durationSeconds,
-          ).length,
-        0,
-      ),
-    [rows, durationSeconds],
-  );
+  const renderedKeyframeTotal = useMemo(() => {
+    const totalFrames = Math.max(1, Math.round(durationSeconds * FPS));
+    const { startFrame, endFrame } = visibleFrames(totalFrames, view);
+    const s0 = startFrame / FPS;
+    const s1 = endFrame / FPS;
+    return rows.reduce(
+      (n, row) =>
+        n +
+        cullVisibleKeyframes(
+          row.keyframes.map((k) => ({ timeSeconds: k.time })),
+          s0,
+          s1,
+        ).length,
+      0,
+    );
+  }, [rows, durationSeconds, view]);
 
   // Measure the host + observe resize (drawer is resizable 200–480px,
   // D-W9-10). useLayoutEffect so the first paint has real dims, not 0x0.
@@ -623,7 +641,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // this same offscreen, so the static layer must live there first.
     offCtx.setTransform(1, 0, 0, 1, 0, 0);
     offCtx.scale(dpr, dpr);
-    paintStaticLayer(offCtx, rows, dims, durationSeconds, activeChannelId, activeKeyframeId);
+    paintStaticLayer(offCtx, rows, dims, durationSeconds, activeChannelId, activeKeyframeId, view);
 
     visCtx.setTransform(1, 0, 0, 1, 0, 0);
     visCtx.clearRect(0, 0, backingW, backingH);
@@ -639,7 +657,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // overwritten by this repaint; reset the ghost idle-guard so the next
     // tick does not "restore" under a stale ghost x that no longer exists.
     lastGhostXRef.current = -1;
-  }, [nodes, activeChannelId, activeKeyframeId, durationSeconds, dims, dpr, rows]);
+  }, [nodes, activeChannelId, activeKeyframeId, durationSeconds, dims, dpr, rows, view]);
 
   // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
   //
@@ -679,12 +697,24 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           const frame = useViewportStore.getState().currentFrameRef.current;
           const dprNow = dprRef.current;
           const durationNow = durationRef.current;
+          // The shared zoom/pan view — read fresh via getState (single source
+          // of truth, like seconds; never closure-captured) so the playhead
+          // tracks zoom/pan with zero React render (V20 / the rAF bypass).
+          const viewNow = useTimelineViewStore.getState().view;
 
-          // C2 owns the math (not re-derived inline — the D-W9-4 win).
-          // Track area excludes the label gutter, exactly as the C3
-          // static layer offsets diamonds by LABEL_GUTTER_PX.
+          // frameToX (shared with the static layer + curve editor) maps the
+          // playhead's frame through the zoom/pan view + diamond inset, so the
+          // playhead lines up exactly with the diamonds at the same frame.
           const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
-          const newX = LABEL_GUTTER_PX + secondsToX(seconds, durationNow, trackWidth);
+          const totalFramesNow = Math.max(1, Math.round(durationNow * FPS));
+          const newX = frameToX(
+            seconds * FPS,
+            totalFramesNow,
+            viewNow,
+            LABEL_GUTTER_PX,
+            trackWidth,
+            DIAMOND_INSET_PX,
+          );
 
           // IDLE GUARD (LOCKED — plan C4 §129): unchanged x → early-out
           // but STAY registered (do NOT cancel/re-arm). Cheaper than
@@ -795,12 +825,33 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           const drag = dragRef.current;
           if (drag) {
             const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
-            // localX: cursor px relative to the track origin. canvasLeft
-            // was read ONCE at pointerdown (NO getBoundingClientRect in
-            // the hot loop — the K13 perf footgun). Pure arithmetic.
-            const localX = Math.max(drag.pointerClientX - drag.canvasLeft - LABEL_GUTTER_PX, 0);
-            const ghostSeconds = xToSeconds(localX, durationNow, trackWidth, DIAMOND_PX);
-            const ghostX = LABEL_GUTTER_PX + secondsToX(ghostSeconds, durationNow, trackWidth);
+            // cursorX: canvas-relative px (incl. gutter). canvasLeft was read
+            // ONCE at pointerdown (NO getBoundingClientRect in the hot loop —
+            // the K13 perf footgun). Map through the shared zoom/pan view so
+            // the ghost snaps to the cursor's frame at the current zoom.
+            const cursorX = drag.pointerClientX - drag.canvasLeft;
+            const ghostFrameRaw = xToFrame(
+              cursorX,
+              totalFramesNow,
+              viewNow,
+              LABEL_GUTTER_PX,
+              trackWidth,
+              DIAMOND_INSET_PX,
+            );
+            const ghostFrame =
+              ghostFrameRaw < 0
+                ? 0
+                : ghostFrameRaw > totalFramesNow
+                  ? totalFramesNow
+                  : ghostFrameRaw;
+            const ghostX = frameToX(
+              ghostFrame,
+              totalFramesNow,
+              viewNow,
+              LABEL_GUTTER_PX,
+              trackWidth,
+              DIAMOND_INSET_PX,
+            );
 
             // The ghost's OWN idle guard, keyed to ITS driver (the
             // cursor), never the playhead's newX. An idle drag (cursor
@@ -862,29 +913,74 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     };
   }, []);
 
+  // ── Wheel zoom/pan (shared view) ──────────────────────────────────────
+  // Native non-passive listener so preventDefault reliably stops page scroll
+  // (React's synthetic onWheel can be passive). Ctrl/⌘+wheel = TIME zoom
+  // anchored on the playhead; plain wheel = horizontal PAN. Reads everything
+  // via getState() so it never goes stale (mounted once). The dopesheet has no
+  // value axis, so Shift+wheel falls through to pan here (value zoom is the
+  // curve editor's concern).
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    function onWheelNative(e: WheelEvent) {
+      if (!canvas) return;
+      const box = canvas.getBoundingClientRect();
+      const trackWidth = Math.max(box.width - LABEL_GUTTER_PX, 0);
+      const duration = useTimeStore.getState().durationSeconds;
+      const total = Math.max(1, Math.round(duration * FPS));
+      const current = useTimelineViewStore.getState().view;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const next = current.zoom * factor;
+        if (next <= MIN_ZOOM && current.zoom <= MIN_ZOOM) return; // already fit
+        const anchorFrame = useTimeStore.getState().seconds * FPS;
+        useTimelineViewStore.getState().setView(zoomAtFrame(current, total, anchorFrame, next));
+      } else {
+        const deltaPx = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        if (deltaPx === 0) return;
+        const next = panByPixels(current, total, deltaPx, trackWidth);
+        if (next !== current) {
+          e.preventDefault();
+          useTimelineViewStore.getState().setView(next);
+        }
+      }
+    }
+    canvas.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheelNative);
+  }, []);
+
   // ── P7.1 pointer handlers (D-04, D-06: single keyframe, horizontal) ───
   // THIN by design (Ousterhout): hit-test via pure geometry, store ONE
   // ref, call ONE seam fn. NO Mutator/Op/DAG-internal type in this file;
   // NO setState / DAG write on the move path (V20 — the hot path adds no
   // React subscription and no second time/frame writer).
 
-  /** localX (track-relative px) → seconds, reused by move+up. */
+  const totalFrames = Math.max(1, Math.round(durationSeconds * FPS));
+
+  /** Canvas-relative x → seconds through the shared zoom/pan view (+ diamond
+   *  inset), the inverse of the diamonds' frameToX. Clamped to [0, duration]. */
   function localXToSeconds(clientX: number, canvasLeft: number): number {
     const canvas = canvasRef.current;
     const cssW = canvas ? canvas.clientWidth : 0;
     const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
-    const localX = Math.max(clientX - canvasLeft - LABEL_GUTTER_PX, 0);
-    return xToSeconds(localX, durationSeconds, trackWidth, DIAMOND_PX);
+    const f = xToFrame(
+      clientX - canvasLeft,
+      totalFrames,
+      view,
+      LABEL_GUTTER_PX,
+      trackWidth,
+      DIAMOND_INSET_PX,
+    );
+    const clamped = f < 0 ? 0 : f > totalFrames ? totalFrames : f;
+    return clamped / FPS;
   }
 
-  /** Ruler x → seconds — the INVERSE of the playhead's secondsToX (NOT the
-   *  inset diamond inverse): a ruler scrub drives the playhead, which the rAF
-   *  loop positions with secondsToX (no inset). Clamped to [0, duration]. */
+  /** Ruler x → seconds — the same view-aware inverse, so a scrub lands the
+   *  playhead exactly under the cursor at any zoom. Clamped to [0, duration]. */
   function rulerXToSeconds(clientX: number, box: DOMRect): number {
-    const trackWidth = Math.max(box.width - LABEL_GUTTER_PX, 1);
-    const rel = clientX - box.left - LABEL_GUTTER_PX;
-    const clamped = rel < 0 ? 0 : rel > trackWidth ? trackWidth : rel;
-    return (clamped / trackWidth) * durationSeconds;
+    return localXToSeconds(clientX, box.left);
   }
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -911,16 +1007,17 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       for (const kf of row.keyframes) {
-        const rect = keyframeToRect(
-          kf.time,
-          r,
-          durationSeconds,
+        // Same view-aware frameToX the static layer paints with, so the hit
+        // target tracks zoom/pan. cy mirrors the ruler-offset row center.
+        const cx = frameToX(
+          kf.time * FPS,
+          totalFrames,
+          view,
+          LABEL_GUTTER_PX,
           trackWidth,
-          ROW_HEIGHT_PX,
-          DIAMOND_PX,
+          DIAMOND_INSET_PX,
         );
-        const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
-        const cy = RULER_H + rect.y + rect.h / 2;
+        const cy = RULER_H + r * ROW_HEIGHT_PX + ROW_HEIGHT_PX / 2;
         const slop = DIAMOND_PX;
         if (
           Math.abs(px - cx) <= DIAMOND_PX / 2 + slop &&
