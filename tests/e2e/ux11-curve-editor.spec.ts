@@ -28,6 +28,7 @@ interface BasherWindow {
       setActiveKeyframe: (ref: { channelId: string; time: number } | null) => void;
     };
   };
+  __basher_time: { getState: () => { seconds: number; setTime: (s: number) => void } };
 }
 
 const CH = 'n_ch_ux11';
@@ -149,5 +150,43 @@ test.describe('UX #11 — editable curve editor', () => {
     // The curve x-track is reshaped by the handle.
     const trackAfter = await page.getByTestId('curve-track-0').getAttribute('points');
     expect(trackAfter).not.toEqual(trackBefore);
+  });
+
+  test('click/drag the frame ruler scrubs time (same gesture + chokepoint as the dopesheet)', async ({
+    page,
+  }) => {
+    await seed(page);
+    const seconds = () =>
+      page.evaluate(() => (window as unknown as BasherWindow).__basher_time.getState().seconds);
+    // Start at t=0 so any rightward scrub must increase time.
+    await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_time.getState().setTime(0),
+    );
+    expect(await seconds()).toBeCloseTo(0, 5);
+
+    const box = (await page.getByTestId('curve-editor').boundingBox())!;
+    // The ruler band is the top RULER_H(16) CSS px, right of the LABEL_W(40)
+    // value gutter. Click LEFT vs RIGHT within it — time must track x.
+    const rulerY = box.y + 8;
+    const plotLeft = box.x + 40;
+    const plotW = box.width - 40;
+
+    await page.mouse.click(plotLeft + plotW * 0.2, rulerY);
+    const tLeft = await seconds();
+    await page.mouse.click(plotLeft + plotW * 0.8, rulerY);
+    const tRight = await seconds();
+    expect(tLeft, 'a ruler click moved time off zero').toBeGreaterThan(0);
+    expect(tRight, 'clicking further right scrubs to a later time').toBeGreaterThan(tLeft);
+
+    // A drag continuously scrubs: press near the left, drag right, time rises.
+    await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_time.getState().setTime(0),
+    );
+    await page.mouse.move(plotLeft + plotW * 0.1, rulerY);
+    await page.mouse.down();
+    await page.mouse.move(plotLeft + plotW * 0.9, rulerY, { steps: 8 });
+    const tDuringDrag = await seconds();
+    await page.mouse.up();
+    expect(tDuringDrag, 'time advanced while dragging the ruler').toBeGreaterThan(0);
   });
 });

@@ -16,6 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useDagStore } from '../core/dag/store';
+import { useTimeStore } from '../app/stores/timeStore';
 import { sampleScalarKeyframes, type ScalarKey } from '../nodes/keyframeInterp';
 import { useTimelineSelection } from './timelineSelection';
 import { useTimelineViewStore } from './timelineViewStore';
@@ -122,6 +123,10 @@ export function EditableCurve({
   // FROZEN to this, so dragging a key past the old extent doesn't rescale the
   // whole curve under the cursor (the mid-drag wobble). Cleared on release.
   const frozenDomainRef = useRef<Domain | null>(null);
+  // Ruler-band scrub: click/drag the top ruler to seek time (the SAME gesture
+  // and chokepoint as the dopesheet's ruler — `useTimeStore.setTime` — so the
+  // playhead stays in lockstep across both tabs). Distinct from key/handle drag.
+  const scrubbingRef = useRef(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -303,15 +308,38 @@ export function EditableCurve({
     setActiveKeyframe({ channelId, time: keyframes[index].time });
   }
 
+  // Client pixels → svg units. The <svg> coordinate system is w×h units but CSS
+  // stretches it to the container, so convert by the live scale (the two can
+  // differ in the window before the ResizeObserver commits size).
+  function localPoint(e: React.PointerEvent): { px: number; py: number } {
+    const rect = hostRef.current!.getBoundingClientRect();
+    return {
+      px: (e.clientX - rect.left) * (w / Math.max(rect.width, 1)),
+      py: (e.clientY - rect.top) * (h / Math.max(rect.height, 1)),
+    };
+  }
+
+  // Ruler-band pointer-down → start a scrub (mirrors TimelineCanvas's ruler
+  // scrub). The band is the top RULER_H rows right of the value gutter; a click
+  // on a key/handle stopPropagation()s before this, so dots never start a scrub.
+  function onPointerDown(e: React.PointerEvent) {
+    const { px, py } = localPoint(e);
+    if (py <= plotY0 && px >= plotX0) {
+      scrubbingRef.current = true;
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+      useTimeStore.getState().setTime(xToTime(px));
+    }
+  }
+
   function onPointerMove(e: React.PointerEvent) {
+    // Ruler scrub: drive time as the cursor moves (setTime clamps to duration).
+    if (scrubbingRef.current) {
+      useTimeStore.getState().setTime(xToTime(localPoint(e).px));
+      return;
+    }
     const d = dragRef.current;
     if (!d || !draft) return;
-    const rect = hostRef.current!.getBoundingClientRect();
-    // The <svg> coordinate system is w×h units but CSS stretches it to the
-    // container, so convert client pixels → svg units by the live scale (the
-    // two can differ in the window before the ResizeObserver commits size).
-    const px = (e.clientX - rect.left) * (w / Math.max(rect.width, 1));
-    const py = (e.clientY - rect.top) * (h / Math.max(rect.height, 1));
+    const { px, py } = localPoint(e);
     const k = draft[d.index];
     const spanLeft = d.index > 0 ? k.time - draft[d.index - 1].time : dur / 4;
     const spanRight = d.index < draft.length - 1 ? draft[d.index + 1].time - k.time : dur / 4;
@@ -362,6 +390,12 @@ export function EditableCurve({
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    // End a ruler scrub (no DAG commit — scrub only moved time).
+    if (scrubbingRef.current) {
+      scrubbingRef.current = false;
+      (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
+      return;
+    }
     const d = dragRef.current;
     if (d && draft) {
       commit(draft.slice().sort((a, b) => a.time - b.time));
@@ -405,6 +439,7 @@ export function EditableCurve({
         className="absolute inset-0"
         width={w}
         height={h}
+        onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
