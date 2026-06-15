@@ -87,13 +87,16 @@ test('a GltfAsset inspector shows every embedded material slot with its base col
   expect(bg).toBe('rgb(255, 0, 0)'); // RedMat #ff0000
 });
 
-test('a GltfChild inspector shows a MATERIAL readout (the child had no material section before)', async ({
+test('a GltfChild inspector shows the EDITABLE material editor (S4 superseded the read-only readout)', async ({
   page,
 }) => {
+  // UX #8 originally showed a read-only readout here; #178 S4 makes a GltfChild
+  // that captured OpenPBR materials (S2) EDITABLE — it now renders the lobe
+  // editor, not the readout (the editable case is gated by ux-gltf-material-edit;
+  // the readout is still exercised by the whole-asset GltfAsset test above).
   const childId = await selectType(page, 'GltfChild');
   expect(childId).not.toBeNull();
   await page.getByTestId('inspector-section-toggle-material').click();
-  await expect(page.getByTestId('gltf-material-readout')).toBeVisible();
-  // The single-node quad's child owns both slots.
-  await expect(page.getByTestId('gltf-material-slot-0')).toBeVisible();
+  await expect(page.getByTestId(`inspector-gltf-material-editor-${childId}`)).toBeVisible();
+  await expect(page.getByTestId('gltf-material-readout')).toHaveCount(0);
 });

@@ -45,7 +45,7 @@ import {
 } from './material/attachMapFromFile';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
-import type { BakedTextureRef } from '../nodes/types';
+import type { BakedTextureRef, InlineMaterialSpec } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
@@ -1200,6 +1200,197 @@ function GltfMaterialSlotRow({ slot }: { slot: GltfMaterialSlot }) {
   );
 }
 
+// #178 S4 — one EDITABLE field inside the glTF lobe editor. Mirrors the native
+// ColorField/NumericField chrome but commits through `onCommit` (the parent
+// rebuilds the WHOLE `materials` array) instead of dispatching a dotted path —
+// `setAtPath` cannot index into an array (ops.ts: a `materials.0.base.color`
+// path REPLACES the array with `{}`), so a glTF material edit MUST be a whole-
+// array replace. No ParamDiamond/scrub/autoKey yet — material-scalar animation
+// is S6; these are plain authoring fields.
+function GltfMatColorField({
+  testid,
+  label,
+  value,
+  onCommit,
+}: {
+  testid: string;
+  label: string;
+  value: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  // Resync when the authored value changes outside this field (undo, slot switch).
+  useEffect(() => setDraft(value), [value]);
+  const commit = (next: string) => {
+    if (!isHex6(next)) return;
+    onCommit(next);
+  };
+  const swatch = isHex6(draft) ? draft : '#000000';
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{label}</span>
+      <span className="flex items-center gap-1">
+        <input
+          type="color"
+          aria-label={`${label} colour swatch`}
+          value={swatch}
+          data-testid={`inspector-gltfmat-color-${testid}`}
+          className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => {
+            setDraft(e.target.value);
+            commit(e.target.value);
+          }}
+        />
+        <input
+          type="text"
+          aria-label={`${label} hex`}
+          value={draft}
+          data-testid={`inspector-gltfmat-colorhex-${testid}`}
+          className="w-20 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
+function GltfMatNumberField({
+  testid,
+  label,
+  value,
+  onCommit,
+}: {
+  testid: string;
+  label: string;
+  value: number;
+  onCommit: (next: number) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{label}</span>
+      <input
+        type="number"
+        step="0.1"
+        value={value}
+        aria-label={label}
+        data-testid={`inspector-gltfmat-num-${testid}`}
+        className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => {
+          const next = parseFloat(e.target.value);
+          if (Number.isNaN(next)) return;
+          onCommit(next);
+        }}
+      />
+    </label>
+  );
+}
+
+/**
+ * #178 S4 — the EDITABLE OpenPBR editor for a GltfChild's captured material(s)
+ * (the visible payoff). Reuses MATERIAL_LOBES (the SAME lobe grouping native
+ * Box/Sphere use) so a glTF material edits exactly like a native one (V53/V32:
+ * one IR, one editor). Each field commits via a WHOLE-`materials`-array replace
+ * (setAtPath can't index an array — see GltfMatColorField), matching the S3 e2e
+ * write. The S3 overlay re-applies on the `materials` change (its effect deps on
+ * depNodeMap) → the viewport repaints live (the falsifiable proof, [[H97]]).
+ * Multi-slot children get a local slot selector — which slot to EDIT is a
+ * view-only concern, NOT a DAG param (unlike MaterialOverride.slotIndex). Texture
+ * maps stay on the clone (captured null, overlay preserves them) → no map rows
+ * here; capture + editing land in S5. Renders ONLY when `materials` is non-empty;
+ * an absent/empty array keeps the read-only readout (V10/H14 backward-compat).
+ */
+function GltfMaterialEditor({
+  nodeId,
+  materials,
+}: {
+  nodeId: string;
+  materials: InlineMaterialSpec[];
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const [activeSlot, setActiveSlot] = useState(0);
+  // Clamp: a slot switch + undo could leave activeSlot past the array end.
+  const slot = activeSlot < materials.length ? activeSlot : 0;
+  const mat = materials[slot] as unknown as Record<string, Record<string, unknown>>;
+  const commit = (lobe: string, key: string, value: unknown) => {
+    const cur = materials[slot] as unknown as Record<string, Record<string, unknown>>;
+    const nextMat = { ...cur, [lobe]: { ...(cur[lobe] ?? {}), [key]: value } };
+    const next = materials.map((m, i) => (i === slot ? nextMat : m));
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'materials', value: next },
+      'user',
+      `edit material slot ${slot} ${lobe}.${key}`,
+    );
+  };
+  return (
+    <div data-testid={`inspector-gltf-material-editor-${nodeId}`} className="flex flex-col">
+      {materials.length > 1 ? (
+        <div className="flex flex-col gap-1 px-3 py-1.5">
+          <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
+          <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
+            {materials.map((m, i) => {
+              const active = i === slot;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  data-testid={`inspector-gltfmat-slot-${nodeId}-${i}`}
+                  onClick={() => setActiveSlot(i)}
+                  className={`rounded border px-2 py-0.5 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                    active
+                      ? 'border-accent bg-accent/15 text-accent'
+                      : 'border-border text-fg/70 hover:bg-muted hover:text-fg'
+                  }`}
+                >
+                  {m.name || String(i)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
+        <div key={lobe} className="flex flex-col">
+          <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+            {label}
+          </div>
+          {fields.map(({ key, label: fieldLabel, kind }) => {
+            const lobeObj = (mat[lobe] ?? {}) as Record<string, unknown>;
+            const testid = `${nodeId}-${slot}-${lobe}-${key}`;
+            if (kind === 'color') {
+              const cv = typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
+              return (
+                <GltfMatColorField
+                  key={key}
+                  testid={testid}
+                  label={fieldLabel}
+                  value={cv}
+                  onCommit={(v) => commit(lobe, key, v)}
+                />
+              );
+            }
+            const nv = typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+            return (
+              <GltfMatNumberField
+                key={key}
+                testid={testid}
+                label={fieldLabel}
+                value={nv}
+                onCommit={(v) => commit(lobe, key, v)}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** UX #8 — read-only readout of a glTF asset/child's embedded materials, read
  *  off the rendered clone (gltfMaterialStore, published by GltfAssetR). The
  *  embedded materials live on the clone, not the DAG, so without this the
@@ -1431,6 +1622,14 @@ export function NPanel() {
                   grouped.get(section)!.push([key, value]);
                 }
               }
+              // #178 S4 — a GltfChild's captured OpenPBR materials (S2). Non-empty
+              // → the MATERIAL section routes to the editable GltfMaterialEditor;
+              // absent/empty → the read-only readout (V10/H14 backward-compat).
+              const gltfChildMaterials =
+                node.type === 'GltfChild' &&
+                Array.isArray((node.params as { materials?: unknown }).materials)
+                  ? ((node.params as { materials: InlineMaterialSpec[] }).materials ?? [])
+                  : [];
               return (
                 <>
                   {declared.map((sectionId) => (
@@ -1447,13 +1646,19 @@ export function NPanel() {
                       {sectionId === 'material' && node.type === 'MaterialOverride' ? (
                         <SlotSelector nodeId={node.id} />
                       ) : null}
-                      {/* UX #8 — read-only embedded-material readout for a glTF
-                          asset (all slots) or child (its slots only). The
-                          materials live on the rendered clone, not the DAG, so
-                          this is the only way to SEE them; editing is via a
-                          MaterialOverride. */}
+                      {/* #178 S4 — a GltfChild that captured OpenPBR materials at
+                          import (S2) gets the EDITABLE lobe editor (the same one
+                          Box/Sphere use); editing writes the child's `materials`
+                          and the S3 overlay repaints the clone live. A GltfChild
+                          with NO captured materials (pre-#178 save / empty bone)
+                          and the whole-asset GltfAsset keep the read-only readout
+                          (V10/H14 backward-compat). */}
                       {sectionId === 'material' &&
-                      (node.type === 'GltfAsset' || node.type === 'GltfChild') ? (
+                      node.type === 'GltfChild' &&
+                      gltfChildMaterials.length > 0 ? (
+                        <GltfMaterialEditor nodeId={node.id} materials={gltfChildMaterials} />
+                      ) : sectionId === 'material' &&
+                        (node.type === 'GltfAsset' || node.type === 'GltfChild') ? (
                         <GltfMaterialReadout
                           assetRef={String((node.params as { assetRef?: unknown }).assetRef ?? '')}
                           childId={node.type === 'GltfChild' ? node.id : null}
