@@ -30,7 +30,7 @@ import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
-import { readGltfMaterials } from '../app/asset/readGltfMaterials';
+import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
 import { useGltfMaterialStore } from '../app/asset/gltfMaterialStore';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -1120,6 +1120,38 @@ function childOverridesForAsset(
   return out;
 }
 
+// #178 (S3) — overlay a GltfChild's captured OpenPBR material (S2) onto the
+// imported clone material, PRESERVING the clone's texture maps (S2 captured
+// maps=null; textures stay with the clone until S5). For an UNEDITED material the
+// captured scalars ARE the glTF's own factors, so re-applying them onto the
+// still-textured clone is IDENTITY (colour × map is how glTF already composites)
+// → pixel parity. Clones the source (never mutates the shared drei-cached material
+// — V20/H36/H45 single-writer). Compiles through openpbrToThree (the one mapping
+// site, V29), so a DAG material renders exactly like a native Box/Sphere one.
+function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Material {
+  const tp = openpbrToThree(ir);
+  const next = s.clone() as THREE.MeshPhysicalMaterial;
+  next.color?.set(tp.color);
+  next.emissive?.set(tp.emissive);
+  if ('emissiveIntensity' in next) next.emissiveIntensity = tp.emissiveIntensity;
+  if ('opacity' in next) next.opacity = tp.opacity;
+  // Only ADD transparency — never strip what the loader set from alpha modes /
+  // extensions we don't capture yet (an edit lowering opacity still turns it on).
+  if ('transparent' in next) next.transparent = next.transparent === true || tp.transparent;
+  // metalness/roughness ARE the captured glTF factors → applying them onto a
+  // mapped material is identity (the scalar multiplies its map, as in glTF).
+  if ('roughness' in next) next.roughness = tp.roughness;
+  if ('metalness' in next) next.metalness = tp.metalness;
+  // Physical-only lobes — silently no-op on a plain MeshStandardMaterial.
+  if ('ior' in next) next.ior = tp.ior;
+  if ('clearcoat' in next) next.clearcoat = tp.clearcoat;
+  if ('clearcoatRoughness' in next) next.clearcoatRoughness = tp.clearcoatRoughness;
+  if ('transmission' in next) next.transmission = tp.transmission;
+  if ('thickness' in next && tp.transmission > 0) next.thickness = tp.thickness;
+  // maps: intentionally NOT touched — keep the clone's embedded textures (S5).
+  return next;
+}
+
 function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
   // H48 4th-occ gate — count this renderer's renders so the perf e2e can prove an
   // unrelated edit re-renders it 0×. DEV-only no-op in production (renderCounter).
@@ -1372,6 +1404,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     //     slot matches ⇒ no-op (range-safe).
     const targetSlot = override ? (override as MaterialValue).slotIndex : undefined;
     let slotIdx = -1;
+    // #178 (S3) — per-GltfChild local slot counter. A mesh maps to its GltfChild
+    // by the nearest stamped ancestor (the H90/readGltfMaterials rule); the i-th
+    // mesh under that child = the i-th captured material (primitive order).
+    const localSlotByChild = new Map<string, number>();
     cloned.traverse((child) => {
       const m = child as THREE.Mesh;
       if (!m.isMesh) return;
@@ -1381,6 +1417,22 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         overrideOriginals.current.set(m.uuid, m.material);
       }
       const src = overrideOriginals.current.get(m.uuid)!;
+      // #178 (S3) — the DAG-material base: overlay this slot's captured OpenPBR IR
+      // onto the imported material (maps preserved). Absent (pre-#178 save / empty
+      // node / array-material mesh) → keep the imported material verbatim (V10/H14
+      // backward-compat). This base then feeds the MaterialOverride layer below.
+      const childId = nearestChildId(m);
+      let local = -1;
+      if (childId) {
+        local = (localSlotByChild.get(childId) ?? -1) + 1;
+        localSlotByChild.set(childId, local);
+      }
+      let dagBase: THREE.Material | THREE.Material[] = src;
+      if (childId && !Array.isArray(src)) {
+        const irs = depNodeMap[childId]?.params?.materials as InlineMaterialSpec[] | undefined;
+        const ir = irs?.[local];
+        if (ir) dagBase = overlayDagMaterial(src, ir);
+      }
       // The override applies to THIS slot iff it exists AND either it is a
       // whole-child override (slotIndex undefined) or it addresses this exact
       // slot. Anything else keeps the imported material — no override, or a
@@ -1388,17 +1440,19 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // slot 0 unchanged when the director edits slot 1).
       const applies = Boolean(override) && (targetSlot === undefined || targetSlot === slotIdx);
       if (!applies) {
-        // Restore the imported material(s) — fixes the latent no-restore bug AND
-        // keeps non-addressed slots at their source material.
-        m.material = src;
+        // No override for this slot → render the DAG material (S3); if the child
+        // carries none, dagBase === src (the imported material), unchanged.
+        m.material = dagBase;
         return;
       }
-      // Flatten ignores the source entirely (fresh clay per slot); the default
-      // path clones the source and overlays only the map-safe fields.
+      // Flatten ignores the base entirely (fresh clay per slot); the default path
+      // clones the DAG base and overlays the override's map-safe fields ON TOP.
       const make = flatten ? () => clay(override as MaterialValue) : tint;
-      m.material = Array.isArray(src) ? src.map(make) : make(src);
+      m.material = Array.isArray(dagBase) ? dagBase.map(make) : make(dagBase);
     });
-  }, [cloned, override]);
+    // depNodeMap is a dep: editing a GltfChild's `materials` (S4) re-runs this
+    // effect so the new OpenPBR scalars re-overlay onto the clone.
+  }, [cloned, override, depNodeMap]);
   // Wireframe pass — flip every mesh material on the cloned scene. Runs
   // independent of override so toggling shading after the override is
   // applied still works.

@@ -54,8 +54,10 @@ const MAP_LABELS: ReadonlyArray<readonly [string, string]> = [
   ['aoMap', 'ambient occlusion'],
 ];
 
-/** Nearest ancestor (including self) carrying a `basherGltfChildId` stamp. */
-function nearestChildId(o: THREE.Object3D): string | null {
+/** Nearest ancestor (including self) carrying a `basherGltfChildId` stamp.
+ *  Exported so the renderer's DAG-material overlay (#178 S3) maps a clone mesh
+ *  back to its GltfChild with the SAME rule this read-only projection uses. */
+export function nearestChildId(o: THREE.Object3D): string | null {
   let cur: THREE.Object3D | null = o;
   while (cur) {
     const id = (cur.userData as { basherGltfChildId?: unknown }).basherGltfChildId;
