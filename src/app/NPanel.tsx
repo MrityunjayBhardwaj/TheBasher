@@ -1449,7 +1449,12 @@ function GltfMapRow({
     try {
       const storage = await getStorage();
       const ref = await attachMapFromFile(storage, file, slot);
-      onSet(ref);
+      // attachMapFromFile stamps the image-UPLOAD orientation (flipY=true, the
+      // native Box/Sphere convention). A glTF mesh's UVs are authored for the
+      // glTF texture convention (flipY=false — what GLTFLoader sets on the
+      // imported textures this replacement sits beside). Override so a replaced
+      // map aligns with the SAME UVs instead of rendering vertically flipped.
+      onSet({ ...ref, flipY: false });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       useAssetErrorStore.getState().report(`gltfmap:${slot}`, `${slot} map failed: ${msg}`);
