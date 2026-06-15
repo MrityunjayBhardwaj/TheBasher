@@ -41,9 +41,14 @@ async function renderAndSample(page: import('@playwright/test').Page) {
       const p = ctx.getImageData(x, y, 1, 1).data;
       return [p[0], p[1], p[2], p[3]] as [number, number, number, number];
     };
+    // The background reference is the actual corner pixel, NOT a hardcoded
+    // colour — the dark redesign moved the ambient stage from ~[10,10,10] to
+    // [26,27,32], so a literal made every pixel read "non-bg" (the H27/V39
+    // re-validation trap). Chrome leak = DEVIATION from the true background.
+    const bg = at(2, 2);
     const isNonBg = (x: number, y: number) => {
       const [r, g, b] = at(x, y);
-      return Math.abs(r - 10) + Math.abs(g - 10) + Math.abs(b - 10) > 24;
+      return Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]) > 24;
     };
     // Dense sample of the bottom-LEFT quadrant — cube-free, but exactly where
     // the floor grid is densest. Background-only (0) when chrome is excluded;
@@ -112,12 +117,15 @@ test.describe('#168 render to image', () => {
     expect(res.chromeRegionNonBg).toBeLessThan(20);
   });
 
-  test('the Render toolbar button downloads a PNG named for the resolution', async ({ page }) => {
+  test('File ▸ Render Image downloads a PNG named for the resolution', async ({ page }) => {
     await waitReady(page);
+    // The render affordance lives in the File menu (the UX overhaul retired the
+    // top-toolbar button — render is a File action like Save/Export).
     const downloadPromise = page.waitForEvent('download');
-    await page.getByTestId('top-toolbar-render').click();
+    await page.getByTestId('menu-file-button').click();
+    await page.getByTestId('menu-file-render-image').click();
     const download = await downloadPromise;
-    // Revert Wave C (the download affordance) → no download event → times out.
+    // Revert the download affordance → no download event → times out.
     expect(download.suggestedFilename()).toMatch(/-1920x1080\.png$/);
   });
 });
