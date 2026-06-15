@@ -211,11 +211,20 @@ export async function resolveAssetFiles(
     } catch {
       texChildren = [];
     }
+    // A `BakedTextureRef.hash` carries the EXTENSION (`<hash>.<ext>` — what
+    // persistTexture returns, e.g. `7b7cb53d.png`), which equals the OPFS child
+    // filename. Key the lookup by BOTH the full filename AND the bare hash so the
+    // current ext-bearing refs match (via the filename) AND any legacy bare-hash
+    // ref still resolves (via the dir listing). Keying by bare hash ALONE — what
+    // this did before — silently dropped every real baked texture from the
+    // bundle (the H98 degenerate-fixture trap: the unit fixtures used a bare
+    // `'deadbeef'` hash that never exercised the ext-bearing shape).
     const byHash = new Map<string, string>();
     for (const child of texChildren) {
       const dot = child.indexOf('.');
-      const hash = dot > 0 ? child.slice(0, dot) : child;
-      byHash.set(hash, child);
+      const bare = dot > 0 ? child.slice(0, dot) : child;
+      byHash.set(child, child);
+      if (!byHash.has(bare)) byHash.set(bare, child);
     }
     for (const hash of refs.bakedTextureHashes) {
       const child = byHash.get(hash);

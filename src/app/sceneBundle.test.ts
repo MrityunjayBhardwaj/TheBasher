@@ -12,11 +12,14 @@ import {
   SceneBundleSchema,
   bundleToProject,
   collectAssetRefs,
+  resolveAssetFiles,
   bytesToBase64,
   base64ToBytes,
   isSelfContained,
   SCENE_BUNDLE_VERSION,
 } from './sceneBundle';
+import { MemoryStorage } from '../core/storage/MemoryStorage';
+import { BAKED_TEXTURE_ROOT } from './asset/bakedTextureStore';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -66,15 +69,37 @@ describe('collectAssetRefs', () => {
   });
 
   it('collects a BakedTextureRef hash from a material map slot', () => {
+    // The REAL ref shape persistTexture returns: `<hash>.<ext>` (NOT a bare
+    // hash — the degenerate fixture this test used to carry let the resolve-side
+    // ext mismatch ship; see the resolveAssetFiles test below).
     const state = stateFromParams({
       mat: {
         maps: {
-          albedo: { hash: 'deadbeef', colorSpace: 'srgb', flipY: true, wrapS: 1000, wrapT: 1000 },
+          albedo: {
+            hash: '7b7cb53d.png',
+            colorSpace: 'srgb',
+            flipY: false,
+            wrapS: 1000,
+            wrapT: 1000,
+          },
           normal: null,
         },
       },
     });
-    expect(collectAssetRefs(state).bakedTextureHashes).toEqual(['deadbeef']);
+    expect(collectAssetRefs(state).bakedTextureHashes).toEqual(['7b7cb53d.png']);
+  });
+
+  it('does NOT collect the glTF cleared-map sentinel (empty hash, no OPFS file)', () => {
+    const state = stateFromParams({
+      mat: {
+        maps: {
+          // #178 S5 CLEARED_MAP — an empty-hash BakedTextureRef: round-trips as
+          // plain data but references no file, so it is never embedded.
+          albedo: { hash: '', colorSpace: 'srgb', flipY: false, wrapS: 1000, wrapT: 1000 },
+        },
+      },
+    });
+    expect(collectAssetRefs(state).bakedTextureHashes).toEqual([]);
   });
 
   it('collects a Scene env file assetRef (env-hdri) as its exact path (UX #9)', () => {
@@ -134,6 +159,47 @@ describe('collectAssetRefs', () => {
     expect(refs.gltfFolders).toEqual([]);
     expect(refs.bakedGeometry).toEqual([]);
     expect(refs.bakedTextureHashes).toEqual([]);
+  });
+});
+
+describe('resolveAssetFiles — baked-texture hash → OPFS file', () => {
+  it('resolves an ext-bearing ref hash (<hash>.<ext>) to its OPFS file', async () => {
+    // The regression guard for the bundle drop: a real BakedTextureRef.hash is
+    // `7b7cb53d.png` (persistTexture stamps the ext). Keying the resolve lookup
+    // by the BARE hash — the old behaviour — silently dropped this file from the
+    // bundle, so an edited glTF map (or any baked texture) didn't round-trip.
+    const storage = new MemoryStorage();
+    await storage.write(`${BAKED_TEXTURE_ROOT}/7b7cb53d.png`, new Uint8Array([1, 2, 3]));
+    const files = await resolveAssetFiles(storage, {
+      gltfFolders: [],
+      bakedGeometry: [],
+      bakedTextureHashes: ['7b7cb53d.png'],
+      envHdri: [],
+    });
+    expect(files).toEqual([`${BAKED_TEXTURE_ROOT}/7b7cb53d.png`]);
+  });
+
+  it('still resolves a legacy bare-hash ref (no extension) via the dir listing', async () => {
+    const storage = new MemoryStorage();
+    await storage.write(`${BAKED_TEXTURE_ROOT}/cafe.jpg`, new Uint8Array([9]));
+    const files = await resolveAssetFiles(storage, {
+      gltfFolders: [],
+      bakedGeometry: [],
+      bakedTextureHashes: ['cafe'],
+      envHdri: [],
+    });
+    expect(files).toEqual([`${BAKED_TEXTURE_ROOT}/cafe.jpg`]);
+  });
+
+  it('drops a hash with no matching OPFS file (no phantom path embedded)', async () => {
+    const storage = new MemoryStorage();
+    const files = await resolveAssetFiles(storage, {
+      gltfFolders: [],
+      bakedGeometry: [],
+      bakedTextureHashes: ['missing.png'],
+      envHdri: [],
+    });
+    expect(files).toEqual([]);
   });
 });
 
