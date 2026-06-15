@@ -261,6 +261,15 @@ export function boot(): Promise<void> {
       void import('./renderImageAction').then((m) => {
         w.__basher_render_png = m.renderActiveProjectToDataUrl;
       });
+      // #189 render-animation seams — the falsifiable e2e drives the real
+      // action (so the MP4/zip download + the loop run end-to-end) and watches
+      // the progress store (for the cancel + playhead-restore observations).
+      void import('./renderAnimationAction').then((m) => {
+        w.__basher_render_animation = m.renderAnimationToFile;
+      });
+      void import('./stores/renderAnimationStore').then((m) => {
+        w.__basher_render_animation_store = m.useRenderAnimationStore;
+      });
       // Lazy import (top-level cycle would tangle stores into boot's
       // dependency graph). The dynamic import is sync-resolved by Vite at
       // build time; only the shape is needed here.

@@ -21,7 +21,11 @@ import { useProjectStore } from '../core/project/store';
 import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
 import type { RenderOutputValue } from '../nodes/types';
 import { DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH } from '../nodes/RenderOutput';
-import { renderSceneToImageCanvas } from '../render/renderToImage';
+import {
+  clampRenderSize,
+  createRenderScratch,
+  renderSceneToImageCanvas,
+} from '../render/renderToImage';
 import {
   createMp4Sink,
   createPngSequenceSink,
@@ -121,6 +125,13 @@ export async function renderAnimationToFile(
   const wasPlaying = time.playing;
   useTimeStore.getState().pause();
 
+  // ONE reusable render target + readback buffer + canvas for the whole render.
+  // Allocating these per frame (as the one-shot still does) churns ~16MB of JS
+  // heap + a fresh GPU target every frame and crashes the context on a long
+  // render — observed: 4 frames OK, 31 frames crashes the page.
+  const { width: clampedW, height: clampedH } = clampRenderSize(gl, width, height);
+  const scratch = createRenderScratch(clampedW, clampedH, postFx.smaa ? 4 : 0);
+
   try {
     const output = await renderAnimation(
       {
@@ -128,7 +139,8 @@ export async function renderAnimationToFile(
         fps,
         setTime: (s) => useTimeStore.getState().setTime(s),
         waitForApply,
-        capture: () => renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }),
+        capture: () =>
+          renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }, scratch),
       },
       sink,
       {
@@ -145,6 +157,7 @@ export async function renderAnimationToFile(
     if (e instanceof RenderAnimationAborted) return { ok: false, cancelled: true };
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   } finally {
+    scratch.dispose();
     useTimeStore.getState().setTime(restoreSeconds);
     if (wasPlaying) useTimeStore.getState().play();
     useRenderAnimationStore.getState().end();

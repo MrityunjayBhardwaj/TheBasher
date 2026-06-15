@@ -112,6 +112,73 @@ export function isUniformColor(buf: Uint8Array | Uint8ClampedArray): boolean {
   return true;
 }
 
+/** PURE — clamp a requested resolution to the GPU's max texture size, preserving
+ *  aspect (scale both dims by one factor). A user can set width/height to
+ *  anything ≥1 (the zod bound); an oversized WebGLRenderTarget loses the GL
+ *  context / OOMs. */
+export function clampRenderSize(
+  gl: THREE.WebGLRenderer,
+  reqWidth: number,
+  reqHeight: number,
+): { width: number; height: number } {
+  const maxTex = gl.capabilities.maxTextureSize;
+  const fit = Math.min(1, maxTex / Math.max(reqWidth, reqHeight));
+  return {
+    width: Math.max(1, Math.floor(reqWidth * fit)),
+    height: Math.max(1, Math.floor(reqHeight * fit)),
+  };
+}
+
+/**
+ * A REUSABLE set of per-frame allocations for the animation render (#189):
+ * the manual-path MSAA target, the readback buffer, and the destination 2D
+ * canvas. Allocating these PER FRAME (as the one-shot still does) churns ~16MB
+ * of JS heap + a fresh GPU render target every frame and crashes the context
+ * over a long render. The animation creates ONE scratch and reuses it for every
+ * frame. dispose() frees the GPU target when the render ends.
+ */
+export interface RenderScratch {
+  readonly width: number;
+  readonly height: number;
+  readonly samples: number;
+  target: THREE.WebGLRenderTarget;
+  readBuf: Uint8Array;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  imageData: ImageData;
+  dispose(): void;
+}
+
+/** Create a reusable scratch for repeated renders at a FIXED resolution. The
+ *  caller must pass already-clamped width/height ({@link clampRenderSize}). */
+export function createRenderScratch(width: number, height: number, samples: number): RenderScratch {
+  const target = new THREE.WebGLRenderTarget(width, height, {
+    samples,
+    colorSpace: THREE.SRGBColorSpace,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('renderToImage: 2D context unavailable for image encode');
+  return {
+    width,
+    height,
+    samples,
+    target,
+    readBuf: new Uint8Array(width * height * 4),
+    canvas,
+    ctx,
+    imageData: new ImageData(width, height),
+    dispose() {
+      target.dispose();
+    },
+  };
+}
+
 /**
  * IMPURE — render the DAG scene offscreen through the production camera and
  * return a 2D canvas holding the (top-down) RGBA pixels. The SHARED render core:
@@ -120,19 +187,25 @@ export function isUniformColor(buf: Uint8Array | Uint8ClampedArray): boolean {
  * (V37 chrome-exclusion / V47 env / V51 DoF). Always restores renderer state +
  * chrome visibility (the GL render happens inside a finally; the canvas is built
  * from the already-captured pixels afterward).
+ *
+ * Pass a {@link RenderScratch} (animation render) to REUSE the target / readback
+ * buffer / canvas across frames — without it the function allocates a one-shot
+ * scratch and disposes it (the still render). When a scratch is reused, its
+ * canvas is overwritten each call, so the caller must consume the returned
+ * canvas (encode the frame) BEFORE the next render call.
  */
 export async function renderSceneToImageCanvas(
   opts: RenderToImageOptions,
+  scratch?: RenderScratch,
 ): Promise<HTMLCanvasElement> {
   const { gl, scene, pose, postFx } = opts;
-  // Clamp the resolution to the GPU's max texture size, preserving aspect — a
-  // user can set width/height to anything ≥1 (the zod bound), and an oversized
-  // WebGLRenderTarget loses the GL context / OOMs. Scale BOTH dims by one
-  // factor so the framing (camera aspect) is unchanged.
-  const maxTex = gl.capabilities.maxTextureSize;
-  const fit = Math.min(1, maxTex / Math.max(opts.width, opts.height));
-  const width = Math.max(1, Math.floor(opts.width * fit));
-  const height = Math.max(1, Math.floor(opts.height * fit));
+  const { width, height } = clampRenderSize(gl, opts.width, opts.height);
+  const samples = postFx.smaa ? 4 : 0;
+  // Reuse the caller's scratch iff it matches this resolution + sample count;
+  // otherwise allocate a one-shot scratch (the still path) and dispose it.
+  const reuse =
+    scratch && scratch.width === width && scratch.height === height && scratch.samples === samples;
+  const sc = reuse ? scratch! : createRenderScratch(width, height, samples);
   const camera = buildRenderCamera(pose, width, height);
 
   // Hide editor chrome — a render shows DAG content only (parity with what
@@ -149,30 +222,23 @@ export async function renderSceneToImageCanvas(
     }
   });
 
-  let flipped: Uint8ClampedArray;
   try {
     // DoF on → go through the postprocessing EffectComposer so the bokeh
     // matches the live viewport (V37). DoF off → the fast manual MSAA path,
     // unchanged (non-DoF renders, incl. #168, are byte-for-byte as before).
     const buf = opts.dof
-      ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof)
-      : renderViaManual(gl, scene, camera, width, height, postFx);
-    flipped = flipRowsY(buf, width, height);
+      ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
+      : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
+    const flipped = flipRowsY(buf, width, height);
+    // Reuse the scratch ImageData buffer (set() copies into it) → no per-frame
+    // 8MB ImageData allocation on the animation path.
+    sc.imageData.data.set(flipped);
+    sc.ctx.putImageData(sc.imageData, 0, 0);
   } finally {
     for (const o of hidden) o.visible = true;
+    if (!reuse) sc.dispose();
   }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('renderToImage: 2D context unavailable for image encode');
-  // Build an ArrayBuffer-backed ImageData then copy — sidesteps the TS 5.7
-  // typed-array-generics complaint about ArrayBufferLike vs ArrayBuffer.
-  const img = new ImageData(width, height);
-  img.data.set(flipped);
-  ctx.putImageData(img, 0, 0);
-  return canvas;
+  return sc.canvas;
 }
 
 /**
@@ -191,7 +257,9 @@ export async function renderSceneToPngBlob(opts: RenderToImageOptions): Promise<
 }
 
 /** Manual MSAA + tone-map render into an offscreen sRGB target; returns the
- *  bottom-up RGBA buffer. Restores renderer state in a finally. */
+ *  bottom-up RGBA buffer (the passed `readBuf`). `target` + `readBuf` are owned
+ *  by the caller's scratch (reused across animation frames, disposed once at the
+ *  end) — restores renderer state in a finally but does NOT dispose the target. */
 function renderViaManual(
   gl: THREE.WebGLRenderer,
   scene: THREE.Scene,
@@ -199,14 +267,9 @@ function renderViaManual(
   width: number,
   height: number,
   postFx: PostFxConfig,
+  target: THREE.WebGLRenderTarget,
+  readBuf: Uint8Array,
 ): Uint8Array {
-  const target = new THREE.WebGLRenderTarget(width, height, {
-    samples: postFx.smaa ? 4 : 0,
-    colorSpace: THREE.SRGBColorSpace,
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: true,
-  });
   const prevTarget = gl.getRenderTarget();
   const prevToneMapping = gl.toneMapping;
   const prevExposure = gl.toneMappingExposure;
@@ -216,14 +279,12 @@ function renderViaManual(
     gl.setRenderTarget(target);
     gl.clear();
     gl.render(scene, camera); // auto-resolves MSAA → readable texture (WebGLRenderer.js:1273)
-    const buf = new Uint8Array(width * height * 4);
-    gl.readRenderTargetPixels(target, 0, 0, width, height, buf);
-    return buf;
+    gl.readRenderTargetPixels(target, 0, 0, width, height, readBuf);
+    return readBuf;
   } finally {
     gl.setRenderTarget(prevTarget);
     gl.toneMapping = prevToneMapping;
     gl.toneMappingExposure = prevExposure;
-    target.dispose();
   }
 }
 
@@ -242,6 +303,7 @@ function renderViaComposer(
   height: number,
   postFx: PostFxConfig,
   dof: DofEffectSettings,
+  readBuf: Uint8Array,
 ): Uint8Array {
   // 8-bit sRGB buffers (UnsignedByte) so the final outputBuffer reads back
   // cleanly as Uint8 — matches the manual path's 8-bit sRGB target. (HalfFloat
@@ -283,10 +345,9 @@ function renderViaComposer(
     gl.toneMapping = THREE.NoToneMapping;
     composer.render();
     // autoRenderToScreen=false leaves the final (tone-mapped, sRGB-encoded)
-    // result in composer.outputBuffer; read it straight as 8-bit RGBA.
-    const buf = new Uint8Array(width * height * 4);
-    gl.readRenderTargetPixels(composer.outputBuffer, 0, 0, width, height, buf);
-    return buf;
+    // result in composer.outputBuffer; read it straight into the scratch buffer.
+    gl.readRenderTargetPixels(composer.outputBuffer, 0, 0, width, height, readBuf);
+    return readBuf;
   } finally {
     gl.setRenderTarget(prevTarget);
     gl.toneMapping = prevToneMapping;
