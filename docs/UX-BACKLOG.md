@@ -21,15 +21,15 @@ Status: ☐ todo · ◐ in progress · ☑ done.
    TOP-anchored and stopping short of a reserved `BOTTOM_BAND` so the already-floating bottom-right
    orbit gizmo + Persp/Ortho stay clear (no widget has to dodge the inspector — the H91/V45
    overlap trap). _(b) bottom islands_ — the agentdock + timeline grid rows are gone; the agent chat
-   + timeline float as a **stacked bottom-center** island group (chat above, timeline below;
-   user-chosen arrangement), so the viewport reads full-bleed top→bottom. New `src/app/layoutIslands.ts`
-   is the single source of truth for island geometry. Island wrappers reuse the FloatingViewportToolbar
-   surface tokens (rounded-2xl border bg-bg-2/95 shadow-xl backdrop-blur-md — V39/contrast-matrix
-   covered); inner panels render transparent. The toolbar pill (centered over the full-bleed viewport)
-   is width-capped (`CENTER_SIDE_RESERVED`) so it can't slide under a side island; right-click on a
-   panel stops propagation so it no longer pops the viewport Add menu; the orbit hint moved above the
-   bottom stack. Fixed-position, collapsible (V35), non-draggable. Gates: vitest 1519 / tsc 0 /
-   eslint 0 / prettier / e2e (new `ux2-floating-islands` 7 + updated spline-wc/wf geometry).
+   - timeline float as a **stacked bottom-center** island group (chat above, timeline below;
+     user-chosen arrangement), so the viewport reads full-bleed top→bottom. New `src/app/layoutIslands.ts`
+     is the single source of truth for island geometry. Island wrappers reuse the FloatingViewportToolbar
+     surface tokens (rounded-2xl border bg-bg-2/95 shadow-xl backdrop-blur-md — V39/contrast-matrix
+     covered); inner panels render transparent. The toolbar pill (centered over the full-bleed viewport)
+     is width-capped (`CENTER_SIDE_RESERVED`) so it can't slide under a side island; right-click on a
+     panel stops propagation so it no longer pops the viewport Add menu; the orbit hint moved above the
+     bottom stack. Fixed-position, collapsible (V35), non-draggable. Gates: vitest 1519 / tsc 0 /
+     eslint 0 / prettier / e2e (new `ux2-floating-islands` 7 + updated spline-wc/wf geometry).
 3. ☑ **Remove the STUB/LIVE toggle** (top-right corner). _(ComfyStatusIndicator unmounted from ProjectTabs.)_
 4. ☑ **Remove Save + Projects from the top-right corner.** Move the projects list under **File**.
    _(Save → File ▸ Save / Cmd+S; projects → File ▸ Switch Project submenu.)_
@@ -111,16 +111,32 @@ Status: ☐ todo · ◐ in progress · ☑ done.
 
 ## Animation
 
-11. ◐ **Dopesheet / graph-editor timeline** modelled on
-    [reze-studio](https://github.com/AmyangXYZ/reze-studio). **Curve editor DONE
-    (2026-06-15, 3 slices).** Decisions (AskUserQuestion): start with the curve editor;
+11. ☑ **Dopesheet / graph-editor timeline** modelled on
+    [reze-studio](https://github.com/AmyangXYZ/reze-studio). **DONE (2026-06-15, 8 slices).**
+    _Dopesheet rebuild + shared-view "unify" (slices 4–8):_ the canvas dopesheet got
+    reze fidelity — a 17px frame ruler (adaptive major/minor ticks + frame labels),
+    a frame-column grid, reze 45° diamonds (neutral base; selected = #5aa0f0 + white
+    outline), and a red playhead with a soft glow + triangle head. Click/drag the
+    ruler to SCRUB. **The "unify" was reframed (AskUserQuestion 2026-06-15): keep the
+    Dopesheet | Curve tabs, but both reze-grade sharing ONE zoom/pan/scroll view**
+    (not a single merged canvas) — a new `timelineView` module + `timelineViewStore`
+    both surfaces read, so switching tabs holds the same time window. Ctrl/⌘-wheel =
+    time zoom (anchored on the playhead), plain wheel = pan, Shift-wheel = value zoom
+    (curve only). Default-view geometry is pixel-identical to the old `keyframeToRect`
+    (parity proof) so p7.1/p7.12/p6-w9 held unchanged. Curve polish: freeze the value
+    domain during a drag (no mid-drag rescale wobble) + a `f150 · x,y,z` key readout.
+    New invariant [[V50]]; e2e-geometry-mirror trap → [[H95]]. _Deferred follow-ups
+    (minor): auto-scroll during playback (perf-subtle vs the static-layer cache),
+    box/multi-keyframe select, quat/color curve projection, the read-only clip-row
+    path sharing the view._
+    **Curve editor DONE earlier (2026-06-15, 3 slices).** Decisions (AskUserQuestion): start with the curve editor;
     wire REAL cubic-bézier. _(1) `keyframeInterp` — ONE shared sampler: explicit
     inHandle/outHandle → true cubic bézier; no-handle → exact legacy linear/smoothstep
     so saved animations render byte-identically (flat handles at ±span/3 == smoothstep,
     proven). _(2) `EditableCurve` — a reze-style SVG graph editor replacing the read-only
     curve preview: real bézier curves sampled THROUGH that core (drawn == played, H40),
     value gutter + frame ruler + grid, per-channel colors (rot→RGB, trs→orange/teal/purple),
-    red playhead, draggable keyframe dots (time+value). _(3) draggable bézier handles —
+    red playhead, draggable keyframe dots (time+value). \_(3) draggable bézier handles —
     grab a control point to bend the motion (x→time clamped to its half-segment, y→value;
     materializes an explicit handle on first pull). SVG over canvas: Basher channels hold
     tens of keys not reze's thousands, so SVG keeps the `curve-track-N` testids + trivial
