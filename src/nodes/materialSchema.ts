@@ -35,7 +35,9 @@ const bakedTextureRefSchema = z.object({
   wrapT: z.number(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
-const NULL_MAPS = {
+// Exported so the glTF→OpenPBR converter (gltfMaterialToOpenpbr) seeds an IR with
+// the SAME empty-maps / identity-UV defaults the schema uses — one source, no drift.
+export const NULL_MAPS = {
   albedo: null,
   normal: null,
   roughness: null,
@@ -58,7 +60,7 @@ const mapsSchema = z
 // default so a pre-#3 project renders byte-identically (V10/H14). Every field +
 // the object carry a `.default` so a partial setParam whole-params re-parse refills
 // siblings (R6 — same discipline as the lobes).
-const IDENTITY_UV_TRANSFORM = {
+export const IDENTITY_UV_TRANSFORM = {
   tiling: [1, 1] as [number, number],
   offset: [0, 0] as [number, number],
   rotation: 0,
