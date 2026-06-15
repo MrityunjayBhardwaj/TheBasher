@@ -67,9 +67,10 @@ const ANIMATED_CHILD = 'Bone1'; // the TIP bone — clip rotates it about Z
 const ANIMATED_BONE_INDEX = 1; // skeleton.bones[1] === Bone1 (gen-skinned-fixture.mjs)
 const TIP_VERTEX = 4; // weighted to Bone1 (the animated bone) → MOVES on edit
 const BASE_VERTEX = 0; // weighted to Bone0 (un-animated) → must NOT move
-const ROW_HEIGHT_PX = 24; // TimelineCanvas.tsx:110
-const DIAMOND_PX = 8; // TimelineCanvas.tsx:112
-const LABEL_GUTTER_PX = 128; // TimelineCanvas.tsx:114
+const ROW_HEIGHT_PX = 24; // TimelineCanvas.tsx ROW_HEIGHT_PX
+const DIAMOND_PX = 10; // TimelineCanvas.tsx DIAMOND_PX (reze 45° diamond)
+const LABEL_GUTTER_PX = 84; // TimelineCanvas.tsx LABEL_GUTTER_PX
+const RULER_H = 17; // TimelineCanvas.tsx RULER_H — rows sit BELOW the frame ruler
 
 type Vec3 = [number, number, number];
 
@@ -192,7 +193,7 @@ async function rotationRowDiamond(
   canvasWidth: number,
 ): Promise<{ rowIndex: number; localX: number; localY: number; fromTime: number }> {
   return page.evaluate(
-    async ({ id, child, width, gutter, rowH, diamond }) => {
+    async ({ id, child, width, gutter, rowH, diamond, ruler }) => {
       const w = window as unknown as BasherWindow;
       const [{ collectChannelRows }, { appendSelectionClipRows }, { keyframeToRect }] =
         await Promise.all([
@@ -214,7 +215,7 @@ async function rotationRowDiamond(
       const rect = keyframeToRect(fromTime, rowIndex, 0, trackWidth, rowH, diamond);
       // Mirror onPointerDown's mapping: localX = gutter + rect.x + rect.w/2.
       const localX = gutter + rect.x + rect.w / 2;
-      const localY = rowIndex * rowH + rowH / 2;
+      const localY = ruler + rowIndex * rowH + rowH / 2;
       return { rowIndex, localX, localY, fromTime };
     },
     {
@@ -224,6 +225,7 @@ async function rotationRowDiamond(
       gutter: LABEL_GUTTER_PX,
       rowH: ROW_HEIGHT_PX,
       diamond: DIAMOND_PX,
+      ruler: RULER_H,
     },
   );
 }
@@ -748,7 +750,7 @@ test('P7.12 (e) PERF GUARD — bake + edit several bones, commits===0 across 5s 
     );
     const box = (await canvas.boundingBox())!;
     const diamond = await page.evaluate(
-      async ({ id, cn, width, gutter, rowH, dia }) => {
+      async ({ id, cn, width, gutter, rowH, dia, ruler }) => {
         const [{ collectChannelRows }, { appendSelectionClipRows }, { keyframeToRect }] =
           await Promise.all([
             import('/src/timeline/TimelineCanvas.tsx'),
@@ -767,7 +769,7 @@ test('P7.12 (e) PERF GUARD — bake + edit several bones, commits===0 across 5s 
         const trackWidth = Math.max(width - gutter, 0);
         const fromTime = rows[idx].keyframes[0].time;
         const rect = keyframeToRect(fromTime, idx, 0, trackWidth, rowH, dia);
-        return { localX: gutter + rect.x + rect.w / 2, localY: idx * rowH + rowH / 2 };
+        return { localX: gutter + rect.x + rect.w / 2, localY: ruler + idx * rowH + rowH / 2 };
       },
       {
         id: childDagId,
@@ -776,6 +778,7 @@ test('P7.12 (e) PERF GUARD — bake + edit several bones, commits===0 across 5s 
         gutter: LABEL_GUTTER_PX,
         rowH: ROW_HEIGHT_PX,
         dia: DIAMOND_PX,
+        ruler: RULER_H,
       },
     );
     if (!diamond) continue; // no clip row for this bone — nothing to bake

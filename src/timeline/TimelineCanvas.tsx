@@ -99,19 +99,49 @@ import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/
  */
 export const PALETTE = {
   CANVAS_BG: '#0a0a0a',
-  DIAMOND: '#e5e5e5',
-  ACTIVE_DIAMOND: '#7c8cff',
-  PLAYHEAD: '#7c8cff',
+  // reze dope-strip diamond: neutral cool-grey base (rgb(170,170,195)),
+  // alpha-modulated at paint time for the selected/unselected intensity.
+  DIAMOND: '#aaaac3',
+  // reze selected-key blue (the dope-strip + curve-key selection colour).
+  ACTIVE_DIAMOND: '#5aa0f0',
+  // reze playhead red (was the basher accent blue — now matches the curve
+  // editor's red playhead so the two surfaces read as one timeline).
+  PLAYHEAD: '#d83838',
   ROW_LINE: '#2a2a2a',
-  LABEL_TEXT: '#9a9a9a',
+  LABEL_TEXT: '#9ca3af',
 } as const;
 
-/** Row height (CSS px) — mirrors Dopesheet's `h-6` channel rows (24px). */
+// ── reze-studio chrome (decorative; NOT contrast-gated like PALETTE) ─────
+// The frame ruler + grid colours mirror EditableCurve's so the dopesheet and
+// the curve editor are visually ONE surface (the unify goal). Kept OUTSIDE
+// PALETTE because PALETTE's exact 6-key set + WCAG gate is a pinned contract
+// (TimelineCanvas.test.tsx + contrastMatrix.test.ts); these are subtle
+// decorative lines/labels, not interactive affordances.
+const RULER_BG = '#101018';
+const RULER_TICK_MAJOR = '#3a3a48';
+const RULER_TICK_MINOR = '#2a2a34';
+const GRID_COL_MAJOR = '#2c2c44';
+const GRID_COL_MINOR = '#161620';
+const DIAMOND_OUTLINE = '#ffffff';
+
+/** Frame ruler band height (CSS px) — reze's 17px top ruler. */
+const RULER_H = 17;
+/** Row height (CSS px) — one channel row in the dopesheet. */
 const ROW_HEIGHT_PX = 24;
-/** Diamond box (CSS px) — mirrors Dopesheet's 8x8 diamond. */
-const DIAMOND_PX = 8;
-/** Left gutter (CSS px) for channel labels — mirrors Dopesheet's `w-32`. */
-const LABEL_GUTTER_PX = 128;
+/** Diamond box (CSS px) — reze's 45° diamond (~5px half-diagonal). */
+const DIAMOND_PX = 10;
+/** Left gutter (CSS px) for channel labels. reze's gutter is 36px because it
+ *  holds value-axis NUMBERS for one object's curves; Basher's dopesheet is
+ *  multi-channel and must show readable channel NAMES, so it's wider. The
+ *  unified curve/value gutter is reconciled at the unify slice. */
+const LABEL_GUTTER_PX = 84;
+const FPS = 60;
+
+/** Adaptive frame step for ruler labels / grid columns so labels never crowd
+ *  (mirrors EditableCurve.frameStep). */
+function rulerFrameStep(totalFrames: number): number {
+  return totalFrames > 240 ? 60 : totalFrames > 60 ? 30 : 10;
+}
 
 /** devicePixelRatio capped to [1,2] — copied verbatim from the
  *  Viewport.tsx convention (it passes `dpr={[1,2]}` to R3F's Canvas;
@@ -209,6 +239,7 @@ export function paintStaticLayer(
   dims: Dims,
   durationSeconds: number,
   activeChannelId: string | null,
+  activeKeyframe?: { channelId: string; time: number } | null,
 ): number {
   const { cssW, cssH } = dims;
   ctx.clearRect(0, 0, cssW, cssH);
@@ -218,29 +249,48 @@ export function paintStaticLayer(
   ctx.fillRect(0, 0, cssW, cssH);
 
   const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
+  const rowsTop = RULER_H; // rows start BELOW the frame ruler.
 
-  // Visible seconds range = the whole track for C3 (no zoom yet; zoom is
-  // a later wave). Culling still runs so the mirror attr is honest and
-  // C5's culling e2e has a real code path to exercise.
+  // Visible seconds range = the whole track (no zoom yet; zoom is a later
+  // slice). Culling still runs so the mirror attr is honest and the
+  // culling e2e has a real code path to exercise.
   const visibleStartSec = 0;
   const visibleEndSec = durationSeconds;
 
-  let rendered = 0;
+  const totalFrames = Math.max(1, Math.round(durationSeconds * FPS));
+  const frameStep = rulerFrameStep(totalFrames);
+
+  // ── Frame-column grid (drawn first, BEHIND rows) ──────────────────────
+  // Vertical lines at each ruler frame step over the track area, so the
+  // dopesheet shares the curve editor's time grid. Minor at every step,
+  // major (brighter) at every 4th step — a light visual cadence.
   ctx.lineWidth = 1;
+  for (let f = 0; f <= totalFrames; f += frameStep) {
+    const rect = keyframeToRect(f / FPS, 0, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
+    const x = Math.round(LABEL_GUTTER_PX + rect.x + rect.w / 2) + 0.5;
+    ctx.strokeStyle = f % (frameStep * 4) === 0 ? GRID_COL_MAJOR : GRID_COL_MINOR;
+    ctx.beginPath();
+    ctx.moveTo(x, rowsTop);
+    ctx.lineTo(x, cssH);
+    ctx.stroke();
+  }
+
+  let rendered = 0;
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
-    const rowTop = r * ROW_HEIGHT_PX;
+    const rowTop = rowsTop + r * ROW_HEIGHT_PX;
 
-    // Active-channel row tint (mirrors Dopesheet's `bg-accent/10`).
+    // Active-channel row tint (a faint highlight on the pinned channel).
     if (activeChannelId !== null && row.channelId === activeChannelId) {
       ctx.fillStyle = PALETTE.ACTIVE_DIAMOND;
-      ctx.globalAlpha = 0.1;
-      ctx.fillRect(0, rowTop, cssW, ROW_HEIGHT_PX);
+      ctx.globalAlpha = 0.08;
+      ctx.fillRect(LABEL_GUTTER_PX, rowTop, cssW - LABEL_GUTTER_PX, ROW_HEIGHT_PX);
       ctx.globalAlpha = 1;
     }
 
     // Row separator line.
+    ctx.lineWidth = 1;
     ctx.strokeStyle = PALETTE.ROW_LINE;
     ctx.beginPath();
     ctx.moveTo(0, rowTop + ROW_HEIGHT_PX + 0.5);
@@ -249,9 +299,9 @@ export function paintStaticLayer(
 
     // Channel label.
     ctx.fillStyle = PALETTE.LABEL_TEXT;
-    ctx.font = '11px sans-serif';
+    ctx.font = '10px ui-monospace, monospace';
     ctx.textBaseline = 'middle';
-    ctx.fillText(row.name, 6, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 8);
+    ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 7);
 
     // Diamonds — geometry comes from C2 (consumed, NOT re-derived inline;
     // re-deriving was the D-W9-4 anti-pattern). Cull first so the count
@@ -261,26 +311,72 @@ export function paintStaticLayer(
       visibleStartSec,
       visibleEndSec,
     );
-    const isActiveRow = activeChannelId !== null && row.channelId === activeChannelId;
-    ctx.fillStyle = isActiveRow ? PALETTE.ACTIVE_DIAMOND : PALETTE.DIAMOND;
 
     for (const { index } of culled) {
       const t = row.keyframes[index].time;
       // C2 keyframeToRect maps time -> CSS-px rect; offset x by the label
-      // gutter so diamonds sit in the track area, not under the labels.
+      // gutter so diamonds sit in the track area, not under the labels,
+      // and y by the ruler band so they sit in their row.
       const rect = keyframeToRect(t, r, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
       const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
-      const cy = rect.y + rect.h / 2;
-      // Rotated (45°) square = diamond, mirroring Dopesheet's
-      // `rotate-45` 8x8 box.
+      const cy = rowsTop + rect.y + rect.h / 2;
+      const selected =
+        !!activeKeyframe &&
+        activeKeyframe.channelId === row.channelId &&
+        Math.abs(activeKeyframe.time - t) <= 0.5 / FPS + 1e-9;
+
+      // reze 45° diamond: neutral cool-grey base alpha-modulated for
+      // unselected, the selection blue + white outline when selected.
       ctx.beginPath();
       ctx.moveTo(cx, cy - DIAMOND_PX / 2);
       ctx.lineTo(cx + DIAMOND_PX / 2, cy);
       ctx.lineTo(cx, cy + DIAMOND_PX / 2);
       ctx.lineTo(cx - DIAMOND_PX / 2, cy);
       ctx.closePath();
-      ctx.fill();
+      if (selected) {
+        ctx.fillStyle = PALETTE.ACTIVE_DIAMOND;
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = DIAMOND_OUTLINE;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = PALETTE.DIAMOND;
+        ctx.globalAlpha = 0.82;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
       rendered++;
+    }
+  }
+
+  // ── Frame ruler (drawn LAST, over the top band) ───────────────────────
+  // A 17px band across the track with major ticks + frame labels at the
+  // adaptive step and minor ticks between, so every diamond's frame is
+  // legible. The label gutter's ruler corner stays bg (no ticks under it).
+  ctx.fillStyle = RULER_BG;
+  ctx.fillRect(LABEL_GUTTER_PX, 0, cssW - LABEL_GUTTER_PX, RULER_H);
+  ctx.strokeStyle = PALETTE.ROW_LINE;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(LABEL_GUTTER_PX, RULER_H + 0.5);
+  ctx.lineTo(cssW, RULER_H + 0.5);
+  ctx.stroke();
+
+  const minorStep = Math.max(1, Math.round(frameStep / 2));
+  for (let f = 0; f <= totalFrames; f += minorStep) {
+    const rect = keyframeToRect(f / FPS, 0, durationSeconds, trackWidth, ROW_HEIGHT_PX, DIAMOND_PX);
+    const x = Math.round(LABEL_GUTTER_PX + rect.x + rect.w / 2) + 0.5;
+    const major = f % frameStep === 0;
+    ctx.strokeStyle = major ? RULER_TICK_MAJOR : RULER_TICK_MINOR;
+    ctx.beginPath();
+    ctx.moveTo(x, major ? RULER_H - 8 : RULER_H - 4);
+    ctx.lineTo(x, RULER_H);
+    ctx.stroke();
+    if (major) {
+      ctx.fillStyle = PALETTE.LABEL_TEXT;
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textBaseline = 'top';
+      ctx.fillText(String(f), x + 2, 1);
     }
   }
 
@@ -290,6 +386,7 @@ export function paintStaticLayer(
 export function TimelineCanvas({ duration }: { duration: number }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
+  const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
   // Read (do not subscribe-render on) durationSeconds as a fallback when
   // the prop is absent; the prop is the contract Dopesheet had, kept
   // identical so the C5 drawer swap is a one-line import change.
@@ -514,7 +611,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // this same offscreen, so the static layer must live there first.
     offCtx.setTransform(1, 0, 0, 1, 0, 0);
     offCtx.scale(dpr, dpr);
-    paintStaticLayer(offCtx, rows, dims, durationSeconds, activeChannelId);
+    paintStaticLayer(offCtx, rows, dims, durationSeconds, activeChannelId, activeKeyframeId);
 
     visCtx.setTransform(1, 0, 0, 1, 0, 0);
     visCtx.clearRect(0, 0, backingW, backingH);
@@ -530,7 +627,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // overwritten by this repaint; reset the ghost idle-guard so the next
     // tick does not "restore" under a stale ghost x that no longer exists.
     lastGhostXRef.current = -1;
-  }, [nodes, activeChannelId, durationSeconds, dims, dpr, rows]);
+  }, [nodes, activeChannelId, activeKeyframeId, durationSeconds, dims, dpr, rows]);
 
   // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
   //
@@ -667,7 +764,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
             // not moving) adds no per-frame redraw.
             if (ghostX !== lastGhostXRef.current) {
               const oldGhostX = lastGhostXRef.current;
-              const rowTop = drag.rowIndex * ROW_HEIGHT_PX;
+              const rowTop = RULER_H + drag.rowIndex * ROW_HEIGHT_PX;
               const cy = rowTop + ROW_HEIGHT_PX / 2;
 
               visCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -761,7 +858,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           DIAMOND_PX,
         );
         const cx = LABEL_GUTTER_PX + rect.x + rect.w / 2;
-        const cy = rect.y + rect.h / 2;
+        const cy = RULER_H + rect.y + rect.h / 2;
         const slop = DIAMOND_PX;
         if (
           Math.abs(px - cx) <= DIAMOND_PX / 2 + slop &&

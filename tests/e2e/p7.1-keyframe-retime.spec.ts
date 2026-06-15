@@ -36,9 +36,12 @@ interface BasherWindow {
   ) => { value: unknown; hash: string };
 }
 
-const LABEL_GUTTER = 128;
-const DIAMOND = 8;
+// Geometry mirrors TimelineCanvas.tsx (reze-fidelity dopesheet, UX #11):
+// 84px label gutter, 10px diamond, a 17px frame ruler above the rows.
+const LABEL_GUTTER = 84;
+const DIAMOND = 10;
 const INSET = 4;
+const RULER_H = 17;
 
 /** Center-x (canvas CSS px) of a keyframe at time t — the SAME math
  *  keyframeToRect uses, so the test is geometry-derived, not a magic
@@ -176,7 +179,7 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
   // 60fps grid: 1.3333*60 = 79.998). Geometry-derived pixels.
   const box = (await canvas.boundingBox())!;
   const startX = box.x + diamondCx(2, durationSeconds, box.width);
-  const startY = box.y + 12; // row 0 center (rowTop 0 + 24/2 - 4 + 4)
+  const startY = box.y + RULER_H + 12; // row 0 center (ruler 17 + rowTop 0 + 24/2)
   const targetSeconds = 1.3333;
   const targetX = box.x + diamondCx(targetSeconds, durationSeconds, box.width);
 
