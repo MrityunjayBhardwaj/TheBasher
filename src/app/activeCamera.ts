@@ -11,14 +11,23 @@
 // Basher applies Ops immutably) so a zustand subscriber re-renders ONLY when
 // the camera node itself changes (pose edit, re-wire), never on every store
 // tick. Reading params directly mirrors framing.ts `anchorForNode` and
-// Gizmo's `getManipulable` — both read `params.position` for cameras. Camera
-// animation via the transform-band layer system is not a thing today
-// (cameras aim via `lookAt`, not the rotation band), so params == evaluated.
+// Gizmo's `getManipulable` — both read `params.position` for cameras.
 //
-// REF: THESIS.md §11; vyapti V1, V8.
+// `cameraPoseFromNode` reads the static AUTHORED pose (the base). For the
+// EVALUATED pose at a given time — base overlaid with any keyframe channels
+// targeting the camera — use `resolveActiveCameraPoseAt` (#190). The camera is
+// wired via `scene.camera` (a single `Camera`-typed ref), NOT `scene.children`,
+// so it sits outside the AnimationLayer/scene-child machinery; its channels
+// target the camera node directly (no layer wrapper) and this file is where
+// they are sampled and overlaid — the camera analogue of
+// `resolveEvaluatedTransform` for scene children.
+//
+// REF: THESIS.md §11; vyapti V1, V8; issue #190.
 
 import type { DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
+import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
+import { sampleScalarKeyframes } from '../nodes/keyframeInterp';
 
 export type CameraKind = 'PerspectiveCamera' | 'OrthographicCamera';
 
@@ -80,7 +89,73 @@ export function cameraPoseFromNode(node: Node | null): CameraPose | null {
   };
 }
 
-/** Convenience: the active camera's pose, or the default when none is wired. */
+/** Convenience: the active camera's static authored pose, or the default when
+ *  none is wired. For the EVALUATED pose at a time, use
+ *  `resolveActiveCameraPoseAt`. */
 export function resolveActiveCameraPose(state: DagState): CameraPose {
   return cameraPoseFromNode(selectActiveCameraNode(state)) ?? DEFAULT_CAMERA_POSE;
+}
+
+/** The keyframe-able camera params. Cameras aim via `lookAt`, not the rotation
+ *  band, so position + lookAt are the spatial channels; fov/near/far are scalar.
+ *  This is the closed set the resolver overlays and the authoring path keys. */
+export const ANIMATABLE_CAMERA_VEC3_PARAMS = ['position', 'lookAt'] as const;
+export const ANIMATABLE_CAMERA_SCALAR_PARAMS = ['fov', 'near', 'far'] as const;
+
+/**
+ * The active camera's EVALUATED pose at clip-time `seconds` (#190): the static
+ * authored base (`cameraPoseFromNode`) overlaid with any `KeyframeChannel*`
+ * node whose `target` is the camera node, sampled at `seconds`.
+ *
+ * This is THE single source feeding the live viewport look-through (slice 4),
+ * the still render (#168, slice 2), and the animation render (#189, slice 3),
+ * so all three frame the SAME shot at time T (the V37/V51 viewport==render
+ * parity invariant). One resolver, no parallel walk.
+ *
+ * PURE — a function of `(state, seconds)` only, with NO store reads, NO THREE,
+ * NO evaluator/ctx/cache threading. It samples channels with the SAME shared
+ * interp primitives the channel nodes themselves use (`buildVec3Sampler` /
+ * `sampleScalarKeyframes`), so it is the same sampling math, not a parallel one
+ * (the H40 single-source rule). Held transient edits are intentionally NOT
+ * overlaid here: a render is of committed DAG state, and including uncommitted
+ * transients would break render parity — the live-edit preview is a separate
+ * viewport concern.
+ *
+ * Unanimated cameras return the base pose unchanged (byte-identical to
+ * `resolveActiveCameraPose`), so this is a safe drop-in for the static reads.
+ */
+export function resolveActiveCameraPoseAt(state: DagState, seconds: number): CameraPose {
+  const node = selectActiveCameraNode(state);
+  const base = cameraPoseFromNode(node) ?? DEFAULT_CAMERA_POSE;
+  if (!node) return base;
+
+  // Overlay every channel targeting this camera node. Sample by the channel's
+  // value type and write by paramPath. A channel with zero keyframes is skipped
+  // (an empty sampler returns 0/[0,0,0] — never let that clobber the base).
+  let pose: CameraPose | null = null; // clone lazily, only when a channel hits
+  for (const ch of Object.values(state.nodes)) {
+    if (!ch.type.startsWith('KeyframeChannel')) continue;
+    const p = ch.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
+    if (p.target !== node.id) continue;
+    const path = p.paramPath;
+    const keyframes = Array.isArray(p.keyframes) ? p.keyframes : [];
+    if (keyframes.length === 0) continue;
+
+    if ((path === 'position' || path === 'lookAt') && ch.type === 'KeyframeChannelVec3') {
+      pose ??= { ...base };
+      const v = buildVec3Sampler(ch.params as KeyframeChannelVec3Params)(seconds);
+      // sampleVec3Keyframes returns a readonly Vec3; copy into the mutable tuple.
+      pose[path] = [v[0], v[1], v[2]];
+    } else if (
+      (path === 'fov' || path === 'near' || path === 'far') &&
+      ch.type === 'KeyframeChannelNumber'
+    ) {
+      pose ??= { ...base };
+      pose[path] = sampleScalarKeyframes(
+        keyframes as Parameters<typeof sampleScalarKeyframes>[0],
+        seconds,
+      );
+    }
+  }
+  return pose ?? base;
 }
