@@ -2,7 +2,7 @@
 // planes + orbit limits derived from the radius, never from constants.
 
 import { describe, expect, it } from 'vitest';
-import { fitDistanceForSphere, fitViewToSphere } from './cameraFit';
+import { clipPlanesForView, fitDistanceForSphere, fitViewToSphere } from './cameraFit';
 
 describe('fitDistanceForSphere', () => {
   it('places the camera so the sphere is tangent to the frustum (vertical fit)', () => {
@@ -91,5 +91,55 @@ describe('fitViewToSphere', () => {
     expect(Number.isFinite(fit.near)).toBe(true);
     expect(Number.isFinite(fit.far)).toBe(true);
     expect(fit.far).toBeGreaterThan(fit.near);
+  });
+});
+
+describe('clipPlanesForView', () => {
+  it('matches fitViewToSphere when called with the same fit distance (one source of truth)', () => {
+    // #191: fitViewToSphere now delegates its plane math to clipPlanesForView.
+    // Feeding the fit distance back in must reproduce the fit's planes exactly.
+    const fit = fitViewToSphere([0, 0, 0], 7, 50, 16 / 9);
+    const planes = clipPlanesForView(fit.distance, 7);
+    expect(planes.near).toBeCloseTo(fit.near, 9);
+    expect(planes.far).toBeCloseTo(fit.far, 9);
+    expect(planes.minDistance).toBeCloseTo(fit.minDistance, 9);
+    expect(planes.maxDistance).toBeCloseTo(fit.maxDistance, 9);
+  });
+
+  it('far clears the back of the sphere from the camera; near stays positive', () => {
+    const r = 3464; // ~radius of a 4000-unit box, the #191 large-model case
+    const planes = clipPlanesForView(5, r); // camera kept CLOSE (saved view)
+    // far reaches past the farthest point of the sphere from the eye.
+    expect(planes.far).toBeGreaterThan(5 + r);
+    // far is bounds-derived, FAR past the old fixed 1000 — the #191 regression.
+    expect(planes.far).toBeGreaterThan(1000);
+    expect(planes.near).toBeGreaterThan(0);
+  });
+
+  it('grows far as the camera dollies away from the same content', () => {
+    const near = clipPlanesForView(10, 50);
+    const far = clipPlanesForView(500, 50);
+    expect(far.far).toBeGreaterThan(near.far);
+  });
+
+  it('keeps far/near bounded so the depth buffer does not z-fight', () => {
+    const planes = clipPlanesForView(100000, 100000);
+    expect(planes.far / planes.near).toBeLessThanOrEqual(50_000 + 1);
+    expect(planes.near).toBeGreaterThan(0);
+  });
+
+  it('scales orbit dolly limits with the radius (tiny model → tiny minDistance)', () => {
+    const tiny = clipPlanesForView(0.05, 0.01);
+    const huge = clipPlanesForView(5000, 1000);
+    expect(tiny.minDistance).toBeLessThan(huge.minDistance);
+    expect(tiny.minDistance).toBeGreaterThan(0);
+  });
+
+  it('falls back to finite planes for degenerate camera distance / radius', () => {
+    const bad = clipPlanesForView(Number.NaN, -5);
+    expect(Number.isFinite(bad.near)).toBe(true);
+    expect(Number.isFinite(bad.far)).toBe(true);
+    expect(bad.far).toBeGreaterThan(bad.near);
+    expect(bad.near).toBeGreaterThan(0);
   });
 });

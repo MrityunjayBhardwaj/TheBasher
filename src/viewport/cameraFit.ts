@@ -34,19 +34,56 @@ const DEFAULT_MARGIN = 1.3;
  *  geometric near would be smaller. */
 const MAX_DEPTH_RATIO = 50_000;
 
-export interface CameraFit {
-  /** Camera world position. */
-  position: [number, number, number];
-  /** Orbit pivot / lookAt — the sphere center. */
-  lookAt: [number, number, number];
-  /** Distance from camera to center (drives ortho zoom + plane math). */
-  distance: number;
+export interface ClipPlanes {
   near: number;
   far: number;
   /** OrbitControls dolly limits, scaled from the radius so you can zoom into a
    *  tiny model and out of a huge one. */
   minDistance: number;
   maxDistance: number;
+}
+
+export interface CameraFit extends ClipPlanes {
+  /** Camera world position. */
+  position: [number, number, number];
+  /** Orbit pivot / lookAt — the sphere center. */
+  lookAt: [number, number, number];
+  /** Distance from camera to center (drives ortho zoom + plane math). */
+  distance: number;
+}
+
+/**
+ * Bounds-derived clip planes + orbit dolly limits for a camera sitting
+ * `cameraDist` from the center of a bounding sphere of radius `radius`.
+ *
+ * Separated from `fitViewToSphere` (#191) because the planes depend on the
+ * camera's ACTUAL distance to the content, not on the fit distance. A saved /
+ * restored editor view keeps its OWN pose (it does not re-frame), yet it still
+ * needs planes that clear the model — so it calls this with the live camera
+ * distance while leaving position/lookAt untouched. `fitViewToSphere` calls it
+ * with its computed fit distance, keeping ONE source of truth for the math.
+ *
+ * far clears the BACK of the sphere; near hugs the FRONT but is bounded by the
+ * depth ratio (and always > 0) so precision survives. Degenerate inputs fall
+ * back to a unit sphere / radius-distance so the result is always finite. Pure.
+ */
+export function clipPlanesForView(
+  cameraDist: number,
+  radius: number,
+  margin: number = DEFAULT_MARGIN,
+): ClipPlanes {
+  const r = Number.isFinite(radius) && radius > 0 ? radius : 1;
+  const d = Number.isFinite(cameraDist) && cameraDist > 0 ? cameraDist : r;
+  const m = Number.isFinite(margin) && margin > 0 ? margin : DEFAULT_MARGIN;
+  const far = d + r * m;
+  const near = Math.max(d - r * m, far / MAX_DEPTH_RATIO);
+  return {
+    near,
+    far,
+    // Let the user dolly from nearly touching the surface to well outside it.
+    minDistance: Math.max(r * 0.01, far / MAX_DEPTH_RATIO),
+    maxDistance: (d + r) * 10,
+  };
 }
 
 export interface FitOptions {
@@ -104,20 +141,14 @@ export function fitViewToSphere(
     center[2] + dir[2] * distance,
   ];
 
-  // far must clear the BACK of the sphere; near hugs the FRONT but is bounded
-  // by the depth-ratio so precision survives, and is always > 0.
-  const far = distance + r * margin;
-  const nearGeometric = distance - r * margin;
-  const near = Math.max(nearGeometric, far / MAX_DEPTH_RATIO);
+  // Clip planes + dolly limits derived from the fit distance — same math as a
+  // saved view's planes-only path (#191), via the shared `clipPlanesForView`.
+  const planes = clipPlanesForView(distance, r, margin);
 
   return {
     position,
     lookAt: [center[0], center[1], center[2]],
     distance,
-    near,
-    far,
-    // Let the user dolly from nearly touching the surface to well outside it.
-    minDistance: Math.max(r * 0.01, far / MAX_DEPTH_RATIO),
-    maxDistance: (distance + r) * 10,
+    ...planes,
   };
 }
