@@ -119,6 +119,10 @@ export function Viewport() {
   // opened a panel) so the band reads clean.
   const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
 
+  // #165: surface the "Camera view · 0" badge while looking through the active
+  // camera (the inner scene component subscribes separately for its orbit gate).
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
+
   // UX-BACKLOG #2 follow-up 2 — in the narrow layout the bottom-center
   // agent/timeline stack goes full-width, so the bottom-RIGHT viewport widgets
   // (orbit axis gizmo + Persp/Ortho pill) have no clear corner to live in. Hide
@@ -154,6 +158,23 @@ export function Viewport() {
       >
         {debouncedSummary}
       </span>
+      {/* #165: "Camera view · 0" badge while looking through the active camera
+          (Blender Numpad-0 mode indicator). Restored here after `ModeBadge.tsx`
+          — its former home — was deleted when the operational-mode enum was
+          dissolved (`b5af221`); the badge was collateral damage, leaving the
+          p165 acceptance test red. Top-center just below the toolbar so it
+          clears the side islands (V46). pointer-events-none so it never
+          swallows a viewport click; aria-live announces entering camera view. */}
+      {lookThrough ? (
+        <div
+          data-testid="camera-view-badge"
+          className="pointer-events-none absolute left-1/2 top-16 z-10 -translate-x-1/2 rounded border border-accent/40 bg-bg-2/90 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-accent backdrop-blur-sm"
+        >
+          <span aria-label="Camera view — press 0 to exit" aria-live="polite">
+            Camera view · 0
+          </span>
+        </div>
+      ) : null}
       {selectedId == null && !timelineDrawerOpen ? (
         <div
           data-testid="viewport-empty-hint"
