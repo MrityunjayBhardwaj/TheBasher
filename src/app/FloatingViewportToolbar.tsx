@@ -41,9 +41,10 @@
 // REF: docs/UI-SPEC.md §5.7, §5.3; .planning/phases/v06.4-director-ux/PLAN.md
 // (W1-T3 — the single-pill inventory); memory/project_p6_w7_plan.md C1.
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
+import { renderImageWithFeedback } from './renderImageAction';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
@@ -192,6 +193,7 @@ function BarButton({
   onClick,
   active,
   ariaLabel,
+  disabled,
   children,
 }: {
   testId: string;
@@ -199,6 +201,7 @@ function BarButton({
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   active?: boolean;
   ariaLabel?: string;
+  disabled?: boolean;
   children: ReactNode;
 }): ReactNode {
   const state = active
@@ -208,10 +211,12 @@ function BarButton({
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       data-testid={testId}
       title={title}
       aria-label={ariaLabel}
-      className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${state}`}
+      aria-busy={disabled || undefined}
+      className={`flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60 ${state}`}
     >
       {children}
     </button>
@@ -238,6 +243,21 @@ function openAddMenuFrom(e: React.MouseEvent<HTMLButtonElement>): void {
 }
 
 export function FloatingViewportToolbar(): ReactNode {
+  // #170: render the production frame to a PNG with surfaced feedback. Local
+  // `rendering` flag drives a brief "Rendering…" affordance + disables the
+  // button so a large-resolution render can't be re-fired mid-flight (the
+  // success/failure toast comes from renderImageWithFeedback). Set BEFORE the
+  // await so React paints "Rendering…" before the blocking gl.render.
+  const [rendering, setRendering] = useState(false);
+  const handleRenderImage = async () => {
+    if (rendering) return;
+    setRendering(true);
+    try {
+      await renderImageWithFeedback();
+    } finally {
+      setRendering(false);
+    }
+  };
   const presentMode = useChromeStore((s) => s.presentMode);
   const togglePresentMode = useChromeStore((s) => s.togglePresentMode);
   const playing = useTimeStore((s) => s.playing);
@@ -465,6 +485,16 @@ export function FloatingViewportToolbar(): ReactNode {
         <span data-testid="top-toolbar-zoom-value">{cameraZoom}%</span>
         <span aria-hidden>▾</span>
       </button>
+      <BarButton
+        testId="top-toolbar-render"
+        title="Render image — current frame to PNG"
+        ariaLabel={rendering ? 'Rendering image' : 'Render image'}
+        onClick={() => void handleRenderImage()}
+        disabled={rendering}
+      >
+        <span aria-hidden>{rendering ? '⏳' : '📷'}</span>
+        <span>{rendering ? 'Rendering…' : 'Render'}</span>
+      </BarButton>
       <BarButton testId="top-toolbar-export" title="Export DAG as JSON" onClick={exportDagJson}>
         <span aria-hidden>⬇</span>
         <span>Export</span>
