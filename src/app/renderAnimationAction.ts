@@ -13,7 +13,7 @@
 // sinks); timeStore (FPS + duration); vyapti V37/V51 (parity), V38 (surface
 // every outcome).
 
-import { cameraPoseFromNode, DEFAULT_CAMERA_POSE, selectActiveCameraNode } from './activeCamera';
+import { resolveActiveCameraPoseAt, selectActiveCameraNode } from './activeCamera';
 import { resolveCameraDof } from './cameraDof';
 import { useDagStore } from '../core/dag/store';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
@@ -88,15 +88,14 @@ export async function renderAnimationToFile(
     postFx = value.postFx ?? postFx;
   }
 
-  // Production camera pose + DoF, read once. NOTE (known limitation, #190): an
-  // ANIMATED camera is not yet followed per-frame — the pose is the node's
-  // authored value, matching the still render (#168) AND the live viewport
-  // (EditorViewCamera reads the same static params). Camera animation isn't
-  // wired at the evaluator level yet; following it per-frame here without the
-  // viewport following too would break viewport==render parity (V37/V51). The
-  // per-frame eval is the last mile of #190's end-to-end arc.
+  // Production camera DoF, read once (focus/aperture are not yet animatable —
+  // see #190 follow-up). The camera POSE is resolved PER FRAME inside capture()
+  // below — #190's last mile: resolveActiveCameraPoseAt(state, frameSeconds)
+  // through the SAME resolver the still render and viewport look-through use, so
+  // the exported video frames the shot frame-for-frame as the viewport does
+  // (viewport==render parity, V37/V51). The DAG itself doesn't change per frame
+  // (animation is channels sampled by time), so only the time advances.
   const activeCamera = selectActiveCameraNode(state);
-  const pose = cameraPoseFromNode(activeCamera) ?? DEFAULT_CAMERA_POSE;
   const dof = resolveCameraDof(activeCamera);
 
   const fps = FRAMES_PER_SECOND;
@@ -143,8 +142,14 @@ export async function renderAnimationToFile(
         fps,
         setTime: (s) => useTimeStore.getState().setTime(s),
         waitForApply,
-        capture: () =>
-          renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }, scratch),
+        capture: () => {
+          // #190 — resolve the camera pose at THIS frame's time, AFTER setTime +
+          // waitForApply have advanced the playhead. Read the live seconds (just
+          // set) and the captured DAG state (unchanged across frames). Same
+          // resolver as the still + viewport → frame-for-frame parity.
+          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().seconds);
+          return renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }, scratch);
+        },
       },
       sink,
       {
