@@ -27,6 +27,8 @@
 //
 // REF: glTF 2.0 spec §4.4; PLAN.md Wave D1.
 
+import type { GltfJsonMaterial } from './gltfJsonMaterialToOpenpbr';
+
 const MAGIC = 0x46546c67;
 const CHUNK_JSON = 0x4e4f534a;
 const CHUNK_BIN = 0x004e4942;
@@ -47,6 +49,12 @@ export interface GltfNode {
    */
   matrix?: number[];
   children?: number[];
+  /**
+   * #178 (S2) — index into the glTF top-level `meshes` array. Present when this
+   * node instantiates a mesh; absent for pure transform/bone nodes.
+   * `captureChildMaterials` reads it to pull the node's per-primitive materials.
+   */
+  mesh?: number;
 }
 
 export interface GltfAccessor {
@@ -114,6 +122,14 @@ export interface GltfJson {
   animations?: GltfAnimation[];
   /** P7.11 (#100) — skin definitions; absent for non-skinned files. */
   skins?: GltfSkin[];
+  /**
+   * #178 (S2) — top-level meshes; each primitive's `material` indexes
+   * `materials`. `captureChildMaterials` reads this to map a node's mesh →
+   * its per-primitive material definitions.
+   */
+  meshes?: { primitives?: { material?: number }[] }[];
+  /** #178 (S2) — material definitions, compiled to OpenPBR IR on import. */
+  materials?: GltfJsonMaterial[];
 }
 
 export interface ParsedGlb {

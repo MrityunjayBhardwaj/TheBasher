@@ -109,7 +109,7 @@ export async function renderAnimationToFile(
     } else {
       sink = createPngSequenceSink();
       useNotificationStore.getState().notify({
-        severity: 'warning',
+        severity: 'warn',
         message: 'MP4 isn’t supported in this browser — rendering a PNG sequence (.zip) instead.',
         durationMs: 8000,
       });

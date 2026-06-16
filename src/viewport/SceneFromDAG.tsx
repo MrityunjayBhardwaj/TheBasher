@@ -1438,7 +1438,9 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
       let dagBase: THREE.Material | THREE.Material[] = src;
       if (childId && !Array.isArray(src)) {
-        const irs = depNodeMap[childId]?.params?.materials as InlineMaterialSpec[] | undefined;
+        const irs = (
+          depNodeMap[childId]?.params as { materials?: InlineMaterialSpec[] } | undefined
+        )?.materials;
         const ir = irs?.[local];
         if (ir) dagBase = overlayDagMaterial(src, ir);
         // #178 S5 — defer this slot's edit-layer map application (replace/clear)

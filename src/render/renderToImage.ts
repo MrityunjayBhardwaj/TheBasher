@@ -30,6 +30,7 @@
 import * as THREE from 'three';
 import {
   DepthOfFieldEffect,
+  type Effect,
   EffectComposer,
   EffectPass,
   RenderPass,
@@ -321,7 +322,7 @@ function renderViaComposer(
     worldFocusRange: dof.focusRange,
     bokehScale: dof.bokehScale,
   });
-  const effects = [dofEffect];
+  const effects: Effect[] = [dofEffect];
   let smaa: SMAAEffect | undefined;
   if (postFx.smaa) {
     smaa = new SMAAEffect();
