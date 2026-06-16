@@ -33,10 +33,12 @@ import * as THREE from 'three';
 import {
   cameraPoseFromNode,
   DEFAULT_CAMERA_POSE,
+  resolveActiveCameraPoseAt,
   selectActiveCameraNode,
 } from '../app/activeCamera';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
@@ -284,6 +286,39 @@ export function EditorViewCamera() {
       if (f.still >= SETTLE_STILL_FRAMES) f.active = false;
     }
     if (f.frames >= MAX_FRAMES) f.active = false; // empty / slow scene — stop waiting
+  });
+
+  // #190 — while looking THROUGH the production camera, follow the EVALUATED
+  // camera pose at the live playhead each frame, so a keyframed camera animates
+  // in the viewport during playback AND on scrub. SNAPSHOT reads (never a time
+  // subscription — H48): the playhead seconds + DAG state are read live in the
+  // frame callback, so this never triggers a React re-render. Orbit is disabled
+  // in look-through (gated in Viewport.tsx), so applying the pose every frame
+  // doesn't fight the user. For an UNANIMATED camera the resolver returns the
+  // static base pose → byte-identical to the pre-#190 static apply. The free
+  // orbit view is untouched (OrbitControls owns it; this early-returns there).
+  // This is THE viewport half of viewport==render parity (V37/V51): it samples
+  // the SAME resolver the still + animation render consume.
+  useFrame(() => {
+    const cam = ref.current;
+    if (!cam || !lookThrough) return;
+    const seconds = useTimeStore.getState().seconds;
+    const evalPose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds);
+    applyView(cam, evalPose.position, evalPose.lookAt);
+    // fov/near/far are camera params too — apply imperatively (the JSX props are
+    // memoized on the static pose). Look-through is always the perspective view.
+    const persp = cam as THREE.PerspectiveCamera;
+    let dirty = false;
+    if (persp.isPerspectiveCamera && persp.fov !== evalPose.fov) {
+      persp.fov = evalPose.fov;
+      dirty = true;
+    }
+    if (cam.near !== evalPose.near || cam.far !== evalPose.far) {
+      cam.near = evalPose.near;
+      cam.far = evalPose.far;
+      dirty = true;
+    }
+    if (dirty) cam.updateProjectionMatrix();
   });
 
   // Cancel an in-progress fit the instant the user touches the canvas (drag OR
