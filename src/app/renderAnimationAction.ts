@@ -88,9 +88,13 @@ export async function renderAnimationToFile(
     postFx = value.postFx ?? postFx;
   }
 
-  // Production camera pose + DoF, read once. NOTE (known limitation): an
+  // Production camera pose + DoF, read once. NOTE (known limitation, #190): an
   // ANIMATED camera is not yet followed per-frame — the pose is the node's
-  // authored value, matching the still render (#168). Tracked for a follow-up.
+  // authored value, matching the still render (#168) AND the live viewport
+  // (EditorViewCamera reads the same static params). Camera animation isn't
+  // wired at the evaluator level yet; following it per-frame here without the
+  // viewport following too would break viewport==render parity (V37/V51). The
+  // per-frame eval is the last mile of #190's end-to-end arc.
   const activeCamera = selectActiveCameraNode(state);
   const pose = cameraPoseFromNode(activeCamera) ?? DEFAULT_CAMERA_POSE;
   const dof = resolveCameraDof(activeCamera);
