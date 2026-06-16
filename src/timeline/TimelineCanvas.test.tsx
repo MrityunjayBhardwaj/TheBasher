@@ -110,6 +110,18 @@ describe('collectChannelRows', () => {
     const mesh = { id: 'm', type: 'BoxMesh', inputs: {}, params: {} } as unknown as Node;
     expect(collectChannelRows({ m: mesh })).toEqual([]);
   });
+
+  it('surfaces a free-floating camera channel as an orphan row (#190)', () => {
+    // A camera channel targets the camera node DIRECTLY with NO AnimationLayer
+    // wrapper (dispatchCameraFirstKey) — the camera is wired via scene.camera,
+    // outside the layer machinery. It must still appear in the dopesheet, which
+    // it does via the orphan-channel path. Falsifiable: restrict collection to
+    // layer-wired channels → the camera row vanishes (silent-empty dopesheet).
+    const camFov = makeChannel('n_camera_fov_channel', 'fov', [0, 1]);
+    const rows = collectChannelRows({ n_camera_fov_channel: camFov });
+    expect(rows.map((r) => r.channelId)).toEqual(['n_camera_fov_channel']);
+    expect(rows[0].name).toBe('fov');
+  });
 });
 
 // --- pure export: paintStaticLayer (recording stub, NOT faked pixels) -
