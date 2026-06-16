@@ -41,7 +41,7 @@ import { useProjectStore } from '../core/project/store';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
-import { fitViewToSphere } from './cameraFit';
+import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
 import { computeSceneBounds } from './sceneBounds';
 
 // Default free-mode clip planes (three's near-ish / the pre-#186 constants).
@@ -149,7 +149,11 @@ export function EditorViewCamera() {
   const appliedPlanes = useRef({ near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR });
   // The active bounds-fit settle session (#186). `active:false` → the camera is
   // FREE (OrbitControls owns it); the fit only runs while content is arriving.
-  const fit = useRef({ active: false, frames: 0, still: 0, lastR: -1 });
+  // `poseToo` (#191): true = full bounds-fit (move the pose AND derive planes);
+  // false = a planes-only settle for a saved / projection-toggle pose — keep the
+  // user's pose, re-derive near/far + dolly limits from the LIVE camera distance
+  // each frame as async bounds arrive, so a large model still clears `far`.
+  const fit = useRef({ active: false, poseToo: false, frames: 0, still: 0, lastR: -1 });
 
   useEffect(() => {
     const cam = ref.current;
@@ -173,25 +177,34 @@ export function EditorViewCamera() {
       // explicit) > a FULL bounds-fit on load (#186). The first two are exact
       // poses that WIN over the fit; only when neither exists do we frame the
       // scene's bounding sphere.
+      // Start a settle session + reset planes to the defaults so a prior huge
+      // model's far doesn't linger into an empty/smaller scene. `poseToo` picks
+      // full bounds-fit (no saved pose) vs planes-only (a saved/captured pose we
+      // must NOT re-frame, #191). The settle loop (below) does the per-frame work.
+      const startSettle = (poseToo: boolean) => {
+        fit.current = { active: true, poseToo, frames: 0, still: 0, lastR: -1 };
+        appliedPlanes.current = { near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR };
+        setFreeNear(DEFAULT_FREE_NEAR);
+        setFreeFar(DEFAULT_FREE_FAR);
+      };
       const pendingPose = takePendingEditorView();
       if (pendingPose) {
+        // Projection-toggle pose: keep it, but re-derive clip planes/limits from
+        // the live camera distance so the toggled view also clears a big model.
         applyView(cam, pendingPose.position, pendingPose.target, orthoArg);
-        fit.current.active = false;
+        startSettle(false);
       } else {
         const saved = loadEditorView(projectId);
         if (saved) {
+          // Saved orbit view (reload / per-project restore): same — restore the
+          // exact pose, then run a planes-only settle so far isn't stuck at 1000.
           applyView(cam, saved.position, saved.target, orthoArg);
-          fit.current.active = false;
+          startSettle(false);
         } else {
-          // No captured/saved pose → bounds-fit. Start the settle loop (below);
-          // it frames the scene once geometry is present (async glTF loads after
-          // this effect), sets bounds-derived clip planes, then hands the free
-          // camera to OrbitControls. Reset planes so a prior huge model's far
-          // doesn't linger into an empty/smaller scene.
-          fit.current = { active: true, frames: 0, still: 0, lastR: -1 };
-          appliedPlanes.current = { near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR };
-          setFreeNear(DEFAULT_FREE_NEAR);
-          setFreeFar(DEFAULT_FREE_FAR);
+          // No captured/saved pose → FULL bounds-fit. The settle frames the scene
+          // once geometry is present (async glTF loads after this effect), sets
+          // bounds-derived planes, then hands the free camera to OrbitControls.
+          startSettle(true);
         }
       }
       bootedKey.current = key;
@@ -200,10 +213,13 @@ export function EditorViewCamera() {
     // position — do not fight it.
   }, [lookThrough, pose, projectId, useOrtho, viewportHeight]);
 
-  // The bounds-fit settle loop (#186). Runs ONLY while `fit.active`: re-frames
-  // each frame as async geometry arrives, ending SETTLE_STILL_FRAMES after the
-  // bounds last changed (or at MAX_FRAMES). It is a one-time initial framing,
-  // NOT a look-at constraint — canvas input (below) cancels it immediately.
+  // The bounds-fit settle loop (#186/#191). Runs ONLY while `fit.active`,
+  // re-deriving each frame as async geometry arrives and ending
+  // SETTLE_STILL_FRAMES after the bounds last changed (or at MAX_FRAMES). Two
+  // modes via `poseToo`: full fit re-frames the pose AND sets planes; planes-only
+  // keeps a saved/captured pose and just re-derives near/far + dolly limits
+  // (#191). Either way it is a one-time initial pass, NOT a persistent
+  // constraint — canvas input (below) cancels it immediately.
   useFrame((state) => {
     const f = fit.current;
     const cam = ref.current;
@@ -211,27 +227,46 @@ export function EditorViewCamera() {
     f.frames += 1;
     const bounds = computeSceneBounds(state.scene);
     if (bounds) {
-      const aspect = state.size.width / Math.max(1, state.size.height);
-      const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
-      const orthoArg = useOrtho
-        ? { fovDeg: pose.fov, viewportHeight: state.size.height }
-        : undefined;
-      applyView(cam, res.position, res.lookAt, orthoArg);
-      cam.near = res.near;
-      cam.far = res.far;
+      // Planes + dolly limits always derive from the camera's distance to the
+      // bounds center. For a full fit (poseToo) that distance IS the fit
+      // distance and we ALSO move the pose; for a saved/captured view (#191) we
+      // keep the user's pose and read the LIVE camera distance, so a big model
+      // clears `far` without re-framing.
+      const center = new THREE.Vector3(bounds.center[0], bounds.center[1], bounds.center[2]);
+      let planes: ClipPlanes;
+      if (f.poseToo) {
+        const aspect = state.size.width / Math.max(1, state.size.height);
+        const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
+        const orthoArg = useOrtho
+          ? { fovDeg: pose.fov, viewportHeight: state.size.height }
+          : undefined;
+        applyView(cam, res.position, res.lookAt, orthoArg);
+        planes = res;
+      } else {
+        const cameraDist = cam.position.distanceTo(center);
+        planes = clipPlanesForView(cameraDist, bounds.radius);
+      }
+      cam.near = planes.near;
+      cam.far = planes.far;
       cam.updateProjectionMatrix();
-      if (res.near !== appliedPlanes.current.near || res.far !== appliedPlanes.current.far) {
-        appliedPlanes.current = { near: res.near, far: res.far };
-        setFreeNear(res.near);
-        setFreeFar(res.far);
+      if (planes.near !== appliedPlanes.current.near || planes.far !== appliedPlanes.current.far) {
+        appliedPlanes.current = { near: planes.near, far: planes.far };
+        setFreeNear(planes.near);
+        setFreeFar(planes.far);
       }
       const controls = state.controls as {
         minDistance?: number;
         maxDistance?: number;
       } | null;
       if (controls) {
-        controls.minDistance = res.minDistance;
-        controls.maxDistance = res.maxDistance;
+        // Clamp the dolly limits so they never EXCLUDE the live camera distance.
+        // A restored close pose (#191) can sit nearer than the radius-derived
+        // minDistance — OrbitControls would otherwise dolly it OUT to satisfy
+        // the limit, silently re-framing a planes-only view. No-op for the full
+        // fit (the eye sits at the fit distance, far above minDistance).
+        const liveDist = cam.position.distanceTo(center);
+        controls.minDistance = Math.min(planes.minDistance, liveDist);
+        controls.maxDistance = Math.max(planes.maxDistance, liveDist);
       }
       const r = bounds.radius;
       const delta = f.lastR > 0 ? Math.abs(r - f.lastR) / Math.max(r, f.lastR) : 1;
