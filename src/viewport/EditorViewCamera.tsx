@@ -314,8 +314,8 @@ export function EditorViewCamera() {
       <OrthographicCamera
         ref={ref as React.MutableRefObject<THREE.OrthographicCamera>}
         makeDefault
-        near={0.1}
-        far={1000}
+        near={near}
+        far={far}
       />
     );
   }
