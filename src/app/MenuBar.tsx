@@ -37,7 +37,8 @@ import { renderImageWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
-import { useViewportStore, type ShadingMode } from './stores/viewportStore';
+import { normalizeViewportClip, useViewportStore, type ShadingMode } from './stores/viewportStore';
+import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
 import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
@@ -349,6 +350,37 @@ export function MenuBar() {
   const currentProjectId = useProjectStore((s) => s.current?.id);
   const currentProjectUpdatedAt = useProjectStore((s) => s.current?.updatedAt);
 
+  // #192 — View ▸ Clipping. The free viewport view's near/far: AUTO (bounds-fit,
+  // #186/#191) by default, with a manual override. `clipReadout` is the live
+  // EFFECTIVE planes (override or auto) so the menu can display + seed numbers.
+  const clipOverride = useViewportStore((s) => s.viewportClipOverride);
+  const clipReadout = useViewportStore((s) => s.viewportClipReadout);
+  // Persist on every change (per project, localStorage) AND set the live store.
+  const applyViewportClip = (next: { near: number; far: number } | null) => {
+    useViewportStore.getState().setViewportClipOverride(next);
+    saveViewportClip(currentProjectId, next);
+  };
+  // Prompt for one plane, keeping the other at its current effective value so
+  // editing Start doesn't move End (no view jump). Invalid input (≤0 / inverted
+  // / NaN) is IGNORED — normalizeViewportClip returns null, so we keep current.
+  const promptViewportClip = (axis: 'near' | 'far') => {
+    const cur = clipOverride ?? clipReadout;
+    const raw = window.prompt(
+      axis === 'near'
+        ? 'Viewport Clip Start (near plane, world units)'
+        : 'Viewport Clip End (far plane, world units)',
+      String(axis === 'near' ? cur.near : cur.far),
+    );
+    if (raw == null) return; // cancelled
+    const val = parseFloat(raw);
+    const candidate = axis === 'near' ? { near: val, far: cur.far } : { near: cur.near, far: val };
+    const valid = normalizeViewportClip(candidate);
+    if (!valid) return;
+    applyViewportClip(valid);
+  };
+  // Compact label for a plane value (e.g. 0.10 / 1000).
+  const fmtClip = (n: number) => (n < 10 ? n.toFixed(2) : String(Math.round(n)));
+
   // Projects list for File ▸ Switch Project (UX backlog #4 — the "projects ▾"
   // dropdown left the top-right corner; its list now lives under File). Fetched
   // when the File menu opens and when the current project changes (new /
@@ -623,6 +655,27 @@ export function MenuBar() {
           onSelect={() => useViewportStore.getState().toggleAxisWidgetVisible()}
           testId="menu-view-toggle-axis"
         />
+        {/* #192 — viewport-view clip planes (NOT the scene camera's). AUTO
+            (bounds-fit) by default; Clip Start/End set a manual override that
+            persists per project. Numeric entry via window.prompt (same as
+            Rename); the labels show the current effective values. */}
+        <Submenu label="Clipping" testId="menu-view-clipping">
+          <Item
+            label={`${clipOverride === null ? '✓ ' : '   '}Auto (frame to scene)`}
+            onSelect={() => applyViewportClip(null)}
+            testId="menu-view-clip-auto"
+          />
+          <Item
+            label={`Clip Start: ${fmtClip(clipReadout.near)}…`}
+            onSelect={() => promptViewportClip('near')}
+            testId="menu-view-clip-start"
+          />
+          <Item
+            label={`Clip End: ${fmtClip(clipReadout.far)}…`}
+            onSelect={() => promptViewportClip('far')}
+            testId="menu-view-clip-end"
+          />
+        </Submenu>
         {/* Dev-only: the FPS/ms overlay is a dev tool (default OFF for a clean
             canvas). Hidden entirely in production, where FpsMeter never renders. */}
         {import.meta.env.DEV ? (

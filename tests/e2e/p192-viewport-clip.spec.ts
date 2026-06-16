@@ -94,4 +94,46 @@ test.describe('#192 viewport clip override', () => {
     expect(cam!.near).toBeCloseTo(3, 3);
     expect(cam!.far).toBeCloseTo(42, 3);
   });
+
+  test('View ▸ Clipping ▸ Clip End sets + persists the far plane; Auto clears it', async ({
+    page,
+  }) => {
+    await waitReady(page);
+
+    // Drive the real menu: View ▸ Clipping ▸ Clip End… → prompt → accept "250".
+    page.once('dialog', (d) => void d.accept('250'));
+    await page.getByTestId('menu-view-button').click();
+    await page.getByTestId('menu-view-clipping').hover();
+    await page.getByTestId('menu-view-clip-end').click();
+    await page.waitForTimeout(150);
+
+    const cam = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_view_camera!(),
+    );
+    expect(cam!.far).toBeCloseTo(250, 3);
+
+    // Persisted for this project (the menu handler saves to localStorage).
+    const saved = await page.evaluate(() => {
+      const id = localStorage.getItem('basher.lastProjectId')!;
+      return localStorage.getItem('basher.viewportClip.' + id);
+    });
+    expect(saved).not.toBeNull();
+    expect(JSON.parse(saved!).far).toBeCloseTo(250, 3);
+
+    // View ▸ Clipping ▸ Auto → clears the override AND the persisted entry.
+    await page.getByTestId('menu-view-button').click();
+    await page.getByTestId('menu-view-clipping').hover();
+    await page.getByTestId('menu-view-clip-auto').click();
+    await page.waitForTimeout(150);
+
+    const cleared = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_view_camera!(),
+    );
+    expect(cleared!.far).not.toBeCloseTo(250, 1);
+    const afterClear = await page.evaluate(() => {
+      const id = localStorage.getItem('basher.lastProjectId')!;
+      return localStorage.getItem('basher.viewportClip.' + id);
+    });
+    expect(afterClear).toBeNull();
+  });
 });
