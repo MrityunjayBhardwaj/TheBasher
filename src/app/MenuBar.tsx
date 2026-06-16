@@ -101,7 +101,11 @@ function Menu({ label, testId, children, open, onOpen, onClose, onHover }: MenuP
           role="menu"
           aria-label={`${label} menu`}
           data-testid={`${testId}-panel`}
-          className="absolute left-0 top-full z-40 mt-0.5 w-[260px] overflow-hidden rounded border border-border bg-bg shadow-lg"
+          // overflow-VISIBLE: a submenu flyout opens to the RIGHT, beyond this
+          // 260px panel. `overflow-hidden` here CLIPPED every flyout out of
+          // existence — present in the DOM (false-green for tests) but invisible
+          // and hit-testing to the canvas behind, so no submenu was reachable.
+          className="absolute left-0 top-full z-40 mt-0.5 w-[260px] overflow-visible rounded border border-border bg-bg shadow-lg"
           onClick={onClose}
         >
           {children}
@@ -141,6 +145,17 @@ function Item({ label, shortcut, onSelect, disabled, testId }: ItemProps) {
 
 const SUBMENU_WIDTH = 220;
 
+// Grace period before a submenu closes on mouse-out. Without it the flyout is
+// UNREACHABLE: there is a sub-pixel seam between the trigger's right edge and
+// the flyout's left edge, so moving the pointer toward the flyout briefly exits
+// the container subtree → mouseleave → the flyout unmounts before you arrive
+// (observed: a straight rightward reach lands on a closed menu). The delay also
+// survives a diagonal drift across a sibling item on the way to the flyout. Any
+// re-entry (onto the flyout, a DOM descendant) cancels the pending close. The
+// delay must comfortably exceed the time to cross the seam / drift past a
+// sibling item on the way to the flyout (a slow, deliberate reach).
+const SUBMENU_CLOSE_DELAY_MS = 300;
+
 function Submenu({
   label,
   children,
@@ -151,16 +166,37 @@ function Submenu({
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const closeTimer = useRef<number | null>(null);
   // Edge-aware placement: opens to the right by default, flips left when the
   // right viewport edge would be crossed (UX #5 — a right-side menu's submenu
   // ran off-screen; shared with AddMenu via useFlyoutSide, H91 family).
   const { containerRef, style: flyoutStyle } = useFlyoutSide<HTMLDivElement>(open, SUBMENU_WIDTH);
+
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const openNow = () => {
+    cancelClose();
+    setOpen(true);
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      setOpen(false);
+    }, SUBMENU_CLOSE_DELAY_MS);
+  };
+  useEffect(() => cancelClose, []); // clear any pending timer on unmount
+
   return (
     <div
       ref={containerRef}
       className="relative"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseEnter={openNow}
+      onMouseLeave={scheduleClose}
     >
       <button
         type="button"
@@ -169,8 +205,11 @@ function Submenu({
         aria-expanded={open}
         data-testid={testId}
         onClick={(e) => {
+          // Open (never toggle): hover already opened the flyout, so a toggle
+          // here would CLOSE what the user clicked to reach. Keyboard/touch
+          // users (no hover) still open it; closing is via mouse-out or Escape.
           e.stopPropagation();
-          setOpen((v) => !v);
+          openNow();
         }}
         className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
@@ -184,7 +223,9 @@ function Submenu({
           role="menu"
           aria-label={label}
           style={{ width: SUBMENU_WIDTH, ...flyoutStyle }}
-          className="absolute top-0 z-50 -mt-1 overflow-hidden rounded border border-border bg-bg shadow-lg"
+          // overflow-VISIBLE for the same reason as the parent panel: a nested
+          // submenu (or this flyout near an edge) must not be clipped to oblivion.
+          className="absolute top-0 z-50 -mt-1 overflow-visible rounded border border-border bg-bg shadow-lg"
         >
           {children}
         </div>
