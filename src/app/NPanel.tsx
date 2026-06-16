@@ -54,20 +54,13 @@ import { getNodeType } from '../core/dag/registry';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { useTimeStore } from './stores/timeStore';
-import { useTransientEditStore, keyOf } from './stores/transientEditStore';
-import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   dispatchApplyTransform,
   isTransformAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
-import { paramAnimationState } from './animate/paramAnimationState';
-import {
-  autoKeyCommit,
-  keyParamFromTransient,
-  resolveChannel,
-  routeAnimatedGrab,
-} from './animate/autoKeyCommit';
+import { ParamDiamond } from './ParamDiamond';
+import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -192,107 +185,10 @@ function OverrideDecorator({
 }
 
 // P7.3: `resolveChannel` + `autoKeyCommit` were lifted to the shared
-// `./animate/autoKeyCommit` module (one Auto-Key chokepoint, two callers:
-// this inspector AND the viewport gizmo grab — issue #68 / D-02). The
-// bodies are byte-identical to the prior module-private versions, so
-// NPanel's behavior is unchanged (verified: the NPanel suite stays green).
-// resolveChannel is re-imported because the diamond handler also uses it.
-
-/**
- * The 3-state inspector diamond (D-01 entry point / D-03 viz). Owns NO
- * state — renders derived `paramAnimationState` and dispatches through
- * the Wave A seam. Subscribes to `useTimeStore((s) => s.frame)` so it
- * re-derives on scrub. **Never reads currentFrameRef (V20).**
- *
- * - hollow ◇  → 'none'   : click = first-key composite (addLayer+addChannel+keyframe)
- * - filled ◆  → 'animated' (off-key) : click = single keyframe Mutator
- * - record ◆  → 'on-key' : click (or Alt-click) = removeKeyframes Mutator (scope:{time})
- *
- * Every Mutator call passes `useTimeStore.getState().seconds` (never a
- * frame int) — the on-key check via C1 is the only place frames are used.
- */
-function ParamDiamond({
-  nodeId,
-  paramPath,
-  value,
-}: {
-  nodeId: string;
-  paramPath: string;
-  value: unknown;
-}) {
-  const frame = useTimeStore((s) => s.frame);
-  const nodes = useDagStore((s) => s.state.nodes);
-  const dagState = useDagStore((s) => s.state);
-
-  const animState = paramAnimationState(dagState, nodeId, paramPath, frame);
-  // #149 F1 — the 4th color (orange). SUBSCRIBED selector (not a getState
-  // snapshot) so the diamond re-renders the moment the transient is set/cleared
-  // (B12). A transient only exists on an ANIMATED param (routeAnimatedGrab
-  // returns false for un-animated), so it always coincides with animState !==
-  // 'none' — but orange wins display regardless (the unsaved edit is the most
-  // urgent signal, the Blender contract). This is FLAG-A's replacement safety
-  // net: orange = "held but not persisted" (supersedes the removed reject alert).
-  const isTransient = useTransientEditStore((s) => s.edits.has(keyOf(nodeId, paramPath)));
-
-  const glyph = animState === 'none' && !isTransient ? '◇' : '◆';
-  const colorClass = isTransient
-    ? 'text-warn' // orange — edited-but-not-keyed (transient), TOP of precedence
-    : animState === 'on-key'
-      ? 'text-record' // yellow — keyed here
-      : animState === 'animated'
-        ? 'text-accent' // green — animated, no key here
-        : 'text-fg/40 hover:text-accent'; // gray — not animated
-
-  const onActivate = (alt: boolean) => {
-    // DELETE path (unchanged): an on-key click OR Alt-click on an animated param
-    // removes the on-key sample (Blender's toggle). Off-key Alt is a silent no-op.
-    if (animState !== 'none' && (animState === 'on-key' || alt)) {
-      const resolved = resolveChannel(nodes, nodeId, paramPath, frame);
-      if (!resolved) {
-        // eslint-disable-next-line no-alert
-        window.alert?.('Channel not found for animated param.');
-        return;
-      }
-      const t = resolved.onKeySeconds ?? null;
-      if (t === null) return; // Alt off-key → silent no-op
-      const del = dispatchMutatorFromUI(
-        'mutator.timeline.removeKeyframes',
-        { channelId: resolved.channelId, scope: { time: t } },
-        `Delete key ${nodeId}.${paramPath}`,
-      );
-      if (!del.ok) {
-        // eslint-disable-next-line no-alert
-        window.alert?.(del.reason);
-      }
-      return;
-    }
-
-    // INSERT/KEY path — #149 E1: the SHARED fork (keyParamFromTransient) captures
-    // the HELD TRANSIENT value (the orange edit) when present, else the authored
-    // `value`, then clears the slot on success. The SAME helper K/I uses (E2), so
-    // the diamond and the viewport gesture cannot drift.
-    const result = keyParamFromTransient(nodeId, paramPath, value);
-    if (!result.ok) {
-      // eslint-disable-next-line no-alert
-      window.alert?.(result.reason);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      data-testid={`inspector-diamond-${nodeId}-${paramPath}`}
-      data-anim-state={animState}
-      data-transient={isTransient || undefined}
-      aria-label={`Toggle keyframe for ${paramPath} (${animState})`}
-      title="Click to key/unkey at the playhead. Alt-click to delete a key."
-      className={`select-none px-1 text-[11px] leading-none ${colorClass} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
-      onClick={(e) => onActivate(e.altKey)}
-    >
-      {glyph}
-    </button>
-  );
-}
+// `./animate/autoKeyCommit` module (one Auto-Key chokepoint, callers: this
+// inspector AND the viewport gizmo grab — issue #68 / D-02). #190: the diamond
+// itself moved to `./ParamDiamond` so CameraLensControls can render it too — so
+// NPanel now imports only the autoKey commit helpers it calls directly.
 
 interface NumericFieldProps {
   nodeId: string;

@@ -55,6 +55,23 @@ function buildScene(): DagState {
   return s;
 }
 
+/** scene with a PerspectiveCamera wired into scene.camera (the #190 shape). */
+function buildSceneWithCamera(): DagState {
+  let s = buildScene();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_cam',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, position: [3, 2, 3], lookAt: [0, 0, 0] },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_cam', socket: 'out' },
+    to: { node: 'scene', socket: 'camera' },
+  }).next;
+  return s;
+}
+
 /** Seed a layer + Vec3 channel so the single-Mutator keyframe path works. */
 function buildSceneWithChannel(): DagState {
   let s = buildScene();
@@ -257,6 +274,77 @@ describe('P7.1 — dispatchRetimeKeyframe (2-Mutator atomic composite, D-01/D-03
     expect(res.ok).toBe(false);
     expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
     expect(useDagStore.getState().undoStack).toHaveLength(0);
+  });
+});
+
+describe('#190 — camera first key (no AnimationLayer wrapper)', () => {
+  it('keying a camera scalar (fov) creates a free-floating channel targeting the camera', () => {
+    useDagStore.getState().hydrate(buildSceneWithCamera());
+
+    const res = dispatchFirstKeyComposite({
+      targetId: 'n_cam',
+      paramPath: 'fov',
+      value: 35,
+      seconds: 0,
+    });
+    expect(res).toEqual({ ok: true });
+
+    const nodes = useDagStore.getState().state.nodes;
+    const ch = nodes['n_cam_fov_channel'];
+    expect(ch).toBeDefined();
+    expect(ch.type).toBe('KeyframeChannelNumber');
+    expect((ch.params as { target: string }).target).toBe('n_cam');
+    expect((ch.params as { paramPath: string }).paramPath).toBe('fov');
+    const kfs = (ch.params as { keyframes: Array<{ time: number; value: unknown }> }).keyframes;
+    expect(kfs).toHaveLength(1);
+    expect(kfs[0]).toMatchObject({ time: 0, value: 35 });
+
+    // CRITICAL: the camera is NOT wrapped in an AnimationLayer, and scene.camera
+    // still points at the camera node (not a layer) — else look-through breaks.
+    expect(Object.values(nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
+    const camRef = nodes['scene'].inputs['camera'];
+    const ref = Array.isArray(camRef) ? camRef[0] : camRef;
+    expect((ref as { node: string }).node).toBe('n_cam');
+
+    // One atomic undo entry.
+    expect(useDagStore.getState().undoStack).toHaveLength(1);
+  });
+
+  it('keying a camera vec3 (position) creates a KeyframeChannelVec3', () => {
+    useDagStore.getState().hydrate(buildSceneWithCamera());
+    const res = dispatchFirstKeyComposite({
+      targetId: 'n_cam',
+      paramPath: 'position',
+      value: [3, 2, 3],
+      seconds: 0,
+    });
+    expect(res).toEqual({ ok: true });
+    const ch = useDagStore.getState().state.nodes['n_cam_position_channel'];
+    expect(ch.type).toBe('KeyframeChannelVec3');
+    expect((ch.params as { paramPath: string }).paramPath).toBe('position');
+  });
+
+  it('a second key on the same camera param routes through keyframe (no second channel)', () => {
+    useDagStore.getState().hydrate(buildSceneWithCamera());
+    dispatchFirstKeyComposite({ targetId: 'n_cam', paramPath: 'fov', value: 20, seconds: 0 });
+    const second = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { channelId: 'n_cam_fov_channel', time: 1, value: 80 },
+      'second camera key',
+    );
+    expect(second).toEqual({ ok: true });
+    const kfs = (
+      useDagStore.getState().state.nodes['n_cam_fov_channel'].params as {
+        keyframes: Array<{ time: number; value: unknown }>;
+      }
+    ).keyframes;
+    expect(kfs.map((k) => k.time)).toEqual([0, 1]);
+    // Still no layer, still exactly one channel for the camera.
+    const nodes = useDagStore.getState().state.nodes;
+    expect(Object.values(nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
+    expect(Object.values(nodes).filter((n) => n.type.startsWith('KeyframeChannel'))).toHaveLength(
+      1,
+    );
   });
 });
 

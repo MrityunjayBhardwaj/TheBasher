@@ -18,6 +18,8 @@
 
 import { useDagStore } from '../core/dag/store';
 import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cameraLens';
+import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import { ParamDiamond } from './ParamDiamond';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -58,6 +60,17 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   const setParam = (paramPath: string, value: unknown, label: string) =>
     dispatch({ type: 'setParam', nodeId, paramPath, value }, 'user', label);
 
+  // #190 — camera params (fov/near/far) are animatable, so the lens control must
+  // honor Auto-Key like every inspector ParamRow: re-route an ANIMATED param
+  // through the shared seam (transient hold / keyframe) BEFORE the raw setParam,
+  // then autoKeyCommit (Auto-Key ON → key it at the playhead). For an un-animated
+  // param with Auto-Key OFF this is byte-identical to the prior bare setParam.
+  const commitParam = (paramPath: string, value: unknown, label: string) => {
+    if (routeAnimatedGrab(nodeId, paramPath, value)) return;
+    setParam(paramPath, value, label);
+    autoKeyCommit(nodeId, paramPath, value);
+  };
+
   // --- Perspective lens (focal length + sensor → derived FOV) ----------------
   const fov = params.fov ?? 45;
   const sensor = params.sensorSize ?? DEFAULT_SENSOR_MM;
@@ -66,7 +79,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   const onFocal = (mm: number) => {
     if (!Number.isFinite(mm) || mm <= 0) return;
     // Focal length is the lens; recompute (and clamp) the stored FOV from it.
-    setParam('fov', fovFromFocalLength(mm, sensor), 'set camera focal length');
+    // FOV is the keyable param, so route through the autoKey-aware commit.
+    commitParam('fov', fovFromFocalLength(mm, sensor), 'set camera focal length');
   };
 
   const onSensor = (mm: number) => {
@@ -75,14 +89,17 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
     // (focal length) fixed and re-derives the FOV. One atomic edit so undo is
     // a single step and the focal-length readout doesn't jump.
     const keptFocal = focalLengthFromFov(fov, sensor);
+    const newFov = fovFromFocalLength(keptFocal, mm);
     dispatchAtomic(
       [
         { type: 'setParam', nodeId, paramPath: 'sensorSize', value: mm },
-        { type: 'setParam', nodeId, paramPath: 'fov', value: fovFromFocalLength(keptFocal, mm) },
+        { type: 'setParam', nodeId, paramPath: 'fov', value: newFov },
       ],
       'user',
       'set camera sensor',
     );
+    // The sensor edit re-derives FOV; key the FOV too so Auto-Key follows it.
+    autoKeyCommit(nodeId, 'fov', newFov);
   };
 
   return (
@@ -136,9 +153,13 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
             </span>
           </label>
           {/* FOV is the stored param but presented as a derived readout — a
-              director sets the lens, not the angle (Blender). */}
+              director sets the lens, not the angle (Blender). The diamond keys it
+              (#190): FOV is the keyable camera param the resolver overlays. */}
           <div className={ROW}>
-            <span className={LABEL}>field of view</span>
+            <span className="flex items-center gap-1">
+              <ParamDiamond nodeId={nodeId} paramPath="fov" value={fov} />
+              <span className={LABEL}>field of view</span>
+            </span>
             <span
               className="font-mono text-[10px] text-fg/40"
               data-testid={`inspector-camera-fov-${nodeId}`}
@@ -200,9 +221,13 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
         </>
       )}
 
-      {/* Clipping — common to both projections. */}
+      {/* Clipping — common to both projections. near/far are keyable camera
+          params (#190): the diamond keys them and edits route through autoKey. */}
       <label className={ROW}>
-        <span className={LABEL}>clip near</span>
+        <span className="flex items-center gap-1">
+          <ParamDiamond nodeId={nodeId} paramPath="near" value={near} />
+          <span className={LABEL}>clip near</span>
+        </span>
         <input
           type="number"
           step={0.1}
@@ -211,13 +236,16 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
           data-testid={`inspector-camera-near-${nodeId}`}
           onChange={(e) => {
             const n = Number(e.target.value);
-            if (Number.isFinite(n) && n > 0) setParam('near', n, 'set camera near clip');
+            if (Number.isFinite(n) && n > 0) commitParam('near', n, 'set camera near clip');
           }}
           className={NUM}
         />
       </label>
       <label className={ROW}>
-        <span className={LABEL}>clip far</span>
+        <span className="flex items-center gap-1">
+          <ParamDiamond nodeId={nodeId} paramPath="far" value={far} />
+          <span className={LABEL}>clip far</span>
+        </span>
         <input
           type="number"
           step={10}
@@ -226,7 +254,7 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
           data-testid={`inspector-camera-far-${nodeId}`}
           onChange={(e) => {
             const n = Number(e.target.value);
-            if (Number.isFinite(n) && n > 0) setParam('far', n, 'set camera far clip');
+            if (Number.isFinite(n) && n > 0) commitParam('far', n, 'set camera far clip');
           }}
           className={NUM}
         />

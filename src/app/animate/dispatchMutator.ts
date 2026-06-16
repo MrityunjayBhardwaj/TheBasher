@@ -481,11 +481,73 @@ function inferValueType(value: unknown): 'number' | 'vec3' | 'quat' | 'color' | 
  * (addLayer.ts:95-123) — that is the H34 orphan fix; it is NOT
  * reimplemented here. Any validate `!ok` → abort, mutate nothing.
  */
+/** Camera node types (#190). Wired into scene.camera, outside the AnimationLayer
+ *  machinery — their channels target the camera node directly, no layer. */
+function isCameraNodeType(type: string | undefined): boolean {
+  return type === 'PerspectiveCamera' || type === 'OrthographicCamera';
+}
+
+/**
+ * The CAMERA first-key (#190). A camera is not a SceneChild and is wired via
+ * scene.camera, so the addLayer+addChannel composite can't carry it (the layer
+ * is Mesh-typed and patchTarget clones a SceneChild). Instead, create a SINGLE
+ * free-floating KeyframeChannel* targeting the camera node, with the first
+ * sample baked into params — resolveActiveCameraPoseAt finds it by target scan.
+ * Subsequent keys flow through the EXISTING channel-id keyframe path (autoKey's
+ * 'animated' branch), so only this first step is camera-specific.
+ *
+ * Routed through the SAME propose→accept spine (one atomic undo entry, V13),
+ * mirroring the composite's fresh-node closure-root pattern (its addLayer op
+ * also roots the closure on a not-yet-existing id).
+ */
+function dispatchCameraFirstKey(args: FirstKeyCompositeArgs, base: DagState): DispatchResult {
+  const { targetId, paramPath, value, seconds } = args;
+  const intent = `Animate ${targetId}.${paramPath}`;
+  const valueType = inferValueType(value);
+  if (valueType !== 'number' && valueType !== 'vec3') {
+    return {
+      ok: false,
+      reason: `Camera param "${paramPath}" is not keyframe-able (expected a number or vec3).`,
+    };
+  }
+  const nodeType = valueType === 'vec3' ? 'KeyframeChannelVec3' : 'KeyframeChannelNumber';
+  const easing = valueType === 'vec3' ? 'cubic' : 'linear';
+  const channelId = `${targetId}_${safePath(paramPath)}_channel`;
+  // First-key only fires for an un-animated param, so the channel should not yet
+  // exist; guard rather than emit a colliding addNode.
+  if (base.nodes[channelId]) {
+    return { ok: false, reason: `Channel "${channelId}" already exists.` };
+  }
+  const op: Op = {
+    type: 'addNode',
+    nodeId: channelId,
+    nodeType,
+    params: {
+      name: paramPath,
+      target: targetId,
+      paramPath,
+      keyframes: [{ time: seconds, value, easing }],
+    },
+  };
+  const closureSpec: ClosureSpec = { rootSelectors: [channelId], followedEdges: [] };
+  return proposeAndAccept(base, [op], intent, ['user:camera.firstKey'], closureSpec, []);
+}
+
 export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): DispatchResult {
   const { targetId, paramPath, value, seconds } = args;
   const intent = `Animate ${targetId}.${paramPath}`;
 
   const base = useDagStore.getState().state;
+
+  // #190 — a camera is wired via scene.camera (a single Camera-typed ref), NOT
+  // scene.children, so it sits OUTSIDE the AnimationLayer machinery. Its first
+  // key is a single free-floating channel targeting the camera node, NOT the
+  // addLayer composite (which would wrap the Camera in a Mesh-typed layer and
+  // break selectActiveCameraNode). Same propose→accept spine, camera-specific
+  // op set. Subsequent keys flow through the existing channel-id keyframe path.
+  if (isCameraNodeType(base.nodes[targetId]?.type)) {
+    return dispatchCameraFirstKey(args, base);
+  }
 
   // 1 — deterministic channel id (mirror addChannel.ts:181). The LAYER id is
   //     resolved below: reuse the layer already wrapping the target if one

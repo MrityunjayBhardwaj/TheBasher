@@ -26,8 +26,10 @@ interface BasherWindow {
   __basher_dag?: {
     getState: () => {
       dispatch: (op: unknown, source: string, desc: string) => void;
+      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
     };
   };
+  __basher_selection?: { getState: () => { select: (id: string) => void } };
 }
 
 async function waitReady(page: import('@playwright/test').Page) {
@@ -35,7 +37,11 @@ async function waitReady(page: import('@playwright/test').Page) {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
     return Boolean(
-      w.__basher_view_camera && w.__basher_viewport && w.__basher_time && w.__basher_dag,
+      w.__basher_view_camera &&
+      w.__basher_viewport &&
+      w.__basher_time &&
+      w.__basher_dag &&
+      w.__basher_selection,
     );
   });
   await page.waitForTimeout(300);
@@ -53,18 +59,16 @@ async function addCameraChannel(
 ) {
   await page.evaluate(
     ({ nodeId, nodeType, paramPath, keyframes }) => {
-      (window as unknown as BasherWindow)
-        .__basher_dag!.getState()
-        .dispatch(
-          {
-            type: 'addNode',
-            nodeId,
-            nodeType,
-            params: { name: paramPath, target: 'n_camera', paramPath, keyframes },
-          },
-          'test',
-          'inject camera channel',
-        );
+      (window as unknown as BasherWindow).__basher_dag!.getState().dispatch(
+        {
+          type: 'addNode',
+          nodeId,
+          nodeType,
+          params: { name: paramPath, target: 'n_camera', paramPath, keyframes },
+        },
+        'test',
+        'inject camera channel',
+      );
     },
     { nodeId, nodeType, paramPath, keyframes },
   );
@@ -124,5 +128,41 @@ test.describe('#190 camera animation (viewport look-through)', () => {
     const at1 = await poseAt(page, 1);
     expect(at0!.fov).toBeCloseTo(20, 0);
     expect(at1!.fov).toBeCloseTo(80, 0);
+  });
+
+  test('the inspector diamond keys a camera param via a free-floating channel (no layer)', async ({
+    page,
+  }) => {
+    await waitReady(page);
+    // Select the production camera so the inspector shows its sections.
+    await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_selection!.getState().select('n_camera'),
+    );
+    // The camera's fov field renders a keyframe diamond (auto, like any param).
+    const diamond = page.getByTestId('inspector-diamond-n_camera-fov');
+    await expect(diamond).toBeVisible();
+    await diamond.click();
+    await page.waitForTimeout(150);
+
+    // The first key created a FREE-FLOATING KeyframeChannelNumber targeting the
+    // camera node — NOT an AnimationLayer wrapping it (which would break
+    // scene.camera + look-through). This is the #190 authoring branch.
+    const shape = await page.evaluate(() => {
+      const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+      const list = Object.values(nodes);
+      const camChannels = list.filter(
+        (n) => n.type.startsWith('KeyframeChannel') && n.params.target === 'n_camera',
+      );
+      return {
+        channelTypes: camChannels.map((c) => c.type),
+        channelPaths: camChannels.map((c) => c.params.paramPath),
+        hasLayer: list.some((n) => n.type === 'AnimationLayer'),
+      };
+    });
+    expect(shape.channelTypes).toEqual(['KeyframeChannelNumber']);
+    expect(shape.channelPaths).toEqual(['fov']);
+    // Falsifiable: revert the camera branch → the first key runs addLayer →
+    // hasLayer is true (and scene.camera would be rewired to the layer).
+    expect(shape.hasLayer).toBe(false);
   });
 });
