@@ -108,6 +108,23 @@ export interface ViewportStore {
    *  Viewport.tsx onPointerMissed. Read by R3 TopToolbar's zoom readout
    *  (§5.3 anatomy). See P6 W10 UIR c-1. */
   cameraZoom: number;
+  /** Manual override for the FREE editor-view clip planes (#192). `null` =
+   *  AUTO: the planes derive from the scene bounds every load (#186/#191). A
+   *  non-null `{ near, far }` overrides that — the user's explicit Clip
+   *  Start/End from the View menu.
+   *
+   *  Viewport-ONLY: this never touches the scene camera node's near/far (that
+   *  drives the render + look-through). It is an editor-session projection like
+   *  `cameraZoom`, NOT in the DAG (V8/V34) — but UNLIKE cameraZoom it IS
+   *  persisted per-project to localStorage (`viewportClipPersistence`, the same
+   *  class as the editor-view pose), hydrated on project change. */
+  viewportClipOverride: { near: number; far: number } | null;
+  /** Live readout of the FREE view's EFFECTIVE clip planes (override ?? the
+   *  auto-derived planes), published each frame by `EditorViewCamera`. Lets the
+   *  View-menu Clipping items DISPLAY and SEED the current numbers without
+   *  reaching into the camera component's local state (mirrors the `cameraZoom`
+   *  readout pattern). Not persisted — recomputed live. */
+  viewportClipReadout: { near: number; far: number };
   /** React-bypass escape hatch for the 60fps timeline playhead.
    *
    *  The OBJECT is created once at store init and is stable for the store's
@@ -134,6 +151,13 @@ export interface ViewportStore {
   setCameraProjection(projection: CameraProjection): void;
   setTimelineDrawerOpen(open: boolean): void;
   setCameraZoom(zoom: number): void;
+  /** Set (or clear, with `null`) the manual viewport clip override. Validated
+   *  via `normalizeViewportClip` — invalid input falls back to `null` (auto).
+   *  PURE state only; persistence is the caller's job (the View-menu handler
+   *  calls `saveViewportClip`; hydration calls this without saving). */
+  setViewportClipOverride(clip: { near: number; far: number } | null): void;
+  /** Publish the live effective clip planes (called by `EditorViewCamera`). */
+  setViewportClipReadout(clip: { near: number; far: number }): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
   toggleSnapEnabled(): void;
@@ -165,6 +189,12 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // OrbitControls onChange listener recomputes this from the live
   // camera→target distance; nothing persists it.
   cameraZoom: 100,
+  // Default null — AUTO clip planes (bounds-fit, #186/#191). Hydrated from
+  // localStorage per project on load (viewportClipPersistence).
+  viewportClipOverride: null,
+  // Seeded with three's historical defaults; EditorViewCamera overwrites it
+  // each frame with the live effective planes.
+  viewportClipReadout: { near: 0.1, far: 1000 },
   // Created once here; the object reference is stable for the store lifetime.
   // `.current` is mutated only by timeStore's frame chokepoint — never
   // reassign this object. See D-W9-1, D-W9-9.
@@ -190,6 +220,11 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setTimelineDrawerOpen: (timelineDrawerOpen) => set({ timelineDrawerOpen }),
   setCameraZoom: (zoom) =>
     set({ cameraZoom: Number.isFinite(zoom) ? Math.max(1, Math.round(zoom)) : 100 }),
+  setViewportClipOverride: (clip) => set({ viewportClipOverride: normalizeViewportClip(clip) }),
+  setViewportClipReadout: (clip) => {
+    const next = normalizeViewportClip(clip);
+    if (next) set({ viewportClipReadout: next });
+  },
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
@@ -203,6 +238,20 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
     });
   },
 }));
+
+/** Validate a viewport clip override (#192). Returns a sane `{ near, far }` or
+ *  `null` (= AUTO / invalid). A valid frustum needs near > 0 and far > near; a
+ *  non-finite or mis-ordered pair falls back to `null` rather than producing a
+ *  degenerate camera. Pure + exported for unit tests and the persistence layer. */
+export function normalizeViewportClip(
+  clip: { near: number; far: number } | null | undefined,
+): { near: number; far: number } | null {
+  if (!clip) return null;
+  const { near, far } = clip;
+  if (!Number.isFinite(near) || !Number.isFinite(far)) return null;
+  if (near <= 0 || far <= near) return null;
+  return { near, far };
+}
 
 /** Round `value` to the nearest multiple of `step`. Returns `value` unchanged
  *  when step ≤ 0 (snap disabled). */
