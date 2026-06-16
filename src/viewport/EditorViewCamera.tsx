@@ -27,8 +27,8 @@
 // (node_modules/@react-three/drei/core/PerspectiveCamera.js:52-64).
 
 import { OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { useThree } from '@react-three/fiber';
-import { useEffect, useMemo, useRef } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
   cameraPoseFromNode,
@@ -41,6 +41,25 @@ import { useProjectStore } from '../core/project/store';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
+import { fitViewToSphere } from './cameraFit';
+import { computeSceneBounds } from './sceneBounds';
+
+// Default free-mode clip planes (three's near-ish / the pre-#186 constants).
+// The bounds-fit overrides them per-load so large/tiny models don't clip.
+const DEFAULT_FREE_NEAR = 0.1;
+const DEFAULT_FREE_FAR = 1000;
+
+// Settle loop (#186): glTF geometry loads ASYNC, AFTER the boot effect fires,
+// so we re-fit each frame as the bounds grow. End the settle SETTLE_STILL_FRAMES
+// (~0.75s) after the bounds LAST CHANGED — NOT on first stability: a sync box
+// stabilizes in ~2 frames while an async glTF arrives ~0.5-2s later, so an
+// early exit would frame the box and never re-frame to include the model.
+// Capped at MAX_FRAMES (~5s) for a never-settling / streaming scene. The fit is
+// a ONE-TIME initial framing, NOT a persistent look-at constraint: any user
+// input on the canvas cancels it immediately and OrbitControls owns the free
+// camera thereafter (explicit camera constraints are a future feature).
+const SETTLE_STILL_FRAMES = 45;
+const MAX_FRAMES = 300;
 
 /** Orthographic zoom that makes the ortho framing match the perspective
  *  framing at the orbit pivot — Blender's Numpad-5 behavior: apparent scale
@@ -122,6 +141,16 @@ export function EditorViewCamera() {
   // After the latched re-frame, OrbitControls owns the camera in free mode.
   const bootedKey = useRef<string | null>(null);
 
+  // Free-mode clip planes — bounds-derived per load (#186) so large/tiny models
+  // don't clip. Driven via STATE (not just imperatively) so a re-render reapplies
+  // the fitted planes as props instead of drei resetting them to the defaults.
+  const [freeNear, setFreeNear] = useState(DEFAULT_FREE_NEAR);
+  const [freeFar, setFreeFar] = useState(DEFAULT_FREE_FAR);
+  const appliedPlanes = useRef({ near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR });
+  // The active bounds-fit settle session (#186). `active:false` → the camera is
+  // FREE (OrbitControls owns it); the fit only runs while content is arriving.
+  const fit = useRef({ active: false, frames: 0, still: 0, lastR: -1 });
+
   useEffect(() => {
     const cam = ref.current;
     if (!cam) return;
@@ -133,25 +162,37 @@ export function EditorViewCamera() {
     }
     const key = `${projectId ?? ''}|${useOrtho ? 'ortho' : 'persp'}`;
     if (bootedKey.current !== key) {
-      // First free-mode frame for THIS (project, projection): restore the
-      // user's saved orbit view for the project (Wave E); fall back to the
-      // active camera's framing so first paint matches the pre-#165
-      // makeDefault behavior when nothing is saved. switchProject() updates
-      // the project store and hydrates the DAG store synchronously back-to-back
-      // (boot.ts), so `projectId` and `pose` are consistent here. The ortho
-      // arg sets `.zoom` so the swapped-in ortho camera frames the scene
+      // First free-mode frame for THIS (project, projection). switchProject()
+      // updates the project store and hydrates the DAG store synchronously
+      // back-to-back (boot.ts), so `projectId`/`pose` are consistent here. The
+      // ortho arg sets `.zoom` so a swapped-in ortho camera frames the scene
       // (position alone does not frame an ortho camera).
       const orthoArg = useOrtho ? { fovDeg: pose.fov, viewportHeight } : undefined;
-      // A projection toggle captured the LIVE pose (editorViewCapture) — re-pose
-      // the swapped-in camera exactly there so the framing is preserved across
-      // persp↔ortho (Blender Numpad 5). Falls through to the saved orbit view
-      // (project switch / reload) then the active-camera framing (first boot).
+      // Priority: a projection-toggle captured pose (editorViewCapture, keeps
+      // framing across persp↔ortho) > the user's saved orbit view (reload /
+      // explicit) > a FULL bounds-fit on load (#186). The first two are exact
+      // poses that WIN over the fit; only when neither exists do we frame the
+      // scene's bounding sphere.
       const pendingPose = takePendingEditorView();
-      if (pendingPose) applyView(cam, pendingPose.position, pendingPose.target, orthoArg);
-      else {
+      if (pendingPose) {
+        applyView(cam, pendingPose.position, pendingPose.target, orthoArg);
+        fit.current.active = false;
+      } else {
         const saved = loadEditorView(projectId);
-        if (saved) applyView(cam, saved.position, saved.target, orthoArg);
-        else applyView(cam, pose.position, pose.lookAt, orthoArg);
+        if (saved) {
+          applyView(cam, saved.position, saved.target, orthoArg);
+          fit.current.active = false;
+        } else {
+          // No captured/saved pose → bounds-fit. Start the settle loop (below);
+          // it frames the scene once geometry is present (async glTF loads after
+          // this effect), sets bounds-derived clip planes, then hands the free
+          // camera to OrbitControls. Reset planes so a prior huge model's far
+          // doesn't linger into an empty/smaller scene.
+          fit.current = { active: true, frames: 0, still: 0, lastR: -1 };
+          appliedPlanes.current = { near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR };
+          setFreeNear(DEFAULT_FREE_NEAR);
+          setFreeFar(DEFAULT_FREE_FAR);
+        }
       }
       bootedKey.current = key;
     }
@@ -159,13 +200,77 @@ export function EditorViewCamera() {
     // position — do not fight it.
   }, [lookThrough, pose, projectId, useOrtho, viewportHeight]);
 
+  // The bounds-fit settle loop (#186). Runs ONLY while `fit.active`: re-frames
+  // each frame as async geometry arrives, ending SETTLE_STILL_FRAMES after the
+  // bounds last changed (or at MAX_FRAMES). It is a one-time initial framing,
+  // NOT a look-at constraint — canvas input (below) cancels it immediately.
+  useFrame((state) => {
+    const f = fit.current;
+    const cam = ref.current;
+    if (!f.active || lookThrough || !cam) return;
+    f.frames += 1;
+    const bounds = computeSceneBounds(state.scene);
+    if (bounds) {
+      const aspect = state.size.width / Math.max(1, state.size.height);
+      const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
+      const orthoArg = useOrtho
+        ? { fovDeg: pose.fov, viewportHeight: state.size.height }
+        : undefined;
+      applyView(cam, res.position, res.lookAt, orthoArg);
+      cam.near = res.near;
+      cam.far = res.far;
+      cam.updateProjectionMatrix();
+      if (res.near !== appliedPlanes.current.near || res.far !== appliedPlanes.current.far) {
+        appliedPlanes.current = { near: res.near, far: res.far };
+        setFreeNear(res.near);
+        setFreeFar(res.far);
+      }
+      const controls = state.controls as {
+        minDistance?: number;
+        maxDistance?: number;
+      } | null;
+      if (controls) {
+        controls.minDistance = res.minDistance;
+        controls.maxDistance = res.maxDistance;
+      }
+      const r = bounds.radius;
+      const delta = f.lastR > 0 ? Math.abs(r - f.lastR) / Math.max(r, f.lastR) : 1;
+      f.lastR = r;
+      // Reset the "still" counter whenever the bounds change (async content
+      // arriving); end only after they hold steady for SETTLE_STILL_FRAMES.
+      f.still = delta <= 1e-3 ? f.still + 1 : 0;
+      if (f.still >= SETTLE_STILL_FRAMES) f.active = false;
+    }
+    if (f.frames >= MAX_FRAMES) f.active = false; // empty / slow scene — stop waiting
+  });
+
+  // Cancel an in-progress fit the instant the user touches the canvas (drag OR
+  // wheel) — the fit is a one-time framing, never a constraint that fights the
+  // user (#186). Listen on the canvas DOM directly (not OrbitControls' 'start',
+  // which fires inconsistently for wheel-dolly) so any interaction wins. After
+  // this the camera is free; OrbitControls owns it.
+  const domEl = useThree((s) => s.gl.domElement);
+  useEffect(() => {
+    if (!domEl) return;
+    const cancel = () => {
+      fit.current.active = false;
+    };
+    domEl.addEventListener('pointerdown', cancel);
+    domEl.addEventListener('wheel', cancel, { passive: true });
+    return () => {
+      domEl.removeEventListener('pointerdown', cancel);
+      domEl.removeEventListener('wheel', cancel);
+    };
+  }, [domEl]);
+
   // Projection: free mode uses the seed camera's fov (captured via `pose` at
   // boot so framing is identical); look-through uses the live DAG fov/near/far.
-  // OrthographicCamera look-through keeps a perspective editor camera (v1
-  // limitation — ortho cameras are rare; pose still adopted).
+  // Free-mode near/far are the bounds-fit planes (#186). OrthographicCamera
+  // look-through keeps a perspective editor camera (v1 limitation — ortho
+  // cameras are rare; pose still adopted).
   const fov = pose.fov;
-  const near = lookThrough ? pose.near : 0.1;
-  const far = lookThrough ? pose.far : 1000;
+  const near = lookThrough ? pose.near : freeNear;
+  const far = lookThrough ? pose.far : freeFar;
 
   // DEV-only observation seam for the #165 e2e: read the live view camera so
   // the test can assert (a) boot framing and (b) look-through adopts the DAG

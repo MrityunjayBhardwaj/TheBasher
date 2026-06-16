@@ -45,16 +45,31 @@ async function waitReady(page: import('@playwright/test').Page) {
 }
 
 test.describe('#165 Blender-style camera', () => {
-  test('boots the editor view at the active camera pose, not looking through', async ({ page }) => {
+  test('boots the editor view framing the scene bounds, not looking through', async ({ page }) => {
     await waitReady(page);
     const cam = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_view_camera!(),
     );
     expect(cam).not.toBeNull();
-    // Byte-identical to the pre-#165 makeDefault DAG camera (default.ts seed).
-    expect(cam!.position[0]).toBeCloseTo(3, 1);
-    expect(cam!.position[1]).toBeCloseTo(2, 1);
-    expect(cam!.position[2]).toBeCloseTo(3, 1);
+    // #186 — FULL bounds-fit on load: the editor view frames the scene's
+    // bounding sphere (the default seed's 1×1×1 box at origin) along the
+    // canonical [3,2,3] viewing angle — NOT the authored camera eye [3,2,3].
+    const p = cam!.position;
+    const dist = Math.hypot(p[0], p[1], p[2]);
+    // Same 3/4 viewing angle (normalized [3,2,3]) — only the DISTANCE scales
+    // to the bounds.
+    const len = Math.hypot(3, 2, 3);
+    expect(p[0] / dist).toBeCloseTo(3 / len, 1);
+    expect(p[1] / dist).toBeCloseTo(2 / len, 1);
+    expect(p[2] / dist).toBeCloseTo(3 / len, 1);
+    // Framing the unit box pulls the eye IN to ~2.9, not the authored 4.69.
+    expect(dist).toBeGreaterThan(1.5);
+    expect(dist).toBeLessThan(4.0);
+    // The headline #186 fix: clip planes are BOUNDS-DERIVED, not the old
+    // 0.1/1000 constants (so large models no longer clip at far). Revert the
+    // bounds-fit → near 0.1 / far 1000 → these two fail.
+    expect(cam!.far).toBeLessThan(50);
+    expect(cam!.near).toBeGreaterThan(0.5);
     expect(cam!.fov).toBeCloseTo(45, 1);
     expect(cam!.lookThrough).toBe(false);
   });
@@ -65,13 +80,23 @@ test.describe('#165 Blender-style camera', () => {
     const canvas = page.getByTestId('viewport-canvas');
     const box = (await canvas.boundingBox())!;
 
-    // The active camera's apex is at [3,2,3] (the boot eye); its frustum hitbox
-    // sits ~0.45u in front, toward its lookAt (origin). Project a point inside
-    // that hitbox volume (apex nudged toward origin) — it is NEARER the eye than
-    // the cube at the origin, so the raycast targets the frustum, not the mesh.
-    const ndcCam = await page.evaluate(() =>
-      (window as unknown as BasherWindow).__basher_project_ndc!([2.7, 1.8, 2.7]),
-    );
+    // #186 — the view now boots framing the box (bounds-fit), so the camera
+    // object at [3,2,3] starts BEHIND the eye. Dolly out (wheel) until its
+    // frustum is in front and on-screen, then click it. The apex is at [3,2,3];
+    // a point ~0.45u in front (toward origin) lands inside the frustum hitbox,
+    // nearer the eye than the cube, so the raycast targets the frustum.
+    const cx0 = box.x + box.width / 2;
+    const cy0 = box.y + box.height / 2;
+    await page.mouse.move(cx0, cy0);
+    let ndcCam: [number, number, number] | null = null;
+    for (let i = 0; i < 20; i++) {
+      ndcCam = await page.evaluate(() =>
+        (window as unknown as BasherWindow).__basher_project_ndc!([2.7, 1.8, 2.7]),
+      );
+      if (ndcCam && ndcCam[2] < 1 && Math.abs(ndcCam[0]) < 0.9 && Math.abs(ndcCam[1]) < 0.9) break;
+      await page.mouse.wheel(0, 240); // dolly out, past the camera apex
+      await page.waitForTimeout(80);
+    }
     expect(ndcCam).not.toBeNull();
     expect(ndcCam![2]).toBeLessThan(1); // in front of the camera
     expect(Math.abs(ndcCam![0])).toBeLessThan(0.95);

@@ -33,17 +33,19 @@ async function waitReady(page: import('@playwright/test').Page) {
   await page.waitForTimeout(300);
 }
 
-function distFromDefault(p: [number, number, number]): number {
-  // The default seed camera (default.ts) boots the view at [3,2,3].
-  return Math.hypot(p[0] - 3, p[1] - 2, p[2] - 3);
+function dist(a: [number, number, number], b: [number, number, number]): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
 test.describe('#167 project-switch reframe', () => {
   test('switching projects re-frames the editor view to the new project', async ({ page }) => {
     await waitReady(page);
 
-    // Orbit project A (the default) well away from its [3,2,3] boot pose.
+    // Capture the boot framing (#186 bounds-fit), then orbit well away from it.
     // OrbitControls onEnd persists this pose to basher.editorView.default.
+    const boot = await page.evaluate(
+      () => (window as unknown as BasherWindow).__basher_view_camera!().position,
+    );
     const canvas = page.getByTestId('viewport-canvas');
     const box = (await canvas.boundingBox())!;
     const cx = box.x + box.width / 2;
@@ -57,8 +59,8 @@ test.describe('#167 project-switch reframe', () => {
     const orbited = await page.evaluate(
       () => (window as unknown as BasherWindow).__basher_view_camera!().position,
     );
-    // Precondition: we actually moved the view off the default framing.
-    expect(distFromDefault(orbited)).toBeGreaterThan(0.5);
+    // Precondition: we actually moved the view off the boot framing.
+    expect(dist(orbited, boot)).toBeGreaterThan(0.5);
 
     // Duplicate the current project → a fresh id with NO saved editor view,
     // switched to in-session (no reload). This is the exact path that #167
@@ -71,14 +73,20 @@ test.describe('#167 project-switch reframe', () => {
       (prev) => localStorage.getItem('basher.lastProjectId') !== prev,
       before,
     );
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(400);
 
     const afterSwitch = await page.evaluate(
       () => (window as unknown as BasherWindow).__basher_view_camera!().position,
     );
-    // The new project has no saved view, so the editor re-frames to its active
-    // camera's production framing ([3,2,3]). Revert the fix → the boolean guard
-    // stays latched → the view sits at A's orbited pose → this fails.
-    expect(distFromDefault(afterSwitch)).toBeLessThan(0.5);
+    // The new project has no saved view, so the editor RE-FRAMES to its bounding
+    // sphere (#186 full bounds-fit) along the canonical [3,2,3] angle — moving
+    // OFF the orbited pose. Revert the reframe → the guard stays latched → the
+    // view sits at A's orbited pose → both assertions below fail.
+    expect(dist(afterSwitch, orbited)).toBeGreaterThan(0.3);
+    const d = Math.hypot(afterSwitch[0], afterSwitch[1], afterSwitch[2]);
+    const len = Math.hypot(3, 2, 3);
+    expect(afterSwitch[0] / d).toBeCloseTo(3 / len, 1);
+    expect(afterSwitch[1] / d).toBeCloseTo(2 / len, 1);
+    expect(afterSwitch[2] / d).toBeCloseTo(3 / len, 1);
   });
 });
