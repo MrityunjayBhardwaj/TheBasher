@@ -7,15 +7,21 @@
 // Why read the LIVE scene (not a re-evaluation): the three.js objects already
 // reflect the current animation frame (the render loop applies it). So the
 // render captures exactly what is on screen at the current playhead — we only
-// evaluate RenderOutput to read postFx + width + height, and read the active
-// camera node's pose for the production framing (Blender F12 — independent of
-// where the editor view orbited).
+// evaluate RenderOutput to read postFx + width + height, and resolve the active
+// camera's EVALUATED pose at the current playhead for the production framing
+// (Blender F12 — independent of where the editor view orbited).
 //
-// REF: issue #168; THESIS.md §11; activeCamera.ts (#165); renderToImage.ts.
+// #190 — the pose comes from resolveActiveCameraPoseAt(state, seconds), NOT the
+// static cameraPoseFromNode, so a keyframed camera frames the shot at time T.
+// This is the SAME resolver the viewport look-through (slice 4) samples, so the
+// still at time T matches the viewport at time T (viewport==render, V37/V51).
+//
+// REF: issue #168 / #190; THESIS.md §11; activeCamera.ts (#165); renderToImage.ts.
 
-import { cameraPoseFromNode, DEFAULT_CAMERA_POSE, selectActiveCameraNode } from './activeCamera';
+import { resolveActiveCameraPoseAt, selectActiveCameraNode } from './activeCamera';
 import { resolveCameraDof } from './cameraDof';
 import { useDagStore } from '../core/dag/store';
+import { useTimeStore } from './stores/timeStore';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
 import type { RenderOutputValue } from '../nodes/types';
@@ -69,10 +75,15 @@ export async function renderActiveProjectBlob(): Promise<{
   }
 
   const activeCamera = selectActiveCameraNode(state);
-  const pose = cameraPoseFromNode(activeCamera) ?? DEFAULT_CAMERA_POSE;
+  // #190 — the EVALUATED pose at the current playhead, so a keyframed camera
+  // frames the shot at time T (matches the viewport look-through at the same
+  // time). An unanimated camera resolves to the static authored pose.
+  const seconds = useTimeStore.getState().seconds;
+  const pose = resolveActiveCameraPoseAt(state, seconds);
   // UX #12 — depth of field, resolved through the SAME pure helper the live
   // viewport uses (cameraDof.ts) so the still's bokeh matches the screen. null
-  // when off → the fast manual render path.
+  // when off → the fast manual render path. (Animated DoF is a future follow-up
+  // — focus/aperture read static here; framing is the #190 scope.)
   const dof = resolveCameraDof(activeCamera);
   const blob = await renderSceneToPngBlob({ gl, scene, pose, width, height, postFx, dof });
   return { blob, width, height };
