@@ -40,6 +40,7 @@ import { useDagStore } from '../core/dag/store';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
+import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
 import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
 import { computeSceneBounds } from './sceneBounds';
@@ -114,6 +115,9 @@ export function EditorViewCamera() {
   // projections — never two default cameras at once ([[H67]]/V34: a single
   // makeDefault camera, no oldCam-restore race).
   const useOrtho = !lookThrough && projection === 'orthographic';
+  // #192: manual viewport clip override (null = AUTO bounds-fit). Applies to the
+  // FREE view only — look-through uses the scene camera's own near/far.
+  const clipOverride = useViewportStore((s) => s.viewportClipOverride);
   // Canvas pixel size — drei's OrthographicCamera frustum is in pixels, so the
   // ortho zoom that matches the perspective framing depends on viewport height.
   const viewportHeight = useThree((s) => s.size.height);
@@ -246,8 +250,11 @@ export function EditorViewCamera() {
         const cameraDist = cam.position.distanceTo(center);
         planes = clipPlanesForView(cameraDist, bounds.radius);
       }
-      cam.near = planes.near;
-      cam.far = planes.far;
+      // A manual override (#192) wins over the auto planes for the RENDERED
+      // near/far, but we still track the auto planes in `freeNear/freeFar` below
+      // so clearing the override restores the bounds-fit without a reload.
+      cam.near = clipOverride?.near ?? planes.near;
+      cam.far = clipOverride?.far ?? planes.far;
       cam.updateProjectionMatrix();
       if (planes.near !== appliedPlanes.current.near || planes.far !== appliedPlanes.current.far) {
         appliedPlanes.current = { near: planes.near, far: planes.far };
@@ -304,8 +311,29 @@ export function EditorViewCamera() {
   // look-through keeps a perspective editor camera (v1 limitation — ortho
   // cameras are rare; pose still adopted).
   const fov = pose.fov;
-  const near = lookThrough ? pose.near : freeNear;
-  const far = lookThrough ? pose.far : freeFar;
+  // Free-view EFFECTIVE clip planes: the manual override (#192) when set, else
+  // the auto bounds-fit. Look-through ignores both and uses the scene camera's
+  // own near/far (you're previewing that camera).
+  const freeNearEff = clipOverride?.near ?? freeNear;
+  const freeFarEff = clipOverride?.far ?? freeFar;
+  const near = lookThrough ? pose.near : freeNearEff;
+  const far = lookThrough ? pose.far : freeFarEff;
+
+  // Publish the free-view effective planes so the View-menu Clipping items can
+  // DISPLAY + SEED the current numbers (mirrors the cameraZoom readout). This is
+  // the value the menu edits, so it tracks the free view even while looking
+  // through.
+  useEffect(() => {
+    useViewportStore.getState().setViewportClipReadout({ near: freeNearEff, far: freeFarEff });
+  }, [freeNearEff, freeFarEff]);
+
+  // Hydrate the per-project clip override into the store when the project
+  // changes (#192). loadViewportClip returns null (AUTO) when none/invalid.
+  // setViewportClipOverride is pure — no re-save here (persistence is owned by
+  // the View-menu handler), so hydration can't echo back into localStorage.
+  useEffect(() => {
+    useViewportStore.getState().setViewportClipOverride(loadViewportClip(projectId));
+  }, [projectId]);
 
   // DEV-only observation seam for the #165 e2e: read the live view camera so
   // the test can assert (a) boot framing and (b) look-through adopts the DAG
