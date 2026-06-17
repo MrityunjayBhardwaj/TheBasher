@@ -47,7 +47,7 @@
 // REF: THESIS.md §11, §15, §40; vyapti V1, V8; krama K7.
 
 import { TransformControls } from '@react-three/drei';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
@@ -121,54 +121,26 @@ export function Gizmo() {
   }, []);
 
   const isCharacter = node?.type === 'Character';
-  const rawManip = isCharacter ? null : getManipulable(node);
+  // The directly-manipulable params (position + rotation/scale-or-size). With
+  // the AnimationLayer wrapper retired (#199, V57), every selectable scene child
+  // is its OWN node carrying a `position` param, so getManipulable resolves it
+  // directly. The old `evalForSelection` synth — which fabricated a manip from
+  // the EVALUATED transform when the selected node had NO position param but the
+  // resolver resolved it to a rendered child — existed ONLY for the positionless
+  // AnimationLayer wrapper (D-01 box-or-layer, #68). That node type is gone, and
+  // every surviving positionless-param node (Group → `{children}`, GltfAsset →
+  // no position field) produces a value with NO `position`, so
+  // resolveEvaluatedTransform returns null for them
+  // (resolveEvaluatedTransform.ts:150/257 require `position`) → the synth could
+  // never fire again. Removed as dead (#194 follow-up; Chesterton-verified by the
+  // value shapes + the gizmo/glTF e2e suite). The ANIMATED gizmo position still
+  // comes from the resolver — in the seeding effect below, which is unchanged.
+  const manip: Manipulable | null = isCharacter ? null : getManipulable(node);
 
   // Time — drives the Character path AND (P7.3) the manip resolver re-seed.
   const seconds = useTimeStore((s) => s.seconds);
   const frame = useTimeStore((s) => s.frame);
   const normalized = useTimeStore((s) => s.normalized);
-
-  // D-01 (LOCKED, CONTEXT.md:46-54): selecting the box OR its wrapping
-  // AnimationLayer must BOTH show ONE gizmo at the cube's evaluated
-  // transform. An AnimationLayer node has NO `position` param, so
-  // getManipulable(layerNode) returns null — pre-7.3 that meant NO gizmo
-  // for a layer selection (the CONTEXT-documented symptom). To honor the
-  // locked D-01 and the non-deferrable D-06 gate (boundary-pair for box
-  // AND layer), synthesize a manip from the EVALUATED transform when the
-  // raw node has none but the resolver resolves selectedId to a rendered
-  // child. (This supersedes the Task-3-step-4 guard NOTE, which was
-  // internally inconsistent with the LOCKED D-01 — the locked decision +
-  // the phase gate win.) The animated transform param for the P7
-  // box→layer shape is `position` (the #68 symptom); rotation/scale ride
-  // the same resolver. When the resolver returns null (genuinely
-  // non-anchorable selection) we still fall through to NO gizmo — the
-  // Task-3 intent for nodes that don't render via a wrapper.
-  const evalForSelection = useMemo(() => {
-    if (rawManip || isCharacter || !selectedId) return null;
-    try {
-      return resolveEvaluatedTransform(useDagStore.getState().state, selectedId, {
-        time: { frame, seconds, normalized },
-      });
-    } catch {
-      return null;
-    }
-  }, [rawManip, isCharacter, selectedId, frame, seconds, normalized]);
-
-  const manip: Manipulable | null =
-    rawManip ??
-    (evalForSelection
-      ? {
-          position: evalForSelection.position,
-          rotation: evalForSelection.rotation,
-          scale: evalForSelection.scale,
-          // D-01: the wrapped target's animated transform param is
-          // 'position'; scale handle writes 'scale' when the eval value
-          // carries one (BoxMesh-style 'size' is not gizmo-grabbable via
-          // a layer selection — the channel paramPath governs the route).
-          scaleParamPath: evalForSelection.scale ? 'scale' : null,
-          scaleSeed: evalForSelection.scale,
-        }
-      : null);
   // D-03: reuse the EXISTING play/pause state (no new flag). Subscribed at
   // component scope (V20 — a React store subscription, NOT a currentFrameRef
   // read) so the seeding effect re-runs across the play/pause transition
