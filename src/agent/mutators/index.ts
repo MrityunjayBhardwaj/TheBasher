@@ -29,6 +29,7 @@ import { scaleMutator } from './builders/scale';
 import { setMaterialColorMutator } from './builders/setMaterialColor';
 import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
+import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
 import { simplifyChannelMutator } from './builders/simplifyChannel';
 import { removeKeyframesMutator } from './builders/removeKeyframes';
@@ -47,6 +48,7 @@ export {
   setMaterialColorMutator,
   duplicateMutator,
   deleteNodeMutator,
+  addChannelMutator,
   keyframeMutator,
   simplifyChannelMutator,
   removeKeyframesMutator,
@@ -67,8 +69,10 @@ export function registerAllMutators(): void {
   registerMutator(duplicateMutator);
   registerMutator(deleteNodeMutator);
   // P3 Wave B — animation Mutators (THESIS §42, issue #34). v0.7 #199: the
-  // AnimationLayer wrapper is retired (direct channels, V57), so addLayer /
-  // addChannel are gone — keyframe targets a free-floating channel directly.
+  // AnimationLayer wrapper is retired (direct channels, V57). `addLayer` is gone;
+  // `addChannel` now mints a FREE-FLOATING channel (no layer), then `keyframe`
+  // appends samples to it by channelId.
+  registerMutator(addChannelMutator);
   registerMutator(keyframeMutator);
   // P6 W6 — RDP simplify; issue #60 / H36 — removeKeyframes parameterizes
   // the former clearChannel ('all') and deleteKeyframe ({time}) into one

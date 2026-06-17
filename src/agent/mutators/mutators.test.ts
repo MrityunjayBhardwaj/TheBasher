@@ -95,11 +95,10 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 16 = the prior 18 minus `addLayer` + `addChannel`, retired with the
-    // AnimationLayer wrapper (v0.7 #199 / V57 — channels are free-floating, so
-    // a keyframe Mutator targets a channel directly; there is no layer to create
-    // and no animation socket to wire into).
-    expect(mutators).toHaveLength(16);
+    // 17 = the prior 18 minus `addLayer` (retired with the AnimationLayer
+    // wrapper, v0.7 #199 / V57). `addChannel` survives but now mints a
+    // FREE-FLOATING channel (no layer), then `keyframe` appends to it.
+    expect(mutators).toHaveLength(17);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -113,6 +112,7 @@ describe('mutator catalog', () => {
       'mutator.scale',
       'mutator.setMaterialColor',
       'mutator.shot.create',
+      'mutator.timeline.addChannel',
       'mutator.timeline.bakeGltfChannel',
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
@@ -1039,7 +1039,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(16);
+    expect(parsed.mutators).toHaveLength(17);
   });
 });
 
@@ -1114,6 +1114,7 @@ describe('agent.proposePlan tool', () => {
 // ---------------------------------------------------------------------------
 
 import {
+  addChannelMutator,
   keyframeMutator,
   simplifyChannelMutator,
   removeKeyframesMutator,
@@ -1131,6 +1132,117 @@ function buildSceneWithTime() {
   }).next;
   return s;
 }
+
+describe('mutator.timeline.addChannel (free-floating, V57)', () => {
+  it('creates ONE free-floating KeyframeChannel — no layer, no connect', () => {
+    const state = buildSceneWithTime();
+    const r = validatePlan(
+      addChannelMutator,
+      {
+        target: 'box',
+        paramPath: 'position',
+        valueType: 'vec3',
+        channelId: 'box_pos_channel',
+        initialKeyframe: { time: 0, value: [0, 0, 0], easing: 'cubic' },
+      },
+      state,
+      'add channel',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // Exactly ONE op: the channel addNode. No connect (free-floating — reached
+    // by the resolver's target scan, never an `animation` edge).
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    expect(op.type).toBe('addNode');
+    if (op.type === 'addNode') {
+      expect(op.nodeType).toBe('KeyframeChannelVec3');
+      expect(op.nodeId).toBe('box_pos_channel');
+      expect((op.params as { target: string }).target).toBe('box');
+      expect((op.params as { paramPath: string }).paramPath).toBe('position');
+    }
+    expect(r.ops.filter((o) => o.type === 'connect')).toHaveLength(0);
+  });
+
+  it('derives a deterministic channelId matching dispatchDirectFirstKey when omitted', () => {
+    const state = buildSceneWithTime();
+    const r = validatePlan(
+      addChannelMutator,
+      { target: 'box', paramPath: 'material.base.color', valueType: 'color' },
+      state,
+      'derive id',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const op = r.ops[0];
+    // `[^a-zA-Z0-9_-]` → `_`, exactly as dispatchDirectFirstKey's safePath.
+    if (op.type === 'addNode') expect(op.nodeId).toBe('box_material_base_color_channel');
+  });
+
+  it.each([
+    ['number', 'KeyframeChannelNumber'],
+    ['vec3', 'KeyframeChannelVec3'],
+    ['quat', 'KeyframeChannelQuat'],
+    ['color', 'KeyframeChannelColor'],
+  ])('valueType=%s → nodeType=%s', (valueType, nodeType) => {
+    const state = buildSceneWithTime();
+    const r = validatePlan(
+      addChannelMutator,
+      { target: 'box', paramPath: 'p', valueType },
+      state,
+      't',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.ops[0].type === 'addNode') expect(r.ops[0].nodeType).toBe(nodeType);
+  });
+
+  it('rejects when target is not in the DAG (gate 4)', () => {
+    const state = buildSceneWithTime();
+    const r = validatePlan(
+      addChannelMutator,
+      { target: 'ghost', paramPath: 'position', valueType: 'vec3' },
+      state,
+      'no target',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects a mismatched initialKeyframe value shape (gate 4)', () => {
+    const state = buildSceneWithTime();
+    const r = validatePlan(
+      addChannelMutator,
+      {
+        target: 'box',
+        paramPath: 'p',
+        valueType: 'vec3',
+        initialKeyframe: { time: 0, value: 1 }, // number, not vec3
+      },
+      state,
+      'shape mismatch',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it('rejects re-creating an existing channel (gate 4 — use keyframe instead)', () => {
+    let state = buildSceneWithTime();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'box_position_channel',
+      nodeType: 'KeyframeChannelVec3',
+      params: { name: 'pos', target: 'box', paramPath: 'position', keyframes: [] },
+    }).next;
+    const r = validatePlan(
+      addChannelMutator,
+      { target: 'box', paramPath: 'position', valueType: 'vec3' },
+      state,
+      'collision',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.gate).toBe(4);
+  });
+});
 
 describe('mutator.timeline.keyframe', () => {
   function stateWithChannel() {
@@ -2184,6 +2296,7 @@ import {
   setMaterialColorMutator as _setColorM,
   duplicateMutator as _dupM,
   deleteNodeMutator as _delM,
+  addChannelMutator as _addChannelM,
   keyframeMutator as _keyframeM,
   simplifyChannelMutator as _simplifyM,
   removeKeyframesMutator as _removeKfM,
@@ -2365,6 +2478,17 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _delM as MutatorDefinition<unknown>,
       build: buildScene,
       spec: { targetSelectors: ['box'] },
+    },
+    'mutator.timeline.addChannel': {
+      mutator: _addChannelM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: {
+        target: 'box',
+        paramPath: 'position',
+        valueType: 'vec3',
+        channelId: 'box_pos_channel',
+        initialKeyframe: { time: 0, value: [0, 0, 0], easing: 'cubic' },
+      },
     },
     'mutator.timeline.keyframe': {
       mutator: _keyframeM as MutatorDefinition<unknown>,

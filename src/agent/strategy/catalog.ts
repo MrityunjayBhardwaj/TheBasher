@@ -238,8 +238,7 @@ runs in the next round after \`mesh.add\`'s newNodeId is visible. That's
 
 const ANIMATION: StrategyResource = {
   topic: 'animation',
-  description:
-    'How to animate a node — wrap with AnimationLayer, add a typed channel, append keyframes.',
+  description: 'How to animate a node — create a free-floating direct channel, append keyframes.',
   body: `# Animation (P3 — timeline = nodes)
 
 Animation is data, not code. Every keyframe is a node; every channel is
@@ -247,24 +246,23 @@ a node; the timeline drawer renders projections of the DAG. The agent
 authors animation by composing Mutators in the same shape as any other
 edit.
 
-## The three-Mutator sequence
+Every animatable node is driven by FREE-FLOATING direct channels: a
+\`KeyframeChannel<T>\` carries \`target\` (the node's dagId) + \`paramPath\`,
+and a pure resolver (\`overlayChannels\`) overlays its sampled value on top
+of the node — consumed by BOTH the renderer and the inspector (V57). There
+is NO wrapper node: the animated node stays exactly where it is in the
+scene; the channel reaches it by its \`target\` id, not a wire.
+
+## The two-Mutator sequence
 
 To animate \`<targetId>.<paramPath>\` from value v0 (at time t0) to v1
 (at time t1):
 
-1. **Wrap the target in an AnimationLayer** (skip if it's already
-   wrapped — \`dag.inspect\` to confirm):
-   \`\`\`json
-   { "mutator": "mutator.timeline.addLayer",
-     "spec": { "targetSelectors": ["<targetId>"], "layerIds": ["<targetId>_layer"] } }
-   \`\`\`
-
-2. **Add a typed channel + initial keyframe** (creates the channel and
-   wires it to the layer's animation socket + the project TimeSource):
+1. **Create a typed channel + initial keyframe** (a single free-floating
+   channel targeting the node — no layer, no wiring):
    \`\`\`json
    { "mutator": "mutator.timeline.addChannel",
      "spec": {
-       "layerId": "<targetId>_layer",
        "target": "<targetId>",
        "paramPath": "position",
        "valueType": "vec3",
@@ -273,7 +271,7 @@ To animate \`<targetId>.<paramPath>\` from value v0 (at time t0) to v1
      } }
    \`\`\`
 
-3. **Append additional keyframes** (call once per sample):
+2. **Append additional keyframes** (call once per sample, by channelId):
    \`\`\`json
    { "mutator": "mutator.timeline.keyframe",
      "spec": {
@@ -283,8 +281,10 @@ To animate \`<targetId>.<paramPath>\` from value v0 (at time t0) to v1
      } }
    \`\`\`
 
-Re-keying the same time replaces the existing sample — no need for a
-"removeKeyframe" Mutator.
+The channelId is deterministic — \`<targetId>_<paramPath>_channel\` (with
+non-alphanumerics → \`_\`) — so you can omit it on addChannel and still
+reference it from later keyframe calls. Re-keying the same time replaces
+the existing sample — no need for a "removeKeyframe" Mutator.
 
 ## Picking valueType
 
@@ -313,8 +313,9 @@ on the cube's Y position from ground (0) to peak (h):
 - t=5D/6 → [0, h, 0]
 - t=D    → [0, 0, 0]
 
-Emit one keyframe Mutator call per sample. Cubic easing makes the bounce
-look elastic; linear gives the cartoon stair-step look.
+Add the channel once (with the t=0 sample), then emit one keyframe
+Mutator call per remaining sample. Cubic easing makes the bounce look
+elastic; linear gives the cartoon stair-step look.
 
 ## What NOT to do
 
@@ -322,8 +323,9 @@ look elastic; linear gives the cartoon stair-step look.
   changes the static value, not the animation. Use a channel.
 - Don't widen \`mesh.add\` with animation params — V14 says property
   changes go through Mutators, not the spawn tool.
-- Don't create a second AnimationLayer wrapping an already-wrapped
-  target — addLayer's gate-4 rejects with a pointer to addChannel.
+- Don't call addChannel twice for the same (target, paramPath) — gate-4
+  rejects the second with "channel already exists"; use keyframe to add
+  more samples to the existing channel.
 - Don't call keyframe before addChannel exists — gate-4 rejects with
   "channelId not in DAG".`,
 };
