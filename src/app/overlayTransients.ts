@@ -13,15 +13,15 @@
 // and the transient is written ON TOP — so a held edit wins over the curve value
 // at the same frame, exactly like Blender's base-transient overlaying evaluated.
 //
-// Path-write reuses the SAME `writeAt` the channel patch uses (lifted/exported
-// from AnimationLayer.ts) — no parallel path-writer, no drift. The inspector and
+// Path-write reuses the SAME `writeAt` the channel patch uses (the one path-writer
+// in overlayChannels.ts) — no parallel path-writer, no drift. The inspector and
 // gizmo route the WHOLE band (paramPath 'position', value [x,y,z]; or a scalar
 // param + its value), exactly the shape KeyframeChannels patch, so writeAt
 // round-trips losslessly.
 //
 // REF: issue #149, PLAN.md Wave B (B1); hetvabhasa H40; vyapti V20.
 
-import { writeAt } from '../nodes/AnimationLayer';
+import { writeAt } from '../nodes/overlayChannels';
 import type { TransientEdit } from './stores/transientEditStore';
 
 /**

@@ -72,7 +72,6 @@ export type SocketTypeName =
   | 'LocomotionState'
   // P3 — Timeline = animation nodes (THESIS §42)
   | 'KeyframeChannel'
-  | 'AnimationLayer'
   | 'Shot'
   | 'Cut'
   // P3.1 — Animation import + retargeting (THESIS §42.1)

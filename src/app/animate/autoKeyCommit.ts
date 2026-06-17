@@ -23,7 +23,6 @@ import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMutator';
 import { paramAnimationState } from './paramAnimationState';
-import { resolveEditTargetId } from './resolveEditTarget';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 
@@ -66,12 +65,9 @@ import { useTransientEditStore } from '../stores/transientEditStore';
 export function routeAnimatedGrab(selectedId: string, paramPath: string, value: unknown): boolean {
   if (!selectedId) return false;
   const state = useDagStore.getState().state;
-  // #160 — a keyframed param wraps its node in an AnimationLayer; a viewport
-  // click selects the LAYER (the scene child), not the wrapped node. Resolve to
-  // the wrapped target so the animation check + the transient/keyframe land on
-  // the id the render overlay keys by (else the proxy moves, the object freezes).
-  // Identity for a non-layer selection → byte-identical to pre-#160.
-  const targetId = resolveEditTargetId(state, selectedId);
+  // v0.7 #199: the selected node IS the animated node — no AnimationLayer wrapper
+  // to unwrap (V57). The animation check + transient/keyframe land on it directly.
+  const targetId = selectedId;
   const grabFrame = useTimeStore.getState().frame;
   const animated = paramAnimationState(state, targetId, paramPath, grabFrame) !== 'none';
   if (!animated) return false; // un-animated → raw setParam, byte-identical
@@ -193,9 +189,8 @@ export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown)
   const seconds = useTimeStore.getState().seconds;
   const frame = useTimeStore.getState().frame;
   const dagState = useDagStore.getState().state;
-  // #160 — resolve a layer selection to its wrapped target so the key lands on
-  // the animated node, not the AnimationLayer wrapper (identity for non-layer).
-  const targetId = resolveEditTargetId(dagState, nodeId);
+  // v0.7 #199: the key lands on the node directly — no AnimationLayer wrapper (V57).
+  const targetId = nodeId;
 
   // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
   // this (targetId, paramPath) — the SAME pure scan the diamond uses (C1).

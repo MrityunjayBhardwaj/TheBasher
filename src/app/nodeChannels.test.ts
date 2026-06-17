@@ -41,16 +41,6 @@ const vec3Channel = (
   inputs: {},
 });
 
-const layer = (id: string, target: string, channelIds: string[]) => ({
-  id,
-  type: 'AnimationLayer',
-  params: { name: 'Layer', weight: 1, boneMask: [], mute: false, solo: false },
-  inputs: {
-    target: { node: target, socket: 'out' },
-    animation: channelIds.map((c) => ({ node: c, socket: 'out' })),
-  },
-});
-
 describe('directChannelNodesForTarget — free-floating channels for a node (#197)', () => {
   it('finds channels whose params.target matches', () => {
     const nodes = {
@@ -62,17 +52,6 @@ describe('directChannelNodesForTarget — free-floating channels for a node (#19
       .map((n) => n.id)
       .sort();
     expect(found).toEqual(['ch1', 'ch2']);
-  });
-
-  it('EXCLUDES channels wired into an AnimationLayer (coexistence guard)', () => {
-    const nodes = {
-      wired: numChannel('wired', 'box1', 'position', 1),
-      direct: numChannel('direct', 'box1', 'material.base.metalness', 0.5),
-      lyr: layer('lyr', 'box1', ['wired']),
-    };
-    const found = directChannelNodesForTarget(nodes, 'box1').map((n) => n.id);
-    // `wired` belongs to the layer path; only the free-floating `direct` is returned.
-    expect(found).toEqual(['direct']);
   });
 
   it('excludes channels with zero keyframes', () => {
@@ -113,12 +92,11 @@ describe('channelValuesFromNodes — build sampling values via each node evaluat
 });
 
 describe('directChannelValuesForTarget — the one-shot read-side form', () => {
-  it('returns the built values for all non-layer channels targeting the node', () => {
+  it('returns the built values for every channel targeting the node', () => {
     const nodes = {
       ch1: numChannel('ch1', 'box1', 'material.base.roughness', 0.25),
       ch2: vec3Channel('ch2', 'box1', 'scale', [2, 2, 2]),
-      wired: numChannel('wired', 'box1', 'position', 1),
-      lyr: layer('lyr', 'box1', ['wired']),
+      other: numChannel('other', 'box2', 'position', 1),
     };
     const values = directChannelValuesForTarget(nodes, 'box1');
     const paths = values.map((v) => v.paramPath).sort();
@@ -138,13 +116,5 @@ describe('directChannelTargetSet — one-pass membership for the renderer (#197)
     expect(set.has('box1')).toBe(true);
     expect(set.has('box2')).toBe(true);
     expect(set.has('box3')).toBe(false); // zero keyframes → not animated
-  });
-
-  it('omits a node whose ONLY channels are layer-wired (coexistence guard)', () => {
-    const nodes = {
-      wired: numChannel('wired', 'box1', 'position', 1),
-      lyr: layer('lyr', 'box1', ['wired']),
-    };
-    expect(directChannelTargetSet(nodes).has('box1')).toBe(false);
   });
 });

@@ -1,9 +1,9 @@
 // resolveEvaluatedTransform — the anti-trap unit suite (D-W9-4 tested-pure
-// discipline). The headline assertion (group 1) is the proof that the
-// resolver UNWRAPS the AnimationLayer patched clone rather than re-evaluating
-// the selected node in isolation — the exact #68 trap (H22/H34 family).
+// discipline). The headline assertion (group 1) is the proof that the resolver
+// OVERLAYS the free-floating direct channel (v0.7 #199 / V57) rather than
+// re-evaluating the selected node in isolation — the exact #68 trap.
 //
-// REF: issue #68, CONTEXT D-01/D-04/D-05, PLAN W1 task 2.
+// REF: issue #68, CONTEXT D-01/D-04/D-05, PLAN W1 task 2; vyapti V57.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, evaluate } from '../core/dag';
@@ -16,7 +16,6 @@ import type { BoxMeshValue } from '../nodes/types';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
 const BOX_ID = 'n_box';
-const LAYER_ID = 'n_layer';
 const CHAN_ID = 'n_pos_channel';
 const ROT_CHAN_ID = 'n_rot_channel';
 
@@ -32,15 +31,13 @@ function ctxAt(seconds: number) {
 }
 
 /**
- * Build: default project, then rewire n_box → AnimationLayer → scene
- * EXACTLY as addLayer does (disconnect box→scene, connect layer→scene,
- * box→layer.target). FLAG-B: the layer's `inputs.target` is seeded
- * array-wrapped (Array.isArray(b)?b:[b] — addLayer.ts:101), so assertion 2
- * exercises the resolver's NodeRef-shape normalization, not bypasses it.
+ * Build: default project + a FREE-FLOATING direct channel targeting n_box
+ * (v0.7 #199 / V57). The box stays its own scene child — NO AnimationLayer
+ * wrapper, no scene rewire. The resolver overlays the channel via
+ * overlayChannels at ctx.time.seconds, exactly as the renderer (DirectChannelsR)
+ * does — the one band, two callers (H40).
  */
-function buildAnimatedState(
-  opts: { rotChannel?: boolean; targetBindShape?: 'bare' | 'array' } = {},
-): DagState {
+function buildAnimatedState(opts: { rotChannel?: boolean } = {}): DagState {
   let state = buildDefaultDagState();
   // Pin the box's authored params so STATIC_POS is meaningful.
   state = applyOp(state, {
@@ -71,95 +68,24 @@ function buildAnimatedState(
         ],
       },
     },
-    {
-      type: 'addNode',
-      nodeId: LAYER_ID,
-      nodeType: 'AnimationLayer',
-      params: { name: 'L', weight: 1, mute: false, solo: false, boneMask: [] },
-    },
-    // addLayer rewire: box→scene becomes layer→scene; box→layer.target.
-    {
-      type: 'disconnect',
-      from: { node: BOX_ID, socket: 'out' },
-      to: { node: 'n_scene', socket: 'children' },
-    },
-    {
-      type: 'connect',
-      from: { node: LAYER_ID, socket: 'out' },
-      to: { node: 'n_scene', socket: 'children' },
-    },
-    {
-      type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
-      to: { node: LAYER_ID, socket: 'target' },
-    },
-    {
-      type: 'connect',
-      from: { node: CHAN_ID, socket: 'out' },
-      to: { node: LAYER_ID, socket: 'animation' },
-    },
-    // P7.12 D-04: channel has no `time` socket — time enters via
-    // value.sample(seconds). The resolver samples the layer via
-    // sampleTarget(ctx.time.seconds). No time→channel connect.
   ];
   if (opts.rotChannel) {
-    ops.push(
-      {
-        type: 'addNode',
-        nodeId: ROT_CHAN_ID,
-        nodeType: 'KeyframeChannelVec3',
-        params: {
-          name: 'rot',
-          target: BOX_ID,
-          paramPath: 'rotation',
-          keyframes: [
-            { time: 0, value: [0, 90, 0], easing: 'linear' },
-            { time: 1, value: [0, 180, 0], easing: 'linear' },
-          ],
-        },
+    ops.push({
+      type: 'addNode',
+      nodeId: ROT_CHAN_ID,
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'rot',
+        target: BOX_ID,
+        paramPath: 'rotation',
+        keyframes: [
+          { time: 0, value: [0, 90, 0], easing: 'linear' },
+          { time: 1, value: [0, 180, 0], easing: 'linear' },
+        ],
       },
-      {
-        type: 'connect',
-        from: { node: ROT_CHAN_ID, socket: 'out' },
-        to: { node: LAYER_ID, socket: 'animation' },
-      },
-      // P7.12 D-04: channel has no `time` socket — no time→channel connect.
-    );
+    });
   }
   for (const op of ops) state = applyOp(state, op).next;
-
-  // Production shape (default): `connect box→layer.target` produces a BARE
-  // single-cardinality NodeRef binding (observed: addLayer emits one
-  // `connect` op; AnimationLayer.target is cardinality:'single'). The
-  // `Array.isArray(b)?b:[b]` at addLayer.ts:101 is only the consumer-rewire
-  // READ loop, NOT what is written to `layer.inputs.target`.
-  //
-  // FLAG-B coverage is a SEPARATE concern: the resolver's step-4
-  // `normalizeRefs` must tolerate an array-shaped binding when TESTING
-  // layer-target membership. Forcing the *evaluated* state's target input
-  // to an array would break AnimationLayer.evaluate itself (the evaluator
-  // resolves an array binding into an array VALUE — evaluator.ts:98-107 —
-  // so patchTarget loses the channel; that is an AnimationLayer-input
-  // concern OUT of 7.3 scope). So 'array' shape is used only by the
-  // dedicated FLAG-B assertion, which asserts select-by-box still RESOLVES
-  // (membership path exercised), not the patched value.
-  if (opts.targetBindShape === 'array') {
-    const layer = state.nodes[LAYER_ID];
-    const t = layer.inputs.target;
-    state = {
-      ...state,
-      nodes: {
-        ...state.nodes,
-        [LAYER_ID]: {
-          ...layer,
-          inputs: {
-            ...layer.inputs,
-            target: Array.isArray(t) ? t : [t],
-          },
-        },
-      },
-    };
-  }
   return state;
 }
 
@@ -184,38 +110,6 @@ describe('resolveEvaluatedTransform', () => {
     // The gap IS the test: resolver ≠ raw ≠ static authored param.
     expect(r!.position).not.toEqual(raw.position);
     expect(r!.position).not.toEqual(STATIC_POS);
-  });
-
-  // 2. SELECT-BY-LAYER (D-01) — box id OR layer id → same transform.
-  it('resolves the same transform whether box or layer id is selected (D-01)', () => {
-    const state = buildAnimatedState();
-    const ctx = ctxAt(0);
-    const byBox = resolveEvaluatedTransform(state, BOX_ID, ctx);
-    const byLayer = resolveEvaluatedTransform(state, LAYER_ID, ctx);
-    expect(byBox).not.toBeNull();
-    expect(byLayer).not.toBeNull();
-    expect(byLayer).toEqual(byBox);
-    expect(byLayer!.position).toEqual(KF0_POS);
-  });
-
-  // 2b. FLAG-B — the resolver's step-4 `normalizeRefs` must tolerate an
-  //     array-shaped `inputs.target` binding when testing layer-target
-  //     membership: select-by-box must still RESOLVE (non-null) so a
-  //     wrapped binding can never silently break select-by-box (D-01). The
-  //     PATCHED value is NOT asserted here — the evaluator resolves an array
-  //     binding into an array VALUE (evaluator.ts:98-107), which is an
-  //     AnimationLayer-input concern out of 7.3 scope; the resolver's
-  //     membership path is what FLAG-B guards.
-  it('membership test tolerates an array-shaped inputs.target binding (FLAG-B)', () => {
-    const bare = buildAnimatedState();
-    const arr = buildAnimatedState({ targetBindShape: 'array' });
-    const ctx = ctxAt(0);
-    // A bare-ref-only assumption in step 4 would miss the wrapped target
-    // and return null for select-by-box. normalizeRefs prevents that.
-    const byBoxArr = resolveEvaluatedTransform(arr, BOX_ID, ctx);
-    expect(byBoxArr).not.toBeNull();
-    // Sanity: the bare canonical path resolves the patched value.
-    expect(resolveEvaluatedTransform(bare, BOX_ID, ctx)!.position).toEqual(KF0_POS);
   });
 
   // 3. PER-PARAM FALLBACK (D-04): position animated, rotation NOT — rotation

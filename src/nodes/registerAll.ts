@@ -5,7 +5,6 @@ import { getNodeType, registerNodeType } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
-import { AnimationLayerNode } from './AnimationLayer';
 // P7.5 — glTF TRS animation extraction (issue #81). Imports stay
 // alphabetised so a re-sort doesn't produce noise.
 // (TransformClipNode is imported later in the alphabetical block.)
@@ -97,7 +96,6 @@ const ALL: NodeDefinition[] = [
   KeyframeChannelVec3Node as unknown as NodeDefinition,
   KeyframeChannelQuatNode as unknown as NodeDefinition,
   KeyframeChannelColorNode as unknown as NodeDefinition,
-  AnimationLayerNode as unknown as NodeDefinition,
   // P7.5 — glTF TRS animation extraction (issue #81); pure node-indexed
   // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
   TransformClipNode as unknown as NodeDefinition,

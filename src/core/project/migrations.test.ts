@@ -189,9 +189,15 @@ describe('RenderOutput v1 → v2 resolution migration (#168 byte-identical gate)
 // (direct channel) at every time, including the layer's weight/mute folded onto
 // the channel. REF: docs/UNIFICATION-DESIGN.md §4; vyapti V57; hetvabhasa H40.
 
-/** Default scene with n_box wrapped in an AnimationLayer (a position channel
- *  wired in) — the exact shape `addLayer` produces. Optional layer weight/mute. */
-function buildLayerWrappedState(opts?: { weight?: number; mute?: boolean }): DagState {
+/** A serialized pre-#199 (formatVersion=1) project with n_box wrapped in an
+ *  AnimationLayer (a position channel wired in) — the exact bytes `addLayer`
+ *  produced and a pre-#199 save wrote to disk. The AnimationLayer node type is
+ *  no longer registered (#199 Slice C), so it CANNOT be built via applyOp; it is
+ *  injected as RAW JSON, mirroring the on-disk shape the load-time
+ *  migrateAnimationLayers pass consumes (it runs BEFORE schema parse — H106). The
+ *  channel + box are built through the real pipeline (both still registered) so
+ *  their versions/shape are authoritative. Optional layer weight/mute. */
+function buildLayerWrappedV1Json(opts?: { weight?: number; mute?: boolean }) {
   let s = buildDefaultDagState();
   s = applyOp(s, {
     type: 'addNode',
@@ -207,52 +213,72 @@ function buildLayerWrappedState(opts?: { weight?: number; mute?: boolean }): Dag
       ],
     },
   }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_box_layer',
-    nodeType: 'AnimationLayer',
-    params: { name: 'Layer', weight: opts?.weight ?? 1, mute: opts?.mute ?? false },
-  }).next;
-  // Splice the layer between n_box and n_scene.children (addLayer.ts:95-123).
-  s = applyOp(s, {
-    type: 'disconnect',
-    from: { node: 'n_box', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_box', socket: 'out' },
-    to: { node: 'n_box_layer', socket: 'target' },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_pos_channel', socket: 'out' },
-    to: { node: 'n_box_layer', socket: 'animation' },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_box_layer', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  }).next;
-  return s;
-}
-
-/** Serialize a DagState as a formatVersion=1 project (the bytes a pre-#199 save
- *  produced — the boundary the user hits on load). */
-function serializeV1(state: DagState) {
-  const nodeVersions: Record<string, number> = {};
-  for (const n of Object.values(state.nodes)) {
-    nodeVersions[n.type] = Math.max(nodeVersions[n.type] ?? 0, n.version);
-  }
+  const nodes = JSON.parse(JSON.stringify(s.nodes)) as Record<
+    string,
+    { id: string; type: string; version: number; params: unknown; inputs: Record<string, unknown> }
+  >;
+  // Inject the legacy AnimationLayer node (raw, version 1) + the addLayer splice:
+  // the layer wraps n_box (target socket) + the channel (animation socket), and
+  // becomes the scene child in n_box's place.
+  nodes.n_box_layer = {
+    id: 'n_box_layer',
+    type: 'AnimationLayer',
+    version: 1,
+    params: {
+      name: 'Layer',
+      weight: opts?.weight ?? 1,
+      boneMask: [],
+      mute: opts?.mute ?? false,
+      solo: false,
+    },
+    inputs: {
+      target: [{ node: 'n_box', socket: 'out' }],
+      animation: [{ node: 'n_pos_channel', socket: 'out' }],
+    },
+  };
+  const sc = nodes.n_scene.inputs.children;
+  const refs = (Array.isArray(sc) ? sc : sc ? [sc] : []) as { node: string; socket: string }[];
+  nodes.n_scene.inputs.children = refs.map((r) =>
+    r.node === 'n_box' ? { ...r, node: 'n_box_layer' } : r,
+  );
   return {
     formatVersion: 1,
     id: 'p199-layer-migration',
     name: 'pre-#199 layer project',
     createdAt: 0,
     updatedAt: 0,
-    nodeVersions,
-    state: { nodes: state.nodes, outputs: state.outputs },
+    nodeVersions: {
+      BoxMesh: nodes.n_box.version,
+      KeyframeChannelVec3: nodes.n_pos_channel.version,
+    },
+    state: { nodes, outputs: s.outputs },
   };
+}
+
+/** The EQUIVALENT layer-free state a native author would build today: one
+ *  free-floating direct channel targeting n_box (the layer's weight/mute folded
+ *  onto the channel). Built via the real pipeline (no layer); migrating
+ *  buildLayerWrappedV1Json must render IDENTICALLY to this (V57). */
+function buildDirectChannelState(opts?: { weight?: number; mute?: boolean }): DagState {
+  let s = buildDefaultDagState();
+  const params: Record<string, unknown> = {
+    name: 'position',
+    target: 'n_box',
+    paramPath: 'position',
+    keyframes: [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 1, value: [0, 6, 0], easing: 'linear' },
+    ],
+  };
+  if (opts?.weight !== undefined && opts.weight !== 1) params.weight = opts.weight;
+  if (opts?.mute) params.mute = true;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_pos_channel',
+    nodeType: 'KeyframeChannelVec3',
+    params,
+  }).next;
+  return s;
 }
 
 function childRefNodes(state: DagState): string[] {
@@ -263,7 +289,7 @@ function childRefNodes(state: DagState): string[] {
 
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
-    const migrated = loadFromBytes(serializeV1(buildLayerWrappedState()));
+    const migrated = loadFromBytes(buildLayerWrappedV1Json());
     expect(migrated.formatVersion).toBe(2);
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
@@ -279,16 +305,16 @@ describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)
     expect(childRefNodes(migrated.state)).not.toContain('n_box_layer');
   });
 
-  it('renders byte-identically: resolveEvaluatedTransform(n_box) matches pre vs post at every t', () => {
-    const pre = buildLayerWrappedState();
-    const post = loadFromBytes(serializeV1(pre)).state;
+  it('renders identically to a native direct-channel project at every t (V57)', () => {
+    const post = loadFromBytes(buildLayerWrappedV1Json()).state;
+    const direct = buildDirectChannelState();
     for (const t of [0, 0.5, 1]) {
       const ctx = ctxAt(t);
-      const a = resolveEvaluatedTransform(pre, 'n_box', ctx);
+      const a = resolveEvaluatedTransform(direct, 'n_box', ctx);
       const b = resolveEvaluatedTransform(post, 'n_box', ctx);
-      expect(a, `pre resolves at t=${t}`).not.toBeNull();
-      expect(b, `post resolves at t=${t}`).not.toBeNull();
-      expect(b, `byte-identical at t=${t}`).toEqual(a);
+      expect(a, `direct resolves at t=${t}`).not.toBeNull();
+      expect(b, `migrated resolves at t=${t}`).not.toBeNull();
+      expect(b, `migrated == native direct at t=${t}`).toEqual(a);
     }
     // Sanity: the channel actually animated (not a degenerate all-equal fixture).
     const p0 = resolveEvaluatedTransform(post, 'n_box', ctxAt(0))!.position;
@@ -296,32 +322,32 @@ describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)
     expect(p1[1]).not.toBe(p0[1]);
   });
 
-  it('folds the layer WEIGHT onto each channel (0.5 blend preserved pre == post)', () => {
-    const pre = buildLayerWrappedState({ weight: 0.5 });
-    const migrated = loadFromBytes(serializeV1(pre));
+  it('folds the layer WEIGHT onto each channel (0.5 blend == native direct channel)', () => {
+    const migrated = loadFromBytes(buildLayerWrappedV1Json({ weight: 0.5 }));
     expect((migrated.state.nodes.n_pos_channel.params as { weight: number }).weight).toBe(0.5);
+    const direct = buildDirectChannelState({ weight: 0.5 });
     for (const t of [0, 0.5, 1]) {
       expect(resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(t))).toEqual(
-        resolveEvaluatedTransform(pre, 'n_box', ctxAt(t)),
+        resolveEvaluatedTransform(direct, 'n_box', ctxAt(t)),
       );
     }
   });
 
-  it('folds the layer MUTE onto each channel (muted → base, no overlay, pre == post)', () => {
-    const pre = buildLayerWrappedState({ mute: true });
-    const migrated = loadFromBytes(serializeV1(pre));
+  it('folds the layer MUTE onto each channel (muted → base, no overlay)', () => {
+    const migrated = loadFromBytes(buildLayerWrappedV1Json({ mute: true }));
     expect((migrated.state.nodes.n_pos_channel.params as { mute: boolean }).mute).toBe(true);
     // A muted channel contributes nothing → position stays at the static base at every t.
     const at0 = resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(0))!.position;
     const at1 = resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(1))!.position;
     expect(at1).toEqual(at0);
+    // ... and identically to a native muted direct channel.
     expect(resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(1))).toEqual(
-      resolveEvaluatedTransform(pre, 'n_box', ctxAt(1)),
+      resolveEvaluatedTransform(buildDirectChannelState({ mute: true }), 'n_box', ctxAt(1)),
     );
   });
 
   it('is idempotent — re-loading a migrated (layer-free) project is a stable no-op', () => {
-    const once = loadFromBytes(serializeV1(buildLayerWrappedState()));
+    const once = loadFromBytes(buildLayerWrappedV1Json());
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_pos_channel).toEqual(once.state.nodes.n_pos_channel);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);

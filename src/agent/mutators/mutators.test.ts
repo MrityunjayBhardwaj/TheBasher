@@ -95,13 +95,11 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 18 = the 17 prior + `mutator.timeline.bakeGltfChannel` (P7.12 / issue
-    // #108 / D1 — copy-on-write bake of an imported glTF bone's clip track).
-    // The 17 = the 16 prior + `mutator.randomize` (P7.2 / issue #26 path B).
-    // The 16 reflects #60 / hetvabhasa H36's earlier collapse of
-    // clearChannel + deleteKeyframe into one parameterized
-    // `removeKeyframes`.
-    expect(mutators).toHaveLength(18);
+    // 16 = the prior 18 minus `addLayer` + `addChannel`, retired with the
+    // AnimationLayer wrapper (v0.7 #199 / V57 — channels are free-floating, so
+    // a keyframe Mutator targets a channel directly; there is no layer to create
+    // and no animation socket to wire into).
+    expect(mutators).toHaveLength(16);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -115,8 +113,6 @@ describe('mutator catalog', () => {
       'mutator.scale',
       'mutator.setMaterialColor',
       'mutator.shot.create',
-      'mutator.timeline.addChannel',
-      'mutator.timeline.addLayer',
       'mutator.timeline.bakeGltfChannel',
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
@@ -1043,7 +1039,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(18);
+    expect(parsed.mutators).toHaveLength(16);
   });
 });
 
@@ -1118,8 +1114,6 @@ describe('agent.proposePlan tool', () => {
 // ---------------------------------------------------------------------------
 
 import {
-  addLayerMutator,
-  addChannelMutator,
   keyframeMutator,
   simplifyChannelMutator,
   removeKeyframesMutator,
@@ -1138,208 +1132,11 @@ function buildSceneWithTime() {
   return s;
 }
 
-describe('mutator.timeline.addLayer', () => {
-  it('emits addNode + disconnect + connect chain that wraps the target', () => {
-    const state = buildSceneWithTime();
-    const r = validatePlan(
-      addLayerMutator,
-      { targetSelectors: ['box'], layerName: 'BoxLayer', layerIds: ['box_layer'] },
-      state,
-      'wrap box',
-    );
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const types = r.ops.map((o) => o.type);
-    // addNode AnimationLayer + disconnect (box → scene) + connect (layer → scene)
-    // + connect (box → layer.target)
-    expect(types).toContain('addNode');
-    expect(types).toContain('disconnect');
-    // 1 disconnect + 2 connects (consumer rewire + target wire)
-    expect(types.filter((t) => t === 'connect').length).toBeGreaterThanOrEqual(2);
-    expect(types.filter((t) => t === 'disconnect').length).toBe(1);
-    const addNodeOp = r.ops.find((o) => o.type === 'addNode');
-    if (addNodeOp?.type === 'addNode') {
-      expect(addNodeOp.nodeType).toBe('AnimationLayer');
-      expect(addNodeOp.nodeId).toBe('box_layer');
-    }
-  });
-
-  it('twice-call is deterministic for the same spec', () => {
-    const state = buildSceneWithTime();
-    const a = validatePlan(
-      addLayerMutator,
-      { targetSelectors: ['box'], layerName: 'L', layerIds: ['box_layer'] },
-      state,
-      'wrap',
-    );
-    const b = validatePlan(
-      addLayerMutator,
-      { targetSelectors: ['box'], layerName: 'L', layerIds: ['box_layer'] },
-      state,
-      'wrap',
-    );
-    expect(a).toEqual(b);
-  });
-
-  it('rejects re-wrapping an existing AnimationLayer (gate 4)', () => {
-    let state = buildSceneWithTime();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'wrapper',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
-    const r = validatePlan(addLayerMutator, { targetSelectors: ['wrapper'] }, state, 'rewrap');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.gate).toBe(4);
-  });
-});
-
-describe('mutator.timeline.addChannel', () => {
-  function stateWithLayer() {
-    let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'L' },
-    }).next;
-    return s;
-  }
-
-  it('creates a KeyframeChannelVec3 wired to layer (no Time wire, D-04)', () => {
-    const state = stateWithLayer();
-    const r = validatePlan(
-      addChannelMutator,
-      {
-        layerId: 'box_layer',
-        target: 'box',
-        paramPath: 'position',
-        valueType: 'vec3',
-        channelId: 'box_pos_channel',
-        initialKeyframe: { time: 0, value: [0, 0, 0], easing: 'cubic' },
-      },
-      state,
-      'add channel',
-    );
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    // P7.12 D-04: 2 ops (addNode + channel→layer.animation). The Time auto-wire
-    // is gone — channels have no `time` socket (time enters via sample(seconds)).
-    expect(r.ops).toHaveLength(2);
-    const addNodeOp = r.ops[0];
-    expect(addNodeOp.type).toBe('addNode');
-    if (addNodeOp.type === 'addNode') {
-      expect(addNodeOp.nodeType).toBe('KeyframeChannelVec3');
-      expect(addNodeOp.nodeId).toBe('box_pos_channel');
-    }
-    // Connects: ONLY channel → layer.animation (no time → channel, D-04).
-    const connects = r.ops.filter((o) => o.type === 'connect');
-    expect(connects).toHaveLength(1);
-    if (connects[0].type === 'connect') {
-      expect(connects[0].to).toEqual({ node: 'box_layer', socket: 'animation' });
-    }
-    // FLAG-4: zero `socket:'time'` connects emitted.
-    const timeConnects = r.ops.filter((o) => o.type === 'connect' && o.to.socket === 'time');
-    expect(timeConnects).toHaveLength(0);
-  });
-
-  it.each([
-    ['number', 'KeyframeChannelNumber'],
-    ['vec3', 'KeyframeChannelVec3'],
-    ['quat', 'KeyframeChannelQuat'],
-    ['color', 'KeyframeChannelColor'],
-  ])('valueType=%s → nodeType=%s', (valueType, nodeType) => {
-    const state = stateWithLayer();
-    const validValue: Record<string, unknown> = {
-      number: 1,
-      vec3: [0, 0, 0],
-      quat: [0, 0, 0, 1],
-      color: '#ff0000',
-    };
-    const r = validatePlan(
-      addChannelMutator,
-      {
-        layerId: 'box_layer',
-        target: 'box',
-        paramPath: 'p',
-        valueType,
-        initialKeyframe: { time: 0, value: validValue[valueType] },
-      },
-      state,
-      't',
-    );
-    expect(r.ok).toBe(true);
-    if (r.ok && r.ops[0].type === 'addNode') {
-      expect(r.ops[0].nodeType).toBe(nodeType);
-    }
-  });
-
-  it('rejects when layerId is not an AnimationLayer (gate 4)', () => {
-    const state = stateWithLayer();
-    const r = validatePlan(
-      addChannelMutator,
-      { layerId: 'box', target: 'box', paramPath: 'p', valueType: 'number' },
-      state,
-      'wrong layer',
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.gate).toBe(4);
-  });
-
-  it('rejects mismatched initialKeyframe value shape (gate 4)', () => {
-    const state = stateWithLayer();
-    const r = validatePlan(
-      addChannelMutator,
-      {
-        layerId: 'box_layer',
-        target: 'box',
-        paramPath: 'p',
-        valueType: 'vec3',
-        initialKeyframe: { time: 0, value: 1 }, // number, not vec3
-      },
-      state,
-      'shape mismatch',
-    );
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.gate).toBe(4);
-  });
-
-  // P7.12 D-04: a project with NO TimeSource is now legal for channel creation
-  // (was a gate-4 reject pre-7.12). The channel has no `time` socket, so no
-  // TimeSource prerequisite remains. Mirrors 7.10 Wave B dropping the importer's
-  // TimeSource requirement. Replaces the old "rejects when no TimeSource" test.
-  it('accepts a project with NO TimeSource (D-04 — no Time prerequisite)', () => {
-    let s = buildScene(); // scene without TimeSource
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
-    const r = validatePlan(
-      addChannelMutator,
-      { layerId: 'box_layer', target: 'box', paramPath: 'p', valueType: 'number' },
-      s,
-      'no time',
-    );
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    // No Time connect emitted (FLAG-4).
-    const timeConnects = r.ops.filter((o) => o.type === 'connect' && o.to.socket === 'time');
-    expect(timeConnects).toHaveLength(0);
-  });
-});
-
 describe('mutator.timeline.keyframe', () => {
   function stateWithChannel() {
     let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
+    // v0.7 #199: a free-floating channel (no AnimationLayer wrapper) — the
+    // keyframe Mutator targets it by channelId directly.
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'ch',
@@ -2009,12 +1806,6 @@ describe('mutator.timeline.simplifyChannel', () => {
     let s = buildSceneWithTime();
     s = applyOp(s, {
       type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
       nodeId: 'ch',
       nodeType: 'KeyframeChannelNumber',
       params: {
@@ -2035,12 +1826,6 @@ describe('mutator.timeline.simplifyChannel', () => {
     keyframes: Array<{ time: number; value: [number, number, number] }>,
   ): DagState {
     let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'ch',
@@ -2150,12 +1935,6 @@ describe('mutator.timeline.simplifyChannel', () => {
     let s = buildSceneWithTime();
     s = applyOp(s, {
       type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
       nodeId: 'ch_q',
       nodeType: 'KeyframeChannelQuat',
       params: {
@@ -2208,12 +1987,6 @@ describe('mutator.timeline.removeKeyframes', () => {
     let s = buildSceneWithTime();
     s = applyOp(s, {
       type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
       nodeId: 'ch',
       nodeType: 'KeyframeChannelNumber',
       params: {
@@ -2231,12 +2004,6 @@ describe('mutator.timeline.removeKeyframes', () => {
 
   function stateWith3Vec3Samples(): DagState {
     let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'ch',
@@ -2276,12 +2043,6 @@ describe('mutator.timeline.removeKeyframes', () => {
 
   it("scope:'all' is a no-op when channel is already empty", () => {
     let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'ch',
@@ -2423,8 +2184,6 @@ import {
   setMaterialColorMutator as _setColorM,
   duplicateMutator as _dupM,
   deleteNodeMutator as _delM,
-  addLayerMutator as _addLayerM,
-  addChannelMutator as _addChannelM,
   keyframeMutator as _keyframeM,
   simplifyChannelMutator as _simplifyM,
   removeKeyframesMutator as _removeKfM,
@@ -2443,17 +2202,11 @@ import { gltfChildDagId } from '../../core/import/gltfImportChain';
 describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // A channel scene: collinear KeyframeChannelNumber so simplifyChannel
   // actually emits a setParam (a flat/no-op channel would emit zero ops
-  // and the probe would compare empty signatures). Has a populated
-  // channel `ch` for keyframe / simplifyChannel / removeKeyframes, plus a
-  // bare AnimationLayer `box_layer` for addChannel.
+  // and the probe would compare empty signatures). The free-floating
+  // channel `ch` (v0.7 #199 / V57 — no AnimationLayer) serves keyframe /
+  // simplifyChannel / removeKeyframes.
   function buildSceneWithChannel(): DagState {
     let s = buildSceneWithTime();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    }).next;
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'ch',
@@ -2612,23 +2365,6 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _delM as MutatorDefinition<unknown>,
       build: buildScene,
       spec: { targetSelectors: ['box'] },
-    },
-    'mutator.timeline.addLayer': {
-      mutator: _addLayerM as MutatorDefinition<unknown>,
-      build: buildSceneWithTime,
-      spec: { targetSelectors: ['box'], layerName: 'BoxLayer', layerIds: ['box_layer'] },
-    },
-    'mutator.timeline.addChannel': {
-      mutator: _addChannelM as MutatorDefinition<unknown>,
-      build: buildSceneWithChannel,
-      spec: {
-        layerId: 'box_layer',
-        target: 'box',
-        paramPath: 'position',
-        valueType: 'vec3',
-        channelId: 'box_pos_channel',
-        initialKeyframe: { time: 0, value: [0, 0, 0], easing: 'cubic' },
-      },
     },
     'mutator.timeline.keyframe': {
       mutator: _keyframeM as MutatorDefinition<unknown>,

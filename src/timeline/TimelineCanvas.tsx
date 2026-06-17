@@ -185,52 +185,28 @@ const CHANNEL_TYPES = new Set([
 export type { ChannelRow };
 
 /**
- * Flatten the DAG's AnimationLayers + orphan channels into the ordered
- * channel-row list the canvas paints, one row per channel. This is the
- * canvas-side equivalent of Dopesheet's collectLayers/collectOrphanChannels
- * (Dopesheet.tsx:259-311) — same selection rules (layer-wired channels
- * first, then unwired), reduced to only what the static layer draws
- * (id + label + keyframe times; mute/solo chrome is C5's drawer concern,
- * not the canvas). Exported so C5 e2e fixtures + any future agent
+ * Flatten the DAG's free-floating KeyframeChannels into the ordered channel-row
+ * list the canvas paints, one row per channel (id + label + keyframe times).
+ * v0.7 #199: the AnimationLayer wrapper is retired — EVERY channel is now
+ * free-floating (V57), so this is a flat scan over the channel node types (no
+ * layer-wired-first ordering). Exported so e2e fixtures + any future agent
  * automation can assert the row contract without DOM scraping.
  */
 export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
   const rows: ChannelRow[] = [];
-  const claimed = new Set<string>();
 
-  const toRow = (node: Node): ChannelRow => {
+  for (const node of Object.values(nodes)) {
+    if (!CHANNEL_TYPES.has(node.type)) continue;
     const params = (node.params ?? {}) as {
       name?: string;
       paramPath?: string;
       keyframes?: Array<{ time: number }>;
     };
-    return {
+    rows.push({
       channelId: node.id,
       name: params.name || params.paramPath || '',
       keyframes: (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time),
-    };
-  };
-
-  // Layer-wired channels first, in layer declaration order.
-  for (const node of Object.values(nodes)) {
-    if (node.type !== 'AnimationLayer') continue;
-    const animation = (node.inputs as Record<string, unknown>).animation;
-    const refs = Array.isArray(animation) ? animation : animation ? [animation] : [];
-    for (const ref of refs) {
-      const channelId = (ref as { node: string }).node;
-      const channelNode = nodes[channelId];
-      if (!channelNode || !CHANNEL_TYPES.has(channelNode.type)) continue;
-      if (claimed.has(channelId)) continue;
-      claimed.add(channelId);
-      rows.push(toRow(channelNode));
-    }
-  }
-  // Then unwired (orphan) channels.
-  for (const node of Object.values(nodes)) {
-    if (!CHANNEL_TYPES.has(node.type)) continue;
-    if (claimed.has(node.id)) continue;
-    claimed.add(node.id);
-    rows.push(toRow(node));
+    });
   }
   return rows;
 }

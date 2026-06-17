@@ -18,7 +18,6 @@ import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
 import type {
   AnimationClipValue,
-  AnimationLayerValue,
   CharacterValue,
   CutValue,
   GroupValue,
@@ -44,7 +43,6 @@ import type {
 const ALL_TYPES = [
   'AmbientLight',
   'AnimationClip',
-  'AnimationLayer',
   'AreaLight',
   'BakedMesh',
   'BeautyPass',
@@ -918,8 +916,7 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
 // P7.12 D-04 — each KeyframeChannel<T> is now a FUNCTION-OF-TIME value (V24):
 // evaluate is pure over (params), no `time` input socket; the value carries
 // `sample(seconds)`. Tests call `.sample(t)` (was the pre-sampled `.value`).
-// AnimationLayer carries `sampleTarget(seconds)` (the patch moved into the
-// closure). Shot/Cut are editorial wrappers (data forwarders).
+// Shot/Cut are editorial wrappers (data forwarders).
 // ---------------------------------------------------------------------------
 
 // P7.12 D-04: channels have no `time` socket. The TimeSource is still seeded
@@ -1217,97 +1214,6 @@ describe('P3 — KeyframeChannelColor (pure, time-aware)', () => {
   });
 });
 
-describe('P3 — AnimationLayer (pure aggregator)', () => {
-  function buildLayer(layerParams: unknown, channelCount = 1) {
-    let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'time',
-      nodeType: 'TimeSource',
-      params: {},
-    }).next;
-    for (let i = 0; i < channelCount; i++) {
-      state = applyOp(state, {
-        type: 'addNode',
-        nodeId: `ch${i}`,
-        nodeType: 'KeyframeChannelNumber',
-        params: {
-          name: `ch${i}`,
-          target: 'box',
-          paramPath: 'foo',
-          keyframes: [
-            { time: 0, value: i, easing: 'linear' },
-            { time: 1, value: i + 1, easing: 'linear' },
-          ],
-        },
-      }).next;
-      // P7.12 D-04: channels have no `time` socket — no time→ch connect.
-    }
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
-    }).next;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: layerParams,
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'box', socket: 'out' },
-      to: { node: 'layer', socket: 'target' },
-    }).next;
-    for (let i = 0; i < channelCount; i++) {
-      state = applyOp(state, {
-        type: 'connect',
-        from: { node: `ch${i}`, socket: 'out' },
-        to: { node: 'layer', socket: 'animation' },
-      }).next;
-    }
-    return state;
-  }
-
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sampleTarget parity)', (t) => {
-    const state = buildLayer({ name: 'L', weight: 1, mute: false, solo: false, boneMask: [] }, 2);
-    const a = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    const b = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    // P7.12 D-04: the patch is function-of-time via sampleTarget(t).
-    expect(a.sampleTarget(t)).toEqual(b.sampleTarget(t));
-  });
-
-  it('passes channels through when mute=false', () => {
-    const state = buildLayer({ name: 'L', weight: 1, mute: false, solo: false, boneMask: [] }, 2);
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
-    expect(v.active).toHaveLength(2);
-    // P7.12 D-04: `target` is the un-patched base; sampleTarget(t) patches it.
-    expect(v.target?.kind).toBe('BoxMesh');
-    expect(v.sampleTarget(0.5)?.kind).toBe('BoxMesh');
-  });
-
-  it('mute=true → active is empty (channel inputs ignored)', () => {
-    const state = buildLayer({ name: 'L', weight: 1, mute: true, solo: false, boneMask: [] }, 2);
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0.5);
-    expect(v.active).toHaveLength(0);
-    // Target still passes through so the renderer still draws the wrapped mesh.
-    expect(v.target?.kind).toBe('BoxMesh');
-    expect(v.mute).toBe(true);
-  });
-
-  it('boneMask + solo pass through to the value verbatim (Wave C consumes them)', () => {
-    const state = buildLayer(
-      { name: 'L', weight: 0.5, mute: false, solo: true, boneMask: ['arm.l', 'arm.r'] },
-      1,
-    );
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    expect(v.weight).toBe(0.5);
-    expect(v.solo).toBe(true);
-    expect(v.boneMask).toEqual(['arm.l', 'arm.r']);
-  });
-});
-
 describe('P3 — Shot + Cut (editorial)', () => {
   function buildShot(name: string, nodeId: string) {
     let state = emptyDagState();
@@ -1390,127 +1296,6 @@ describe('P3 — Shot + Cut (editorial)', () => {
     expect(v.transitionFrame).toBe(12);
     expect(v.from?.name).toBe('a');
     expect(v.to?.name).toBe('b');
-  });
-});
-
-describe('P3 — AnimationLayer channel patcher (Wave C)', () => {
-  function buildAnimatedBoxState(channelValue: [number, number, number] = [0, 5, 0]) {
-    let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'time',
-      nodeType: 'TimeSource',
-      params: {},
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'default', color: '#ff0000' },
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'ch',
-      nodeType: 'KeyframeChannelVec3',
-      params: {
-        name: 'pos',
-        target: 'box',
-        paramPath: 'position',
-        keyframes: [
-          { time: 0, value: [0, 0, 0], easing: 'linear' },
-          { time: 1, value: channelValue, easing: 'linear' },
-        ],
-      },
-    }).next;
-    // P7.12 D-04: channel has no `time` socket — no time→ch connect.
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'L', weight: 1, mute: false, solo: false, boneMask: [] },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'box', socket: 'out' },
-      to: { node: 'layer', socket: 'target' },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'ch', socket: 'out' },
-      to: { node: 'layer', socket: 'animation' },
-    }).next;
-    return s;
-  }
-
-  // P7.12 D-04: the patch is sampled at time via sampleTarget(seconds); the
-  // eager `target` is the un-patched base.
-  it('patches the wrapped target.position at t=1 (full channel)', () => {
-    const state = buildAnimatedBoxState([0, 5, 0]);
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    const patched = v.sampleTarget(1);
-    expect(patched?.kind).toBe('BoxMesh');
-    if (patched?.kind === 'BoxMesh') {
-      expect(patched.position).toEqual([0, 5, 0]);
-    }
-  });
-
-  it('blends toward original at weight=0.5 (half-strength channel)', () => {
-    let state = buildAnimatedBoxState([0, 10, 0]);
-    state = applyOp(state, {
-      type: 'setParam',
-      nodeId: 'layer',
-      paramPath: 'weight',
-      value: 0.5,
-    }).next;
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    const patched = v.sampleTarget(1);
-    if (patched?.kind === 'BoxMesh') {
-      // Original [0,0,0], channel [0,10,0], weight 0.5 → [0,5,0]
-      expect(patched.position[1]).toBeCloseTo(5, 6);
-    }
-  });
-
-  it('mute=true leaves the static target unchanged (channel ignored)', () => {
-    let state = buildAnimatedBoxState([0, 99, 0]);
-    state = applyOp(state, {
-      type: 'setParam',
-      nodeId: 'layer',
-      paramPath: 'mute',
-      value: true,
-    }).next;
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    const patched = v.sampleTarget(1);
-    if (patched?.kind === 'BoxMesh') {
-      expect(patched.position).toEqual([0, 0, 0]);
-    }
-  });
-
-  it('twice-eval bit-exact when patched (channel application is pure)', () => {
-    const state = buildAnimatedBoxState([1, 2, 3]);
-    const a = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    const b = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    expect(a.sampleTarget(0.5)).toEqual(b.sampleTarget(0.5));
-  });
-
-  it('empty paramPath is a no-op — target unchanged', () => {
-    let state = buildAnimatedBoxState([0, 5, 0]);
-    // Mutate the channel's paramPath via setParam — empty string sentinel.
-    state = applyOp(state, {
-      type: 'setParam',
-      nodeId: 'ch',
-      paramPath: 'paramPath',
-      value: '',
-    }).next;
-    const v = evalAt<AnimationLayerValue>(state, 'layer', 0);
-    const patched = v.sampleTarget(1);
-    if (patched?.kind === 'BoxMesh') {
-      expect(patched.position).toEqual([0, 0, 0]);
-    }
   });
 });
 

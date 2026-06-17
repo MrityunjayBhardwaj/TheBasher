@@ -85,9 +85,8 @@ describe('C2 — inspectorSections declarations', () => {
     expect(snap.MaterialOverride.inspectorSections).toEqual(['material']);
   });
 
-  it('AnimationLayer + AnimationClip are animate-primary', () => {
+  it('AnimationClip is animate-primary', () => {
     const snap = snapshotRegistry();
-    expect(snap.AnimationLayer.inspectorSections?.[0]).toBe('animate');
     expect(snap.AnimationClip.inspectorSections?.[0]).toBe('animate');
   });
 

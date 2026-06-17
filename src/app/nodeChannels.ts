@@ -12,16 +12,13 @@
 // cadence (renderer useFrame snapshot / read-side ctx.time — never a time
 // subscription, H48).
 //
-// COEXISTENCE GUARD (removable at Phase 5, #199): a channel wired into an
-// `AnimationLayer.animation` socket ALSO carries `params.target === <wrapped
-// node>` (addChannel sets it). Until the wrapper is retired, the layer path
-// (`AnimationLayerR`) already overlays those channels — so the DIRECT enumeration
-// MUST exclude them or the node double-overlays. We collect every channel id
-// referenced by any layer's `animation` input and skip it. Once no layers exist
-// (Phase 5 migration), the excluded set is empty and this is a no-op.
+// v0.7 #199: the AnimationLayer wrapper is retired — EVERY channel is now
+// free-floating (it carries its own `target` + `paramPath`), so the enumeration
+// is a flat scan by `params.target`. (The pre-#199 coexistence guard that
+// excluded layer-wired channels is gone with the wrapper — V57.)
 //
 // REF: docs/UNIFICATION-DESIGN.md §3.1/§3.3; activeCamera.ts (camera precedent);
-//      bakedGltfChannels.ts (glTF precedent); vyapti V20/V24; hetvabhasa H40/H48.
+//      bakedGltfChannels.ts (glTF precedent); vyapti V20/V24/V57; hetvabhasa H40/H48.
 
 import { getNodeType } from '../core/dag/registry';
 import type { KeyframeChannelValue } from '../nodes/types';
@@ -33,41 +30,21 @@ interface NodeLike {
   readonly inputs?: Readonly<Record<string, unknown>>;
 }
 
-/** Collect every channel node id referenced by any AnimationLayer's `animation`
- *  input — these are owned by the layer path and must NOT be overlaid directly
- *  (the coexistence guard). Returns an empty set once no layers exist. */
-function layerWiredChannelIds(nodes: Readonly<Record<string, NodeLike>>): Set<string> {
-  const ids = new Set<string>();
-  for (const node of Object.values(nodes)) {
-    if (node.type !== 'AnimationLayer') continue;
-    const anim = node.inputs?.animation;
-    const refs = Array.isArray(anim) ? anim : anim ? [anim] : [];
-    for (const ref of refs) {
-      const id = (ref as { node?: string } | undefined)?.node;
-      if (id) ids.add(id);
-    }
-  }
-  return ids;
-}
-
 /**
- * The NODE refs of every free-floating direct channel targeting `targetId`
- * (excluding layer-wired channels). Returned as stable node references so a
- * subscribed selector can compare them with `shallow` — an unrelated edit leaves
- * each ref untouched (immutable Ops), so the subscriber does not re-render (H48).
- * Build the channel VALUES from these via {@link channelValuesFromNodes} in a memo
- * keyed off this array.
+ * The NODE refs of every free-floating direct channel targeting `targetId`.
+ * Returned as stable node references so a subscribed selector can compare them
+ * with `shallow` — an unrelated edit leaves each ref untouched (immutable Ops),
+ * so the subscriber does not re-render (H48). Build the channel VALUES from these
+ * via {@link channelValuesFromNodes} in a memo keyed off this array.
  */
 export function directChannelNodesForTarget<T extends NodeLike & { id: string }>(
   nodes: Readonly<Record<string, T>>,
   targetId: string,
 ): T[] {
   if (!targetId) return [];
-  const wired = layerWiredChannelIds(nodes);
   const out: T[] = [];
   for (const node of Object.values(nodes)) {
     if (!node.type.startsWith('KeyframeChannel')) continue;
-    if (wired.has(node.id)) continue; // owned by the layer path (coexistence guard)
     const p = node.params as { target?: unknown; keyframes?: unknown };
     if (p.target !== targetId) continue;
     if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue; // empty → no overlay
@@ -77,19 +54,17 @@ export function directChannelNodesForTarget<T extends NodeLike & { id: string }>
 }
 
 /**
- * The set of node ids that have at least one free-floating direct channel
- * (excluding layer-wired). Built in ONE pass over the nodes — the renderer
- * computes it once per render and tests membership per child, so the child map
- * stays O(N), never O(N²) (the B13 trap of scanning all nodes per child).
+ * The set of node ids that have at least one free-floating direct channel.
+ * Built in ONE pass over the nodes — the renderer computes it once per render
+ * and tests membership per child, so the child map stays O(N), never O(N²)
+ * (the B13 trap of scanning all nodes per child).
  */
 export function directChannelTargetSet(
   nodes: Readonly<Record<string, NodeLike & { id: string }>>,
 ): Set<string> {
-  const wired = layerWiredChannelIds(nodes);
   const targets = new Set<string>();
   for (const node of Object.values(nodes)) {
     if (!node.type.startsWith('KeyframeChannel')) continue;
-    if (wired.has(node.id)) continue;
     const p = node.params as { target?: unknown; keyframes?: unknown };
     if (typeof p.target !== 'string' || !p.target) continue;
     if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue;

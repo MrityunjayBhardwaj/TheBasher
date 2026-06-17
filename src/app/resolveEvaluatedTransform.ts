@@ -53,7 +53,6 @@ import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { directChannelValuesForTarget } from './nodeChannels';
 import { useTransientEditStore } from './stores/transientEditStore';
-import { resolveEditTargetId } from './animate/resolveEditTarget';
 
 type Vec3 = [number, number, number];
 
@@ -72,21 +71,15 @@ function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 }
 
-/** Normalize an inputs binding through addLayer.ts:101's own shape:
- *  `Array.isArray(t) ? t : [t]`. Never assume a bare ref. */
-function normalizeRefs(binding: unknown): NodeRef[] {
-  if (binding == null) return [];
-  return Array.isArray(binding) ? (binding as NodeRef[]) : [binding as NodeRef];
-}
-
 /**
- * Resolve the evaluated rendered transform for `selectedId` (the box id OR
- * its wrapping AnimationLayer id — D-01). Pure: no store reads, caller passes
- * `state`, `ctx`, and the optional shared `cache`.
+ * Resolve the evaluated rendered transform for `selectedId` (the producing
+ * node's own id — v0.7 #199 retired the AnimationLayer wrapper, so there is no
+ * layer indirection). Pure: no store reads, caller passes `state`, `ctx`, and
+ * the optional shared `cache`.
  *
  * Returns null on the identity-null path (selectedId is neither a rendered
- * scene child nor a single-hop wrapped layer target) — the caller falls back
- * to the static `node.params` value (today's behavior, no crash).
+ * scene child nor a GltfChild) — the caller falls back to the static
+ * `node.params` value (today's behavior, no crash).
  */
 export function resolveEvaluatedTransform(
   state: DagState,
@@ -118,31 +111,14 @@ export function resolveEvaluatedTransform(
       ? (sceneNode.inputs.children as NodeRef[])
       : [];
 
-  // 4. Find the matching scene-child index. Match when:
-  //    (a) childRefs[i].node === selectedId (direct producer — box not
-  //        wrapped, OR selectedId IS the layer post-addLayer rewire), OR
-  //    (b) the scene child is an AnimationLayer whose layer node's
-  //        `inputs.target` (normalized through addLayer.ts:101's shape)
-  //        contains selectedId (select-by-box on a wrapped cube — D-01).
+  // 4. Find the matching scene-child index: childRefs[i].node === selectedId
+  //    (the producing node IS its own scene child — v0.7 #199 retired the
+  //    AnimationLayer wrapper, so there is no layer-target indirection to match).
   let matchIdx = -1;
   for (let i = 0; i < value.scene.children.length; i++) {
-    const refNode = childRefs[i]?.node;
-    if (refNode === selectedId) {
+    if (childRefs[i]?.node === selectedId) {
       matchIdx = i;
       break;
-    }
-    const child = value.scene.children[i];
-    if (child && child.kind === 'AnimationLayer' && refNode) {
-      const layerNode = state.nodes[refNode];
-      if (layerNode) {
-        // Single-hop only: the layer's direct target refs (P7 box→layer
-        // shape). No deep recursion (keeps it cheap; D-08).
-        const targetRefs = normalizeRefs(layerNode.inputs.target);
-        if (targetRefs.some((r) => r?.node === selectedId)) {
-          matchIdx = i;
-          break;
-        }
-      }
     }
   }
   if (matchIdx === -1) {
@@ -237,29 +213,18 @@ export function resolveEvaluatedTransform(
     return null;
   }
 
-  // 5. Unwrap the AnimationLayer to the patched clone (the H34 mechanism —
-  //    THIS is the animated value, NOT a re-evaluate of selectedId).
-  //    P7.12 D-04 (H40 read-side parity): the layer's `target` is now the
-  //    UN-PATCHED base (the channels are function-of-time). The renderer
-  //    (AnimationLayerR) patches via sampleTarget(seconds) in a useFrame; the
-  //    read-side MUST sample at the SAME ctx.time.seconds so the gizmo/NPanel
-  //    evaluated transform equals what renders. Reading the eager `target`
-  //    would show the static base while the viewport shows the animated clone
-  //    (the #68/#77 displayed≠rendered class this resolver exists to prevent).
+  // 5. The matched scene child IS the producing node's evaluated value (v0.7
+  //    #199 retired the AnimationLayer wrapper, so there is no patched clone to
+  //    unwrap — the animation overlay below is the only "animated value" source).
   let child: SceneChild | null = value.scene.children[matchIdx];
-  if (child && child.kind === 'AnimationLayer') {
-    child = child.sampleTarget(ctx.time.seconds);
-  }
 
-  // v0.7 unification (#197) — overlay free-floating DIRECT channels the SAME way
-  // the render side (DirectChannelsR, SceneFromDAG) does: the SAME overlayChannels
-  // primitive at the SAME ctx.time.seconds, BEFORE the transient (channels →
-  // transient, one band, H40). For a direct-channeled box (not layer-wrapped) the
-  // matched `child` above is the RAW static value — without this the gizmo/NPanel
-  // would read the authored pose while the viewport renders the animated one (the
-  // #68/#77 displayed≠rendered class). Layer-wired channels are EXCLUDED by the
-  // coexistence guard (nodeChannels.ts), so a wrapped node — already overlaid via
-  // the AnimationLayer unwrap above — is never double-applied. Empty → identity.
+  // v0.7 unification (#197/#199) — overlay free-floating DIRECT channels the SAME
+  // way the render side (DirectChannelsR, SceneFromDAG) does: the SAME
+  // overlayChannels primitive at the SAME ctx.time.seconds, BEFORE the transient
+  // (channels → transient, one band, H40). The matched `child` is the RAW static
+  // value — without this the gizmo/NPanel would read the authored pose while the
+  // viewport renders the animated one (the #68/#77 displayed≠rendered class).
+  // Empty → identity.
   if (child) {
     const directChannels = directChannelValuesForTarget(state.nodes, selectedId);
     if (directChannels.length > 0) {
@@ -275,17 +240,10 @@ export function resolveEvaluatedTransform(
   // ctx, not a hook) — the one UI-store read in this otherwise-pure resolver,
   // justified by H40 (it MUST reflect the same live edit the subscribed render
   // reads). Empty store → identity (purity tests stay green). Gated by the PAUSED
-  // transform boundary-pair e2e (C3).
-  //
-  // #160 — key the overlay by the EDIT TARGET, not the raw selection. The render
-  // side (AnimationLayerR) keys the transient by the wrapped target id
-  // (`animationTargetId`); when the selection IS the AnimationLayer (a viewport
-  // click on a keyframed cube), the transient lives on the target — so the read
-  // side must unwrap the same way or the gizmo proxy snaps back to the curve
-  // value while the object holds the edit. Identity for a box/glTF selection
-  // (resolveEditTargetId returns selectedId), so the C3 box case is unchanged.
-  const overlayId = resolveEditTargetId(state, selectedId);
-  child = overlayTransients(child, overlayId, useTransientEditStore.getState().edits);
+  // transform boundary-pair e2e (C3). v0.7 #199: the transient is keyed by the
+  // selected node directly — no AnimationLayer wrapper to unwrap (the render side
+  // keys DirectChannelsR's transient by the same node id).
+  child = overlayTransients(child, selectedId, useTransientEditStore.getState().edits);
 
   if (!child) return null;
 

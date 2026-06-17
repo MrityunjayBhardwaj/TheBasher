@@ -25,7 +25,6 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { resolveTransformParam } from './resolveTransformParam';
 
 const BOX_ID = 'n_box';
-const LAYER_ID = 'n_layer';
 const CHAN_ID = 'n_pos_channel';
 
 // The authored static values — deliberately DIFFERENT from the channel
@@ -40,11 +39,10 @@ function ctxAt(seconds: number) {
 }
 
 /**
- * Build the default project, pin the box's authored params, then rewire
- * box → AnimationLayer → scene EXACTLY as addLayer does (mirrors
- * resolveEvaluatedTransform.test.ts:41-173). The channel samples the
- * project clock `n_time` so `ctx.time.seconds` actually drives the
- * sampled value through the evaluator.
+ * Build the default project, pin the box's authored params, then add a
+ * FREE-FLOATING direct channel targeting the box (v0.7 #199 / V57 — no
+ * AnimationLayer wrapper, no scene rewire; the box stays its own scene child).
+ * The resolver overlays the channel via overlayChannels at ctx.time.seconds.
  */
 function buildAnimatedState(): DagState {
   let state = buildDefaultDagState();
@@ -79,36 +77,6 @@ function buildAnimatedState(): DagState {
         ],
       },
     },
-    {
-      type: 'addNode',
-      nodeId: LAYER_ID,
-      nodeType: 'AnimationLayer',
-      params: { name: 'L', weight: 1, mute: false, solo: false, boneMask: [] },
-    },
-    // addLayer rewire: box→scene becomes layer→scene; box→layer.target.
-    {
-      type: 'disconnect',
-      from: { node: BOX_ID, socket: 'out' },
-      to: { node: 'n_scene', socket: 'children' },
-    },
-    {
-      type: 'connect',
-      from: { node: LAYER_ID, socket: 'out' },
-      to: { node: 'n_scene', socket: 'children' },
-    },
-    {
-      type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
-      to: { node: LAYER_ID, socket: 'target' },
-    },
-    {
-      type: 'connect',
-      from: { node: CHAN_ID, socket: 'out' },
-      to: { node: LAYER_ID, socket: 'animation' },
-    },
-    // P7.12 D-04: channel has no `time` socket — time enters via
-    // value.sample(seconds); the resolver samples the layer via
-    // sampleTarget(ctx.time.seconds). No time→channel connect.
   ];
   for (const op of ops) state = applyOp(state, op).next;
   return state;
@@ -140,23 +108,6 @@ describe('resolveTransformParam', () => {
     const raw = state.nodes[BOX_ID].params.position;
     expect(raw).toEqual(STATIC_POS);
     expect(v).not.toEqual(raw);
-  });
-
-  // 2. LAYER-SELECT PARITY (D-01 mirror): selecting the wrapping
-  //    AnimationLayer's id resolves to the SAME per-param value as
-  //    selecting the box id. Closes the box-OR-layer selection symmetry
-  //    that 7.3 D-01 locked for the gizmo.
-  it('resolves the same per-param value whether box or layer id is selected (D-01)', () => {
-    const state = buildAnimatedState();
-    const ctx = ctxAt(0);
-
-    const byBox = resolveTransformParam(state, BOX_ID, 'position', ctx);
-    const byLayer = resolveTransformParam(state, LAYER_ID, 'position', ctx);
-
-    expect(byBox).not.toBeNull();
-    expect(byLayer).not.toBeNull();
-    expect(byLayer).toEqual(byBox);
-    expect(byLayer).toEqual(KF0_POS);
   });
 
   // 3. NULL FALLBACK — outer-null paths (caller falls back to static

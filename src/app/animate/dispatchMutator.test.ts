@@ -72,26 +72,15 @@ function buildSceneWithCamera(): DagState {
   return s;
 }
 
-/** Seed a layer + Vec3 channel so the single-Mutator keyframe path works. */
+/** Seed a free-floating Vec3 channel (v0.7 #199 / V57 — no AnimationLayer) so the
+ *  single-Mutator keyframe path works. */
 function buildSceneWithChannel(): DagState {
   let s = buildScene();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box_layer',
-    nodeType: 'AnimationLayer',
-    params: { name: 'Layer' },
-  }).next;
   s = applyOp(s, {
     type: 'addNode',
     nodeId: 'box_position_channel',
     nodeType: 'KeyframeChannelVec3',
     params: { name: 'position', target: 'box', paramPath: 'position', keyframes: [] },
-  }).next;
-  // P7.12 D-04: channel has no `time` socket — no time→channel connect.
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'box_position_channel', socket: 'out' },
-    to: { node: 'box_layer', socket: 'animation' },
   }).next;
   return s;
 }

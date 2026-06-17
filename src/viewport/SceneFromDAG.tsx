@@ -45,7 +45,6 @@ import {
   directChannelTargetSet,
 } from '../app/nodeChannels';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { resolveEditTargetId } from '../app/animate/resolveEditTarget';
 import { useDrillStore } from '../app/stores/drillStore';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -72,7 +71,6 @@ import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { resolveMaterialOverrideFields } from './materialOverrideMerge';
 import type {
   AmbientLightValue,
-  AnimationLayerValue,
   AreaLightValue,
   BakedMeshValue,
   BoxMeshValue,
@@ -217,12 +215,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
           })
         : null}
-      {/* #149 B2a — for an AnimationLayer scene child, the transient is keyed by
-          the WRAPPED target's id (the object the gizmo/inspector edits), NOT the
-          layer's id (H40 read/write parity). Index `i` corresponds to the Scene
-          aggregator's `inputs.children[i]` (childRefs) per the comment above.
-          Each child renders through the MEMOIZED SceneChildNode so a single param
-          edit re-renders ONE node, not all N (H48 / B13). */}
+      {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
+          (childRefs) per the comment above. Each child renders through the
+          MEMOIZED SceneChildNode so a single param edit re-renders ONE node, not
+          all N (H48 / B13). */}
       {value.scene.children.map((child, i) => {
         const cpid = childRefs[i]?.node ?? null;
         return (
@@ -230,16 +226,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             key={`mesh:${i}`}
             value={child}
             pickId={cpid}
-            animationTargetId={
-              child.kind === 'AnimationLayer' ? animationLayerTargetId(state, cpid) : null
-            }
-            // v0.7 unification (#197) — a native node animated by free-floating
-            // direct channels (no AnimationLayer wrapper) overlays via
-            // DirectChannelsR. Membership tested against the ONE pre-built set
-            // (O(N) total, not O(N²)). The layer path owns AnimationLayer kinds.
-            hasDirectChannels={
-              cpid != null && child.kind !== 'AnimationLayer' && directChannelTargets.has(cpid)
-            }
+            // v0.7 unification (#197) — a node animated by free-floating direct
+            // channels (V57) overlays via DirectChannelsR. Membership tested
+            // against the ONE pre-built set (O(N) total, not O(N²)).
+            hasDirectChannels={cpid != null && directChannelTargets.has(cpid)}
           />
         );
       })}
@@ -550,15 +540,9 @@ interface MeshChildProps {
   value: SceneChild;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
-  /** #149 B2a — the wrapped target's node id for an AnimationLayer child, so
-   *  AnimationLayerR can overlay the transient keyed by the SAME id the read
-   *  side uses (H40). Only set by the top-level scene-children map for a
-   *  single-hop AnimationLayer; undefined elsewhere (nested layers are out of
-   *  scope, mirroring the read-side single-hop limit). */
-  animationTargetId?: string | null;
 }
 
-const MeshChild = memo(function MeshChild({ value, override, animationTargetId }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
@@ -588,32 +572,13 @@ const MeshChild = memo(function MeshChild({ value, override, animationTargetId }
       return <ScatterR value={value} override={override} />;
     case 'Character':
       return <CharacterR value={value} />;
-    case 'AnimationLayer':
-      // P7.12 D-04 (shape B-lite) — the layer's channels are function-of-time,
-      // so the patched target must be sampled at live time. AnimationLayerR
-      // samples value.sampleTarget(seconds) in a useFrame (time SNAPSHOT, never
-      // a subscription — H48) and renders the patched SceneChild declaratively.
-      return <AnimationLayerR value={value} override={override} targetNodeId={animationTargetId} />;
   }
 });
-
-/** Resolve an AnimationLayer child's single-hop target node id (the wrapped
- *  object the gizmo/inspector edits), mirroring resolveEvaluatedTransform:135.
- *  Returns a STRING (stable by value across renders) so it is a memo-safe prop.
- *  null for any non-layer child / missing target. */
-function animationLayerTargetId(state: DagState, pickId: string | null): string | null {
-  if (!pickId) return null;
-  const tb = state.nodes[pickId]?.inputs.target;
-  const tref = Array.isArray(tb) ? tb[0] : tb;
-  return (tref as { node?: string } | undefined)?.node ?? null;
-}
 
 interface SceneChildNodeProps {
   value: SceneChild;
   /** Producing DAG node id (for click-to-select + the MeshScaleProbe name). */
   pickId: string | null;
-  /** AnimationLayer wrapped-target id; null otherwise (H40 read/write parity). */
-  animationTargetId: string | null;
   /** v0.7 (#197) — this node is driven by free-floating direct channels, so its
    *  value is overlaid by DirectChannelsR. A stable boolean (membership in the
    *  pre-built set) so the memo bails out for static nodes (H48). */
@@ -641,7 +606,6 @@ interface SceneChildNodeProps {
 const SceneChildNode = memo(function SceneChildNode({
   value,
   pickId,
-  animationTargetId,
   hasDirectChannels,
 }: SceneChildNodeProps) {
   const onClick = useCallback(
@@ -649,12 +613,10 @@ const SceneChildNode = memo(function SceneChildNode({
       if (!pickId) return;
       e.stopPropagation();
       const sel = useSelectionStore.getState();
-      // #162 — NEVER select the AnimationLayer wrapper from the viewport; unwrap
-      // to the edited OBJECT. Read LIVE state (not a render-time closure) so the
-      // handler identity stays stable across SceneFromDAG re-renders.
-      const objId = resolveEditTargetId(useDagStore.getState().state, pickId);
-      if (e.shiftKey) sel.selectAdditive(objId);
-      else sel.select(objId);
+      // v0.7 #199: a node is its own scene child now (no AnimationLayer wrapper to
+      // unwrap, V57), so the click selects the producing node directly.
+      if (e.shiftKey) sel.selectAdditive(pickId);
+      else sel.select(pickId);
       // UX #7: a single click on a DIFFERENT top-level node exits the drill
       // context, so a later Esc doesn't pop back into the model we left. We key
       // off the drill chain's ROOT (chain[0] === this pickId) rather than reset
@@ -682,7 +644,7 @@ const SceneChildNode = memo(function SceneChildNode({
       const sel = useSelectionStore.getState();
       if (!chain || chain.length <= 1) {
         // not a drillable glTF hierarchy → behave like a normal select
-        sel.select(resolveEditTargetId(state, pickId));
+        sel.select(pickId);
         return;
       }
       sel.select(useDrillStore.getState().drillInto(chain));
@@ -697,81 +659,11 @@ const SceneChildNode = memo(function SceneChildNode({
       {hasDirectChannels && pickId ? (
         <DirectChannelsR value={value} pickId={pickId} />
       ) : (
-        <MeshChild value={value} animationTargetId={animationTargetId} />
+        <MeshChild value={value} />
       )}
     </group>
   );
 });
-
-// P7.12 D-04 (shape B-lite, FLAG-1 LOCKED) — renderer for the authored
-// AnimationLayer path. The channels are function-of-time (no pre-sampled
-// `.value`), so the layer's patched target must be re-sampled per frame at the
-// live play time. This component:
-//   1. Reads the time SNAPSHOT (`useTimeStore.getState().seconds`) inside a
-//      useFrame — NEVER a subscribed time selector. Subscribing would
-//      re-introduce the per-frame React reconciliation P7.10 removed (H48,
-//      3rd-occurrence risk). The grep-gate asserts no time selector is added
-//      to this render path.
-//   2. Calls value.sampleTarget(seconds) → the patched clone for this frame.
-//   3. Renders the patched SceneChild declaratively. Re-rendering the ONE
-//      authored node per playback frame is the accepted B-lite cost — this is
-//      a single standalone scene node (cube + NPanel diamond), not 64 bones,
-//      and is exactly the pre-7.10 behavior for the authored path. The V24/H49
-//      perf win is for the CHANNELS themselves (pure function-of-time).
-// A `lastApplied` dirty-check on (seconds, sampleTarget ref) keeps the PAUSED
-// case free (no churn when not playing) and re-applies on an edit (a new
-// value ref) or a time change.
-// REF: PLAN 7.12 D-04 (A3 LOCKED B-lite); vyapti V24; hetvabhasa H48/H40.
-function AnimationLayerR({
-  value,
-  override,
-  targetNodeId,
-}: {
-  value: AnimationLayerValue;
-  override?: MaterialValue;
-  /** #149 B2a — the wrapped target's node id, used to overlay its transient. */
-  targetNodeId?: string | null;
-}) {
-  // #149 B2c (H40 form 2 — LOAD-BEARING): subscribe the transient SET. A PAUSED
-  // edit changes this ref → the component re-renders → a fresh useFrame closure
-  // captures the new edits → the dirty-check below re-fires → the overlay
-  // re-applies. WITHOUT this subscription the paused edit updates the store but
-  // the useFrame is gated out and the viewport freezes at the curve value (the
-  // #68 "snaps right back" class) while the inspector shows the transient.
-  //
-  // H48 SAFETY (checker I-2): this is the FIRST subscribed store selector in
-  // this H48-perf-sensitive render path (it still reads `seconds` as a SNAPSHOT,
-  // never a time subscription). It is safe ONLY because transients are
-  // paused-only + cleared-on-frame-change: during playback `edits` is a stable
-  // (empty) Map ref → zero re-renders → commits=0 holds. The Wave B gate adds a
-  // perf-fox commits=0 check to prove it.
-  const transients = useTransientEditStore((s) => s.edits);
-  const sample = (seconds: number): SceneChild | null =>
-    overlayTransients(value.sampleTarget(seconds), targetNodeId ?? '', transients);
-
-  const [patched, setPatched] = useState<SceneChild | null>(() =>
-    sample(useTimeStore.getState().seconds),
-  );
-  const lastApplied = useRef<{
-    seconds: number;
-    sampleTarget: unknown;
-    transients: unknown;
-  } | null>(null);
-  useFrame(() => {
-    const seconds = useTimeStore.getState().seconds;
-    if (
-      lastApplied.current !== null &&
-      lastApplied.current.seconds === seconds &&
-      lastApplied.current.sampleTarget === value.sampleTarget &&
-      lastApplied.current.transients === transients
-    ) {
-      return;
-    }
-    lastApplied.current = { seconds, sampleTarget: value.sampleTarget, transients };
-    setPatched(sample(seconds));
-  });
-  return patched ? <MeshChild value={patched} override={override} /> : null;
-}
 
 // v0.7 unification (#197) — renderer for a native node animated by FREE-FLOATING
 // direct channels (no AnimationLayer wrapper); the native-mesh analogue of
@@ -1654,7 +1546,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       if (childId && local >= 0) {
         if (!flatten && !Array.isArray(m.material)) {
           const claimed = m.material;
-          recordSlot(childId, local, { mat: claimed, reapplyOverride: () => applyTintFields(claimed) });
+          recordSlot(childId, local, {
+            mat: claimed,
+            reapplyOverride: () => applyTintFields(claimed),
+          });
         } else {
           recordSlot(childId, local, null);
         }

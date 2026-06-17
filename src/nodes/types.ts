@@ -771,20 +771,18 @@ export type SceneChild =
   | GroupValue
   | MaterialOverrideValue
   | ScatterValue
-  | CharacterValue
-  | AnimationLayerValue;
+  | CharacterValue;
 
 // ---------------------------------------------------------------------------
-// P3 — Animation channels + layers + shots (THESIS §42)
+// P3 — Animation channels + shots (THESIS §42)
 //
 // KeyframeChannel<T>: separate node types per T (Number / Vec3 / Quat / Color)
 // for clean V2 pure-flag handling, but all output the same 'KeyframeChannel'
-// socket type so AnimationLayer can accept any of them in a list socket. The
-// `valueType` discriminator on the value lets consumers switch on the variant.
-//
-// AnimationLayer: aggregator. Filters channels by mute / solo / boneMask,
-// scales by weight, and wraps a single `target` SceneChild whose params are
-// patched by active channels at evaluator time.
+// socket type. The `valueType` discriminator on the value lets consumers switch
+// on the variant. v0.7 #199: channels are FREE-FLOATING — each carries its own
+// `target` node id + `paramPath` and is overlaid by the one `overlayChannels`
+// primitive consumed by both the renderer and the read-side (V57). The legacy
+// AnimationLayer wrapper that aggregated channels per target is retired.
 //
 // Shot / Cut: editorial layer. Shot ties a time range to a camera + scene.
 // Cut sequences two shots with an optional transition.
@@ -887,39 +885,6 @@ export type KeyframeChannelValue =
   | KeyframeChannelVec3Value
   | KeyframeChannelQuatValue
   | KeyframeChannelColorValue;
-
-export interface AnimationLayerValue {
-  readonly kind: 'AnimationLayer';
-  readonly name: string;
-  /** Channels passing the mute/solo gate (post-filter). */
-  readonly active: readonly KeyframeChannelValue[];
-  readonly weight: number;
-  readonly boneMask: readonly string[];
-  readonly mute: boolean;
-  readonly solo: boolean;
-  /**
-   * Wrapped target — null when unwired. Layer is transparent in scene.
-   *
-   * P7.12 D-04 (shape B-lite): post-migration this is the UN-PATCHED base
-   * target. The channels are now function-of-time (no pre-sampled `.value`),
-   * so the layer cannot patch a fixed clone at evaluate time. The renderer
-   * (`AnimationLayerR`) samples `sampleTarget(seconds)` in a useFrame and
-   * renders the patched clone declaratively. The read-side
-   * (`resolveEvaluatedTransform`) reads `sampleTarget(ctx.time.seconds)` so
-   * gizmo/NPanel match the render (H40).
-   */
-  readonly target: SceneChild | null;
-  /**
-   * Sample the channels onto a deep clone of `target` at `seconds`, blended by
-   * weight (P7.12 D-04 — function-of-time, V24/H40). Returns the un-patched
-   * base when no active channels / no target. The single per-frame consumer
-   * (AnimationLayerR useFrame) and the read-side resolver both call this; the
-   * channels stay pure function-of-time (the V24/H49 win), only the authored
-   * node re-renders per frame (B-lite — accepted, pre-7.10 behavior, this is
-   * ONE standalone scene node not 64 bones).
-   */
-  sampleTarget(seconds: number): SceneChild | null;
-}
 
 export interface ShotValue {
   readonly kind: 'Shot';

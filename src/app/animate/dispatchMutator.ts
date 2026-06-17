@@ -570,8 +570,7 @@ function dispatchDirectFirstKey(
 }
 
 export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): DispatchResult {
-  const { targetId, paramPath, value, seconds } = args;
-  const intent = `Animate ${targetId}.${paramPath}`;
+  const { targetId } = args;
 
   const base = useDagStore.getState().state;
 
@@ -602,94 +601,15 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
     });
   }
 
-  // Native target. #199 (Phase 5) — a native mesh first-key now mints a
-  // FREE-FLOATING direct channel targeting the node's dagId (V57), the SAME road
-  // as the camera (#190) and glTF material (#188). No AnimationLayer wrapper:
-  // new projects never create a layer; the channel is rendered by DirectChannelsR
-  // and read by resolveEvaluatedTransform (#197), both via overlayChannels.
-  const channelId = `${targetId}_${safePath(paramPath)}_channel`;
-  const existingLayerId = ((): string | null => {
-    for (const node of Object.values(base.nodes)) {
-      if (node.type !== 'AnimationLayer') continue;
-      const tb = (node.inputs ?? {}).target as unknown;
-      const refs = Array.isArray(tb) ? tb : tb ? [tb] : [];
-      if (refs.some((r) => (r as { node?: string } | undefined)?.node === targetId)) {
-        return node.id;
-      }
-    }
-    return null;
-  })();
-
-  // The common path: the target is NOT wrapped in a legacy layer → direct channel.
-  if (!existingLayerId) {
-    return dispatchDirectFirstKey(args, base, {
-      allowed: ['number', 'vec3', 'color', 'quat'],
-      intentTag: 'user:mesh.firstKey',
-      surface: 'Mesh',
-    });
-  }
-
-  // TRANSITIONAL (removed in Slice C once migrateAnimationLayers retires every
-  // layer at load): the target is still wrapped in a legacy AnimationLayer — an
-  // un-migrated old file. Add the new band INTO that layer so it keeps rendering
-  // via the layer path. A free-floating channel on a layer-wrapped node would NOT
-  // render — the node sits in the layer's `target` socket, not as a direct scene
-  // child, so only AnimationLayerR overlays it (SceneFromDAG render-case gating).
-  const layerId = existingLayerId;
-  const addChannel = getMutator('mutator.timeline.addChannel');
-  const keyframe = getMutator('mutator.timeline.keyframe');
-  if (!addChannel || !keyframe) {
-    return {
-      ok: false,
-      reason: 'Timeline Mutators not registered (addChannel / keyframe).',
-    };
-  }
-
-  const valueType = inferValueType(value);
-  if (!valueType) {
-    return {
-      ok: false,
-      reason: `Cannot infer channel valueType for paramPath "${paramPath}".`,
-    };
-  }
-  const cParsed = addChannel.spec.safeParse({
-    layerId,
-    target: targetId,
-    paramPath,
-    valueType,
-    channelId,
+  // Native target. #199 (Phase 5) — a native mesh first-key mints a FREE-FLOATING
+  // direct channel targeting the node's dagId (V57), the SAME road as the camera
+  // (#190) and glTF material (#188). No AnimationLayer wrapper exists any more
+  // (retired at load by migrateAnimationLayers): the channel is rendered by
+  // DirectChannelsR and read by resolveEvaluatedTransform (#197), both via
+  // overlayChannels.
+  return dispatchDirectFirstKey(args, base, {
+    allowed: ['number', 'vec3', 'color', 'quat'],
+    intentTag: 'user:mesh.firstKey',
+    surface: 'Mesh',
   });
-  if (!cParsed.success) {
-    return { ok: false, reason: `addChannel spec invalid: ${cParsed.error.message}` };
-  }
-  const cResult = validatePlan(addChannel, cParsed.data, base, intent);
-  if (!cResult.ok) {
-    return { ok: false, reason: `addChannel rejected: ${cResult.reason}` };
-  }
-
-  let fork2: DagState;
-  try {
-    fork2 = createFork(base, cResult.ops).fork;
-  } catch (err) {
-    return { ok: false, reason: `addChannel fork failed: ${(err as Error).message}` };
-  }
-
-  const kParsed = keyframe.spec.safeParse({ channelId, time: seconds, value });
-  if (!kParsed.success) {
-    return { ok: false, reason: `keyframe spec invalid: ${kParsed.error.message}` };
-  }
-  const kResult = validatePlan(keyframe, kParsed.data, fork2, intent);
-  if (!kResult.ok) {
-    return { ok: false, reason: `keyframe rejected: ${kResult.reason}` };
-  }
-
-  const combinedClosure = unionClosureSpecs(cResult.closure.spec, kResult.closure.spec);
-  return proposeAndAccept(
-    base,
-    [...cResult.ops, ...kResult.ops],
-    intent,
-    ['user:mutator.timeline.addChannel', 'user:mutator.timeline.keyframe'],
-    combinedClosure,
-    [...cResult.warnings, ...kResult.warnings],
-  );
 }
