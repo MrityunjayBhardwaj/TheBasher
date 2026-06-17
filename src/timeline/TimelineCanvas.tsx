@@ -89,6 +89,7 @@ import { useTimelineViewStore } from './timelineViewStore';
 import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
+import { nodeDisplayName } from '../app/sceneTreeWalk';
 
 /**
  * Imperative canvas palette — the exact hex constants the 2D context
@@ -200,11 +201,29 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
     const params = (node.params ?? {}) as {
       name?: string;
       paramPath?: string;
+      target?: string;
       keyframes?: Array<{ time: number }>;
     };
+    // Row label. dispatchDirectFirstKey sets `name === paramPath` (a bare param
+    // token like "fov" / "position"), so post-#199 — when EVERY node animates via
+    // free-floating channels in ONE flat list (camera, glTF child, mesh) — two
+    // unrelated "position" rows are indistinguishable. Qualify such bare labels
+    // with the TARGET node's identity ("n_camera — fov", "n_box — position") using
+    // the SAME `nodeDisplayName` the outliner/inspector use (V34), matching the
+    // baked-clip "bone_1 — position" convention already in the dopesheet. A
+    // channel whose name is already descriptive (name !== paramPath, e.g. a baked
+    // clip) is left untouched; an unresolved/empty target falls back to the bare
+    // label (so the orphan-row contract + existing fixtures hold).
+    const paramLabel = params.paramPath || params.name || '';
+    const isBareDefault = !params.name || params.name === params.paramPath;
+    const targetNode = params.target ? nodes[params.target] : undefined;
+    const name =
+      isBareDefault && targetNode
+        ? `${nodeDisplayName(targetNode)} — ${paramLabel}`
+        : params.name || params.paramPath || '';
     rows.push({
       channelId: node.id,
-      name: params.name || params.paramPath || '',
+      name,
       keyframes: (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time),
     });
   }

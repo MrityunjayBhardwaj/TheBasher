@@ -120,7 +120,60 @@ describe('collectChannelRows', () => {
     const camFov = makeChannel('n_camera_fov_channel', 'fov', [0, 1]);
     const rows = collectChannelRows({ n_camera_fov_channel: camFov });
     expect(rows.map((r) => r.channelId)).toEqual(['n_camera_fov_channel']);
+    // No target node present in the map → the label falls back to the bare
+    // paramPath (the orphan-row contract). Qualification kicks in only when the
+    // target resolves (next test).
     expect(rows[0].name).toBe('fov');
+  });
+
+  it('qualifies a bare direct-channel label with its target identity (#194 dopesheet)', () => {
+    // dispatchDirectFirstKey sets name === paramPath ("position"). Post-#199 the
+    // camera, the box, every node animates via free-floating channels in ONE flat
+    // list — so two "position" rows are indistinguishable until qualified by owner.
+    const node = (id: string, type: string, params: Record<string, unknown>) =>
+      ({ id, type, inputs: {}, params }) as unknown as Node;
+    const ch = (id: string, target: string) =>
+      node(id, 'KeyframeChannelVec3', {
+        name: 'position',
+        paramPath: 'position',
+        target,
+        keyframes: [{ time: 0 }],
+      });
+    const rows = collectChannelRows({
+      n_camera: node('n_camera', 'PerspectiveCamera', { fov: 45 }),
+      n_box: node('n_box', 'BoxMesh', {}),
+      cam_pos_ch: ch('cam_pos_ch', 'n_camera'),
+      box_pos_ch: ch('box_pos_ch', 'n_box'),
+    });
+    const byId = Object.fromEntries(rows.map((r) => [r.channelId, r.name]));
+    // The two "position" channels are now distinguishable by their owner — the
+    // SAME identity the outliner shows (V34); no meta/params.name → the id.
+    expect(byId.cam_pos_ch).toBe('n_camera — position');
+    expect(byId.box_pos_ch).toBe('n_box — position');
+  });
+
+  it('leaves an already-qualified channel name untouched (baked-clip convention)', () => {
+    // A baked bone channel carries a descriptive name (name !== paramPath); it
+    // must NOT be re-qualified into "Skeleton — bone_1 — position".
+    const baked = {
+      id: 'n_baked',
+      type: 'KeyframeChannelVec3',
+      inputs: {},
+      params: {
+        name: 'bone_1 — position',
+        paramPath: 'position',
+        target: 'n_skel',
+        keyframes: [{ time: 0 }],
+      },
+    } as unknown as Node;
+    const skel = {
+      id: 'n_skel',
+      type: 'GltfSkeleton',
+      inputs: {},
+      params: { name: 'Skeleton' },
+    } as unknown as Node;
+    const rows = collectChannelRows({ n_skel: skel, n_baked: baked });
+    expect(rows.find((r) => r.channelId === 'n_baked')?.name).toBe('bone_1 — position');
   });
 });
 

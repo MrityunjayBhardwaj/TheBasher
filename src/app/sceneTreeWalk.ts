@@ -12,7 +12,7 @@
 // REF: THESIS.md §12, §39 (P1 Wave C).
 
 import type { DagState } from '../core/dag/state';
-import type { NodeId } from '../core/dag/types';
+import type { Node, NodeId } from '../core/dag/types';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -50,23 +50,32 @@ function pushRow(ctx: WalkCtx, row: TreeRow): void {
   ctx.rows.push(row);
 }
 
+/**
+ * The canonical user-facing identity for a node, in priority order:
+ *   1. meta.name — the canonical user-facing name (what the inspector header
+ *      and the a11y selection summary resolve to: meta.name ?? id). Honoring
+ *      it first keeps every surface 1:1 with the inspector identity.
+ *   2. params.name — the SEMANTIC name carried by Shot / AnimationClip /
+ *      Character node params (their domain label, not a generic field).
+ *   3. node.id — the unique, stable fallback. Previously this fell back to
+ *      `node.type`, which rendered every unnamed BoxMesh as the indistinct
+ *      label "BoxMesh"; two boxes were unidentifiable while the inspector
+ *      showed "n_box_2". The type is conveyed by the row's icon, so the label
+ *      carries identity, not category.
+ *
+ * ONE source so the outliner, the inspector header, the a11y summary AND the
+ * dopesheet channel row all agree on a node's name (V34 — single identity).
+ */
+export function nodeDisplayName(node: Node): string {
+  const params = node.params as Record<string, unknown>;
+  const paramName = typeof params?.name === 'string' ? params.name : undefined;
+  return node.meta?.name ?? paramName ?? node.id;
+}
+
 function display(state: DagState, nodeId: NodeId): string {
   const node = state.nodes[nodeId];
   if (!node) return `<missing:${nodeId}>`;
-  const params = node.params as Record<string, unknown>;
-  // Identity, in priority order:
-  //   1. meta.name — the canonical user-facing name (what the inspector header
-  //      and the a11y selection summary resolve to: meta.name ?? id). Honoring
-  //      it first keeps the tree row 1:1 with the inspector identity.
-  //   2. params.name — the SEMANTIC name carried by Shot / AnimationClip /
-  //      Character node params (their domain label, not a generic field).
-  //   3. node.id — the unique, stable fallback. Previously this fell back to
-  //      `node.type`, which rendered every unnamed BoxMesh as the indistinct
-  //      label "BoxMesh"; two boxes were unidentifiable in the tree while the
-  //      inspector showed "n_box_2". The type is conveyed by the row's icon,
-  //      so the label carries identity, not category.
-  const paramName = typeof params?.name === 'string' ? params.name : undefined;
-  return node.meta?.name ?? paramName ?? node.id;
+  return nodeDisplayName(node);
 }
 
 function walkOneAsChild(
