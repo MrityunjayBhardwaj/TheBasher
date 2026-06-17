@@ -1262,117 +1262,19 @@ function GltfMaterialSlotRow({ slot }: { slot: GltfMaterialSlot }) {
   );
 }
 
-// #178 S4 — one EDITABLE field inside the glTF lobe editor. Mirrors the native
-// ColorField/NumericField chrome but commits through `onCommit` (the parent
-// rebuilds the WHOLE `materials` array) instead of dispatching a dotted path —
-// `setAtPath` cannot index into an array (ops.ts: a `materials.0.base.color`
-// path REPLACES the array with `{}`), so a glTF material edit MUST be a whole-
-// array replace. No ParamDiamond/scrub/autoKey yet — material-scalar animation
-// is S6; these are plain authoring fields.
-function GltfMatColorField({
-  testid,
-  label,
-  value,
-  onCommit,
-  diamond,
-}: {
-  testid: string;
-  label: string;
-  value: string;
-  onCommit: (next: string) => void;
-  diamond?: React.ReactNode;
-}) {
-  const [draft, setDraft] = useState(value);
-  // Resync when the authored value changes outside this field (undo, slot switch).
-  useEffect(() => setDraft(value), [value]);
-  const commit = (next: string) => {
-    if (!isHex6(next)) return;
-    onCommit(next);
-  };
-  const swatch = isHex6(draft) ? draft : '#000000';
-  return (
-    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="flex items-center gap-1 font-mono text-fg/60">
-        {diamond}
-        {label}
-      </span>
-      <span className="flex items-center gap-1">
-        <input
-          type="color"
-          aria-label={`${label} colour swatch`}
-          value={swatch}
-          data-testid={`inspector-gltfmat-color-${testid}`}
-          className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          onChange={(e) => {
-            setDraft(e.target.value);
-            commit(e.target.value);
-          }}
-        />
-        <input
-          type="text"
-          aria-label={`${label} hex`}
-          value={draft}
-          data-testid={`inspector-gltfmat-colorhex-${testid}`}
-          className="w-20 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={(e) => commit(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
-          }}
-        />
-      </span>
-    </label>
-  );
-}
-
-function GltfMatNumberField({
-  testid,
-  label,
-  value,
-  onCommit,
-  diamond,
-}: {
-  testid: string;
-  label: string;
-  value: number;
-  onCommit: (next: number) => void;
-  diamond?: React.ReactNode;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="flex items-center gap-1 font-mono text-fg/60">
-        {diamond}
-        {label}
-      </span>
-      <input
-        type="number"
-        step="0.1"
-        value={value}
-        aria-label={label}
-        data-testid={`inspector-gltfmat-num-${testid}`}
-        className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        onChange={(e) => {
-          const next = parseFloat(e.target.value);
-          if (Number.isNaN(next)) return;
-          onCommit(next);
-        }}
-      />
-    </label>
-  );
-}
-
 /**
- * #178 S4 — the EDITABLE OpenPBR editor for a GltfChild's captured material(s)
- * (the visible payoff). Reuses MATERIAL_LOBES (the SAME lobe grouping native
- * Box/Sphere use) so a glTF material edits exactly like a native one (V53/V32:
- * one IR, one editor). Each field commits via a WHOLE-`materials`-array replace
- * (setAtPath can't index an array — see GltfMatColorField), matching the S3 e2e
- * write. The S3 overlay re-applies on the `materials` change (its effect deps on
- * depNodeMap) → the viewport repaints live (the falsifiable proof, [[H97]]).
- * Multi-slot children get a local slot selector — which slot to EDIT is a
- * view-only concern, NOT a DAG param (unlike MaterialOverride.slotIndex). Texture
- * maps stay on the clone (captured null, overlay preserves them) → no map rows
- * here; capture + editing land in S5. Renders ONLY when `materials` is non-empty;
+ * #178 S4 / v0.7 Phase 4 (#198) — the EDITABLE OpenPBR editor for a GltfChild's
+ * captured material(s). Renders the SHARED `MaterialRows` (the SAME component the
+ * native Box/Sphere editor uses, V53/V32: one IR → one editor) for the lobe
+ * scalars/colours, and keeps ONLY its glTF-specific extras AROUND it: the
+ * per-submesh slot selector + the S5 edit-layer Map rows (the design's
+ * reduce-to-extras fork). MaterialRows owns the diamond + Auto-Key routing + the
+ * H40 read-side; this editor supplies the array `fieldPath` + the whole-
+ * `materials`-array-replace source write (setAtPath can't index an array, V53 S4).
+ * Editing the source re-runs the S3 overlay (depNodeMap) → the viewport repaints
+ * live ([[H97]]); an animated field routes to the channel and the read-side shows
+ * it through the row. Which slot to EDIT is a view-only concern, NOT a DAG param
+ * (unlike MaterialOverride.slotIndex). Renders ONLY when `materials` is non-empty;
  * an absent/empty array keeps the read-only readout (V10/H14 backward-compat).
  */
 function GltfMaterialEditor({
@@ -1390,15 +1292,13 @@ function GltfMaterialEditor({
   // The keyframe paramPath for a lobe field — `materials.<slot>.<lobe>.<field>`,
   // targeting THIS GltfChild dagId directly (the glTF direct-channel road, V57).
   const fieldPath = (lobe: string, key: string) => `materials.${slot}.${lobe}.${key}`;
-  const commit = (lobe: string, key: string, value: unknown) => {
-    // #188 — keyframing parity (the H104 rule: a custom control must re-wire every
-    // cross-cutting affordance, here Auto-Key). If this field is ANIMATED, route the
-    // edit through the shared seam (transient hold / keyframe at the playhead) and do
-    // NOT also whole-array-replace the source `materials` — the channel owns the value
-    // (H36 single-write; a source write would double-apply and read as a no-op while
-    // the channel drives the render). Un-animated → the existing whole-array replace,
-    // then autoKeyCommit (Auto-Key ON → first-key creates the free-floating channel).
-    if (routeAnimatedGrab(nodeId, fieldPath(lobe, key), value)) return;
+  // v0.7 Phase 4 (#198) — the UN-animated source write for a glTF material field.
+  // A glTF material is an ARRAY param (`materials[<slot>]`); setAtPath cannot index
+  // an array (a `materials.0.base.color` path REPLACES the array with `{}`, V53 S4),
+  // so the source write MUST be a whole-`materials`-array replace. The Auto-Key
+  // routing (routeAnimatedGrab → this → autoKeyCommit) now lives in MaterialRows
+  // (shared with the native editor) — this closure is only the source write.
+  const commitSource = (lobe: string, key: string, value: number | string) => {
     const cur = materials[slot] as unknown as Record<string, Record<string, unknown>>;
     const nextMat = { ...cur, [lobe]: { ...(cur[lobe] ?? {}), [key]: value } };
     const next = materials.map((m, i) => (i === slot ? nextMat : m));
@@ -1407,7 +1307,6 @@ function GltfMaterialEditor({
       'user',
       `edit material slot ${slot} ${lobe}.${key}`,
     );
-    autoKeyCommit(nodeId, fieldPath(lobe, key), value);
   };
   // #178 S5 — edit-layer map write: rebuild the whole `materials` array setting
   // this slot's `maps.<mapSlot>` (null = inherit imported, CLEARED_MAP = remove,
@@ -1451,45 +1350,32 @@ function GltfMaterialEditor({
           </div>
         </div>
       ) : null}
-      {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
-        <div key={lobe} className="flex flex-col">
-          <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
-            {label}
-          </div>
-          {fields.map(({ key, label: fieldLabel, kind }) => {
-            const lobeObj = (mat[lobe] ?? {}) as Record<string, unknown>;
-            const testid = `${nodeId}-${slot}-${lobe}-${key}`;
-            if (kind === 'color') {
-              const cv = typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
-              return (
-                <GltfMatColorField
-                  key={key}
-                  testid={testid}
-                  label={fieldLabel}
-                  value={cv}
-                  onCommit={(v) => commit(lobe, key, v)}
-                  diamond={
-                    <ParamDiamond nodeId={nodeId} paramPath={fieldPath(lobe, key)} value={cv} />
-                  }
-                />
-              );
-            }
-            const nv = typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
-            return (
-              <GltfMatNumberField
-                key={key}
-                testid={testid}
-                label={fieldLabel}
-                value={nv}
-                onCommit={(v) => commit(lobe, key, v)}
-                diamond={
-                  <ParamDiamond nodeId={nodeId} paramPath={fieldPath(lobe, key)} value={nv} />
-                }
-              />
-            );
-          })}
-        </div>
-      ))}
+      {/* v0.7 Phase 4 (#198) — the SHARED lobe rows (the SAME MaterialRows the
+          native primitive editor renders). glTF supplies the array fieldPath +
+          the whole-array-replace commit; the diamond + Auto-Key routing + the H40
+          read-side (resolveEvaluatedParam) come for free, so a scrubbed/animated
+          glTF material value now shows through the field like native (closes the
+          glTF read side of #188's Phase-4 list). */}
+      <MaterialRows
+        nodeId={nodeId}
+        fieldPath={fieldPath}
+        readValue={(lobe, key, kind) => {
+          const lobeObj = (mat[lobe] ?? {}) as Record<string, unknown>;
+          if (kind === 'color')
+            return typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
+          return typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+        }}
+        commitSource={commitSource}
+        testids={(lobe, key) => {
+          const t = `${nodeId}-${slot}-${lobe}-${key}`;
+          return {
+            num: `inspector-gltfmat-num-${t}`,
+            scrub: `inspector-gltfmat-scrub-${t}`,
+            color: `inspector-gltfmat-color-${t}`,
+            colorHex: `inspector-gltfmat-colorhex-${t}`,
+          };
+        }}
+      />
       {/* #178 S5 — edit-layer texture maps. Each row shows this slot's edit state
           (imported / replaced / cleared) + lets the director replace (pick a
           file → bake → ref), clear (remove the imported texture), or revert to
