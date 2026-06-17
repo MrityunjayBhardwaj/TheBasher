@@ -9,11 +9,13 @@
 // scene.children rewire: the box stays the scene child, and its rendered scale
 // tracks the channel as the playhead scrubs.
 //
-// THE observation (Side A only this slice): the REAL rendered three.js object's
-// world scale (__basher_mesh_world_scale) at ≥2 playhead times, animating
-// [1,1,1]→[3,3,3] linearly. The read-side resolver parity (Side B / the H40
-// boundary-pair) lands in the read-side slice; here we prove the viewport
-// overlays a direct channel at all.
+// THE boundary-pair observation at ≥2 playhead times (animating [1,1,1]→[3,3,3]
+// linearly):
+//   Side A — the REAL rendered three.js object's world scale (__basher_mesh_world_scale).
+//   Side B — resolveEvaluatedMesh(...).transform.scale at the SAME ctx.time
+//            (__basher_evaluated_mesh → resolveEvaluatedTransform's direct-channel overlay).
+// Assert A === B (H40) AND the value tracks the channel across the two times.
+// Mirrors p153 (the layer path) for the direct-channel road.
 //
 // REF: docs/UNIFICATION-DESIGN.md §3.1; issue #197; SceneFromDAG DirectChannelsR;
 //      overlayChannels.ts; nodeChannels.ts. Sibling of p153 (the layer path) and
@@ -30,12 +32,30 @@ interface BasherWindow {
   };
   __basher_time?: { getState: () => { setTime: (s: number) => void; seconds: number } };
   __basher_mesh_world_scale?: (nodeId: string) => [number, number, number] | null;
+  __basher_evaluated_mesh?: (
+    nodeId: string,
+    ctx?: { time: { frame: number; seconds: number; normalized: number } },
+  ) => { transform: { scale: [number, number, number] } } | null;
 }
+
+const ctxAt = (seconds: number) => ({
+  time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
+});
 
 async function setTime(page: import('@playwright/test').Page, seconds: number) {
   await page.evaluate((s) => {
     (window as unknown as BasherWindow).__basher_time!.getState().setTime(s);
   }, seconds);
+}
+
+async function resolvedAt(page: import('@playwright/test').Page, id: string, seconds: number) {
+  return page.evaluate(
+    ({ nodeId, c }) => {
+      const m = (window as unknown as BasherWindow).__basher_evaluated_mesh!(nodeId, c);
+      return m ? m.transform.scale : null;
+    },
+    { nodeId: id, c: ctxAt(seconds) },
+  );
 }
 
 test.beforeEach(async ({ page }) => {
@@ -54,7 +74,9 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_time && w.__basher_mesh_world_scale);
+    return Boolean(
+      w.__basher_dag && w.__basher_time && w.__basher_mesh_world_scale && w.__basher_evaluated_mesh,
+    );
   });
   await page.waitForFunction(
     () => (window as unknown as BasherWindow).__basher_mesh_world_scale!('n_box') !== null,
@@ -107,9 +129,16 @@ test.describe('#197 — native primitive animated by a direct channel (no Animat
       const r = await page.evaluate(() =>
         (window as unknown as BasherWindow).__basher_mesh_world_scale!('n_box'),
       );
+      const s = await resolvedAt(page, 'n_box', seconds);
       expect(r, `rendered@${seconds}`).not.toBeNull();
-      // The REAL rendered object IS at the animated scale (observation, not inferred).
+      expect(s, `resolver@${seconds}`).not.toBeNull();
+      // Side A — the REAL rendered object IS at the animated scale (not inferred).
       for (let i = 0; i < 3; i++) expect(r![i]).toBeCloseTo(expected, 3);
+      // Side B — resolveEvaluatedMesh/Transform overlays the SAME direct channel
+      // at the SAME ctx.time, so the gizmo/inspector read the animated value too.
+      for (let i = 0; i < 3; i++) expect(s![i]).toBeCloseTo(expected, 3);
+      // H40 — rendered == resolver, component-wise (the boundary-pair).
+      for (let i = 0; i < 3; i++) expect(r![i]).toBeCloseTo(s![i], 3);
       return r!;
     };
 

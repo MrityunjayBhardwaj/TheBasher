@@ -50,6 +50,8 @@ import type { GltfAssetValue, RenderOutputValue, SceneChild } from '../nodes/typ
 import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
 import { overlayTransients } from './overlayTransients';
+import { overlayChannels } from '../nodes/overlayChannels';
+import { directChannelValuesForTarget } from './nodeChannels';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { resolveEditTargetId } from './animate/resolveEditTarget';
 
@@ -247,6 +249,22 @@ export function resolveEvaluatedTransform(
   let child: SceneChild | null = value.scene.children[matchIdx];
   if (child && child.kind === 'AnimationLayer') {
     child = child.sampleTarget(ctx.time.seconds);
+  }
+
+  // v0.7 unification (#197) — overlay free-floating DIRECT channels the SAME way
+  // the render side (DirectChannelsR, SceneFromDAG) does: the SAME overlayChannels
+  // primitive at the SAME ctx.time.seconds, BEFORE the transient (channels →
+  // transient, one band, H40). For a direct-channeled box (not layer-wrapped) the
+  // matched `child` above is the RAW static value — without this the gizmo/NPanel
+  // would read the authored pose while the viewport renders the animated one (the
+  // #68/#77 displayed≠rendered class). Layer-wired channels are EXCLUDED by the
+  // coexistence guard (nodeChannels.ts), so a wrapped node — already overlaid via
+  // the AnimationLayer unwrap above — is never double-applied. Empty → identity.
+  if (child) {
+    const directChannels = directChannelValuesForTarget(state.nodes, selectedId);
+    if (directChannels.length > 0) {
+      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
+    }
   }
 
   // #149 C1 — overlay the held transient the SAME way the renderer does
