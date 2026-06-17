@@ -22,22 +22,28 @@
 // REF: issue #149, PLAN.md Wave B (B1); hetvabhasa H40; vyapti V20.
 
 import { writeAt } from '../nodes/AnimationLayer';
-import type { SceneChild } from '../nodes/types';
 import type { TransientEdit } from './stores/transientEditStore';
 
 /**
- * Apply every transient edit targeting `nodeId` onto a clone of `child`.
- * Returns `child` UNCHANGED (same ref → no churn) when no edit matches or when
- * `child` is null. When at least one edit matches, deep-clones `child` (the same
- * JSON deep-clone patchTarget uses — SceneChild is plain data at this layer) and
- * writes each matching edit's value at its paramPath. The base is never mutated.
+ * Apply every transient edit targeting `nodeId` onto a clone of `base`.
+ * Returns `base` UNCHANGED (same ref → no churn) when no edit matches or when
+ * `base` is null. When at least one edit matches, deep-clones `base` (the same
+ * JSON deep-clone patchTarget uses — the overlay targets are plain data at this
+ * layer) and writes each matching edit's value at its paramPath. The base is
+ * never mutated.
+ *
+ * Generic `<T>` (V20, mirroring overlayChannels) so the SAME primitive serves
+ * BOTH the native/AnimationLayer `SceneChild` callers (T = SceneChild) AND the
+ * glTF material per-frame loop (T = `{ materials }`) — one band, two callers, no
+ * drift. `writeAt` already indexes the `materials.<slot>.<lobe>.<field>` array
+ * path (V53), so a glTF material transient round-trips losslessly.
  */
-export function overlayTransients(
-  child: SceneChild | null,
+export function overlayTransients<T>(
+  base: T | null,
   nodeId: string,
   edits: Map<string, TransientEdit>,
-): SceneChild | null {
-  if (!child || edits.size === 0) return child;
+): T | null {
+  if (!base || edits.size === 0) return base;
 
   let hasMatch = false;
   for (const edit of edits.values()) {
@@ -46,12 +52,12 @@ export function overlayTransients(
       break;
     }
   }
-  if (!hasMatch) return child; // identity — no clone, no churn
+  if (!hasMatch) return base; // identity — no clone, no churn
 
-  const clone = JSON.parse(JSON.stringify(child)) as Record<string, unknown>;
+  const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
   for (const edit of edits.values()) {
     if (edit.nodeId !== nodeId) continue;
     writeAt(clone, edit.paramPath, edit.value); // transient > channel (applied last)
   }
-  return clone as unknown as SceneChild;
+  return clone as unknown as T;
 }

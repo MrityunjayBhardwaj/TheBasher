@@ -1844,14 +1844,24 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // re-instantiating). Mirrors the TRS dirty-check exactly: snapshot live time (never
   // a time subscription — H48), skip when (seconds, channels) are unchanged so a
   // PAUSED scene pays nothing; early-out when no child animates a material.
-  const lastMaterialApplied = useRef<{ seconds: number; channels: unknown } | null>(null);
+  const lastMaterialApplied = useRef<{
+    seconds: number;
+    channels: unknown;
+    transients: unknown;
+  } | null>(null);
   useFrame(() => {
     if (materialChannelsByChild.size === 0) return;
     const seconds = useTimeStore.getState().seconds;
+    // #198 (Phase 4, item 4) — snapshot the transient SET (NEVER subscribe — H48,
+    // the frameloop is "always"). A material transient is held ONLY for an ANIMATED
+    // field (routeAnimatedGrab finds a channel), so the channel guard above already
+    // covers every child that can carry one; the transient just wins ON TOP below.
+    const transients = useTransientEditStore.getState().edits;
     if (
       lastMaterialApplied.current !== null &&
       lastMaterialApplied.current.seconds === seconds &&
-      lastMaterialApplied.current.channels === materialChannelsByChild
+      lastMaterialApplied.current.channels === materialChannelsByChild &&
+      lastMaterialApplied.current.transients === transients
     ) {
       return;
     }
@@ -1866,12 +1876,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // a parallel sample) via the ONE overlay primitive (V57); weight 1 → the
       // sampled value wins. `writeAt` indexes the `materials.<slot>.<lobe>.<field>`
       // array path with NO setAtPath change (V53). One overlay per child handles all
-      // its slots/fields at once.
-      const animated = overlayChannels(
-        { materials: baseMaterials },
-        channels,
-        1,
-        seconds,
+      // its slots/fields at once. THEN overlay the transient ON TOP (transient >
+      // channel — #198 item 4): an Auto-Key-OFF held edit on an animated material
+      // field previews live, the SAME overlayTransients the native DirectChannelsR
+      // uses (one band, two callers) so the RENDER matches the inspector read-side
+      // (resolveEvaluatedParam) — no H40 "snaps right back" divergence.
+      const animated = overlayTransients(
+        overlayChannels({ materials: baseMaterials }, channels, 1, seconds) ?? {
+          materials: baseMaterials,
+        },
+        childId,
+        transients,
       )?.materials;
       if (!animated) continue;
       for (let i = 0; i < slotMats.length; i += 1) {
@@ -1888,7 +1903,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         }
       }
     }
-    lastMaterialApplied.current = { seconds, channels: materialChannelsByChild };
+    lastMaterialApplied.current = { seconds, channels: materialChannelsByChild, transients };
   });
   // Re-apply on a structural rebuild (clone swap / override change / dep edit) — the
   // override effect (same deps) re-clones the materials, so the prior write targets
