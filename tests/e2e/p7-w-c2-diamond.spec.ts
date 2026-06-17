@@ -4,8 +4,8 @@
 //
 // Coverage (the C2 <verify>, observed not inferred):
 //   - select n_box, scrub to frame 60, click the Position diamond →
-//     DAG gains an AnimationLayer + KeyframeChannel + exactly ONE sample
-//     (the first-key composite), and the diamond shows 'on-key'.
+//     DAG gains a free-floating KeyframeChannel + exactly ONE sample (#199 —
+//     a direct channel, NO AnimationLayer), and the diamond shows 'on-key'.
 //   - scrub off the key → diamond shows 'animated'.
 //   - scrub back to the key + click → deleteKeyframe → 'none' again.
 //   - Cmd+Z reverts the WHOLE composite in ONE undo entry.
@@ -100,9 +100,10 @@ test('P7.C2 diamond: none → first-key composite → on-key (one undo entry)', 
 
   await diamond.click();
 
-  // The composite: layer + channel + exactly ONE sample, ONE undo entry.
+  // #199 — first key = ONE free-floating direct channel + ONE sample, ONE undo
+  // entry. NO AnimationLayer is created.
   const after = await dagSnapshot(page);
-  expect(after.layerCount).toBe(1);
+  expect(after.layerCount).toBe(0);
   expect(after.channelCount).toBe(1);
   expect(after.channelKeyframes[0]).toHaveLength(1);
   expect(after.undoLen).toBe(before.undoLen + 1);
@@ -143,11 +144,11 @@ test('P7.C2 Cmd+Z reverts the first-key composite in ONE step', async ({ page })
   await diamond.click();
 
   const after = await dagSnapshot(page);
-  expect(after.layerCount).toBe(1);
+  expect(after.layerCount).toBe(0);
   expect(after.channelCount).toBe(1);
   expect(after.undoLen).toBe(before.undoLen + 1);
 
-  // ONE Cmd+Z reverts the whole composite (layer + channel + sample).
+  // ONE Cmd+Z reverts the whole first key (channel + sample).
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
 
   await expect.poll(async () => (await dagSnapshot(page)).layerCount).toBe(before.layerCount);

@@ -34,17 +34,13 @@ interface BasherWindow {
     mode: 'translate' | 'rotate' | 'scale',
     target: [number, number, number],
   ) => void;
-  __basher_evaluate?: (
+  // #199 — a keyframed native mesh is driven by a free-floating direct channel
+  // (no AnimationLayer), so the rendered transform is read through the SAME
+  // resolveEvaluatedTransform seam (which overlays the direct channel, #197).
+  __basher_evaluated_transform?: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
-  ) => {
-    value: {
-      sampleTarget?: (s: number) => {
-        size?: [number, number, number];
-        scale?: [number, number, number];
-      } | null;
-    };
-  };
+  ) => { scale?: [number, number, number]; position?: [number, number, number] } | null;
 }
 
 /** All KeyframeChannel* nodes in the DAG — the byte-identical motion observable
@@ -111,58 +107,23 @@ async function gizmoGrabScale(
   );
 }
 
-/** The single AnimationLayer node id (the gizmo first-key composite wraps the
- *  target in one). The size channel only "works" if it evaluates THROUGH this
- *  layer — reading the channel's keyframes proves authoring, not playback. */
-async function layerNodeId(page: import('@playwright/test').Page): Promise<string> {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const entry = Object.entries(nodes).find(([, n]) => n.type === 'AnimationLayer');
-    if (!entry) throw new Error('no AnimationLayer node — gizmo first-key did not wrap the target');
-    return entry[0];
-  });
-}
-
-/** Evaluated (rendered) box size at time `s`, read through the AnimationLayer's
- *  `sampleTarget(seconds)` patched clone — the SAME value the renderer draws
- *  (`<boxGeometry args={value.size}/>`). This is the observation, not the
- *  authored channel. */
-async function evaluatedBoxSize(
+/** Evaluated (rendered) box SCALE at time `s`, read through the SAME
+ *  `resolveEvaluatedTransform` the renderer's DirectChannelsR consumes (#197) —
+ *  the read-side overlay of the free-floating scale channel onto n_box. This is
+ *  the observation (where it renders), not the authored channel. */
+async function evaluatedScale(
   page: import('@playwright/test').Page,
-  layerId: string,
   s: number,
 ): Promise<number[] | undefined> {
   return page.evaluate(
-    ({ id, sec }) => {
+    ({ sec }) => {
       const w = window as unknown as BasherWindow;
-      const v = w.__basher_evaluate!(id, {
+      const t = w.__basher_evaluated_transform!('n_box', {
         time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
-      }).value;
-      return v.sampleTarget?.(sec)?.size;
+      });
+      return t?.scale;
     },
-    { id: layerId, sec: s },
-  );
-}
-
-/** Evaluated (rendered) box SCALE at time `s`, read through the AnimationLayer's
- *  patched clone — the SAME `value.scale` the renderer applies on the <mesh>
- *  (v0.6 #1 Wave 3). The scale channel patches `clone.scale` exactly as a
- *  position channel patches `clone.position` (patchTarget is paramPath-agnostic). */
-async function evaluatedBoxScale(
-  page: import('@playwright/test').Page,
-  layerId: string,
-  s: number,
-): Promise<number[] | undefined> {
-  return page.evaluate(
-    ({ id, sec }) => {
-      const w = window as unknown as BasherWindow;
-      const v = w.__basher_evaluate!(id, {
-        time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
-      }).value;
-      return v.sampleTarget?.(sec)?.scale;
-    },
-    { id: layerId, sec: s },
+    { sec: s },
   );
 }
 
@@ -282,14 +243,16 @@ test.describe('Gizmo + Auto-Key — drag-to-record an animation (REPRO: not work
     expect((byTime[1].value as number[])[0]).toBeCloseTo(4, 5);
 
     // Evaluation half: the scale channel must drive the RENDERED box. Read the
-    // evaluated transform.scale THROUGH the AnimationLayer at the two key times
-    // and the midpoint — linear interpolation @0.5 ⇒ 3× (same arithmetic, now on
-    // the scale band instead of size).
-    const layerId = await layerNodeId(page);
-    const at0 = await evaluatedBoxScale(page, layerId, 0);
-    const atMid = await evaluatedBoxScale(page, layerId, 0.5);
-    const at1 = await evaluatedBoxScale(page, layerId, 1);
-    expect(at0, 'scale channel must evaluate through the layer @t=0').toBeDefined();
+    // evaluated transform.scale THROUGH resolveEvaluatedTransform (the direct
+    // channel's read-side overlay, #197) at the two key times and the midpoint —
+    // linear interpolation @0.5 ⇒ 3×.
+    const at0 = await evaluatedScale(page, 0);
+    const atMid = await evaluatedScale(page, 0.5);
+    const at1 = await evaluatedScale(page, 1);
+    expect(
+      at0,
+      'scale channel must evaluate through the direct-channel resolver @t=0',
+    ).toBeDefined();
     expect(at0![0]).toBeCloseTo(2, 4);
     expect(atMid![0]).toBeCloseTo(3, 4);
     expect(at1![0]).toBeCloseTo(4, 4);

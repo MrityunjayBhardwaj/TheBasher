@@ -348,8 +348,8 @@ describe('#190 — camera first key (no AnimationLayer wrapper)', () => {
   });
 });
 
-describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
-  it('first key: layer + channel + sample land atomically with deterministic ids', () => {
+describe('A2 — dispatchFirstKeyComposite (native → free-floating direct channel, #199)', () => {
+  it('first key: a single direct channel + sample land atomically, NO layer, scene unchanged', () => {
     useDagStore.getState().hydrate(buildScene());
     expect(useDagStore.getState().undoStack).toHaveLength(0);
 
@@ -363,34 +363,37 @@ describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
     expect(res).toEqual({ ok: true });
 
     const nodes = useDagStore.getState().state.nodes;
-    // Deterministic ids match addLayer.ts:131 / addChannel.ts:181.
-    expect(nodes['box_layer']).toBeDefined();
-    expect(nodes['box_layer'].type).toBe('AnimationLayer');
+    // #199 — a native first-key now mints ONE free-floating channel targeting the
+    // node's dagId (V57), the SAME road as camera/glTF. No AnimationLayer wrapper.
+    expect(Object.values(nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
     expect(nodes['box_position_channel']).toBeDefined();
     expect(nodes['box_position_channel'].type).toBe('KeyframeChannelVec3');
+    expect(nodes['box_layer']).toBeUndefined();
 
-    const kfs = (
-      nodes['box_position_channel'].params as {
-        keyframes: Array<{ time: number; value: unknown }>;
-      }
-    ).keyframes;
-    expect(kfs).toHaveLength(1);
-    expect(kfs[0]).toMatchObject({ time: 0, value: [0, 0, 0] });
+    const params = nodes['box_position_channel'].params as {
+      target: string;
+      paramPath: string;
+      keyframes: Array<{ time: number; value: unknown }>;
+    };
+    // The channel targets the node by dagId (free-floating, no input socket wiring).
+    expect(params.target).toBe('box');
+    expect(params.paramPath).toBe('position');
+    expect(params.keyframes).toHaveLength(1);
+    expect(params.keyframes[0]).toMatchObject({ time: 0, value: [0, 0, 0] });
 
-    // H34 splice: Scene.children now names the layer's .out, NOT raw box.
+    // Scene.children STILL names raw box directly — no wrapper splices in.
     const scene = nodes['scene'];
     const childRefs = scene.inputs['children'];
     const refs = Array.isArray(childRefs) ? childRefs : [childRefs];
-    expect(refs.some((r) => r.node === 'box_layer')).toBe(true);
-    expect(refs.some((r) => r.node === 'box')).toBe(false);
+    expect(refs.some((r) => r.node === 'box')).toBe(true);
 
-    // Exactly one atomic undo entry for the whole composite.
+    // Exactly one atomic undo entry for the single-op first key.
     const stack = useDagStore.getState().undoStack;
     expect(stack).toHaveLength(1);
     expect((stack[0] as { __atomic?: true }).__atomic).toBe(true);
   });
 
-  it('second key on the same param routes through single keyframe (no duplicate layer)', () => {
+  it('second key on the same param routes through single keyframe (no duplicate channel, no layer)', () => {
     useDagStore.getState().hydrate(buildScene());
 
     const first = dispatchFirstKeyComposite({
@@ -410,8 +413,9 @@ describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
     expect(second).toEqual({ ok: true });
 
     const nodes = useDagStore.getState().state.nodes;
-    const layers = Object.values(nodes).filter((n) => n.type === 'AnimationLayer');
-    expect(layers).toHaveLength(1); // no duplicate layer
+    expect(Object.values(nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
+    const channels = Object.values(nodes).filter((n) => n.type.startsWith('KeyframeChannel'));
+    expect(channels).toHaveLength(1); // no duplicate channel
 
     const kfs = (
       nodes['box_position_channel'].params as {
@@ -421,31 +425,40 @@ describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
     expect(kfs).toHaveLength(2);
     expect(kfs.map((k) => k.time)).toEqual([0, 1]);
 
-    // Two atomic entries total (one composite + one keyframe).
+    // Two atomic entries total (one first key + one keyframe).
     expect(useDagStore.getState().undoStack).toHaveLength(2);
   });
 
-  it('addChannel validates against the FORKED state (closure resolves the fresh layer id)', () => {
-    // If addChannel were validated against the un-forked base, its
-    // closure could not resolve box_layer and validate would reject.
-    // A green composite IS the proof the fork-evolve sequencing is correct.
+  it('keying a SECOND distinct param mints a SEPARATE direct channel (still no layer)', () => {
     useDagStore.getState().hydrate(buildScene());
-    const res = dispatchFirstKeyComposite({
-      targetId: 'box',
-      paramPath: 'rotation',
-      value: [0, 0, 0],
-      seconds: 0,
-    });
-    expect(res).toEqual({ ok: true });
-    expect(useDagStore.getState().state.nodes['box_rotation_channel']).toBeDefined();
+    expect(
+      dispatchFirstKeyComposite({
+        targetId: 'box',
+        paramPath: 'position',
+        value: [0, 0, 0],
+        seconds: 0,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      dispatchFirstKeyComposite({
+        targetId: 'box',
+        paramPath: 'rotation',
+        value: [0, 0, 0],
+        seconds: 0,
+      }),
+    ).toEqual({ ok: true });
+
+    const nodes = useDagStore.getState().state.nodes;
+    expect(Object.values(nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
+    expect(nodes['box_position_channel']).toBeDefined();
+    expect(nodes['box_rotation_channel']).toBeDefined();
+    expect((nodes['box_rotation_channel'].params as { target: string }).target).toBe('box');
   });
 
-  // P7.12 D-04 (FLAG-4): post-migration the composite delegates to the
-  // Time-wire-free addChannel, so its applied DAG must carry ZERO
-  // `socket:'time'` connects landing on the channel, AND no channel input
-  // binds the now-dropped `time` socket. This locks the invariant that the
-  // first-key composite no longer roots/wires a TimeSource into the channel.
-  it('FLAG-4: first-key composite emits NO time wire into the channel (D-04)', () => {
+  // #199 / P7.12 D-04 (FLAG-4): the direct channel is FREE-FLOATING — found by a
+  // target scan, never wired through an input socket. It carries no `time` input
+  // and nothing in the DAG binds it (no AnimationLayer.animation edge anymore).
+  it('FLAG-4: the direct channel is free-floating — no time wire, no consumer edge', () => {
     useDagStore.getState().hydrate(buildScene());
     const res = dispatchFirstKeyComposite({
       targetId: 'box',
@@ -455,23 +468,17 @@ describe('A2 — dispatchFirstKeyComposite (multi-Mutator fork-evolve)', () => {
     });
     expect(res).toEqual({ ok: true });
 
-    // The channel node carries no binding on a `time` input socket.
     const channel = useDagStore.getState().state.nodes['box_position_channel'];
     expect(channel).toBeDefined();
     expect((channel.inputs as Record<string, unknown>).time).toBeUndefined();
 
-    // No node in the resulting DAG wires anything into the channel's `time`.
+    // No node in the resulting DAG binds the channel via ANY input socket — it is
+    // free-floating, resolved purely by its `params.target` dagId.
     for (const node of Object.values(useDagStore.getState().state.nodes)) {
       const bindings = Object.values(node.inputs ?? {}).flat();
       for (const b of bindings) {
         const ref = b as { node?: string; socket?: string } | undefined;
-        // Nothing should bind the channel via a `time`-named socket on it,
-        // and the channel itself declares no `time` input.
-        if (ref?.node === 'box_position_channel') {
-          // The only legal consumer wiring is layer.animation ← channel.out;
-          // there must be no time edge.
-          expect(node.type === 'AnimationLayer' || node.type === 'KeyframeChannelVec3').toBe(true);
-        }
+        expect(ref?.node).not.toBe('box_position_channel');
       }
     }
   });
