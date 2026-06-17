@@ -16,10 +16,13 @@
 // REF: src/app/cameraLens.ts (focal↔fov math); src/app/activeCamera.ts
 //      (pose read); vyapti V34/V37. Mirrors NPanel BooleanField row layout.
 
+import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cameraLens';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { ParamDiamond } from './ParamDiamond';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
+import { useTimeStore } from './stores/timeStore';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -36,6 +39,27 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   const node = useDagStore((s) => s.state.nodes[nodeId]);
   const dispatch = useDagStore((s) => s.dispatch);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
+
+  // #194 / H104 — the evaluated read side. CameraLensControls is a CUSTOM control,
+  // so it does NOT inherit the generic ParamRow's evaluated display: it read
+  // `node.params.fov/near/far` directly, freezing the focal/FOV/clip fields at the
+  // authored value while the renderer (look-through via resolveActiveCameraPoseAt,
+  // V56) followed the keyed channel. Resolve the animatable scalars through the
+  // render-identical per-node path (resolveEvaluatedParam — the #198 MaterialRows
+  // template; its `.sample()` is the SAME sampleScalarKeyframes the camera resolver
+  // uses, so inspector == look-through), gated read-only while a channel actively
+  // drives the field during playback (`playing && resolved !== null`, the NPanel
+  // D-02 gate). Subscribing here is what makes the fields re-render on scrub.
+  const dagState = useDagStore((s) => s.state);
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const evaluatedScalar = useMemo(() => {
+    const ctx = { time: { frame, seconds, normalized } };
+    const at = (paramPath: string) => resolveEvaluatedParam(dagState, nodeId, paramPath, ctx);
+    return { fov: at('fov'), near: at('near'), far: at('far') };
+  }, [dagState, nodeId, frame, seconds, normalized]);
 
   if (!node) return null;
   const params = (node.params ?? {}) as {
@@ -54,8 +78,15 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   const focusDistance = params.focusDistance ?? 5;
   const fStop = params.fStop ?? 2.8;
 
-  const near = params.near ?? 0.1;
-  const far = params.far ?? 1000;
+  // Effective (evaluated) value the renderer shows, falling back to the authored
+  // param when no channel/transient drives it (resolved === null). `readOnly` while
+  // a channel actively drives the field during playback (the NPanel D-02 gate).
+  const near =
+    typeof evaluatedScalar.near?.value === 'number' ? evaluatedScalar.near.value : params.near ?? 0.1;
+  const far =
+    typeof evaluatedScalar.far?.value === 'number' ? evaluatedScalar.far.value : params.far ?? 1000;
+  const nearReadOnly = playing && evaluatedScalar.near !== null;
+  const farReadOnly = playing && evaluatedScalar.far !== null;
 
   const setParam = (paramPath: string, value: unknown, label: string) =>
     dispatch({ type: 'setParam', nodeId, paramPath, value }, 'user', label);
@@ -72,7 +103,11 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   };
 
   // --- Perspective lens (focal length + sensor → derived FOV) ----------------
-  const fov = params.fov ?? 45;
+  // FOV is the keyable param: display its EVALUATED value so the derived focal
+  // readout + the FOV readout both follow a keyed channel during scrub (#194).
+  const fov =
+    typeof evaluatedScalar.fov?.value === 'number' ? evaluatedScalar.fov.value : params.fov ?? 45;
+  const fovReadOnly = playing && evaluatedScalar.fov !== null;
   const sensor = params.sensorSize ?? DEFAULT_SENSOR_MM;
   const focal = round(focalLengthFromFov(fov, sensor));
 
@@ -130,6 +165,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
                 step={1}
                 min={1}
                 value={focal}
+                readOnly={fovReadOnly}
+                data-readonly-while-playing={fovReadOnly || undefined}
                 data-testid={`inspector-camera-focal-${nodeId}`}
                 onChange={(e) => onFocal(Number(e.target.value))}
                 className={NUM}
@@ -145,6 +182,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
                 step={1}
                 min={1}
                 value={round(sensor)}
+                readOnly={fovReadOnly}
+                data-readonly-while-playing={fovReadOnly || undefined}
                 data-testid={`inspector-camera-sensor-${nodeId}`}
                 onChange={(e) => onSensor(Number(e.target.value))}
                 className={NUM}
@@ -233,6 +272,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
           step={0.1}
           min={0}
           value={near}
+          readOnly={nearReadOnly}
+          data-readonly-while-playing={nearReadOnly || undefined}
           data-testid={`inspector-camera-near-${nodeId}`}
           onChange={(e) => {
             const n = Number(e.target.value);
@@ -251,6 +292,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
           step={10}
           min={0}
           value={far}
+          readOnly={farReadOnly}
+          data-readonly-while-playing={farReadOnly || undefined}
           data-testid={`inspector-camera-far-${nodeId}`}
           onChange={(e) => {
             const n = Number(e.target.value);
