@@ -487,31 +487,67 @@ function isCameraNodeType(type: string | undefined): boolean {
   return type === 'PerspectiveCamera' || type === 'OrthographicCamera';
 }
 
+/** GltfChild (#188). NOT a scene producer (no `out` socket, no scene edge), so it
+ *  CANNOT be wrapped in an AnimationLayer — its material channels target the child
+ *  dagId directly, exactly like a camera (the glTF direct-channel road, V57). */
+function isGltfChildNodeType(type: string | undefined): boolean {
+  return type === 'GltfChild';
+}
+
+/** The KeyframeChannel* node type + default easing for a value type. */
+function channelNodeFor(valueType: 'number' | 'vec3' | 'color' | 'quat'): {
+  nodeType: string;
+  easing: 'linear' | 'cubic';
+} {
+  switch (valueType) {
+    case 'vec3':
+      return { nodeType: 'KeyframeChannelVec3', easing: 'cubic' };
+    case 'color':
+      return { nodeType: 'KeyframeChannelColor', easing: 'cubic' };
+    case 'quat':
+      return { nodeType: 'KeyframeChannelQuat', easing: 'cubic' };
+    default:
+      return { nodeType: 'KeyframeChannelNumber', easing: 'linear' };
+  }
+}
+
 /**
- * The CAMERA first-key (#190). A camera is not a SceneChild and is wired via
- * scene.camera, so the addLayer+addChannel composite can't carry it (the layer
- * is Mesh-typed and patchTarget clones a SceneChild). Instead, create a SINGLE
- * free-floating KeyframeChannel* targeting the camera node, with the first
- * sample baked into params — resolveActiveCameraPoseAt finds it by target scan.
+ * The DIRECT first-key (#190 camera, #188 glTF material) — ONE free-floating
+ * channel targeting a node that sits OUTSIDE the AnimationLayer machinery (V20,
+ * V57). A camera is wired via scene.camera; a GltfChild is not a scene producer —
+ * neither can be wrapped by the addLayer+addChannel composite (the layer is
+ * Mesh-typed and patchTarget clones a SceneChild). Instead create a SINGLE
+ * KeyframeChannel* targeting the node, the first sample baked into params; the
+ * resolver finds it by target scan (resolveActiveCameraPoseAt for the camera,
+ * directChannelNodesForTarget / GltfAssetR's material useFrame for the child).
  * Subsequent keys flow through the EXISTING channel-id keyframe path (autoKey's
- * 'animated' branch), so only this first step is camera-specific.
+ * 'animated' branch), so only this first step is node-specific.
  *
  * Routed through the SAME propose→accept spine (one atomic undo entry, V13),
- * mirroring the composite's fresh-node closure-root pattern (its addLayer op
- * also roots the closure on a not-yet-existing id).
+ * mirroring the composite's fresh-node closure-root pattern.
+ *
+ * @param allowed   the value types this surface can key (camera: number/vec3;
+ *                  glTF material: number/color) — guards the unsupported case.
  */
-function dispatchCameraFirstKey(args: FirstKeyCompositeArgs, base: DagState): DispatchResult {
+function dispatchDirectFirstKey(
+  args: FirstKeyCompositeArgs,
+  base: DagState,
+  opts: {
+    allowed: readonly ('number' | 'vec3' | 'color' | 'quat')[];
+    intentTag: string;
+    surface: string;
+  },
+): DispatchResult {
   const { targetId, paramPath, value, seconds } = args;
   const intent = `Animate ${targetId}.${paramPath}`;
   const valueType = inferValueType(value);
-  if (valueType !== 'number' && valueType !== 'vec3') {
+  if (!valueType || !opts.allowed.includes(valueType)) {
     return {
       ok: false,
-      reason: `Camera param "${paramPath}" is not keyframe-able (expected a number or vec3).`,
+      reason: `${opts.surface} param "${paramPath}" is not keyframe-able (expected ${opts.allowed.join(' or ')}).`,
     };
   }
-  const nodeType = valueType === 'vec3' ? 'KeyframeChannelVec3' : 'KeyframeChannelNumber';
-  const easing = valueType === 'vec3' ? 'cubic' : 'linear';
+  const { nodeType, easing } = channelNodeFor(valueType);
   const channelId = `${targetId}_${safePath(paramPath)}_channel`;
   // First-key only fires for an un-animated param, so the channel should not yet
   // exist; guard rather than emit a colliding addNode.
@@ -530,7 +566,7 @@ function dispatchCameraFirstKey(args: FirstKeyCompositeArgs, base: DagState): Di
     },
   };
   const closureSpec: ClosureSpec = { rootSelectors: [channelId], followedEdges: [] };
-  return proposeAndAccept(base, [op], intent, ['user:camera.firstKey'], closureSpec, []);
+  return proposeAndAccept(base, [op], intent, [opts.intentTag], closureSpec, []);
 }
 
 export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): DispatchResult {
@@ -546,7 +582,24 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   // break selectActiveCameraNode). Same propose→accept spine, camera-specific
   // op set. Subsequent keys flow through the existing channel-id keyframe path.
   if (isCameraNodeType(base.nodes[targetId]?.type)) {
-    return dispatchCameraFirstKey(args, base);
+    return dispatchDirectFirstKey(args, base, {
+      allowed: ['number', 'vec3'],
+      intentTag: 'user:camera.firstKey',
+      surface: 'Camera',
+    });
+  }
+
+  // #188 — a GltfChild is NOT a scene producer (no `out` socket), so the addLayer
+  // composite below can't wrap it. Its material channels (materials.<slot>.<lobe>.
+  // <field>) target the child dagId directly — the SAME free-floating direct-channel
+  // road as the camera (V57). number = a scalar lobe (metalness/roughness/…), color
+  // = a hex lobe (base.color/emission.color).
+  if (isGltfChildNodeType(base.nodes[targetId]?.type)) {
+    return dispatchDirectFirstKey(args, base, {
+      allowed: ['number', 'color'],
+      intentTag: 'user:gltfMaterial.firstKey',
+      surface: 'glTF material',
+    });
   }
 
   // 1 — deterministic channel id (mirror addChannel.ts:181). The LAYER id is

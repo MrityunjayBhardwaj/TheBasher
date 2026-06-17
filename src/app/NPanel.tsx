@@ -1109,11 +1109,13 @@ function GltfMatColorField({
   label,
   value,
   onCommit,
+  diamond,
 }: {
   testid: string;
   label: string;
   value: string;
   onCommit: (next: string) => void;
+  diamond?: React.ReactNode;
 }) {
   const [draft, setDraft] = useState(value);
   // Resync when the authored value changes outside this field (undo, slot switch).
@@ -1125,7 +1127,10 @@ function GltfMatColorField({
   const swatch = isHex6(draft) ? draft : '#000000';
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="font-mono text-fg/60">{label}</span>
+      <span className="flex items-center gap-1 font-mono text-fg/60">
+        {diamond}
+        {label}
+      </span>
       <span className="flex items-center gap-1">
         <input
           type="color"
@@ -1160,15 +1165,20 @@ function GltfMatNumberField({
   label,
   value,
   onCommit,
+  diamond,
 }: {
   testid: string;
   label: string;
   value: number;
   onCommit: (next: number) => void;
+  diamond?: React.ReactNode;
 }) {
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="font-mono text-fg/60">{label}</span>
+      <span className="flex items-center gap-1 font-mono text-fg/60">
+        {diamond}
+        {label}
+      </span>
       <input
         type="number"
         step="0.1"
@@ -1212,7 +1222,18 @@ function GltfMaterialEditor({
   // Clamp: a slot switch + undo could leave activeSlot past the array end.
   const slot = activeSlot < materials.length ? activeSlot : 0;
   const mat = materials[slot] as unknown as Record<string, Record<string, unknown>>;
+  // The keyframe paramPath for a lobe field — `materials.<slot>.<lobe>.<field>`,
+  // targeting THIS GltfChild dagId directly (the glTF direct-channel road, V57).
+  const fieldPath = (lobe: string, key: string) => `materials.${slot}.${lobe}.${key}`;
   const commit = (lobe: string, key: string, value: unknown) => {
+    // #188 — keyframing parity (the H104 rule: a custom control must re-wire every
+    // cross-cutting affordance, here Auto-Key). If this field is ANIMATED, route the
+    // edit through the shared seam (transient hold / keyframe at the playhead) and do
+    // NOT also whole-array-replace the source `materials` — the channel owns the value
+    // (H36 single-write; a source write would double-apply and read as a no-op while
+    // the channel drives the render). Un-animated → the existing whole-array replace,
+    // then autoKeyCommit (Auto-Key ON → first-key creates the free-floating channel).
+    if (routeAnimatedGrab(nodeId, fieldPath(lobe, key), value)) return;
     const cur = materials[slot] as unknown as Record<string, Record<string, unknown>>;
     const nextMat = { ...cur, [lobe]: { ...(cur[lobe] ?? {}), [key]: value } };
     const next = materials.map((m, i) => (i === slot ? nextMat : m));
@@ -1221,6 +1242,7 @@ function GltfMaterialEditor({
       'user',
       `edit material slot ${slot} ${lobe}.${key}`,
     );
+    autoKeyCommit(nodeId, fieldPath(lobe, key), value);
   };
   // #178 S5 — edit-layer map write: rebuild the whole `materials` array setting
   // this slot's `maps.<mapSlot>` (null = inherit imported, CLEARED_MAP = remove,
@@ -1281,6 +1303,9 @@ function GltfMaterialEditor({
                   label={fieldLabel}
                   value={cv}
                   onCommit={(v) => commit(lobe, key, v)}
+                  diamond={
+                    <ParamDiamond nodeId={nodeId} paramPath={fieldPath(lobe, key)} value={cv} />
+                  }
                 />
               );
             }
@@ -1292,6 +1317,9 @@ function GltfMaterialEditor({
                 label={fieldLabel}
                 value={nv}
                 onCommit={(v) => commit(lobe, key, v)}
+                diamond={
+                  <ParamDiamond nodeId={nodeId} paramPath={fieldPath(lobe, key)} value={nv} />
+                }
               />
             );
           })}
