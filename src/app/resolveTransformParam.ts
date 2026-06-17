@@ -8,12 +8,12 @@
 //   `NumericField`/`VectorComponent` derive `display = scrub.isDragging ?
 //   scrub.previewValue : value` where `value` comes from `node.params.X`
 //   (the static authored source). The moment a transform param is
-//   animated, the rendered object moves (AnimationLayer.patchTarget writes
-//   the channel value onto the CLONE — AnimationLayer.ts:107-122) but the
-//   inspector freezes at the authored value. Same root cause as #68's
-//   gizmo (H40); same fix vehicle: the pure resolver that already mirrors
-//   the renderer's scene-child correspondence + unwraps the AnimationLayer
-//   patched clone (Chesterton — resolveEvaluatedTransform.ts:88-164).
+//   animated, the rendered object moves (a free-floating direct channel's
+//   sampled value is overlaid by `overlayChannels` — V57) but the inspector
+//   freezes at the authored value. Same root cause as #68's gizmo (H40);
+//   same fix vehicle: the pure resolver that mirrors the renderer's
+//   scene-child correspondence + overlays the direct channel (Chesterton —
+//   resolveEvaluatedTransform.ts).
 //
 // THE H40 NAMED TRAP, restated for this helper:
 //   `evaluate(state, selectedId, ctx)` returns the box's RAW value (the
@@ -35,8 +35,8 @@
 //   prop (today's behavior, byte-identical, no crash). Per-param fallback
 //   exactly mirrors the gizmo seam at Gizmo.tsx:205-229. A non-null Vec3
 //   ⇒ the field displays this value (which may equal the static authored
-//   value when the resolver preserved an un-channelled field on the
-//   patched clone — that's correct-by-construction, not a special case).
+//   value when the resolver preserved an un-channelled field through the
+//   direct-channel overlay — that's correct-by-construction, not a special case).
 //
 // D-03 scope (CONTEXT.md:53-59): transform-only. `paramPath` is whitelisted
 //   to `'position' | 'rotation' | 'scale'`. Anything else (e.g. material
@@ -110,8 +110,8 @@ export function resolveTransformParam(
   // 3. Consume the shared resolver — the ONE place "where it actually
   //    renders" is derived (H40 mechanism). NEVER `evaluate(state,
   //    selectedId, ...)` here — that returns the RAW source value (the
-  //    named trap). The resolver unwraps the AnimationLayer patched
-  //    clone via the SceneFromDAG index-correspondence.
+  //    named trap). The resolver overlays the free-floating direct channel
+  //    via the SceneFromDAG index-correspondence (V57).
   const result = resolveEvaluatedTransform(state, selectedId, ctx, cache);
   if (result == null) return null;
 

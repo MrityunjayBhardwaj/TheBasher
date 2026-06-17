@@ -25,9 +25,9 @@
 //   the static `node.params`. Like the Character branch, it now evaluates
 //   the render tree (via resolveEvaluatedTransform) and re-seeds the proxy
 //   on every playhead change so the gizmo sits where the cube RENDERS
-//   (the AnimationLayer patched clone), not where it was authored. When
+//   (the channel-overlaid value), not where it was authored. When
 //   the resolver returns null (selectedId not a rendered scene child / not
-//   a wrapped layer target) the branch falls back ENTIRELY to the static
+//   a GltfChild) the branch falls back ENTIRELY to the static
 //   params — today's behavior, no crash (D-04 per-param-when-null).
 //   `playing` is subscribed (D-03): the gizmo display-follows during
 //   playback and is interactive only when paused.
@@ -194,16 +194,16 @@ export function Gizmo() {
     if (manip) {
       // P7.3 (#68): mirror the Character branch — evaluate the render tree
       // and seed the proxy to the EVALUATED transform, re-running on every
-      // playhead change. The resolver returns the AnimationLayer patched
-      // clone (the rendered transform) for an animated node; null when the
-      // selection isn't a rendered scene child / wrapped target.
+      // playhead change. The resolver returns the channel-overlaid value
+      // (the rendered transform) for an animated node; null when the
+      // selection isn't a rendered scene child / GltfChild.
       //
       // No proxy double-write: evalT is computed FIRST, then a SINGLE
       // set() per axis chooses eval-or-static — we never set static then
       // overwrite (which would flash the stale authored value for a frame).
-      // evalT non-null ⇒ the patched clone IS the rendered transform, so
+      // evalT non-null ⇒ the overlaid value IS the rendered transform, so
       // seeding all three axes from it is correct-by-construction (the
-      // gizmo must sit where the cube renders; patchTarget preserves
+      // gizmo must sit where the cube renders; overlayChannels preserves
       // un-channelled fields). evalT null ⇒ FULL static fallback — today's
       // behavior exactly (D-04 per-param-when-null).
       let evalT: ReturnType<typeof resolveEvaluatedTransform> = null;
@@ -220,7 +220,7 @@ export function Gizmo() {
       else groupNode.position.set(...manip.position);
 
       // rotation — params/eval rotation are DEGREES; Object3D wants RADIANS.
-      // Per-param: eval rotation when the patched clone carries one, else
+      // Per-param: eval rotation when the overlaid value carries one, else
       // the static manip rotation, else identity (byte-identical defaults).
       if (evalT && evalT.rotation) groupNode.rotation.set(...degVec3ToRad(evalT.rotation));
       else if (!evalT && manip.rotation) groupNode.rotation.set(...degVec3ToRad(manip.rotation));

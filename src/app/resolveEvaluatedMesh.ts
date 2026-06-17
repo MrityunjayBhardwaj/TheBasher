@@ -12,7 +12,7 @@
 // The ONE band, no drift (H40 / V20):
 //   - box/sphere: the TRS band is DELEGATED to `resolveEvaluatedTransform` (#153)
 //     — the same animation-tracking walk the renderer/gizmo/inspector use, which
-//     unwraps the AnimationLayer patched clone. When there is no render output to
+//     overlays the free-floating direct channel (V57). When there is no render output to
 //     walk (the bare-node case), we fall back to the node's own Op-backed params
 //     (position/rotation/scale); `scale` defaults to identity ([1,1,1]) so a
 //     pre-migration node still resolves green (C-1 — the V10/H14 guard ALSO at
@@ -85,7 +85,7 @@ function isMaterialSpec(v: unknown): v is InlineMaterialSpec {
 
 /**
  * The primitive (Box/Sphere) transform band (#153). Prefer the full evaluated
- * walk (`resolveEvaluatedTransform` unwraps the AnimationLayer patched clone — the
+ * walk (`resolveEvaluatedTransform` overlays the free-floating direct channel, V57 — the
  * renderer's exact, animation-tracking transform). When there is no render output
  * to walk (the bare-node case — node not in the rendered scene), fall back to the
  * node's own Op-backed params. Mirrors the GltfChild branch; never a parallel walk.

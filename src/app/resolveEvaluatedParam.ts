@@ -1,7 +1,7 @@
 // resolveEvaluatedParam — the GENERIC evaluated-param resolver for NON-transform
 // inspector fields (issue #149, Wave C2). Transform fields keep
 // resolveTransformParam → resolveEvaluatedTransform (which carries the
-// AnimationLayer-unwrap + scene-index correspondence + glTF-child branch). This
+// direct-channel overlay + scene-index correspondence + glTF-child branch). This
 // is the NON-transform sibling — there is NO mega-resolver (RESEARCH reshaping
 // #3).
 //
