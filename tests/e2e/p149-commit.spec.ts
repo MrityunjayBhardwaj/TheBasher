@@ -41,27 +41,8 @@ async function seedWrappedAnimatedBox(page: import('@playwright/test').Page) {
     const sceneId = findType('Scene');
     if (!sceneId) throw new Error('no Scene');
     const boxId = 'n_box';
-    dispatch({
-      type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
+    // V57 — a free-floating direct channel targeting the box. No AnimationLayer
+    // wrapper: the box stays its own scene child; overlayChannels drives it.
     dispatch({
       type: 'addNode',
       nodeId: 'seed_pos_ch',
@@ -75,11 +56,6 @@ async function seedWrappedAnimatedBox(page: import('@playwright/test').Page) {
           { time: 2, value: [4, 0, 0], easing: 'linear' },
         ],
       },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_pos_ch', socket: 'out' },
-      to: { node: 'seed_layer', socket: 'animation' },
     });
   });
 }

@@ -33,27 +33,9 @@ async function seedTwoBandAnimatedBox(page: import('@playwright/test').Page) {
     const sceneId = findType('Scene');
     if (!sceneId) throw new Error('no Scene');
     const boxId = 'n_box';
-    dispatch({
-      type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
+    // V57 — two free-floating direct channels targeting the box (position +
+    // rotation). No AnimationLayer wrapper: the box stays its own scene child;
+    // overlayChannels drives it.
     for (const [id, paramPath] of [
       ['seed_pos', 'position'],
       ['seed_rot', 'rotation'],
@@ -71,11 +53,6 @@ async function seedTwoBandAnimatedBox(page: import('@playwright/test').Page) {
             { time: 2, value: [4, 0, 0], easing: 'linear' },
           ],
         },
-      });
-      dispatch({
-        type: 'connect',
-        from: { node: id, socket: 'out' },
-        to: { node: 'seed_layer', socket: 'animation' },
       });
     }
   });

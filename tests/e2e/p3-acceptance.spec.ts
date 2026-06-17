@@ -67,10 +67,11 @@ test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor pan
   await expect(page.getByTestId('timeline-canvas')).toHaveAttribute('data-channel-count', '0');
 });
 
-test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', async ({ page }) => {
-  // Build the substrate: addNode AnimationLayer (wrapping the seed box) +
-  // a KeyframeChannelVec3 with two keyframes + connect chain. Drives the
-  // dopesheet to render one layer row + one channel row.
+test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ page }) => {
+  // Build the substrate: a free-floating KeyframeChannelVec3 (V57) targeting
+  // the seed box by dagId, with two keyframes. No AnimationLayer wrapper, no
+  // scene rewire — the box stays its own scene child. Drives the dopesheet to
+  // render one channel row.
   await page.evaluate(async () => {
     const w = window as unknown as BasherWindow & {
       __basher_dag: {
@@ -97,12 +98,6 @@ test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', asyn
       Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
     dag.dispatch({
       type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'Bounce', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dag.dispatch({
-      type: 'addNode',
       nodeId: 'box_pos_channel',
       nodeType: 'KeyframeChannelVec3',
       params: {
@@ -115,30 +110,15 @@ test('P3#3 dopesheet renders a layer + channel after a Mutator chain runs', asyn
         ],
       },
     });
-    // P7.12 D-04: channel has no `time` socket — connect removed.
-    dag.dispatch({
-      type: 'connect',
-      from: { node: 'box_pos_channel', socket: 'out' },
-      to: { node: 'box_layer', socket: 'animation' },
-    });
-    dag.dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'box_layer', socket: 'target' },
-    });
   });
   await page.getByTestId('floating-toolbar-timeline').click();
-  // P6 W9: the SVG Dopesheet rendered a DOM `layer-{id}` group with
-  // per-channel `channel-row-{id}` + per-keyframe `keyframe-diamond-*`
-  // nodes. TimelineCanvas paints all of that onto a 2D <canvas>
-  // (D-W9-2/D-W9-4 — no per-row DOM, no pixel-diffing). The honest
-  // equivalent of "one channel row + two diamonds rendered" is the
-  // DAG-derived mirror-attr contract: one channel collected, two
-  // keyframes culled-and-painted. collectChannelRows deliberately
-  // flattens layer-wired channels (mute/solo chrome is a deferred
-  // drawer concern, NOT on the canvas surface in W9 — see
-  // TimelineCanvas.tsx collectChannelRows comment); the lost
-  // mute/solo DOM affordance's Op path is still covered by P3#5.
+  // P6 W9: the SVG Dopesheet rendered a DOM `channel-row-{id}` group with
+  // per-keyframe `keyframe-diamond-*` nodes. TimelineCanvas paints all of
+  // that onto a 2D <canvas> (D-W9-2/D-W9-4 — no per-row DOM, no
+  // pixel-diffing). The honest equivalent of "one channel row + two diamonds
+  // rendered" is the DAG-derived mirror-attr contract: one channel collected,
+  // two keyframes culled-and-painted. collectChannelRows now lists every
+  // free-floating channel as a row (V57 — no layer grouping).
   const canvas = page.getByTestId('timeline-canvas');
   await expect(canvas).toBeVisible();
   await expect(canvas).toHaveAttribute('data-channel-count', '1');
@@ -165,12 +145,7 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
     }
     const timeId =
       Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
-    dag.dispatch({
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: {},
-    });
+    // V57: free-floating direct channel targeting the box by dagId.
     dag.dispatch({
       type: 'addNode',
       nodeId: 'box_pos_channel',
@@ -184,12 +159,6 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
           { time: 1, value: 5, easing: 'linear' },
         ],
       },
-    });
-    // P7.12 D-04: channel has no `time` socket — connect removed.
-    dag.dispatch({
-      type: 'connect',
-      from: { node: 'box_pos_channel', socket: 'out' },
-      to: { node: 'box_layer', socket: 'animation' },
     });
   });
   await page.getByTestId('floating-toolbar-timeline').click();
@@ -226,17 +195,14 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
 
 // P6 W9: this spec exercised the SVG Dopesheet's per-layer mute toggle
 // (`layer-mute-{id}`, rendered by LayerRowControls inside Dopesheet's
-// LayerSection). TimelineCanvas (D-W9-2) flattens layer-wired channels
-// and deliberately does NOT paint mute/solo chrome — that affordance is
-// a deferred drawer concern with no mount in W9 (see collectChannelRows
-// in TimelineCanvas.tsx). The V1 invariant it tested (UI toggle →
-// setParam Op) is unchanged at the store/Op-builder level; only the UI
-// surface is gone. Skipped honestly rather than faked (dispatching the
-// Op directly here would assert dispatch works, not that a UI toggle
-// dispatches it). Re-enable when a wave re-mounts layer mute/solo
-// controls onto/beside TimelineCanvas. H29 hand-resolution: deferral
-// recorded, not silent false-green.
-test.skip('P3#5 mute toggle on layer row dispatches a setParam Op (V1 holds) — DEFERRED: layer mute/solo chrome not on the W9 TimelineCanvas surface', async () => {
+// LayerSection). The AnimationLayer node type has since been RETIRED (V57
+// — animation is now free-floating direct channels, no layer wrapper), so
+// the layer-row mute/solo affordance has no backing model at all. Per-
+// channel mute/weight live on the channel itself; a future wave may mount
+// a per-channel mute control onto/beside TimelineCanvas. Skipped honestly
+// rather than faked. H29 hand-resolution: deferral recorded, not silent
+// false-green.
+test.skip('P3#5 mute toggle on layer row dispatches a setParam Op (V1 holds) — DEFERRED: AnimationLayer retired (V57); per-channel mute chrome not yet on the W9 TimelineCanvas surface', async () => {
   // intentionally empty — see the block comment above for the W9
   // rationale and the re-enable condition.
 });

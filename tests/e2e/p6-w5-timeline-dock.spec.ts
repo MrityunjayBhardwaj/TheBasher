@@ -146,7 +146,8 @@ test('P6.W5#4 Frame / total + FPS readouts reflect timeStore', async ({ page }) 
 test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)', async ({
   page,
 }) => {
-  // Seed a layer + channel so the Dopesheet has a row to click.
+  // Seed a free-floating direct channel (V57) so the Dopesheet has a row to
+  // click — targets the box by dagId, no AnimationLayer wrapper.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
@@ -157,12 +158,6 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
     }
     const timeId =
       Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
-    dag.dispatch({
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
     dag.dispatch({
       type: 'addNode',
       nodeId: 'box_pos_channel',
@@ -176,12 +171,6 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
           { time: 1, value: 5, easing: 'linear' },
         ],
       },
-    });
-    // P7.12 D-04: channel has no `time` socket — connect removed.
-    dag.dispatch({
-      type: 'connect',
-      from: { node: 'box_pos_channel', socket: 'out' },
-      to: { node: 'box_layer', socket: 'animation' },
     });
   });
   await page.getByTestId('floating-toolbar-timeline').click();

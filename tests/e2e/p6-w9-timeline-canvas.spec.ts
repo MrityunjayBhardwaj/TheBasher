@@ -47,9 +47,10 @@ interface BasherWindow {
 }
 
 /**
- * Seed a realistic animation scene: one layer + N channels, each with
- * `kfPerChannel` keyframes spread across [0, span] seconds. Returns the
- * total keyframe count so the culling spec can compare.
+ * Seed a realistic animation scene: N free-floating direct channels (V57),
+ * each with `kfPerChannel` keyframes spread across [0, span] seconds. No
+ * AnimationLayer wrapper — every channel targets the DirectionalLight by
+ * dagId. Returns the total keyframe count so the culling spec can compare.
  */
 async function seedScene(
   page: import('@playwright/test').Page,
@@ -79,12 +80,6 @@ async function seedScene(
             color: '#ffffff',
           },
         },
-        {
-          type: 'addNode',
-          nodeId: 'layer',
-          nodeType: 'AnimationLayer',
-          params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-        },
       ];
       let total = 0;
       for (let c = 0; c < channels; c++) {
@@ -98,17 +93,12 @@ async function seedScene(
           });
           total++;
         }
+        // V57: free-floating direct channel targeting the light by dagId.
         ops.push({
           type: 'addNode',
           nodeId: id,
           nodeType: 'KeyframeChannelNumber',
           params: { name: id, target: 'sun', paramPath: 'intensity', keyframes },
-        });
-        // P7.12 D-04: channel has no `time` socket — connect removed.
-        ops.push({
-          type: 'connect',
-          from: { node: id, socket: 'out' },
-          to: { node: 'layer', socket: 'animation' },
         });
       }
       dag.dispatchAtomic(ops, 'user', 'w9-seed');
@@ -190,6 +180,7 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
       Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
     dag.dispatchAtomic(
       [
+        // V57: free-floating direct channel targeting the light by dagId.
         {
           type: 'addNode',
           nodeId: 'ch_extra',
@@ -203,12 +194,6 @@ test('P6.W9#1 scrub advances data-playhead-px monotonically; diamonds survive (c
               { time: 4, value: 1, easing: 'linear' },
             ],
           },
-        },
-        // P7.12 D-04: channel has no `time` socket — connect removed.
-        {
-          type: 'connect',
-          from: { node: 'ch_extra', socket: 'out' },
-          to: { node: 'layer', socket: 'animation' },
         },
       ],
       'user',

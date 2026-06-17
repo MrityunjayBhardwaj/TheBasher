@@ -58,8 +58,9 @@ interface BasherWindow {
   __basher_gizmo_grab?: (mode: 'translate' | 'rotate' | 'scale', target: Vec3Tuple) => void;
 }
 
-/** Seed n_box wrapped in an AnimationLayer with a channel on `paramPath`.
- *  Returns { layerId } — the wrapping group's name in the scene. */
+/** Seed a free-floating direct channel (V57) on n_box for `paramPath`. No
+ *  AnimationLayer wrapper: the box stays its own scene child and overlayChannels
+ *  drives it. Returns { boxId } — the animated node's id (and its scene-child name). */
 async function seedWrappedAnimatedBox(
   page: import('@playwright/test').Page,
   channel: { nodeType: string; paramPath: string; keyframes: { time: number; value: unknown }[] },
@@ -79,27 +80,6 @@ async function seedWrappedAnimatedBox(
     const boxId = 'n_box';
     dispatch({
       type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'SeedLayer', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
-    dispatch({
-      type: 'addNode',
       nodeId: 'seed_ch',
       nodeType: chan.nodeType,
       params: {
@@ -109,13 +89,7 @@ async function seedWrappedAnimatedBox(
         keyframes: chan.keyframes,
       },
     });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_ch', socket: 'out' },
-      to: { node: 'seed_layer', socket: 'animation' },
-    });
-    const n = nodes();
-    return { layerId: Object.entries(n).find(([, x]) => x.type === 'AnimationLayer')?.[0] ?? null };
+    return { boxId };
   }, channel);
   return ids;
 }
@@ -155,7 +129,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     // Wait for the render overlay (useFrame) to apply the held edit.
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
-      const p = w.__basher_mesh_world_position?.('seed_layer');
+      const p = w.__basher_mesh_world_position?.('n_box');
       return p != null && Math.abs(p[0] - 9) < 1e-3;
     });
 
@@ -163,7 +137,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
       const w = window as unknown as BasherWindow;
       const ctx = { time: { frame: 60, seconds: 1, normalized: 0.1 } };
       return {
-        sideA: w.__basher_mesh_world_position!('seed_layer'),
+        sideA: w.__basher_mesh_world_position!('n_box'),
         sideB: w.__basher_evaluated_transform!('n_box', ctx)?.position ?? null,
         transient: w.__basher_transient!.getState().get('n_box', 'position')?.value ?? null,
       };
@@ -207,8 +181,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
       return (
-        typeof w.__basher_mesh_material === 'function' &&
-        w.__basher_mesh_material('seed_layer') != null
+        typeof w.__basher_mesh_material === 'function' && w.__basher_mesh_material('n_box') != null
       );
     });
 
@@ -220,7 +193,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
       const w = window as unknown as BasherWindow;
       const ctx = { time: { frame: 60, seconds: 1, normalized: 0.1 } };
       return {
-        sideA: w.__basher_mesh_material!('seed_layer')?.color ?? null,
+        sideA: w.__basher_mesh_material!('n_box')?.color ?? null,
         sideB: w.__basher_evaluated_param!('n_box', 'material.base.color', ctx)?.value ?? null,
       };
     });
@@ -235,14 +208,14 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     });
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
-      const c = w.__basher_mesh_material!('seed_layer')?.color ?? '';
+      const c = w.__basher_mesh_material!('n_box')?.color ?? '';
       return c.toLowerCase() === '#ff0000';
     });
     const withTransient = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       const ctx = { time: { frame: 60, seconds: 1, normalized: 0.1 } };
       return {
-        sideA: w.__basher_mesh_material!('seed_layer')?.color ?? null,
+        sideA: w.__basher_mesh_material!('n_box')?.color ?? null,
         sideB: w.__basher_evaluated_param!('n_box', 'material.base.color', ctx)?.value ?? null,
       };
     });

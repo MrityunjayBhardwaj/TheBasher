@@ -7,13 +7,14 @@
 // NEW timing; and the P7 inspector diamond still reads on-key after a
 // sub-frame drop (D-05).
 //
-// H35/H28 discipline: the load-bearing assertion is `__basher_evaluate`
-// returning a value that is ONLY correct if the keyframe MOVED — an
-// OBSERVED evaluated delta, NEVER a dopesheet row / data-*-count /
-// screenshot (TimelineCanvas is never screenshot-asserted — D-W9-8).
+// H35/H28 discipline: the load-bearing assertion is the EVALUATED rendered
+// rotation (`__basher_evaluated_transform`, the V57 direct-channel resolver)
+// returning a value that is ONLY correct if the keyframe MOVED — an OBSERVED
+// evaluated delta, NEVER a dopesheet row / data-*-count / screenshot
+// (TimelineCanvas is never screenshot-asserted — D-W9-8).
 //
 // REF: .planning/phases/07.1-keyframe-retime/PLAN.md Wave 3 Task 6;
-//      CONTEXT D-01..D-07; boot.ts:263 (__basher_evaluate seam).
+//      CONTEXT D-01..D-07; boot.ts:508 (__basher_evaluated_transform seam).
 
 import { expect, test } from './_fixtures';
 
@@ -30,10 +31,13 @@ interface BasherWindow {
   __basher_time?: {
     getState: () => { setTime: (s: number) => void; seconds: number; durationSeconds: number };
   };
-  __basher_evaluate?: (
+  // V57 direct channels (#199): the animation overlay lives in the
+  // renderer/resolver, not the node's evaluate() value. Read the rendered
+  // rotation through the SAME resolveEvaluatedTransform the renderer consumes.
+  __basher_evaluated_transform?: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
-  ) => { value: unknown; hash: string };
+  ) => { rotation?: [number, number, number] | null } | null;
 }
 
 // Geometry mirrors TimelineCanvas.tsx (reze-fidelity dopesheet, UX #11):
@@ -78,20 +82,22 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_time && w.__basher_evaluate);
+    return Boolean(w.__basher_dag && w.__basher_time && w.__basher_evaluated_transform);
   });
 
-  // Seed: DirectionalLight + AnimationLayer + ONE KeyframeChannelNumber
-  // on `intensity` with TWO linear samples — value at a probe time
-  // DEPENDS on where the t=2 key sits. Wire TimeSource → channel → layer.
+  // Seed (V57 direct channels): BoxMesh + ONE free-floating
+  // KeyframeChannelVec3 on `rotation` with TWO linear samples — value at a
+  // probe time DEPENDS on where the t=2 key sits. The channel targets the
+  // box DIRECTLY (target = box dagId); NO AnimationLayer wraps it, the box
+  // stays its own scene child. `overlayChannels` overlays the sampled value.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
     }
-    const timeId =
-      Object.entries(dag.state.nodes).find(([, n]) => n.type === 'TimeSource')?.[0] ?? 'time';
+    const sceneId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Scene')?.[0];
+    if (!sceneId) throw new Error('p7.1-seed: no Scene node');
     const ops: unknown[] = [
       {
         type: 'addNode',
@@ -104,11 +110,12 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
           material: { name: 'default', color: '#ff0000' },
         },
       },
+      // V57: the box IS its own scene child (no AnimationLayer wrapper to slot
+      // between it and the scene) — wire it directly into scene.children.
       {
-        type: 'addNode',
-        nodeId: 'layer',
-        nodeType: 'AnimationLayer',
-        params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
+        type: 'connect',
+        from: { node: 'sun', socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
       },
       {
         type: 'addNode',
@@ -123,19 +130,6 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
             { time: 2, value: [0, 10, 0], easing: 'linear' },
           ],
         },
-      },
-      // P7.12 D-04: channel has no `time` socket — connect removed.
-      {
-        type: 'connect',
-        from: { node: 'ch', socket: 'out' },
-        to: { node: 'layer', socket: 'animation' },
-      },
-      {
-        // Wrap the target so the layer patches sun.intensity — evaluating
-        // 'layer' returns { target: <patched sun> } (AnimationLayer.ts:64).
-        type: 'connect',
-        from: { node: 'sun', socket: 'out' },
-        to: { node: 'layer', socket: 'target' },
       },
     ];
     dag.dispatchAtomic(ops, 'user', 'p7.1-seed');
@@ -157,15 +151,14 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
     page.evaluate(
       ({ sec }) => {
         const w = window as unknown as BasherWindow;
-        // P7.12 D-04: AnimationLayer is shape B-lite — `.target` is the
-        // UN-PATCHED base; the channel-patched value comes from
-        // sampleTarget(seconds). Read the sampled target (H52).
-        const v = w.__basher_evaluate!('layer', {
+        // V57 direct channels (#199): the box is its own scene child; the
+        // channel's sampled rotation is overlaid by the renderer/resolver, NOT
+        // the node's raw evaluate() value. Read the rendered rotation.y through
+        // the SAME resolveEvaluatedTransform the renderer consumes.
+        const t = w.__basher_evaluated_transform!('sun', {
           time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
-        }).value as {
-          sampleTarget?: (s: number) => { rotation?: [number, number, number] } | null;
-        };
-        return { intensity: v.sampleTarget?.(sec)?.rotation?.[1] };
+        });
+        return { intensity: t?.rotation?.[1] };
       },
       { sec: s },
     );

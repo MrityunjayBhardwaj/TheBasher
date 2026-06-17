@@ -114,10 +114,11 @@ test.beforeEach(async ({ page }) => {
       w.__basher_dag && w.__basher_viewport && w.__basher_time && w.__basher_timeline_selection,
     );
   });
-  // Seed a layer + Number channel with 3 keyframes so all W6 features
-  // have something to operate on. Channel targets a DirectionalLight's
-  // `intensity` param — DirectionalLight has intensity as a native
-  // number in its paramSchema, so K-insert can read it back at press
+  // Seed a free-floating Number channel (V57) with 3 keyframes so all W6
+  // features have something to operate on — no AnimationLayer wrapper, the
+  // channel targets the DirectionalLight directly by dagId. Channel targets a
+  // DirectionalLight's `intensity` param — DirectionalLight has intensity as a
+  // native number in its paramSchema, so K-insert can read it back at press
   // time without tripping setParam schema validation (BoxMesh has no
   // intensity field; targeting box.intensity would fail silently).
   await page.evaluate(() => {
@@ -144,12 +145,6 @@ test.beforeEach(async ({ page }) => {
         },
         {
           type: 'addNode',
-          nodeId: 'layer',
-          nodeType: 'AnimationLayer',
-          params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-        },
-        {
-          type: 'addNode',
           nodeId: 'ch',
           nodeType: 'KeyframeChannelNumber',
           params: {
@@ -162,12 +157,6 @@ test.beforeEach(async ({ page }) => {
               { time: 1, value: 10, easing: 'linear' },
             ],
           },
-        },
-        // P7.12 D-04: channel has no `time` socket — connect removed.
-        {
-          type: 'connect',
-          from: { node: 'ch', socket: 'out' },
-          to: { node: 'layer', socket: 'animation' },
         },
       ],
       'user',

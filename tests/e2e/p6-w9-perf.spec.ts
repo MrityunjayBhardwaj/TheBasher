@@ -60,8 +60,9 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
     return Boolean(w.__basher_dag && w.__basher_time);
   });
 
-  // Seed a realistic-heavy scene: 10 channels × 24 keyframes = 240
-  // diamonds across the static layer (exceeds the ≥8×≥20 floor).
+  // Seed a realistic-heavy scene: 10 free-floating channels (V57) × 24
+  // keyframes = 240 diamonds (exceeds the ≥8×≥20 floor). No AnimationLayer
+  // wrapper — every channel targets the DirectionalLight directly by dagId.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
@@ -83,12 +84,6 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
           color: '#ffffff',
         },
       },
-      {
-        type: 'addNode',
-        nodeId: 'layer',
-        nodeType: 'AnimationLayer',
-        params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-      },
     ];
     for (let c = 0; c < 10; c++) {
       const id = `pch${c}`;
@@ -101,12 +96,6 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
         nodeId: id,
         nodeType: 'KeyframeChannelNumber',
         params: { name: id, target: 'sun', paramPath: 'intensity', keyframes },
-      });
-      // P7.12 D-04: channel has no `time` socket — connect removed.
-      ops.push({
-        type: 'connect',
-        from: { node: id, socket: 'out' },
-        to: { node: 'layer', socket: 'animation' },
       });
     }
     dag.dispatchAtomic(ops, 'user', 'w9-perf-seed');

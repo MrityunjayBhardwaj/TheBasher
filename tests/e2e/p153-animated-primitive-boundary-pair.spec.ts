@@ -1,12 +1,13 @@
 // p153 — the H40 boundary-pair gate for an ANIMATED primitive.
 //
 // #153: `resolveEvaluatedMesh`'s Box/Sphere transform band used to read raw
-// node params — STATIC, ignoring any AnimationLayer driving the node. So for an
+// node params — STATIC, ignoring any channel driving the node. So for an
 // animated primitive the resolver returned the authored value while the renderer
 // drew the animated one (latent H40, one indirection deeper than #68 — bites the
 // #2/#3 material/UV consumers). The fix delegates the primitive band to
 // `resolveEvaluatedTransform` (the same animation-tracking walk the renderer uses),
-// mirroring the GltfChild branch.
+// mirroring the GltfChild branch. (V57: the box is now driven by a free-floating
+// direct channel, not an AnimationLayer wrapper.)
 //
 // THE load-bearing observation — at ≥2 playhead times:
 //   Side A — the REAL rendered three.js object's WORLD scale (__basher_mesh_world_scale).
@@ -87,19 +88,14 @@ test.beforeEach(async ({ page }) => {
     () => (window as unknown as BasherWindow).__basher_mesh_world_scale!('n_box') !== null,
   );
 
-  // Insert an AnimationLayer between the default box (n_box → n_scene.children)
-  // and the scene, driving n_box.scale via a KeyframeChannelVec3 (t0→[1,1,1],
-  // t2→[3,3,3], linear). The layer-wrapped box now RENDERS animated.
+  // V57 — drive n_box.scale via a free-floating direct KeyframeChannelVec3
+  // (t0→[1,1,1], t2→[3,3,3], linear). No AnimationLayer wrapper: the box stays
+  // its own scene child (n_box → n_scene.children) and overlayChannels drives
+  // it, so it now RENDERS animated.
   await page.evaluate(() => {
     const dag = (window as unknown as BasherWindow).__basher_dag!.getState();
     dag.dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: 'p153_layer',
-          nodeType: 'AnimationLayer',
-          params: { name: 'L', mute: false, solo: false, weight: 1, boneMask: [] },
-        },
         {
           type: 'addNode',
           nodeId: 'p153_ch',
@@ -113,26 +109,6 @@ test.beforeEach(async ({ page }) => {
               { time: 2, value: [3, 3, 3], easing: 'linear' },
             ],
           },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p153_ch', socket: 'out' },
-          to: { node: 'p153_layer', socket: 'animation' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'p153_layer', socket: 'target' },
-        },
-        {
-          type: 'disconnect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'n_scene', socket: 'children' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p153_layer', socket: 'out' },
-          to: { node: 'n_scene', socket: 'children' },
         },
       ],
       'user',
@@ -149,14 +125,14 @@ test.describe('#153 — resolveEvaluatedMesh tracks an animated primitive (H40 b
     // t=0.5 → 1.5 ; t=1.5 → 2.5.
     const probe = async (seconds: number, expected: number) => {
       await setTime(page, seconds);
-      // Side A is read by the SCENE-CHILD producer id — after the seed the scene
-      // child is the AnimationLayer's output (`p153_layer`), so the wrapping group
-      // is named 'p153_layer' (SceneFromDAG names groups by childRefs[i].node). The
-      // probe descends to the inner mesh, which carries the box's animated scale.
-      // Side B resolves the BOX node ('n_box') — resolveEvaluatedMesh delegates to
-      // resolveEvaluatedTransform, walks the rendered scene, finds the box under the
-      // layer, and returns the SAME animated scale. That equality IS the boundary-pair.
-      const RENDER_ID = 'p153_layer';
+      // Side A is read by the SCENE-CHILD producer id — with a free-floating direct
+      // channel (V57) the box stays its own scene child, so the group is named
+      // 'n_box' (SceneFromDAG names groups by childRefs[i].node). The probe descends
+      // to the inner mesh, which carries the box's animated scale. Side B resolves
+      // the BOX node ('n_box') — resolveEvaluatedMesh delegates to
+      // resolveEvaluatedTransform, walks the rendered scene, finds the box, and
+      // returns the SAME animated scale. That equality IS the boundary-pair.
+      const RENDER_ID = 'n_box';
       // Wait for the render commit to flow the animated scale onto the object.
       await page.waitForFunction(
         ({ exp, rid }) => {

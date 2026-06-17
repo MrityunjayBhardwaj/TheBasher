@@ -1,13 +1,16 @@
 // v0.6 #2 (#178) W4 — material-scalar ANIMATION boundary-pair (H40) + the Blender
 // field-colour table (4.3). A KeyframeChannelNumber animates
-// material.specular.roughness inside an AnimationLayer; paused mid-curve the REAL
-// three.js mesh.material.roughness (side-A) == resolveEvaluatedParam (side-B).
-// FALSIFIABLE: the same revert that breaks the transform overlay would break this
-// (the material reads the static value → side-A diverges).
+// material.specular.roughness via a free-floating direct channel (V57); paused
+// mid-curve the REAL three.js mesh.material.roughness (side-A) ==
+// resolveEvaluatedParam (side-B). FALSIFIABLE: the same revert that breaks the
+// transform overlay would break this (the material reads the static value →
+// side-A diverges).
 //
 // Reuses the #149 engine verbatim — W0 proved the generic channel scan matches a
 // nested material paramPath, and p149 proved material.base.color renders via the
-// AnimationLayer overlay. This adds the SCALAR (roughness) sibling.
+// overlayChannels overlay. This adds the SCALAR (roughness) sibling. The channel
+// targets the box DIRECTLY (V57) — no AnimationLayer wrapper, no scene rewire; the
+// box stays its own scene child.
 
 import { expect, test } from './_fixtures';
 
@@ -44,30 +47,9 @@ async function seedRoughnessAnim(page: import('@playwright/test').Page) {
     const api = w.__basher_dag!.getState();
     const dispatch = (op: unknown) => api.dispatch(op);
     const nodes = () => w.__basher_dag!.getState().state.nodes;
-    const sceneId = Object.entries(nodes()).find(([, n]) => n.type === 'Scene')?.[0];
-    if (!sceneId) throw new Error('no Scene');
     const boxId = 'n_box';
-    dispatch({
-      type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'SeedLayer', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
+    // V57: a free-floating direct channel targets the box by dagId — no
+    // AnimationLayer wrapper, no scene rewire. The box stays its own scene child.
     dispatch({
       type: 'addNode',
       nodeId: 'seed_ch',
@@ -81,11 +63,6 @@ async function seedRoughnessAnim(page: import('@playwright/test').Page) {
           { time: 2, value: 0.9 },
         ],
       },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_ch', socket: 'out' },
-      to: { node: 'seed_layer', socket: 'animation' },
     });
   }, PARAM);
 }
@@ -106,7 +83,7 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
     // Wait for the rendered material to reflect the curve (non-default roughness).
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
-      const m = w.__basher_mesh_material?.('seed_layer');
+      const m = w.__basher_mesh_material?.('n_box');
       return m != null && m.roughness != null && Math.abs(m.roughness - 0.5) < 0.02;
     });
 
@@ -114,7 +91,7 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
       const w = window as unknown as BasherWindow;
       const ctx = { time: { frame: 60, seconds: 1, normalized: 0.1 } };
       return {
-        sideA: w.__basher_mesh_material!('seed_layer')?.roughness ?? null,
+        sideA: w.__basher_mesh_material!('n_box')?.roughness ?? null,
         sideB: (w.__basher_evaluated_param!('n_box', paramPath, ctx)?.value as number) ?? null,
       };
     }, PARAM);

@@ -9,13 +9,13 @@
 // pattern, swapping the consumer-side reader from `__basher_gizmo()` to the
 // DOM `inputValue()` on the inspector field.
 //
-// The producer side (OUR side, already trusted) is the evaluated render-walk:
-//   render → scene.children[i] → AnimationLayer → .target.position
-// (the same walk `resolveEvaluatedTransform.ts:103-148` performs;
-// re-implemented inline here so this test does NOT call the helper —
-// calling it would make the assertion tautological. The test must compute
-// the rendered value via the SAME walk the renderer uses, then assert the
-// DOM input.value matches.)
+// The producer side (OUR side, already trusted) is the evaluated rendered
+// transform. V57 direct channels (#199): the box is its own scene child and the
+// channel's sampled value is overlaid by `resolveEvaluatedTransform` — there is
+// no AnimationLayer wrapper, no patched clone to unwrap. The test reads the
+// producer through the `__basher_evaluated_transform` seam (the renderer's own
+// resolver), observed INDEPENDENTLY of the consumer-side DOM input.value it then
+// asserts against — the two sides of the boundary-pair.
 //
 // The consumer side (THEIR side, the side never observed for the inspector
 // class, the #69 gap) is the rendered DOM input.value: the `inspector-vec-*`
@@ -61,10 +61,13 @@ interface BasherWindow {
   __basher_autokey?: {
     getState: () => { enabled: boolean; toggle: () => void; set?: (v: boolean) => void };
   };
-  __basher_evaluate?: (
+  // V57 direct channels (#199): the animation overlay lives in the
+  // renderer/resolver, not the node's evaluate() value. Read the rendered
+  // transform through the SAME resolveEvaluatedTransform the renderer consumes.
+  __basher_evaluated_transform?: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
-  ) => { value: unknown; hash: string };
+  ) => { position?: [number, number, number] | null } | null;
   __basher_transient?: {
     getState: () => {
       get: (n: string, p: string) => { value: unknown } | undefined;
@@ -76,20 +79,16 @@ interface BasherWindow {
 
 const V = (a: number[] | null) => JSON.stringify(a);
 
-/** The evaluated render-walk position for `selectedId` (OUR side — the
- *  producer). MIRRORS resolveEvaluatedTransform.ts:103-148: walk
- *  `value.scene.children[i]` ↔ `sceneNode.inputs.children[i].node`
- *  (childRefs correspondence), match selectedId either as the direct
- *  child producer OR as a single-hop target of an AnimationLayer wrapper,
- *  then unwrap `.target` for the AnimationLayer case (the patched clone —
- *  the H34 mechanism).
- *
- *  This is INLINED (not a `resolveTransformParam` call) on purpose: the
- *  boundary-pair check requires observing the producer side INDEPENDENTLY
- *  of the consumer-side helper. Calling the helper the inspector itself
- *  consumes would be a tautology (helper == helper). The H40 detection
- *  question — "which side did I observe?" — is answered: BOTH, via two
- *  independent paths to the rendered value. */
+/** The evaluated rendered position for `selectedId` (OUR side — the producer).
+ *  V57 direct channels (#199): the box is its own scene child; the channel's
+ *  sampled position is overlaid by the renderer/resolver (resolveEvaluatedTransform),
+ *  NOT the node's raw evaluate() value. There is no AnimationLayer wrapper to
+ *  match-by-target or unwrap. Read it through the SAME resolveEvaluatedTransform
+ *  the inspector consumes — but via the dedicated `__basher_evaluated_transform`
+ *  seam (resolveEvaluatedTransform), which is the producer the renderer reads,
+ *  observed INDEPENDENTLY of the consumer-side DOM input.value the test asserts
+ *  against. The H40 detection question — "which side did I observe?" — is
+ *  answered: BOTH, the producer (here) and the consumer (the DOM input). */
 async function evalWalkPosition(
   page: import('@playwright/test').Page,
   seconds: number,
@@ -98,62 +97,11 @@ async function evalWalkPosition(
   return page.evaluate(
     ({ s, id }) => {
       const w = window as unknown as BasherWindow;
-      const dag = w.__basher_dag!.getState().state;
-      const root = dag.outputs.render;
-      if (!root) return null;
-      const out = w.__basher_evaluate!(root.node, {
-        time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
-      }).value as { scene?: { children?: Array<Record<string, unknown>> } };
-      const children = out?.scene?.children ?? [];
-      // Mirror resolveEvaluatedTransform.ts:107-112: childRefs from
-      // outputs.scene → sceneNode.inputs.children.
-      const sceneRef = dag.outputs.scene;
-      const sceneNode = sceneRef ? dag.nodes[sceneRef.node] : null;
-      const childRefs =
-        sceneNode && Array.isArray(sceneNode.inputs.children)
-          ? (sceneNode.inputs.children as Array<{ node: string; socket: string }>)
-          : [];
-      // NodeRef normalization mirrors addLayer.ts:101 (Array.isArray(b) ? b : [b]).
-      const normalizeRefs = (binding: unknown): Array<{ node: string; socket: string }> => {
-        if (binding == null) return [];
-        return Array.isArray(binding)
-          ? (binding as Array<{ node: string; socket: string }>)
-          : [binding as { node: string; socket: string }];
-      };
-      let matchIdx = -1;
-      for (let i = 0; i < children.length; i++) {
-        const refNode = childRefs[i]?.node;
-        if (refNode === id) {
-          matchIdx = i;
-          break;
-        }
-        const child = children[i] as { kind?: string };
-        if (child && child.kind === 'AnimationLayer' && refNode) {
-          const layerNode = dag.nodes[refNode] as { inputs?: { target?: unknown } } | undefined;
-          if (layerNode) {
-            const targetRefs = normalizeRefs(layerNode.inputs?.target);
-            if (targetRefs.some((r) => r?.node === id)) {
-              matchIdx = i;
-              break;
-            }
-          }
-        }
-      }
-      if (matchIdx === -1) return null;
-      // Unwrap AnimationLayer → sampleTarget(s) (P7.12 D-04: channels are
-      // function-of-time; `.target` is now the UN-PATCHED base — the animated
-      // value comes from sampleTarget(seconds), mirroring
-      // resolveEvaluatedTransform.ts:234).
-      let child: Record<string, unknown> | null = children[matchIdx] ?? null;
-      if (child && (child as { kind?: string }).kind === 'AnimationLayer') {
-        const st = (child as { sampleTarget?: (sec: number) => Record<string, unknown> | null })
-          .sampleTarget;
-        child = typeof st === 'function' ? st(s) : null;
-      }
-      if (!child) return null;
-      const pos = (child as { position?: unknown }).position;
-      if (!Array.isArray(pos) || pos.length !== 3) return null;
-      return pos as [number, number, number];
+      return (
+        w.__basher_evaluated_transform!(id, {
+          time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
+        })?.position ?? null
+      );
     },
     { s: seconds, id: selectedId },
   );
@@ -173,21 +121,20 @@ async function inspectorDisplayedPosition(
   return [parseFloat(x), parseFloat(y), parseFloat(z)];
 }
 
-/** Seed an animated cube via DIRECT DAG dispatch ops (the
- *  `tests/e2e/p3-observe.spec.ts:48-110` precedent — mirrors p7.3's
- *  restaged seedAnimatedCube exactly). addNode AnimationLayer, rewire
- *  Scene.children box→layer, connect box→layer.target, addNode
- *  KeyframeChannelVec3 with EXPLICIT keyframes [0,0,0]@0 and [4,0,0]@2,
- *  connect TimeSource→channel.time and channel→layer.animation. Same
- *  observable end-state as the prior diamond+inspector seam, with ZERO
- *  dependence on the pre-D-05 inspector silent-dead-write (D-05 / #77
- *  converted that to alert+no-op; the prior seam keyed the inspector-
- *  authored value, which no longer reaches the source). Every downstream
- *  assertion is unchanged. Returns layerId and chId. */
+/** Seed an animated cube via DIRECT DAG dispatch ops. V57 direct channels
+ *  (#199): addNode a free-floating KeyframeChannelVec3 whose `target` is the
+ *  box dagId, with EXPLICIT keyframes [0,0,0]@0 and [4,0,0]@2. NO
+ *  AnimationLayer wraps the box, NO scene rewire — the box stays its own
+ *  scene child; the renderer/resolver overlays the sampled position. Same
+ *  observable end-state as the prior layer seam, with ZERO dependence on the
+ *  pre-D-05 inspector silent-dead-write (D-05 / #77 converted that to
+ *  alert+no-op). Every downstream assertion is unchanged. Returns the box id
+ *  (the scene child + the edit/selection target now — there is no layer) and
+ *  the channel id. */
 async function seedAnimatedCube(page: import('@playwright/test').Page) {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_selection && w.__basher_dag && w.__basher_evaluate);
+    return Boolean(w.__basher_selection && w.__basher_dag && w.__basher_evaluated_transform);
   });
   const ids = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
@@ -210,27 +157,6 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
 
     dispatch({
       type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'SeedLayer', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
-    dispatch({
-      type: 'addNode',
       nodeId: 'seed_pos_ch',
       nodeType: 'KeyframeChannelVec3',
       params: {
@@ -243,15 +169,9 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
         ],
       },
     });
-    // P7.12 D-04: channel has no `time` socket — connect removed.
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_pos_ch', socket: 'out' },
-      to: { node: 'seed_layer', socket: 'animation' },
-    });
     const n = nodes();
     return {
-      layerId: Object.entries(n).find(([, x]) => x.type === 'AnimationLayer')?.[0],
+      boxId,
       chId: Object.entries(n).find(([, x]) => x.type.startsWith('KeyframeChannel'))?.[0],
     };
   });
@@ -264,21 +184,14 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
   await page.getByTestId('inspector-section-toggle-transform').click();
   await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
 
+  // V57 direct channels (#199): read the rendered position through the SAME
+  // resolveEvaluatedTransform the renderer overlays the channel into.
   const moves = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    const root = w.__basher_dag!.getState().state.outputs.render;
-    if (!root) return null;
-    const at = (s: number) => {
-      const out = w.__basher_evaluate!(root.node, {
+    const at = (s: number) =>
+      w.__basher_evaluated_transform!('n_box', {
         time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
-      }).value as { scene?: { children: Array<Record<string, unknown>> } };
-      const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
-      const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
-        | undefined;
-      // P7.12 D-04: sample the function-of-time patched target at s (was layer.target).
-      return layer?.sampleTarget?.(s)?.position ?? null;
-    };
+      })?.position ?? null;
     return { t0: at(0), t1: at(1) };
   });
   expect(moves?.t0?.[0]).toBeCloseTo(0, 4);
@@ -309,11 +222,11 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (the #69 boundary-pair)', () => {
-  test('boundary-pair: inspector input.value == evaluated walk at ≥2 playhead times, box AND layer select', async ({
+  test('boundary-pair: inspector input.value == evaluated walk at ≥2 playhead times (box select)', async ({
     page,
   }) => {
-    const { layerId } = await seedAnimatedCube(page);
-    expect(layerId).toBeTruthy();
+    const { boxId } = await seedAnimatedCube(page);
+    expect(boxId).toBeTruthy();
 
     // Pause so the field is in its steady display-follow state (D-02:
     // read-only-while-playing applies to the gate, but the display equality
@@ -323,39 +236,20 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
       (window as unknown as BasherWindow).__basher_time!.getState().pause();
     });
 
-    // The inspector renders for the CURRENT selection — its testids are
-    // keyed by the selected nodeId. When we select the AnimationLayer, the
-    // inspector re-renders with `inspector-vec-{layerId}-*` testids (the
-    // layer has no `position` param of its own, so the section may render
-    // empty); in that mode the D-06 surface assertion targets the cube's
-    // n_box-keyed fields ONLY when n_box is selected. The 7.3 D-06 spec
-    // iterates BOTH selections to prove the GIZMO PROXY tracks correctly
-    // for either selection; the inspector's surface is keyed by selection,
-    // so the parity here is: for each selection, the inspector's displayed
-    // value (when present for that selection) matches the eval-walk at
-    // that selection.
-    //
-    // Concretely: for sel='n_box' the inspector shows inspector-vec-n_box-position-*
-    // (the box has a `position` param, animated). For sel=layerId, the
-    // AnimationLayer has no Transform section to display, but the
-    // EVAL-WALK at layerId still resolves (single-hop wrapped target
-    // identity — resolveEvaluatedTransform.ts:128-138 — returns the same
-    // patched-clone position as for n_box). So we assert:
-    //   - n_box selection: input.value == evalWalk(n_box) at ≥2 times.
-    //   - layerId selection: evalWalk(layerId) == evalWalk(n_box) at the
-    //     same time (the H40 sibling proof for layer-as-selection,
-    //     mirroring 7.3 D-06's layer-select branch). The inspector itself
-    //     has nothing to display under layer-select (no transform params
-    //     on AnimationLayer), so this branch proves the producer-side
-    //     identity holds for the layer-select case too — without it, a
-    //     future inspector enhancement to render evaluated transform under
-    //     layer-select would silently regress.
+    // V57 direct channels (#199): the box is its own scene child and the sole
+    // selection target — there is no AnimationLayer wrapper. The inspector
+    // renders for the CURRENT selection (n_box), showing inspector-vec-n_box-
+    // position-* (the box has a `position` param, animated by the free-floating
+    // channel). We assert: input.value == evalWalk(n_box) at ≥2 playhead times.
+    // (Pre-#199 this also ran a layer-select branch asserting evalWalk(layerId)
+    // == evalWalk(n_box) — the single-hop target identity; the wrapper is gone,
+    // so the box-select branch is the whole boundary-pair now.)
     for (const t of [0.5, 1.5]) {
       await page.evaluate((s) => {
         (window as unknown as BasherWindow).__basher_time!.getState().setTime(s);
       }, t);
 
-      // Branch 1: box-select. Inspector displays inspector-vec-n_box-position-*.
+      // Box-select. Inspector displays inspector-vec-n_box-position-*.
       await page.evaluate(() => {
         (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
       });
@@ -379,23 +273,6 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
       if (t === 1.5) {
         expect(evalPosBox![0]).toBeGreaterThan(0);
       }
-
-      // Branch 2: layer-select. The eval-walk at layerId resolves to the
-      // SAME patched clone (single-hop target identity); the inspector
-      // shows no transform section under layer-select, so we assert the
-      // producer-side identity only. This guards the layer-select branch
-      // for any future inspector enhancement.
-      await page.evaluate((id) => {
-        (window as unknown as BasherWindow).__basher_selection!.getState().select(id);
-      }, layerId!);
-      const evalPosLayer = await evalWalkPosition(page, t, layerId!);
-      console.log(
-        `[P7.4 D-06 layer] t=${t} eval=${V(evalPosLayer)} (== box-eval ${V(evalPosBox)})`,
-      );
-      expect(evalPosLayer).not.toBeNull();
-      expect(evalPosLayer![0]).toBeCloseTo(evalPosBox![0], 4);
-      expect(evalPosLayer![1]).toBeCloseTo(evalPosBox![1], 4);
-      expect(evalPosLayer![2]).toBeCloseTo(evalPosBox![2], 4);
     }
   });
 
@@ -612,7 +489,9 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
   test('D-06 (#78): single-axis edit keys [typedX, evalY@t, evalZ@t] WITHOUT perturbing the Y/Z curve', async ({
     page,
   }) => {
-    // Stage a cube with DISTINCT non-constant Y and Z curves directly.
+    // Stage a cube with DISTINCT non-constant Y and Z curves directly. V57
+    // direct channels (#199): a free-floating KeyframeChannelVec3 targeting the
+    // box — NO AnimationLayer wrapper, NO scene rewire.
     const { chId } = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       const dagApi = w.__basher_dag!.getState() as unknown as {
@@ -620,34 +499,10 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
       };
       const dispatch = (op: unknown) => dagApi.dispatch(op);
       const nodes = () => w.__basher_dag!.getState().state.nodes;
-      const findType = (t: string) => Object.entries(nodes()).find(([, n]) => n.type === t)?.[0];
       const boxId = 'n_box';
-      const sceneId = findType('Scene')!;
       if (!Object.values(nodes()).some((n) => n.type === 'TimeSource')) {
         dispatch({ type: 'addNode', nodeId: 'd6_time', nodeType: 'TimeSource', params: {} });
       }
-      const timeId = findType('TimeSource')!;
-      dispatch({
-        type: 'addNode',
-        nodeId: 'd6_layer',
-        nodeType: 'AnimationLayer',
-        params: { name: 'D6Layer', mute: false, solo: false, weight: 1, boneMask: [] },
-      });
-      dispatch({
-        type: 'disconnect',
-        from: { node: boxId, socket: 'out' },
-        to: { node: sceneId, socket: 'children' },
-      });
-      dispatch({
-        type: 'connect',
-        from: { node: 'd6_layer', socket: 'out' },
-        to: { node: sceneId, socket: 'children' },
-      });
-      dispatch({
-        type: 'connect',
-        from: { node: boxId, socket: 'out' },
-        to: { node: 'd6_layer', socket: 'target' },
-      });
       dispatch({
         type: 'addNode',
         nodeId: 'd6_pos_ch',
@@ -664,12 +519,6 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
             { time: 2, value: [4, 10, -6], easing: 'linear' },
           ],
         },
-      });
-      // P7.12 D-04: channel has no `time` socket — connect removed.
-      dispatch({
-        type: 'connect',
-        from: { node: 'd6_pos_ch', socket: 'out' },
-        to: { node: 'd6_layer', socket: 'animation' },
       });
       return {
         chId: Object.entries(nodes()).find(([, n]) => n.type.startsWith('KeyframeChannel'))?.[0],
@@ -690,22 +539,17 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
     await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
 
     // Sample the Y/Z curve at a CONTROL time t2=1.5 BEFORE the edit (the
-    // non-perturbation reference). Read the channel sample directly — the
-    // evaluated render-walk Y/Z at t2.
+    // non-perturbation reference). V57 direct channels (#199): read the
+    // rendered Y/Z at the sample time through the SAME resolveEvaluatedTransform
+    // the renderer overlays the channel into.
     const sampleYZ = async (label: string) =>
       page.evaluate(
         ({ s }) => {
           const w = window as unknown as BasherWindow;
-          const root = w.__basher_dag!.getState().state.outputs.render!;
-          const out = w.__basher_evaluate!(root.node, {
-            time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
-          }).value as { scene?: { children: Array<Record<string, unknown>> } };
-          const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
-          const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-            | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
-            | undefined;
-          // P7.12 D-04: sample the function-of-time patched target (was layer.target).
-          const p = layer?.sampleTarget?.(s)?.position ?? null;
+          const p =
+            w.__basher_evaluated_transform!('n_box', {
+              time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
+            })?.position ?? null;
           return p ? ([p[1], p[2]] as [number, number]) : null;
         },
         { s: label === 't2' ? 1.5 : 1 },

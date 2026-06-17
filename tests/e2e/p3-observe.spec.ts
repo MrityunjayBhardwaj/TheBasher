@@ -19,10 +19,14 @@ interface BasherWindow {
       dispatch: (op: unknown) => void;
     };
   };
-  __basher_evaluate: (
+  // v0.7 #199 / V57: the channel overlay lives in the RESOLVER, not in a node's
+  // evaluate() value (a free-floating channel never feeds an input socket). The
+  // animated transform is read through resolveEvaluatedTransform — the SAME band
+  // the renderer (DirectChannelsR) consumes — exposed as this dev seam.
+  __basher_evaluated_transform: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
-  ) => { value: unknown };
+  ) => { position: [number, number, number] } | null;
   __basher_viewport: { getState: () => { timelineDrawerOpen: boolean } };
 }
 
@@ -42,7 +46,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_evaluate);
+    return Boolean(w.__basher_dag && w.__basher_evaluated_transform);
   });
 });
 
@@ -66,28 +70,9 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
     const sceneId = Object.entries(nodes()).find(([, n]) => n.type === 'Scene')?.[0];
     if (!sceneId) throw new Error('no Scene');
 
-    dispatch({
-      type: 'addNode',
-      nodeId: 'box_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'Bounce', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'box_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'box_layer', socket: 'target' },
-    });
-
+    // V57: a free-floating direct channel targets the box by dagId. No
+    // AnimationLayer wrapper, no scene rewire — the box stays its own scene
+    // child and overlayChannels applies the keyframed position on top.
     dispatch({
       type: 'addNode',
       nodeId: 'pos_ch',
@@ -102,45 +87,21 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
         ],
       },
     });
-    // P7.12 D-04: channel has no `time` socket — connect removed.
-    dispatch({
-      type: 'connect',
-      from: { node: 'pos_ch', socket: 'out' },
-      to: { node: 'box_layer', socket: 'animation' },
+
+    // Read the box's EVALUATED transform through the resolver seam at t=0 vs
+    // t=1 — the channel overlay is applied by resolveEvaluatedTransform (the
+    // band the renderer consumes), not by the node's raw evaluate() value.
+    void sceneId;
+    const t0 = w.__basher_evaluated_transform(boxId, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
     });
-
-    const eval0 = w.__basher_evaluate(sceneId, { time: { frame: 0, seconds: 0, normalized: 0 } })
-      .value as {
-      children: Array<{
-        kind: string;
-        target?: { kind: string; position: [number, number, number] };
-        position?: [number, number, number];
-      }>;
-    };
-    const eval1 = w.__basher_evaluate(sceneId, { time: { frame: 60, seconds: 1, normalized: 0.1 } })
-      .value as typeof eval0;
-
-    // Find the AnimationLayer wrapping our cube in scene.children
-    const layerAt = (scene: typeof eval0) =>
-      scene.children.find((c) => c.kind === 'AnimationLayer');
-    const layer0 = layerAt(eval0);
-    const layer1 = layerAt(eval1);
-    return {
-      kind0: layer0?.kind,
-      // P7.12 D-04: sample the function-of-time patched target (was layer.target).
-      target0: (
-        layer0 as { sampleTarget?: (s: number) => { position?: number[] } | null } | undefined
-      )?.sampleTarget?.(0)?.position,
-      kind1: layer1?.kind,
-      target1: (
-        layer1 as { sampleTarget?: (s: number) => { position?: number[] } | null } | undefined
-      )?.sampleTarget?.(1)?.position,
-    };
+    const t1 = w.__basher_evaluated_transform(boxId, {
+      time: { frame: 60, seconds: 1, normalized: 0.1 },
+    });
+    return { target0: t0?.position, target1: t1?.position };
   });
 
   console.log('OBSERVED:', JSON.stringify(observed));
-  expect(observed.kind0).toBe('AnimationLayer');
-  expect(observed.kind1).toBe('AnimationLayer');
   expect(observed.target0).toEqual([0, 0, 0]);
   expect(observed.target1).toEqual([0, 2, 0]);
 });

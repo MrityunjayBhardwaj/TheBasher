@@ -39,27 +39,8 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
     const sceneId = findType('Scene');
     if (!sceneId) throw new Error('no Scene');
     const boxId = 'n_box';
-    dispatch({
-      type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'SeedLayer', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
+    // V57 — a free-floating direct channel targeting the box. No AnimationLayer
+    // wrapper: the box stays its own scene child; overlayChannels drives it.
     dispatch({
       type: 'addNode',
       nodeId: 'seed_pos_ch',
@@ -73,11 +54,6 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
           { time: 2, value: [4, 0, 0], easing: 'linear' },
         ],
       },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_pos_ch', socket: 'out' },
-      to: { node: 'seed_layer', socket: 'animation' },
     });
   });
 }
@@ -107,7 +83,7 @@ test.describe('#149 clear-on-scrub (D-149-2)', () => {
     // Held: transient present + rendered x == 9.
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
-      const p = w.__basher_mesh_world_position?.('seed_layer');
+      const p = w.__basher_mesh_world_position?.('n_box');
       return p != null && Math.abs(p[0] - 9) < 1e-3;
     });
     expect(
@@ -125,14 +101,14 @@ test.describe('#149 clear-on-scrub (D-149-2)', () => {
     // (x=3 at t=1.5 on the [0,0,0]@0 → [4,0,0]@2 line).
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
-      const p = w.__basher_mesh_world_position?.('seed_layer');
+      const p = w.__basher_mesh_world_position?.('n_box');
       return p != null && Math.abs(p[0] - 3) < 1e-2;
     });
     const cleared = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       return {
         has: w.__basher_transient!.getState().has('n_box', 'position'),
-        renderedX: w.__basher_mesh_world_position!('seed_layer')?.[0] ?? null,
+        renderedX: w.__basher_mesh_world_position!('n_box')?.[0] ?? null,
       };
     });
     console.log(`[p149 D] after-scrub has=${cleared.has} renderedX=${cleared.renderedX}`);

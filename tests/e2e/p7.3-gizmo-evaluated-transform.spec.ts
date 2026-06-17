@@ -3,13 +3,15 @@
 // THE PHASE OBSERVATION GATE (D-06, non-deferrable). #68 shipped because
 // P7's E2 asserted the EVALUATOR output and never the GIZMO proxy — only
 // one side of the boundary was observed. This spec observes BOTH sides:
-//   (a) the evaluated render-walk transform (render → scene.children[i] →
-//       AnimationLayer → .target.position — OUR side, already trusted), and
+//   (a) the evaluated rendered transform (V57 direct channels, #199: the box
+//       is its own scene child; resolveEvaluatedTransform overlays the channel
+//       — OUR side, already trusted), and
 //   (b) the GIZMO PROXY transform (the FLAG-C dev mirror — the side never
 //       observed, the #68 gap).
-// ASSERT (a) === (b) at ≥2 distinct playhead times for box-select AND
-// layer-select. Plus grab→Auto-Key (ON keys / OFF rejects zero ops) and
-// paused-vs-playing interactivity (D-02/D-03).
+// ASSERT (a) === (b) at ≥2 distinct playhead times. (Pre-#199 this also ran a
+// layer-select branch; the AnimationLayer wrapper is retired — the box is the
+// sole selection target.) Plus grab→Auto-Key (ON keys / OFF rejects zero ops)
+// and paused-vs-playing interactivity (D-02/D-03).
 //
 // Observation over inference: every assertion reads the ACTUAL evaluated
 // + proxy values, never "the effect should have run".
@@ -38,10 +40,13 @@ interface BasherWindow {
   __basher_autokey?: {
     getState: () => { enabled: boolean; toggle: () => void; set?: (v: boolean) => void };
   };
-  __basher_evaluate?: (
+  // V57 direct channels (#199): the animation overlay lives in the
+  // renderer/resolver, not the node's evaluate() value. Read the rendered
+  // transform through the SAME resolveEvaluatedTransform the renderer consumes.
+  __basher_evaluated_transform?: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
-  ) => { value: unknown; hash: string };
+  ) => { position?: [number, number, number] | null } | null;
   __basher_gizmo?: () => {
     position: [number, number, number];
     rotation: [number, number, number];
@@ -62,9 +67,11 @@ interface BasherWindow {
 
 const V = (a: number[] | null) => JSON.stringify(a);
 
-/** The evaluated render-walk position for the wrapped cube (OUR side —
- *  the same render → scene.children → AnimationLayer → .target walk P7's
- *  E2 used). Returns the layer's patched-clone position. */
+/** The evaluated rendered position of the animated cube (OUR side — the
+ *  producer). V57 direct channels (#199): the box is its own scene child and
+ *  the channel's sampled position is overlaid by the renderer/resolver, NOT
+ *  the node's raw evaluate() value. Read it through the SAME
+ *  resolveEvaluatedTransform the renderer (DirectChannelsR) consumes. */
 async function evalWalkPosition(
   page: import('@playwright/test').Page,
   seconds: number,
@@ -72,17 +79,11 @@ async function evalWalkPosition(
   return page.evaluate(
     ({ s }) => {
       const w = window as unknown as BasherWindow;
-      const root = w.__basher_dag!.getState().state.outputs.render;
-      if (!root) throw new Error('no outputs.render');
-      const out = w.__basher_evaluate!(root.node, {
-        time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
-      }).value as { scene?: { children: Array<Record<string, unknown>> } };
-      const scene = out.scene ?? (out as unknown as { children?: unknown[] });
-      const children = (scene as { children: Array<Record<string, unknown>> }).children;
-      const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
-        | undefined;
-      return layer?.sampleTarget?.(s)?.position ?? null;
+      return (
+        w.__basher_evaluated_transform!('n_box', {
+          time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
+        })?.position ?? null
+      );
     },
     { s: seconds },
   );
@@ -98,24 +99,20 @@ async function gizmoProxyPosition(
   });
 }
 
-/** Seed an animated cube via DIRECT DAG dispatch ops (the
- *  `tests/e2e/p3-observe.spec.ts:48-110` precedent): addNode
- *  AnimationLayer, rewire Scene.children box→layer, connect
- *  box→layer.target, addNode KeyframeChannelVec3 with EXPLICIT keyframes
- *  [0,0,0]@0 and [4,0,0]@2, connect TimeSource→channel.time and
- *  channel→layer.animation. Result: n_box wrapped in an AnimationLayer
- *  with a position channel [0,0,0]@0 and [4,0,0]@2 — IDENTICAL observable
- *  end-state to the prior diamond+inspector seam, but with ZERO dependence
- *  on the pre-D-05 inspector silent-dead-write (which D-05 / #77
- *  intentionally converted to an alert+no-op — the prior seam keyed the
- *  authored value after an inspector edit; that authored mutation no longer
- *  reaches the source, so the diamond would have re-keyed [0,0,0]@2 and the
- *  cube would never move). Restaged correctly; every downstream assertion
- *  (the moving cube, kfCount, keyframe values) is unchanged. */
+/** Seed an animated cube via DIRECT DAG dispatch ops. V57 direct channels
+ *  (#199): addNode a free-floating KeyframeChannelVec3 whose `target` is the
+ *  box dagId, with EXPLICIT keyframes [0,0,0]@0 and [4,0,0]@2. NO
+ *  AnimationLayer wraps the box, NO scene rewire — the box stays its own
+ *  scene child; the renderer/resolver (DirectChannelsR / resolveEvaluatedTransform)
+ *  overlays the sampled position. IDENTICAL observable end-state to the prior
+ *  layer seam (the moving cube, kfCount, keyframe values are unchanged), but
+ *  with ZERO dependence on the pre-D-05 inspector silent-dead-write (D-05 / #77
+ *  converted that to an alert+no-op). Returns the box id (the scene child + the
+ *  edit/selection target now — there is no layer to select) and the channel id. */
 async function seedAnimatedCube(page: import('@playwright/test').Page) {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_selection && w.__basher_dag && w.__basher_evaluate);
+    return Boolean(w.__basher_selection && w.__basher_dag && w.__basher_evaluated_transform);
   });
   const ids = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
@@ -138,27 +135,6 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
 
     dispatch({
       type: 'addNode',
-      nodeId: 'seed_layer',
-      nodeType: 'AnimationLayer',
-      params: { name: 'SeedLayer', mute: false, solo: false, weight: 1, boneMask: [] },
-    });
-    dispatch({
-      type: 'disconnect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_layer', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    });
-    dispatch({
-      type: 'connect',
-      from: { node: boxId, socket: 'out' },
-      to: { node: 'seed_layer', socket: 'target' },
-    });
-    dispatch({
-      type: 'addNode',
       nodeId: 'seed_pos_ch',
       nodeType: 'KeyframeChannelVec3',
       params: {
@@ -171,15 +147,9 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
         ],
       },
     });
-    // P7.12 D-04: channel has no `time` socket — connect removed.
-    dispatch({
-      type: 'connect',
-      from: { node: 'seed_pos_ch', socket: 'out' },
-      to: { node: 'seed_layer', socket: 'animation' },
-    });
     const n = nodes();
     return {
-      layerId: Object.entries(n).find(([, x]) => x.type === 'AnimationLayer')?.[0],
+      boxId,
       chId: Object.entries(n).find(([, x]) => x.type.startsWith('KeyframeChannel'))?.[0],
     };
   });
@@ -197,20 +167,14 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
   // Observe the cube genuinely animates BEFORE returning (the seed is
   // bug-independent: eval position moves from [0,0,0] at t=0 toward
   // [4,0,0] at t=2 via the channel — no inspector dead-write involved).
+  // V57 direct channels (#199): read the rendered position through the SAME
+  // resolveEvaluatedTransform the renderer overlays the channel into.
   const moves = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    const root = w.__basher_dag!.getState().state.outputs.render;
-    if (!root) return null;
-    const at = (s: number) => {
-      const out = w.__basher_evaluate!(root.node, {
+    const at = (s: number) =>
+      w.__basher_evaluated_transform!('n_box', {
         time: { frame: Math.round(s * 60), seconds: s, normalized: 0 },
-      }).value as { scene?: { children: Array<Record<string, unknown>> } };
-      const children = (out.scene as { children: Array<Record<string, unknown>> }).children;
-      const layer = children.find((c) => (c as { kind?: string }).kind === 'AnimationLayer') as
-        | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
-        | undefined;
-      return layer?.sampleTarget?.(s)?.position ?? null;
-    };
+      })?.position ?? null;
     return { t0: at(0), t1: at(1) };
   });
   expect(moves?.t0?.[0]).toBeCloseTo(0, 4);
@@ -244,41 +208,43 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
   test('boundary-pair: proxy position == evaluated walk at ≥2 playhead times, box AND layer select', async ({
     page,
   }) => {
-    const { layerId } = await seedAnimatedCube(page);
-    expect(layerId).toBeTruthy();
+    const { boxId } = await seedAnimatedCube(page);
+    expect(boxId).toBeTruthy();
 
     // Pause so the gizmo is in its steady display-follow state.
     await page.evaluate(() => {
       (window as unknown as BasherWindow).__basher_time!.getState().pause();
     });
 
-    for (const sel of ['n_box', layerId!]) {
-      await page.evaluate((id) => {
-        (window as unknown as BasherWindow).__basher_selection!.getState().select(id);
-      }, sel);
+    // V57 direct channels (#199): the box IS the scene child + the selection
+    // target — there is no AnimationLayer wrapper to select. (Pre-#199 this
+    // also iterated the layerId to prove the layer-select branch tracked; that
+    // branch is gone with the wrapper.)
+    await page.evaluate((id) => {
+      (window as unknown as BasherWindow).__basher_selection!.getState().select(id);
+    }, boxId!);
 
-      for (const t of [0.5, 1.5]) {
-        await page.evaluate((s) => {
-          (window as unknown as BasherWindow).__basher_time!.getState().setTime(s);
-        }, t);
+    for (const t of [0.5, 1.5]) {
+      await page.evaluate((s) => {
+        (window as unknown as BasherWindow).__basher_time!.getState().setTime(s);
+      }, t);
 
-        // Poll the proxy until it matches the evaluated walk (the FLAG-C
-        // tail write guarantees a committed value; poll absorbs the React
-        // effect settle without an arbitrary sleep).
-        const evalPos = await evalWalkPosition(page, t);
-        await expect.poll(async () => V(await gizmoProxyPosition(page))).toBe(V(evalPos));
+      // Poll the proxy until it matches the evaluated walk (the FLAG-C
+      // tail write guarantees a committed value; poll absorbs the React
+      // effect settle without an arbitrary sleep).
+      const evalPos = await evalWalkPosition(page, t);
+      await expect.poll(async () => V(await gizmoProxyPosition(page))).toBe(V(evalPos));
 
-        const proxyPos = await gizmoProxyPosition(page);
-        console.log(
-          `[P7.3 D-06] select=${sel} t=${t} ` + `eval=${V(evalPos)} proxy=${V(proxyPos)}`,
-        );
-        // The assertion whose absence let #68 ship: BOTH sides equal.
-        expect(proxyPos![0]).toBeCloseTo(evalPos![0], 4);
-        expect(proxyPos![1]).toBeCloseTo(evalPos![1], 4);
-        expect(proxyPos![2]).toBeCloseTo(evalPos![2], 4);
-        // And the eval position actually MOVES (not frozen at authored).
-        expect(evalPos![0]).toBeGreaterThan(0);
-      }
+      const proxyPos = await gizmoProxyPosition(page);
+      console.log(
+        `[P7.3 D-06] select=${boxId} t=${t} ` + `eval=${V(evalPos)} proxy=${V(proxyPos)}`,
+      );
+      // The assertion whose absence let #68 ship: BOTH sides equal.
+      expect(proxyPos![0]).toBeCloseTo(evalPos![0], 4);
+      expect(proxyPos![1]).toBeCloseTo(evalPos![1], 4);
+      expect(proxyPos![2]).toBeCloseTo(evalPos![2], 4);
+      // And the eval position actually MOVES (not frozen at authored).
+      expect(evalPos![0]).toBeGreaterThan(0);
     }
   });
 
@@ -422,16 +388,12 @@ test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 bound
         page.evaluate(() => {
           const w = window as unknown as BasherWindow;
           const sec = w.__basher_time!.getState().seconds;
-          const root = w.__basher_dag!.getState().state.outputs.render!;
-          const out = w.__basher_evaluate!(root.node, {
-            time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
-          }).value as { scene: { children: Array<Record<string, unknown>> } };
-          const layer = out.scene.children.find(
-            (c) => (c as { kind?: string }).kind === 'AnimationLayer',
-          ) as
-            | { sampleTarget?: (sec: number) => { position?: [number, number, number] } | null }
-            | undefined;
-          const evalPos = layer?.sampleTarget?.(sec)?.position ?? null;
+          // V57 direct channels (#199): read the rendered position through the
+          // SAME resolveEvaluatedTransform the renderer overlays the channel into.
+          const evalPos =
+            w.__basher_evaluated_transform!('n_box', {
+              time: { frame: Math.round(sec * 60), seconds: sec, normalized: 0 },
+            })?.position ?? null;
           const proxy = w.__basher_gizmo?.()?.position ?? null;
           if (!evalPos || !proxy) return 'null';
           // Display-follow: proxy tracks eval at the live time. Compare
