@@ -1260,6 +1260,16 @@ function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Ma
   return next;
 }
 
+// #198 — one per-frame material-animation write target. `mat` is the slot's FINAL
+// owned material (a per-slot clone). `reapplyOverride`, when present, re-layers a
+// MaterialOverride tint's forced fields on top AFTER the animated base IR is
+// written each frame (channel-over-override composition); absent for plain
+// (un-overridden) animatable slots.
+interface AnimSlot {
+  mat: THREE.Material;
+  reapplyOverride?: () => void;
+}
+
 function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
   // H48 4th-occ gate — count this renderer's renders so the perf e2e can prove an
   // unrelated edit re-renders it 0×. DEV-only no-op in production (renderCounter).
@@ -1455,14 +1465,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   useEffect(() => {
     overrideOriginals.current = new Map();
   }, [cloned]);
-  // #188 (v0.7 Phase 3) — the per-frame material-animation WRITE TARGETS: each
-  // animatable slot's FINAL assigned material, keyed `childId` → array indexed by
-  // local slot (primitive order, the same `localSlotByChild` counter the override
-  // effect uses). `null` at a slot = NOT animatable (an array-material mesh OR a
-  // slot a MaterialOverride tint/flatten claimed — animating the base IR there would
-  // clobber the override; deferred to the converged editor, Phase 4). Rebuilt by the
-  // override effect on every run (materials are re-cloned there); read by the useFrame.
-  const childSlotMaterials = useRef<Map<string, (THREE.Material | null)[]>>(new Map());
+  // #188 (v0.7 Phase 3) / #198 (Phase 4) — the per-frame material-animation WRITE
+  // TARGETS: each animatable slot's FINAL assigned material, keyed `childId` → array
+  // indexed by local slot (primitive order, the same `localSlotByChild` counter the
+  // override effect uses). `null` = NOT animatable (an array-material mesh, OR a slot
+  // a FLATTEN override claimed — flatten ignores the base IR so animating it is
+  // meaningless). A slot a MaterialOverride TINT claimed now records `{ mat,
+  // reapplyOverride }` (#198): the useFrame writes the animated base IR onto `mat`,
+  // then `reapplyOverride()` re-layers the tint's forced fields ON TOP — channel
+  // animates the base, tint wins for its forced channels (composition). Rebuilt by
+  // the override effect on every run (materials are re-cloned there); read by useFrame.
+  const childSlotMaterials = useRef<Map<string, (AnimSlot | null)[]>>(new Map());
   // #99 (P7.13) — material override applied MATERIAL-FAITHFULLY. The old code
   // replaced every mesh material with a fresh `new MeshStandardMaterial(7 scalars)`,
   // which dropped imported maps (.map/.normalMap/.roughnessMap/.metalnessMap/
@@ -1513,8 +1526,18 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       });
       return next;
     };
-    const tint = (s: THREE.Material): THREE.Material => {
-      const std = s as THREE.MeshStandardMaterial;
+    // #198 — apply the override's map-aware tint fields onto an OWNED material IN
+    // PLACE. Extracted from `tint` so the per-frame material-animation loop can
+    // re-layer the SAME tint on top of the animated base IR without re-cloning (the
+    // clone is already owned). Reads map presence off `next` — clone() preserves the
+    // source map refs, so the force-vs-map decision is identical to reading the source.
+    // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal meshes
+    // (all PBR fields present), but KHR_materials_unlit yields a MeshBasicMaterial —
+    // which has `.color`/`.opacity` but NO `.emissive`/`.roughness`/`.metalness`.
+    // Set each field only when it exists; an unconditional `.emissive.set()` would
+    // throw and break the whole traverse for an unlit asset.
+    const applyTintFields = (next: THREE.Material): void => {
+      const std = next as THREE.MeshStandardMaterial;
       const fields = resolveMaterialOverrideFields(
         override as MaterialValue,
         {
@@ -1523,22 +1546,18 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         },
         (override as MaterialValue).overridden, // #124 (V28): per-field force-vs-map
       );
-      // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal
-      // meshes (all PBR fields present), but KHR_materials_unlit yields a
-      // MeshBasicMaterial — which has `.color`/`.opacity` but NO `.emissive`/
-      // `.roughness`/`.metalness`. Clone preserves that subclass, so set each
-      // field only when it exists; unconditional `.emissive.set()` would throw
-      // and break the whole traverse for an unlit asset (the old wholesale-replace
-      // didn't throw because it always built a fresh Standard material).
+      std.color?.set(fields.color);
+      std.emissive?.set(fields.emissive);
+      if ('emissiveIntensity' in std) std.emissiveIntensity = fields.emissiveIntensity;
+      if ('opacity' in std) std.opacity = fields.opacity;
+      if ('transparent' in std) std.transparent = fields.transparent;
+      if (fields.roughness !== null && 'roughness' in std) std.roughness = fields.roughness;
+      if (fields.metalness !== null && 'metalness' in std) std.metalness = fields.metalness;
+      if ('wireframe' in std) std.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
+    };
+    const tint = (s: THREE.Material): THREE.Material => {
       const next = s.clone() as THREE.MeshStandardMaterial;
-      next.color?.set(fields.color);
-      next.emissive?.set(fields.emissive);
-      if ('emissiveIntensity' in next) next.emissiveIntensity = fields.emissiveIntensity;
-      if ('opacity' in next) next.opacity = fields.opacity;
-      if ('transparent' in next) next.transparent = fields.transparent;
-      if (fields.roughness !== null && 'roughness' in next) next.roughness = fields.roughness;
-      if (fields.metalness !== null && 'metalness' in next) next.metalness = fields.metalness;
-      if ('wireframe' in next) next.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
+      applyTintFields(next);
       return next;
     };
     // v0.6 #2 (#178, W6 — D-05/D-07) — per-submesh addressing. A "slot" is the
@@ -1561,9 +1580,9 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     // material iff it is animatable (has a GltfChild, single material, no override
     // tint); `null` otherwise so the local-slot index stays aligned.
     childSlotMaterials.current = new Map();
-    const recordSlot = (id: string, localIdx: number, mat: THREE.Material | null) => {
+    const recordSlot = (id: string, localIdx: number, slot: AnimSlot | null) => {
       const arr = childSlotMaterials.current.get(id) ?? [];
-      arr[localIdx] = mat;
+      arr[localIdx] = slot;
       childSlotMaterials.current.set(id, arr);
     };
     cloned.traverse((child) => {
@@ -1609,7 +1628,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         // #188 — this slot is animatable iff it has a GltfChild + a single material
         // (the same scope overlayDagMaterial / per-child IR addressing requires).
         if (childId && local >= 0) {
-          recordSlot(childId, local, Array.isArray(m.material) ? null : m.material);
+          recordSlot(childId, local, Array.isArray(m.material) ? null : { mat: m.material });
         }
         return;
       }
@@ -1617,11 +1636,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // clones the DAG base and overlays the override's map-safe fields ON TOP.
       const make = flatten ? () => clay(override as MaterialValue) : tint;
       m.material = Array.isArray(dagBase) ? dagBase.map(make) : make(dagBase);
-      // #188 — a MaterialOverride tint/flatten OWNS this slot; per-frame writing the
-      // animated base IR would clobber it, so it is NOT a material-animation target
-      // (null). Composing a channel over an override is deferred to the converged
-      // material editor (Phase 4, #198). Record null to keep local-slot alignment.
-      if (childId && local >= 0) recordSlot(childId, local, null);
+      // #198 — channel-over-MaterialOverride COMPOSITION. A non-flatten TINT slot is
+      // now animatable: the per-frame loop writes the animated base IR onto this OWNED
+      // clone, then `reapplyOverride` re-layers the tint's forced fields ON TOP
+      // (channel animates the base, tint wins for its forced channels). FLATTEN claims
+      // the slot wholesale (clay ignores the base IR) → animating it is meaningless →
+      // null. An ARRAY-material slot is not single-material addressable → null.
+      if (childId && local >= 0) {
+        if (!flatten && !Array.isArray(m.material)) {
+          const claimed = m.material;
+          recordSlot(childId, local, { mat: claimed, reapplyOverride: () => applyTintFields(claimed) });
+        } else {
+          recordSlot(childId, local, null);
+        }
+      }
     });
     // #178 S5 — apply edit-layer texture maps after the synchronous traverse has
     // assigned every final material. Loads happen off the React cycle; the
@@ -1847,11 +1875,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       )?.materials;
       if (!animated) continue;
       for (let i = 0; i < slotMats.length; i += 1) {
-        const mat = slotMats[i];
+        const slot = slotMats[i];
         const ir = animated[i];
-        // mat === null → not animatable (array-material / override-claimed slot); ir
+        // slot === null → not animatable (array-material / flatten-claimed slot); ir
         // absent → fewer captured materials than clone slots. Both: leave untouched.
-        if (mat && ir) applyOpenpbrScalars(mat, openpbrToThree(ir));
+        if (slot && ir) {
+          applyOpenpbrScalars(slot.mat, openpbrToThree(ir));
+          // #198 — re-layer the MaterialOverride tint's forced fields ON TOP of the
+          // animated base IR (channel-over-override composition). No-op for plain
+          // (un-overridden) animatable slots.
+          slot.reapplyOverride?.();
+        }
       }
     }
     lastMaterialApplied.current = { seconds, channels: materialChannelsByChild };
