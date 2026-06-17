@@ -41,6 +41,12 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationLayerValue, KeyframeChannelValue, SceneChild } from './types';
+import { overlayChannels } from './overlayChannels';
+
+// `writeAt` (the one path-writer shared with overlayTransients, #149) was lifted
+// into overlayChannels.ts (v0.7 unification, #196). Re-exported here so existing
+// importers (`overlayTransients.ts`) keep their import path — no drift (H40).
+export { writeAt } from './overlayChannels';
 
 export const AnimationLayerParams = z.object({
   name: z.string().default('Layer'),
@@ -97,7 +103,7 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
     // / the read-side resolver invoke sampleTarget(seconds) at their cadence.
     // The closure captures `active` + `target` + `weight` (all pure values).
     const sampleTarget = (seconds: number): SceneChild | null =>
-      patchTarget(target, active, weight, seconds);
+      overlayChannels(target, active, weight, seconds);
 
     return {
       kind: 'AnimationLayer',
@@ -114,97 +120,3 @@ export const AnimationLayerNode: NodeDefinition<AnimationLayerParams, AnimationL
     };
   },
 };
-
-/**
- * Apply each channel's (paramPath, sampled value @ seconds) onto a deep-cloned
- * copy of target.
- * - Returns target unchanged when active is empty (avoids the clone cost).
- * - paramPath supports dot notation for nested fields (e.g. 'material.color').
- *   Empty paramPath is treated as a no-op — channels carry it as a sentinel.
- * - weight blends each scalar / vector toward the target's static value.
- *   String / quat values pass through at weight≥0.5; <0.5 falls back to
- *   target. (Quat blending requires slerp toward static; deferred —
- *   single-layer use cases don't need partial weights.)
- *
- * P7.12 D-04: channels are function-of-time, so the per-channel value comes
- * from `ch.sample(seconds)` (was the pre-sampled `ch.value`).
- */
-function patchTarget(
-  target: SceneChild | null,
-  active: readonly KeyframeChannelValue[],
-  weight: number,
-  seconds: number,
-): SceneChild | null {
-  if (!target) return null;
-  if (active.length === 0) return target;
-  const clone = JSON.parse(JSON.stringify(target)) as Record<string, unknown>;
-  for (const ch of active) {
-    if (!ch.paramPath) continue;
-    const original = readAt(clone, ch.paramPath);
-    const blended = blend(original, ch.sample(seconds), ch.valueType, weight);
-    writeAt(clone, ch.paramPath, blended);
-  }
-  return clone as unknown as SceneChild;
-}
-
-function readAt(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.');
-  let cur: unknown = obj;
-  for (const key of parts) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[key];
-  }
-  return cur;
-}
-
-/**
- * Write `value` at a dot-path on `obj`, IN PLACE. Shared with
- * `overlayTransients` (issue #149) so the transient overlay writes a paramPath
- * EXACTLY the way the channel patch does — one path-writer, no drift (H40). A
- * missing intermediate object is a no-op (the path must already exist; every
- * animated/transient paramPath does, because routeAnimatedGrab only fires on an
- * existing animated field and the inspector/gizmo route the whole band).
- */
-export function writeAt(obj: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split('.');
-  const last = parts.pop();
-  if (last == null) return;
-  let cur: Record<string, unknown> = obj;
-  for (const key of parts) {
-    const nxt = cur[key];
-    if (nxt == null || typeof nxt !== 'object') return;
-    cur = nxt as Record<string, unknown>;
-  }
-  cur[last] = value;
-}
-
-function blend(
-  original: unknown,
-  channelValue: unknown,
-  valueType: KeyframeChannelValue['valueType'],
-  weight: number,
-): unknown {
-  const w = Math.max(0, Math.min(1, weight));
-  if (w >= 1) return channelValue;
-  if (w <= 0) return original ?? channelValue;
-  if (valueType === 'number' && typeof original === 'number' && typeof channelValue === 'number') {
-    return original + (channelValue - original) * w;
-  }
-  if (
-    valueType === 'vec3' &&
-    Array.isArray(original) &&
-    original.length === 3 &&
-    Array.isArray(channelValue) &&
-    channelValue.length === 3
-  ) {
-    return [
-      (original[0] as number) + ((channelValue[0] as number) - (original[0] as number)) * w,
-      (original[1] as number) + ((channelValue[1] as number) - (original[1] as number)) * w,
-      (original[2] as number) + ((channelValue[2] as number) - (original[2] as number)) * w,
-    ];
-  }
-  // quat / color / unknown: snap at the half-weight mark. Smooth blending
-  // for these types needs slerp / HSL-lerp; defer until weight<1 is a real
-  // authoring need.
-  return w >= 0.5 ? channelValue : (original ?? channelValue);
-}
