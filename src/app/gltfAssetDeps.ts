@@ -40,6 +40,10 @@ export function gltfAssetDepNodes(
   assetRef: string,
   nodeNameMap: Readonly<Record<string, string>>,
 ): Node[] {
+  // The set of THIS asset's GltfChild dagIds — the membership scope for material
+  // channels (#188), which target a child dagId DIRECTLY (no childName, unlike the
+  // transform channels above whose asset scope is nodeNameMap[childName]===target).
+  const childIds = new Set(Object.values(nodeNameMap));
   const out: Node[] = [];
   for (const node of Object.values(nodes)) {
     if (node.type === 'GltfChild') {
@@ -54,6 +58,24 @@ export function gltfAssetDepNodes(
         typeof p.target === 'string' &&
         (p.paramPath === 'position' || p.paramPath === 'rotation' || p.paramPath === 'scale') &&
         nodeNameMap[p.childName] === p.target
+      ) {
+        out.push(node);
+      }
+      continue;
+    }
+    // #188 (v0.7 Phase 3) — material channels. A `materials.<slot>.<lobe>.<field>`
+    // channel (KeyframeChannelNumber for scalars, KeyframeChannelColor for hex
+    // colours) targets a GltfChild dagId directly. Subscribe it so editing the
+    // channel re-renders this asset (the H40 freeze-guard) and the per-frame
+    // overlay sees it. A SUPERSET is safe — `directChannelNodesForTarget` re-filters
+    // with the H105 layer-wired guard downstream; here we only need the ref-flip.
+    if (node.type === 'KeyframeChannelNumber' || node.type === 'KeyframeChannelColor') {
+      const p = node.params as { target?: unknown; paramPath?: unknown };
+      if (
+        typeof p.target === 'string' &&
+        childIds.has(p.target) &&
+        typeof p.paramPath === 'string' &&
+        p.paramPath.startsWith('materials.')
       ) {
         out.push(node);
       }

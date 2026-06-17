@@ -99,6 +99,12 @@ export const GltfChildNode: NodeDefinition<GltfChildParams, GltfChildValue> = {
       rotation: params.rotation,
       scale: params.scale,
       overridden: params.overridden,
+      // #188 (v0.7 Phase 3) — surface the captured materials so the renderer reads
+      // the EVALUATED (channel-overlaid) value, not raw params (H40). Pass-through
+      // when un-animated (no channel) → byte-identical to the old params read, so a
+      // saved project renders unchanged. `undefined` for an empty/bone child or a
+      // pre-#178 save → the renderer keeps the clone's embedded material (V10/H14).
+      materials: params.materials,
     };
   },
 };

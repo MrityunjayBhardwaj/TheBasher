@@ -548,6 +548,18 @@ export interface GltfChildValue {
     readonly rotation: boolean;
     readonly scale: boolean;
   };
+  /**
+   * #188 (v0.7 Phase 3) — the OpenPBR material(s) captured at import, ONE per
+   * mesh primitive (slot) in primitive order, surfaced from `params.materials`
+   * so the renderer reads the EVALUATED (channel-overlaid) value, not raw params
+   * (the [[H40]] evaluated-read rule, now extended to glTF materials). A material
+   * channel (`paramPath = materials.<slot>.<lobe>.<field>`, target = this child's
+   * dagId) overlays onto THIS array via the ONE `overlayChannels` primitive (V57),
+   * exactly as a transform channel overlays `position`/`rotation`/`scale`. OPTIONAL:
+   * absent = a pre-#178 save OR a node with no mesh (empty/bone) → the renderer
+   * falls back to the clone's embedded material (V10/H14 backward-compat).
+   */
+  readonly materials?: readonly InlineMaterialSpec[];
 }
 
 export interface TransformValue {

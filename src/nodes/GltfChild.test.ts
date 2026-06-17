@@ -59,6 +59,33 @@ describe('GltfChild node', () => {
     expect(value.overridden).toEqual({ position: true, rotation: false, scale: false });
   });
 
+  it('#188 — surfaces captured materials on the evaluated value (so the renderer reads EVALUATED, not raw params, H40)', () => {
+    const params = GltfChildParams.parse({
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      assetRef: 'a.glb',
+      childName: 'Body',
+      materials: [{ name: 'slot0', base: { color: '#ff0000', metalness: 0.2 } }],
+    });
+    const value = GltfChildNode.evaluate(params, {}) as GltfChildValue;
+    expect(value.materials).toHaveLength(1);
+    expect(value.materials?.[0].base.color).toBe('#ff0000');
+    expect(value.materials?.[0].base.metalness).toBe(0.2);
+  });
+
+  it('#188 — materials is undefined when the child captured none (pre-#178 save / empty bone → V10/H14 fallback)', () => {
+    const params = GltfChildParams.parse({
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      assetRef: 'a.glb',
+      childName: 'Axe_mesh',
+    });
+    const value = GltfChildNode.evaluate(params, {}) as GltfChildValue;
+    expect(value.materials).toBeUndefined();
+  });
+
   it('paramSchema rejects a missing childName', () => {
     expect(() =>
       GltfChildParams.parse({
