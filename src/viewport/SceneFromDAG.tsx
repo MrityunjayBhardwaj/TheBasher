@@ -27,7 +27,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
-import { openpbrToThree } from '../app/material/openpbrToThree';
+import { openpbrToThree, type ThreeMaterialParams } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
 import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
@@ -1222,9 +1222,18 @@ function childOverridesForAsset(
 // → pixel parity. Clones the source (never mutates the shared drei-cached material
 // — V20/H36/H45 single-writer). Compiles through openpbrToThree (the one mapping
 // site, V29), so a DAG material renders exactly like a native Box/Sphere one.
-function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Material {
-  const tp = openpbrToThree(ir);
-  const next = s.clone() as THREE.MeshPhysicalMaterial;
+/**
+ * Write the OpenPBR scalar/colour fields onto an EXISTING three.js material, IN
+ * PLACE (no clone). The ONE field-mapping source (V20) shared by the static
+ * overlay (`overlayDagMaterial`, which clones first) AND the per-frame material
+ * animation (#188 `useFrame` below, which writes onto the already-cloned live
+ * material — re-cloning per frame would churn GC). Property-guarded so an unlit
+ * `MeshBasicMaterial` (KHR_materials_unlit — has `.color`/`.opacity` but no
+ * `.roughness`/`.emissive`/physical lobes) doesn't throw. Maps are NEVER touched
+ * (keep the clone's embedded/edited textures, S5).
+ */
+function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void {
+  const next = mat as THREE.MeshPhysicalMaterial;
   next.color?.set(tp.color);
   next.emissive?.set(tp.emissive);
   if ('emissiveIntensity' in next) next.emissiveIntensity = tp.emissiveIntensity;
@@ -1242,6 +1251,11 @@ function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Ma
   if ('clearcoatRoughness' in next) next.clearcoatRoughness = tp.clearcoatRoughness;
   if ('transmission' in next) next.transmission = tp.transmission;
   if ('thickness' in next && tp.transmission > 0) next.thickness = tp.thickness;
+}
+
+function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Material {
+  const next = s.clone() as THREE.MeshPhysicalMaterial;
+  applyOpenpbrScalars(next, openpbrToThree(ir));
   // maps: intentionally NOT touched — keep the clone's embedded textures (S5).
   return next;
 }
@@ -1406,6 +1420,31 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap),
     [depNodeMap, value.nodeNameMap],
   );
+  // #188 (v0.7 Phase 3) — the MATERIAL-CHANNEL band, keyed childDagId → the
+  // function-of-time channel VALUES targeting that child's `materials.*` paths.
+  // Enumerated from depNodeMap (the narrow subscription — Slice 1 already filters
+  // material channels in, so editing one re-renders here and this memo re-derives,
+  // H40/H48), and built via the SHARED `channelValuesFromNodes` (one sampler source,
+  // no parallel walk — V24/V57). The H105 layer-wired guard is a NO-OP here: a
+  // material channel targets a GltfChild, which is NOT a scene producer, so no
+  // AnimationLayer ever wraps it — applying the guard would require scanning the
+  // whole node table (the H48 storm depNodeMap exists to avoid). Empty map ⇒ the
+  // useFrame below early-returns ⇒ a static glTF pays zero per-frame cost.
+  const materialChannelsByChild = useMemo(() => {
+    const byChild = new Map<string, ReturnType<typeof channelValuesFromNodes>>();
+    const nodesByChild = new Map<string, (typeof depNodeMap)[string][]>();
+    for (const node of Object.values(depNodeMap)) {
+      if (node.type !== 'KeyframeChannelNumber' && node.type !== 'KeyframeChannelColor') continue;
+      const p = node.params as { target?: unknown; paramPath?: unknown };
+      if (typeof p.target !== 'string' || !p.target) continue;
+      if (typeof p.paramPath !== 'string' || !p.paramPath.startsWith('materials.')) continue;
+      (nodesByChild.get(p.target) ?? nodesByChild.set(p.target, []).get(p.target)!).push(node);
+    }
+    for (const [childId, nodes] of nodesByChild) {
+      byChild.set(childId, channelValuesFromNodes(nodes));
+    }
+    return byChild;
+  }, [depNodeMap]);
   // #99 (P7.13) — per-clone capture of the IMPORTED material(s), keyed by mesh
   // uuid. The override effect re-derives from this ORIGINAL every time (never
   // from an already-overridden clone), so changing/removing the override never
@@ -1416,6 +1455,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   useEffect(() => {
     overrideOriginals.current = new Map();
   }, [cloned]);
+  // #188 (v0.7 Phase 3) — the per-frame material-animation WRITE TARGETS: each
+  // animatable slot's FINAL assigned material, keyed `childId` → array indexed by
+  // local slot (primitive order, the same `localSlotByChild` counter the override
+  // effect uses). `null` at a slot = NOT animatable (an array-material mesh OR a
+  // slot a MaterialOverride tint/flatten claimed — animating the base IR there would
+  // clobber the override; deferred to the converged editor, Phase 4). Rebuilt by the
+  // override effect on every run (materials are re-cloned there); read by the useFrame.
+  const childSlotMaterials = useRef<Map<string, (THREE.Material | null)[]>>(new Map());
   // #99 (P7.13) — material override applied MATERIAL-FAITHFULLY. The old code
   // replaced every mesh material with a fresh `new MeshStandardMaterial(7 scalars)`,
   // which dropped imported maps (.map/.normalMap/.roughnessMap/.metalnessMap/
@@ -1509,6 +1556,16 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     // by the nearest stamped ancestor (the H90/readGltfMaterials rule); the i-th
     // mesh under that child = the i-th captured material (primitive order).
     const localSlotByChild = new Map<string, number>();
+    // #188 — rebuild the per-frame material-animation write targets each run (the
+    // materials below are freshly cloned/assigned). A slot records its FINAL
+    // material iff it is animatable (has a GltfChild, single material, no override
+    // tint); `null` otherwise so the local-slot index stays aligned.
+    childSlotMaterials.current = new Map();
+    const recordSlot = (id: string, localIdx: number, mat: THREE.Material | null) => {
+      const arr = childSlotMaterials.current.get(id) ?? [];
+      arr[localIdx] = mat;
+      childSlotMaterials.current.set(id, arr);
+    };
     cloned.traverse((child) => {
       const m = child as THREE.Mesh;
       if (!m.isMesh) return;
@@ -1549,12 +1606,22 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         // No override for this slot → render the DAG material (S3); if the child
         // carries none, dagBase === src (the imported material), unchanged.
         m.material = dagBase;
+        // #188 — this slot is animatable iff it has a GltfChild + a single material
+        // (the same scope overlayDagMaterial / per-child IR addressing requires).
+        if (childId && local >= 0) {
+          recordSlot(childId, local, Array.isArray(m.material) ? null : m.material);
+        }
         return;
       }
       // Flatten ignores the base entirely (fresh clay per slot); the default path
       // clones the DAG base and overlays the override's map-safe fields ON TOP.
       const make = flatten ? () => clay(override as MaterialValue) : tint;
       m.material = Array.isArray(dagBase) ? dagBase.map(make) : make(dagBase);
+      // #188 — a MaterialOverride tint/flatten OWNS this slot; per-frame writing the
+      // animated base IR would clobber it, so it is NOT a material-animation target
+      // (null). Composing a channel over an override is deferred to the converged
+      // material editor (Phase 4, #198). Record null to keep local-slot alignment.
+      if (childId && local >= 0) recordSlot(childId, local, null);
     });
     // #178 S5 — apply edit-layer texture maps after the synchronous traverse has
     // assigned every final material. Loads happen off the React cycle; the
@@ -1740,6 +1807,62 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   useEffect(() => {
     lastApplied.current = null;
   }, [cloned]);
+  // #188 (v0.7 Phase 3) — the per-frame MATERIAL-ANIMATION write loop. The glTF
+  // material analogue of the TRS useFrame above: the override EFFECT establishes the
+  // material objects (clones, base IR overlay, override tint — the expensive,
+  // structural step), and THIS useFrame overlays the animated scalar deltas onto
+  // those already-cloned live materials each frame (cheap — re-cloning per frame
+  // would churn GC, the same reason TRS writes `child.position.set` instead of
+  // re-instantiating). Mirrors the TRS dirty-check exactly: snapshot live time (never
+  // a time subscription — H48), skip when (seconds, channels) are unchanged so a
+  // PAUSED scene pays nothing; early-out when no child animates a material.
+  const lastMaterialApplied = useRef<{ seconds: number; channels: unknown } | null>(null);
+  useFrame(() => {
+    if (materialChannelsByChild.size === 0) return;
+    const seconds = useTimeStore.getState().seconds;
+    if (
+      lastMaterialApplied.current !== null &&
+      lastMaterialApplied.current.seconds === seconds &&
+      lastMaterialApplied.current.channels === materialChannelsByChild
+    ) {
+      return;
+    }
+    for (const [childId, channels] of materialChannelsByChild) {
+      const slotMats = childSlotMaterials.current.get(childId);
+      if (!slotMats) continue;
+      const baseMaterials = (
+        depNodeMap[childId]?.params as { materials?: InlineMaterialSpec[] } | undefined
+      )?.materials;
+      if (!baseMaterials) continue;
+      // Overlay the channels onto the EVALUATED materials (H40 — read evaluated, not
+      // a parallel sample) via the ONE overlay primitive (V57); weight 1 → the
+      // sampled value wins. `writeAt` indexes the `materials.<slot>.<lobe>.<field>`
+      // array path with NO setAtPath change (V53). One overlay per child handles all
+      // its slots/fields at once.
+      const animated = overlayChannels(
+        { materials: baseMaterials },
+        channels,
+        1,
+        seconds,
+      )?.materials;
+      if (!animated) continue;
+      for (let i = 0; i < slotMats.length; i += 1) {
+        const mat = slotMats[i];
+        const ir = animated[i];
+        // mat === null → not animatable (array-material / override-claimed slot); ir
+        // absent → fewer captured materials than clone slots. Both: leave untouched.
+        if (mat && ir) applyOpenpbrScalars(mat, openpbrToThree(ir));
+      }
+    }
+    lastMaterialApplied.current = { seconds, channels: materialChannelsByChild };
+  });
+  // Re-apply on a structural rebuild (clone swap / override change / dep edit) — the
+  // override effect (same deps) re-clones the materials, so the prior write targets
+  // are stale; clear the dirty-check so the next frame re-applies onto the fresh
+  // materials even if (seconds, channels) happen to be referentially equal.
+  useEffect(() => {
+    lastMaterialApplied.current = null;
+  }, [cloned, override, depNodeMap]);
   // #88 (DEV-only) — observation seam for the skinned-deform e2e. The proof
   // that #88 works is that a skin-bound VERTEX moves (not just that a joint
   // Object3D animates — that already happens via the TRS effect above). That

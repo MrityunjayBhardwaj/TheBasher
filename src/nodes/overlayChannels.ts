@@ -18,7 +18,7 @@
 //
 // REF: docs/UNIFICATION-DESIGN.md §3.1/§3.2; vyapti V20/V24; hetvabhasa H40/H48.
 
-import type { KeyframeChannelValue, SceneChild } from './types';
+import type { KeyframeChannelValue } from './types';
 
 /**
  * Overlay each channel's (paramPath, sampled value @ seconds) onto a deep-cloned
@@ -31,13 +31,19 @@ import type { KeyframeChannelValue, SceneChild } from './types';
  *
  * Channels are function-of-time (V24), so the per-channel value comes from
  * `ch.sample(seconds)`.
+ *
+ * GENERIC over the base shape (V57 — the ONE overlay primitive for EVERY animatable
+ * node): a `SceneChild` (AnimationLayer / DirectChannelsR), a `GltfChildValue`
+ * carrying `materials` (#188, the glTF-material road), or any future value object.
+ * The body is structurally generic (JSON clone + `writeAt` at the paramPath); the
+ * type param keeps the caller's shape on the way out.
  */
-export function overlayChannels(
-  base: SceneChild | null,
+export function overlayChannels<T>(
+  base: T | null,
   channels: readonly KeyframeChannelValue[],
   weight: number,
   seconds: number,
-): SceneChild | null {
+): T | null {
   if (!base) return null;
   if (channels.length === 0) return base;
   const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
@@ -47,7 +53,7 @@ export function overlayChannels(
     const blended = blend(original, ch.sample(seconds), ch.valueType, weight);
     writeAt(clone, ch.paramPath, blended);
   }
-  return clone as unknown as SceneChild;
+  return clone as unknown as T;
 }
 
 export function readAt(obj: Record<string, unknown>, path: string): unknown {
