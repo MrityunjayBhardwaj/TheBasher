@@ -33,6 +33,10 @@ export const KeyframeChannelVec3Params = z.object({
   name: z.string().default('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
+  /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
+   *  identity defaults → byte-identical to pre-#199. */
+  mute: z.boolean().default(false),
+  weight: z.number().min(0).max(1).default(1),
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
   // imported clip track is materialized into per-bone channels (bakeGltfChannel,
   // Wave D), each channel carries the bone's `childName` AND the owning asset's
@@ -94,6 +98,8 @@ export const KeyframeChannelVec3Node: NodeDefinition<
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
+      mute: params.mute,
+      weight: params.weight,
       sample: buildVec3Sampler(params),
     };
   },

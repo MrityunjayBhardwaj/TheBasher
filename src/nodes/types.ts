@@ -838,6 +838,16 @@ interface KeyframeChannelValueBase {
   readonly target: string;
   /** Path within target.params — e.g. 'position', 'material.color'. */
   readonly paramPath: string;
+  /**
+   * Per-channel gate + blend (v0.7 #199 — lifted off the retired AnimationLayer
+   * wrapper). `mute` true → the channel contributes nothing (overlayChannels
+   * skips it). `weight` ∈ [0,1] blends the sampled value toward the base. Both
+   * default-identity (mute:false, weight:1) so an un-migrated channel and every
+   * direct channel are byte-identical to pre-#199. REF: docs/UNIFICATION-DESIGN.md
+   * §3.2 (locked decision 1); vyapti V57.
+   */
+  readonly mute: boolean;
+  readonly weight: number;
 }
 
 // P7.12 D-04 (function-of-time, V24/V3-amended) — mirrors the P7.10

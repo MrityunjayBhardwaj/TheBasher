@@ -40,6 +40,10 @@ export const KeyframeChannelNumberParams = z.object({
   target: z.string().default(''),
   /** Param path on the target — e.g. 'intensity', 'fov'. */
   paramPath: z.string().default(''),
+  /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
+   *  identity defaults → byte-identical to pre-#199. */
+  mute: z.boolean().default(false),
+  weight: z.number().min(0).max(1).default(1),
   keyframes: z
     .array(
       z.object({
@@ -88,6 +92,8 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
+      mute: params.mute,
+      weight: params.weight,
       sample: (seconds: number) => sample(sorted, seconds),
     };
   },

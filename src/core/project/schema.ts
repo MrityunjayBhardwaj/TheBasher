@@ -5,12 +5,19 @@
 // V0.5 ships formatVersion=1 only. The first node-type version bump (P3+)
 // triggers the first migration; the runner is wired and tested today.
 //
+// formatVersion=2 (v0.7 #199): retires the AnimationLayer wrapper. A v1 file is
+// rewritten by the `migrateAnimationLayers` FORMAT migration (runs on raw JSON
+// BEFORE this schema parses) — each layer's edges are reversed onto the wrapped
+// node, its channels re-targeted + their gate/blend folded on, and the layer
+// node deleted. After it runs no AnimationLayer node exists, so the (now-removed)
+// node type is never looked up. REF: docs/UNIFICATION-DESIGN.md §4; krama K5.
+//
 // REF: THESIS.md §52, vyapti V4, krama K5.
 
 import { z } from 'zod';
 import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 
-export const PROJECT_FORMAT_VERSION = 1;
+export const PROJECT_FORMAT_VERSION = 2;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

@@ -137,7 +137,9 @@ describe('Project save/load round-trip', () => {
     };
     await storage.write('projects/old/project.json', new TextEncoder().encode(JSON.stringify(v0)));
     const loaded = await loadProject(storage, 'old');
-    expect(loaded.formatVersion).toBe(1);
+    // The ladder chains v0→v1 (registered above) then v1→v2 (#199 AnimationLayer
+    // retirement — a no-op for this layer-free TN node) → current.
+    expect(loaded.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(loaded.state.nodes.n.params).toEqual({ value: 5 });
   });
 

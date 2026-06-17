@@ -29,6 +29,10 @@ export const KeyframeChannelQuatParams = z.object({
   name: z.string().default('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
+  /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
+   *  identity defaults → byte-identical to pre-#199. */
+  mute: z.boolean().default(false),
+  weight: z.number().min(0).max(1).default(1),
   keyframes: z
     .array(
       z.object({
@@ -132,6 +136,8 @@ export const KeyframeChannelQuatNode: NodeDefinition<
       name: params.name,
       target: params.target,
       paramPath: params.paramPath,
+      mute: params.mute,
+      weight: params.weight,
       sample: (seconds: number) => sample(sorted, seconds),
     };
   },

@@ -18,8 +18,111 @@ type FormatMigration = (raw: unknown) => unknown;
 
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
-  // empty: formatVersion=1 is current
+  // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
+  1: migrateAnimationLayers,
 };
+
+// ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
+// Reverses what `addLayer` wired (addLayer.ts:88-123). For each AnimationLayer
+// L wrapping target T with channels C wired into L.animation:
+//   1. re-target each channel C to T (params.target = T) and FOLD L's gate/blend
+//      onto it (mute/weight — the only behaviour the wrapper carried, V57 §11),
+//   2. re-point every consumer edge L.out → T.out (the splice, reversed),
+//   3. delete L. Its channels are now FREE-FLOATING direct channels.
+// Runs on RAW JSON BEFORE ProjectSchema.parse, so the now-removed AnimationLayer
+// node type is never looked up by the registry. solo / boneMask were inert
+// (never filtered channels — AnimationLayer.ts:88-92) → dropped, but LOGGED when
+// non-default so the loss is never silent (V38). REF: docs/UNIFICATION-DESIGN.md §4.
+
+interface RawRef {
+  node?: string;
+  socket?: string;
+}
+interface RawNode {
+  id?: string;
+  type?: string;
+  params?: Record<string, unknown>;
+  inputs?: Record<string, RawRef | RawRef[]>;
+}
+
+function asRefs(binding: RawRef | RawRef[] | undefined): RawRef[] {
+  if (Array.isArray(binding)) return binding;
+  return binding ? [binding] : [];
+}
+
+/** Replace any ref to `fromNode` with `toNode` (preserving the socket) in a
+ *  binding, keeping the binding's single-vs-list shape. */
+function remapBinding(
+  binding: RawRef | RawRef[] | undefined,
+  fromNode: string,
+  toNode: string,
+): RawRef | RawRef[] | undefined {
+  if (Array.isArray(binding)) {
+    return binding.map((r) => (r.node === fromNode ? { ...r, node: toNode } : r));
+  }
+  if (binding && binding.node === fromNode) return { ...binding, node: toNode };
+  return binding;
+}
+
+export function migrateAnimationLayers(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode>; outputs?: Record<string, RawRef> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 2 };
+
+  const layers = Object.values(nodes).filter((n) => n?.type === 'AnimationLayer');
+  for (const layer of layers) {
+    const layerId = layer.id;
+    if (!layerId) continue;
+    const targetId = asRefs(layer.inputs?.target)[0]?.node;
+    const channelRefs = asRefs(layer.inputs?.animation);
+    const lw = typeof layer.params?.weight === 'number' ? (layer.params.weight as number) : 1;
+    const muted = layer.params?.mute === true;
+
+    // Surface the dropped inert semantics (no silent loss, V38).
+    const boneMask = layer.params?.boneMask;
+    if (layer.params?.solo === true || (Array.isArray(boneMask) && boneMask.length > 0)) {
+      console.warn(
+        `[migrateAnimationLayers] layer "${layerId}" had solo/boneMask set; these were ` +
+          `never wired (inert) and are dropped (#199). Reintroduce as per-channel solo / a ` +
+          `ChannelGroup if a real need appears.`,
+      );
+    }
+
+    // 1 — re-target each channel to the wrapped node + fold gate/blend on.
+    for (const cref of channelRefs) {
+      const ch = cref.node ? nodes[cref.node] : undefined;
+      if (!ch) continue;
+      ch.params = ch.params ?? {};
+      if (targetId) ch.params.target = targetId;
+      if (lw !== 1) ch.params.weight = lw;
+      if (muted) ch.params.mute = true;
+    }
+
+    // 2 — re-point every consumer edge L.out → T.out (reverse the splice).
+    if (targetId) {
+      for (const n of Object.values(nodes)) {
+        if (!n.inputs) continue;
+        for (const socket of Object.keys(n.inputs)) {
+          n.inputs[socket] = remapBinding(n.inputs[socket], layerId, targetId)!;
+        }
+      }
+      const outputs = proj.state?.outputs;
+      if (outputs) {
+        for (const k of Object.keys(outputs)) {
+          if (outputs[k]?.node === layerId) outputs[k] = { ...outputs[k], node: targetId };
+        }
+      }
+    }
+
+    // 3 — delete the layer node; its channels are now free-floating.
+    delete nodes[layerId];
+  }
+
+  return { ...proj, formatVersion: 2 };
+}
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {
   if (formatMigrations[fromVersion]) {

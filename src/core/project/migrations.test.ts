@@ -16,9 +16,10 @@
 // REF: PLAN.md W1 (1.6); THESIS §52; vyapti V4/V10/V32; hetvabhasa H14/H25; #178.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests } from '../dag';
+import { __resetRegistryForTests, applyOp, type DagState } from '../dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
+import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
 import type { InlineMaterialSpec } from '../../nodes/types';
 import { migrateNodes, migrateProjectFormat } from './migrations';
@@ -176,5 +177,153 @@ describe('RenderOutput v1 → v2 resolution migration (#168 byte-identical gate)
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_render).toEqual(once.state.nodes.n_render);
     expect(twice.state.nodes.n_render.version).toBe(2);
+  });
+});
+
+// ── AnimationLayer retirement (#199) — byte-identical render gate ───────────
+// The v1→v2 format migration reverses addLayer's splice: a layer wrapping n_box
+// (with a position channel) becomes a FREE-FLOATING direct channel targeting
+// n_box, the layer node gone, scene.children re-pointed to the box. The gate:
+// resolveEvaluatedTransform('n_box') — the SAME read-side band the renderer draws
+// (V57/#197) — must be IDENTICAL pre-migration (layer path) and post-migration
+// (direct channel) at every time, including the layer's weight/mute folded onto
+// the channel. REF: docs/UNIFICATION-DESIGN.md §4; vyapti V57; hetvabhasa H40.
+
+/** Default scene with n_box wrapped in an AnimationLayer (a position channel
+ *  wired in) — the exact shape `addLayer` produces. Optional layer weight/mute. */
+function buildLayerWrappedState(opts?: { weight?: number; mute?: boolean }): DagState {
+  let s = buildDefaultDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_pos_channel',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_box',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [0, 0, 0], easing: 'linear' },
+        { time: 1, value: [0, 6, 0], easing: 'linear' },
+      ],
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_box_layer',
+    nodeType: 'AnimationLayer',
+    params: { name: 'Layer', weight: opts?.weight ?? 1, mute: opts?.mute ?? false },
+  }).next;
+  // Splice the layer between n_box and n_scene.children (addLayer.ts:95-123).
+  s = applyOp(s, {
+    type: 'disconnect',
+    from: { node: 'n_box', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_box', socket: 'out' },
+    to: { node: 'n_box_layer', socket: 'target' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_pos_channel', socket: 'out' },
+    to: { node: 'n_box_layer', socket: 'animation' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_box_layer', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  }).next;
+  return s;
+}
+
+/** Serialize a DagState as a formatVersion=1 project (the bytes a pre-#199 save
+ *  produced — the boundary the user hits on load). */
+function serializeV1(state: DagState) {
+  const nodeVersions: Record<string, number> = {};
+  for (const n of Object.values(state.nodes)) {
+    nodeVersions[n.type] = Math.max(nodeVersions[n.type] ?? 0, n.version);
+  }
+  return {
+    formatVersion: 1,
+    id: 'p199-layer-migration',
+    name: 'pre-#199 layer project',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions,
+    state: { nodes: state.nodes, outputs: state.outputs },
+  };
+}
+
+function childRefNodes(state: DagState): string[] {
+  const sceneChildren = state.nodes.n_scene.inputs.children;
+  const refs = Array.isArray(sceneChildren) ? sceneChildren : sceneChildren ? [sceneChildren] : [];
+  return refs.map((r) => r.node);
+}
+
+describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
+  it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
+    const migrated = loadFromBytes(serializeV1(buildLayerWrappedState()));
+    expect(migrated.formatVersion).toBe(2);
+    // No AnimationLayer node survives the load.
+    expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
+      false,
+    );
+    expect(migrated.state.nodes.n_box_layer).toBeUndefined();
+    // The channel is a free-floating direct channel targeting the wrapped node.
+    const ch = migrated.state.nodes.n_pos_channel;
+    expect(ch).toBeDefined();
+    expect((ch.params as { target: string }).target).toBe('n_box');
+    // scene.children names the box directly again (the splice, reversed).
+    expect(childRefNodes(migrated.state)).toContain('n_box');
+    expect(childRefNodes(migrated.state)).not.toContain('n_box_layer');
+  });
+
+  it('renders byte-identically: resolveEvaluatedTransform(n_box) matches pre vs post at every t', () => {
+    const pre = buildLayerWrappedState();
+    const post = loadFromBytes(serializeV1(pre)).state;
+    for (const t of [0, 0.5, 1]) {
+      const ctx = ctxAt(t);
+      const a = resolveEvaluatedTransform(pre, 'n_box', ctx);
+      const b = resolveEvaluatedTransform(post, 'n_box', ctx);
+      expect(a, `pre resolves at t=${t}`).not.toBeNull();
+      expect(b, `post resolves at t=${t}`).not.toBeNull();
+      expect(b, `byte-identical at t=${t}`).toEqual(a);
+    }
+    // Sanity: the channel actually animated (not a degenerate all-equal fixture).
+    const p0 = resolveEvaluatedTransform(post, 'n_box', ctxAt(0))!.position;
+    const p1 = resolveEvaluatedTransform(post, 'n_box', ctxAt(1))!.position;
+    expect(p1[1]).not.toBe(p0[1]);
+  });
+
+  it('folds the layer WEIGHT onto each channel (0.5 blend preserved pre == post)', () => {
+    const pre = buildLayerWrappedState({ weight: 0.5 });
+    const migrated = loadFromBytes(serializeV1(pre));
+    expect((migrated.state.nodes.n_pos_channel.params as { weight: number }).weight).toBe(0.5);
+    for (const t of [0, 0.5, 1]) {
+      expect(resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(t))).toEqual(
+        resolveEvaluatedTransform(pre, 'n_box', ctxAt(t)),
+      );
+    }
+  });
+
+  it('folds the layer MUTE onto each channel (muted → base, no overlay, pre == post)', () => {
+    const pre = buildLayerWrappedState({ mute: true });
+    const migrated = loadFromBytes(serializeV1(pre));
+    expect((migrated.state.nodes.n_pos_channel.params as { mute: boolean }).mute).toBe(true);
+    // A muted channel contributes nothing → position stays at the static base at every t.
+    const at0 = resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(0))!.position;
+    const at1 = resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(1))!.position;
+    expect(at1).toEqual(at0);
+    expect(resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(1))).toEqual(
+      resolveEvaluatedTransform(pre, 'n_box', ctxAt(1)),
+    );
+  });
+
+  it('is idempotent — re-loading a migrated (layer-free) project is a stable no-op', () => {
+    const once = loadFromBytes(serializeV1(buildLayerWrappedState()));
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_pos_channel).toEqual(once.state.nodes.n_pos_channel);
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
   });
 });

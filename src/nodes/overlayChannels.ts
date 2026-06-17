@@ -45,12 +45,19 @@ export function overlayChannels<T>(
   seconds: number,
 ): T | null {
   if (!base) return null;
-  if (channels.length === 0) return base;
+  // Per-channel mute gate (v0.7 #199 — lifted off the retired AnimationLayer):
+  // a muted channel contributes nothing. Drop empty-path channels too. If none
+  // remain, return the base unchanged (skip the clone cost).
+  const active = channels.filter((ch) => !ch.mute && ch.paramPath);
+  if (active.length === 0) return base;
   const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
-  for (const ch of channels) {
-    if (!ch.paramPath) continue;
+  for (const ch of active) {
     const original = readAt(clone, ch.paramPath);
-    const blended = blend(original, ch.sample(seconds), ch.valueType, weight);
+    // Effective weight = caller weight × per-channel weight (both identity by
+    // default → byte-identical to pre-#199). `?? 1` is defensive for any
+    // channel value constructed without the field.
+    const w = weight * (ch.weight ?? 1);
+    const blended = blend(original, ch.sample(seconds), ch.valueType, w);
     writeAt(clone, ch.paramPath, blended);
   }
   return clone as unknown as T;

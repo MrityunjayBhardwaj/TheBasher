@@ -8,7 +8,7 @@ import {
   emptyDagState,
 } from '../core/dag';
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
-import { ProjectSchema } from '../core/project/schema';
+import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
 // P7.12 D-04 — node defs for the inputs:{} purity assertion.
@@ -157,7 +157,7 @@ describe('default project', () => {
   it('serializes through ProjectSchema cleanly', () => {
     const project = buildDefaultProject();
     const parsed = ProjectSchema.parse(project);
-    expect(parsed.formatVersion).toBe(1);
+    expect(parsed.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(parsed.nodeVersions.PerspectiveCamera).toBe(1);
   });
 });

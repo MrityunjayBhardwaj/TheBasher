@@ -8,6 +8,7 @@ import { __resetRegistryForTests } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { composeProject } from '../core/project/io';
+import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import {
   SceneBundleSchema,
   bundleToProject,
@@ -267,7 +268,7 @@ describe('bundleToProject', () => {
 
     expect(project.id).toBe('proj_new');
     expect(project.name).toBe('Orig');
-    expect(project.formatVersion).toBe(1);
+    expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(project.createdAt).toBe(9999);
     // The DAG survives the round-trip: identical node id set.
     expect(Object.keys(project.state.nodes).sort()).toEqual(Object.keys(src.state.nodes).sort());
