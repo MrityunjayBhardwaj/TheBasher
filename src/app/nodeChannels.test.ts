@@ -4,6 +4,7 @@ import {
   directChannelNodesForTarget,
   channelValuesFromNodes,
   directChannelValuesForTarget,
+  directChannelTargetSet,
 } from './nodeChannels';
 
 beforeAll(() => {
@@ -122,5 +123,28 @@ describe('directChannelValuesForTarget — the one-shot read-side form', () => {
     const values = directChannelValuesForTarget(nodes, 'box1');
     const paths = values.map((v) => v.paramPath).sort();
     expect(paths).toEqual(['material.base.roughness', 'scale']);
+  });
+});
+
+describe('directChannelTargetSet — one-pass membership for the renderer (#197)', () => {
+  it('collects every node id with a free-floating direct channel', () => {
+    const nodes = {
+      ch1: numChannel('ch1', 'box1', 'material.base.metalness', 0.5),
+      ch2: vec3Channel('ch2', 'box2', 'position', [1, 1, 1]),
+      empty: numChannel('empty', 'box3', 'position', 0),
+    };
+    nodes.empty.params.keyframes = [];
+    const set = directChannelTargetSet(nodes);
+    expect(set.has('box1')).toBe(true);
+    expect(set.has('box2')).toBe(true);
+    expect(set.has('box3')).toBe(false); // zero keyframes → not animated
+  });
+
+  it('omits a node whose ONLY channels are layer-wired (coexistence guard)', () => {
+    const nodes = {
+      wired: numChannel('wired', 'box1', 'position', 1),
+      lyr: layer('lyr', 'box1', ['wired']),
+    };
+    expect(directChannelTargetSet(nodes).has('box1')).toBe(false);
   });
 });

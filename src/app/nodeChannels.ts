@@ -76,6 +76,28 @@ export function directChannelNodesForTarget<T extends NodeLike & { id: string }>
   return out;
 }
 
+/**
+ * The set of node ids that have at least one free-floating direct channel
+ * (excluding layer-wired). Built in ONE pass over the nodes — the renderer
+ * computes it once per render and tests membership per child, so the child map
+ * stays O(N), never O(N²) (the B13 trap of scanning all nodes per child).
+ */
+export function directChannelTargetSet(
+  nodes: Readonly<Record<string, NodeLike & { id: string }>>,
+): Set<string> {
+  const wired = layerWiredChannelIds(nodes);
+  const targets = new Set<string>();
+  for (const node of Object.values(nodes)) {
+    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (wired.has(node.id)) continue;
+    const p = node.params as { target?: unknown; keyframes?: unknown };
+    if (typeof p.target !== 'string' || !p.target) continue;
+    if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue;
+    targets.add(p.target);
+  }
+  return targets;
+}
+
 /** Build the function-of-time {@link KeyframeChannelValue} for each channel node,
  *  via the node's OWN `evaluate` (one sampling source, no drift). Unknown/dead
  *  node types are skipped. */

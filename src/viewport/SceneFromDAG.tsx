@@ -39,6 +39,12 @@ import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
+import {
+  directChannelNodesForTarget,
+  channelValuesFromNodes,
+  directChannelTargetSet,
+} from '../app/nodeChannels';
+import { overlayChannels } from '../nodes/overlayChannels';
 import { resolveEditTargetId } from '../app/animate/resolveEditTarget';
 import { useDrillStore } from '../app/stores/drillStore';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
@@ -160,6 +166,13 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       ? (sceneNode.inputs.lights as { node: string; socket: string }[])
       : [];
 
+  // v0.7 unification (#197) — the set of nodes driven by free-floating direct
+  // channels, built in ONE pass so the child map below is O(N), not O(N²). A
+  // child in this set (and not an AnimationLayer) overlays its channels via
+  // DirectChannelsR. Excludes layer-wired channels (the coexistence guard lives
+  // in nodeChannels.ts).
+  const directChannelTargets = directChannelTargetSet(state.nodes);
+
   // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
   // object, not just the active one). They are NOT in value.scene.children —
   // only one camera is wired to scene.camera — so we read them from state.
@@ -210,18 +223,26 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           aggregator's `inputs.children[i]` (childRefs) per the comment above.
           Each child renders through the MEMOIZED SceneChildNode so a single param
           edit re-renders ONE node, not all N (H48 / B13). */}
-      {value.scene.children.map((child, i) => (
-        <SceneChildNode
-          key={`mesh:${i}`}
-          value={child}
-          pickId={childRefs[i]?.node ?? null}
-          animationTargetId={
-            child.kind === 'AnimationLayer'
-              ? animationLayerTargetId(state, childRefs[i]?.node ?? null)
-              : null
-          }
-        />
-      ))}
+      {value.scene.children.map((child, i) => {
+        const cpid = childRefs[i]?.node ?? null;
+        return (
+          <SceneChildNode
+            key={`mesh:${i}`}
+            value={child}
+            pickId={cpid}
+            animationTargetId={
+              child.kind === 'AnimationLayer' ? animationLayerTargetId(state, cpid) : null
+            }
+            // v0.7 unification (#197) — a native node animated by free-floating
+            // direct channels (no AnimationLayer wrapper) overlays via
+            // DirectChannelsR. Membership tested against the ONE pre-built set
+            // (O(N) total, not O(N²)). The layer path owns AnimationLayer kinds.
+            hasDirectChannels={
+              cpid != null && child.kind !== 'AnimationLayer' && directChannelTargets.has(cpid)
+            }
+          />
+        );
+      })}
       <MeshScaleProbe />
       {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
@@ -593,6 +614,10 @@ interface SceneChildNodeProps {
   pickId: string | null;
   /** AnimationLayer wrapped-target id; null otherwise (H40 read/write parity). */
   animationTargetId: string | null;
+  /** v0.7 (#197) — this node is driven by free-floating direct channels, so its
+   *  value is overlaid by DirectChannelsR. A stable boolean (membership in the
+   *  pre-built set) so the memo bails out for static nodes (H48). */
+  hasDirectChannels: boolean;
 }
 
 // The per-top-level-child WRAPPER, memoized. This is the lever that makes a
@@ -617,6 +642,7 @@ const SceneChildNode = memo(function SceneChildNode({
   value,
   pickId,
   animationTargetId,
+  hasDirectChannels,
 }: SceneChildNodeProps) {
   const onClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
@@ -668,7 +694,11 @@ const SceneChildNode = memo(function SceneChildNode({
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
     <group name={pickId ?? undefined} onClick={onClick} onDoubleClick={onDoubleClick}>
-      <MeshChild value={value} animationTargetId={animationTargetId} />
+      {hasDirectChannels && pickId ? (
+        <DirectChannelsR value={value} pickId={pickId} />
+      ) : (
+        <MeshChild value={value} animationTargetId={animationTargetId} />
+      )}
     </group>
   );
 });
@@ -741,6 +771,68 @@ function AnimationLayerR({
     setPatched(sample(seconds));
   });
   return patched ? <MeshChild value={patched} override={override} /> : null;
+}
+
+// v0.7 unification (#197) — renderer for a native node animated by FREE-FLOATING
+// direct channels (no AnimationLayer wrapper); the native-mesh analogue of
+// AnimationLayerR and the render-tree counterpart of the camera's
+// resolveActiveCameraPoseAt. It:
+//   1. Narrow-subscribes the channel NODES targeting `pickId` (shallow → under
+//      structural sharing an unrelated edit leaves their refs untouched, so this
+//      re-renders ONLY when THIS node's channels change — the gltfAssetDeps/H48
+//      pattern). Layer-wired channels are excluded upstream (coexistence guard).
+//   2. Builds their function-of-time values once per change (channelValuesFromNodes).
+//   3. In a useFrame, samples them at the live time SNAPSHOT (never a time
+//      subscription — H48) → overlayChannels onto the base value (the SAME overlay
+//      primitive AnimationLayerR uses — one band, no drift, H40) → overlayTransients.
+// Mounted only for nodes in the pre-built direct-channel set, so a static scene
+// pays zero cost (the boolean prop keeps SceneChildNode's memo bailing out).
+function DirectChannelsR({
+  value,
+  pickId,
+  override,
+}: {
+  value: SceneChild;
+  pickId: string;
+  override?: MaterialValue;
+}) {
+  const channelNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => directChannelNodesForTarget(s.state.nodes, pickId),
+    shallow,
+  );
+  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  // Subscribe the transient SET so a PAUSED edit re-applies (the AnimationLayerR
+  // #149 B2c mechanism; safe under H48 — `edits` is a stable empty Map ref during
+  // playback). overlayChannels runs FIRST (committed curve), then the transient
+  // overlays on top (the live uncommitted edit), keyed by this node's id.
+  const transients = useTransientEditStore((s) => s.edits);
+  const sample = (seconds: number): SceneChild =>
+    overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
+    value;
+
+  const [patched, setPatched] = useState<SceneChild>(() => sample(useTimeStore.getState().seconds));
+  const lastApplied = useRef<{
+    seconds: number;
+    channels: unknown;
+    transients: unknown;
+    value: unknown;
+  } | null>(null);
+  useFrame(() => {
+    const seconds = useTimeStore.getState().seconds;
+    if (
+      lastApplied.current !== null &&
+      lastApplied.current.seconds === seconds &&
+      lastApplied.current.channels === channels &&
+      lastApplied.current.transients === transients &&
+      lastApplied.current.value === value
+    ) {
+      return;
+    }
+    lastApplied.current = { seconds, channels, transients, value };
+    setPatched(sample(seconds));
+  });
+  return <MeshChild value={patched} override={override} />;
 }
 
 function applyOverride(
