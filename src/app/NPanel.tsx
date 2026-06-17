@@ -77,6 +77,7 @@ import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorS
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveTransformParam } from './resolveTransformParam';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import {
   buildRevertedSet,
   isFieldOverridden,
@@ -493,82 +494,11 @@ function isInputBinding(v: unknown): boolean {
  *  number / vec3 / string / input-binding / complex. Returns null when
  *  the value is an upstream binding (those render via socket wiring
  *  in C5+, not the Inspector). */
-// v0.6 #2 (#178, W3) — ColorField: a swatch + hex control that dispatches setParam
-// on its color paramPath (e.g. material.base.color). Mirrors NumericField's wiring
-// EXACTLY so a colour ANIMATES like any scalar: ParamDiamond (the Blender field-
-// colour table, free), routeAnimatedGrab + autoKeyCommit on edit (KeyframeColor
-// channels already exist), and the optional override decorator. There is no colour
-// picker anywhere else in the app (grep-confirmed) — this is the one.
+// v0.7 Phase 4 (#198) — the swatch+hex colour field is now the shared
+// `MaterialColorRow` (consumed by MaterialRows for native AND glTF). `isHex6`
+// stays here — MaterialColorRow + GltfMatColorField both validate hex with it.
 function isHex6(v: string): boolean {
   return /^#[0-9a-fA-F]{6}$/.test(v);
-}
-
-interface ColorFieldProps {
-  nodeId: string;
-  paramPath: string;
-  label: string;
-  value: string;
-  overrideInfo?: OverrideInfo;
-}
-
-function ColorField({ nodeId, paramPath, label, value, overrideInfo }: ColorFieldProps) {
-  const dispatch = useDagStore((s) => s.dispatch);
-  const [draft, setDraft] = useState(value);
-  // Keep the hex text in sync when the authored value changes outside this field
-  // (undo, animation scrub, agent edit) — the input is otherwise locally edited.
-  useEffect(() => setDraft(value), [value]);
-  const commit = (next: string) => {
-    if (!isHex6(next)) return;
-    // SAME chokepoints as NumericField (H36 anti-double-write): animated → seam,
-    // covered override field → value+bit atomic, else raw setParam; then autoKey.
-    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
-    if (!dispatchOverrideValueEdit(nodeId, paramPath, next, overrideInfo)) {
-      dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `edit ${paramPath}`);
-    }
-    autoKeyCommit(nodeId, paramPath, next);
-  };
-  const swatch = isHex6(draft) ? draft : '#000000';
-  return (
-    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-      <span className="flex items-center gap-1">
-        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
-        {overrideInfo ? (
-          <OverrideDecorator
-            nodeId={nodeId}
-            descriptor={overrideInfo.descriptor}
-            field={paramPath}
-            marked={overrideInfo.marked}
-          />
-        ) : null}
-        <span className="font-mono text-fg/60">{label}</span>
-      </span>
-      <span className="flex items-center gap-1">
-        <input
-          type="color"
-          aria-label={`${label} colour swatch`}
-          value={swatch}
-          data-testid={`inspector-color-${nodeId}-${paramPath}`}
-          className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          onChange={(e) => {
-            setDraft(e.target.value);
-            commit(e.target.value);
-          }}
-        />
-        <input
-          type="text"
-          aria-label={`${label} hex`}
-          value={draft}
-          data-testid={`inspector-colorhex-${nodeId}-${paramPath}`}
-          className="w-20 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={(e) => commit(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
-          }}
-        />
-      </span>
-    </label>
-  );
 }
 
 // v0.6 #2 (#178, W3) — the lobe-grouped OpenPBR material editor that REPLACES the
@@ -831,7 +761,245 @@ function UvNumberInline({
   );
 }
 
+// v0.7 Phase 4 (#198) — the SHARED OpenPBR lobe-row block that BOTH the native
+// primitive `MaterialEditor` and the glTF `GltfMaterialEditor` render (V20/V53:
+// one IR → one editor). It owns every cross-cutting per-field affordance H104
+// demands a custom control re-wire, ONCE, for both callers:
+//   - the ParamDiamond (keyframe toggle at `fieldPath`),
+//   - the Auto-Key routing chokepoint (routeAnimatedGrab → caller's source write
+//     → autoKeyCommit — the H36 single-write seam),
+//   - the EVALUATED read-side (resolveEvaluatedParam → display the value the
+//     renderer shows + read-only-while-playing) — closing the H40 material read
+//     gap for native AND glTF at the same stroke.
+// The two callers differ ONLY in the three caller-specific closures below; the
+// extras (native Maps + UvTransform / glTF slot selector + edit-layer Maps) stay
+// in each caller AROUND this block (the design's reduce-to-extras fork).
+interface MaterialRowTestids {
+  num: string;
+  scrub: string;
+  color: string;
+  colorHex: string;
+}
+function MaterialRows({
+  nodeId,
+  fieldPath,
+  readValue,
+  commitSource,
+  testids,
+}: {
+  nodeId: string;
+  /** The keyframe channel path for a lobe field (native `material.<lobe>.<field>`,
+   *  glTF `materials.<slot>.<lobe>.<field>`) — drives diamond + animation + read. */
+  fieldPath: (lobe: string, key: string) => string;
+  /** The authored base value (pre-evaluation) for a field. */
+  readValue: (lobe: string, key: string, kind: 'number' | 'color') => number | string;
+  /** The UN-animated source write — caller-specific (native dotted setParam, glTF
+   *  whole-`materials`-array replace, since setAtPath can't index an array, V53). */
+  commitSource: (lobe: string, key: string, value: number | string) => void;
+  /** Per-field e2e testids — each caller keeps its existing scheme (H95, no churn). */
+  testids: (lobe: string, key: string) => MaterialRowTestids;
+}) {
+  return (
+    <>
+      {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
+        <div key={lobe} className="flex flex-col">
+          <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+            {label}
+          </div>
+          {fields.map(({ key, label: fieldLabel, kind }) => {
+            const path = fieldPath(lobe, key);
+            const tid = testids(lobe, key);
+            if (kind === 'color') {
+              return (
+                <MaterialColorRow
+                  key={key}
+                  nodeId={nodeId}
+                  paramPath={path}
+                  label={fieldLabel}
+                  value={readValue(lobe, key, 'color') as string}
+                  testidColor={tid.color}
+                  testidHex={tid.colorHex}
+                  onSource={(v) => commitSource(lobe, key, v)}
+                />
+              );
+            }
+            return (
+              <MaterialNumberRow
+                key={key}
+                nodeId={nodeId}
+                paramPath={path}
+                label={fieldLabel}
+                value={readValue(lobe, key, 'number') as number}
+                testidInput={tid.num}
+                testidScrub={tid.scrub}
+                onSource={(v) => commitSource(lobe, key, v)}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </>
+  );
+}
+
+// One shared OpenPBR scalar row: drag-scrub label + numeric input, ParamDiamond,
+// Auto-Key routing, and the H40 read-side. `value` is the authored base (the
+// diamond's first-key); `effective` is the evaluated value the renderer shows
+// (transient → channel → base). Read-only while a channel actively drives it
+// during playback (`playing && resolved !== null`) — the VectorField D-02 gate.
+function MaterialNumberRow({
+  nodeId,
+  paramPath,
+  label,
+  value,
+  testidInput,
+  testidScrub,
+  onSource,
+}: {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: number;
+  testidInput: string;
+  testidScrub: string;
+  onSource: (next: number) => void;
+}) {
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const dagState = useDagStore((s) => s.state);
+  const resolved = useMemo(
+    () => resolveEvaluatedParam(dagState, nodeId, paramPath, { time: { frame, seconds, normalized } }),
+    [dagState, nodeId, paramPath, frame, seconds, normalized],
+  );
+  const effective = typeof resolved?.value === 'number' ? resolved.value : value;
+  const readOnly = playing && resolved !== null;
+  const onEdit = (next: number) => {
+    // H36 single-write seam (the H104 affordance): animated → route to the channel
+    // /transient and SKIP the source write; un-animated → caller's source write,
+    // then autoKeyCommit (Auto-Key ON → first-key creates the free-floating channel).
+    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
+    onSource(next);
+    autoKeyCommit(nodeId, paramPath, next);
+  };
+  const scrub = useDragScrub({ value: effective, onCommit: onEdit });
+  const display = scrub.isDragging ? scrub.previewValue : effective;
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        <span
+          className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
+          onPointerDown={scrub.onPointerDown}
+          data-testid={testidScrub}
+          title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
+        >
+          {label}
+        </span>
+      </span>
+      <input
+        type="number"
+        step="0.1"
+        value={display}
+        readOnly={readOnly}
+        data-readonly-while-playing={readOnly || undefined}
+        aria-label={label}
+        data-testid={testidInput}
+        className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => {
+          const next = parseFloat(e.target.value);
+          if (Number.isNaN(next)) return;
+          onEdit(next);
+        }}
+      />
+    </label>
+  );
+}
+
+// One shared OpenPBR colour row: swatch + hex input, ParamDiamond, Auto-Key
+// routing, and the H40 read-side (mirrors MaterialNumberRow for strings). The
+// draft tracks the EFFECTIVE value so a scrubbed/animated colour shows through.
+function MaterialColorRow({
+  nodeId,
+  paramPath,
+  label,
+  value,
+  testidColor,
+  testidHex,
+  onSource,
+}: {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: string;
+  testidColor: string;
+  testidHex: string;
+  onSource: (next: string) => void;
+}) {
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const dagState = useDagStore((s) => s.state);
+  const resolved = useMemo(
+    () => resolveEvaluatedParam(dagState, nodeId, paramPath, { time: { frame, seconds, normalized } }),
+    [dagState, nodeId, paramPath, frame, seconds, normalized],
+  );
+  const effective = typeof resolved?.value === 'string' ? resolved.value : value;
+  const readOnly = playing && resolved !== null;
+  const [draft, setDraft] = useState(effective);
+  // Resync when the effective value changes outside this field (undo, slot switch,
+  // scrub, animation, agent edit) — the input is otherwise locally edited.
+  useEffect(() => setDraft(effective), [effective]);
+  const commit = (next: string) => {
+    if (!isHex6(next)) return;
+    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
+    onSource(next);
+    autoKeyCommit(nodeId, paramPath, next);
+  };
+  const swatch = isHex6(draft) ? draft : '#000000';
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="flex items-center gap-1 font-mono text-fg/60">
+        <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {label}
+      </span>
+      <span className="flex items-center gap-1">
+        <input
+          type="color"
+          aria-label={`${label} colour swatch`}
+          value={swatch}
+          disabled={readOnly}
+          data-readonly-while-playing={readOnly || undefined}
+          data-testid={testidColor}
+          className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => {
+            setDraft(e.target.value);
+            commit(e.target.value);
+          }}
+        />
+        <input
+          type="text"
+          aria-label={`${label} hex`}
+          value={draft}
+          readOnly={readOnly}
+          data-readonly-while-playing={readOnly || undefined}
+          data-testid={testidHex}
+          className="w-20 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+          }}
+        />
+      </span>
+    </label>
+  );
+}
+
 function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknown }) {
+  const dispatch = useDagStore((s) => s.dispatch);
   if (!isMaterialIR(material)) return null;
   const maps = (material.maps ?? {}) as Record<string, BakedTextureRef | null>;
   const uvt = material.uvTransform as
@@ -839,39 +1007,36 @@ function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknow
     | undefined;
   return (
     <div data-testid={`inspector-material-editor-${nodeId}`} className="flex flex-col">
-      {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
-        <div key={lobe} className="flex flex-col">
-          <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
-            {label}
-          </div>
-          {fields.map(({ key, label: fieldLabel, kind }) => {
-            const paramPath = `material.${lobe}.${key}`;
-            const lobeObj = material[lobe] ?? {};
-            if (kind === 'color') {
-              const cv = typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
-              return (
-                <ColorField
-                  key={key}
-                  nodeId={nodeId}
-                  paramPath={paramPath}
-                  label={fieldLabel}
-                  value={cv}
-                />
-              );
-            }
-            const nv = typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
-            return (
-              <NumericField
-                key={key}
-                nodeId={nodeId}
-                paramPath={paramPath}
-                label={fieldLabel}
-                value={nv}
-              />
-            );
-          })}
-        </div>
-      ))}
+      {/* v0.7 Phase 4 (#198) — the SHARED lobe rows (the same MaterialRows the glTF
+          editor renders). The primitive owns its material → a direct dotted
+          setParam (D-07); no override decorator on material fields (native material
+          fields never carried one). */}
+      <MaterialRows
+        nodeId={nodeId}
+        fieldPath={(lobe, key) => `material.${lobe}.${key}`}
+        readValue={(lobe, key, kind) => {
+          const lobeObj = (material[lobe] ?? {}) as Record<string, unknown>;
+          if (kind === 'color')
+            return typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
+          return typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+        }}
+        commitSource={(lobe, key, value) =>
+          dispatch(
+            { type: 'setParam', nodeId, paramPath: `material.${lobe}.${key}`, value },
+            'user',
+            `edit material.${lobe}.${key}`,
+          )
+        }
+        testids={(lobe, key) => {
+          const p = `material.${lobe}.${key}`;
+          return {
+            num: `inspector-input-${nodeId}-${p}`,
+            scrub: `inspector-scrub-${nodeId}-${p}`,
+            color: `inspector-color-${nodeId}-${p}`,
+            colorHex: `inspector-colorhex-${nodeId}-${p}`,
+          };
+        }}
+      />
       <div className="flex flex-col">
         <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
           Maps
