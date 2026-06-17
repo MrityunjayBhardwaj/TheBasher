@@ -1553,11 +1553,20 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       if ('transparent' in std) std.transparent = fields.transparent;
       if (fields.roughness !== null && 'roughness' in std) std.roughness = fields.roughness;
       if (fields.metalness !== null && 'metalness' in std) std.metalness = fields.metalness;
-      if ('wireframe' in std) std.wireframe = wireframe; // won't re-fire the [cloned, shading] pass
+      // NB: wireframe is deliberately NOT set here. applyTintFields runs per-frame
+      // in the #198 composition reapplyOverride; the wireframe effect ([cloned,
+      // shading]) is the SOLE runtime owner of `.wireframe`, so re-applying a
+      // captured value here would overwrite a wireframe toggle made during
+      // playback. `tint` sets it once at effect time (below) for fresh clones the
+      // wireframe effect won't re-cover on an override-only change.
     };
     const tint = (s: THREE.Material): THREE.Material => {
       const next = s.clone() as THREE.MeshStandardMaterial;
       applyTintFields(next);
+      // Effect-time only (a fresh clone an override-only change makes, which the
+      // [cloned, shading] wireframe effect won't re-fire to cover); the per-frame
+      // reapplyOverride never reaches this.
+      if ('wireframe' in next) (next as THREE.MeshStandardMaterial).wireframe = wireframe;
       return next;
     };
     // v0.6 #2 (#178, W6 — D-05/D-07) — per-submesh addressing. A "slot" is the
