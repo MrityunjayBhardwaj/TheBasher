@@ -41,10 +41,10 @@ async function waitReady(page: import('@playwright/test').Page) {
     const w = window as unknown as BasherWindow;
     return Boolean(
       w.__basher_view_camera &&
-        w.__basher_viewport &&
-        w.__basher_time &&
-        w.__basher_dag &&
-        w.__basher_selection,
+      w.__basher_viewport &&
+      w.__basher_time &&
+      w.__basher_dag &&
+      w.__basher_selection,
     );
   });
   await page.waitForTimeout(300);

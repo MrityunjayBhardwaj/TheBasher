@@ -82,9 +82,13 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   // param when no channel/transient drives it (resolved === null). `readOnly` while
   // a channel actively drives the field during playback (the NPanel D-02 gate).
   const near =
-    typeof evaluatedScalar.near?.value === 'number' ? evaluatedScalar.near.value : params.near ?? 0.1;
+    typeof evaluatedScalar.near?.value === 'number'
+      ? evaluatedScalar.near.value
+      : (params.near ?? 0.1);
   const far =
-    typeof evaluatedScalar.far?.value === 'number' ? evaluatedScalar.far.value : params.far ?? 1000;
+    typeof evaluatedScalar.far?.value === 'number'
+      ? evaluatedScalar.far.value
+      : (params.far ?? 1000);
   const nearReadOnly = playing && evaluatedScalar.near !== null;
   const farReadOnly = playing && evaluatedScalar.far !== null;
 
@@ -106,7 +110,7 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   // FOV is the keyable param: display its EVALUATED value so the derived focal
   // readout + the FOV readout both follow a keyed channel during scrub (#194).
   const fov =
-    typeof evaluatedScalar.fov?.value === 'number' ? evaluatedScalar.fov.value : params.fov ?? 45;
+    typeof evaluatedScalar.fov?.value === 'number' ? evaluatedScalar.fov.value : (params.fov ?? 45);
   const fovReadOnly = playing && evaluatedScalar.fov !== null;
   const sensor = params.sensorSize ?? DEFAULT_SENSOR_MM;
   const focal = round(focalLengthFromFov(fov, sensor));
