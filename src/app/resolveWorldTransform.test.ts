@@ -215,6 +215,54 @@ describe('resolveWorldTransform', () => {
     expect(w!.position[2]).toBeCloseTo(0, 6);
   });
 
+  // 7b. MaterialOverride is a pass-through (identity, no wrapper group): a box
+  //     nested under a translating Transform AND a MaterialOverride still composes
+  //     through to Transform.local · box.local — the override contributes nothing
+  //     to the world matrix. Locks the documented childEdges MaterialOverride path.
+  it('descends a MaterialOverride (identity pass-through) without altering world', () => {
+    // scene → Transform → MaterialOverride → box
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: BOX_ID,
+      paramPath: 'position',
+      value: [1, 0, 0],
+    }).next;
+    const MO_ID = 'n_mo';
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: XF_ID,
+        nodeType: 'Transform',
+        params: { name: 'xf', position: [0, 4, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'addNode',
+        nodeId: MO_ID,
+        nodeType: 'MaterialOverride',
+        params: { name: 'mo' },
+      },
+      {
+        type: 'disconnect',
+        from: { node: BOX_ID, socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      { type: 'connect', from: { node: BOX_ID, socket: 'out' }, to: { node: MO_ID, socket: 'target' } },
+      { type: 'connect', from: { node: MO_ID, socket: 'out' }, to: { node: XF_ID, socket: 'target' } },
+      {
+        type: 'connect',
+        from: { node: XF_ID, socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    const w = resolveWorldTransform(state, BOX_ID, ctxAt(0));
+    expect(w).not.toBeNull();
+    expect(w!.position[0]).toBeCloseTo(1, 6);
+    expect(w!.position[1]).toBeCloseTo(4, 6); // Transform only; MaterialOverride adds nothing
+    expect(w!.position[2]).toBeCloseTo(0, 6);
+  });
+
   // 8. IDENTITY-NULL: unknown id, and a node that is not a scene-child descendant.
   it('returns null for an unknown id and a non-scene-child node (no crash)', () => {
     const state = buildNestedTransformState({});
