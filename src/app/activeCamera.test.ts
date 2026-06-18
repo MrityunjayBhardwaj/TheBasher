@@ -227,3 +227,84 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(resolveActiveCameraPoseAt(emptyDagState(), 3)).toEqual(DEFAULT_CAMERA_POSE);
   });
 });
+
+// #204 — the camera migration onto Track-To. A constraint on the camera node
+// DERIVES its lookAt from the target (V60), through the SAME machinery meshes use.
+describe('activeCamera — Track-To migration (#204)', () => {
+  /** Default project + a target box (the aim node) + a Track-To on n_camera. */
+  function buildCameraTrackTo(opts: { aimNode?: string; aimPoint?: [number, number, number] }) {
+    let state = buildDefaultDagState();
+    if (opts.aimNode) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: opts.aimNode,
+        nodeType: 'BoxMesh',
+        params: { position: [7, 0, 0], size: [1, 1, 1] },
+      }).next;
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: opts.aimNode, socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      }).next;
+    }
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_cam_tt',
+      nodeType: 'TrackTo',
+      params: {
+        name: 'camtt',
+        target: 'n_camera',
+        aimNode: opts.aimNode ?? '',
+        aimPoint: opts.aimPoint ?? [0, 0, 0],
+        up: [0, 1, 0],
+        mute: false,
+      },
+    }).next;
+    return state;
+  }
+
+  it('derives the camera lookAt from a node-ref target world position', () => {
+    const state = buildCameraTrackTo({ aimNode: 'n_cam_target' });
+    // lookAt is no longer the static [0,0,0] param — it tracks the box at [7,0,0].
+    expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([7, 0, 0]);
+    // position is untouched (Track-To only aims).
+    expect(resolveActiveCameraPoseAt(state, 0).position).toEqual([3, 2, 3]);
+  });
+
+  it('the camera lookAt follows a MOVING target over time', () => {
+    let state = buildCameraTrackTo({ aimNode: 'n_cam_target' });
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_target',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'tgt',
+        target: 'n_cam_target',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [7, 0, 0], easing: 'linear' },
+          { time: 1, value: [0, 0, 7], easing: 'linear' },
+        ],
+      },
+    }).next;
+    expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([7, 0, 0]);
+    expect(resolveActiveCameraPoseAt(state, 1).lookAt).toEqual([0, 0, 7]);
+  });
+
+  it('a point-target Track-To overrides the static lookAt', () => {
+    const state = buildCameraTrackTo({ aimPoint: [1, 2, 3] });
+    expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([1, 2, 3]);
+  });
+
+  it('a muted camera Track-To leaves the static lookAt untouched', () => {
+    let state = buildCameraTrackTo({ aimNode: 'n_cam_target' });
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'n_cam_tt',
+      paramPath: 'mute',
+      value: true,
+    }).next;
+    // Byte-identical to the unconstrained base pose.
+    expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([0, 0, 0]);
+  });
+});

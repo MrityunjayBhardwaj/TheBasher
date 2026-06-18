@@ -379,8 +379,13 @@ export function EditorViewCamera() {
       const cam = ref.current;
       if (!cam) return null;
       const isOrthographic = (cam as THREE.OrthographicCamera).isOrthographicCamera === true;
+      // #204 — the camera's world forward (-Z) so the Track-To boundary-pair can
+      // assert the look-through camera actually AIMS at its constraint target.
+      const dir = new THREE.Vector3();
+      cam.getWorldDirection(dir);
       return {
         position: [cam.position.x, cam.position.y, cam.position.z],
+        direction: [dir.x, dir.y, dir.z],
         // fov is perspective-only — null for the ortho view camera.
         fov: isOrthographic ? null : (cam as THREE.PerspectiveCamera).fov,
         near: cam.near,

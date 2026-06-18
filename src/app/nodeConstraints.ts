@@ -117,14 +117,40 @@ export function resolveConstraintRotation(
   if (!tt) return null;
   const objWorld: WorldTransform | null = resolveWorldTransform(state, nodeId, ctx, cache);
   if (!objWorld) return null;
-  let targetPos: Vec3;
-  if (tt.aimNode) {
-    const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
-    // Unresolvable node-ref target → fall back to the fixed aimPoint (never throw;
-    // a deleted/unreachable target should not blank the object's orientation).
-    targetPos = targetWorld ? targetWorld.position : tt.aimPoint;
-  } else {
-    targetPos = tt.aimPoint;
-  }
-  return resolveTrackTo(objWorld.position, targetPos, tt.up);
+  return resolveTrackTo(objWorld.position, aimTargetWorld(state, tt, ctx, cache), tt.up);
+}
+
+/**
+ * The WORLD aim-target POSITION of a node's active Track-To, or null when the
+ * node is unconstrained. This is the aim point the constraint resolves to — a
+ * node-ref's world position (via #202) or the fixed `aimPoint`. The CAMERA
+ * migration (#204) consumes this directly: a camera aims by `lookAt` (a point),
+ * and Object3D.lookAt is the SAME Matrix4.lookAt math resolveTrackTo uses, so a
+ * camera Track-To feeds its target world position straight in as `lookAt` —
+ * one constraint system, one aim math, expressed in each consumer's native form.
+ */
+export function resolveTrackToTarget(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 | null {
+  const tt = trackToForTarget(state.nodes, nodeId);
+  if (!tt) return null;
+  return aimTargetWorld(state, tt, ctx, cache);
+}
+
+/** The world aim-target position for a resolved Track-To: the aim node's world
+ *  position (via #202) when set, else the fixed `aimPoint`. Unresolvable node-ref
+ *  → fall back to `aimPoint` (never throw; a deleted target must not blank the
+ *  aim). Shared by the mesh-rotation and camera-lookAt consumers. */
+function aimTargetWorld(
+  state: DagState,
+  tt: ActiveTrackTo,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 {
+  if (!tt.aimNode) return tt.aimPoint;
+  const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
+  return targetWorld ? targetWorld.position : tt.aimPoint;
 }
