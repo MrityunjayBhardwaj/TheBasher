@@ -801,29 +801,52 @@ function ConstrainedR({
   const transients = useTransientEditStore((s) => s.edits);
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
-  const sample = (seconds: number): SceneChild => {
+  // channels (position) → transient → derived aim rotation (constraint wins on
+  // rotation, the whole point of V58 — derived, never stored). Returns the
+  // patched value AND a stable key for the aim, so the useFrame can skip
+  // setState when nothing changed (H48 — a static constrained node must not
+  // re-render every frame).
+  const build = (seconds: number): { v: SceneChild; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
-    // channels (position) → transient → derived aim rotation (constraint wins on
-    // rotation, the whole point of V58 — it is derived, never stored).
-    let v =
+    const base =
       overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
       value;
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
-    const rec = v as unknown as Record<string, unknown>;
-    if (aim && 'rotation' in rec) {
-      v = { ...rec, rotation: aim } as unknown as SceneChild;
-    }
-    return v;
+    const rec = base as unknown as Record<string, unknown>;
+    const v = aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneChild) : base;
+    return { v, aimKey: aim ? aim.join(',') : '' };
   };
 
-  const [patched, setPatched] = useState<SceneChild>(() => sample(useTimeStore.getState().seconds));
+  const [patched, setPatched] = useState<SceneChild>(() => build(useTimeStore.getState().seconds).v);
+  const lastApplied = useRef<{
+    seconds: number;
+    channels: unknown;
+    transients: unknown;
+    value: unknown;
+    aimKey: string;
+  } | null>(null);
   useFrame(() => {
     // The aim depends on object + target world positions, both of which can move
-    // every frame — so unlike DirectChannelsR there is no cheap (seconds,channels)
-    // short-circuit; recompute each frame. Constrained nodes are few (the B13
-    // membership gate keeps unconstrained nodes out of this path entirely).
-    setPatched(sample(useTimeStore.getState().seconds));
+    // every frame, so recompute it (cheap — cached eval + matrix math). But only
+    // re-render when the RESULT changed: a paused static constraint recomputes the
+    // SAME aim → skip setState (H48). A target edit changes `aimKey` even while
+    // paused (it isn't captured by this node's seconds/value) → re-render fires.
+    const seconds = useTimeStore.getState().seconds;
+    const { v, aimKey } = build(seconds);
+    const la = lastApplied.current;
+    if (
+      la !== null &&
+      la.seconds === seconds &&
+      la.channels === channels &&
+      la.transients === transients &&
+      la.value === value &&
+      la.aimKey === aimKey
+    ) {
+      return;
+    }
+    lastApplied.current = { seconds, channels, transients, value, aimKey };
+    setPatched(v);
   });
   return <MeshChild value={patched} override={override} />;
 }
