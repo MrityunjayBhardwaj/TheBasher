@@ -151,10 +151,18 @@ export function resolveActiveCameraPoseAt(state: DagState, seconds: number): Cam
       ch.type === 'KeyframeChannelNumber'
     ) {
       pose ??= { ...base };
-      pose[path] = sampleScalarKeyframes(
-        keyframes as Parameters<typeof sampleScalarKeyframes>[0],
-        seconds,
+      // Sort defensively before sampling (#200): `sampleScalarKeyframes` REQUIRES
+      // a time-sorted list (it walks adjacent pairs, no internal sort), and
+      // `KeyframeChannelNumber.evaluate` sorts the SAME way before its `.sample()`.
+      // Without this, an out-of-order keyframe array would make this render path
+      // interpolate against an unsorted list while the inspector read-side
+      // (`resolveEvaluatedParam` → the channel's sorted `evaluate().sample`)
+      // reads the sorted one → the two surfaces silently disagree. The vec3
+      // branch already gets this for free via `buildVec3Sampler` (which sorts).
+      const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
+        (a, b) => a.time - b.time,
       );
+      pose[path] = sampleScalarKeyframes(sorted, seconds);
     }
   }
   return pose ?? base;

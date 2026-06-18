@@ -143,6 +143,22 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(resolveActiveCameraPoseAt(state, 2).fov).toBe(60);
   });
 
+  it('sorts a scalar channel before sampling, matching the inspector read-side (#200)', () => {
+    // The SAME two keys as above, authored OUT OF TIME ORDER. The render path
+    // (`sampleScalarKeyframes`) requires a sorted list, and the inspector
+    // read-side (`KeyframeChannelNumber.evaluate` → `.sample`) sorts defensively,
+    // so the two must agree only if THIS resolver also sorts. Falsifiable: revert
+    // the #200 sort → `sampleScalarKeyframes` clamps to the first (now time=2)
+    // key, so t=1 returns 60 instead of the correctly-interpolated 40.
+    const state = addChannel(buildDefaultDagState(), 'KeyframeChannelNumber', 'fov', [
+      { time: 2, value: 60, easing: 'linear' },
+      { time: 0, value: 20, easing: 'linear' },
+    ]);
+    expect(resolveActiveCameraPoseAt(state, 0).fov).toBe(20);
+    expect(resolveActiveCameraPoseAt(state, 1).fov).toBe(40);
+    expect(resolveActiveCameraPoseAt(state, 2).fov).toBe(60);
+  });
+
   it('overlays position + lookAt + fov channels together at the same time', () => {
     let state = buildDefaultDagState();
     state = addChannel(
