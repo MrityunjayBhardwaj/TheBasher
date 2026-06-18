@@ -9,6 +9,7 @@ import { Box3, Vector3 } from 'three';
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveWorldTransform } from './resolveWorldTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { resolveMeshUVs } from './resolveMeshUVs';
 import { resolveMeshTexture } from './resolveMeshTexture';
@@ -509,6 +510,18 @@ export function boot(): Promise<void> {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         return resolveEvaluatedTransform(state, nodeId, evalCtx);
+      };
+      // #202 (epic #201) — the H40 side-B seam for the pure WORLD transform. The
+      // boundary-pair e2e asserts the RESOLVER world (here) == the REAL rendered
+      // object's world matrix (__basher_mesh_world_position) for a nested
+      // Transform/Group hierarchy. This is THE foundational constraint gate:
+      // resolveWorldTransform MIRRORS the SceneFromDAG accumulation as a pure
+      // value, so a constraint can read a target's world transform off-graph.
+      // Read-only (V8 clean).
+      w.__basher_world_transform = (nodeId: NodeId, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        return resolveWorldTransform(state, nodeId, evalCtx);
       };
       w.__basher_evaluated_param = (nodeId: NodeId, paramPath: string, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
