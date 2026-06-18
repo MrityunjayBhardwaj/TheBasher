@@ -318,19 +318,22 @@ Studio lights are **additive** to the scene environment (V47), not a replacement
 
 ## 9. Sequencing / slices
 
-1. **World transform as a pure evaluable value** (§4.3) — the foundational gate
-   shared by constraints (and any "read where it renders" need).
-2. **`OperatorStack`** (§2.2) — chain wiring + stack UI + mute + serialize + agent
-   op; the shared piece, value-type-polymorphic.
-3. **CHOP / constraints** (§4) — Track-To first; **migrate the camera's `lookAt`
-   onto it** (the proof). Then Copy Location/Transforms, Child Of, Limit, Follow
-   Path on demand.
-4. **`StudioLight` + `LightRig`** (§7.1–7.2) — the textured-area-light pair + the
-   rig as a Track-To consumer; params + animation fall out of existing systems.
-5. **2D control panel** (§7.3) — `resolveStudioLightTransform`.
-6. **Light Brush** (§7.4) — the raycast-to-place modal tool.
-7. **Profiles** (§7.5) — named/switchable + JSON import/export.
-8. **SOP / modifiers** (§5) — independent value-add, after the above.
+Tracked under **epic #201**; one issue per slice.
+
+1. **World transform as a pure evaluable value** (§4.3, **#202**) — the foundational
+   gate shared by constraints (and any "read where it renders" need).
+2. **`OperatorStack`** (§2.2, **#203**) — chain wiring + stack UI + mute + serialize
+   + agent op; the shared piece, value-type-polymorphic.
+3. **CHOP / constraints** (§4, **#204**) — Track-To first; **migrate the camera's
+   `lookAt` onto it** (the proof). Then Copy Location/Transforms, Child Of, Limit,
+   Follow Path on demand.
+4. **`StudioLight` + `LightRig`** (§7.1–7.2, **#205**) — the textured-area-light pair
+   + the rig as a Track-To consumer; params + animation fall out of existing systems.
+5. **2D control panel** (§7.3, **#206**) — `resolveStudioLightTransform`.
+6. **Light Brush** (§7.4, **#207**) — the raycast-to-place modal tool.
+7. **Profiles** (§7.5, **#208**) — named/switchable + JSON import/export.
+8. **SOP / modifiers** (§5, **#209**) — independent value-add, parallelizable after
+   slice 2.
 
 ---
 
