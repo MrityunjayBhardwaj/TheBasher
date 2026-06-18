@@ -29,6 +29,7 @@ import type { Node } from '../core/dag/types';
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
 import { sampleScalarKeyframes } from '../nodes/keyframeInterp';
 import { resolveTrackToTarget } from './nodeConstraints';
+import type { EvaluatorCache } from '../core/dag/evaluator';
 
 export type CameraKind = 'PerspectiveCamera' | 'OrthographicCamera';
 
@@ -133,7 +134,11 @@ export const ANIMATABLE_CAMERA_SCALAR_PARAMS = ['fov', 'near', 'far'] as const;
  * Unanimated cameras return the base pose unchanged (byte-identical to
  * `resolveActiveCameraPose`), so this is a safe drop-in for the static reads.
  */
-export function resolveActiveCameraPoseAt(state: DagState, seconds: number): CameraPose {
+export function resolveActiveCameraPoseAt(
+  state: DagState,
+  seconds: number,
+  cache?: EvaluatorCache,
+): CameraPose {
   const node = selectActiveCameraNode(state);
   const base = cameraPoseFromNode(node) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
@@ -180,9 +185,12 @@ export function resolveActiveCameraPoseAt(state: DagState, seconds: number): Cam
   // fixed aimPoint), through the SAME resolver meshes use. It takes over the
   // lookAt (over the static param + any lookAt channel above). null → no camera
   // constraint → the channel/static lookAt stands (byte-identical to pre-#204).
-  const aimTarget = resolveTrackToTarget(state, node.id, {
-    time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
-  });
+  const aimTarget = resolveTrackToTarget(
+    state,
+    node.id,
+    { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+    cache,
+  );
   if (aimTarget) {
     pose ??= { ...base };
     pose.lookAt = aimTarget;

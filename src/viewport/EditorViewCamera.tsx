@@ -38,6 +38,7 @@ import {
 } from '../app/activeCamera';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -127,6 +128,12 @@ export function EditorViewCamera() {
   // a camera change, not every store tick), derive its pose via useMemo.
   const camNode = useDagStore((s) => selectActiveCameraNode(s.state));
   const pose = useMemo(() => cameraPoseFromNode(camNode) ?? DEFAULT_CAMERA_POSE, [camNode]);
+  // #204 — a STABLE evaluator cache for the per-frame look-through pose resolve.
+  // resolveActiveCameraPoseAt only evaluates the render root when the camera
+  // carries a Track-To (to read the aim target's world pos via #202); the cache
+  // makes that a content-hash HIT while the DAG is unchanged, so a constrained
+  // camera doesn't re-walk the scene every frame (the SceneFromDAG cache pattern).
+  const cameraPoseCache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   // The Canvas (and this component) mounts ONCE for the app lifetime, but the
   // boot-framing guard's true scope is the PROJECT, not the component: each
   // project has its own saved view / active camera, and switching projects
@@ -303,7 +310,11 @@ export function EditorViewCamera() {
     const cam = ref.current;
     if (!cam || !lookThrough) return;
     const seconds = useTimeStore.getState().seconds;
-    const evalPose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds);
+    const evalPose = resolveActiveCameraPoseAt(
+      useDagStore.getState().state,
+      seconds,
+      cameraPoseCache,
+    );
     applyView(cam, evalPose.position, evalPose.lookAt);
     // fov/near/far are camera params too — apply imperatively (the JSX props are
     // memoized on the static pose). Look-through is always the perspective view.
