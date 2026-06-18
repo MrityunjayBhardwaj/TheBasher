@@ -22,6 +22,7 @@ export type SectionId =
   | 'render'
   | 'animate'
   | 'channel'
+  | 'constraint'
   | 'environment'
   | 'camera'
   | 'layout';
@@ -33,6 +34,9 @@ export const SECTION_IDS: readonly SectionId[] = [
   'render',
   'animate',
   'channel',
+  // Operator substrate — CHOP/constraints (epic #201, V58). The TrackTo node
+  // declares this section; param-routing predicates land here in a later slice.
+  'constraint',
   'environment',
   'camera',
   'layout',

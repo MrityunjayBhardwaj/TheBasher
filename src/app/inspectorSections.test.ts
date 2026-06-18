@@ -19,6 +19,8 @@ describe('SECTION_IDS', () => {
       'render',
       'animate',
       'channel',
+      // Operator substrate — CHOP/constraints (epic #201, V58).
+      'constraint',
       'environment',
       'camera',
       'layout',

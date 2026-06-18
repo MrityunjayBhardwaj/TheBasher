@@ -52,6 +52,7 @@ import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfCha
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { directChannelValuesForTarget } from './nodeChannels';
+import { resolveConstraintRotation } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
@@ -255,9 +256,17 @@ export function resolveEvaluatedTransform(
     size?: unknown;
   };
   if (!isVec3(c.position)) return null; // identity-null: not a transformable child
-  const rotation = isVec3(c.rotation) ? (c.rotation as Vec3) : null;
+  let rotation = isVec3(c.rotation) ? (c.rotation as Vec3) : null;
   // Mirror getManipulable:69-76 — explicit scale wins, then size fallback.
   const scale = isVec3(c.scale) ? (c.scale as Vec3) : isVec3(c.size) ? (c.size as Vec3) : null;
+
+  // #204 (epic #201) — a Track-To constraint DERIVES this node's rotation from
+  // its world position → the aim target ([[V58]]), so it OVERRIDES the
+  // authored/animated rotation. Applying it here (the read side) keeps the gizmo
+  // + inspector showing the SAME aim the renderer applies (read==render, H40) —
+  // one band, two callers. Unconstrained nodes → null → rotation unchanged.
+  const aim = resolveConstraintRotation(state, selectedId, ctx, cache);
+  if (aim) rotation = aim;
 
   return { position: c.position as Vec3, rotation, scale };
 }

@@ -886,6 +886,38 @@ export type KeyframeChannelValue =
   | KeyframeChannelQuatValue
   | KeyframeChannelColorValue;
 
+// ---------------------------------------------------------------------------
+// Operator substrate — constraints (CHOP) — epic #201 / V58
+// ---------------------------------------------------------------------------
+
+/**
+ * A Track-To constraint value (epic #201, slice #204). Like a KeyframeChannel,
+ * a constraint is an EDGE-LESS node: it carries the constrained node's id
+ * (`target`) and an aim target, and is enumerated from the node table + resolved
+ * at the scene-resolution layer (`nodeConstraints.ts`), where world transforms
+ * are available — NOT applied inside a bare node `evaluate` (a relationship needs
+ * world context). The orientation is DERIVED from positions, never a stored
+ * rotation ([[V58]]). evaluate's return is for agent/introspection completeness;
+ * the resolver reads params directly (the `resolveActiveCameraPoseAt` pattern).
+ */
+export interface TrackToConstraintValue {
+  readonly kind: 'Constraint';
+  readonly constraintType: 'trackTo';
+  readonly name: string;
+  /** The constrained node id whose rotation this derives. */
+  readonly target: string;
+  /** Aim at this node's world position when non-empty; else `aimPoint`. */
+  readonly aimNode: string;
+  /** Fixed-point aim target (world) used when `aimNode` is empty. */
+  readonly aimPoint: Vec3;
+  /** Roll reference (default +Y). */
+  readonly up: Vec3;
+  /** Bypass — a muted constraint contributes nothing (the future OperatorStack). */
+  readonly mute: boolean;
+}
+
+export type ConstraintValue = TrackToConstraintValue;
+
 export interface ShotValue {
   readonly kind: 'Shot';
   readonly name: string;

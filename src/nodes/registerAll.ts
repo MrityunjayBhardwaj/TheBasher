@@ -46,6 +46,7 @@ import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
 import { TimeSourceNode } from './TimeSource';
+import { TrackToNode } from './TrackTo';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
 import { VideoStitchNode } from './VideoStitch';
@@ -96,6 +97,10 @@ const ALL: NodeDefinition[] = [
   KeyframeChannelVec3Node as unknown as NodeDefinition,
   KeyframeChannelQuatNode as unknown as NodeDefinition,
   KeyframeChannelColorNode as unknown as NodeDefinition,
+  // Operator substrate — CHOP/constraints (epic #201, V58). Edge-less, enumerated
+  // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
+  // pattern), since a relationship aim needs world context (resolveWorldTransform).
+  TrackToNode as unknown as NodeDefinition,
   // P7.5 — glTF TRS animation extraction (issue #81); pure node-indexed
   // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
   TransformClipNode as unknown as NodeDefinition,

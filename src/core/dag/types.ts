@@ -72,6 +72,10 @@ export type SocketTypeName =
   | 'LocomotionState'
   // P3 — Timeline = animation nodes (THESIS §42)
   | 'KeyframeChannel'
+  // Operator substrate — CHOP/constraints (epic #201, V58). Edge-less driver
+  // type (like KeyframeChannel): the output exists for introspection, but a
+  // constraint is enumerated + scene-layer resolved, never wired into the graph.
+  | 'Constraint'
   | 'Shot'
   | 'Cut'
   // P3.1 — Animation import + retargeting (THESIS §42.1)

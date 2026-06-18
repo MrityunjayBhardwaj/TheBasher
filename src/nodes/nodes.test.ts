@@ -81,6 +81,7 @@ const ALL_TYPES = [
   'SphereMesh',
   'SpotLight',
   'TimeSource',
+  'TrackTo',
   'Transform',
   'TransformClip',
   'VideoStitch',
