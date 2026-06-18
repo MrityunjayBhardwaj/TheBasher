@@ -44,6 +44,7 @@ import {
   channelValuesFromNodes,
   directChannelTargetSet,
 } from '../app/nodeChannels';
+import { constraintTargetSet, resolveConstraintRotation } from '../app/nodeConstraints';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { useDrillStore } from '../app/stores/drillStore';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
@@ -171,6 +172,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // in nodeChannels.ts).
   const directChannelTargets = directChannelTargetSet(state.nodes);
 
+  // #204 (epic #201) — the set of nodes constrained by an active Track-To, built
+  // once (O(N)) so the child map tests membership in O(1), never O(N²) (B13). A
+  // constrained child renders through ConstrainedR, which derives its rotation
+  // from the aim (V58) instead of the authored/animated value.
+  const constraintTargets = constraintTargetSet(state.nodes);
+
   // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
   // object, not just the active one). They are NOT in value.scene.children —
   // only one camera is wired to scene.camera — so we read them from state.
@@ -230,6 +237,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             // channels (V57) overlays via DirectChannelsR. Membership tested
             // against the ONE pre-built set (O(N) total, not O(N²)).
             hasDirectChannels={cpid != null && directChannelTargets.has(cpid)}
+            // #204 — a node with an active Track-To renders through ConstrainedR
+            // (derived aim rotation), taking precedence over DirectChannelsR.
+            isConstrained={cpid != null && constraintTargets.has(cpid)}
           />
         );
       })}
@@ -289,6 +299,26 @@ function MeshScaleProbe() {
       const p = new THREE.Vector3();
       obj.getWorldPosition(p);
       return [p.x, p.y, p.z];
+    };
+    // #204 (epic #201) — the H40 side-A observation for a CONSTRAINT: the REAL
+    // rendered object's WORLD quaternion [x,y,z,w] by node id. The Track-To
+    // boundary-pair e2e asserts the rendered -Z axis (this quaternion applied to
+    // (0,0,-1)) points from the object toward the aim target == the pure resolver
+    // (resolveTrackTo / resolveEvaluatedTransform). Read-only (V8 clean).
+    w.__basher_mesh_world_quaternion = (
+      nodeId: string,
+    ): [number, number, number, number] | null => {
+      const grp = scene.getObjectByName(nodeId);
+      if (!grp) return null;
+      let target: THREE.Object3D | null = null;
+      grp.traverse((o) => {
+        if (!target && (o as THREE.Mesh).isMesh) target = o;
+      });
+      const obj: THREE.Object3D = target ?? grp;
+      obj.updateWorldMatrix(true, false);
+      const q = new THREE.Quaternion();
+      obj.getWorldQuaternion(q);
+      return [q.x, q.y, q.z, q.w];
     };
     // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
     // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
@@ -375,6 +405,7 @@ function MeshScaleProbe() {
       delete w.__basher_mesh_world_bounds;
       delete w.__basher_mesh_material;
       delete w.__basher_mesh_world_position;
+      delete w.__basher_mesh_world_quaternion;
     };
   }, [scene]);
   return null;
@@ -583,6 +614,10 @@ interface SceneChildNodeProps {
    *  value is overlaid by DirectChannelsR. A stable boolean (membership in the
    *  pre-built set) so the memo bails out for static nodes (H48). */
   hasDirectChannels: boolean;
+  /** #204 — this node has an active Track-To: ConstrainedR derives its rotation
+   *  from the aim (V58), taking precedence over DirectChannelsR (it overlays
+   *  channels too). Stable boolean (membership in the pre-built set), H48. */
+  isConstrained: boolean;
 }
 
 // The per-top-level-child WRAPPER, memoized. This is the lever that makes a
@@ -607,6 +642,7 @@ const SceneChildNode = memo(function SceneChildNode({
   value,
   pickId,
   hasDirectChannels,
+  isConstrained,
 }: SceneChildNodeProps) {
   const onClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
@@ -656,7 +692,11 @@ const SceneChildNode = memo(function SceneChildNode({
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
     <group name={pickId ?? undefined} onClick={onClick} onDoubleClick={onDoubleClick}>
-      {hasDirectChannels && pickId ? (
+      {isConstrained && pickId ? (
+        // #204 — derived aim rotation (V58). ConstrainedR overlays channels too,
+        // so it takes precedence over DirectChannelsR for a constrained node.
+        <ConstrainedR value={value} pickId={pickId} />
+      ) : hasDirectChannels && pickId ? (
         <DirectChannelsR value={value} pickId={pickId} />
       ) : (
         <MeshChild value={value} />
@@ -723,6 +763,67 @@ function DirectChannelsR({
     }
     lastApplied.current = { seconds, channels, transients, value };
     setPatched(sample(seconds));
+  });
+  return <MeshChild value={patched} override={override} />;
+}
+
+// #204 (epic #201) — renderer for a node with an active Track-To constraint. The
+// constraint DERIVES the node's rotation from its world position → the aim target
+// (V58); this is the render counterpart of the read-side override in
+// resolveEvaluatedTransform — one band, two callers (render == read, H40). It also
+// overlays free-floating channels + the held transient (a constrained node may be
+// animated on position), then OVERRIDES rotation with the aim, every frame (the
+// aim moves when the object OR the target moves). Mounted only for nodes in the
+// pre-built constraint set, so a static scene pays nothing.
+//
+// Per-frame it re-resolves the aim via resolveConstraintRotation, which evaluates
+// the render root through a STABLE local cache (createEvaluatorCache) — a content-
+// hash cache HIT while the DAG is unchanged, so the per-frame cost is the world-
+// transform matrix math, not a full re-eval (the SceneFromDAG cache pattern). v1
+// scope: the aim is written as LOCAL rotation, correct for a TOP-LEVEL node (its
+// wrapper group is identity → local == world); a nested constrained node is a
+// follow-up (parentWorld⁻¹·aimWorld). See nodeConstraints.ts.
+function ConstrainedR({
+  value,
+  pickId,
+  override,
+}: {
+  value: SceneChild;
+  pickId: string;
+  override?: MaterialValue;
+}) {
+  const channelNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => directChannelNodesForTarget(s.state.nodes, pickId),
+    shallow,
+  );
+  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const transients = useTransientEditStore((s) => s.edits);
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+
+  const sample = (seconds: number): SceneChild => {
+    const state = useDagStore.getState().state;
+    const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+    // channels (position) → transient → derived aim rotation (constraint wins on
+    // rotation, the whole point of V58 — it is derived, never stored).
+    let v =
+      overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
+      value;
+    const aim = resolveConstraintRotation(state, pickId, ctx, cache);
+    const rec = v as unknown as Record<string, unknown>;
+    if (aim && 'rotation' in rec) {
+      v = { ...rec, rotation: aim } as unknown as SceneChild;
+    }
+    return v;
+  };
+
+  const [patched, setPatched] = useState<SceneChild>(() => sample(useTimeStore.getState().seconds));
+  useFrame(() => {
+    // The aim depends on object + target world positions, both of which can move
+    // every frame — so unlike DirectChannelsR there is no cheap (seconds,channels)
+    // short-circuit; recompute each frame. Constrained nodes are few (the B13
+    // membership gate keeps unconstrained nodes out of this path entirely).
+    setPatched(sample(useTimeStore.getState().seconds));
   });
   return <MeshChild value={patched} override={override} />;
 }
