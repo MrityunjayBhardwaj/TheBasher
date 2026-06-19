@@ -25,6 +25,9 @@ import { useSelectionStore } from '../app/stores/selectionStore';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { enumerateStudioLights, resolveRigTarget, type StudioLightEntry } from '../app/studioLightRig';
 import { resolveStudioLightTransform, studioLightPanelXY } from '../app/resolveStudioLightTransform';
+import { buildAddStudioLightOps } from '../app/addStudioLight';
+import { importEnvironmentHdri } from '../app/asset/importEnvironmentHdri';
+import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { panelXYToFraction, fractionToPanelXY } from './studioPanelGeometry';
 
 type Vec3 = [number, number, number];
@@ -108,10 +111,54 @@ export function LightStudioPanel() {
     }
   }
 
+  function onAddLight() {
+    const state = useDagStore.getState().state;
+    const result = buildAddStudioLightOps(state, target);
+    if (!result) {
+      useAssetErrorStore.getState().report('light-studio:add', 'Cannot add a light — no scene.');
+      return;
+    }
+    useDagStore.getState().dispatchAtomic(result.ops, 'user', 'add studio light');
+    select(result.lightId); // select the new light so its params show immediately
+  }
+
+  const selectedLight = lights.find((l) => l.nodeId === primaryNodeId) ?? null;
+
   return (
-    <div data-testid="light-studio-panel" className="relative h-full w-full bg-bg text-fg">
-      {/* The lat-long canvas (the sphere unwrap). Equator + centre meridian give
-          the director a sense of front (+Z, centre) / up (+Y, top). */}
+    <div data-testid="light-studio-panel" className="flex h-full w-full bg-bg text-fg">
+      {/* Left rail — add + light list + the selected light's params / tex. */}
+      <div className="flex w-48 shrink-0 flex-col border-r border-line text-xs">
+        <button
+          type="button"
+          data-testid="light-studio-add"
+          onClick={onAddLight}
+          className="m-2 rounded border border-line bg-bg-2 px-2 py-1 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          + Light
+        </button>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {lights.map((light) => (
+            <button
+              key={light.nodeId}
+              type="button"
+              data-testid={`light-studio-row-${light.nodeId}`}
+              data-selected={light.nodeId === primaryNodeId}
+              onClick={() => select(light.nodeId)}
+              className={`flex w-full items-center gap-1.5 px-3 py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                light.nodeId === primaryNodeId ? 'bg-line text-fg' : 'text-mute hover:bg-line/40 hover:text-fg'
+              }`}
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${light.tex ? 'bg-accent' : 'bg-fg'}`} />
+              <span className="truncate">{light.name}</span>
+            </button>
+          ))}
+        </div>
+        {selectedLight ? <StudioLightControls light={selectedLight} /> : null}
+      </div>
+
+      {/* Right region — the lat-long canvas (the sphere unwrap). Equator + centre
+          meridian give the director a sense of front (+Z, centre) / up (+Y, top). */}
+      <div className="relative flex-1">
       <div
         ref={canvasRef}
         data-testid="light-studio-canvas"
@@ -162,9 +209,147 @@ export function LightStudioPanel() {
           data-testid="light-studio-empty"
           className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-mute"
         >
-          No rig lights yet — add an area light aimed at the rig (a Track-To) to place it here.
+          No rig lights yet — add a key light with “+ Light”, then drag it into place.
         </div>
       ) : null}
+      </div>
+    </div>
+  );
+}
+
+const FIELD =
+  'w-20 rounded border border-border bg-muted px-1.5 py-0.5 text-right text-[10px] text-fg/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+const BTN =
+  'rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+
+/** The selected rig light's emission params + the emitter-texture picker. A `tex`
+ *  turns the light into a STUDIO light (the §1.5 pair, V61); clearing it (tex='',
+ *  falsy) returns it to a plain area light. Every field is a setParam Op, so it
+ *  saves/undoes and is animatable from the dopesheet for free (V57). */
+function StudioLightControls({ light }: { light: StudioLightEntry }) {
+  const nodeId = light.nodeId;
+  const params = useDagStore((s) => s.state.nodes[nodeId]?.params) as
+    | { intensity?: number; color?: string; width?: number; height?: number; tex?: string }
+    | undefined;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const intensity = params?.intensity ?? 5;
+  const color = params?.color ?? '#ffffff';
+  const width = params?.width ?? 2;
+  const height = params?.height ?? 2;
+  const tex = params?.tex;
+
+  const setParam = (paramPath: string, value: unknown, label: string) =>
+    useDagStore.getState().dispatchAtomic([{ type: 'setParam', nodeId, paramPath, value }], 'user', label);
+
+  const onNumber = (paramPath: string, raw: string, label: string) => {
+    const n = Number(raw);
+    if (Number.isFinite(n)) setParam(paramPath, n, label);
+  };
+
+  const onImport = async (file: File) => {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const assetRef = await importEnvironmentHdri(bytes, file.name);
+      setParam('tex', assetRef, 'set studio light texture');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      useAssetErrorStore.getState().report(`${nodeId}:tex`, `Light texture import failed: ${msg}`);
+    }
+  };
+
+  return (
+    <div
+      data-testid={`light-studio-controls-${nodeId}`}
+      className="flex flex-col gap-1 border-t border-line p-2 text-[11px] text-fg/80"
+    >
+      <label className="flex items-center justify-between gap-2">
+        <span className="font-mono text-fg/60">intensity</span>
+        <input
+          type="number"
+          step={0.5}
+          min={0}
+          value={intensity}
+          data-testid={`light-intensity-${nodeId}`}
+          onChange={(e) => onNumber('intensity', e.target.value, 'set light intensity')}
+          className={FIELD}
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="font-mono text-fg/60">color</span>
+        <input
+          type="color"
+          value={color}
+          data-testid={`light-color-${nodeId}`}
+          onChange={(e) => setParam('color', e.target.value, 'set light color')}
+          className="h-5 w-8 rounded border border-border bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="font-mono text-fg/60">width</span>
+        <input
+          type="number"
+          step={0.25}
+          min={0.01}
+          value={width}
+          data-testid={`light-width-${nodeId}`}
+          onChange={(e) => onNumber('width', e.target.value, 'set light width')}
+          className={FIELD}
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="font-mono text-fg/60">height</span>
+        <input
+          type="number"
+          step={0.25}
+          min={0.01}
+          value={height}
+          data-testid={`light-height-${nodeId}`}
+          onChange={(e) => onNumber('height', e.target.value, 'set light height')}
+          className={FIELD}
+        />
+      </label>
+
+      {/* Emitter texture — the studio look (V61). Import sets `tex`; clear returns
+          the light to a plain area light. */}
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <span className="truncate font-mono text-[10px] text-fg/40" data-testid={`light-tex-state-${nodeId}`}>
+          {tex ? 'textured' : '— no texture'}
+        </span>
+        <span className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid={`light-tex-import-${nodeId}`}
+            onClick={() => fileInputRef.current?.click()}
+            className={BTN}
+          >
+            {tex ? 'replace' : 'texture…'}
+          </button>
+          {tex ? (
+            <button
+              type="button"
+              data-testid={`light-tex-clear-${nodeId}`}
+              onClick={() => setParam('tex', '', 'clear light texture')}
+              className={BTN}
+            >
+              clear
+            </button>
+          ) : null}
+        </span>
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".hdr,.exr,image/vnd.radiance,image/x-exr"
+        aria-label="studio light emitter texture"
+        data-testid={`light-tex-file-${nodeId}`}
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void onImport(f);
+          e.target.value = '';
+        }}
+      />
     </div>
   );
 }

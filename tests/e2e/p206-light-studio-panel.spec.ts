@@ -188,6 +188,60 @@ test('#206 — dragging a puck places the light via the resolver; the live light
   expect(nearest!).toBeLessThan(0.15);
 });
 
+test('#206 — “+ Light” adds a Track-To-aimed light that appears as a puck + row, selected', async ({
+  page,
+}) => {
+  await openLightStudio(page);
+  const pucks = page.locator('[data-testid^="light-studio-puck-"]');
+  const rows = page.locator('[data-testid^="light-studio-row-"]');
+  await expect(pucks).toHaveCount(0);
+
+  await page.getByTestId('light-studio-add').click();
+
+  await expect(pucks).toHaveCount(1);
+  await expect(rows).toHaveCount(1);
+  // The new light is selected → its params controls are shown.
+  await expect(page.locator('[data-testid^="light-studio-controls-"]')).toBeVisible();
+});
+
+test('#206 — the tex picker turns the light into a studio light (the §1.5 pair renders) — closes the no-picker limit', async ({
+  page,
+}) => {
+  await openLightStudio(page);
+  await page.getByTestId('light-studio-add').click();
+  await expect(page.locator('[data-testid^="light-studio-controls-"]')).toBeVisible();
+
+  // A plain area light casts NO emissive card (a Mesh carrying a .map texture).
+  const cardCount = () =>
+    page.evaluate(() => {
+      const w = window as unknown as PanelWindow & {
+        __basher_three: {
+          getState: () => {
+            scene: {
+              traverse: (cb: (o: { type: string; material?: { map?: unknown } | null }) => void) => void;
+            } | null;
+          };
+        };
+      };
+      let cards = 0;
+      w.__basher_three.getState().scene?.traverse((o) => {
+        if (o.type === 'Mesh' && o.material && (o.material as { map?: unknown }).map) cards++;
+      });
+      return cards;
+    });
+  const before = await cardCount();
+
+  // Pick an emitter texture through the panel's file input (the same
+  // importEnvironmentHdri path as the env picker).
+  await page
+    .locator('[data-testid^="light-tex-file-"]')
+    .setInputFiles('public/fixtures/env/test.hdr');
+
+  // The §1.5 pair now renders: an emissive textured card appears (one more card).
+  await expect.poll(cardCount, { timeout: 10_000 }).toBe(before + 1);
+  await expect(page.locator('[data-testid^="light-tex-state-"]')).toHaveText('textured');
+});
+
 test('#206 — a free (un-aimed) area light is NOT on the rig; the empty panel shows the hint', async ({
   page,
 }) => {
