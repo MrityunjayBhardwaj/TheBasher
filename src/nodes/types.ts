@@ -90,6 +90,10 @@ export interface AreaLightValue {
   readonly width: number;
   readonly height: number;
   readonly lookAt: Vec3;
+  /** #205 — optional HDR/EXR emitter texture (env-hdri assetRef). When present,
+   *  the renderer expands this into the §1.5 studio-light PAIR (a mean-radiance
+   *  tinted RectAreaLight + an emissive textured card). Absent → plain light. */
+  readonly tex?: string;
 }
 
 export interface AmbientLightValue {

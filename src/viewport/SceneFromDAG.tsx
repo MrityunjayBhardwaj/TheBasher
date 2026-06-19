@@ -45,6 +45,8 @@ import {
   directChannelTargetSet,
 } from '../app/nodeChannels';
 import { constraintTargetSet, resolveConstraintRotation } from '../app/nodeConstraints';
+import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
+import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { useDrillStore } from '../app/stores/drillStore';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
@@ -539,6 +541,18 @@ function SpotLightR({ value }: { value: SpotLightValue }) {
 }
 
 function AreaLightR({ value }: { value: AreaLightValue }) {
+  // #205 — a `tex` makes this a STUDIO LIGHT: render the §1.5 PAIR. The branch is
+  // on a COMPONENT boundary (NOT a hook) so each path's hooks stay unconditional
+  // (rules-of-hooks) — only the textured path calls the env-texture Suspense hook.
+  // UNSET → byte-identical to the pre-#205 plain RectAreaLight (V37 parity).
+  return value.tex ? (
+    <StudioAreaLightR value={value} tex={value.tex} />
+  ) : (
+    <PlainAreaLightR value={value} />
+  );
+}
+
+function PlainAreaLightR({ value }: { value: AreaLightValue }) {
   ensureRectAreaInit();
   const ref = useRef<THREE.RectAreaLight | null>(null);
   useEffect(() => {
@@ -560,6 +574,71 @@ function AreaLightR({ value }: { value: AreaLightValue }) {
       height={height}
       position={value.position as [number, number, number]}
     />
+  );
+}
+
+/** #205 — the textured studio area light: the §1.5 renderer PAIR (a textured
+ *  Cycles area light is two objects in three.js, which can't texture + shadow one
+ *  light). A RectAreaLight illuminates, tinted by the texture's MEAN radiance
+ *  (averageRadiance — the flux-faithful DC term Blender integrates fully); an
+ *  emissive textured card supplies the visible look + reflections the LTC light
+ *  can't. BOTH aim at `lookAt` so the card is coplanar with the lit rectangle.
+ *  No shadows (RectAreaLight casts none in three.js — deferred to the WebGPU/TSL
+ *  path-tracer epic; known-limit). Suspends on the OPFS read + decode. */
+function StudioAreaLightR({ value, tex }: { value: AreaLightValue; tex: string }) {
+  ensureRectAreaInit();
+  const texture = useEnvironmentTexture(tex);
+  const lightRef = useRef<THREE.RectAreaLight | null>(null);
+  const cardRef = useRef<THREE.Mesh | null>(null);
+  useEffect(() => {
+    const target = new THREE.Vector3(...value.lookAt);
+    lightRef.current?.lookAt(target);
+    cardRef.current?.lookAt(target);
+  }, [value.lookAt, value.position]);
+
+  const scale = value.scale ?? [1, 1, 1];
+  const width = value.width * scale[0];
+  const height = value.height * scale[1];
+
+  // The mean-radiance reduction (§1.5): the untexturable RectAreaLight is tinted
+  // by the texture's DC term so its illumination matches the card's mean energy.
+  // The texture is content-hash-cached (one decode per assetRef), so this averages
+  // only when the texture identity changes — never per frame.
+  const { color, intensity } = useMemo(() => {
+    const drive = studioLightDrive(averageRadiance(texture));
+    const c = new THREE.Color().setRGB(
+      drive.color[0],
+      drive.color[1],
+      drive.color[2],
+      THREE.LinearSRGBColorSpace,
+    );
+    // The authored `color` is a further tint on the texture's chroma.
+    c.multiply(new THREE.Color(value.color));
+    return { color: c, intensity: value.intensity * drive.intensityScale };
+  }, [texture, value.color, value.intensity]);
+
+  return (
+    <>
+      <rectAreaLight
+        ref={lightRef as React.MutableRefObject<THREE.RectAreaLight>}
+        intensity={intensity}
+        color={color}
+        width={width}
+        height={height}
+        position={value.position as [number, number, number]}
+      />
+      {/* The visible emitter card. raycast disabled — it must not steal viewport
+          clicks from the subject (selection goes through the LightHelper). NOT
+          editorChrome: it's the light's real look, so it appears in the render. */}
+      <mesh
+        ref={cardRef}
+        position={value.position as [number, number, number]}
+        raycast={() => null}
+      >
+        <planeGeometry args={[width, height]} />
+        <meshBasicMaterial map={texture} side={THREE.DoubleSide} />
+      </mesh>
+    </>
   );
 }
 

@@ -26,6 +26,14 @@ export const AreaLightParams = z.object({
   // geometry rather than an intensity multiplier (avoids double-count).
   // scale.z is preserved for round-trip but has no shading effect.
   scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
+  // #205 — an OPTIONAL HDR/EXR emitter texture (an env-hdri assetRef, V47/V41
+  // content-hash store). When set, this area light becomes a STUDIO LIGHT: the
+  // renderer expands it into the §1.5 PAIR — a RectAreaLight tinted by the
+  // texture's mean radiance (averageRadiance) + an emissive textured card (the
+  // visible look + reflections). UNSET (the default) → a plain RectAreaLight,
+  // byte-identical to a pre-#205 project (V37 parity; no migration needed since
+  // optional means "absent" reads back as absent).
+  tex: z.string().optional(),
 });
 export type AreaLightParams = z.infer<typeof AreaLightParams>;
 
@@ -51,6 +59,8 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
       width: params.width,
       height: params.height,
       lookAt: params.lookAt,
+      // Pass the emitter texture ref through unchanged. undefined → plain light.
+      ...(params.tex ? { tex: params.tex } : {}),
     };
   },
 };
