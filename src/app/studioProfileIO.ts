@@ -20,7 +20,7 @@
 import { z } from 'zod';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { activeProfileSelect, enumerateProfiles } from './studioProfiles';
+import { activeProfileSelect, enumerateProfiles, uniqueProfileName } from './studioProfiles';
 
 type Vec3 = [number, number, number];
 
@@ -144,7 +144,9 @@ export function buildImportProfilesOps(
   const sceneId = sceneRef.node;
 
   const ops: Op[] = [];
-  const usedNames = new Set(enumerateProfiles(state).map((p) => p.name));
+  // Track names minted in THIS import too, so two same-named imported profiles also
+  // de-dupe against each other (not just against existing ones).
+  const mintedNames = new Set<string>();
 
   // Ensure a select exists + feeds the scene.
   let selId = activeProfileSelect(state);
@@ -156,24 +158,12 @@ export function buildImportProfilesOps(
     );
   }
 
-  // De-dupe a name against existing + already-imported names.
-  const uniqueName = (base: string): string => {
-    if (!usedNames.has(base)) {
-      usedNames.add(base);
-      return base;
-    }
-    for (let n = 2; ; n++) {
-      const candidate = `${base} (${n})`;
-      if (!usedNames.has(candidate)) {
-        usedNames.add(candidate);
-        return candidate;
-      }
-    }
-  };
-
   let activatedName: string | null = null;
   for (const profile of file.profiles) {
-    const name = uniqueName(profile.name);
+    // De-dupe against existing profiles AND names minted earlier in this import
+    // (the select keys by name, V63 — collisions make the active profile ambiguous).
+    const name = uniqueProfileName(state, profile.name, mintedNames);
+    mintedNames.add(name);
     if (activatedName === null) activatedName = name;
     const rigId = newId('rig');
     ops.push({

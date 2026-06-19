@@ -63,6 +63,24 @@ function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/** A profile name not already taken by an existing rig (or by `taken`), suffixing
+ *  with " (N)" on collision. The `LightProfileSelect` keys by NAME (V63), so a
+ *  duplicate name would make the active profile ambiguous — every name-mint path
+ *  (the "+ Profile" builder, JSON import) routes through here. */
+export function uniqueProfileName(
+  state: DagState,
+  base: string,
+  taken?: ReadonlySet<string>,
+): string {
+  const used = new Set(enumerateProfiles(state).map((p) => p.name));
+  if (taken) for (const t of taken) used.add(t);
+  if (!used.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base} (${n})`;
+    if (!used.has(candidate)) return candidate;
+  }
+}
+
 /** A studio light wired DIRECTLY into `Scene.inputs.lights` (the pre-profile legacy
  *  path from #205–#207) that is aimed by a Track-To — i.e. a rig light with no rig.
  *  The first profile ADOPTS these so existing setups don't vanish when scoping
@@ -113,6 +131,9 @@ export function buildAddProfileOps(
 
   const existingProfiles = enumerateProfiles(state);
   const isFirst = existingProfiles.length === 0;
+  // De-dupe the name — the select keys by name (V63), so a collision (e.g. after a
+  // delete renumbers the "Profile N" count) would make the active profile ambiguous.
+  name = uniqueProfileName(state, name);
   const rigId = newId('rig');
 
   const ops: Op[] = [

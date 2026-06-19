@@ -100,6 +100,20 @@ describe('studioProfiles (#208)', () => {
     expect(state.nodes[light!.lightId]).toBeUndefined();
   });
 
+  it('de-dupes a colliding "+ Profile" name (count renumber after a delete)', () => {
+    let state = buildDefaultDagState();
+    // [Profile 1, Profile 2], then delete Profile 1 → count is 1 again.
+    const p1 = buildAddProfileOps(state, 'Profile 1', [0, 0, 0])!;
+    state = apply(state, p1.ops);
+    state = apply(state, buildAddProfileOps(state, 'Profile 2', [0, 0, 0])!.ops);
+    state = apply(state, buildDeleteProfileOps(state, p1.rigId)!);
+    // The panel would mint "Profile 2" again (length 1 + 1) → must NOT collide.
+    const next = buildAddProfileOps(state, 'Profile 2', [0, 0, 0])!;
+    state = apply(state, next.ops);
+    const names = enumerateProfiles(state).map((p) => p.name).sort();
+    expect(names).toEqual(['Profile 2', 'Profile 2 (2)']);
+  });
+
   it('returns null when the scene aggregator is missing', () => {
     const state = buildDefaultDagState();
     const broken = { ...state, outputs: { ...state.outputs, scene: undefined } };
