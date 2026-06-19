@@ -38,6 +38,12 @@ import {
   buildDeleteProfileOps,
   type ProfileEntry,
 } from '../app/studioProfiles';
+import {
+  composeProfilesFile,
+  parseProfilesFile,
+  buildImportProfilesOps,
+} from '../app/studioProfileIO';
+import { downloadBlob } from '../app/downloadBlob';
 import { importEnvironmentHdri } from '../app/asset/importEnvironmentHdri';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -166,6 +172,27 @@ export function LightStudioPanel() {
     if (ops) useDagStore.getState().dispatchAtomic(ops, 'user', 'delete light profile');
   }
 
+  function onExportProfiles() {
+    const file = composeProfilesFile(useDagStore.getState().state); // all profiles
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+    downloadBlob(blob, 'light-profiles.json');
+  }
+
+  async function onImportProfiles(file: File) {
+    try {
+      const parsed = parseProfilesFile(JSON.parse(await file.text()));
+      const result = buildImportProfilesOps(useDagStore.getState().state, parsed);
+      if (result.ops.length === 0) {
+        useAssetErrorStore.getState().report('light-studio:import', 'No profiles found in the file.');
+        return;
+      }
+      useDagStore.getState().dispatchAtomic(result.ops, 'user', 'import light profiles');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      useAssetErrorStore.getState().report('light-studio:import', `Profile import failed: ${msg}`);
+    }
+  }
+
   const selectedLight = lights.find((l) => l.nodeId === primaryNodeId) ?? null;
 
   return (
@@ -177,6 +204,8 @@ export function LightStudioPanel() {
         onAdd={onAddProfile}
         onSelect={onSelectProfile}
         onDelete={onDeleteProfile}
+        onExport={onExportProfiles}
+        onImport={onImportProfiles}
       />
 
       <div className="flex min-h-0 flex-1">
@@ -282,13 +311,18 @@ function ProfilesBar({
   onAdd,
   onSelect,
   onDelete,
+  onExport,
+  onImport,
 }: {
   profiles: ProfileEntry[];
   onAdd: () => void;
   onSelect: (name: string) => void;
   onDelete: (rigId: string) => void;
+  onExport: () => void;
+  onImport: (file: File) => void;
 }) {
   const active = profiles.find((p) => p.active) ?? null;
+  const importRef = useRef<HTMLInputElement>(null);
   return (
     <div
       data-testid="light-studio-profiles-bar"
@@ -329,6 +363,41 @@ function ProfilesBar({
           Delete
         </button>
       ) : null}
+
+      {/* Import/Export — the portable .bls-style JSON (V63). Export writes ALL
+          profiles; import rebuilds them (de-duping names). */}
+      <span className="mx-1 h-4 w-px bg-line" aria-hidden />
+      {profiles.length > 0 ? (
+        <button
+          type="button"
+          data-testid="light-studio-profiles-export"
+          onClick={onExport}
+          className="rounded border border-border bg-muted px-2 py-0.5 text-fg/60 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          Export
+        </button>
+      ) : null}
+      <button
+        type="button"
+        data-testid="light-studio-profiles-import"
+        onClick={() => importRef.current?.click()}
+        className="rounded border border-border bg-muted px-2 py-0.5 text-fg/60 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        Import
+      </button>
+      <input
+        ref={importRef}
+        type="file"
+        accept="application/json,.json"
+        aria-label="import light profiles"
+        data-testid="light-studio-profiles-import-file"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onImport(f);
+          e.target.value = '';
+        }}
+      />
     </div>
   );
 }
