@@ -63,6 +63,7 @@ const ALL_TYPES = [
   'KeyframeChannelNumber',
   'KeyframeChannelQuat',
   'KeyframeChannelVec3',
+  'LightProfileSelect',
   'LightRig',
   'LocomotionState',
   'MaterialOverride',

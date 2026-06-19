@@ -27,6 +27,7 @@ import { KeyframeChannelColorNode } from './KeyframeChannelColor';
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
+import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
@@ -106,6 +107,7 @@ const ALL: NodeDefinition[] = [
   // LightRig groups its lights + owns the shared aim centre/radius; a
   // LightProfileSelect (the ClipSelect pattern) picks one to feed the scene.
   LightRigNode as unknown as NodeDefinition,
+  LightProfileSelectNode as unknown as NodeDefinition,
   // P7.5 — glTF TRS animation extraction (issue #81); pure node-indexed
   // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
   TransformClipNode as unknown as NodeDefinition,

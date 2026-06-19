@@ -181,6 +181,86 @@ test('#208 — a LightRig wired to the scene renders its grouped lights; a Track
   expect(out!.dataUrl.startsWith('data:image/png')).toBe(true);
 });
 
+test('#208 — a LightProfileSelect switches the live profile by name (one rig at a time)', async ({
+  page,
+}) => {
+  const before = await countRectLights(page);
+
+  // Two profiles (rigs) co-resident in the DAG; a LightProfileSelect feeds the
+  // scene. "Key" has 2 lights, "Rim" has 1 — so the live count tells us which is on.
+  await page.evaluate(() => {
+    const w = window as unknown as RigWindow;
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    const al = (id: string, x: number) => ({
+      type: 'addNode',
+      nodeId: id,
+      nodeType: 'AreaLight',
+      params: { intensity: 5, position: [x, 4, 3], color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    });
+    const conn = (from: string, to: string, socket: string) => ({
+      type: 'connect',
+      from: { node: from, socket: 'out' },
+      to: { node: to, socket },
+    });
+    dag.dispatchAtomic(
+      [
+        al('key_a', 3),
+        al('key_b', -3),
+        al('rim_a', 0),
+        { type: 'addNode', nodeId: 'rig_key', nodeType: 'LightRig', params: { name: 'Key' } },
+        { type: 'addNode', nodeId: 'rig_rim', nodeType: 'LightRig', params: { name: 'Rim' } },
+        conn('key_a', 'rig_key', 'lights'),
+        conn('key_b', 'rig_key', 'lights'),
+        conn('rim_a', 'rig_rim', 'lights'),
+        {
+          type: 'addNode',
+          nodeId: 'profile_sel',
+          nodeType: 'LightProfileSelect',
+          params: { selectedProfile: 'Key' },
+        },
+        conn('rig_key', 'profile_sel', 'rigs'),
+        conn('rig_rim', 'profile_sel', 'rigs'),
+        conn('profile_sel', sceneId, 'lightRig'),
+      ],
+      'e2e',
+      'two profiles + select',
+    );
+  });
+
+  // "Key" is live → 2 rig lights render.
+  await page.waitForFunction((prev) => {
+    const w = window as unknown as RigWindow;
+    const scene = w.__basher_three.getState().scene;
+    let n = 0;
+    scene?.traverse((o) => {
+      if ((o as ThreeObjLike).type === 'RectAreaLight') n++;
+    });
+    return n === prev + 2;
+  }, before, { timeout: 15_000 });
+
+  // Switch the live profile to "Rim" (a single param change) → 1 rig light renders.
+  await page.evaluate(() => {
+    const w = window as unknown as RigWindow;
+    const dag = w.__basher_dag.getState();
+    dag.dispatchAtomic(
+      [{ type: 'setParam', nodeId: 'profile_sel', paramPath: 'selectedProfile', value: 'Rim' }],
+      'e2e',
+      'switch to Rim',
+    );
+  });
+  await page.waitForFunction((prev) => {
+    const w = window as unknown as RigWindow;
+    const scene = w.__basher_three.getState().scene;
+    let n = 0;
+    scene?.traverse((o) => {
+      if ((o as ThreeObjLike).type === 'RectAreaLight') n++;
+    });
+    return n === prev + 1;
+  }, before, { timeout: 15_000 });
+  expect(await countRectLights(page)).toBe(before + 1);
+});
+
 test('#208 — a rig NOT wired to the scene renders nothing (falsification)', async ({ page }) => {
   const before = await countRectLights(page);
 
