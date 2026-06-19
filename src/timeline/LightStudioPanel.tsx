@@ -28,6 +28,7 @@ import { resolveStudioLightTransform, studioLightPanelXY } from '../app/resolveS
 import { buildAddStudioLightOps } from '../app/addStudioLight';
 import { importEnvironmentHdri } from '../app/asset/importEnvironmentHdri';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
+import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { panelXYToFraction, fractionToPanelXY } from './studioPanelGeometry';
 
 type Vec3 = [number, number, number];
@@ -136,6 +137,7 @@ export function LightStudioPanel() {
         >
           + Light
         </button>
+        <LightBrushControls hasSelectedLight={selectedLight !== null} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           {lights.map((light) => (
             <button
@@ -213,6 +215,61 @@ export function LightStudioPanel() {
         </div>
       ) : null}
       </div>
+    </div>
+  );
+}
+
+/** The Light Brush modal toggle (#207, §7.4): while active, clicking a scene mesh
+ *  in the viewport paints the SELECTED rig light onto the rig sphere at the hit.
+ *  Mode picks the brush direction (reflect = highlight, normal = straight key). */
+function LightBrushControls({ hasSelectedLight }: { hasSelectedLight: boolean }) {
+  const active = useLightBrushStore((s) => s.active);
+  const mode = useLightBrushStore((s) => s.mode);
+  const toggle = useLightBrushStore((s) => s.toggleActive);
+  const setMode = useLightBrushStore((s) => s.setMode);
+
+  return (
+    <div className="flex flex-col gap-1 px-2 pb-2 text-[11px]">
+      <button
+        type="button"
+        data-testid="light-studio-brush-toggle"
+        aria-pressed={active}
+        onClick={toggle}
+        className={`rounded border px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+          active
+            ? 'border-accent bg-accent/15 text-accent'
+            : 'border-line bg-bg-2 text-fg hover:border-accent hover:text-accent'
+        }`}
+      >
+        {active ? '✎ Brushing…' : '✎ Brush'}
+      </button>
+      {active ? (
+        <>
+          <span className="flex items-center gap-1">
+            {(['reflect', 'normal'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                data-testid={`light-studio-brush-mode-${m}`}
+                aria-pressed={mode === m}
+                onClick={() => setMode(m)}
+                className={`flex-1 rounded border px-1 py-0.5 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                  mode === m
+                    ? 'border-accent bg-accent/15 text-accent'
+                    : 'border-border bg-muted text-fg/80 hover:text-accent'
+                }`}
+              >
+                {m === 'reflect' ? 'highlight' : 'normal'}
+              </button>
+            ))}
+          </span>
+          <span data-testid="light-studio-brush-hint" className="text-[10px] text-mute">
+            {hasSelectedLight
+              ? 'Click the model to place the selected light.'
+              : 'Select a light, then click the model.'}
+          </span>
+        </>
+      ) : null}
     </div>
   );
 }

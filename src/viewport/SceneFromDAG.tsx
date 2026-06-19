@@ -55,6 +55,8 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { useDrillStore } from '../app/stores/drillStore';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
+import { useLightBrushStore } from '../app/stores/lightBrushStore';
+import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera';
@@ -798,6 +800,33 @@ const SceneChildNode = memo(function SceneChildNode({
 }: SceneChildNodeProps) {
   const onClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
+      // #207 Light Brush — while the modal is active, a click PAINTS the selected
+      // rig light onto the rig sphere at the hit (instead of selecting). The face
+      // normal is local, so transform it to world by the hit object's matrix; the
+      // decision (which light, radius, placement) is the pure buildLightBrushOp.
+      const brush = useLightBrushStore.getState();
+      if (brush.active) {
+        e.stopPropagation();
+        const face = e.face;
+        if (!face) return;
+        const obj = e.object as THREE.Object3D;
+        const nWorld = new THREE.Vector3()
+          .copy(face.normal)
+          .transformDirection(obj.matrixWorld)
+          .normalize();
+        const dir = e.ray.direction;
+        const op = buildLightBrushOp(
+          useDagStore.getState().state,
+          useTimeStore.getState().seconds,
+          useSelectionStore.getState().primaryNodeId,
+          [e.point.x, e.point.y, e.point.z],
+          [nWorld.x, nWorld.y, nWorld.z],
+          [dir.x, dir.y, dir.z],
+          brush.mode,
+        );
+        if (op) useDagStore.getState().dispatchAtomic([op], 'user', 'brush light');
+        return;
+      }
       if (!pickId) return;
       e.stopPropagation();
       const sel = useSelectionStore.getState();
