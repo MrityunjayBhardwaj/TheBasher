@@ -39,10 +39,15 @@ function newId(prefix: string): string {
  * Build the Op chain for a new rig light aimed at `target` (the rig centre).
  * Returns null when the scene aggregator is missing (a corrupt project). The
  * chain is atomic at the caller (one dispatchAtomic → one undo entry).
+ *
+ * When `rigId` is given (a profile is active, #208), the light is wired into that
+ * rig's `lights` socket so it belongs to the profile; otherwise it wires into
+ * `scene.lights` directly (the pre-profile legacy path #205–#207).
  */
 export function buildAddStudioLightOps(
   state: DagState,
   target: Vec3,
+  rigId?: string | null,
 ): AddStudioLightResult | null {
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return null;
@@ -50,6 +55,13 @@ export function buildAddStudioLightOps(
   const lightId = newId('light');
   const ttId = newId('tt');
   const { position } = resolveStudioLightTransform(SPAWN_PANEL_XY, SPAWN_RADIUS, target);
+
+  // A profile's rig groups the light; without a profile it wires straight into the
+  // scene's flat light list (legacy).
+  const dest =
+    rigId && state.nodes[rigId]?.type === 'LightRig'
+      ? { node: rigId, socket: 'lights' }
+      : { node: sceneRef.node, socket: 'lights' };
 
   const ops: Op[] = [
     {
@@ -61,7 +73,7 @@ export function buildAddStudioLightOps(
     {
       type: 'connect',
       from: { node: lightId, socket: 'out' },
-      to: { node: sceneRef.node, socket: 'lights' },
+      to: dest,
     },
     {
       type: 'addNode',

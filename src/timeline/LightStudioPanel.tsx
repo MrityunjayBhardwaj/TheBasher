@@ -23,9 +23,21 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { createEvaluatorCache } from '../core/dag/evaluator';
-import { enumerateStudioLights, resolveRigTarget, type StudioLightEntry } from '../app/studioLightRig';
+import {
+  enumerateActiveProfileLights,
+  resolveActiveRigCenter,
+  type StudioLightEntry,
+} from '../app/studioLightRig';
 import { resolveStudioLightTransform, studioLightPanelXY } from '../app/resolveStudioLightTransform';
 import { buildAddStudioLightOps } from '../app/addStudioLight';
+import { resolveActiveRigNode } from '../app/resolveRigLightSources';
+import {
+  enumerateProfiles,
+  buildAddProfileOps,
+  buildSelectProfileOp,
+  buildDeleteProfileOps,
+  type ProfileEntry,
+} from '../app/studioProfiles';
 import { importEnvironmentHdri } from '../app/asset/importEnvironmentHdri';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -43,29 +55,35 @@ interface PuckDrag {
 }
 
 export function LightStudioPanel() {
-  const nodes = useDagStore((s) => s.state.nodes);
+  // Subscribe to the whole DAG state — its identity changes on every Op (structural
+  // sharing), so the memo below recomputes on any edit; only DAG ops re-render this
+  // panel (time/selection have their own stores).
+  const dagState = useDagStore((s) => s.state);
   const seconds = useTimeStore((s) => s.seconds);
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const select = useSelectionStore((s) => s.select);
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<PuckDrag | null>(null);
 
-  const { lights, target } = useMemo(() => {
-    const state = useDagStore.getState().state;
+  const { lights, target, profiles, activeRigId } = useMemo(() => {
     const ctx = {
       time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
     };
     // A FRESH cache per recompute — the EvaluatorCache is a manual-invalidation
     // Map (not auto-cleared on DAG mutation), so a memoized-once cache would feed
     // a STALE aim-node world transform after the node moves. The memo re-runs on
-    // every nodes/seconds change, so a clean cache here is both correct and cheap
-    // (the panel is reactive, not per-frame).
+    // every dagState/seconds change, so a clean cache here is both correct and
+    // cheap (the panel is reactive, not per-frame).
     const cache = createEvaluatorCache();
     return {
-      lights: enumerateStudioLights(nodes),
-      target: resolveRigTarget(state, ctx, cache),
+      // #208 — scope to the ACTIVE profile's lights (falls back to legacy free
+      // lights when no profile exists); the centre prefers the rig's explicit one.
+      lights: enumerateActiveProfileLights(dagState),
+      target: resolveActiveRigCenter(dagState, ctx, cache),
+      profiles: enumerateProfiles(dagState),
+      activeRigId: resolveActiveRigNode(dagState),
     };
-  }, [nodes, seconds]);
+  }, [dagState, seconds]);
 
   // Pointer fraction within the canvas rect (0..1 from the left / top edge).
   function fractionAt(e: React.PointerEvent): { leftFrac: number; topFrac: number } {
@@ -114,7 +132,9 @@ export function LightStudioPanel() {
 
   function onAddLight() {
     const state = useDagStore.getState().state;
-    const result = buildAddStudioLightOps(state, target);
+    // #208 — wire the new light into the active profile's rig when one exists, so
+    // it belongs to the profile (else the legacy scene.lights path).
+    const result = buildAddStudioLightOps(state, target, activeRigId);
     if (!result) {
       useAssetErrorStore.getState().report('light-studio:add', 'Cannot add a light — no scene.');
       return;
@@ -123,10 +143,43 @@ export function LightStudioPanel() {
     select(result.lightId); // select the new light so its params show immediately
   }
 
+  function onAddProfile() {
+    const state = useDagStore.getState().state;
+    // Name profiles "Profile N" by count (BLS convention); the user can rename via
+    // the light list — kept simple for v1.
+    const name = `Profile ${profiles.length + 1}`;
+    const result = buildAddProfileOps(state, name, target);
+    if (!result) {
+      useAssetErrorStore.getState().report('light-studio:profile', 'Cannot add a profile — no scene.');
+      return;
+    }
+    useDagStore.getState().dispatchAtomic(result.ops, 'user', 'add light profile');
+  }
+
+  function onSelectProfile(name: string) {
+    const op = buildSelectProfileOp(useDagStore.getState().state, name);
+    if (op) useDagStore.getState().dispatchAtomic([op], 'user', 'switch light profile');
+  }
+
+  function onDeleteProfile(rigId: string) {
+    const ops = buildDeleteProfileOps(useDagStore.getState().state, rigId);
+    if (ops) useDagStore.getState().dispatchAtomic(ops, 'user', 'delete light profile');
+  }
+
   const selectedLight = lights.find((l) => l.nodeId === primaryNodeId) ?? null;
 
   return (
-    <div data-testid="light-studio-panel" className="flex h-full w-full bg-bg text-fg">
+    <div data-testid="light-studio-panel" className="flex h-full w-full flex-col bg-bg text-fg">
+      {/* #208 — the Profiles bar (BLS "Profiles"): switch the live profile, add a
+          new one, delete the current. Grounded in BLS light_profiles.py / gui.py. */}
+      <ProfilesBar
+        profiles={profiles}
+        onAdd={onAddProfile}
+        onSelect={onSelectProfile}
+        onDelete={onDeleteProfile}
+      />
+
+      <div className="flex min-h-0 flex-1">
       {/* Left rail — add + light list + the selected light's params / tex. */}
       <div className="flex w-48 shrink-0 flex-col border-r border-line text-xs">
         <button
@@ -215,6 +268,67 @@ export function LightStudioPanel() {
         </div>
       ) : null}
       </div>
+      </div>
+    </div>
+  );
+}
+
+/** The Profiles bar (#208, §7.5) — the BLS "Profiles" panel grounded onto Basher's
+ *  substrate (LightRig + LightProfileSelect). A switcher picks the live profile
+ *  (one setParam → keyframeable, V57); "+ Profile" adds one; "Delete" removes the
+ *  current profile and its lights. Empty until the first profile is created. */
+function ProfilesBar({
+  profiles,
+  onAdd,
+  onSelect,
+  onDelete,
+}: {
+  profiles: ProfileEntry[];
+  onAdd: () => void;
+  onSelect: (name: string) => void;
+  onDelete: (rigId: string) => void;
+}) {
+  const active = profiles.find((p) => p.active) ?? null;
+  return (
+    <div
+      data-testid="light-studio-profiles-bar"
+      className="flex items-center gap-2 border-b border-line px-2 py-1.5 text-[11px]"
+    >
+      <span className="font-mono text-fg/50">Profiles</span>
+      {profiles.length > 0 ? (
+        <select
+          data-testid="light-studio-profile-select"
+          value={active?.name ?? ''}
+          onChange={(e) => onSelect(e.target.value)}
+          className="min-w-0 flex-1 rounded border border-border bg-muted px-1.5 py-0.5 text-fg/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {profiles.map((p) => (
+            <option key={p.rigId} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="flex-1 text-fg/40">none — add one to start a lighting setup</span>
+      )}
+      <button
+        type="button"
+        data-testid="light-studio-profile-add"
+        onClick={onAdd}
+        className="rounded border border-line bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        + Profile
+      </button>
+      {active ? (
+        <button
+          type="button"
+          data-testid="light-studio-profile-delete"
+          onClick={() => onDelete(active.rigId)}
+          className="rounded border border-border bg-muted px-2 py-0.5 text-fg/60 hover:border-red-500 hover:text-red-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          Delete
+        </button>
+      ) : null}
     </div>
   );
 }

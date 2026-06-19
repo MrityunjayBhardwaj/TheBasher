@@ -24,6 +24,7 @@ import type { EvalCtx, Node } from '../core/dag/types';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import { trackToForTarget, resolveTrackToTarget } from './nodeConstraints';
 import { nodeDisplayName } from './sceneTreeWalk';
+import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
 
 type Vec3 = [number, number, number];
 
@@ -81,4 +82,56 @@ export function resolveRigTarget(
     if (aim) return aim;
   }
   return [0, 0, 0];
+}
+
+/** Build a panel entry for one AreaLight node id (its world position is the param
+ *  position — rig lights are top-level). */
+function entryFor(nodes: Readonly<Record<string, Node>>, nodeId: string): StudioLightEntry | null {
+  const node = nodes[nodeId];
+  if (!node || node.type !== 'AreaLight') return null;
+  const p = node.params as { position?: unknown; tex?: unknown };
+  return {
+    nodeId,
+    position: isVec3(p.position) ? p.position : [0, 0, 0],
+    name: nodeDisplayName(node),
+    tex: typeof p.tex === 'string' ? p.tex : undefined,
+  };
+}
+
+/**
+ * The lights the panel should draw: the ACTIVE profile's lights when a profile is
+ * live (scoped to the rig, in its edge order), else every Track-To-aimed AreaLight
+ * (the pre-profile legacy fallback, so existing setups still show). The rig's edge
+ * order keeps puck identity stable with the renderer's rig band
+ * (`resolveRigLightSources`). Pure.
+ */
+export function enumerateActiveProfileLights(state: DagState): StudioLightEntry[] {
+  const rigId = resolveActiveRigNode(state);
+  if (!rigId) return enumerateStudioLights(state.nodes); // legacy: no profile yet
+  const out: StudioLightEntry[] = [];
+  for (const lightId of resolveRigLightSources(state)) {
+    const e = entryFor(state.nodes, lightId);
+    if (e) out.push(e);
+  }
+  return out;
+}
+
+/**
+ * The aim centre the panel's pucks orbit: the ACTIVE rig's EXPLICIT `center` param
+ * when a profile is live (the LightRig formalizes the centre, V63), else the
+ * DERIVED centre (`resolveRigTarget` — the shared Track-To aim, pre-profile). Pure
+ * (state + ctx); threads the shared evaluator `cache` for the derived path.
+ */
+export function resolveActiveRigCenter(
+  state: DagState,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 {
+  const rigId = resolveActiveRigNode(state);
+  const rig = rigId ? state.nodes[rigId] : null;
+  if (rig) {
+    const c = (rig.params as { center?: unknown }).center;
+    if (isVec3(c)) return c;
+  }
+  return resolveRigTarget(state, ctx, cache);
 }
