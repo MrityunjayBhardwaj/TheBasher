@@ -220,6 +220,101 @@ test('#205 — a textured AreaLight renders the §1.5 pair; the light is tinted 
   expect(out!.dataUrl.startsWith('data:image/png')).toBe(true);
 });
 
+test('#205 — a Track-To aims the area light at the constraint target (the rig, V60)', async ({
+  page,
+}) => {
+  // The light is AUTHORED to look at the origin, but a Track-To aims it at a
+  // DISTINCT point — so the test proves the CONSTRAINT wins (not the authored
+  // lookAt), the third V60 consumer (mesh, camera, light).
+  const POS: [number, number, number] = [3, 4, 3];
+  const AIM: [number, number, number] = [5, 0, -5];
+  const AUTHORED: [number, number, number] = [0, 0, 0];
+
+  await page.evaluate(
+    ({ pos, aim, authored }) => {
+      const w = window as unknown as StudioWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'rig_light_e2e',
+            nodeType: 'AreaLight',
+            params: {
+              intensity: 5,
+              position: pos,
+              color: '#ffffff',
+              width: 2,
+              height: 2,
+              lookAt: authored,
+            },
+          },
+          {
+            type: 'connect',
+            from: { node: 'rig_light_e2e', socket: 'out' },
+            to: { node: sceneId, socket: 'lights' },
+          },
+          // The rig's aim: a Track-To targeting the light, aiming at a fixed point.
+          {
+            type: 'addNode',
+            nodeId: 'rig_trackto_e2e',
+            nodeType: 'TrackTo',
+            params: { target: 'rig_light_e2e', aimNode: '', aimPoint: aim, up: [0, 1, 0] },
+          },
+        ],
+        'e2e',
+        'add rig light + track-to',
+      );
+    },
+    { pos: POS, aim: AIM, authored: AUTHORED },
+  );
+
+  // Forward (toward the aim) = light's local -Z in world. Wait until it points at
+  // the constraint target — the per-frame Track-To aim has taken over.
+  const norm = (v: [number, number, number]): [number, number, number] => {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+  };
+  const expected = norm([AIM[0] - POS[0], AIM[1] - POS[1], AIM[2] - POS[2]]);
+  const authoredDir = norm([AUTHORED[0] - POS[0], AUTHORED[1] - POS[1], AUTHORED[2] - POS[2]]);
+
+  await page.waitForFunction(
+    (exp) => {
+      const w = window as unknown as StudioWindow;
+      const scene = w.__basher_three.getState().scene;
+      let fwd: [number, number, number] | null = null;
+      scene?.traverse((o) => {
+        const obj = o as unknown as {
+          type: string;
+          updateMatrixWorld?: (f?: boolean) => void;
+          matrixWorld?: { elements: number[] };
+        };
+        if (obj.type === 'RectAreaLight' && obj.matrixWorld) {
+          obj.updateMatrixWorld?.(true);
+          const e = obj.matrixWorld.elements;
+          // -Z column (forward toward target), normalized.
+          const z: [number, number, number] = [-e[8], -e[9], -e[10]];
+          const l = Math.hypot(z[0], z[1], z[2]) || 1;
+          fwd = [z[0] / l, z[1] / l, z[2] / l];
+        }
+      });
+      if (!fwd) return false;
+      return (
+        Math.abs(fwd[0] - exp[0]) < 0.02 &&
+        Math.abs(fwd[1] - exp[1]) < 0.02 &&
+        Math.abs(fwd[2] - exp[2]) < 0.02
+      );
+    },
+    expected,
+    { timeout: 15_000 },
+  );
+
+  // Falsification: the light is NOT pointing where it was AUTHORED to (the
+  // constraint overrode it). expected and authoredDir are distinct by construction.
+  expect(expected).not.toEqual(authoredDir);
+});
+
 test('#205 — a plain AreaLight (no tex) renders NO emissive card (falsification)', async ({
   page,
 }) => {

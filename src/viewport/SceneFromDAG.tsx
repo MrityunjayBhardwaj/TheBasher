@@ -44,7 +44,11 @@ import {
   channelValuesFromNodes,
   directChannelTargetSet,
 } from '../app/nodeChannels';
-import { constraintTargetSet, resolveConstraintRotation } from '../app/nodeConstraints';
+import {
+  constraintTargetSet,
+  resolveConstraintRotation,
+  resolveTrackToTarget,
+} from '../app/nodeConstraints';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -202,9 +206,19 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {/* #165: the DAG camera no longer mounts a makeDefault render camera
           here — the editor owns the view (EditorViewCamera) so DAG cameras
           become selectable frustum objects (CameraHelpers). */}
-      {value.scene.lights.map((light, i) => (
-        <LightNode key={`light:${i}`} value={light} />
-      ))}
+      {value.scene.lights.map((light, i) => {
+        const lid = lightRefs[i]?.node ?? null;
+        // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
+        // membership set is built once (O(N)) so this stays O(1) per light (B13).
+        return (
+          <LightNode
+            key={`light:${i}`}
+            value={light}
+            nodeId={lid}
+            constrained={lid != null && constraintTargets.has(lid)}
+          />
+        );
+      })}
       {/* Editor-only wireframe helpers — show position/direction/range
           for every DAG light. Hidden in `rendered` mode so the screenshot
           / production parity stays clean. */}
@@ -432,7 +446,17 @@ function MeshScaleProbe() {
 // Lights
 // ---------------------------------------------------------------------------
 
-const LightNode = memo(function LightNode({ value }: { value: LightValue }) {
+const LightNode = memo(function LightNode({
+  value,
+  nodeId,
+  constrained,
+}: {
+  value: LightValue;
+  /** The light's DAG node id (for Track-To resolution); null if unmapped. */
+  nodeId: string | null;
+  /** True iff this light is the target of an active Track-To (#205, V60). */
+  constrained: boolean;
+}) {
   switch (value.kind) {
     case 'DirectionalLight':
       return <DirectionalLightR value={value} />;
@@ -443,7 +467,9 @@ const LightNode = memo(function LightNode({ value }: { value: LightValue }) {
     case 'SpotLight':
       return <SpotLightR value={value} />;
     case 'AreaLight':
-      return <AreaLightR value={value} />;
+      // #205 — the studio-light / rig aim consumer (the only light that aims via
+      // lookAt today). Other light kinds ignore the constraint for now.
+      return <AreaLightR value={value} nodeId={nodeId} constrained={constrained} />;
   }
 });
 
@@ -540,25 +566,74 @@ function SpotLightR({ value }: { value: SpotLightValue }) {
   );
 }
 
-function AreaLightR({ value }: { value: AreaLightValue }) {
+interface AreaLightRProps {
+  value: AreaLightValue;
+  /** The light's DAG node id (for resolving its Track-To), or null. */
+  nodeId: string | null;
+  /** True iff this light is the target of an active Track-To (#205, V60). */
+  constrained: boolean;
+}
+
+/** #205 — drive an area light's aim (`lookAt`), the LIGHT RIG mechanism. When the
+ *  light is the target of an active Track-To (`constrained`), re-resolve the world
+ *  aim point PER FRAME and point every ref at it — the EditorViewCamera pattern
+ *  (snapshot reads, live seconds, no React re-render), making the area light the
+ *  THIRD V60 consumer after the mesh (ConstrainedR) and the camera. Lights aren't
+ *  scene children, so ConstrainedR can't reach them — they aim via `lookAt`,
+ *  exactly like the camera. Unconstrained → the authored `lookAt` applies once
+ *  (byte-identical to pre-#205) and the per-frame path no-ops, so an ordinary
+ *  area light pays nothing. */
+function useAreaLightAim(
+  lookAt: AreaLightValue['lookAt'],
+  nodeId: string | null,
+  constrained: boolean,
+  refs: React.RefObject<THREE.Object3D | null>[],
+) {
+  // A stable local cache so the per-frame render-root evaluate (inside
+  // resolveTrackToTarget → resolveWorldTransform) HITS while the DAG is unchanged.
+  const cache = useMemo(() => createEvaluatorCache(), []);
+  // Static authored aim — owns orientation when there is no Track-To.
+  useEffect(() => {
+    if (constrained) return;
+    const t = new THREE.Vector3(lookAt[0], lookAt[1], lookAt[2]);
+    for (const r of refs) r.current?.lookAt(t);
+    // `refs` are stable React refs read at apply time; only the authored aim and
+    // the constrained flag are reactive inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [constrained, lookAt]);
+  // Per-frame Track-To aim (the camera parity mechanism, V60/V37). Resolves only
+  // when constrained, so unconstrained lights spend a single boolean per frame.
+  useFrame(() => {
+    if (!constrained || !nodeId) return;
+    const seconds = useTimeStore.getState().seconds;
+    const aim = resolveTrackToTarget(
+      useDagStore.getState().state,
+      nodeId,
+      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      cache,
+    );
+    if (!aim) return;
+    const t = new THREE.Vector3(aim[0], aim[1], aim[2]);
+    for (const r of refs) r.current?.lookAt(t);
+  });
+}
+
+function AreaLightR({ value, nodeId, constrained }: AreaLightRProps) {
   // #205 — a `tex` makes this a STUDIO LIGHT: render the §1.5 PAIR. The branch is
   // on a COMPONENT boundary (NOT a hook) so each path's hooks stay unconditional
   // (rules-of-hooks) — only the textured path calls the env-texture Suspense hook.
   // UNSET → byte-identical to the pre-#205 plain RectAreaLight (V37 parity).
   return value.tex ? (
-    <StudioAreaLightR value={value} tex={value.tex} />
+    <StudioAreaLightR value={value} tex={value.tex} nodeId={nodeId} constrained={constrained} />
   ) : (
-    <PlainAreaLightR value={value} />
+    <PlainAreaLightR value={value} nodeId={nodeId} constrained={constrained} />
   );
 }
 
-function PlainAreaLightR({ value }: { value: AreaLightValue }) {
+function PlainAreaLightR({ value, nodeId, constrained }: AreaLightRProps) {
   ensureRectAreaInit();
   const ref = useRef<THREE.RectAreaLight | null>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.lookAt(new THREE.Vector3(...value.lookAt));
-  }, [value.lookAt, value.position]);
+  useAreaLightAim(value.lookAt, nodeId, constrained, [ref]);
   // AreaLight has a real geometric extent — scale.x multiplies width
   // and scale.y multiplies height so the gizmo's scale gesture maps
   // 1:1 onto the lit rectangle. Defensive default for legacy projects.
@@ -585,16 +660,14 @@ function PlainAreaLightR({ value }: { value: AreaLightValue }) {
  *  can't. BOTH aim at `lookAt` so the card is coplanar with the lit rectangle.
  *  No shadows (RectAreaLight casts none in three.js — deferred to the WebGPU/TSL
  *  path-tracer epic; known-limit). Suspends on the OPFS read + decode. */
-function StudioAreaLightR({ value, tex }: { value: AreaLightValue; tex: string }) {
+function StudioAreaLightR({ value, tex, nodeId, constrained }: AreaLightRProps & { tex: string }) {
   ensureRectAreaInit();
   const texture = useEnvironmentTexture(tex);
   const lightRef = useRef<THREE.RectAreaLight | null>(null);
   const cardRef = useRef<THREE.Mesh | null>(null);
-  useEffect(() => {
-    const target = new THREE.Vector3(...value.lookAt);
-    lightRef.current?.lookAt(target);
-    cardRef.current?.lookAt(target);
-  }, [value.lookAt, value.position]);
+  // Both the light and the card aim at `lookAt` (so the card stays coplanar with
+  // the lit rectangle) — and follow a Track-To per frame when constrained (V60).
+  useAreaLightAim(value.lookAt, nodeId, constrained, [lightRef, cardRef]);
 
   const scale = value.scale ?? [1, 1, 1];
   const width = value.width * scale[0];
