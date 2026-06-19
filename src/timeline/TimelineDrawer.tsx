@@ -1,6 +1,7 @@
 // TimelineDrawer — Timebar (always visible) + collapsible drawer body
 // hosting the dopesheet view (TimelineCanvas, the canvas-2D surface
-// the SVG Dopesheet was replaced by in P6 W9) and CurveEditor as tabs
+// the SVG Dopesheet was replaced by in P6 W9), CurveEditor, and the
+// LightStudioPanel (the 2D light-rig surface, #206) as tabs
 // (P6 W5 — UI-SPEC §5.9; D-UX-2). The "Dopesheet" tab id/label is
 // unchanged — only the rendering technology advanced (D-W9-2). Bottom
 // toolbar with track-ops buttons added P6 W6.
@@ -35,6 +36,7 @@ import { removeKeyframesMutator, validatePlan } from '../agent/mutators';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
+import { LightStudioPanel } from './LightStudioPanel';
 import { SimplifyPopover } from './SimplifyPopover';
 
 const DRAWER_HEIGHT_PX = 240;
@@ -87,8 +89,18 @@ export function TimelineDrawer() {
             >
               <CurveEditor duration={duration} />
             </div>
+            <div
+              data-testid="light-studio-pane"
+              data-active={activeTab === 'lightStudio'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'lightStudio' ? 'flex' : 'none' }}
+            >
+              <LightStudioPanel />
+            </div>
           </div>
-          <DockToolbar />
+          {/* The track-ops toolbar is keyframe-specific — only the time tabs show
+              it. The Light Studio is a spatial surface with its own affordances. */}
+          {activeTab !== 'lightStudio' ? <DockToolbar /> : null}
         </div>
       )}
       <div className="flex items-stretch">
@@ -140,6 +152,12 @@ function DockHeader({
         label="Curve Editor"
         active={activeTab === 'curve'}
         onClick={() => onSelectTab('curve')}
+      />
+      <TabButton
+        id="lightStudio"
+        label="Light Studio"
+        active={activeTab === 'lightStudio'}
+        onClick={() => onSelectTab('lightStudio')}
       />
       <div className="flex-1" />
       <div className="flex items-center gap-3 px-3 text-mute">
