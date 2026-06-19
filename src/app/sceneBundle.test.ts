@@ -115,6 +115,24 @@ describe('collectAssetRefs', () => {
     expect(refs.gltfFolders).toEqual([]);
   });
 
+  it('collects a studio AreaLight `tex` env-hdri ref (#205 — survives cross-machine open)', () => {
+    // The collector is VALUE-based (any `env-hdri/` string under node params), so
+    // a studio light's `tex` embeds in the .basher bundle automatically — no new
+    // collector branch, no [[H77]] silent-drop. Guards that for the new param home.
+    const state = stateFromParams({
+      light: {
+        intensity: 5,
+        position: [3, 4, 3],
+        color: '#ffffff',
+        width: 2,
+        height: 2,
+        lookAt: [0, 0, 0],
+        tex: 'env-hdri/c0ffee01.exr',
+      },
+    });
+    expect(collectAssetRefs(state).envHdri).toEqual(['env-hdri/c0ffee01.exr']);
+  });
+
   it('does NOT collect a preset env source (CDN, not OPFS) — UX #9', () => {
     const state = stateFromParams({
       scene: { envSource: { kind: 'preset', name: 'sunset' } },
