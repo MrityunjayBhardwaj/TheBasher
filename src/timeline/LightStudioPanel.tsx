@@ -143,6 +143,9 @@ export function LightStudioPanel() {
               onPointerDown={(e) => onPuckDown(e, light)}
               onPointerMove={onPuckMove}
               onPointerUp={onPuckUp}
+              // Keyboard activation (Enter/Space) fires click, not pointer events
+              // — keep selection reachable without a pointer (a11y).
+              onClick={() => select(light.nodeId)}
               style={{ left: `${leftFrac * 100}%`, top: `${topFrac * 100}%`, touchAction: 'none' }}
               className={`absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent active:cursor-grabbing ${
                 selected
