@@ -27,6 +27,7 @@ import { KeyframeChannelColorNode } from './KeyframeChannelColor';
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
+import { LightRigNode } from './LightRig';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
 import { NavmeshNode } from './Navmesh';
@@ -101,6 +102,10 @@ const ALL: NodeDefinition[] = [
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).
   TrackToNode as unknown as NodeDefinition,
+  // Studio lighting — a switchable lighting PROFILE (epic #201, slice #208). A
+  // LightRig groups its lights + owns the shared aim centre/radius; a
+  // LightProfileSelect (the ClipSelect pattern) picks one to feed the scene.
+  LightRigNode as unknown as NodeDefinition,
   // P7.5 — glTF TRS animation extraction (issue #81); pure node-indexed
   // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
   TransformClipNode as unknown as NodeDefinition,

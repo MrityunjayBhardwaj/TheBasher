@@ -60,6 +60,7 @@ import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera';
+import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { resolveCameraDof } from '../app/cameraDof';
 import { degVec3ToRad } from './rotation';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
@@ -172,6 +173,13 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     sceneNode && Array.isArray(sceneNode.inputs.lights)
       ? (sceneNode.inputs.lights as { node: string; socket: string }[])
       : [];
+  // #208 — the active rig's light node ids, in the SAME order as
+  // `value.scene.lightRig.lights` (both read the rig's `inputs.lights` edges). The
+  // renderer renders the rig's lights as a parallel band; this recovers each one's
+  // node id so Track-To aim (V60) + click-to-select keep working, mirroring the
+  // direct-light index-correspondence above.
+  const rigLightSources = resolveRigLightSources(state);
+  const rigLights = value.scene.lightRig?.lights ?? [];
 
   // v0.7 unification (#197) — the set of nodes driven by free-floating direct
   // channels, built in ONE pass so the child map below is O(N), not O(N²). A
@@ -221,12 +229,36 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           />
         );
       })}
+      {/* #208 — the active lighting PROFILE's lights, rendered as a parallel band.
+          Node ids come from `rigLightSources` (the rig's `inputs.lights` edge order,
+          matching `rigLights`) so studio lights keep their Track-To aim + selection. */}
+      {rigLights.map((light, i) => {
+        const lid = rigLightSources[i] ?? null;
+        return (
+          <LightNode
+            key={`rig-light:${lid ?? i}`}
+            value={light}
+            nodeId={lid}
+            constrained={lid != null && constraintTargets.has(lid)}
+          />
+        );
+      })}
       {/* Editor-only wireframe helpers — show position/direction/range
           for every DAG light. Hidden in `rendered` mode so the screenshot
           / production parity stays clean. */}
       {showLightHelpers
         ? value.scene.lights.map((light, i) => (
             <LightHelper key={`helper:${i}`} value={light} pickId={lightRefs[i]?.node ?? null} />
+          ))
+        : null}
+      {/* #208 — wireframe helpers for the active rig's lights too. */}
+      {showLightHelpers
+        ? rigLights.map((light, i) => (
+            <LightHelper
+              key={`rig-helper:${rigLightSources[i] ?? i}`}
+              value={light}
+              pickId={rigLightSources[i] ?? null}
+            />
           ))
         : null}
       {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;

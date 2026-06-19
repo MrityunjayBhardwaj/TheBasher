@@ -76,6 +76,12 @@ export type SocketTypeName =
   // type (like KeyframeChannel): the output exists for introspection, but a
   // constraint is enumerated + scene-layer resolved, never wired into the graph.
   | 'Constraint'
+  // Studio lighting — a named, switchable lighting setup (epic #201, slice #208,
+  // V58/V62). A `LightRig` groups its lights + owns the shared aim centre/radius;
+  // a `LightProfileSelect` picks one rig by name (the ClipSelect pattern) to feed
+  // the scene. All profiles stay co-resident in the DAG (V34); switching is one
+  // param → keyframeable (V57).
+  | 'LightRig'
   | 'Shot'
   | 'Cut'
   // P3.1 — Animation import + retargeting (THESIS §42.1)

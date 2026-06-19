@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { CameraValue, EnvironmentSource, LightValue, SceneChild, SceneValue } from './types';
+import type {
+  CameraValue,
+  EnvironmentSource,
+  LightRigValue,
+  LightValue,
+  SceneChild,
+  SceneValue,
+} from './types';
 
 // UX #9 — scene-level environment (HDRI/IBL) source. Discriminated so the
 // editor authors exactly one of: nothing / a drei preset (CDN) / an imported
@@ -35,6 +42,10 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     camera: { type: 'Camera', cardinality: 'single' },
     lights: { type: 'Light', cardinality: 'list' },
     children: { type: 'Mesh', cardinality: 'list' },
+    // #208 — the active lighting PROFILE (a LightRig directly, or the rig a
+    // LightProfileSelect picks). Kept SEPARATE from `lights` so the direct-light
+    // index-correspondence with `inputs.lights` stays byte-identical.
+    lightRig: { type: 'LightRig', cardinality: 'single' },
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
   inspectorSections: ['environment', 'layout'],
@@ -48,6 +59,10 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
       camera: inputs.camera as CameraValue,
       lights: (inputs.lights as LightValue[]) ?? [],
       children: (inputs.children as SceneChild[]) ?? [],
+      // #208 — the active profile's rig, passed through SEPARATELY (never merged
+      // into `lights`). null when nothing is wired (the common case, byte-identical
+      // to a pre-#208 project).
+      lightRig: (inputs.lightRig as LightRigValue | undefined) ?? null,
       environment: {
         source: (params.envSource as EnvironmentSource | undefined) ?? { kind: 'none' },
         intensity: (params.envIntensity as number | undefined) ?? 1,

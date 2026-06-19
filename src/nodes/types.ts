@@ -109,6 +109,22 @@ export type LightValue =
   | AreaLightValue
   | AmbientLightValue;
 
+// Studio lighting — a LightRig (socket type 'LightRig'). Epic #201 / slice #208
+// (§7.2/§7.5, V62). A rig = one switchable lighting PROFILE: it groups its lights
+// and owns the shared aim CENTRE + radius the panel's pucks orbit (formalizing the
+// implicit centre `resolveRigTarget` derived in #206/#207). The lights stay in
+// edge order (the renderer recovers their node ids by index-correspondence via
+// `resolveRigLightSources`, exactly as the Scene's direct `lights` do).
+export interface LightRigValue {
+  readonly kind: 'LightRig';
+  readonly name: string;
+  /** The rig sphere origin every light on the rig aims at (the BLS "handle"). */
+  readonly center: Vec3;
+  /** The rig sphere radius (default puck distance from the centre). */
+  readonly radius: number;
+  readonly lights: readonly LightValue[];
+}
+
 // ---------------------------------------------------------------------------
 // Materials (V9 — preset + scalar/texture only; no shader-as-code in v0.5)
 // ---------------------------------------------------------------------------
@@ -1104,6 +1120,12 @@ export interface SceneValue {
   readonly lights: readonly LightValue[];
   readonly children: readonly SceneChild[];
   readonly environment: EnvironmentValue;
+  /** #208 — the active lighting PROFILE's rig (the lights it groups + the shared
+   *  aim centre/radius), or null when no rig is wired. Kept SEPARATE from `lights`
+   *  so the direct-light index-correspondence with `Scene.inputs.lights` stays
+   *  byte-identical; the renderer renders `lightRig.lights` as a parallel band,
+   *  recovering their node ids via `resolveRigLightSources` (the same edge order). */
+  readonly lightRig?: LightRigValue | null;
 }
 
 export interface PostFxConfig {
