@@ -21,6 +21,7 @@ import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useDrillStore } from '../app/stores/drillStore';
+import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
 import { saveEditorView } from '../app/editorViewPersistence';
 import { useProjectStore } from '../core/project/store';
@@ -212,6 +213,11 @@ export function Viewport() {
         // mesh. selectionStore is a UI projection, not the DAG (V1 stays
         // clean).
         onPointerMissed={() => {
+          // #207 — while the Light Brush is active, a click that misses the model
+          // is a missed brush stroke, NOT a deselect: keep the selected light so
+          // the next stroke still has a target (else one stray click drops the
+          // light mid-painting).
+          if (useLightBrushStore.getState().active) return;
           useSelectionStore.getState().clear();
           // UX #7 — clicking empty space exits any drill context, so the next
           // double-click on a model restarts at its first child.
