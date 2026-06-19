@@ -15,7 +15,10 @@
 //      src/timeline/studioPanelGeometry.ts; vyapti V60/V37; hetvabhasa H95.
 
 import { expect, test } from './_fixtures';
-import { studioLightPanelXY } from '../../src/app/resolveStudioLightTransform';
+import {
+  resolveStudioLightTransform,
+  studioLightPanelXY,
+} from '../../src/app/resolveStudioLightTransform';
 import { panelXYToFraction } from '../../src/timeline/studioPanelGeometry';
 
 interface Op {
@@ -25,8 +28,16 @@ interface Op {
 interface PanelWindow {
   __basher_dag: {
     getState: () => {
-      state: { outputs: { scene?: { node: string } } };
+      state: {
+        outputs: { scene?: { node: string } };
+        nodes: Record<string, { params?: { position?: [number, number, number] } }>;
+      };
       dispatchAtomic: (ops: Op[], source?: string, label?: string) => void;
+    };
+  };
+  __basher_three: {
+    getState: () => {
+      scene: { traverse: (cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void) => void } | null;
     };
   };
 }
@@ -88,7 +99,7 @@ test.beforeEach(async ({ page }) => {
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as PanelWindow;
-    return Boolean(w.__basher_dag && w.__basher_dag.getState().state.outputs.scene);
+    return Boolean(w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene);
   });
 });
 
@@ -117,6 +128,64 @@ test('#206 — a rig light shows as a puck at the resolver-projected canvas spot
   // Within 2% of the canvas — sub-pixel rounding + the puck's border box.
   expect(Math.abs(measuredLeft - expected.leftFrac)).toBeLessThan(0.02);
   expect(Math.abs(measuredTop - expected.topFrac)).toBeLessThan(0.02);
+});
+
+test('#206 — dragging a puck places the light via the resolver; the live light follows (panel == viewport)', async ({
+  page,
+}) => {
+  const startPos: [number, number, number] = [3, 4, 3];
+  const target: [number, number, number] = [0, 0, 0];
+  await addAreaLight(page, 'drag_light_e2e', startPos, target);
+  await openLightStudio(page);
+
+  const canvasBox = await page.getByTestId('light-studio-canvas').boundingBox();
+  const puck = page.getByTestId('light-studio-puck-drag_light_e2e');
+  const puckBox = await puck.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(puckBox).not.toBeNull();
+
+  // Drag the puck to a known canvas fraction: leftFrac 0.5, topFrac 0.25
+  // → panelXY [0.5, 0.75] (front meridian, high elevation). The radius is the
+  // start light's distance from the rig centre — the drag preserves it.
+  const { radius } = studioLightPanelXY(startPos, target);
+  const targetFrac = { leftFrac: 0.5, topFrac: 0.25 };
+  const toX = canvasBox!.x + targetFrac.leftFrac * canvasBox!.width;
+  const toY = canvasBox!.y + targetFrac.topFrac * canvasBox!.height;
+
+  await page.mouse.move(puckBox!.x + puckBox!.width / 2, puckBox!.y + puckBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(toX, toY, { steps: 8 });
+  await page.mouse.up();
+
+  // RESOLVER prediction for the drop point.
+  const expectedPanelXY: [number, number] = [targetFrac.leftFrac, 1 - targetFrac.topFrac];
+  const { position: expected } = resolveStudioLightTransform(expectedPanelXY, radius, target);
+
+  // Side A (authoring): the light's DAG position param == the resolver output.
+  const dagPos = await page.evaluate(() => {
+    const w = window as unknown as PanelWindow;
+    return w.__basher_dag.getState().state.nodes['drag_light_e2e']?.params?.position ?? null;
+  });
+  expect(dagPos).not.toBeNull();
+  for (let i = 0; i < 3; i++) expect(Math.abs(dagPos![i] - expected[i])).toBeLessThan(0.15);
+
+  // Side B (render): a live RectAreaLight sits at that position — the viewport
+  // reflects the drag (panel == viewport, V37).
+  const nearest = await page.evaluate(
+    (exp) => {
+      const w = window as unknown as PanelWindow;
+      let best: number | null = null;
+      w.__basher_three.getState().scene?.traverse((o) => {
+        if (o.type !== 'RectAreaLight') return;
+        const d = Math.hypot(o.position.x - exp[0], o.position.y - exp[1], o.position.z - exp[2]);
+        if (best === null || d < best) best = d;
+      });
+      return best;
+    },
+    expected as [number, number, number],
+  );
+  expect(nearest).not.toBeNull();
+  expect(nearest!).toBeLessThan(0.15);
 });
 
 test('#206 — a free (un-aimed) area light is NOT on the rig; the empty panel shows the hint', async ({
