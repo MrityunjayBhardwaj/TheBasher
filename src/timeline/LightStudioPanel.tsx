@@ -33,20 +33,22 @@ export function LightStudioPanel() {
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const select = useSelectionStore((s) => s.select);
 
-  // A stable cache so the rig-target resolve (which walks the evaluator for an
-  // aim-node's world position) hits while the DAG is unchanged.
-  const cache = useMemo(() => createEvaluatorCache(), []);
-
   const { lights, target } = useMemo(() => {
     const state = useDagStore.getState().state;
     const ctx = {
       time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
     };
+    // A FRESH cache per recompute — the EvaluatorCache is a manual-invalidation
+    // Map (not auto-cleared on DAG mutation), so a memoized-once cache would feed
+    // a STALE aim-node world transform after the node moves. The memo re-runs on
+    // every nodes/seconds change, so a clean cache here is both correct and cheap
+    // (the panel is reactive, not per-frame).
+    const cache = createEvaluatorCache();
     return {
       lights: enumerateStudioLights(nodes),
       target: resolveRigTarget(state, ctx, cache),
     };
-  }, [nodes, seconds, cache]);
+  }, [nodes, seconds]);
 
   return (
     <div data-testid="light-studio-panel" className="relative h-full w-full bg-bg text-fg">
