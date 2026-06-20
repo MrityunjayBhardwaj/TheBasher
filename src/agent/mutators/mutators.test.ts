@@ -294,6 +294,26 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  it('wires a MirrorModifier with its axis param (and does not leak Array params)', () => {
+    const state = buildScene();
+    const result = validatePlan(
+      addModifierMutator,
+      // offset is Array's Vec3 param — it must NOT reach the Mirror node (whose
+      // schema expects a scalar offset). Only `axis` is relevant to a Mirror.
+      { target: 'box', modifierType: 'MirrorModifier', axis: 'z', offset: [2, 0, 0] },
+      state,
+      'mirror the box',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const add = result.ops.find((o) => o.type === 'addNode');
+    expect(add && add.type === 'addNode' ? add.params : null).toEqual({ axis: 'z' });
+    const next = applyOps(state, result.ops);
+    const stack = enumerateModifierStack(next, 'box');
+    expect(stack).toHaveLength(1);
+    expect(stack[0].type).toBe('MirrorModifier');
+  });
 });
 
 describe('translate mutator', () => {

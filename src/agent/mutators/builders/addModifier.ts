@@ -50,10 +50,15 @@ function defaultModifierId(target: NodeId, modifierType: string, used: Set<NodeI
 }
 
 function specParams(spec: AddModifierSpec): Record<string, unknown> {
+  // Scope params to the modifier type so a cross-type param (e.g. Array's Vec3
+  // `offset`) never lands on a node whose schema expects a different shape.
   const p: Record<string, unknown> = {};
-  if (spec.count !== undefined) p.count = spec.count;
-  if (spec.offset !== undefined) p.offset = spec.offset;
-  if (spec.axis !== undefined) p.axis = spec.axis;
+  if (spec.modifierType === 'ArrayModifier') {
+    if (spec.count !== undefined) p.count = spec.count;
+    if (spec.offset !== undefined) p.offset = spec.offset;
+  } else if (spec.modifierType === 'MirrorModifier') {
+    if (spec.axis !== undefined) p.axis = spec.axis;
+  }
   return p;
 }
 
