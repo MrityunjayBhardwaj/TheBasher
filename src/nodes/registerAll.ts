@@ -32,6 +32,7 @@ import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
+import { MirrorModifierNode } from './MirrorModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { OrthographicCameraNode } from './OrthographicCamera';
@@ -108,6 +109,7 @@ const ALL: NodeDefinition[] = [
   // is a Mesh→Mesh wrapper sub-chain node (edge-WIRED, unlike the edge-less
   // constraint above) that rewrites its source geometry into a rebuildable handle.
   ArrayModifierNode as unknown as NodeDefinition,
+  MirrorModifierNode as unknown as NodeDefinition,
   // Studio lighting — a switchable lighting PROFILE (epic #201, slice #208). A
   // LightRig groups its lights + owns the shared aim centre/radius; a
   // LightProfileSelect (the ClipSelect pattern) picks one to feed the scene.

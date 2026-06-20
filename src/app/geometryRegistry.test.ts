@@ -133,4 +133,85 @@ describe('geometryRegistry', () => {
     };
     expect(get(arrayRef(gltfSrc, 3, [2, 0, 0]))).toBeNull();
   });
+
+  // SOP / modifier (epic #201, #209) — the recursive `mirror` descriptor build.
+  const mirrorRef = (source: GeometryRef, axis: 'x' | 'y' | 'z', offset = 0): GeometryRef => ({
+    key: `mirror|${source.key}|${axis}|${offset}`,
+    kind: 'mirror',
+    descriptor: { kind: 'mirror', source, axis, offset },
+  });
+
+  it('builds a mirror modifier: source + reflection merged (2× the vertices)', () => {
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    const oneCount = get(src)!.getAttribute('position').count; // BoxGeometry → 24
+    const mir = get(mirrorRef(src, 'x'))!;
+    expect(mir).not.toBeNull();
+    expect(mir.getAttribute('position').count).toBe(oneCount * 2);
+  });
+
+  it('a non-zero offset separates the halves: reflection lands across the plane at `offset`', () => {
+    // A unit box (x∈[-0.5,0.5]) mirrored across x=2 → reflected half spans
+    // [2·2−0.5, 2·2+0.5] = [3.5,4.5]. The merged bounds span the original + reflection.
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    const mir = get(mirrorRef(src, 'x', 2))!;
+    mir.computeBoundingBox();
+    expect(mir.boundingBox!.min.x).toBeCloseTo(-0.5, 5); // original half
+    expect(mir.boundingBox!.max.x).toBeCloseTo(4.5, 5); // reflected half across x=2
+  });
+
+  it('mirror reverses the reflected half winding — winding agrees with the normals everywhere', () => {
+    // The decisive correctness check: a reflection (det −1) flips triangle winding,
+    // so without reverseWinding the mirrored half would render inside-out. For every
+    // triangle, the geometric normal (from the index winding) must point the SAME
+    // way as the stored vertex normal (dot > 0). A box face's 3 vertex normals all
+    // equal the face normal, so a correct mirror gives dot ≈ +1 for ALL triangles.
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    const mir = get(mirrorRef(src, 'x'))!;
+    const pos = mir.getAttribute('position');
+    const nrm = mir.getAttribute('normal');
+    const index = mir.getIndex()!;
+    const idx = index.array;
+    let minDot = Infinity;
+    for (let i = 0; i + 2 < idx.length; i += 3) {
+      const [a, b, c] = [idx[i], idx[i + 1], idx[i + 2]];
+      const p0 = [pos.getX(a), pos.getY(a), pos.getZ(a)];
+      const p1 = [pos.getX(b), pos.getY(b), pos.getZ(b)];
+      const p2 = [pos.getX(c), pos.getY(c), pos.getZ(c)];
+      const e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+      const e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+      const g = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+      ];
+      const vn = [nrm.getX(a), nrm.getY(a), nrm.getZ(a)];
+      minDot = Math.min(minDot, g[0] * vn[0] + g[1] * vn[1] + g[2] * vn[2]);
+    }
+    expect(minDot).toBeGreaterThan(0); // every face front-facing — winding == normals
+  });
+
+  it('mirror caches by key (same params → same instance) and does not mutate the source', () => {
+    const src = boxRef('box|2,1,1', [2, 1, 1]);
+    const sourceInstance = get(src)!;
+    const a = get(mirrorRef(src, 'x'));
+    const b = get(mirrorRef(src, 'x'));
+    expect(a).toBe(b); // cached
+    // the cached source is still the unmodified single box (clones were reflected)
+    sourceInstance.computeBoundingBox();
+    expect(sourceInstance.boundingBox!.max.x).toBeCloseTo(1, 5); // half-width of a 2-wide box
+  });
+
+  it('distinct mirror axes key to distinct instances (no false sharing)', () => {
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    expect(get(mirrorRef(src, 'x'))).not.toBe(get(mirrorRef(src, 'y')));
+  });
+
+  it('returns null for a mirror over a non-sync-buildable source (gltf) — v1 follow-up', () => {
+    const gltfSrc: GeometryRef = {
+      key: 'gltf|a|M',
+      kind: 'gltf',
+      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
+    };
+    expect(get(mirrorRef(gltfSrc, 'x'))).toBeNull();
+  });
 });

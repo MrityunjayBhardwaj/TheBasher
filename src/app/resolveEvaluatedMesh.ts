@@ -40,10 +40,11 @@ import type {
   GeometryRef,
   InlineMaterialSpec,
   MeshTransform,
+  MirrorAxis,
   Vec3,
 } from '../nodes/types';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
-import { arrayGeometryRef } from './modifierGeometry';
+import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { get as getRegistryGeometry } from './geometryRegistry';
@@ -292,6 +293,30 @@ export function resolveEvaluatedMesh(
     const offset: Vec3 = isVec3(p.offset) ? p.offset : [2, 0, 0];
     return {
       geometry: arrayGeometryRef(source.geometry, count, offset),
+      uvs: null, // modified geometry's UVs are an async/registry follow-up
+      material: source.material,
+      transform: source.transform,
+    };
+  }
+
+  if (node.type === 'MirrorModifier') {
+    // SOP / modifier (epic #201, #209) — the RECURSIVE read-side branch, the parity
+    // twin of `MirrorModifier.evaluate` (identical shape to the ArrayModifier branch
+    // above). Resolve the SOURCE mesh the same way the renderer evaluates it, then
+    // wrap its geometry in the `mirror` descriptor through the SAME `mirrorGeometryRef`
+    // the evaluate path uses → identical deterministic key on both roads (H40, no
+    // drift). A muted modifier returns the source verbatim.
+    const binding = node.inputs.target;
+    if (!binding || Array.isArray(binding)) return null;
+    const source = resolveEvaluatedMesh(state, binding.node, ctx, cache);
+    if (!source) return null; // unwired / non-leaf-mesh source — nothing to modify
+    const muted = (node.params as { muted?: unknown }).muted === true;
+    if (muted) return source; // mute-bypass (V58): identity passthrough
+    const p = node.params as { axis?: unknown; offset?: unknown };
+    const axis: MirrorAxis = p.axis === 'y' || p.axis === 'z' ? p.axis : 'x';
+    const offset = typeof p.offset === 'number' ? p.offset : 0;
+    return {
+      geometry: mirrorGeometryRef(source.geometry, axis, offset),
       uvs: null, // modified geometry's UVs are an async/registry follow-up
       material: source.material,
       transform: source.transform,

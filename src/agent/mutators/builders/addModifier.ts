@@ -21,8 +21,8 @@ import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { buildAddModifierOps, MODIFIER_NODE_TYPES } from '../../../app/operatorStack';
 
-// v1: the one geometry modifier. New modifiers join MODIFIER_NODE_TYPES + this enum.
-const ModifierType = z.enum(['ArrayModifier']);
+// The geometry modifiers. New modifiers join MODIFIER_NODE_TYPES + this enum.
+const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier']);
 type ModifierType = z.infer<typeof ModifierType>;
 
 const AddModifierSpec = z.object({
@@ -32,6 +32,8 @@ const AddModifierSpec = z.object({
   /** Array params (optional — the node schema defaults count=3, offset=[2,0,0]). */
   count: z.number().int().positive().optional(),
   offset: z.tuple([z.number(), z.number(), z.number()]).optional(),
+  /** Mirror param (optional — the node schema defaults axis='x'). */
+  axis: z.enum(['x', 'y', 'z']).optional(),
   /** Caller-supplied modifier id; auto-derived from target + type when omitted. */
   modifierId: z.string().optional(),
 });
@@ -51,6 +53,7 @@ function specParams(spec: AddModifierSpec): Record<string, unknown> {
   const p: Record<string, unknown> = {};
   if (spec.count !== undefined) p.count = spec.count;
   if (spec.offset !== undefined) p.offset = spec.offset;
+  if (spec.axis !== undefined) p.axis = spec.axis;
   return p;
 }
 
@@ -60,10 +63,12 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     'Add a geometry MODIFIER (the SOP / geometry-operator stack) on top of a ' +
     "mesh's modifier stack — a non-destructive, re-orderable operation over the " +
     'mesh geometry. modifierType "ArrayModifier" replicates the mesh `count` ' +
-    'times along `offset` (local space) and merges. target may be the mesh or any ' +
-    'modifier already in its stack (the base is resolved automatically). Returns a ' +
-    'deterministic modifierId; tune it later with dag.exec setParam (count / ' +
-    'offset / muted) or stack it with another addModifier call.',
+    'times along `offset` (local space) and merges; "MirrorModifier" reflects the ' +
+    'mesh across the local-origin plane on `axis` (x|y|z) and merges → a symmetric ' +
+    'whole. target may be the mesh or any modifier already in its stack (the base ' +
+    'is resolved automatically). Returns a deterministic modifierId; tune it later ' +
+    'with dag.exec setParam (count / offset / axis / muted) or stack it with ' +
+    'another addModifier call.',
   spec: AddModifierSpec,
   specExample: {
     target: 'cube',

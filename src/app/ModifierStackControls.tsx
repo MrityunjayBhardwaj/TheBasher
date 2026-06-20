@@ -23,9 +23,11 @@ import {
   resolveStackBase,
 } from './operatorStack';
 
-/** The modifiers the user can add from the "+ Add" menu (the v1 set is just Array). */
+/** The modifiers the user can add from the "+ Add" menu. New modifiers join here
+ *  + MODIFIER_NODE_TYPES + the agent ModifierType enum + registerAll. */
 const ADDABLE: ReadonlyArray<{ type: string; label: string }> = [
   { type: 'ArrayModifier', label: 'Array' },
+  { type: 'MirrorModifier', label: 'Mirror' },
 ];
 
 export function ModifierStackControls({ nodeId }: { nodeId: string }) {

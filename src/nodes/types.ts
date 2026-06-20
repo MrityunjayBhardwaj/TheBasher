@@ -357,11 +357,22 @@ export type GeometryDescriptor =
   // source `count` times, each translated by `i*offset` (local space), and merges.
   // Sync-buildable when the source is sync-buildable (box/sphere) — a glTF/baked
   // source is a follow-up (its geometry is async, outside the sync registry).
-  | { readonly kind: 'array'; readonly source: GeometryRef; readonly count: number; readonly offset: Vec3 };
+  | { readonly kind: 'array'; readonly source: GeometryRef; readonly count: number; readonly offset: Vec3 }
+  // `mirror` (epic #201, #209) — the SECOND modifier: reflect the source across the
+  // plane perpendicular to `axis` at `offset` along it (offset 0 = the LOCAL origin,
+  // Blender's default) and merge the reflection back with the original → a symmetric
+  // whole. A non-zero offset separates the halves (useful for v1's geometry-centered
+  // primitives, where an origin mirror would overlap the source exactly). The
+  // reflection has determinant −1, so the registry reverses the reflected copy's
+  // triangle winding (else the mirrored half renders inside-out). Same sync scope.
+  | { readonly kind: 'mirror'; readonly source: GeometryRef; readonly axis: MirrorAxis; readonly offset: number };
+
+/** The axis a `mirror` modifier reflects across (the negated component). */
+export type MirrorAxis = 'x' | 'y' | 'z';
 
 export interface GeometryRef {
   readonly key: string;
-  readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array';
+  readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array' | 'mirror';
   readonly descriptor: GeometryDescriptor;
 }
 

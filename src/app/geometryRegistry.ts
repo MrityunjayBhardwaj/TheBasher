@@ -98,7 +98,71 @@ function build(ref: GeometryRef): BufferGeometry | null {
     for (const c of copies) c.dispose(); // mergeGeometries copies the buffers out
     return merged; // null only if the copies mismatch attributes (same source → never)
   }
+  if (d.kind === 'mirror') {
+    // SOP / modifier (#209): reflect the source across the local-origin plane whose
+    // normal is `axis`, then merge the reflection back with the ORIGINAL (a symmetric
+    // whole, 2× the verts — Blender's Mirror). Clone both halves — never mutate the
+    // cached source (H111). The reflection matrix has determinant −1, which flips
+    // triangle winding: `applyMatrix4` reflects the normal attribute (via the normal
+    // matrix), but the index winding would now disagree with those normals →
+    // front-faces become back-faces (the mirrored half renders inside-out). Reverse
+    // the reflected copy's winding so winding and normals agree again.
+    const source = get(d.source);
+    if (!source) return null;
+    // Reflection across the plane perpendicular to `axis` at `offset` along it:
+    // p' = 2·offset − p on that axis (a scale of −1 plus a translation of 2·offset).
+    const reflect = new Matrix4().makeScale(
+      d.axis === 'x' ? -1 : 1,
+      d.axis === 'y' ? -1 : 1,
+      d.axis === 'z' ? -1 : 1,
+    );
+    const t = 2 * d.offset;
+    reflect.setPosition(d.axis === 'x' ? t : 0, d.axis === 'y' ? t : 0, d.axis === 'z' ? t : 0);
+    const original = source.clone();
+    const reflected = reverseWinding(source.clone().applyMatrix4(reflect));
+    const merged = mergeGeometries([original, reflected]);
+    original.dispose();
+    reflected.dispose();
+    return merged; // null only on attribute mismatch (same source → never)
+  }
   return null; // gltf / baked — not built here (gltf in asset clone, baked from OPFS)
+}
+
+/**
+ * Reverse the triangle winding of `geom` in place (swap the 2nd & 3rd vertex of
+ * each triangle). Needed after a reflection (determinant −1): the reflected
+ * positions/normals are correct, but the index order would still imply the OLD
+ * orientation, so without this the mirrored faces are back-facing. Handles indexed
+ * geometry (box/sphere — the v1 sources) and falls back to swapping attribute
+ * triplets for the non-indexed case. Returns `geom` for chaining.
+ */
+function reverseWinding(geom: BufferGeometry): BufferGeometry {
+  const index = geom.getIndex();
+  if (index) {
+    const arr = index.array;
+    for (let i = 0; i + 2 < arr.length; i += 3) {
+      const tmp = arr[i + 1];
+      arr[i + 1] = arr[i + 2];
+      arr[i + 2] = tmp;
+    }
+    index.needsUpdate = true;
+    return geom;
+  }
+  for (const attr of Object.values(geom.attributes)) {
+    const data = attr.array;
+    const n = attr.itemSize;
+    for (let i = 0; i + 2 < attr.count; i += 3) {
+      for (let k = 0; k < n; k++) {
+        const o1 = (i + 1) * n + k;
+        const o2 = (i + 2) * n + k;
+        const tmp = data[o1];
+        data[o1] = data[o2];
+        data[o2] = tmp;
+      }
+    }
+    attr.needsUpdate = true;
+  }
+  return geom;
 }
 
 /** Test seam: drop every cached geometry (disposing GPU-less CPU buffers). */

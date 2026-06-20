@@ -68,6 +68,7 @@ const ALL_TYPES = [
   'LightRig',
   'LocomotionState',
   'MaterialOverride',
+  'MirrorModifier',
   'Navmesh',
   'NormalPass',
   'OrthographicCamera',

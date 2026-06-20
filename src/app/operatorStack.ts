@@ -30,7 +30,7 @@ import { nodeDisplayName } from './sceneTreeWalk';
  *  is a modifier iff its type is registered here — new modifiers (Mirror, Subdiv…)
  *  register by adding their type, nothing else. They all share the Mesh `target`
  *  input / Mesh `out` output shape, which is what makes the sub-chain uniform. */
-export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set(['ArrayModifier']);
+export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set(['ArrayModifier', 'MirrorModifier']);
 
 export function isModifierNode(node: Node | undefined): boolean {
   return !!node && MODIFIER_NODE_TYPES.has(node.type);

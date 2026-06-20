@@ -22,7 +22,14 @@
 //      src/app/geometryRegistry.ts (build 'array'); src/nodes/ArrayModifier.ts;
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §5 / §2.2; vyapti V58.
 
-import type { GeometryRef, InlineMaterialSpec, MeshTransform, SceneChild, Vec3 } from '../nodes/types';
+import type {
+  GeometryRef,
+  InlineMaterialSpec,
+  MeshTransform,
+  MirrorAxis,
+  SceneChild,
+  Vec3,
+} from '../nodes/types';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 const ORIGIN: Vec3 = [0, 0, 0];
@@ -103,5 +110,23 @@ export function arrayGeometryRef(source: GeometryRef, count: number, offset: Vec
     key: `array|${source.key}|${n}|${offset[0]},${offset[1]},${offset[2]}`,
     kind: 'array',
     descriptor: { kind: 'array', source, count: n, offset },
+  };
+}
+
+/**
+ * Wrap a source `GeometryRef` in a `mirror` descriptor: reflect the source across
+ * the plane through the LOCAL origin whose normal is `axis`, then merge the
+ * reflection back with the original (Blender's Mirror → a symmetric whole, 2× the
+ * vertices). The key folds the source key + axis so identical inputs share a
+ * registry-cached build and two axes never false-share (§48). The ONE place a
+ * source ref becomes a mirror descriptor — both the evaluate road
+ * (`MirrorModifier.evaluate`) and the read-side walk (`resolveEvaluatedMesh`) call
+ * it → one deterministic key on both roads (H40, no drift).
+ */
+export function mirrorGeometryRef(source: GeometryRef, axis: MirrorAxis, offset: number): GeometryRef {
+  return {
+    key: `mirror|${source.key}|${axis}|${offset}`,
+    kind: 'mirror',
+    descriptor: { kind: 'mirror', source, axis, offset },
   };
 }
