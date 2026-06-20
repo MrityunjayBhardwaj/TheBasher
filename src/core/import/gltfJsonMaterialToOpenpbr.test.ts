@@ -8,7 +8,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { Color, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
-import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import {
+  gltfJsonMaterialToOpenpbr,
+  materialHasPerMapUvTransform,
+} from './gltfJsonMaterialToOpenpbr';
 import { openpbrToThree } from '../../app/material/openpbrToThree';
 
 /** Expected sRGB hex for a glTF linear factor, via the SAME path the converter uses. */
@@ -181,6 +184,49 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(openpbrToThree(ds).doubleSided).toBe(true);
     expect(gltfJsonMaterialToOpenpbr({}).geometry.doubleSided).toBeUndefined();
     expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).doubleSided).toBe(false);
+  });
+
+  it('captures a uniform KHR_texture_transform into the shared uvTransform', () => {
+    const xform = { offset: [0.1, 0.2], scale: [2, 3], rotation: 0.5 };
+    const mat = {
+      pbrMetallicRoughness: {
+        baseColorTexture: { index: 0, extensions: { KHR_texture_transform: xform } },
+        metallicRoughnessTexture: { index: 1, extensions: { KHR_texture_transform: xform } },
+      },
+    };
+    const ir = gltfJsonMaterialToOpenpbr(mat);
+    expect(ir.uvTransform).toEqual({ tiling: [2, 3], offset: [0.1, 0.2], rotation: 0.5 });
+    expect(materialHasPerMapUvTransform(mat)).toBe(false); // shared → not per-map
+  });
+
+  it('leaves uvTransform IDENTITY when maps carry DIFFERING transforms (per-map case)', () => {
+    const mat = {
+      pbrMetallicRoughness: {
+        baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+      },
+      normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [4, 4] } } },
+    };
+    const ir = gltfJsonMaterialToOpenpbr(mat);
+    expect(ir.uvTransform).toEqual({ tiling: [1, 1], offset: [0, 0], rotation: 0 }); // identity
+    expect(materialHasPerMapUvTransform(mat)).toBe(true);
+  });
+
+  it('a single transformed texture is uniform (not flagged per-map)', () => {
+    const mat = {
+      pbrMetallicRoughness: {
+        baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+      },
+    };
+    expect(materialHasPerMapUvTransform(mat)).toBe(false);
+    expect(gltfJsonMaterialToOpenpbr(mat).uvTransform.tiling).toEqual([2, 2]);
+  });
+
+  it('an untextured / untransformed material captures IDENTITY uvTransform', () => {
+    expect(gltfJsonMaterialToOpenpbr({}).uvTransform).toEqual({
+      tiling: [1, 1],
+      offset: [0, 0],
+      rotation: 0,
+    });
   });
 
   it('round-trips through openpbrToThree for the supported lobes', () => {

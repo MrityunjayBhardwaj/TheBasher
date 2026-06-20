@@ -29,7 +29,10 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
 import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
-import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import {
+  gltfJsonMaterialToOpenpbr,
+  materialHasPerMapUvTransform,
+} from './gltfJsonMaterialToOpenpbr';
 import type { InlineMaterialSpec } from '../../nodes/types';
 import {
   parseGltfContainer,
@@ -73,6 +76,9 @@ const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
   'KHR_materials_transmission',
   'KHR_materials_emissive_strength',
   'KHR_materials_unlit',
+  // Captured into the shared uvTransform when uniform across a material's textures;
+  // the per-map-DIFFERING case is flagged separately below (not by this blanket).
+  'KHR_texture_transform',
 ]);
 
 /**
@@ -84,11 +90,19 @@ const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
  */
 export function detectUnsupportedGltfFeatures(json: {
   extensionsUsed?: string[];
+  materials?: Parameters<typeof materialHasPerMapUvTransform>[0][];
   meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
 }): string[] {
   const out: string[] = [];
   for (const ext of json.extensionsUsed ?? []) {
     if (typeof ext === 'string' && !SUPPORTED_GLTF_EXTENSIONS.has(ext)) out.push(ext);
+  }
+  // KHR_texture_transform is captured into the shared uvTransform — but only when
+  // uniform across a material's textures. A material whose maps carry DIFFERING
+  // transforms can't be represented by the single shared transform (only the
+  // shared one applies; the clone still renders each map's own), so flag it.
+  if ((json.materials ?? []).some((m) => materialHasPerMapUvTransform(m))) {
+    out.push('per-map texture transform (only the shared transform is editable)');
   }
   // Secondary UV sets: the texCoord index is captured on the map descriptor, but
   // a DAG-replaced map currently binds UV0 only — so flag UV1+ as a limitation.

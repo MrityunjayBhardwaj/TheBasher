@@ -1535,6 +1535,49 @@ function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Ma
   return next;
 }
 
+// The map slots a glTF child's shared uvTransform applies to.
+const GLTF_UV_MAP_SLOTS = [
+  'map',
+  'normalMap',
+  'roughnessMap',
+  'metalnessMap',
+  'aoMap',
+  'emissiveMap',
+] as const;
+
+/**
+ * Apply a glTF child material's captured KHR_texture_transform (the single shared
+ * `ir.uvTransform`) onto an OVERLAY material's map textures (#181 / V53). Pivots
+ * about the UV ORIGIN (center [0,0]) — three's GLTFLoader sets the same values
+ * with the default center [0,0] (GLTFLoader.js extendTexture), so an UNEDITED
+ * import is byte-identical; editing the uvTransform re-runs the overlay and
+ * re-applies. Textures are SHARED by the clone (A-5), so each is CLONED before
+ * mutation. Identity uvTransform → no-op (keep the clone's own per-map transform,
+ * which already renders correctly — including the per-map-differing case).
+ */
+function applyGltfUvTransform(mat: THREE.Material, uv: InlineMaterialSpec['uvTransform']): void {
+  const identity =
+    uv.tiling[0] === 1 &&
+    uv.tiling[1] === 1 &&
+    uv.offset[0] === 0 &&
+    uv.offset[1] === 0 &&
+    uv.rotation === 0;
+  if (identity || !('map' in mat)) return;
+  const std = mat as unknown as Record<string, THREE.Texture | null | undefined>;
+  for (const slot of GLTF_UV_MAP_SLOTS) {
+    const tex = std[slot];
+    if (!tex) continue;
+    const c = tex.clone();
+    c.center.set(0, 0); // glTF pivots about the UV origin (matches GLTFLoader)
+    c.repeat.set(uv.tiling[0], uv.tiling[1]);
+    c.offset.set(uv.offset[0], uv.offset[1]);
+    c.rotation = uv.rotation;
+    c.needsUpdate = true;
+    std[slot] = c;
+  }
+  (mat as THREE.Material).needsUpdate = true;
+}
+
 // #198 — one per-frame material-animation write target. `mat` is the slot's FINAL
 // owned material (a per-slot clone). `reapplyOverride`, when present, re-layers a
 // MaterialOverride tint's forced fields on top AFTER the animated base IR is
@@ -1894,7 +1937,13 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           depNodeMap[childId]?.params as { materials?: InlineMaterialSpec[] } | undefined
         )?.materials;
         const ir = irs?.[local];
-        if (ir) dagBase = overlayDagMaterial(src, ir);
+        if (ir) {
+          dagBase = overlayDagMaterial(src, ir);
+          // #181 / V53 — apply the captured KHR_texture_transform (shared
+          // uvTransform) onto the overlay's inherited map textures. Identity for
+          // an unedited import (matches GLTFLoader); editing it re-overlays.
+          applyGltfUvTransform(dagBase, ir.uvTransform);
+        }
         // #178 S5 — defer this slot's edit-layer map application (replace/clear)
         // to the async pass below; it lands on the FINAL material `m.material`.
         if (ir && hasMapEdits(ir.maps)) mapWork.push({ mesh: m, maps: ir.maps });
@@ -2287,6 +2336,12 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         transparent: boolean;
         vertexColors: boolean;
         side: number | null;
+        // The base-color map's UV transform (glTF KHR_texture_transform), so the
+        // texture-transform slice can boundary-pair the rendered repeat/offset/
+        // rotation against the captured `uvTransform`. null when the slot is empty.
+        mapRepeat: [number, number] | null;
+        mapOffset: [number, number] | null;
+        mapRotation: number | null;
         // P151 Wave 4 t11 — the original child's WORLD-space bounds (three-way
         // verts boundary-pair: original child == resolver baked == rendered baked)
         // and its render VISIBILITY (suppression: false after the child is baked).
@@ -2393,6 +2448,9 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             transparent: std?.transparent === true,
             vertexColors: std?.vertexColors === true,
             side: typeof std?.side === 'number' ? std.side : null,
+            mapRepeat: map ? [map.repeat.x, map.repeat.y] : null,
+            mapOffset: map ? [map.offset.x, map.offset.y] : null,
+            mapRotation: map ? map.rotation : null,
             worldBounds: [wb.x, wb.y, wb.z],
             visible: vis,
             mapProbe: probeMap(map),

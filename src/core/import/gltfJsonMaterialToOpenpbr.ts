@@ -31,10 +31,92 @@ import { NULL_MAPS, IDENTITY_UV_TRANSFORM } from '../../nodes/materialSchema';
 /** glTF default sampler wrap = REPEAT (10497) when a texture declares no sampler. */
 const GLTF_WRAP_REPEAT = 10497;
 
-/** A glTF textureInfo reference (`{ index, texCoord }`) on a material slot. */
+/** A glTF KHR_texture_transform payload (offset/scale/rotation about the UV
+ *  ORIGIN — three's GLTFLoader applies it with texture.center=[0,0]). */
+interface GltfTextureTransform {
+  offset?: number[];
+  scale?: number[];
+  rotation?: number;
+  texCoord?: number;
+}
+
+/** A glTF textureInfo reference (`{ index, texCoord }`) on a material slot, with
+ *  the optional KHR_texture_transform extension. */
 interface GltfTextureInfo {
   index?: number;
   texCoord?: number;
+  extensions?: { KHR_texture_transform?: GltfTextureTransform };
+}
+
+/** A normalized per-slot UV transform (identity = no KHR_texture_transform). */
+interface UvSlotTransform {
+  offset: [number, number];
+  scale: [number, number];
+  rotation: number;
+}
+
+const IDENTITY_SLOT_TRANSFORM: UvSlotTransform = { offset: [0, 0], scale: [1, 1], rotation: 0 };
+
+/** The normalized KHR_texture_transform for a present texture slot (identity when
+ *  the slot has no transform); undefined when the slot is absent. */
+function slotTransform(info: GltfTextureInfo | undefined): UvSlotTransform | undefined {
+  if (!info || typeof info.index !== 'number') return undefined;
+  const t = info.extensions?.KHR_texture_transform;
+  if (!t) return IDENTITY_SLOT_TRANSFORM;
+  return {
+    offset: [num(t.offset?.[0], 0), num(t.offset?.[1], 0)],
+    scale: [num(t.scale?.[0], 1), num(t.scale?.[1], 1)],
+    rotation: num(t.rotation, 0),
+  };
+}
+
+function slotTransformEq(a: UvSlotTransform, b: UvSlotTransform): boolean {
+  return (
+    a.offset[0] === b.offset[0] &&
+    a.offset[1] === b.offset[1] &&
+    a.scale[0] === b.scale[0] &&
+    a.scale[1] === b.scale[1] &&
+    a.rotation === b.rotation
+  );
+}
+
+/** Every present texture slot's normalized transform, in capture order. */
+function materialSlotTransforms(mat: GltfJsonMaterial): UvSlotTransform[] {
+  const pbr = mat.pbrMetallicRoughness ?? {};
+  return [
+    slotTransform(pbr.baseColorTexture),
+    slotTransform(pbr.metallicRoughnessTexture),
+    slotTransform(mat.normalTexture),
+    slotTransform(mat.occlusionTexture),
+    slotTransform(mat.emissiveTexture),
+  ].filter((t): t is UvSlotTransform => t !== undefined);
+}
+
+/**
+ * True iff a material's textures DON'T share one UV transform — the case the
+ * single shared `uvTransform` IR can't represent (only the shared transform is
+ * captured/applied; the clone still renders each map's own). Used by the
+ * no-silent-drop detector to warn precisely for this case (V53).
+ */
+export function materialHasPerMapUvTransform(mat: GltfJsonMaterial): boolean {
+  const slots = materialSlotTransforms(mat);
+  return slots.length > 1 && !slots.every((s) => slotTransformEq(s, slots[0]));
+}
+
+/** Capture a material's KHR_texture_transform into the single shared IR uvTransform
+ *  WHEN uniform across its textures (the common case); a per-map-differing material
+ *  captures IDENTITY (the clone renders each map's own transform; the detector warns). */
+function captureUvTransform(mat: GltfJsonMaterial): InlineMaterialSpec['uvTransform'] {
+  const slots = materialSlotTransforms(mat);
+  const t = slots[0];
+  if (!t || !slots.every((s) => slotTransformEq(s, t))) {
+    return {
+      tiling: [...IDENTITY_UV_TRANSFORM.tiling],
+      offset: [...IDENTITY_UV_TRANSFORM.offset],
+      rotation: IDENTITY_UV_TRANSFORM.rotation,
+    };
+  }
+  return { tiling: t.scale, offset: t.offset, rotation: t.rotation };
 }
 
 /** A glTF 2.0 material object as it appears in `json.materials[]` (partial, the
@@ -192,10 +274,8 @@ export function gltfJsonMaterialToOpenpbr(
     // Capture imported-texture descriptors when the JSON texture tables are
     // available (import path); fall back to NULL_MAPS for the clone-read oracle.
     maps: tables ? captureMaps(mat, tables) : { ...NULL_MAPS },
-    uvTransform: {
-      tiling: [...IDENTITY_UV_TRANSFORM.tiling],
-      offset: [...IDENTITY_UV_TRANSFORM.offset],
-      rotation: IDENTITY_UV_TRANSFORM.rotation,
-    },
+    // KHR_texture_transform → the single shared uvTransform (uniform case); a
+    // per-map-differing material captures identity (clone renders each map's own).
+    uvTransform: captureUvTransform(mat),
   };
 }

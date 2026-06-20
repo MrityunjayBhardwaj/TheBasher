@@ -695,12 +695,32 @@ describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
 });
 
 describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
-  it('flags extensions NOT captured into the IR (sheen/volume/specular/texture_transform)', () => {
+  it('flags extensions NOT captured into the IR (sheen/volume/specular)', () => {
     expect(
       detectUnsupportedGltfFeatures({
-        extensionsUsed: ['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_texture_transform'],
+        extensionsUsed: ['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_materials_specular'],
       }),
-    ).toEqual(['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_texture_transform']);
+    ).toEqual(['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_materials_specular']);
+  });
+
+  it('does NOT blanket-flag KHR_texture_transform (now captured into the shared uvTransform)', () => {
+    expect(detectUnsupportedGltfFeatures({ extensionsUsed: ['KHR_texture_transform'] })).toEqual([]);
+  });
+
+  it('flags only the PER-MAP texture-transform case (maps with differing transforms)', () => {
+    expect(
+      detectUnsupportedGltfFeatures({
+        extensionsUsed: ['KHR_texture_transform'],
+        materials: [
+          {
+            pbrMetallicRoughness: {
+              baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+            },
+            normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [4, 4] } } },
+          },
+        ],
+      }),
+    ).toEqual(['per-map texture transform (only the shared transform is editable)']);
   });
 
   it('does NOT flag loader-handled or IR-captured extensions', () => {
