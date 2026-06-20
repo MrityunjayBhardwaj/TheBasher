@@ -43,7 +43,14 @@
 //   is uniform across node kinds. Still out of scope: a GltfChild's world
 //   (addressed BY NAME inside a GltfAsset, not a scene-child edge) and
 //   Scatter-instance / Character-bone worlds (sub-objects that are not addressable
-//   DAG nodes); cameras are handled by a sibling branch (#210, slice 3.2 — pose).
+//   DAG nodes). CAMERAS (#210 slice 3.2) resolve via their POSE — a camera is
+//   wired through scene.camera (a single ref) and never appears in the walks
+//   below, so a dedicated early branch returns position + look-orientation
+//   (-Z → lookAt, the frame CameraHelpers draws) + identity scale, with the
+//   position/lookAt channels overlaid by the SAME primitive (one band, H40). It
+//   does NOT import the camera resolver (activeCamera → trackTo →
+//   resolveWorldTransform would cycle) and does NOT reflect a camera Track-To aim
+//   (that is the active-camera RENDER path, resolveActiveCameraPoseAt).
 //   Descent stops at out-of-scope nodes and returns null. Documented, not silent.
 //
 // V8 file-location: lives in src/app/ beside resolveEvaluatedTransform — its
@@ -196,6 +203,23 @@ function walk(
   return null;
 }
 
+/** The world matrix of a camera from its pose: position + the orientation that
+ *  rotates the camera's local -Z (three.js forward) onto (position → lookAt),
+ *  identity scale. Mirrors CameraHelpers.frustumQuaternion so the resolved world
+ *  matches the drawn frustum. */
+function cameraWorldMatrix(position: Vec3, lookAt: Vec3): THREE.Matrix4 {
+  const pos = new THREE.Vector3(position[0], position[1], position[2]);
+  const dir = new THREE.Vector3(
+    lookAt[0] - position[0],
+    lookAt[1] - position[1],
+    lookAt[2] - position[2],
+  );
+  if (dir.lengthSq() === 0) dir.set(0, 0, -1);
+  dir.normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), dir);
+  return new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1));
+}
+
 function decompose(m: THREE.Matrix4): WorldTransform {
   const p = new THREE.Vector3();
   const q = new THREE.Quaternion();
@@ -224,6 +248,33 @@ export function resolveWorldTransform(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): WorldTransform | null {
+  // 0. Cameras (#210 slice 3.2) — wired via scene.camera (a single ref), a camera
+  //    never appears in the scene-child / light walks below. Resolve its world
+  //    from its pose: position + look-orientation + identity scale, with the
+  //    position/lookAt channels overlaid by the shared primitive (one band, H40 —
+  //    overlayChannels.sample == the camera resolver's sampler). See the header on
+  //    why this stays inline (the activeCamera import would cycle) and why a camera
+  //    Track-To aim is not reflected here.
+  const camNode = state.nodes[selectedId];
+  if (
+    camNode &&
+    (camNode.type === 'PerspectiveCamera' || camNode.type === 'OrthographicCamera')
+  ) {
+    const cp = camNode.params as { position?: unknown; lookAt?: unknown };
+    let cam: { position: Vec3; lookAt: Vec3 } = {
+      // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
+      position: isVec3(cp.position) ? cp.position : [3, 2, 3],
+      lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
+    };
+    const camChannels = directChannelValuesForTarget(state.nodes, selectedId).filter(
+      (c) => c.paramPath === 'position' || c.paramPath === 'lookAt',
+    );
+    if (camChannels.length > 0) {
+      cam = overlayChannels(cam, camChannels, 1, ctx.time.seconds) ?? cam;
+    }
+    return decompose(cameraWorldMatrix(cam.position, cam.lookAt));
+  }
+
   // 1. Render root — the same evaluate SceneFromDAG makes every render.
   const target = state.outputs.render;
   if (!target) return null;

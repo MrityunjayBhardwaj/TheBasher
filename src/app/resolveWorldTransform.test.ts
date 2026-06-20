@@ -328,11 +328,46 @@ describe('resolveWorldTransform', () => {
     expect(at0!.position[0]).not.toBeCloseTo(at1!.position[0], 6);
   });
 
-  // 9. IDENTITY-NULL: unknown id, and a node that is not a scene-child descendant.
-  it('returns null for an unknown id and a non-scene-child node (no crash)', () => {
+  // 9. CAMERAS (#210 slice 3.2) — a camera resolves via its pose (position +
+  //    look-orientation), uniform with meshes/lights even though it is wired via
+  //    scene.camera, not scene.children.
+  it('resolves a camera world from its pose (position matches the node params)', () => {
+    const state = buildDefaultDagState();
+    const camPos = (state.nodes['n_camera'].params as { position: [number, number, number] })
+      .position;
+    const w = resolveWorldTransform(state, 'n_camera', ctxAt(0));
+    expect(w).not.toBeNull();
+    expect(w!.position[0]).toBeCloseTo(camPos[0], 6);
+    expect(w!.position[1]).toBeCloseTo(camPos[1], 6);
+    expect(w!.position[2]).toBeCloseTo(camPos[2], 6);
+  });
+
+  it('tracks an animated camera: world position follows the playhead', () => {
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_cam_pos_ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'campos',
+        target: 'n_camera',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 1, value: [10, 0, 0], easing: 'linear' },
+        ],
+      },
+    }).next;
+    const at0 = resolveWorldTransform(state, 'n_camera', ctxAt(0));
+    const at1 = resolveWorldTransform(state, 'n_camera', ctxAt(1));
+    expect(at0!.position[0]).toBeCloseTo(0, 6);
+    expect(at1!.position[0]).toBeCloseTo(10, 6);
+    expect(at0!.position[0]).not.toBeCloseTo(at1!.position[0], 6);
+  });
+
+  // 10. IDENTITY-NULL: unknown id (no crash).
+  it('returns null for an unknown id (no crash)', () => {
     const state = buildNestedTransformState({});
     expect(resolveWorldTransform(state, 'not_a_node', ctxAt(0))).toBeNull();
-    // n_camera is a real node but wired to scene.camera, not scene.children.
-    expect(resolveWorldTransform(state, 'n_camera', ctxAt(0))).toBeNull();
   });
 });
