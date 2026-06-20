@@ -32,10 +32,16 @@ export function ParamDiamond({
   nodeId,
   paramPath,
   value,
+  testid,
 }: {
   nodeId: string;
   paramPath: string;
   value: unknown;
+  /** Override the e2e testid. Defaults to the inspector scheme; a SECOND surface
+   *  rendering a diamond for the same (nodeId, paramPath) — e.g. the Light Studio
+   *  panel beside the inspector — passes a distinct id so the two don't collide
+   *  (H95 — duplicate testids break a strict locator). */
+  testid?: string;
 }) {
   const frame = useTimeStore((s) => s.frame);
   const nodes = useDagStore((s) => s.state.nodes);
@@ -95,7 +101,7 @@ export function ParamDiamond({
   return (
     <button
       type="button"
-      data-testid={`inspector-diamond-${nodeId}-${paramPath}`}
+      data-testid={testid ?? `inspector-diamond-${nodeId}-${paramPath}`}
       data-anim-state={animState}
       data-transient={isTransient || undefined}
       aria-label={`Toggle keyframe for ${paramPath} (${animState})`}

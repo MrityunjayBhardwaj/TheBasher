@@ -28,7 +28,10 @@ import {
   resolveActiveRigCenter,
   type StudioLightEntry,
 } from '../app/studioLightRig';
-import { resolveStudioLightTransform, studioLightPanelXY } from '../app/resolveStudioLightTransform';
+import {
+  resolveStudioLightTransform,
+  studioLightPanelXY,
+} from '../app/resolveStudioLightTransform';
 import { buildAddStudioLightOps } from '../app/addStudioLight';
 import { resolveActiveRigNode } from '../app/resolveRigLightSources';
 import {
@@ -48,6 +51,8 @@ import { importEnvironmentHdri } from '../app/asset/importEnvironmentHdri';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { panelXYToFraction, fractionToPanelXY } from './studioPanelGeometry';
+import { ParamDiamond } from '../app/ParamDiamond';
+import { useAnimatableField } from '../app/animate/useAnimatableField';
 
 type Vec3 = [number, number, number];
 
@@ -156,7 +161,9 @@ export function LightStudioPanel() {
     const name = `Profile ${profiles.length + 1}`;
     const result = buildAddProfileOps(state, name, target);
     if (!result) {
-      useAssetErrorStore.getState().report('light-studio:profile', 'Cannot add a profile — no scene.');
+      useAssetErrorStore
+        .getState()
+        .report('light-studio:profile', 'Cannot add a profile — no scene.');
       return;
     }
     useDagStore.getState().dispatchAtomic(result.ops, 'user', 'add light profile');
@@ -183,7 +190,9 @@ export function LightStudioPanel() {
       const parsed = parseProfilesFile(JSON.parse(await file.text()));
       const result = buildImportProfilesOps(useDagStore.getState().state, parsed);
       if (result.ops.length === 0) {
-        useAssetErrorStore.getState().report('light-studio:import', 'No profiles found in the file.');
+        useAssetErrorStore
+          .getState()
+          .report('light-studio:import', 'No profiles found in the file.');
         return;
       }
       useDagStore.getState().dispatchAtomic(result.ops, 'user', 'import light profiles');
@@ -209,94 +218,102 @@ export function LightStudioPanel() {
       />
 
       <div className="flex min-h-0 flex-1">
-      {/* Left rail — add + light list + the selected light's params / tex. */}
-      <div className="flex w-48 shrink-0 flex-col border-r border-line text-xs">
-        <button
-          type="button"
-          data-testid="light-studio-add"
-          onClick={onAddLight}
-          className="m-2 rounded border border-line bg-bg-2 px-2 py-1 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          + Light
-        </button>
-        <LightBrushControls hasSelectedLight={selectedLight !== null} />
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {lights.map((light) => (
-            <button
-              key={light.nodeId}
-              type="button"
-              data-testid={`light-studio-row-${light.nodeId}`}
-              data-selected={light.nodeId === primaryNodeId}
-              onClick={() => select(light.nodeId)}
-              className={`flex w-full items-center gap-1.5 px-3 py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-                light.nodeId === primaryNodeId ? 'bg-line text-fg' : 'text-mute hover:bg-line/40 hover:text-fg'
-              }`}
-            >
-              <span className={`h-2 w-2 shrink-0 rounded-full ${light.tex ? 'bg-accent' : 'bg-fg'}`} />
-              <span className="truncate">{light.name}</span>
-            </button>
-          ))}
+        {/* Left rail — add + light list + the selected light's params / tex. */}
+        <div className="flex w-48 shrink-0 flex-col border-r border-line text-xs">
+          <button
+            type="button"
+            data-testid="light-studio-add"
+            onClick={onAddLight}
+            className="m-2 rounded border border-line bg-bg-2 px-2 py-1 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            + Light
+          </button>
+          <LightBrushControls hasSelectedLight={selectedLight !== null} />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {lights.map((light) => (
+              <button
+                key={light.nodeId}
+                type="button"
+                data-testid={`light-studio-row-${light.nodeId}`}
+                data-selected={light.nodeId === primaryNodeId}
+                onClick={() => select(light.nodeId)}
+                className={`flex w-full items-center gap-1.5 px-3 py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                  light.nodeId === primaryNodeId
+                    ? 'bg-line text-fg'
+                    : 'text-mute hover:bg-line/40 hover:text-fg'
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${light.tex ? 'bg-accent' : 'bg-fg'}`}
+                />
+                <span className="truncate">{light.name}</span>
+              </button>
+            ))}
+          </div>
+          {selectedLight ? <StudioLightControls light={selectedLight} /> : null}
         </div>
-        {selectedLight ? <StudioLightControls light={selectedLight} /> : null}
-      </div>
 
-      {/* Right region — the lat-long canvas (the sphere unwrap). Equator + centre
+        {/* Right region — the lat-long canvas (the sphere unwrap). Equator + centre
           meridian give the director a sense of front (+Z, centre) / up (+Y, top). */}
-      <div className="relative flex-1">
-      <div
-        ref={canvasRef}
-        data-testid="light-studio-canvas"
-        className="absolute inset-3 rounded border border-line"
-      >
-        {/* equator (v = 0.5) */}
-        <div className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-line" />
-        {/* centre meridian (u = 0.5 → +Z, the camera-facing front) */}
-        <div className="pointer-events-none absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-line" />
+        <div className="relative flex-1">
+          <div
+            ref={canvasRef}
+            data-testid="light-studio-canvas"
+            className="absolute inset-3 rounded border border-line"
+          >
+            {/* equator (v = 0.5) */}
+            <div className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-line" />
+            {/* centre meridian (u = 0.5 → +Z, the camera-facing front) */}
+            <div className="pointer-events-none absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-line" />
 
-        {/* axis hints */}
-        <span className="pointer-events-none absolute left-1 top-1 text-[9px] text-mute">+Y (up)</span>
-        <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-mute">
-          front (+Z) · azimuth →
-        </span>
+            {/* axis hints */}
+            <span className="pointer-events-none absolute left-1 top-1 text-[9px] text-mute">
+              +Y (up)
+            </span>
+            <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-mute">
+              front (+Z) · azimuth →
+            </span>
 
-        {lights.map((light) => {
-          const { panelXY } = studioLightPanelXY(light.position, target);
-          const { leftFrac, topFrac } = panelXYToFraction(panelXY);
-          const selected = light.nodeId === primaryNodeId;
-          return (
-            <button
-              key={light.nodeId}
-              type="button"
-              data-testid={`light-studio-puck-${light.nodeId}`}
-              data-selected={selected}
-              aria-label={`Studio light ${light.name}`}
-              title={light.name}
-              onPointerDown={(e) => onPuckDown(e, light)}
-              onPointerMove={onPuckMove}
-              onPointerUp={onPuckUp}
-              // Keyboard activation (Enter/Space) fires click, not pointer events
-              // — keep selection reachable without a pointer (a11y).
-              onClick={() => select(light.nodeId)}
-              style={{ left: `${leftFrac * 100}%`, top: `${topFrac * 100}%`, touchAction: 'none' }}
-              className={`absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent active:cursor-grabbing ${
-                selected
-                  ? 'border-accent bg-accent'
-                  : 'border-line bg-fg hover:border-accent'
-              }`}
-            />
-          );
-        })}
-      </div>
+            {lights.map((light) => {
+              const { panelXY } = studioLightPanelXY(light.position, target);
+              const { leftFrac, topFrac } = panelXYToFraction(panelXY);
+              const selected = light.nodeId === primaryNodeId;
+              return (
+                <button
+                  key={light.nodeId}
+                  type="button"
+                  data-testid={`light-studio-puck-${light.nodeId}`}
+                  data-selected={selected}
+                  aria-label={`Studio light ${light.name}`}
+                  title={light.name}
+                  onPointerDown={(e) => onPuckDown(e, light)}
+                  onPointerMove={onPuckMove}
+                  onPointerUp={onPuckUp}
+                  // Keyboard activation (Enter/Space) fires click, not pointer events
+                  // — keep selection reachable without a pointer (a11y).
+                  onClick={() => select(light.nodeId)}
+                  style={{
+                    left: `${leftFrac * 100}%`,
+                    top: `${topFrac * 100}%`,
+                    touchAction: 'none',
+                  }}
+                  className={`absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent active:cursor-grabbing ${
+                    selected ? 'border-accent bg-accent' : 'border-line bg-fg hover:border-accent'
+                  }`}
+                />
+              );
+            })}
+          </div>
 
-      {lights.length === 0 ? (
-        <div
-          data-testid="light-studio-empty"
-          className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-mute"
-        >
-          No rig lights yet — add a key light with “+ Light”, then drag it into place.
+          {lights.length === 0 ? (
+            <div
+              data-testid="light-studio-empty"
+              className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-mute"
+            >
+              No rig lights yet — add a key light with “+ Light”, then drag it into place.
+            </div>
+          ) : null}
         </div>
-      ) : null}
-      </div>
       </div>
     </div>
   );
@@ -480,11 +497,31 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
   const tex = params?.tex;
 
   const setParam = (paramPath: string, value: unknown, label: string) =>
-    useDagStore.getState().dispatchAtomic([{ type: 'setParam', nodeId, paramPath, value }], 'user', label);
+    useDagStore
+      .getState()
+      .dispatchAtomic([{ type: 'setParam', nodeId, paramPath, value }], 'user', label);
 
-  const onNumber = (paramPath: string, raw: string, label: string) => {
+  // Animatable-field spines (diamond + Auto-Key + evaluated read — the H104
+  // affordance the inspector material rows use), so a director keyframes a light's
+  // emission straight from the Light Studio. These RENDER via seam A
+  // (DirectChannelsLightR overlays the light's channels per frame). The diamond is
+  // rendered per field below; the hook owns the read-side + edit routing.
+  const intensityField = useAnimatableField(nodeId, 'intensity', intensity, (v) =>
+    setParam('intensity', v, 'set light intensity'),
+  );
+  const widthField = useAnimatableField(nodeId, 'width', width, (v) =>
+    setParam('width', v, 'set light width'),
+  );
+  const heightField = useAnimatableField(nodeId, 'height', height, (v) =>
+    setParam('height', v, 'set light height'),
+  );
+  const colorField = useAnimatableField(nodeId, 'color', color, (v) =>
+    setParam('color', v, 'set light color'),
+  );
+
+  const onNumberEdit = (field: { onEdit: (n: number) => void }, raw: string) => {
     const n = Number(raw);
-    if (Number.isFinite(n)) setParam(paramPath, n, label);
+    if (Number.isFinite(n)) field.onEdit(n);
   };
 
   const onImport = async (file: File) => {
@@ -504,48 +541,86 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
       className="flex flex-col gap-1 border-t border-line p-2 text-[11px] text-fg/80"
     >
       <label className="flex items-center justify-between gap-2">
-        <span className="font-mono text-fg/60">intensity</span>
+        <span className="flex items-center gap-1">
+          <ParamDiamond
+            nodeId={nodeId}
+            paramPath="intensity"
+            value={intensity}
+            testid={`studio-diamond-${nodeId}-intensity`}
+          />
+          <span className="font-mono text-fg/60">intensity</span>
+        </span>
         <input
           type="number"
           step={0.5}
           min={0}
-          value={intensity}
+          value={intensityField.effective}
+          readOnly={intensityField.readOnly}
+          data-readonly-while-playing={intensityField.readOnly || undefined}
           data-testid={`light-intensity-${nodeId}`}
-          onChange={(e) => onNumber('intensity', e.target.value, 'set light intensity')}
+          onChange={(e) => onNumberEdit(intensityField, e.target.value)}
           className={FIELD}
         />
       </label>
       <label className="flex items-center justify-between gap-2">
-        <span className="font-mono text-fg/60">color</span>
+        <span className="flex items-center gap-1">
+          <ParamDiamond
+            nodeId={nodeId}
+            paramPath="color"
+            value={color}
+            testid={`studio-diamond-${nodeId}-color`}
+          />
+          <span className="font-mono text-fg/60">color</span>
+        </span>
         <input
           type="color"
-          value={color}
+          value={colorField.effective}
           data-testid={`light-color-${nodeId}`}
-          onChange={(e) => setParam('color', e.target.value, 'set light color')}
+          onChange={(e) => colorField.onEdit(e.target.value)}
           className="h-5 w-8 rounded border border-border bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         />
       </label>
       <label className="flex items-center justify-between gap-2">
-        <span className="font-mono text-fg/60">width</span>
+        <span className="flex items-center gap-1">
+          <ParamDiamond
+            nodeId={nodeId}
+            paramPath="width"
+            value={width}
+            testid={`studio-diamond-${nodeId}-width`}
+          />
+          <span className="font-mono text-fg/60">width</span>
+        </span>
         <input
           type="number"
           step={0.25}
           min={0.01}
-          value={width}
+          value={widthField.effective}
+          readOnly={widthField.readOnly}
+          data-readonly-while-playing={widthField.readOnly || undefined}
           data-testid={`light-width-${nodeId}`}
-          onChange={(e) => onNumber('width', e.target.value, 'set light width')}
+          onChange={(e) => onNumberEdit(widthField, e.target.value)}
           className={FIELD}
         />
       </label>
       <label className="flex items-center justify-between gap-2">
-        <span className="font-mono text-fg/60">height</span>
+        <span className="flex items-center gap-1">
+          <ParamDiamond
+            nodeId={nodeId}
+            paramPath="height"
+            value={height}
+            testid={`studio-diamond-${nodeId}-height`}
+          />
+          <span className="font-mono text-fg/60">height</span>
+        </span>
         <input
           type="number"
           step={0.25}
           min={0.01}
-          value={height}
+          value={heightField.effective}
+          readOnly={heightField.readOnly}
+          data-readonly-while-playing={heightField.readOnly || undefined}
           data-testid={`light-height-${nodeId}`}
-          onChange={(e) => onNumber('height', e.target.value, 'set light height')}
+          onChange={(e) => onNumberEdit(heightField, e.target.value)}
           className={FIELD}
         />
       </label>
@@ -553,7 +628,10 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
       {/* Emitter texture — the studio look (V61). Import sets `tex`; clear returns
           the light to a plain area light. */}
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-[10px] text-fg/40" data-testid={`light-tex-state-${nodeId}`}>
+        <span
+          className="truncate font-mono text-[10px] text-fg/40"
+          data-testid={`light-tex-state-${nodeId}`}
+        >
           {tex ? 'textured' : '— no texture'}
         </span>
         <span className="flex items-center gap-1">
