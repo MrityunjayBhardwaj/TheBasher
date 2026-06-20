@@ -19,7 +19,7 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad } from './rotation';
-import { useSelectionStore } from '../app/stores/selectionStore';
+import { selectNodeOnClick } from './selectNodeOnClick';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -81,19 +81,6 @@ function HelperLine({
   );
 }
 
-/** Bind a click handler to a helper group → select(pickId). Shift adds
- *  to the multi-select set. stopPropagation so OrbitControls / fallthrough
- *  pickers don't also act on this click. */
-function selectOnClick(pickId: string | null) {
-  return (e: { stopPropagation: () => void; shiftKey: boolean }) => {
-    if (!pickId) return;
-    e.stopPropagation();
-    const sel = useSelectionStore.getState();
-    if (e.shiftKey) sel.selectAdditive(pickId);
-    else sel.select(pickId);
-  };
-}
-
 /** Compute the world-space direction the directional light shines along.
  *  When rotation is non-zero, derive from rotation × (0,-1,0). When zero,
  *  fall back to the legacy "from position toward origin" interpretation
@@ -138,7 +125,7 @@ function DirectionalLightHelper({
     <group
       position={value.position as [number, number, number]}
       scale={scale}
-      onClick={selectOnClick(pickId)}
+      onClick={selectNodeOnClick(pickId)}
       userData={{ editorChrome: true }}
     >
       <mesh quaternion={ringQuat}>
@@ -171,7 +158,7 @@ function PointLightHelper({ value, pickId }: { value: PointLightValue; pickId: s
       position={value.position as [number, number, number]}
       quaternion={rotQuat}
       scale={scale}
-      onClick={selectOnClick(pickId)}
+      onClick={selectNodeOnClick(pickId)}
     >
       <mesh>
         <sphereGeometry args={[0.15, 12, 8]} />
@@ -220,7 +207,7 @@ function SpotLightHelper({ value, pickId }: { value: SpotLightValue; pickId: str
       position={value.position as [number, number, number]}
       quaternion={quat}
       scale={scale}
-      onClick={selectOnClick(pickId)}
+      onClick={selectNodeOnClick(pickId)}
     >
       <mesh position={[0, -length / 2, 0]}>
         <coneGeometry args={[baseR, length, 16, 1, true]} />
@@ -258,7 +245,7 @@ function AreaLightHelper({ value, pickId }: { value: AreaLightValue; pickId: str
     <group
       position={value.position as [number, number, number]}
       quaternion={quat}
-      onClick={selectOnClick(pickId)}
+      onClick={selectNodeOnClick(pickId)}
     >
       <mesh>
         <planeGeometry args={[w, h]} />

@@ -65,6 +65,7 @@ import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera'
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { resolveCameraDof } from '../app/cameraDof';
 import { degVec3ToRad } from './rotation';
+import { selectNode } from './selectNodeOnClick';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
 import { gltfAssetDepNodes } from '../app/gltfAssetDeps';
@@ -865,12 +866,12 @@ const SceneChildNode = memo(function SceneChildNode({
         return;
       }
       if (!pickId) return;
-      e.stopPropagation();
-      const sel = useSelectionStore.getState();
-      // v0.7 #199: a node is its own scene child now (no AnimationLayer wrapper to
-      // unwrap, V57), so the click selects the producing node directly.
-      if (e.shiftKey) sel.selectAdditive(pickId);
-      else sel.select(pickId);
+      // #211 — the one shared viewport selection handler (stopPropagation +
+      // select/selectAdditive). v0.7 #199: a node is its own scene child now (no
+      // AnimationLayer wrapper to unwrap, V57), so the click selects the producing
+      // node directly. The brush gate above + the drill reset below are this
+      // picker's superset, layered around the shared select.
+      selectNode(pickId, e);
       // UX #7: a single click on a DIFFERENT top-level node exits the drill
       // context, so a later Esc doesn't pop back into the model we left. We key
       // off the drill chain's ROOT (chain[0] === this pickId) rather than reset

@@ -17,6 +17,7 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import type { CameraPose } from '../app/activeCamera';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { selectNodeOnClick } from './selectNodeOnClick';
 
 // Display constants — the frustum is an editor indicator at a FIXED size, not
 // the real far plane (Blender's camera "display size"). Aspect is the common
@@ -146,13 +147,8 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   // ortho box hitbox uses the same shape, close enough for picking).
   const halfH = Math.tan((THREE.MathUtils.degToRad(pose.fov) || 0) / 2) * FRUSTUM_DEPTH;
 
-  const onClick = (e: { stopPropagation: () => void; shiftKey: boolean }) => {
-    if (!pickId) return;
-    e.stopPropagation();
-    const sel = useSelectionStore.getState();
-    if (e.shiftKey) sel.selectAdditive(pickId);
-    else sel.select(pickId);
-  };
+  // #211 — the one shared viewport selection handler (was duplicated here).
+  const onClick = selectNodeOnClick(pickId);
 
   return (
     <group
