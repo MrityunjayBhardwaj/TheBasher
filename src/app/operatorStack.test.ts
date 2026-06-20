@@ -64,7 +64,9 @@ describe('operatorStack', () => {
   });
 
   it('a second add stacks on TOP (base → m1 → m2 → consumer), bottom-to-top order', () => {
-    let { state, id: m1 } = addMod(buildDefaultDagState(), BOX);
+    const r1 = addMod(buildDefaultDagState(), BOX);
+    const m1 = r1.id;
+    let state = r1.state;
     const consumerBefore = findConsumer(state, m1); // m1 → Scene.children
     const r2 = addMod(state, BOX);
     state = r2.state;
@@ -77,7 +79,9 @@ describe('operatorStack', () => {
   });
 
   it('remove splices the chain closed (base → m2 → consumer)', () => {
-    let { state, id: m1 } = addMod(buildDefaultDagState(), BOX);
+    const r1 = addMod(buildDefaultDagState(), BOX);
+    const m1 = r1.id;
+    let state = r1.state;
     const consumer = findConsumer(state, m1);
     const r2 = addMod(state, BOX);
     state = r2.state;
@@ -114,7 +118,9 @@ describe('operatorStack', () => {
   });
 
   it('reorder swaps two adjacent modifiers by pure re-wiring (base → m2 → m1 → consumer)', () => {
-    let { state, id: m1 } = addMod(buildDefaultDagState(), BOX);
+    const r1 = addMod(buildDefaultDagState(), BOX);
+    const m1 = r1.id;
+    let state = r1.state;
     const consumer = findConsumer(state, m1);
     const r2 = addMod(state, BOX);
     state = r2.state;
