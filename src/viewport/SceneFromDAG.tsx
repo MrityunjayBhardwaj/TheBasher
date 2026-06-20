@@ -26,6 +26,8 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
+import * as geometryRegistry from '../app/geometryRegistry';
+import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree, type ThreeMaterialParams } from '../app/material/openpbrToThree';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
@@ -92,6 +94,7 @@ import type {
   MaterialOverrideValue,
   InlineMaterialSpec,
   MaterialValue,
+  ModifiedMeshValue,
   PointLightValue,
   RenderOutputValue,
   ScatterValue,
@@ -767,6 +770,8 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
       return <SphereMeshR value={value} override={override} />;
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
+    case 'ModifiedMesh':
+      return <ModifiedMeshR value={value} override={override} />;
     case 'GltfAsset':
       // #83 gap 2 — per-asset error boundary. A load/parse failure
       // (bad bytes, unsupported extension, missing #82 sibling, Draco
@@ -1249,6 +1254,37 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
     >
       <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
+      <primitive object={material} attach="material" />
+    </mesh>
+  );
+}
+
+// ModifiedMeshR (epic #201 / #209) — the renderer for a geometry MODIFIER's
+// output (the SOP half of V58). Reads the modified geometry from the registry
+// SYNCHRONOUSLY (geometryRegistry.get recursively builds the `array` descriptor
+// from its source) — NO suspense, unlike BakedMeshR (a modifier's geometry is
+// rebuildable from params, not an async OPFS handle). The material is the source's
+// inline OpenPBR IR (V53), built through the SAME usePrimitiveMaterial as Box/
+// SphereR. The transform was inherited from the source at evaluate, so it is
+// applied here exactly as BoxMeshR applies its own (one band, H40). A null geom
+// (a glTF/baked source the registry can't build sync — v1 follow-up) renders
+// nothing rather than crashing.
+const MODIFIED_FALLBACK_MATERIAL = hydrateInlineMaterial(null, '#808080');
+
+function ModifiedMeshR({ value, override }: { value: ModifiedMeshValue; override?: MaterialValue }) {
+  const shading = useViewportStore((s) => s.shading);
+  // Hook first (rules-of-hooks) — material builds unconditionally; the geom guard
+  // below is a plain branch with no hooks after it.
+  const material = usePrimitiveMaterial(value.material ?? MODIFIED_FALLBACK_MATERIAL, override, shading);
+  const geom = geometryRegistry.get(value.geometry);
+  if (!geom) return null; // source not sync-buildable (glTF/baked) — v1 follow-up
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+    >
+      <primitive object={geom} attach="geometry" />
       <primitive object={material} attach="material" />
     </mesh>
   );

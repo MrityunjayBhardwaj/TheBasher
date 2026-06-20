@@ -87,4 +87,50 @@ describe('geometryRegistry', () => {
     expect(get(ref)).toBe(first);
     expect(size()).toBe(1);
   });
+
+  // SOP / modifier (epic #201, #209) — the recursive `array` descriptor build.
+  const arrayRef = (source: GeometryRef, count: number, offset: [number, number, number]): GeometryRef => ({
+    key: `array|${source.key}|${count}|${offset.join(',')}`,
+    kind: 'array',
+    descriptor: { kind: 'array', source, count, offset },
+  });
+
+  it('builds an array modifier: N copies of the source merged (count× the vertices)', () => {
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    const one = get(src)!;
+    const oneCount = one.getAttribute('position').count; // BoxGeometry → 24
+    const three = get(arrayRef(src, 3, [2, 0, 0]))!;
+    expect(three).not.toBeNull();
+    expect(three.getAttribute('position').count).toBe(oneCount * 3);
+  });
+
+  it('array copies are TRANSLATED by i*offset (the merged bounds span the run)', () => {
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    const arr = get(arrayRef(src, 3, [5, 0, 0]))!;
+    arr.computeBoundingBox();
+    const bb = arr.boundingBox!;
+    // copy0 spans x∈[-0.5,0.5]; copy2 sits at +10 → spans [9.5,10.5]. Width ≈ 11.
+    expect(bb.min.x).toBeCloseTo(-0.5, 5);
+    expect(bb.max.x).toBeCloseTo(10.5, 5);
+  });
+
+  it('array build caches by key (same params → same instance) and does not mutate the source', () => {
+    const src = boxRef('box|1,1,1', [1, 1, 1]);
+    const sourceInstance = get(src)!;
+    const a = get(arrayRef(src, 2, [2, 0, 0]));
+    const b = get(arrayRef(src, 2, [2, 0, 0]));
+    expect(a).toBe(b); // cached
+    // the cached source is still the unmodified single box (clones were translated)
+    sourceInstance.computeBoundingBox();
+    expect(sourceInstance.boundingBox!.max.x).toBeCloseTo(0.5, 5);
+  });
+
+  it('returns null for an array over a non-sync-buildable source (gltf) — v1 follow-up', () => {
+    const gltfSrc: GeometryRef = {
+      key: 'gltf|a|M',
+      kind: 'gltf',
+      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
+    };
+    expect(get(arrayRef(gltfSrc, 3, [2, 0, 0]))).toBeNull();
+  });
 });

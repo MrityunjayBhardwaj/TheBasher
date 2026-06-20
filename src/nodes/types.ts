@@ -350,11 +350,18 @@ export type GeometryDescriptor =
       readonly heightSegments: number;
     }
   | { readonly kind: 'gltf'; readonly assetRef: string; readonly childName: string }
-  | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number };
+  | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
+  // SOP / modifier (epic #201, #209) — a RECURSIVE descriptor: a geometry
+  // operator over a `source` handle. The registry builds the source on demand
+  // (geometryRegistry.get(source)) then applies the op. `array` replicates the
+  // source `count` times, each translated by `i*offset` (local space), and merges.
+  // Sync-buildable when the source is sync-buildable (box/sphere) — a glTF/baked
+  // source is a follow-up (its geometry is async, outside the sync registry).
+  | { readonly kind: 'array'; readonly source: GeometryRef; readonly count: number; readonly offset: Vec3 };
 
 export interface GeometryRef {
   readonly key: string;
-  readonly kind: 'box' | 'sphere' | 'gltf' | 'baked';
+  readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array';
   readonly descriptor: GeometryDescriptor;
 }
 
@@ -450,6 +457,31 @@ export interface BakedMeshValue {
   /** Identity post-Apply (the TRS is baked into the geometry verts). */
   readonly scale: Vec3;
   readonly material: BakedMaterialSpec;
+}
+
+/**
+ * ModifiedMesh (epic #201 / #209) — the output of a geometry MODIFIER (SOP), the
+ * geometry half of [[V58]]. A modifier is a `Mesh → Mesh` wrapper sub-chain node
+ * (like {@link TransformValue}, but it rewrites the GEOMETRY, not a nesting
+ * transform): it consumes its source mesh's geometry handle, wraps it in a
+ * recursive {@link GeometryDescriptor} (e.g. `array`), and INHERITS the source's
+ * transform + material so the result sits where the source was.
+ *
+ * Like {@link BakedMeshValue} it carries a `geometry: GeometryRef` handle — but
+ * the handle is REBUILDABLE from params (the registry builds it SYNCHRONOUSLY by
+ * recursing into the source), not an authoritative OPFS baked buffer. The
+ * renderer (ModifiedMeshR) reads it via `geometryRegistry.get` (sync, no
+ * suspense). A `muted` modifier passes its source through unchanged at
+ * `evaluate`, so there is no muted ModifiedMeshValue — mute is identity.
+ */
+export interface ModifiedMeshValue {
+  readonly kind: 'ModifiedMesh';
+  readonly geometry: GeometryRef;
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+  /** Inherited from the source mesh (box/sphere inline material in v1; null otherwise). */
+  readonly material: InlineMaterialSpec | null;
 }
 
 /**
@@ -786,6 +818,7 @@ export type SceneChild =
   | BoxMeshValue
   | SphereMeshValue
   | BakedMeshValue
+  | ModifiedMeshValue
   | GltfAssetValue
   | TransformValue
   | GroupValue

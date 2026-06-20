@@ -5,6 +5,7 @@ import { getNodeType, registerNodeType } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
+import { ArrayModifierNode } from './ArrayModifier';
 // P7.5 — glTF TRS animation extraction (issue #81). Imports stay
 // alphabetised so a re-sort doesn't produce noise.
 // (TransformClipNode is imported later in the alphabetical block.)
@@ -103,6 +104,10 @@ const ALL: NodeDefinition[] = [
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).
   TrackToNode as unknown as NodeDefinition,
+  // Operator substrate — SOP/modifiers (epic #201, #209, V58). A geometry operator
+  // is a Mesh→Mesh wrapper sub-chain node (edge-WIRED, unlike the edge-less
+  // constraint above) that rewrites its source geometry into a rebuildable handle.
+  ArrayModifierNode as unknown as NodeDefinition,
   // Studio lighting — a switchable lighting PROFILE (epic #201, slice #208). A
   // LightRig groups its lights + owns the shared aim centre/radius; a
   // LightProfileSelect (the ClipSelect pattern) picks one to feed the scene.

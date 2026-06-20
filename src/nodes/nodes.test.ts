@@ -44,6 +44,7 @@ const ALL_TYPES = [
   'AmbientLight',
   'AnimationClip',
   'AreaLight',
+  'ArrayModifier',
   'BakedMesh',
   'BeautyPass',
   'BoneNameMap',

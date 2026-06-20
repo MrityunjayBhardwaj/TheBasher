@@ -23,6 +23,7 @@ export type SectionId =
   | 'animate'
   | 'channel'
   | 'constraint'
+  | 'modifier'
   | 'environment'
   | 'camera'
   | 'layout';
@@ -37,6 +38,9 @@ export const SECTION_IDS: readonly SectionId[] = [
   // Operator substrate — CHOP/constraints (epic #201, V58). The TrackTo node
   // declares this section; param-routing predicates land here in a later slice.
   'constraint',
+  // Operator substrate — SOP/modifiers (epic #201, #209, V58). The geometry
+  // operator stack (ArrayModifier et al.) declares this section.
+  'modifier',
   'environment',
   'camera',
   'layout',
@@ -174,6 +178,16 @@ export function paramToSection(
       paramPath === 'fStop')
   ) {
     return 'camera';
+  }
+  // Modifier params (epic #201, #209) — the geometry operator's params (Array's
+  // count/offset, mute). Routed here so they group under the Modifier section.
+  if (
+    declaredSections.includes('modifier') &&
+    (paramPath === 'count' ||
+      paramPath === 'offset' ||
+      paramPath === 'muted')
+  ) {
+    return 'modifier';
   }
   // Layout params — name / labels / cosmetic positioning.
   if (

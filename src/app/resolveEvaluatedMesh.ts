@@ -43,6 +43,7 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
+import { arrayGeometryRef } from './modifierGeometry';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { get as getRegistryGeometry } from './geometryRegistry';
@@ -269,6 +270,32 @@ export function resolveEvaluatedMesh(
       scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard
     };
     return { geometry: p.geometry, uvs: null, material: p.material, transform };
+  }
+
+  if (node.type === 'ArrayModifier') {
+    // SOP / modifier (epic #201, #209) — the RECURSIVE read-side branch, the
+    // parity twin of `ArrayModifier.evaluate`. Resolve the SOURCE mesh (the node
+    // wired into `inputs.target`) the same way the renderer evaluates it, then
+    // wrap its geometry in the `array` descriptor through the SAME
+    // `arrayGeometryRef` the evaluate path uses → identical deterministic key on
+    // both roads (H40 one band, no drift). The modifier INHERITS the source's
+    // transform + material (geometry is modified in local space; the source's TRS
+    // positions the whole result). A muted modifier returns the source verbatim.
+    const binding = node.inputs.target;
+    if (!binding || Array.isArray(binding)) return null;
+    const source = resolveEvaluatedMesh(state, binding.node, ctx, cache);
+    if (!source) return null; // unwired / non-leaf-mesh source — nothing to modify
+    const muted = (node.params as { muted?: unknown }).muted === true;
+    if (muted) return source; // mute-bypass (V58): identity passthrough
+    const p = node.params as { count?: unknown; offset?: unknown };
+    const count = typeof p.count === 'number' ? p.count : 3;
+    const offset: Vec3 = isVec3(p.offset) ? p.offset : [2, 0, 0];
+    return {
+      geometry: arrayGeometryRef(source.geometry, count, offset),
+      uvs: null, // modified geometry's UVs are an async/registry follow-up
+      material: source.material,
+      transform: source.transform,
+    };
   }
 
   return null; // identity-null: not a mesh producer

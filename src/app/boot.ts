@@ -597,6 +597,22 @@ export function boot(): Promise<void> {
         new Box3(box.min, box.max).getSize(size);
         return [size.x, size.y, size.z];
       };
+      // #209 (epic #201) — the SOP/modifier boundary-pair side-B seam. Resolve the
+      // node's EvaluatedMesh, build its (registry-cached) geometry, and return the
+      // position-attribute count. For an ArrayModifier this is the merged array's
+      // vertex count — the SAME geometryRegistry instance ModifiedMeshR rendered
+      // (side A reads it off the three scene). render-count == resolver-count proves
+      // the live render consumed the resolver's geometry handle (H40 one band, V37).
+      w.__basher_modified_vertex_count = (nodeId: NodeId, ctx?: EvalCtx): number | null => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
+        if (!mesh) return null;
+        const geom = geometryRegistry.get(mesh.geometry);
+        if (!geom) return null; // registry miss (gltf/baked source) — not buildable here
+        const pos = geom.getAttribute('position');
+        return pos ? pos.count : null;
+      };
       // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
       // SphereMesh nodes at `segments` tessellation in a compact grid (kept
       // near origin so they stay inside the default camera frustum — culled

@@ -32,7 +32,8 @@
 // REF: PLAN.md Wave 1 Tasks 2-3; CONTEXT §C; RESEARCH §C/§Q2; vyapti V1 (exempt),
 //      authoritative-baked-store vyapti.
 
-import { BoxGeometry, SphereGeometry, type BufferGeometry } from 'three';
+import { BoxGeometry, Matrix4, SphereGeometry, type BufferGeometry } from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { GeometryRef } from '../nodes/types';
 
 const cache = new Map<string, BufferGeometry>();
@@ -79,6 +80,23 @@ function build(ref: GeometryRef): BufferGeometry | null {
   }
   if (d.kind === 'sphere') {
     return new SphereGeometry(d.radius, d.widthSegments, d.heightSegments);
+  }
+  if (d.kind === 'array') {
+    // SOP / modifier (#209): recursively build the source handle, then merge
+    // `count` CLONES each translated by i*offset (local space). Clone, never
+    // mutate the cached source instance (other refs share it). A source that
+    // can't build sync (gltf MISS / baked MISS → null) makes the whole array
+    // unbuildable here — return null (a follow-up; the renderer renders nothing).
+    const source = get(d.source);
+    if (!source) return null;
+    const copies: BufferGeometry[] = [];
+    for (let i = 0; i < d.count; i++) {
+      const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
+      copies.push(source.clone().applyMatrix4(m));
+    }
+    const merged = mergeGeometries(copies);
+    for (const c of copies) c.dispose(); // mergeGeometries copies the buffers out
+    return merged; // null only if the copies mismatch attributes (same source → never)
   }
   return null; // gltf / baked — not built here (gltf in asset clone, baked from OPFS)
 }

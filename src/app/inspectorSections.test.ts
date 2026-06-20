@@ -21,6 +21,8 @@ describe('SECTION_IDS', () => {
       'channel',
       // Operator substrate — CHOP/constraints (epic #201, V58).
       'constraint',
+      // Operator substrate — SOP/modifiers (epic #201, #209, V58).
+      'modifier',
       'environment',
       'camera',
       'layout',
