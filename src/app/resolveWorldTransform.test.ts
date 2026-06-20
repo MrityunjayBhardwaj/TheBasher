@@ -263,7 +263,72 @@ describe('resolveWorldTransform', () => {
     expect(w!.position[2]).toBeCloseTo(0, 6);
   });
 
-  // 8. IDENTITY-NULL: unknown id, and a node that is not a scene-child descendant.
+  // 8. LIGHTS (#210) — a light is flat in scene.lights, so its world == its own
+  //    overlaid local transform. The resolver is now uniform across node kinds.
+  const LIGHT_ID = 'n_area_light';
+  function buildAreaLightState(opts: {
+    pos?: [number, number, number];
+    rot?: [number, number, number];
+    scale?: [number, number, number];
+  }): DagState {
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: LIGHT_ID,
+      nodeType: 'AreaLight',
+      params: {
+        intensity: 5,
+        position: opts.pos ?? [0, 0, 0],
+        rotation: opts.rot ?? [0, 0, 0],
+        scale: opts.scale ?? [1, 1, 1],
+        color: '#ffffff',
+        width: 2,
+        height: 2,
+        lookAt: [0, 0, 0],
+      },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: LIGHT_ID, socket: 'out' },
+      to: { node: 'n_scene', socket: 'lights' },
+    }).next;
+    return state;
+  }
+
+  it('a flat AreaLight resolves world == its own position/scale (uniform with meshes)', () => {
+    const state = buildAreaLightState({ pos: [3, 4, 5], scale: [2, 2, 2] });
+    const w = resolveWorldTransform(state, LIGHT_ID, ctxAt(0));
+    expect(w).not.toBeNull();
+    expect(w!.position[0]).toBeCloseTo(3, 6);
+    expect(w!.position[1]).toBeCloseTo(4, 6);
+    expect(w!.position[2]).toBeCloseTo(5, 6);
+    expect(w!.scale[0]).toBeCloseTo(2, 6);
+  });
+
+  it('tracks an animated light: world position follows the playhead', () => {
+    let state = buildAreaLightState({ pos: [0, 0, 0] });
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_light_pos_ch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'lightpos',
+        target: LIGHT_ID,
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 1, value: [10, 0, 0], easing: 'linear' },
+        ],
+      },
+    }).next;
+    const at0 = resolveWorldTransform(state, LIGHT_ID, ctxAt(0));
+    const at1 = resolveWorldTransform(state, LIGHT_ID, ctxAt(1));
+    expect(at0!.position[0]).toBeCloseTo(0, 6);
+    expect(at1!.position[0]).toBeCloseTo(10, 6);
+    expect(at0!.position[0]).not.toBeCloseTo(at1!.position[0], 6);
+  });
+
+  // 9. IDENTITY-NULL: unknown id, and a node that is not a scene-child descendant.
   it('returns null for an unknown id and a non-scene-child node (no crash)', () => {
     const state = buildNestedTransformState({});
     expect(resolveWorldTransform(state, 'not_a_node', ctxAt(0))).toBeNull();

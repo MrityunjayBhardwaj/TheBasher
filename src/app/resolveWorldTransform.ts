@@ -33,13 +33,18 @@
 //   read MUST reflect the same live edit the subscribed render reads). Empty store
 //   → identity overlay, so purity tests stay green.
 //
-// SCOPE (slice #202): the kinds the constraint gate needs — Transform, Group,
-//   MaterialOverride (pass-through), and the leaf meshes (Box/Sphere/Baked/Gltf
-//   asset-root). A GltfChild's world transform (addressed BY NAME inside a
-//   GltfAsset, not by a scene-child edge) and Scatter-instance / Character-bone
-//   world transforms (sub-objects that are not addressable DAG nodes) are out of
-//   scope here — descent stops at those nodes and the resolver returns the node's
-//   own world (or null if the target lives beneath them). Documented, not silent.
+// SCOPE: the kinds the constraint gate needs — Transform, Group, MaterialOverride
+//   (pass-through), and the leaf meshes (Box/Sphere/Baked/Gltf asset-root) nested
+//   under scene.children. #210 (the renderable-node unification) ALSO resolves
+//   LIGHTS: a light is wired flat into scene.lights (or the active rig's lights),
+//   not nested under a Transform, so its world == its own overlaid local matrix.
+//   The same channel + transient overlay the scene-child path uses applies (one
+//   band, H40) — so a constraint can aim at a light and __basher_world_transform
+//   is uniform across node kinds. Still out of scope: a GltfChild's world
+//   (addressed BY NAME inside a GltfAsset, not a scene-child edge) and
+//   Scatter-instance / Character-bone worlds (sub-objects that are not addressable
+//   DAG nodes); cameras are handled by a sibling branch (#210, slice 3.2 — pose).
+//   Descent stops at out-of-scope nodes and returns null. Documented, not silent.
 //
 // V8 file-location: lives in src/app/ beside resolveEvaluatedTransform — its
 //   consumers (constraints, the camera migration) and its tests sit in
@@ -55,6 +60,7 @@ import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { directChannelValuesForTarget } from './nodeChannels';
+import { resolveRigLightSources } from './resolveRigLightSources';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
@@ -258,5 +264,40 @@ export function resolveWorldTransform(
     const world = walk(state, topId, child, identity, selectedId);
     if (world) return decompose(world);
   }
+
+  // 4. Lights (#210) — a light is wired FLAT into scene.lights (or the active
+  //    rig's lights), not nested under a Transform, so its world == its own
+  //    overlaid local matrix. Mirror the renderer's index-correspondence:
+  //    lightRefs[i] ↔ scene.lights[i] (SceneFromDAG.tsx:175-178) and
+  //    rigLightSources[i] ↔ scene.lightRig.lights[i] (#208). The SAME channel →
+  //    transient overlay the scene-child path uses applies (one band, H40) so the
+  //    resolved world tracks an animated light exactly as the constraint/read need.
+  const lightEdges: Array<{ id: string; value: SceneChild }> = [];
+  const directLights = value.scene.lights ?? [];
+  const lightRefs = Array.isArray(sceneNode?.inputs.lights)
+    ? (sceneNode!.inputs.lights as NodeRef[])
+    : [];
+  for (let i = 0; i < directLights.length; i++) {
+    const id = lightRefs[i]?.node;
+    if (id) lightEdges.push({ id, value: directLights[i] as unknown as SceneChild });
+  }
+  const rigLights = value.scene.lightRig?.lights ?? [];
+  const rigSources = resolveRigLightSources(state);
+  for (let i = 0; i < rigLights.length; i++) {
+    const id = rigSources[i];
+    if (id) lightEdges.push({ id, value: rigLights[i] as unknown as SceneChild });
+  }
+  for (const edge of lightEdges) {
+    if (edge.id !== selectedId) continue;
+    let lit: SceneChild | null = edge.value;
+    const directChannels = directChannelValuesForTarget(state.nodes, edge.id);
+    if (lit && directChannels.length > 0) {
+      lit = overlayChannels(lit, directChannels, 1, ctx.time.seconds);
+    }
+    lit = overlayTransients(lit, edge.id, transients);
+    if (!lit) continue;
+    return decompose(identity.clone().multiply(localMatrix(lit)));
+  }
+
   return null;
 }
