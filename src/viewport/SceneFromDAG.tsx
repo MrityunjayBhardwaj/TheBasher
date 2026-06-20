@@ -230,6 +230,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             value={light}
             nodeId={lid}
             constrained={lid != null && constraintTargets.has(lid)}
+            hasDirectChannels={lid != null && directChannelTargets.has(lid)}
           />
         );
       })}
@@ -244,6 +245,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             value={light}
             nodeId={lid}
             constrained={lid != null && constraintTargets.has(lid)}
+            hasDirectChannels={lid != null && directChannelTargets.has(lid)}
           />
         );
       })}
@@ -488,11 +490,37 @@ const LightNode = memo(function LightNode({
   value,
   nodeId,
   constrained,
+  hasDirectChannels,
 }: {
   value: LightValue;
   /** The light's DAG node id (for Track-To resolution); null if unmapped. */
   nodeId: string | null;
   /** True iff this light is the target of an active Track-To (#205, V60). */
+  constrained: boolean;
+  /** True iff this light is driven by free-floating direct channels (V57). */
+  hasDirectChannels: boolean;
+}) {
+  // Seam A (#211, V57) — a light animated by free-floating direct channels
+  // overlays its channels per-frame through DirectChannelsLightR, the light
+  // analogue of SceneChildNode → DirectChannelsR. A static light (the common
+  // case) renders the per-kind switch directly, so it pays nothing.
+  if (hasDirectChannels && nodeId) {
+    return <DirectChannelsLightR value={value} nodeId={nodeId} constrained={constrained} />;
+  }
+  return <LightKindR value={value} nodeId={nodeId} constrained={constrained} />;
+});
+
+/** The per-kind light dispatch — pure projection of an (already-overlaid) light
+ *  value onto the three.js light objects. Shared by the static path (LightNode)
+ *  and the animated path (DirectChannelsLightR) so the channel overlay reuses the
+ *  SAME projection as a static light — render == resolver for free (H40). */
+function LightKindR({
+  value,
+  nodeId,
+  constrained,
+}: {
+  value: LightValue;
+  nodeId: string | null;
   constrained: boolean;
 }) {
   switch (value.kind) {
@@ -509,7 +537,70 @@ const LightNode = memo(function LightNode({
       // lookAt today). Other light kinds ignore the constraint for now.
       return <AreaLightR value={value} nodeId={nodeId} constrained={constrained} />;
   }
-});
+}
+
+// Seam A (#211, V57) — renderer for a light animated by FREE-FLOATING direct
+// channels (intensity/color/position/etc.). The light analogue of DirectChannelsR
+// (the mesh per-frame overlay) — it closes the V57 "renderer AND read-side consume
+// the same overlay" gap that left scene.lights as the un-migrated holdout (the
+// resolver tracked the channels via resolveEvaluatedParam while the live light
+// stayed flat — the displayed≠rendered H40 class, for lights). It:
+//   1. Narrow-subscribes the channel NODES targeting this light (shallow → an
+//      unrelated edit leaves their refs untouched, so this re-renders ONLY when
+//      THIS light's channels change — the DirectChannelsR/H48 pattern).
+//   2. Builds their function-of-time values once per change (channelValuesFromNodes).
+//   3. In a useFrame, samples them at the live time SNAPSHOT (never a time
+//      subscription — H48) → overlayChannels onto the base value (the SAME overlay
+//      primitive the mesh path uses — one band, no drift, H40) → overlayTransients,
+//      then renders the per-kind switch (LightKindR) so the projection (intensity ×
+//      scalePower, scale → width/height, the studio tint) matches a static light.
+// Mounted only for lights in the pre-built direct-channel set, so a static scene
+// pays zero cost (the boolean prop keeps LightNode's memo bailing out). Lights are
+// few, so the per-frame setState (one light subtree) is cheap — the same trade the
+// mesh path makes for far more nodes.
+function DirectChannelsLightR({
+  value,
+  nodeId,
+  constrained,
+}: {
+  value: LightValue;
+  nodeId: string;
+  constrained: boolean;
+}) {
+  const channelNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => directChannelNodesForTarget(s.state.nodes, nodeId),
+    shallow,
+  );
+  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const transients = useTransientEditStore((s) => s.edits);
+  const sample = (seconds: number): LightValue =>
+    overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
+    value;
+
+  const [patched, setPatched] = useState<LightValue>(() => sample(useTimeStore.getState().seconds));
+  const lastApplied = useRef<{
+    seconds: number;
+    channels: unknown;
+    transients: unknown;
+    value: unknown;
+  } | null>(null);
+  useFrame(() => {
+    const seconds = useTimeStore.getState().seconds;
+    if (
+      lastApplied.current !== null &&
+      lastApplied.current.seconds === seconds &&
+      lastApplied.current.channels === channels &&
+      lastApplied.current.transients === transients &&
+      lastApplied.current.value === value
+    ) {
+      return;
+    }
+    lastApplied.current = { seconds, channels, transients, value };
+    setPatched(sample(seconds));
+  });
+  return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
+}
 
 /** Volume product of the (defensive) scale vec — drives power scaling
  *  on Point/Spot/Directional lights. AreaLight handles power via
