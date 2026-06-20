@@ -50,6 +50,7 @@ export interface GltfJsonMaterial {
   };
   emissiveFactor?: number[];
   alphaMode?: 'OPAQUE' | 'MASK' | 'BLEND';
+  alphaCutoff?: number;
   normalTexture?: GltfTextureInfo;
   occlusionTexture?: GltfTextureInfo;
   emissiveTexture?: GltfTextureInfo;
@@ -133,9 +134,17 @@ function linearRgbToSrgbHex(rgb: number[] | undefined, fallback: [number, number
  * specular.roughness (default 1), KHR ior/clearcoat/transmission→the matching
  * lobes, emissiveFactor→emission.color, emissive_strength→emission.luminance.
  */
+/** Per-PRIMITIVE capture context (vs the asset-level texture tables). glTF vertex
+ *  colours live on a primitive's `COLOR_0` attribute, not on the material JSON, so
+ *  `captureChildMaterials` detects them and passes the flag here. */
+export interface GltfPrimitiveContext {
+  vertexColors?: boolean;
+}
+
 export function gltfJsonMaterialToOpenpbr(
   mat: GltfJsonMaterial,
   tables?: GltfTextureTables,
+  prim?: GltfPrimitiveContext,
 ): InlineMaterialSpec {
   const pbr = mat.pbrMetallicRoughness ?? {};
   const ext = mat.extensions ?? {};
@@ -169,7 +178,14 @@ export function gltfJsonMaterialToOpenpbr(
       color: linearRgbToSrgbHex(mat.emissiveFactor, [0, 0, 0]),
       luminance: num(emissiveStrength?.emissiveStrength, 1),
     },
-    geometry: { opacity },
+    geometry: {
+      opacity,
+      // alphaMode:'MASK' → the alphaTest cutoff (glTF default 0.5). The clone
+      // already renders cutout; capturing makes it DAG-addressable + editable.
+      ...(mat.alphaMode === 'MASK' ? { alphaCutoff: num(mat.alphaCutoff, 0.5) } : {}),
+      // COLOR_0 → vertex colours captured for representation (clone renders it).
+      ...(prim?.vertexColors ? { vertexColors: true } : {}),
+    },
     // Capture imported-texture descriptors when the JSON texture tables are
     // available (import path); fall back to NULL_MAPS for the clone-read oracle.
     maps: tables ? captureMaps(mat, tables) : { ...NULL_MAPS },

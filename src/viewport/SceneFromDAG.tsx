@@ -1506,6 +1506,13 @@ function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void
   // Only ADD transparency — never strip what the loader set from alpha modes /
   // extensions we don't capture yet (an edit lowering opacity still turns it on).
   if ('transparent' in next) next.transparent = next.transparent === true || tp.transparent;
+  // alphaTest (glTF alphaMode:'MASK' cutout) + vertexColors (COLOR_0) — now
+  // CAPTURED into the IR, so apply from there. For an unedited import these equal
+  // what GLTFLoader already set on the clone (identity); editing alphaCutoff makes
+  // the cutout render respond. vertexColors only ever set to its captured value
+  // (the clone's shader is already compiled for it → no needsUpdate churn).
+  if ('alphaTest' in next) next.alphaTest = tp.alphaTest;
+  if ('vertexColors' in next) next.vertexColors = tp.vertexColors;
   // metalness/roughness ARE the captured glTF factors → applying them onto a
   // mapped material is identity (the scalar multiplies its map, as in glTF).
   if ('roughness' in next) next.roughness = tp.roughness;
@@ -2269,6 +2276,14 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         roughness: number | null;
         hasMetalnessMap: boolean;
         hasRoughnessMap: boolean;
+        // glTF direct-import (texture-maps milestone) — the live three.js material
+        // flags GLTFLoader sets from alphaMode/COLOR_0/doubleSided. Exposed so the
+        // alphaMode + vertex-color slices can OBSERVE whether the clone already
+        // renders them (the reframing: the scalar overlay never strips these).
+        alphaTest: number | null;
+        transparent: boolean;
+        vertexColors: boolean;
+        side: number | null;
         // P151 Wave 4 t11 — the original child's WORLD-space bounds (three-way
         // verts boundary-pair: original child == resolver baked == rendered baked)
         // and its render VISIBILITY (suppression: false after the child is baked).
@@ -2342,6 +2357,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             roughness?: number;
             metalnessMap?: THREE.Texture | null;
             roughnessMap?: THREE.Texture | null;
+            alphaTest?: number;
+            transparent?: boolean;
+            vertexColors?: boolean;
+            side?: number;
           } | null;
           // P151 Wave 4 t11 — world bounds of THIS child mesh + its render
           // visibility (false once suppressed by the bake). `visible` walks up the
@@ -2367,6 +2386,10 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
             roughness: typeof std?.roughness === 'number' ? std.roughness : null,
             hasMetalnessMap: Boolean(std?.metalnessMap),
             hasRoughnessMap: Boolean(std?.roughnessMap),
+            alphaTest: typeof std?.alphaTest === 'number' ? std.alphaTest : null,
+            transparent: std?.transparent === true,
+            vertexColors: std?.vertexColors === true,
+            side: typeof std?.side === 'number' ? std.side : null,
             worldBounds: [wb.x, wb.y, wb.z],
             visible: vis,
             mapProbe: probeMap(map),

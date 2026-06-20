@@ -121,6 +121,10 @@ export function openpbrMaterialSchema(baseColorDefault: string) {
       geometry: z
         .object({
           opacity: z.number().default(1),
+          // glTF direct-import (texture-maps milestone) — OPTIONAL so a native
+          // box/sphere + pre-milestone save re-parse unchanged (V10/H14).
+          alphaCutoff: z.number().optional(),
+          vertexColors: z.boolean().optional(),
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
@@ -193,7 +197,7 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
     coat?: PartialLobe;
     transmission?: PartialLobe;
     emission?: PartialLobe;
-    geometry?: PartialLobe;
+    geometry?: PartialLobe & { alphaCutoff?: unknown; vertexColors?: unknown };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     unsupported?: Record<string, number>;
@@ -212,7 +216,17 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
       color: str(m.emission?.color, '#000000'),
       luminance: num(m.emission?.luminance, 0),
     },
-    geometry: { opacity: num(m.geometry?.opacity, 1) },
+    geometry: {
+      opacity: num(m.geometry?.opacity, 1),
+      // OPTIONAL captured-import fields — only present them when set, so a native
+      // material's geometry lobe stays `{opacity}` (no spurious keys, V10/H14).
+      ...(typeof m.geometry?.alphaCutoff === 'number'
+        ? { alphaCutoff: m.geometry.alphaCutoff }
+        : {}),
+      ...(typeof m.geometry?.vertexColors === 'boolean'
+        ? { vertexColors: m.geometry.vertexColors }
+        : {}),
+    },
     maps: {
       albedo: m.maps?.albedo ?? null,
       normal: m.maps?.normal ?? null,

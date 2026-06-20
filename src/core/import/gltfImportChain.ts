@@ -453,7 +453,7 @@ function buildClipKeyframes(
 function captureChildMaterials(
   node: { mesh?: number },
   json: {
-    meshes?: { primitives?: { material?: number }[] }[];
+    meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
     materials?: Parameters<typeof gltfJsonMaterialToOpenpbr>[0][];
     textures?: { sampler?: number }[];
     samplers?: { wrapS?: number; wrapT?: number }[];
@@ -471,6 +471,9 @@ function captureChildMaterials(
     gltfJsonMaterialToOpenpbr(
       typeof p.material === 'number' ? (mats[p.material] ?? {}) : {},
       tables,
+      // COLOR_0 lives on the PRIMITIVE, not the material → detect it here and pass
+      // the flag so the captured IR records vertex colours (V53 slice 3).
+      { vertexColors: p.attributes?.COLOR_0 !== undefined },
     ),
   );
 }

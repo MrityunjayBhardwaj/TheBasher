@@ -228,8 +228,21 @@ export interface InlineMaterialSpec {
   readonly transmission: { readonly weight: number };
   /** emission_color (sRGB hex) + emission_luminance (cd/m², 1:1 → emissiveIntensity). */
   readonly emission: { readonly color: string; readonly luminance: number };
-  /** geometry_opacity [0..1] — auto-sets three `transparent` when <1. */
-  readonly geometry: { readonly opacity: number };
+  /**
+   * geometry_opacity [0..1] — auto-sets three `transparent` when <1.
+   * `alphaCutoff` (glTF direct-import, texture-maps milestone) — the alphaTest
+   * threshold captured from a glTF `alphaMode:'MASK'` material (default 0.5);
+   * absent = not a cutout material (alphaTest 0). `vertexColors` — captured from
+   * a primitive's `COLOR_0` attribute so a vertex-coloured mesh is REPRESENTED in
+   * the IR (the clone already renders it; this makes it DAG-addressable + survives
+   * a from-IR rebuild). Both optional ⇒ pre-milestone saves + native primitives
+   * are byte-identical (V10/H14).
+   */
+  readonly geometry: {
+    readonly opacity: number;
+    readonly alphaCutoff?: number;
+    readonly vertexColors?: boolean;
+  };
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
   /**

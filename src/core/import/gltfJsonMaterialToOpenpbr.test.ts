@@ -151,6 +151,30 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(ir.maps.emissive).toBeNull();
   });
 
+  it('captures alphaMode:MASK → geometry.alphaCutoff (default 0.5, or the given cutoff)', () => {
+    const def = gltfJsonMaterialToOpenpbr({ alphaMode: 'MASK' });
+    expect(def.geometry.alphaCutoff).toBe(0.5); // glTF spec default
+    const explicit = gltfJsonMaterialToOpenpbr({ alphaMode: 'MASK', alphaCutoff: 0.3 });
+    expect(explicit.geometry.alphaCutoff).toBe(0.3);
+    // OPAQUE/BLEND are NOT cutout — no alphaCutoff (stays a plain {opacity} lobe).
+    expect(gltfJsonMaterialToOpenpbr({ alphaMode: 'OPAQUE' }).geometry.alphaCutoff).toBeUndefined();
+    expect(
+      gltfJsonMaterialToOpenpbr({ alphaMode: 'BLEND' }).geometry.alphaCutoff,
+    ).toBeUndefined();
+    // alphaCutoff round-trips to three.js alphaTest.
+    expect(openpbrToThree(def).alphaTest).toBe(0.5);
+    expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).alphaTest).toBe(0); // off by default
+  });
+
+  it('captures a primitive COLOR_0 flag → geometry.vertexColors', () => {
+    const vc = gltfJsonMaterialToOpenpbr({}, undefined, { vertexColors: true });
+    expect(vc.geometry.vertexColors).toBe(true);
+    expect(openpbrToThree(vc).vertexColors).toBe(true);
+    // absent COLOR_0 → no flag (native primitives never set it).
+    expect(gltfJsonMaterialToOpenpbr({}).geometry.vertexColors).toBeUndefined();
+    expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).vertexColors).toBe(false);
+  });
+
   it('round-trips through openpbrToThree for the supported lobes', () => {
     const ir = gltfJsonMaterialToOpenpbr({
       pbrMetallicRoughness: {

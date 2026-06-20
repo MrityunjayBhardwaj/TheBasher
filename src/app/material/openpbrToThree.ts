@@ -48,6 +48,13 @@ export interface ThreeMaterialParams {
   readonly metalness: number;
   readonly opacity: number;
   readonly transparent: boolean;
+  /** alphaTest threshold (glTF direct-import alphaMode:'MASK' → cutout). 0 = off
+   *  (three's default). Captured from `geometry.alphaCutoff` so editing it
+   *  changes the render; identity for an unedited import (matches the clone). */
+  readonly alphaTest: number;
+  /** Render per-vertex COLOR_0 (glTF vertex colours). Captured from
+   *  `geometry.vertexColors`; false (default) for a native primitive. */
+  readonly vertexColors: boolean;
   readonly emissive: string;
   readonly emissiveIntensity: number;
   readonly ior: number;
@@ -93,6 +100,8 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     emissiveIntensity: ir.emission.luminance * EMISSION_NIT_TO_INTENSITY,
     opacity,
     transparent,
+    alphaTest: ir.geometry.alphaCutoff ?? 0,
+    vertexColors: ir.geometry.vertexColors ?? false,
     maps: {
       map: ir.maps.albedo,
       normalMap: ir.maps.normal,
