@@ -22,6 +22,8 @@ import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
 import { randomizeMutator } from './builders/randomize';
 import { retargetMutator } from './builders/retarget';
+import { addModifierMutator } from './builders/addModifier';
+import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { proposePlanTool, listMutatorsTool } from './tool';
@@ -95,15 +97,16 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 17 = the prior 18 minus `addLayer` (retired with the AnimationLayer
-    // wrapper, v0.7 #199 / V57). `addChannel` survives but now mints a
-    // FREE-FLOATING channel (no layer), then `keyframe` appends to it.
-    expect(mutators).toHaveLength(17);
+    // 18 = the prior 17 + `mutator.geometry.addModifier` (epic #201 / #209, the
+    // geometry OperatorStack agent op). (17 was the prior 18 minus `addLayer`,
+    // retired with the AnimationLayer wrapper, v0.7 #199 / V57.)
+    expect(mutators).toHaveLength(18);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
+      'mutator.geometry.addModifier',
       'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
@@ -238,6 +241,58 @@ describe('rotate mutator', () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.gate).toBe(4);
+  });
+});
+
+describe('addModifier mutator (geometry OperatorStack — #209)', () => {
+  function applyOps(state: DagState, ops: ReturnType<typeof validatePlan> extends { ops: infer O } ? O : never): DagState {
+    return (ops as { type: string }[]).reduce((s, op) => applyOp(s, op as never).next, state);
+  }
+
+  it('passes all five gates and wires Box → ArrayModifier → Scene', () => {
+    const state = buildScene();
+    const result = validatePlan(
+      addModifierMutator,
+      { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
+      state,
+      'array the box',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // addNode(ArrayModifier) + disconnect + 2× connect.
+    expect(result.ops.some((o) => o.type === 'addNode')).toBe(true);
+    const next = applyOps(state, result.ops);
+    const stack = enumerateModifierStack(next, 'box');
+    expect(stack).toHaveLength(1);
+    expect(stack[0].type).toBe('ArrayModifier');
+    // The box now feeds the modifier; the modifier feeds the scene's children.
+    expect(findConsumer(next, 'box')).toEqual({ node: stack[0].nodeId, socket: 'target' });
+    expect(findConsumer(next, stack[0].nodeId)).toEqual({ node: 'scene', socket: 'children' });
+  });
+
+  it('mints a deterministic modifierId (target + short type)', () => {
+    const state = buildScene();
+    const result = validatePlan(
+      addModifierMutator,
+      { target: 'box', modifierType: 'ArrayModifier' },
+      state,
+      'array',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const add = result.ops.find((o) => o.type === 'addNode');
+    expect(add && add.type === 'addNode' ? add.nodeId : null).toBe('box_array');
+  });
+
+  it('precondition fails for an unknown target', () => {
+    const state = buildScene();
+    const result = validatePlan(
+      addModifierMutator,
+      { target: 'ghost', modifierType: 'ArrayModifier' },
+      state,
+      'array ghost',
+    );
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -1039,7 +1094,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(17);
+    expect(parsed.mutators).toHaveLength(18);
   });
 });
 
@@ -2307,6 +2362,7 @@ import {
   addStitchMutator as _addStitchM,
   randomizeMutator as _randomizeM,
   bakeGltfChannelMutator as _bakeGltfM,
+  addModifierMutator as _addModifierM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2570,6 +2626,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _bakeGltfM as MutatorDefinition<unknown>,
       build: buildSceneForBake,
       spec: { assetRef: BAKE_ASSET, childName: 'bone_1' },
+    },
+    'mutator.geometry.addModifier': {
+      mutator: _addModifierM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
     },
   };
 

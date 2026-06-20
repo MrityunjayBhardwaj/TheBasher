@@ -157,10 +157,13 @@ export function buildAddModifierOps(
   baseNodeId: string,
   modifierType: string,
   params: Record<string, unknown> = {},
+  explicitId?: string,
 ): AddModifierResult | null {
   if (!state.nodes[baseNodeId]) return null;
   const { lastProducer, consumer } = stackTail(state, baseNodeId);
-  const modifierId = newId('mod');
+  // The UI lets the registry mint a random id; the agent passes a deterministic
+  // one (the closure spec needs the id before build, and the LLM references it).
+  const modifierId = explicitId ?? newId('mod');
 
   const ops: Op[] = [{ type: 'addNode', nodeId: modifierId, nodeType: modifierType, params }];
   if (consumer) {
