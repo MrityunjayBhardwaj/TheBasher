@@ -56,7 +56,7 @@ const childMaterial = (page: import('@playwright/test').Page) =>
     const nodes = Object.values(w.__basher_dag.getState().state.nodes);
     const child = nodes.find((n) => n.type === 'GltfChild' && Array.isArray(n.params.materials));
     const mats = child?.params.materials as
-      | { geometry?: { alphaCutoff?: number; vertexColors?: boolean } }[]
+      | { geometry?: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean } }[]
       | undefined;
     return mats?.[0]?.geometry ?? null;
   });
@@ -75,6 +75,11 @@ test.describe('glTF alphaMode + vertex-color — clone renders it + IR captures 
 
     // side A — the importer captured alphaCutoff into the IR (DAG-addressable).
     await expect.poll(async () => (await childMaterial(page))?.alphaCutoff).toBe(0.5);
+
+    // doubleSided rides along (the cutout material is double-sided): clone renders
+    // side=DoubleSide (2) AND the IR captured the flag.
+    await expect.poll(async () => (await firstMesh(page))?.side).toBe(2);
+    await expect.poll(async () => (await childMaterial(page))?.doubleSided).toBe(true);
   });
 
   test('COLOR_0 → clone renders vertex colors; IR captures the flag', async ({ page }) => {

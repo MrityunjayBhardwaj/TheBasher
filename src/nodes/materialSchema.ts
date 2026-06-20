@@ -125,6 +125,7 @@ export function openpbrMaterialSchema(baseColorDefault: string) {
           // box/sphere + pre-milestone save re-parse unchanged (V10/H14).
           alphaCutoff: z.number().optional(),
           vertexColors: z.boolean().optional(),
+          doubleSided: z.boolean().optional(),
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
@@ -197,7 +198,7 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
     coat?: PartialLobe;
     transmission?: PartialLobe;
     emission?: PartialLobe;
-    geometry?: PartialLobe & { alphaCutoff?: unknown; vertexColors?: unknown };
+    geometry?: PartialLobe & { alphaCutoff?: unknown; vertexColors?: unknown; doubleSided?: unknown };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     unsupported?: Record<string, number>;
@@ -225,6 +226,9 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
         : {}),
       ...(typeof m.geometry?.vertexColors === 'boolean'
         ? { vertexColors: m.geometry.vertexColors }
+        : {}),
+      ...(typeof m.geometry?.doubleSided === 'boolean'
+        ? { doubleSided: m.geometry.doubleSided }
         : {}),
     },
     maps: {

@@ -55,6 +55,11 @@ export interface ThreeMaterialParams {
   /** Render per-vertex COLOR_0 (glTF vertex colours). Captured from
    *  `geometry.vertexColors`; false (default) for a native primitive. */
   readonly vertexColors: boolean;
+  /** Render both faces (glTF `doubleSided`). Captured from
+   *  `geometry.doubleSided`; false (front-only) by default. The renderer maps
+   *  this to three `side` (DoubleSide / FrontSide) — kept boolean here so this
+   *  module stays THREE-free (V32). */
+  readonly doubleSided: boolean;
   readonly emissive: string;
   readonly emissiveIntensity: number;
   readonly ior: number;
@@ -102,6 +107,7 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     transparent,
     alphaTest: ir.geometry.alphaCutoff ?? 0,
     vertexColors: ir.geometry.vertexColors ?? false,
+    doubleSided: ir.geometry.doubleSided ?? false,
     maps: {
       map: ir.maps.albedo,
       normalMap: ir.maps.normal,

@@ -1513,6 +1513,9 @@ function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void
   // (the clone's shader is already compiled for it → no needsUpdate churn).
   if ('alphaTest' in next) next.alphaTest = tp.alphaTest;
   if ('vertexColors' in next) next.vertexColors = tp.vertexColors;
+  // doubleSided → three `side`. Identity for an unedited import (matches the
+  // clone); editing re-clones first, so the new `side` compiles correctly.
+  if ('side' in next) next.side = tp.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
   // metalness/roughness ARE the captured glTF factors → applying them onto a
   // mapped material is identity (the scalar multiplies its map, as in glTF).
   if ('roughness' in next) next.roughness = tp.roughness;

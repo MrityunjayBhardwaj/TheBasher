@@ -242,6 +242,9 @@ export interface InlineMaterialSpec {
     readonly opacity: number;
     readonly alphaCutoff?: number;
     readonly vertexColors?: boolean;
+    /** glTF direct-import — render both faces (three `side=DoubleSide`), captured
+     *  from a material's `doubleSided:true`. Absent = front-only (the default). */
+    readonly doubleSided?: boolean;
   };
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;

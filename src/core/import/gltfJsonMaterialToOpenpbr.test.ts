@@ -175,6 +175,14 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).vertexColors).toBe(false);
   });
 
+  it('captures doubleSided → geometry.doubleSided (front-only by default)', () => {
+    const ds = gltfJsonMaterialToOpenpbr({ doubleSided: true });
+    expect(ds.geometry.doubleSided).toBe(true);
+    expect(openpbrToThree(ds).doubleSided).toBe(true);
+    expect(gltfJsonMaterialToOpenpbr({}).geometry.doubleSided).toBeUndefined();
+    expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).doubleSided).toBe(false);
+  });
+
   it('round-trips through openpbrToThree for the supported lobes', () => {
     const ir = gltfJsonMaterialToOpenpbr({
       pbrMetallicRoughness: {

@@ -51,6 +51,7 @@ export interface GltfJsonMaterial {
   emissiveFactor?: number[];
   alphaMode?: 'OPAQUE' | 'MASK' | 'BLEND';
   alphaCutoff?: number;
+  doubleSided?: boolean;
   normalTexture?: GltfTextureInfo;
   occlusionTexture?: GltfTextureInfo;
   emissiveTexture?: GltfTextureInfo;
@@ -185,6 +186,8 @@ export function gltfJsonMaterialToOpenpbr(
       ...(mat.alphaMode === 'MASK' ? { alphaCutoff: num(mat.alphaCutoff, 0.5) } : {}),
       // COLOR_0 → vertex colours captured for representation (clone renders it).
       ...(prim?.vertexColors ? { vertexColors: true } : {}),
+      // doubleSided → render both faces; captured so the DAG can override `side`.
+      ...(mat.doubleSided ? { doubleSided: true } : {}),
     },
     // Capture imported-texture descriptors when the JSON texture tables are
     // available (import path); fall back to NULL_MAPS for the clone-read oracle.
