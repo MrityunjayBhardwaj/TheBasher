@@ -62,6 +62,7 @@ import {
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import { useAnimatableField } from './animate/useAnimatableField';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -79,7 +80,6 @@ import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorS
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveTransformParam } from './resolveTransformParam';
-import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import {
   buildRevertedSet,
   isFieldOverridden,
@@ -935,25 +935,9 @@ function MaterialNumberRow({
   testidScrub: string;
   onSource: (next: number) => void;
 }) {
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
-  const playing = useTimeStore((s) => s.playing);
-  const dagState = useDagStore((s) => s.state);
-  const resolved = useMemo(
-    () => resolveEvaluatedParam(dagState, nodeId, paramPath, { time: { frame, seconds, normalized } }),
-    [dagState, nodeId, paramPath, frame, seconds, normalized],
-  );
-  const effective = typeof resolved?.value === 'number' ? resolved.value : value;
-  const readOnly = playing && resolved !== null;
-  const onEdit = (next: number) => {
-    // H36 single-write seam (the H104 affordance): animated → route to the channel
-    // /transient and SKIP the source write; un-animated → caller's source write,
-    // then autoKeyCommit (Auto-Key ON → first-key creates the free-floating channel).
-    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
-    onSource(next);
-    autoKeyCommit(nodeId, paramPath, next);
-  };
+  // The animatable-field spine (evaluated read-side + Auto-Key edit routing) is the
+  // ONE shared hook (H104 — wire the affordance once); this row owns only its chrome.
+  const { effective, readOnly, onEdit } = useAnimatableField(nodeId, paramPath, value, onSource);
   const scrub = useDragScrub({ value: effective, onCommit: onEdit });
   const display = scrub.isDragging ? scrub.previewValue : effective;
   return (
@@ -1008,26 +992,15 @@ function MaterialColorRow({
   testidHex: string;
   onSource: (next: string) => void;
 }) {
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
-  const playing = useTimeStore((s) => s.playing);
-  const dagState = useDagStore((s) => s.state);
-  const resolved = useMemo(
-    () => resolveEvaluatedParam(dagState, nodeId, paramPath, { time: { frame, seconds, normalized } }),
-    [dagState, nodeId, paramPath, frame, seconds, normalized],
-  );
-  const effective = typeof resolved?.value === 'string' ? resolved.value : value;
-  const readOnly = playing && resolved !== null;
+  // The shared animatable-field spine (H104); this row owns only its colour chrome.
+  const { effective, readOnly, onEdit } = useAnimatableField(nodeId, paramPath, value, onSource);
   const [draft, setDraft] = useState(effective);
   // Resync when the effective value changes outside this field (undo, slot switch,
   // scrub, animation, agent edit) — the input is otherwise locally edited.
   useEffect(() => setDraft(effective), [effective]);
   const commit = (next: string) => {
     if (!isHex6(next)) return;
-    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
-    onSource(next);
-    autoKeyCommit(nodeId, paramPath, next);
+    onEdit(next);
   };
   const swatch = isHex6(draft) ? draft : '#000000';
   return (
