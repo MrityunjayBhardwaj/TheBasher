@@ -73,6 +73,7 @@ import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
+import { ModifierStackControls } from './ModifierStackControls';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -1793,6 +1794,12 @@ export function NPanel() {
                       (node.type === 'PerspectiveCamera' || node.type === 'OrthographicCamera') ? (
                         <CameraLensControls nodeId={node.id} />
                       ) : null}
+                      {/* #209 — the geometry OperatorStack UI (epic #201). Renders
+                          for the base mesh AND any modifier in its chain (Box/
+                          Sphere declare 'modifier'; ArrayModifier does too). The
+                          modifier's own params (count/offset) still render as the
+                          ParamRows below, so selecting a modifier shows both. */}
+                      {sectionId === 'modifier' ? <ModifierStackControls nodeId={node.id} /> : null}
                       {sectionId === 'environment' || sectionId === 'camera'
                         ? null
                         : (grouped.get(sectionId) ?? []).map(([key, value]) => (

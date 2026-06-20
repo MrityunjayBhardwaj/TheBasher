@@ -104,6 +104,25 @@ export function enumerateModifierStack(state: DagState, baseNodeId: string): Mod
   return out;
 }
 
+/**
+ * The BASE mesh of a stack from any node in it: if `nodeId` is a modifier, walk
+ * down its `target` chain past modifiers to the first non-modifier producer (the
+ * mesh); if it is already a mesh-producer, return it unchanged. Lets the inspector
+ * show the SAME stack whether the user selected the base mesh or one of its
+ * modifiers (the rendered arrayed mesh click-selects the top modifier).
+ */
+export function resolveStackBase(state: DagState, nodeId: string): string {
+  let cur = nodeId;
+  const seen = new Set<string>();
+  while (isModifierNode(state.nodes[cur]) && !seen.has(cur)) {
+    seen.add(cur);
+    const up = singleRef(state.nodes[cur], TARGET);
+    if (!up) break; // dangling modifier — treat it as the base
+    cur = up.node;
+  }
+  return cur;
+}
+
 /** The top of the stack (the last producer) + where it feeds. lastProducer is the
  *  base when the stack is empty, else the topmost modifier. */
 function stackTail(
