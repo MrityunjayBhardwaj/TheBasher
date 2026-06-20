@@ -47,6 +47,58 @@ export interface GltfImportChainResult {
   readonly clipSelectId: string | null;
   readonly transformClipIds: string[];
   readonly nodeNameMap: Record<string, string>;
+  /**
+   * NO-SILENT-DROP (V38, V53 fork-3) — glTF features present in the file that
+   * are NOT yet captured into Basher's editable OpenPBR IR. These RENDER (the
+   * imported three.js clone draws them and the scalar overlay never strips
+   * them), but they are not addressable/editable in the inspector. The app
+   * caller surfaces this via `assetErrorStore` so the limitation is visible
+   * rather than silent. Empty for a fully-supported import.
+   */
+  readonly unsupportedFeatures: string[];
+}
+
+// glTF extensions Basher either handles at the loader (DRACO/KTX2/Meshopt/
+// quantization) or captures into the OpenPBR IR (the scalar material lobes).
+// Anything in the file's `extensionsUsed` NOT listed here is surfaced as a
+// no-silent-drop notice — including FUTURE extensions we haven't seen, so a new
+// unknown feature warns instead of vanishing.
+const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
+  'KHR_draco_mesh_compression',
+  'KHR_texture_basisu',
+  'EXT_meshopt_compression',
+  'KHR_mesh_quantization',
+  'KHR_materials_ior',
+  'KHR_materials_clearcoat',
+  'KHR_materials_transmission',
+  'KHR_materials_emissive_strength',
+  'KHR_materials_unlit',
+]);
+
+/**
+ * Detect glTF features the importer does NOT yet capture into the editable IR
+ * (V38 no-silent-drop, V53 fork-3). Pure: reads `extensionsUsed` (authoritative
+ * top-level list — catches sheen/volume/specular/KHR_texture_transform/etc. AND
+ * any future unknown extension) plus a primitive scan for secondary UV sets.
+ * These still RENDER via the imported clone; the notice is about editability.
+ */
+export function detectUnsupportedGltfFeatures(json: {
+  extensionsUsed?: string[];
+  meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
+}): string[] {
+  const out: string[] = [];
+  for (const ext of json.extensionsUsed ?? []) {
+    if (typeof ext === 'string' && !SUPPORTED_GLTF_EXTENSIONS.has(ext)) out.push(ext);
+  }
+  // Secondary UV sets: the texCoord index is captured on the map descriptor, but
+  // a DAG-replaced map currently binds UV0 only — so flag UV1+ as a limitation.
+  const multiUV = (json.meshes ?? []).some((m) =>
+    (m.primitives ?? []).some((p) =>
+      Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),
+    ),
+  );
+  if (multiUV) out.push('secondary UV set (TEXCOORD_1+)');
+  return out;
 }
 
 export interface GltfImportChainArgs {
@@ -595,6 +647,7 @@ export async function buildGltfImportOps(
       clipSelectId: null,
       transformClipIds: [],
       nodeNameMap,
+      unsupportedFeatures: detectUnsupportedGltfFeatures(json),
     };
   }
 
@@ -642,5 +695,12 @@ export async function buildGltfImportOps(
     to: { node: gltfAssetId, socket: 'transformClip' },
   });
 
-  return { ops, gltfAssetId, clipSelectId, transformClipIds, nodeNameMap };
+  return {
+    ops,
+    gltfAssetId,
+    clipSelectId,
+    transformClipIds,
+    nodeNameMap,
+    unsupportedFeatures: detectUnsupportedGltfFeatures(json),
+  };
 }

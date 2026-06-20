@@ -12,7 +12,12 @@ import { describe, expect, it } from 'vitest';
 import { Quaternion } from 'three';
 import { quaternionToEulerVec3 } from './threeAdapter';
 import { radVec3ToDeg } from '../../viewport/rotation';
-import { buildGltfImportOps, buildNodeNameMap, importGroupNodeIds } from './gltfImportChain';
+import {
+  buildGltfImportOps,
+  buildNodeNameMap,
+  detectUnsupportedGltfFeatures,
+  importGroupNodeIds,
+} from './gltfImportChain';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 import type { GltfJson } from './glb';
@@ -686,5 +691,54 @@ describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
   it('returns [] for an assetRef with no nodes in the state', async () => {
     const { state } = await importedState('asset/anim.glb');
     expect(importGroupNodeIds('asset/other.glb', state)).toEqual([]);
+  });
+});
+
+describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
+  it('flags extensions NOT captured into the IR (sheen/volume/specular/texture_transform)', () => {
+    expect(
+      detectUnsupportedGltfFeatures({
+        extensionsUsed: ['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_texture_transform'],
+      }),
+    ).toEqual(['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_texture_transform']);
+  });
+
+  it('does NOT flag loader-handled or IR-captured extensions', () => {
+    expect(
+      detectUnsupportedGltfFeatures({
+        extensionsUsed: [
+          'KHR_draco_mesh_compression',
+          'KHR_texture_basisu',
+          'KHR_materials_ior',
+          'KHR_materials_clearcoat',
+          'KHR_materials_transmission',
+          'KHR_materials_emissive_strength',
+          'KHR_materials_unlit',
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it('flags an unknown FUTURE extension (warns rather than silently drops)', () => {
+    expect(detectUnsupportedGltfFeatures({ extensionsUsed: ['KHR_materials_future'] })).toEqual([
+      'KHR_materials_future',
+    ]);
+  });
+
+  it('flags a secondary UV set (TEXCOORD_1+) from a primitive', () => {
+    expect(
+      detectUnsupportedGltfFeatures({
+        meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1, TEXCOORD_1: 2 } }] }],
+      }),
+    ).toEqual(['secondary UV set (TEXCOORD_1+)']);
+  });
+
+  it('returns [] for a fully-supported file', () => {
+    expect(
+      detectUnsupportedGltfFeatures({
+        extensionsUsed: ['KHR_materials_ior'],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 } }] }],
+      }),
+    ).toEqual([]);
   });
 });

@@ -156,6 +156,17 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       useDagStore.getState().state,
     );
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
+    // NO-SILENT-DROP (V38, V53 fork-3): the import is FAITHFUL — these glTF
+    // features render via the GLTFLoader clone and the scalar overlay never
+    // strips them — they are simply not yet captured into Basher's EDITABLE IR.
+    // So this is a console notice, NOT the red `asset failed:` error banner
+    // (which would mislabel a fine import as a failure and fire on most PBR
+    // models). The structured list rides on the result for a future notice UI.
+    if (result.unsupportedFeatures.length > 0) {
+      console.warn(
+        `glTF imported OK (${path}). These features render but aren't editable in Basher yet: ${result.unsupportedFeatures.join(', ')}`,
+      );
+    }
     // Bump AFTER dispatchAtomic returns (pre-mortem #3): a pre-dispatch
     // bump would cause the My-Imports list to re-enumerate before the
     // import succeeded, yielding stale/empty results on failure.
