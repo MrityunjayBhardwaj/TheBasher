@@ -51,6 +51,7 @@ import { useDagStore } from '../core/dag/store';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
+import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { useTimeStore } from './stores/timeStore';
@@ -481,6 +482,75 @@ function BooleanField({
           )
         }
       />
+    </label>
+  );
+}
+
+/** Unwrap a zod schema's default/optional/nullable wrappers to its inner type. */
+function unwrapZod(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodDefault) return unwrapZod(schema.removeDefault());
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+    return unwrapZod(schema.unwrap());
+  }
+  return schema;
+}
+
+/**
+ * The string options for a node's TOP-LEVEL enum param, or null if it isn't a
+ * string enum. Reads the node's declared `paramSchema` (the same source the
+ * evaluator validates against) so the inspector can author ANY declared enum
+ * param (Mirror's `axis`, RenderOutput's `tonemap`, TransformClip's `loop`, …)
+ * instead of rendering it read-only. Nested paths (a.b.c) are out of scope — those
+ * enums don't surface as top-level ParamRows. The node type is static, so a
+ * snapshot read needs no subscription.
+ */
+function stringEnumOptions(nodeId: string, paramPath: string): readonly string[] | null {
+  if (paramPath.includes('.')) return null;
+  const type = useDagStore.getState().state.nodes[nodeId]?.type;
+  if (!type) return null;
+  const schema = getNodeType(type)?.paramSchema;
+  if (!(schema instanceof z.ZodObject)) return null;
+  const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
+  if (!field) return null;
+  const inner = unwrapZod(field);
+  if (!(inner instanceof z.ZodEnum)) return null;
+  const opts = inner.options as readonly unknown[];
+  return opts.every((o) => typeof o === 'string') ? (opts as readonly string[]) : null;
+}
+
+/** A dropdown for a string-enum param. Mirrors BooleanField's dispatch shape (a
+ *  plain setParam — enum params are discrete config, not keyframed). */
+function EnumField({
+  nodeId,
+  paramPath,
+  label,
+  value,
+  options,
+}: {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: string;
+  options: readonly string[];
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{label}</span>
+      <select
+        value={value}
+        data-testid={`inspector-enum-${nodeId}-${paramPath}`}
+        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          dispatch({ type: 'setParam', nodeId, paramPath, value: e.target.value }, 'user', `set ${paramPath}`)
+        }
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -1093,9 +1163,17 @@ function ParamRow({
     return <BooleanField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />;
   }
   if (typeof value === 'string') {
-    // No string param is a covered override field today (the descriptor covers
-    // only numeric roughness/metalness + the vec3 TRS), so the string row needs
-    // no decorator. If a string override field appears, thread overrideInfo here.
+    // A declared string-ENUM param (Mirror's axis, RenderOutput's tonemap, …) is
+    // authorable via a dropdown read from the node's paramSchema; a free string has
+    // no options → falls through to the read-only row below. No string param is a
+    // covered override field today (the descriptor covers only numeric roughness/
+    // metalness + the vec3 TRS), so neither row needs a decorator.
+    const options = stringEnumOptions(nodeId, paramPath);
+    if (options) {
+      return (
+        <EnumField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} options={options} />
+      );
+    }
     return (
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
         <span className="font-mono text-fg/60">{paramPath}</span>
