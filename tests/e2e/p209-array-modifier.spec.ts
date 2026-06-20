@@ -191,3 +191,58 @@ test('#209 — muting the modifier collapses the output back to the source box (
   const counts = await meshVertexCounts(page);
   expect(counts).not.toContain(72);
 });
+
+test('#209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array — recursive build)', async ({
+  page,
+}) => {
+  // Box → Array(3) → Array(2) → Scene. The OperatorStack sub-chain (§2.2): each
+  // modifier operates on the cumulative result below it. The recursive registry
+  // build is the risky bit — the outer array must replicate the inner-arrayed
+  // geometry, so 3 × 2 × 24 = 144 verts.
+  const A1 = 'p209_a1';
+  const A2 = 'p209_a2';
+  await page.evaluate(
+    ({ box, a1, a2 }) => {
+      const w = window as unknown as ModWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
+          { type: 'addNode', nodeId: a1, nodeType: 'ArrayModifier', params: { count: 3, offset: [2, 0, 0], muted: false } },
+          { type: 'addNode', nodeId: a2, nodeType: 'ArrayModifier', params: { count: 2, offset: [0, 3, 0], muted: false } },
+          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: a1, socket: 'target' } },
+          { type: 'connect', from: { node: a1, socket: 'out' }, to: { node: a2, socket: 'target' } },
+          { type: 'connect', from: { node: a2, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+        ],
+        'e2e',
+        'box → array → array → scene',
+      );
+    },
+    { box: MBOX, a1: A1, a2: A2 },
+  );
+
+  // Side B: the top of the chain resolves to 3 × 2 × 24 = 144 verts.
+  await page.waitForFunction(
+    (a2) => (window as unknown as ModWindow).__basher_modified_vertex_count(a2) === 144,
+    A2,
+    { timeout: 15_000 },
+  );
+  // Side A: the live render contains that cumulative mesh (boundary-pair holds through the chain).
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as ModWindow;
+      const scene = w.__basher_three.getState().scene;
+      let found = false;
+      scene?.traverse((o) => {
+        const g = (o as ThreeObjLike).geometry?.attributes?.position;
+        if ((o as ThreeObjLike).type === 'Mesh' && g && g.count === 144) found = true;
+      });
+      return found;
+    },
+    undefined,
+    { timeout: 15_000 },
+  );
+  const counts = await meshVertexCounts(page);
+  expect(counts).toContain(144);
+});
