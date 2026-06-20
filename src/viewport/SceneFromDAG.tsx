@@ -217,6 +217,14 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           chrome hide-pass (V37) and lights the production render for free.
           NEVER mark this editorChrome (V47). */}
       <SceneEnvironment value={value.scene.environment} />
+      {/* Seam B (#212) — per-frame overlay for the scene env's animatable params
+          (envIntensity / envRotationY). SceneEnvironment renders the STATIC
+          evaluated env, so without this an env channel resolves but does not render
+          (the H40 class seam A closed for lights). Mounted only when the Scene node
+          carries channels, so a static scene pays nothing. */}
+      {sceneRef && directChannelTargets.has(sceneRef.node) ? (
+        <SceneEnvChannelsR sceneNodeId={sceneRef.node} />
+      ) : null}
       {/* #165: the DAG camera no longer mounts a makeDefault render camera
           here — the editor owns the view (EditorViewCamera) so DAG cameras
           become selectable frustum objects (CameraHelpers). */}
@@ -600,6 +608,48 @@ function DirectChannelsLightR({
     setPatched(sample(seconds));
   });
   return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
+}
+
+// Seam B (#212) — per-frame overlay for the SCENE ENVIRONMENT's animatable params
+// (envIntensity / envRotationY). <SceneEnvironment> renders the STATIC evaluated env
+// (SceneFromDAG evaluates at frozen ctx.time=0 and does not subscribe to time), and
+// drei's <Environment> sets scene.environmentIntensity / environmentRotation /
+// backgroundRotation declaratively from that static value. Without this, the env's
+// free-floating channels would RESOLVE (resolveEvaluatedParam) but not RENDER — the
+// displayed≠rendered H40 class, the sibling of the light gap seam A closed. This
+// useFrame re-applies the SAMPLED channel values onto the LIVE scene each frame (live
+// time snapshot, never a subscription — H48), writing EXACTLY the props
+// SceneEnvironment sets so there is no jump at t=0 (intensity → environmentIntensity;
+// rotationY° → environmentRotation.y + backgroundRotation.y; backgroundIntensity is
+// left at drei's default, matching the static path). The env is a scene PROPERTY (not
+// a node value), so this is an imperative ref-write like the camera, not a
+// value-recompute like the mesh/light overlays. Mounted only when the Scene node
+// carries channels, so a static scene pays nothing.
+function SceneEnvChannelsR({ sceneNodeId }: { sceneNodeId: string }) {
+  const scene = useThree((s) => s.scene);
+  const channelNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => directChannelNodesForTarget(s.state.nodes, sceneNodeId),
+    shallow,
+  );
+  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  useFrame(() => {
+    if (channels.length === 0) return;
+    const seconds = useTimeStore.getState().seconds;
+    for (const ch of channels) {
+      if (ch.mute) continue;
+      const v = ch.sample(seconds);
+      if (typeof v !== 'number') continue;
+      if (ch.paramPath === 'envIntensity') {
+        scene.environmentIntensity = v;
+      } else if (ch.paramPath === 'envRotationY') {
+        const rad = (v * Math.PI) / 180;
+        scene.environmentRotation.set(0, rad, 0);
+        scene.backgroundRotation.set(0, rad, 0);
+      }
+    }
+  });
+  return null;
 }
 
 /** Volume product of the (defensive) scale vec — drives power scaling
@@ -1120,15 +1170,21 @@ function ConstrainedR({
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
     const base =
-      overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
-      value;
+      overlayTransients(
+        overlayChannels(value, channels, 1, seconds) ?? value,
+        pickId,
+        transients,
+      ) ?? value;
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
     const rec = base as unknown as Record<string, unknown>;
-    const v = aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneChild) : base;
+    const v =
+      aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneChild) : base;
     return { v, aimKey: aim ? aim.join(',') : '' };
   };
 
-  const [patched, setPatched] = useState<SceneChild>(() => build(useTimeStore.getState().seconds).v);
+  const [patched, setPatched] = useState<SceneChild>(
+    () => build(useTimeStore.getState().seconds).v,
+  );
   const lastApplied = useRef<{
     seconds: number;
     channels: unknown;
@@ -1363,11 +1419,21 @@ function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: M
 // nothing rather than crashing.
 const MODIFIED_FALLBACK_MATERIAL = hydrateInlineMaterial(null, '#808080');
 
-function ModifiedMeshR({ value, override }: { value: ModifiedMeshValue; override?: MaterialValue }) {
+function ModifiedMeshR({
+  value,
+  override,
+}: {
+  value: ModifiedMeshValue;
+  override?: MaterialValue;
+}) {
   const shading = useViewportStore((s) => s.shading);
   // Hook first (rules-of-hooks) — material builds unconditionally; the geom guard
   // below is a plain branch with no hooks after it.
-  const material = usePrimitiveMaterial(value.material ?? MODIFIED_FALLBACK_MATERIAL, override, shading);
+  const material = usePrimitiveMaterial(
+    value.material ?? MODIFIED_FALLBACK_MATERIAL,
+    override,
+    shading,
+  );
   const geom = geometryRegistry.get(value.geometry);
   if (!geom) return null; // source not sync-buildable (glTF/baked) — v1 follow-up
   return (

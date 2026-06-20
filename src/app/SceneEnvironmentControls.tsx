@@ -20,6 +20,8 @@ import type { EnvironmentSource } from '../nodes/types';
 import { ENV_PRESET_NAMES } from './envPresets';
 import { importEnvironmentHdri } from './asset/importEnvironmentHdri';
 import { useAssetErrorStore } from './stores/assetErrorStore';
+import { ParamDiamond } from './ParamDiamond';
+import { useAnimatableField } from './animate/useAnimatableField';
 
 const DEFAULT_SOURCE: EnvironmentSource = { kind: 'none' };
 
@@ -54,6 +56,16 @@ export function SceneEnvironmentControls({ nodeId }: { nodeId: string }) {
 
   const setParam = (paramPath: string, value: unknown, label: string) =>
     dispatch({ type: 'setParam', nodeId, paramPath, value }, 'user', label);
+
+  // Animatable-field spines (diamond + Auto-Key + evaluated read — the H104
+  // affordance), so the env intensity / Y-rotation keyframe. These RENDER via seam B
+  // (SceneEnvChannelsR re-applies the channels onto the live scene per frame).
+  const intensityField = useAnimatableField(nodeId, 'envIntensity', intensity, (v) =>
+    setParam('envIntensity', v, 'set environment intensity'),
+  );
+  const rotationField = useAnimatableField(nodeId, 'envRotationY', rotationY, (v) =>
+    setParam('envRotationY', v, 'set environment rotation'),
+  );
 
   const setSource = (next: EnvironmentSource) =>
     setParam('envSource', next, `set environment ${next.kind}`);
@@ -169,30 +181,40 @@ export function SceneEnvironmentControls({ nodeId }: { nodeId: string }) {
       {mode !== 'none' ? (
         <>
           <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-            <span className="font-mono text-fg/60">intensity</span>
+            <span className="flex items-center gap-1">
+              <ParamDiamond nodeId={nodeId} paramPath="envIntensity" value={intensity} />
+              <span className="font-mono text-fg/60">intensity</span>
+            </span>
             <input
               type="number"
               step={0.1}
               min={0}
-              value={intensity}
+              value={intensityField.effective}
+              readOnly={intensityField.readOnly}
+              data-readonly-while-playing={intensityField.readOnly || undefined}
               data-testid={`inspector-env-intensity-${nodeId}`}
               onChange={(e) => {
                 const n = Number(e.target.value);
-                if (Number.isFinite(n)) setParam('envIntensity', n, 'set environment intensity');
+                if (Number.isFinite(n)) intensityField.onEdit(n);
               }}
               className="w-16 rounded border border-border bg-muted px-1.5 py-0.5 text-right text-[10px] text-fg/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             />
           </label>
           <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
-            <span className="font-mono text-fg/60">rotation Y°</span>
+            <span className="flex items-center gap-1">
+              <ParamDiamond nodeId={nodeId} paramPath="envRotationY" value={rotationY} />
+              <span className="font-mono text-fg/60">rotation Y°</span>
+            </span>
             <input
               type="number"
               step={5}
-              value={rotationY}
+              value={rotationField.effective}
+              readOnly={rotationField.readOnly}
+              data-readonly-while-playing={rotationField.readOnly || undefined}
               data-testid={`inspector-env-rotation-${nodeId}`}
               onChange={(e) => {
                 const n = Number(e.target.value);
-                if (Number.isFinite(n)) setParam('envRotationY', n, 'set environment rotation');
+                if (Number.isFinite(n)) rotationField.onEdit(n);
               }}
               className="w-16 rounded border border-border bg-muted px-1.5 py-0.5 text-right text-[10px] text-fg/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             />
