@@ -12,16 +12,30 @@
 // Option-A choice rests on.
 //
 // SCOPE: core metallic-roughness + the common KHR scalar extensions (ior,
-// clearcoat, transmission, emissive_strength). Texture MAPS are deferred (later
-// slice; IR map slots seed null and the renderer keeps the clone's textures).
-// KHR_materials_unlit is captured as core for now (flat-shading nuance deferred).
+// clearcoat, transmission, emissive_strength) + TEXTURE MAPS (the direct-import
+// milestone, V53). Maps are captured as "imported descriptors" (the LIGHTER
+// persistence path: gltfTexture index + colorspace + flipY + texCoord + wrap, but
+// hash empty — the bytes ride in the embedded `.glb`, V41). The renderer LEAVES
+// the clone's textures in place for these (inherit), so the captured descriptor
+// only makes the slot inspector-visible + DAG-addressable; render is byte-
+// identical. KHR_materials_unlit is captured as core (flat-shading nuance deferred).
 //
 // REF: #178 (glTF materials → OpenPBR DAG); openpbrToThree.ts (forward adapter);
-//      gltfMaterialToOpenpbr.ts (the clone-read SIBLING + round-trip oracle).
+//      gltfMaterialToOpenpbr.ts (the clone-read SIBLING + round-trip oracle);
+//      V53 (the IR invariant + the DIRECT-IMPORTABILITY GAP block).
 
 import { Color, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
-import type { InlineMaterialSpec } from '../../nodes/types';
+import type { BakedTextureRef, InlineMaterialMaps, InlineMaterialSpec } from '../../nodes/types';
 import { NULL_MAPS, IDENTITY_UV_TRANSFORM } from '../../nodes/materialSchema';
+
+/** glTF default sampler wrap = REPEAT (10497) when a texture declares no sampler. */
+const GLTF_WRAP_REPEAT = 10497;
+
+/** A glTF textureInfo reference (`{ index, texCoord }`) on a material slot. */
+interface GltfTextureInfo {
+  index?: number;
+  texCoord?: number;
+}
 
 /** A glTF 2.0 material object as it appears in `json.materials[]` (partial, the
  *  fields we read). Everything optional — defaults match the glTF spec. */
@@ -31,10 +45,73 @@ export interface GltfJsonMaterial {
     baseColorFactor?: number[];
     metallicFactor?: number;
     roughnessFactor?: number;
+    baseColorTexture?: GltfTextureInfo;
+    metallicRoughnessTexture?: GltfTextureInfo;
   };
   emissiveFactor?: number[];
   alphaMode?: 'OPAQUE' | 'MASK' | 'BLEND';
+  normalTexture?: GltfTextureInfo;
+  occlusionTexture?: GltfTextureInfo;
+  emissiveTexture?: GltfTextureInfo;
   extensions?: Record<string, { [k: string]: unknown } | undefined>;
+}
+
+/** The glTF JSON texture/sampler tables a material's texture slots index into.
+ *  Passed at capture time (gltfImportChain) so the converter can resolve a
+ *  material's `*Texture.index` → a captured-import descriptor. Absent → the
+ *  converter seeds NULL_MAPS (the pre-milestone behaviour, e.g. a clone-read
+ *  round-trip oracle that has no JSON tables). */
+export interface GltfTextureTables {
+  textures?: { sampler?: number }[];
+  samplers?: { wrapS?: number; wrapT?: number }[];
+}
+
+/**
+ * Capture ONE glTF material texture slot → an imported-texture descriptor
+ * (BakedTextureRef with empty hash + the glTF texture index). Returns null when
+ * the slot is absent — null = "inherit the clone's texture" (the slot stays
+ * empty for an untextured material). The descriptor's `hash` is EMPTY: the bytes
+ * ride in the embedded `.glb` (V41, the lighter path), so this never references
+ * an OPFS file; `collectAssetRefs` skips it and the renderer leaves the clone's
+ * texture in place.
+ */
+function captureMap(
+  info: GltfTextureInfo | undefined,
+  colorSpace: BakedTextureRef['colorSpace'],
+  tables: GltfTextureTables,
+): BakedTextureRef | null {
+  if (!info || typeof info.index !== 'number') return null;
+  const tex = tables.textures?.[info.index];
+  const sampler = typeof tex?.sampler === 'number' ? tables.samplers?.[tex.sampler] : undefined;
+  const ref: BakedTextureRef = {
+    hash: '', // lighter path — bytes ride in the embedded .glb (V41), not OPFS
+    colorSpace,
+    flipY: false, // glTF textures are always flipY=false
+    wrapS: sampler?.wrapS ?? GLTF_WRAP_REPEAT,
+    wrapT: sampler?.wrapT ?? GLTF_WRAP_REPEAT,
+    gltfTexture: info.index,
+  };
+  // texCoord captured (no silent drop of the UV set) only when non-default; the
+  // UV1+ APPLY is a later slice — the clone already binds the right set.
+  return typeof info.texCoord === 'number' && info.texCoord !== 0
+    ? { ...ref, gltfTexCoord: info.texCoord }
+    : ref;
+}
+
+/** Build the 6 IR map slots from a material's texture references. glTF packs
+ *  roughness (G) + metalness (B) in ONE metallicRoughnessTexture, so the
+ *  roughness + metalness slots reference the SAME imported texture. Colorspaces
+ *  follow the glTF convention: baseColor/emissive = srgb, the rest = linear. */
+function captureMaps(mat: GltfJsonMaterial, tables: GltfTextureTables): InlineMaterialMaps {
+  const pbr = mat.pbrMetallicRoughness ?? {};
+  return {
+    albedo: captureMap(pbr.baseColorTexture, 'srgb', tables),
+    normal: captureMap(mat.normalTexture, 'srgb-linear', tables),
+    roughness: captureMap(pbr.metallicRoughnessTexture, 'srgb-linear', tables),
+    metalness: captureMap(pbr.metallicRoughnessTexture, 'srgb-linear', tables),
+    emissive: captureMap(mat.emissiveTexture, 'srgb', tables),
+    ao: captureMap(mat.occlusionTexture, 'srgb-linear', tables),
+  };
 }
 
 function num(v: unknown, fallback: number): number {
@@ -56,7 +133,10 @@ function linearRgbToSrgbHex(rgb: number[] | undefined, fallback: [number, number
  * specular.roughness (default 1), KHR ior/clearcoat/transmission→the matching
  * lobes, emissiveFactor→emission.color, emissive_strength→emission.luminance.
  */
-export function gltfJsonMaterialToOpenpbr(mat: GltfJsonMaterial): InlineMaterialSpec {
+export function gltfJsonMaterialToOpenpbr(
+  mat: GltfJsonMaterial,
+  tables?: GltfTextureTables,
+): InlineMaterialSpec {
   const pbr = mat.pbrMetallicRoughness ?? {};
   const ext = mat.extensions ?? {};
   const ior = ext.KHR_materials_ior as { ior?: number } | undefined;
@@ -90,7 +170,9 @@ export function gltfJsonMaterialToOpenpbr(mat: GltfJsonMaterial): InlineMaterial
       luminance: num(emissiveStrength?.emissiveStrength, 1),
     },
     geometry: { opacity },
-    maps: { ...NULL_MAPS },
+    // Capture imported-texture descriptors when the JSON texture tables are
+    // available (import path); fall back to NULL_MAPS for the clone-read oracle.
+    maps: tables ? captureMaps(mat, tables) : { ...NULL_MAPS },
     uvTransform: {
       tiling: [...IDENTITY_UV_TRANSFORM.tiling],
       offset: [...IDENTITY_UV_TRANSFORM.offset],

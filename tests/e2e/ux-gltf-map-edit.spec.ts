@@ -90,9 +90,11 @@ test.describe('#178 S5 — editable glTF map rows', () => {
     }, child!.id);
     await page.getByTestId('inspector-section-toggle-material').click();
 
-    // The Maps section shows the albedo slot as "imported".
+    // The Maps section shows the albedo slot as "— none": cube-draco has NO
+    // base-colour texture, so nothing is captured/inherited (the texture-maps
+    // milestone distinguishes an empty slot from an "● imported" captured one).
     const stateTag = page.getByTestId(`inspector-gltfmap-state-${child!.id}-0-albedo`);
-    await expect(stateTag).toHaveText('imported');
+    await expect(stateTag).toHaveText('— none');
 
     // Pick a file → bake → the IR ref is set + the clone repaints with a map.
     await page

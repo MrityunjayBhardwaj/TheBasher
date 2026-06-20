@@ -263,7 +263,9 @@ export interface InlineMaterialSpec {
 // are populated in Wave 3 (glTF material capture); a primitive bake leaves all
 // map slots null. (RESEARCH §M3.)
 export interface BakedTextureRef {
-  /** OPFS key: baked-texture/<hash>.<ext>. */
+  /** OPFS key: baked-texture/<hash>.<ext>. EMPTY ('') for the two non-OPFS
+   *  sentinels below (cleared, imported) — they reference no OPFS file, so
+   *  `collectAssetRefs` skips them and `loadBakedTexture` is never called. */
   readonly hash: string;
   /** map/emissiveMap = 'srgb'; normal/ao/roughness/metalness = 'srgb-linear'. */
   readonly colorSpace: 'srgb' | 'srgb-linear' | 'no-colorspace';
@@ -271,6 +273,22 @@ export interface BakedTextureRef {
   readonly flipY: boolean;
   readonly wrapS: number;
   readonly wrapT: number;
+  /**
+   * glTF direct-import (texture-maps milestone) — the index of the IMPORTED glTF
+   * texture this slot was captured from (`json.textures[gltfTexture]`). Present
+   * ONLY on a captured-import descriptor (the "lighter" persistence path, V53):
+   * the pixel bytes keep riding in the embedded `.glb` (V41), so `hash` is empty
+   * and the renderer LEAVES the clone's texture in place (inherit) — the
+   * descriptor exists so the slot is inspector-visible + DAG-addressable, not so
+   * the renderer re-resolves it. Distinguishes a captured import (`hash:'' +
+   * gltfTexture set`) from the CLEARED sentinel (`hash:'' + gltfTexture absent`).
+   * Absent on every native baked ref + every pre-milestone save (V10/H14-clean).
+   */
+  readonly gltfTexture?: number;
+  /** glTF direct-import — the texCoord (UV set) the imported texture binds to.
+   *  Captured so the UV set is never silently dropped; UV1+ APPLY is a later
+   *  slice (the clone already binds the right set, so render is unaffected). */
+  readonly gltfTexCoord?: number;
 }
 
 /**

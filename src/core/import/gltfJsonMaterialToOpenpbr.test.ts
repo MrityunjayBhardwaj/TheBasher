@@ -75,6 +75,82 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(opaque.geometry.opacity).toBe(1);
   });
 
+  it('seeds NULL maps when no texture tables are passed (clone-read oracle path)', () => {
+    const ir = gltfJsonMaterialToOpenpbr({
+      pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+    });
+    expect(ir.maps.albedo).toBeNull(); // no tables → no capture
+  });
+
+  it('captures texture slots → imported descriptors (hash empty, gltfTexture index)', () => {
+    const ir = gltfJsonMaterialToOpenpbr(
+      {
+        pbrMetallicRoughness: {
+          baseColorTexture: { index: 0 },
+          metallicRoughnessTexture: { index: 1 },
+        },
+        normalTexture: { index: 2 },
+        occlusionTexture: { index: 3 },
+        emissiveTexture: { index: 4 },
+      },
+      {
+        textures: [{ sampler: 0 }, {}, {}, {}, {}],
+        samplers: [{ wrapS: 33071, wrapT: 33071 }],
+      },
+    );
+    // albedo + emissive are sRGB; the rest linear (glTF convention).
+    expect(ir.maps.albedo).toEqual({
+      hash: '',
+      colorSpace: 'srgb',
+      flipY: false,
+      wrapS: 33071, // ClampToEdge from sampler 0
+      wrapT: 33071,
+      gltfTexture: 0,
+    });
+    expect(ir.maps.emissive?.colorSpace).toBe('srgb');
+    expect(ir.maps.normal?.colorSpace).toBe('srgb-linear');
+    expect(ir.maps.normal?.gltfTexture).toBe(2);
+    expect(ir.maps.ao?.gltfTexture).toBe(3);
+    // glTF packs roughness (G) + metalness (B) in ONE texture → SAME index.
+    expect(ir.maps.roughness?.gltfTexture).toBe(1);
+    expect(ir.maps.metalness?.gltfTexture).toBe(1);
+    // No OPFS bytes — the descriptor's hash is empty (bytes ride in the .glb).
+    expect(ir.maps.albedo?.hash).toBe('');
+  });
+
+  it('defaults sampler wrap to REPEAT (10497) when a texture declares no sampler', () => {
+    const ir = gltfJsonMaterialToOpenpbr(
+      { pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
+      { textures: [{}], samplers: [] },
+    );
+    expect(ir.maps.albedo?.wrapS).toBe(10497);
+    expect(ir.maps.albedo?.wrapT).toBe(10497);
+  });
+
+  it('captures a non-default texCoord (UV set) but omits the default 0', () => {
+    const ir = gltfJsonMaterialToOpenpbr(
+      {
+        pbrMetallicRoughness: {
+          baseColorTexture: { index: 0, texCoord: 1 },
+          metallicRoughnessTexture: { index: 0, texCoord: 0 },
+        },
+      },
+      { textures: [{}], samplers: [] },
+    );
+    expect(ir.maps.albedo?.gltfTexCoord).toBe(1);
+    expect(ir.maps.roughness?.gltfTexCoord).toBeUndefined(); // default UV0 omitted
+  });
+
+  it('leaves untextured slots null (inherit) on a textured material', () => {
+    const ir = gltfJsonMaterialToOpenpbr(
+      { pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
+      { textures: [{}], samplers: [] },
+    );
+    expect(ir.maps.albedo).not.toBeNull();
+    expect(ir.maps.normal).toBeNull();
+    expect(ir.maps.emissive).toBeNull();
+  });
+
   it('round-trips through openpbrToThree for the supported lobes', () => {
     const ir = gltfJsonMaterialToOpenpbr({
       pbrMetallicRoughness: {

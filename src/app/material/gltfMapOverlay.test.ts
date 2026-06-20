@@ -4,7 +4,24 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { persistTexture } from '../asset/bakedTextureStore';
 import { NULL_MAPS } from '../../nodes/materialSchema';
 import type { InlineMaterialMaps } from '../../nodes/types';
-import { CLEARED_MAP, isClearedMap, hasMapEdits, applyEditedMaps } from './gltfMapOverlay';
+import type { BakedTextureRef } from '../../nodes/types';
+import {
+  CLEARED_MAP,
+  isClearedMap,
+  isImportedMap,
+  hasMapEdits,
+  applyEditedMaps,
+} from './gltfMapOverlay';
+
+/** A captured imported-texture descriptor (empty hash + a gltfTexture index). */
+const IMPORTED: BakedTextureRef = {
+  hash: '',
+  colorSpace: 'srgb',
+  flipY: false,
+  wrapS: 10497,
+  wrapT: 10497,
+  gltfTexture: 0,
+};
 
 // happy-dom has no image decoder, so the load path is driven through an injected
 // `decode` hook (the same seam bakedTextureStore.test.ts uses); the unit proves
@@ -34,6 +51,35 @@ describe('gltfMapOverlay', () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it('disambiguates an imported descriptor from the cleared sentinel (both hash:"")', () => {
+    expect(isImportedMap(IMPORTED)).toBe(true);
+    expect(isImportedMap(CLEARED_MAP)).toBe(false); // no gltfTexture
+    expect(isImportedMap(null)).toBe(false);
+    // The cleared check must NOT match an imported descriptor (else inherit→remove).
+    expect(isClearedMap(IMPORTED)).toBe(false);
+    expect(isClearedMap(CLEARED_MAP)).toBe(true);
+  });
+
+  it('an imported-only material is NOT an edit (zero map work on unedited import)', () => {
+    expect(hasMapEdits(maps({ albedo: IMPORTED, normal: IMPORTED }))).toBe(false);
+    // …but a real edit alongside imported descriptors still counts.
+    expect(hasMapEdits(maps({ albedo: IMPORTED, normal: CLEARED_MAP }))).toBe(true);
+  });
+
+  it('an imported descriptor INHERITS — leaves the clone texture untouched', async () => {
+    const mat = new THREE.MeshStandardMaterial();
+    const imported = new THREE.Texture();
+    mat.map = imported;
+    const changed = await applyEditedMaps(
+      mat,
+      maps({ albedo: IMPORTED }),
+      new MemoryStorage(),
+      () => false,
+    );
+    expect(changed).toBe(false);
+    expect(mat.map).toBe(imported); // inherited, never removed or replaced
   });
 
   it('null slot INHERITS — the imported texture is left untouched', async () => {

@@ -33,6 +33,12 @@ const bakedTextureRefSchema = z.object({
   flipY: z.boolean(),
   wrapS: z.number(),
   wrapT: z.number(),
+  // glTF direct-import captured-descriptor fields (texture-maps milestone). Both
+  // OPTIONAL so a native baked ref / pre-milestone save re-parses unchanged
+  // (V10/H14). zod strips unknown keys, so they MUST be declared here or a whole-
+  // params setParam re-parse would silently drop a captured descriptor's identity.
+  gltfTexture: z.number().optional(),
+  gltfTexCoord: z.number().optional(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
 // Exported so the glTF→OpenPBR converter (gltfMaterialToOpenpbr) seeds an IR with

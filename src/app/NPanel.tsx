@@ -43,7 +43,7 @@ import {
   MATERIAL_MAP_SLOTS,
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
-import { CLEARED_MAP, isClearedMap } from './material/gltfMapOverlay';
+import { CLEARED_MAP, isClearedMap, isImportedMap } from './material/gltfMapOverlay';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
 import type { BakedTextureRef, InlineMaterialSpec } from '../nodes/types';
@@ -1498,7 +1498,13 @@ function GltfMapRow({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const cleared = isClearedMap(value);
-  const state = value == null ? 'imported' : cleared ? 'cleared' : 'replaced';
+  // A captured imported-texture descriptor (direct-import milestone, V53) renders
+  // identically to a null/inherit slot — but it means "this slot HAS an imported
+  // texture" (vs null = genuinely no texture), so the inspector shows which maps
+  // the model carries instead of an empty slot. Both share the pick+clear branch.
+  const importedTex = isImportedMap(value);
+  const replaced = value != null && !cleared && !importedTex; // a user OPFS ref
+  const state = replaced ? 'replaced' : cleared ? 'cleared' : 'imported';
   const onPick = async (file: File) => {
     try {
       const storage = await getStorage();
@@ -1522,7 +1528,13 @@ function GltfMapRow({
   // context; each button ALSO carries a slot-specific aria-label so it is
   // unambiguous on its own (6 map slots otherwise read identically).
   const stateLabel =
-    state === 'replaced' ? 'replaced' : state === 'cleared' ? 'cleared' : 'imported';
+    state === 'replaced'
+      ? 'replaced'
+      : state === 'cleared'
+        ? 'cleared'
+        : importedTex
+          ? 'imported'
+          : 'none';
   return (
     <div
       role="group"
@@ -1535,7 +1547,13 @@ function GltfMapRow({
           className="font-mono text-[10px] text-fg/40"
           data-testid={`inspector-gltfmap-state-${testid}`}
         >
-          {state === 'replaced' ? '● replaced' : state === 'cleared' ? '— cleared' : 'imported'}
+          {state === 'replaced'
+            ? '● replaced'
+            : state === 'cleared'
+              ? '— cleared'
+              : importedTex
+                ? '● imported'
+                : '— none'}
         </span>
         <button
           type="button"

@@ -40,8 +40,23 @@ export const CLEARED_MAP: BakedTextureRef = {
   wrapT: THREE.ClampToEdgeWrapping,
 };
 
+/**
+ * An IMPORTED-TEXTURE descriptor (direct-import milestone, V53): a captured glTF
+ * texture, `hash:''` + a `gltfTexture` index. Like a cleared slot it has no OPFS
+ * file — but its meaning is the OPPOSITE: INHERIT the clone's imported texture
+ * (leave the slot untouched), NOT remove it. It exists only to make the slot
+ * inspector-visible + DAG-addressable; the bytes ride in the embedded `.glb`.
+ * MUST be checked before {@link isClearedMap} (both share `hash:''`).
+ */
+export function isImportedMap(ref: BakedTextureRef | null | undefined): boolean {
+  return ref != null && ref.hash === '' && typeof ref.gltfTexture === 'number';
+}
+
+/** A CLEARED slot = empty hash AND no glTF-import identity (else it is an
+ *  imported descriptor, which inherits rather than removes — disambiguated
+ *  because both sentinels carry `hash:''`). */
 export function isClearedMap(ref: BakedTextureRef | null | undefined): boolean {
-  return ref != null && ref.hash === '';
+  return ref != null && ref.hash === '' && typeof ref.gltfTexture !== 'number';
 }
 
 /** IR map slot → the three.js material property it drives. */
@@ -56,10 +71,16 @@ const SLOT_TO_THREE_PROP: Record<MaterialMapSlot, keyof THREE.MeshStandardMateri
 
 const SLOTS = Object.keys(SLOT_TO_THREE_PROP) as MaterialMapSlot[];
 
-/** True iff any slot of this map set carries an edit (a real ref or a clear). */
+/** True iff any slot carries a real EDIT — a replacement ref or a clear. An
+ *  imported-texture descriptor is NOT an edit (it inherits the clone's texture),
+ *  so a freshly-imported textured material with only captured descriptors does
+ *  ZERO map work (the "unedited import pays zero cost" invariant holds). */
 export function hasMapEdits(maps: InlineMaterialMaps | undefined): boolean {
   if (!maps) return false;
-  return SLOTS.some((slot) => maps[slot] != null);
+  return SLOTS.some((slot) => {
+    const ref = maps[slot];
+    return ref != null && !isImportedMap(ref);
+  });
 }
 
 /**
@@ -83,6 +104,7 @@ export async function applyEditedMaps(
   for (const slot of SLOTS) {
     const ref = maps[slot];
     if (ref == null) continue; // inherit the imported texture
+    if (isImportedMap(ref)) continue; // captured descriptor → inherit (leave clone)
     const prop = SLOT_TO_THREE_PROP[slot];
     if (isClearedMap(ref)) {
       if (std[prop] != null) {

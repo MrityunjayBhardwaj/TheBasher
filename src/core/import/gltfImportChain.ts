@@ -455,6 +455,8 @@ function captureChildMaterials(
   json: {
     meshes?: { primitives?: { material?: number }[] }[];
     materials?: Parameters<typeof gltfJsonMaterialToOpenpbr>[0][];
+    textures?: { sampler?: number }[];
+    samplers?: { wrapS?: number; wrapT?: number }[];
   },
 ): InlineMaterialSpec[] | undefined {
   if (typeof node.mesh !== 'number') return undefined;
@@ -462,8 +464,14 @@ function captureChildMaterials(
   const prims = mesh?.primitives;
   if (!Array.isArray(prims) || prims.length === 0) return undefined;
   const mats = json.materials ?? [];
+  // The texture/sampler tables let the converter capture each material's texture
+  // slots → imported-texture descriptors (direct-import milestone, V53).
+  const tables = { textures: json.textures, samplers: json.samplers };
   return prims.map((p) =>
-    gltfJsonMaterialToOpenpbr(typeof p.material === 'number' ? (mats[p.material] ?? {}) : {}),
+    gltfJsonMaterialToOpenpbr(
+      typeof p.material === 'number' ? (mats[p.material] ?? {}) : {},
+      tables,
+    ),
   );
 }
 
