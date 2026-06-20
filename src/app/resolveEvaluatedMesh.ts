@@ -291,9 +291,13 @@ export function resolveEvaluatedMesh(
     const p = node.params as { count?: unknown; offset?: unknown };
     const count = typeof p.count === 'number' ? p.count : 3;
     const offset: Vec3 = isVec3(p.offset) ? p.offset : [2, 0, 0];
+    const geometry = arrayGeometryRef(source.geometry, count, offset);
     return {
-      geometry: arrayGeometryRef(source.geometry, count, offset),
-      uvs: null, // modified geometry's UVs are an async/registry follow-up
+      geometry,
+      // The modified geometry is SYNC-buildable (a box/sphere source), so its UVs
+      // (the merged source islands) come from the SAME registry path as Box/Sphere
+      // (#209 UV follow-up). A glTF/baked source still resolves to null upstream.
+      uvs: resolveRegistryUVs(geometry),
       material: source.material,
       transform: source.transform,
     };
@@ -315,9 +319,10 @@ export function resolveEvaluatedMesh(
     const p = node.params as { axis?: unknown; offset?: unknown };
     const axis: MirrorAxis = p.axis === 'y' || p.axis === 'z' ? p.axis : 'x';
     const offset = typeof p.offset === 'number' ? p.offset : 0;
+    const geometry = mirrorGeometryRef(source.geometry, axis, offset);
     return {
-      geometry: mirrorGeometryRef(source.geometry, axis, offset),
-      uvs: null, // modified geometry's UVs are an async/registry follow-up
+      geometry,
+      uvs: resolveRegistryUVs(geometry), // sync-buildable → real UV islands (#209 follow-up)
       material: source.material,
       transform: source.transform,
     };

@@ -110,6 +110,9 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
     const resolved = resolveEvaluatedMesh(state, MOD_ID, ctx);
     expect(resolved).not.toBeNull();
     expect(resolved!.geometry.kind).toBe('mirror');
+    // Sync-buildable modified geometry → real UV islands (not null) for the UV editor.
+    expect(resolved!.uvs).not.toBeNull();
+    expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
 
     // The evaluate path projects the SAME box (size [1,1,1]) with the same axis.
     const evald = evalMod({ axis: 'z', muted: false }, boxValue([0, 0, 0])) as ModifiedMeshValue;

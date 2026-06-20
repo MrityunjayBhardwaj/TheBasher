@@ -100,6 +100,10 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     const resolved = resolveEvaluatedMesh(state, MOD_ID, ctx);
     expect(resolved).not.toBeNull();
     expect(resolved!.geometry.kind).toBe('array');
+    // The modified geometry is sync-buildable → real UV islands (not null), so the
+    // UV-editor backdrop works for a modifier (#209 follow-up).
+    expect(resolved!.uvs).not.toBeNull();
+    expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
 
     // The evaluate path projects the SAME box (size [1,1,1]) with the same params.
     const evald = evalMod({ count: 4, offset: [3, 0, 0], muted: false }, boxValue([0, 0, 0])) as ModifiedMeshValue;
