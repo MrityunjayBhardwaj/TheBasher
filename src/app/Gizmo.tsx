@@ -57,6 +57,7 @@ import type { CharacterValue } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
 import { useEditorStore } from './stores/editorStore';
+import { isModifierNode, resolveStackBase } from './operatorStack';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
@@ -105,7 +106,19 @@ function getManipulable(node: Node | null): Manipulable | null {
 }
 
 export function Gizmo() {
-  const selectedId = useSelectionStore((s) => s.primaryNodeId);
+  const primarySelectedId = useSelectionStore((s) => s.primaryNodeId);
+  // When a geometry MODIFIER (Array/Mirror) is selected, the gizmo edits the BASE
+  // mesh's transform: the modifier inherits the source's TRS and renders the
+  // modified result THERE (resolveEvaluatedMesh), so dragging the base moves the
+  // whole result. The literal selection stays on the modifier (its stack UI +
+  // inspector params); only the gizmo's transform TARGET redirects to the base.
+  // Closes the #209 "gizmo inert on a selected modifier" known-limit. For a normal
+  // node, or a dangling modifier, this is identity (targets the selection itself).
+  const selectedId = useDagStore((s) => {
+    if (!primarySelectedId) return null;
+    const sel = s.state.nodes[primarySelectedId];
+    return isModifierNode(sel) ? resolveStackBase(s.state, primarySelectedId) : primarySelectedId;
+  });
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
   const mode = useGizmoStore((s) => s.mode);
   // ref-as-state — setting `groupNode` triggers a re-render so the
