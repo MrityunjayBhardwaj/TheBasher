@@ -137,4 +137,45 @@ test.describe('glTF spec/gloss .glb → metal-rough at ingest (#216)', () => {
       .poll(async () => (await meshes(page)).some((m) => m.hasMetalnessMap || m.hasRoughnessMap))
       .toBe(true);
   });
+
+  test('a coloured-specular metal bakes a base-color map from the specular (#218)', async ({
+    page,
+  }) => {
+    // The gold metal fixture: a solid-gold combined specularGlossinessTexture with
+    // a black diffuse — the tint lives ONLY in the specular channel. The old path
+    // kept the (black) diffuse as base color → the metal rendered near-black. #218
+    // reconstructs the base color from the specular and bakes it as a baseColorTexture.
+    await page.goto('/');
+    await page.waitForFunction(
+      () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
+    );
+    await page.evaluate(async () => {
+      const w = window as unknown as BasherWindow;
+      const bytes = new Uint8Array(
+        await fetch('/assets/specgloss-metal-quad.glb').then((r) => r.arrayBuffer()),
+      );
+      await w.__basher_ingestGltfFolder(
+        [{ relativePath: 'specgloss-metal-quad.glb', bytes }],
+        'specgloss-metal',
+      );
+    });
+
+    // side A — the metal has a BAKED base-color (albedo) map descriptor (sRGB),
+    // not the black diffuse it started with, plus the metalness map. metallicFactor
+    // is 1 (the texture carries the value).
+    await expect
+      .poll(async () => (await capturedMaterials(page))['SGMetal']?.maps?.albedo?.gltfTexture)
+      .toBeGreaterThanOrEqual(1);
+    const metal = (await capturedMaterials(page))['SGMetal'];
+    expect(metal.maps.albedo).toMatchObject({ hash: '', colorSpace: 'srgb' });
+    expect(metal.maps.metalness).toMatchObject({ hash: '', colorSpace: 'srgb-linear' });
+    expect(metal.base.metalness).toBe(1);
+
+    // side B — the rendered clone carries BOTH a base map and a metalness map (the
+    // baked base-color data-URI loaded; the metal renders with its gold tint).
+    await expect.poll(async () => (await meshes(page)).some((m) => m.hasMap)).toBe(true);
+    await expect
+      .poll(async () => (await meshes(page)).some((m) => m.hasMetalnessMap))
+      .toBe(true);
+  });
 });

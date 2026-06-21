@@ -17,6 +17,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import zlib from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const assets = join(here, '..', 'public', 'assets');
@@ -111,30 +112,133 @@ const json = {
   buffers: [{ byteLength: bin.byteLength }],
 };
 
-// Pack the GLB (glTF 2.0 §4.4): header | JSON chunk (space-padded) | BIN chunk.
-const enc = new TextEncoder();
-const jsonBytes = enc.encode(JSON.stringify(json));
-const pad = (n) => (4 - (n % 4)) % 4;
-const jsonChunkLen = jsonBytes.byteLength + pad(jsonBytes.byteLength);
-const binChunkLen = bin.byteLength + pad(bin.byteLength);
-const total = 12 + 8 + jsonChunkLen + 8 + binChunkLen;
+/** Pack a glTF JSON + BIN into GLB bytes (glTF 2.0 §4.4): header | JSON chunk
+ *  (space-padded) | BIN chunk (zero-padded). */
+function packGlb(jsonObj, binBytes) {
+  const jb = new TextEncoder().encode(JSON.stringify(jsonObj));
+  const pad = (n) => (4 - (n % 4)) % 4;
+  const jLen = jb.byteLength + pad(jb.byteLength);
+  const bLen = binBytes.byteLength + pad(binBytes.byteLength);
+  const total = 12 + 8 + jLen + 8 + bLen;
+  const out = new Uint8Array(total);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, 0x46546c67, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, total, true);
+  let c = 12;
+  dv.setUint32(c, jLen, true);
+  dv.setUint32(c + 4, 0x4e4f534a, true); // 'JSON'
+  out.set(jb, c + 8);
+  out.fill(0x20, c + 8 + jb.byteLength, c + 8 + jLen);
+  c += 8 + jLen;
+  dv.setUint32(c, bLen, true);
+  dv.setUint32(c + 4, 0x004e4942, true); // 'BIN\0'
+  out.set(binBytes, c + 8);
+  return out;
+}
 
-const out = new Uint8Array(total);
-const dv = new DataView(out.buffer);
-dv.setUint32(0, 0x46546c67, true); // 'glTF'
-dv.setUint32(4, 2, true);
-dv.setUint32(8, total, true);
-let c = 12;
-dv.setUint32(c, jsonChunkLen, true);
-dv.setUint32(c + 4, 0x4e4f534a, true); // 'JSON'
-out.set(jsonBytes, c + 8);
-out.fill(0x20, c + 8 + jsonBytes.byteLength, c + 8 + jsonChunkLen); // space pad
-c += 8 + jsonChunkLen;
-dv.setUint32(c, binChunkLen, true);
-dv.setUint32(c + 4, 0x004e4942, true); // 'BIN\0'
-out.set(bin, c + 8);
-// (BIN tail already zero from Uint8Array init)
+const dielectric = packGlb(json, bin);
+writeFileSync(join(assets, 'specgloss-quad.glb'), dielectric);
+console.log(
+  `wrote specgloss-quad.glb (${dielectric.byteLength} bytes; BIN ${bin.byteLength}, image @${imageOffset}+${pngBytes.byteLength})`,
+);
 
-const target = join(assets, 'specgloss-quad.glb');
-writeFileSync(target, out);
-console.log(`wrote ${target} (${out.byteLength} bytes; BIN ${bin.byteLength}, image @${imageOffset}+${pngBytes.byteLength})`);
+// ── Metal variant (#218): a SOLID-GOLD combined specularGlossinessTexture (the
+// tint lives in the SPECULAR channel, diffuse is black) → the conversion solves
+// to a metal and bakes a base-color map from the specular. Encodes a tiny solid
+// PNG so the metallic solve is deterministic (no reliance on the reused image). ──
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([len, body, crc]);
+}
+/** Encode a solid w×h RGBA PNG (8-bit, color type 6). */
+function solidPng(w, h, [r, g, b, a]) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  const raw = Buffer.alloc(h * (1 + w * 4));
+  for (let y = 0; y < h; y++) {
+    const row = y * (1 + w * 4);
+    raw[row] = 0; // filter: none
+    for (let x = 0; x < w; x++) {
+      const p = row + 1 + x * 4;
+      raw[p] = r;
+      raw[p + 1] = g;
+      raw[p + 2] = b;
+      raw[p + 3] = a;
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+const goldPng = new Uint8Array(solidPng(4, 4, [255, 200, 80, 255])); // gold, opaque
+const metalBin = new Uint8Array(geomBytes.byteLength + goldPng.byteLength);
+metalBin.set(geomBytes, 0);
+metalBin.set(goldPng, geomBytes.byteLength);
+const metalJson = {
+  asset: { version: '2.0', generator: 'basher-specgloss-glb-metal-fixture' },
+  extensionsUsed: ['KHR_materials_pbrSpecularGlossiness'],
+  extensionsRequired: ['KHR_materials_pbrSpecularGlossiness'],
+  scene: 0,
+  scenes: [{ nodes: [0] }],
+  nodes: [{ mesh: 0, name: 'SGMetalQuad' }],
+  meshes: [
+    {
+      name: 'SGMetalQuad',
+      primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, indices: 2, material: 0 }],
+    },
+  ],
+  materials: [
+    {
+      name: 'SGMetal',
+      extensions: {
+        KHR_materials_pbrSpecularGlossiness: {
+          diffuseFactor: [0, 0, 0, 1], // black diffuse — the tint is in specular
+          specularGlossinessTexture: { index: 0 },
+          specularFactor: [1, 1, 1],
+          glossinessFactor: 0.9,
+        },
+      },
+    },
+  ],
+  images: [{ bufferView: 3, mimeType: 'image/png' }],
+  textures: [{ sampler: 0, source: 0 }],
+  samplers: [{ magFilter: 9728, minFilter: 9728, wrapS: 10497, wrapT: 10497 }],
+  accessors: json.accessors,
+  bufferViews: [
+    { buffer: 0, byteOffset: 0, byteLength: 48 },
+    { buffer: 0, byteOffset: 48, byteLength: 32 },
+    { buffer: 0, byteOffset: 80, byteLength: 12 },
+    { buffer: 0, byteOffset: geomBytes.byteLength, byteLength: goldPng.byteLength },
+  ],
+  buffers: [{ byteLength: metalBin.byteLength }],
+};
+const metal = packGlb(metalJson, metalBin);
+writeFileSync(join(assets, 'specgloss-metal-quad.glb'), metal);
+console.log(`wrote specgloss-metal-quad.glb (${metal.byteLength} bytes; gold PNG ${goldPng.byteLength})`);

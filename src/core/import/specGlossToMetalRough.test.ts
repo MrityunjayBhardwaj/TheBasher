@@ -13,6 +13,7 @@ import {
   solveMetallic,
   specGlossFactorsToMetalRough,
   specGlossPixelsToMetalRough,
+  specGlossPixelsToMetalRoughAndBase,
   convertSpecGlossDocument,
   type GltfDoc,
 } from './specGlossToMetalRough';
@@ -231,5 +232,63 @@ describe('specGlossPixelsToMetalRough', () => {
     const out = specGlossPixelsToMetalRough(spec, diffuse, [1, 1, 1], 0.5, false);
     expect(out[1]).toBe(Math.round(0.5 * 255)); // roughness = 1 - gloss
     expect(out[2]).toBeLessThan(40); // near-floor specular → low metalness
+  });
+});
+
+describe('specGlossPixelsToMetalRoughAndBase — base-color bake (#218)', () => {
+  it('a coloured-specular METAL reconstructs base color from the SPECULAR channel', () => {
+    // Gold: bright coloured specular, ~black diffuse (the tint lives in specular).
+    const spec = new Uint8ClampedArray([255, 200, 80, 255]);
+    const diffuse = new Uint8ClampedArray([0, 0, 0, 255]);
+    const { base, maxMetallic } = specGlossPixelsToMetalRoughAndBase(
+      spec,
+      diffuse,
+      [0, 0, 0],
+      1,
+      false,
+    );
+    expect(maxMetallic).toBeGreaterThan(0.9); // solves to a metal
+    // base ≈ the specular colour (gold), NOT the black diffuse the old path kept.
+    expect(base[0]).toBeGreaterThan(200); // R high
+    expect(base[1]).toBeGreaterThan(150); // G mid-high
+    expect(base[2]).toBeLessThan(140); // B lower (gold tint)
+  });
+
+  it('a DIELECTRIC keeps base ≈ diffuse and reports ~0 metallic (no base bake)', () => {
+    // Low specular (below the 0.04 floor) + a red diffuse → dielectric.
+    const spec = new Uint8ClampedArray([6, 6, 6, 255]);
+    const diffuse = new Uint8ClampedArray([200, 40, 40, 255]);
+    const { base, maxMetallic } = specGlossPixelsToMetalRoughAndBase(
+      spec,
+      diffuse,
+      [1, 1, 1],
+      0.5,
+      false,
+    );
+    expect(maxMetallic).toBe(0); // sub-floor specular → fully dielectric
+    expect(base[0]).toBeGreaterThan(180); // base ≈ the red diffuse
+    expect(base[1]).toBeLessThan(80);
+    expect(base[2]).toBeLessThan(80);
+  });
+
+  it('maxMetallic is the PEAK across texels (mixed metal + dielectric)', () => {
+    // Texel 0 dielectric (low spec), texel 1 metal (bright spec).
+    const spec = new Uint8ClampedArray([5, 5, 5, 255, 240, 240, 240, 255]);
+    const { maxMetallic } = specGlossPixelsToMetalRoughAndBase(
+      spec,
+      null,
+      [0.5, 0.5, 0.5],
+      1,
+      false,
+    );
+    expect(maxMetallic).toBeGreaterThan(0.5); // the metal texel drives the peak
+  });
+
+  it('the .mr output matches the back-compat specGlossPixelsToMetalRough wrapper', () => {
+    const spec = new Uint8ClampedArray([200, 180, 60, 255]);
+    const diffuse = new Uint8ClampedArray([20, 20, 20, 255]);
+    const { mr } = specGlossPixelsToMetalRoughAndBase(spec, diffuse, [1, 1, 1], 0.8, false);
+    const legacy = specGlossPixelsToMetalRough(spec, diffuse, [1, 1, 1], 0.8, false);
+    expect(Array.from(mr)).toEqual(Array.from(legacy));
   });
 });

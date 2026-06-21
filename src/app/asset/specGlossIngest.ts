@@ -42,7 +42,7 @@
 import {
   hasSpecGlossMaterials,
   convertSpecGlossDocument,
-  specGlossPixelsToMetalRough,
+  specGlossPixelsToMetalRoughAndBase,
   type GltfDoc,
   type CombinedTextureMaterial,
 } from '../../core/import/specGlossToMetalRough';
@@ -162,11 +162,26 @@ interface ImageSource {
   mime: string;
 }
 
+/** Peak metallic above which the combined-texture material is treated as a metal
+ *  and gets a baked base-color map (#218). Below it the material is dielectric →
+ *  base ≈ diffuse, so the original diffuse texture is kept (no re-encode, no extra
+ *  texture). 0.05 = 5% metallic, comfortably above solve noise for a dielectric. */
+const METAL_BASE_BAKE_THRESHOLD = 0.05;
+
+/** The encoded combined-texture maps: the metallic-roughness PNG (always) and,
+ *  for a coloured-specular metal, the reconstructed base-color PNG (#218). */
+interface BakedCombinedMaps {
+  mrPng: Uint8Array;
+  /** null for a dielectric (keep the diffuse texture as base color). */
+  basePng: Uint8Array | null;
+}
+
 /**
  * The container-agnostic bake: decode the combined specularGlossinessTexture (+
  * the optional diffuse texture, resampled to its dimensions), run the per-texel
- * Khronos conversion, and encode the result as a PNG (linear MR data). Returns
- * null when the spec image can't be decoded (the caller degrades to the
+ * Khronos conversion, and encode the metallic-roughness PNG (always) plus — when
+ * the material has metal content (#218) — the reconstructed base-color PNG.
+ * Returns null when the spec image can't be decoded (the caller degrades to the
  * factor-only conversion, V38). Shared by the `.gltf` and `.glb` paths — only
  * how `specSource`/`diffuseSource` are RESOLVED differs (sibling file vs BIN
  * bufferView).
@@ -175,7 +190,7 @@ async function bakeMetalRoughPng(
   specSource: ImageSource,
   diffuseSource: ImageSource | null,
   mat: CombinedTextureMaterial,
-): Promise<Uint8Array | null> {
+): Promise<BakedCombinedMaps | null> {
   const spec = await decodeImageToRgba(specSource.bytes, specSource.mime);
   if (!spec) return null;
 
@@ -193,24 +208,25 @@ async function bakeMetalRoughPng(
   // JPEG carries no alpha → glossiness comes from the factor; PNG/webp carry the
   // glossiness in alpha (the spec/gloss convention).
   const glossFromAlpha = specSource.mime !== 'image/jpeg';
-  const mr = specGlossPixelsToMetalRough(
+  const { mr, base, maxMetallic } = specGlossPixelsToMetalRoughAndBase(
     spec.data,
     diffuse,
     [mat.diffuseFactor[0], mat.diffuseFactor[1], mat.diffuseFactor[2]],
     mat.glossinessFactor,
     glossFromAlpha,
   );
-  return encodeRgbaToPng(mr, spec.width, spec.height);
+  const mrPng = await encodeRgbaToPng(mr, spec.width, spec.height);
+  const basePng =
+    maxMetallic > METAL_BASE_BAKE_THRESHOLD
+      ? await encodeRgbaToPng(base, spec.width, spec.height)
+      : null;
+  return { mrPng, basePng };
 }
 
-/**
- * Wire a baked MR texture (already encoded, referenced by `uri` — a sibling
- * filename for `.gltf` or a `data:` URI for `.glb`) into the document: append an
- * image + texture (reusing the spec texture's sampler), point the material's
- * metallicRoughnessTexture at it, and set the factors to 1× (the value now lives
- * in the texture). Shared by both container paths.
- */
-function wireBakedMrTexture(doc: GltfDoc, mat: CombinedTextureMaterial, uri: string): void {
+/** Append an image + texture for a baked map (reusing the combined-texture's
+ *  sampler) and return the new glTF texture index. `uri` is a sibling filename
+ *  for `.gltf` or a `data:` URI for `.glb`. */
+function pushBakedTexture(doc: GltfDoc, mat: CombinedTextureMaterial, uri: string): number {
   doc.images = doc.images ?? [];
   doc.textures = doc.textures ?? [];
   doc.images.push({ uri, mimeType: 'image/png' });
@@ -220,12 +236,32 @@ function wireBakedMrTexture(doc: GltfDoc, mat: CombinedTextureMaterial, uri: str
     source: newImageIndex,
     ...(typeof specTexture?.sampler === 'number' ? { sampler: specTexture.sampler } : {}),
   });
-  const newTextureIndex = doc.textures.length - 1;
+  return doc.textures.length - 1;
+}
 
+/**
+ * Wire the baked combined-texture maps into the document: the metallicRoughnessTexture
+ * (always; factors → 1× since the value now lives in the texture) and, for a
+ * coloured-specular metal (#218), the reconstructed baseColorTexture (which
+ * SUPERSEDES the diffuse→baseColorTexture rename and neutralises the RGB factor,
+ * keeping alpha as opacity). Shared by both container paths.
+ */
+function wireBakedMrTexture(
+  doc: GltfDoc,
+  mat: CombinedTextureMaterial,
+  mrUri: string,
+  baseUri: string | null,
+): void {
   const pbr = (doc.materials![mat.materialIndex].pbrMetallicRoughness ??= {});
-  pbr.metallicRoughnessTexture = { index: newTextureIndex };
+  pbr.metallicRoughnessTexture = { index: pushBakedTexture(doc, mat, mrUri) };
   pbr.metallicFactor = 1;
   pbr.roughnessFactor = 1;
+  if (baseUri) {
+    pbr.baseColorTexture = { index: pushBakedTexture(doc, mat, baseUri) };
+    const f = pbr.baseColorFactor;
+    const alpha = Array.isArray(f) && typeof f[3] === 'number' ? f[3] : 1;
+    pbr.baseColorFactor = [1, 1, 1, alpha];
+  }
 }
 
 /**
@@ -239,21 +275,29 @@ async function bakeCombinedTextureGltf(
   mat: CombinedTextureMaterial,
   entryPath: string,
   fileMap: Map<string, Uint8Array>,
-): Promise<{ relativePath: string; bytes: Uint8Array } | null> {
+): Promise<{ relativePath: string; bytes: Uint8Array }[]> {
   const specSource = resolveTextureBytes(doc, mat.specGlossTextureIndex, entryPath, fileMap);
-  if (!specSource) return null;
+  if (!specSource) return [];
   const diffuseSource =
     typeof mat.diffuseTextureIndex === 'number'
       ? resolveTextureBytes(doc, mat.diffuseTextureIndex, entryPath, fileMap)
       : null;
 
-  const pngBytes = await bakeMetalRoughPng(specSource, diffuseSource, mat);
-  if (!pngBytes) return null;
+  const baked = await bakeMetalRoughPng(specSource, diffuseSource, mat);
+  if (!baked) return [];
 
-  // URI relative to the .gltf dir; the baked PNG rides as a sibling file.
-  const uri = `basher-mr-${mat.materialIndex}.png`;
-  wireBakedMrTexture(doc, mat, uri);
-  return { relativePath: opfsSiblingPath(entryPath, uri), bytes: pngBytes };
+  // The baked maps ride as sibling files (relative to the .gltf dir). The base
+  // map is present only for a coloured-specular metal (#218).
+  const files: { relativePath: string; bytes: Uint8Array }[] = [];
+  const mrUri = `basher-mr-${mat.materialIndex}.png`;
+  files.push({ relativePath: opfsSiblingPath(entryPath, mrUri), bytes: baked.mrPng });
+  let baseUri: string | null = null;
+  if (baked.basePng) {
+    baseUri = `basher-base-${mat.materialIndex}.png`;
+    files.push({ relativePath: opfsSiblingPath(entryPath, baseUri), bytes: baked.basePng });
+  }
+  wireBakedMrTexture(doc, mat, mrUri, baseUri);
+  return files;
 }
 
 /**
@@ -285,7 +329,7 @@ export async function convertSpecGlossGltfFiles(
     for (const mat of combinedTextureMaterials) {
       try {
         const baked = await bakeCombinedTextureGltf(doc, mat, entry.relativePath, fileMap);
-        if (baked) extraFiles.push(baked);
+        extraFiles.push(...baked);
       } catch {
         // Degrade to the factor-only conversion already in `doc` (V38). The
         // import stays faithful; only the MR detail map for this material drops.
@@ -397,9 +441,13 @@ export async function convertSpecGlossGlb(entry: IngestFile): Promise<SpecGlossI
         typeof mat.diffuseTextureIndex === 'number'
           ? resolveGlbTextureBytes(doc, mat.diffuseTextureIndex, bin)
           : null;
-      const pngBytes = await bakeMetalRoughPng(specSource, diffuseSource, mat);
-      if (!pngBytes) continue;
-      wireBakedMrTexture(doc, mat, `data:image/png;base64,${bytesToBase64(pngBytes)}`);
+      const baked = await bakeMetalRoughPng(specSource, diffuseSource, mat);
+      if (!baked) continue;
+      const mrUri = `data:image/png;base64,${bytesToBase64(baked.mrPng)}`;
+      const baseUri = baked.basePng
+        ? `data:image/png;base64,${bytesToBase64(baked.basePng)}`
+        : null;
+      wireBakedMrTexture(doc, mat, mrUri, baseUri);
     } catch {
       // Degrade to the factor-only conversion already in `doc` (V38).
     }

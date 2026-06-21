@@ -268,8 +268,49 @@ export function specGlossPixelsToMetalRough(
   glossiness: number,
   glossFromAlpha: boolean,
 ): Uint8ClampedArray {
+  return specGlossPixelsToMetalRoughAndBase(
+    spec,
+    diffuse,
+    diffuseFactor,
+    glossiness,
+    glossFromAlpha,
+  ).mr;
+}
+
+/** The per-texel bake outputs: the metallic-roughness map, the reconstructed
+ *  base-color map, and the peak metallic across all texels (the caller bakes the
+ *  base map only when this exceeds a threshold — a fully-dielectric material keeps
+ *  its original diffuse texture). */
+export interface MetalRoughBaseBake {
+  /** metallicRoughnessTexture RGBA (R=AO white, G=roughness, B=metalness) — LINEAR. */
+  mr: Uint8ClampedArray;
+  /** baseColorTexture RGBA (the reconstructed albedo, A=255) — sRGB color data, in
+   *  the SAME raw working space as the diffuse input (the Khronos approximation). */
+  base: Uint8ClampedArray;
+  /** Peak metallic 0..1 across all texels — drives the "is this a metal?" gate. */
+  maxMetallic: number;
+}
+
+/**
+ * The full combined-texture bake: metallic-roughness AND the reconstructed
+ * base-color, per texel, sharing the ONE `specGlossToMetalRough` core (so the MR
+ * map and the base map can't diverge). For a coloured-specular METAL the base
+ * color comes from the SPECULAR channel (the metal's tint), which the diffuse
+ * texture does not carry — this is what `specGlossPixelsToMetalRough` discards.
+ * Reports `maxMetallic` so the caller skips the base bake for a dielectric (whose
+ * base ≈ diffuse — re-baking would only re-encode + add a texture for no gain).
+ */
+export function specGlossPixelsToMetalRoughAndBase(
+  spec: Uint8ClampedArray,
+  diffuse: Uint8ClampedArray | null,
+  diffuseFactor: readonly [number, number, number],
+  glossiness: number,
+  glossFromAlpha: boolean,
+): MetalRoughBaseBake {
   const n = spec.length; // 4 per texel (RGBA)
-  const out = new Uint8ClampedArray(n);
+  const mr = new Uint8ClampedArray(n);
+  const base = new Uint8ClampedArray(n);
+  let maxMetallic = 0;
   for (let i = 0; i < n; i += 4) {
     const specRgb: [number, number, number] = [
       spec[i] / 255,
@@ -280,13 +321,18 @@ export function specGlossPixelsToMetalRough(
     const diffRgb: [number, number, number] = diffuse
       ? [diffuse[i] / 255, diffuse[i + 1] / 255, diffuse[i + 2] / 255]
       : [diffuseFactor[0], diffuseFactor[1], diffuseFactor[2]];
-    const { metallic, roughness } = specGlossToMetalRough(diffRgb, specRgb, gloss);
-    out[i] = 255; // R: AO unused (white)
-    out[i + 1] = Math.round(roughness * 255); // G: roughness
-    out[i + 2] = Math.round(metallic * 255); // B: metalness
-    out[i + 3] = 255; // A
+    const { baseColor, metallic, roughness } = specGlossToMetalRough(diffRgb, specRgb, gloss);
+    mr[i] = 255; // R: AO unused (white)
+    mr[i + 1] = Math.round(roughness * 255); // G: roughness
+    mr[i + 2] = Math.round(metallic * 255); // B: metalness
+    mr[i + 3] = 255; // A
+    base[i] = Math.round(baseColor[0] * 255);
+    base[i + 1] = Math.round(baseColor[1] * 255);
+    base[i + 2] = Math.round(baseColor[2] * 255);
+    base[i + 3] = 255;
+    if (metallic > maxMetallic) maxMetallic = metallic;
   }
-  return out;
+  return { mr, base, maxMetallic };
 }
 
 /** Strip a value from a string list; returns undefined when the list empties
