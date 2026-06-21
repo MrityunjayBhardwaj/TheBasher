@@ -86,9 +86,30 @@ export interface GltfDocMaterial {
   [k: string]: unknown;
 }
 
+/** A glTF image / texture / sampler entry (the fields the combined-texture pixel
+ *  pass appends when it bakes a new metallic-roughness texture). */
+export interface GltfImage {
+  uri?: string;
+  mimeType?: string;
+  [k: string]: unknown;
+}
+export interface GltfTexture {
+  source?: number;
+  sampler?: number;
+  [k: string]: unknown;
+}
+export interface GltfSampler {
+  wrapS?: number;
+  wrapT?: number;
+  [k: string]: unknown;
+}
+
 /** A glTF document object (the top-level fields this converter touches). */
 export interface GltfDoc {
   materials?: GltfDocMaterial[];
+  images?: GltfImage[];
+  textures?: GltfTexture[];
+  samplers?: GltfSampler[];
   extensionsUsed?: string[];
   extensionsRequired?: string[];
   [k: string]: unknown;
@@ -137,6 +158,51 @@ export function solveMetallic(
   return clamp01((-b + Math.sqrt(discriminant)) / (2 * a));
 }
 
+/** The metal-rough values a spec/gloss (diffuse, specular, glossiness) triple
+ *  reduces to — the shared core consumed by BOTH the factor path and the
+ *  per-texel texture path, so they cannot diverge (one Khronos formula). */
+export interface MetalRoughValue {
+  baseColor: [number, number, number];
+  metallic: number;
+  roughness: number;
+}
+
+/**
+ * The ONE Khronos spec/gloss → metal-rough conversion (the per-component core).
+ * All RGB inputs are linear 0..1; glossiness 0..1. Reconstructs base color from
+ * BOTH the diffuse and the specular reflectance, lerped by metallic² so a metal
+ * (high coloured specular) keeps its tint while a dielectric keeps its albedo.
+ * roughness = 1 - glossiness. Used for the material factors AND for each texel
+ * of a combined specularGlossinessTexture.
+ */
+export function specGlossToMetalRough(
+  diffuse: readonly [number, number, number],
+  specular: readonly [number, number, number],
+  glossiness: number,
+): MetalRoughValue {
+  const specularStrength = Math.max(specular[0], specular[1], specular[2]);
+  const oneMinusSpecularStrength = 1 - specularStrength;
+  const metallic = solveMetallic(
+    perceivedBrightness(diffuse),
+    perceivedBrightness(specular),
+    oneMinusSpecularStrength,
+  );
+
+  const baseColor: [number, number, number] = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    const fromDiffuse =
+      (diffuse[i] * oneMinusSpecularStrength) /
+      (1 - DIELECTRIC_SPECULAR) /
+      Math.max(1 - metallic, EPSILON);
+    const fromSpecular =
+      (specular[i] - DIELECTRIC_SPECULAR * (1 - metallic)) / Math.max(metallic, EPSILON);
+    const t = metallic * metallic;
+    baseColor[i] = clamp01(fromDiffuse * (1 - t) + fromSpecular * t);
+  }
+
+  return { baseColor, metallic, roughness: clamp01(1 - glossiness) };
+}
+
 /** The metal-rough factors a spec/gloss material's FACTORS reduce to (the
  *  texture-independent part — exported for the boundary-pair test). */
 export interface MetalRoughFactors {
@@ -146,10 +212,8 @@ export interface MetalRoughFactors {
 }
 
 /**
- * Convert spec/gloss FACTORS → metal-rough factors (the full Khronos
- * approximation). Reconstructs base color from BOTH the diffuse and the
- * specular reflectance, lerped by metallic² so a metal (high coloured specular)
- * keeps its tint while a dielectric keeps its albedo. roughness = 1 - glossiness.
+ * Convert spec/gloss FACTORS → metal-rough factors (delegates to the shared
+ * `specGlossToMetalRough` core + carries diffuse alpha through as opacity).
  */
 export function specGlossFactorsToMetalRough(
   diffuseFactor: readonly number[] = [1, 1, 1, 1],
@@ -167,35 +231,61 @@ export function specGlossFactorsToMetalRough(
     specularFactor[1] ?? 1,
     specularFactor[2] ?? 1,
   ];
-
-  const specularStrength = Math.max(specular[0], specular[1], specular[2]);
-  const oneMinusSpecularStrength = 1 - specularStrength;
-  const metallic = solveMetallic(
-    perceivedBrightness(diffuse),
-    perceivedBrightness(specular),
-    oneMinusSpecularStrength,
+  const { baseColor, metallic, roughness } = specGlossToMetalRough(
+    diffuse,
+    specular,
+    glossinessFactor,
   );
-
-  // Reconstruct base color from the diffuse side and the specular side, then
-  // lerp by metallic² (the Khronos blend — biases toward albedo until clearly
-  // metallic). Clamp each channel to [0,1].
-  const baseColor: [number, number, number] = [0, 0, 0];
-  for (let i = 0; i < 3; i++) {
-    const fromDiffuse =
-      (diffuse[i] * oneMinusSpecularStrength) /
-      (1 - DIELECTRIC_SPECULAR) /
-      Math.max(1 - metallic, EPSILON);
-    const fromSpecular =
-      (specular[i] - DIELECTRIC_SPECULAR * (1 - metallic)) / Math.max(metallic, EPSILON);
-    const t = metallic * metallic;
-    baseColor[i] = clamp01(fromDiffuse * (1 - t) + fromSpecular * t);
-  }
-
   return {
     baseColorFactor: [baseColor[0], baseColor[1], baseColor[2], opacity],
     metallicFactor: metallic,
-    roughnessFactor: clamp01(1 - glossinessFactor),
+    roughnessFactor: roughness,
   };
+}
+
+/**
+ * Convert a combined specularGlossinessTexture (+ optional resampled diffuse) to
+ * a metallic-roughness texture, per texel. RGBA inputs are 0..255 (sRGB-decoded
+ * is unnecessary — perceived-brightness on raw 0..1 is the Khronos convention).
+ *
+ *   spec:    RGBA of the specularGlossinessTexture (RGB = specular, A = gloss)
+ *   diffuse: RGBA diffuse texture resampled to the SAME dimensions, or null →
+ *            use `diffuseFactor` for every texel (the common case: a material
+ *            with a spec/gloss map but only a diffuse FACTOR).
+ *   glossFromAlpha: true when the spec/gloss image carries an alpha channel
+ *            (PNG); false (e.g. JPEG) → glossiness is the constant `glossiness`.
+ *
+ * Output RGBA is the glTF metallicRoughnessTexture convention: R = AO (unused,
+ * left 255/white), G = roughness, B = metalness, A = 255. The texture is LINEAR
+ * data (the caller must encode it losslessly — PNG, never JPEG — and mark it
+ * NoColorSpace; GLTFLoader already treats metallicRoughnessTexture as linear).
+ */
+export function specGlossPixelsToMetalRough(
+  spec: Uint8ClampedArray,
+  diffuse: Uint8ClampedArray | null,
+  diffuseFactor: readonly [number, number, number],
+  glossiness: number,
+  glossFromAlpha: boolean,
+): Uint8ClampedArray {
+  const n = spec.length; // 4 per texel (RGBA)
+  const out = new Uint8ClampedArray(n);
+  for (let i = 0; i < n; i += 4) {
+    const specRgb: [number, number, number] = [
+      spec[i] / 255,
+      spec[i + 1] / 255,
+      spec[i + 2] / 255,
+    ];
+    const gloss = glossFromAlpha ? spec[i + 3] / 255 : glossiness;
+    const diffRgb: [number, number, number] = diffuse
+      ? [diffuse[i] / 255, diffuse[i + 1] / 255, diffuse[i + 2] / 255]
+      : [diffuseFactor[0], diffuseFactor[1], diffuseFactor[2]];
+    const { metallic, roughness } = specGlossToMetalRough(diffRgb, specRgb, gloss);
+    out[i] = 255; // R: AO unused (white)
+    out[i + 1] = Math.round(roughness * 255); // G: roughness
+    out[i + 2] = Math.round(metallic * 255); // B: metalness
+    out[i + 3] = 255; // A
+  }
+  return out;
 }
 
 /** Strip a value from a string list; returns undefined when the list empties
@@ -206,14 +296,30 @@ function withoutExtension(list: string[] | undefined, ext: string): string[] | u
   return next.length > 0 ? next : undefined;
 }
 
-/** The result of a document conversion: the new document + the material indices
- *  that carried a combined `specularGlossinessTexture` (their MR map needs the
- *  per-pixel pass — increment 2; their factors + diffuseTexture are converted
- *  here). */
+/** A spec/gloss material that carried a combined `specularGlossinessTexture` —
+ *  everything the per-pixel pass (increment 2, app layer) needs to bake a
+ *  metallic-roughness texture. Captured BEFORE the extension is stripped from
+ *  the document; the factors + diffuseTexture are already converted in `doc`. */
+export interface CombinedTextureMaterial {
+  /** Index into `doc.materials`. */
+  materialIndex: number;
+  /** glTF texture index of the combined specularGlossinessTexture (RGB = spec,
+   *  A = gloss). */
+  specGlossTextureIndex: number;
+  /** glTF texture index of the diffuse texture, if any (resampled per-texel for
+   *  the metallic solve; absent → use `diffuseFactor`). */
+  diffuseTextureIndex?: number;
+  diffuseFactor: [number, number, number, number];
+  specularFactor: [number, number, number];
+  glossinessFactor: number;
+}
+
+/** The result of a document conversion: the new document + the combined-texture
+ *  materials whose MR map needs the per-pixel pass (their factors + diffuseTexture
+ *  are already converted in `doc`). */
 export interface SpecGlossConversionResult {
   doc: GltfDoc;
-  /** Material indices whose spec/gloss used a combined specularGlossinessTexture. */
-  combinedTextureMaterials: number[];
+  combinedTextureMaterials: CombinedTextureMaterial[];
 }
 
 /**
@@ -226,7 +332,7 @@ export interface SpecGlossConversionResult {
  */
 export function convertSpecGlossDocument(input: GltfDoc): SpecGlossConversionResult {
   const doc = structuredClone(input) as GltfDoc;
-  const combinedTextureMaterials: number[] = [];
+  const combinedTextureMaterials: CombinedTextureMaterial[] = [];
 
   const materials = doc.materials ?? [];
   for (let i = 0; i < materials.length; i++) {
@@ -253,8 +359,26 @@ export function convertSpecGlossDocument(input: GltfDoc): SpecGlossConversionRes
     if (sg.diffuseTexture) {
       pbr.baseColorTexture = sg.diffuseTexture;
     }
-    if (sg.specularGlossinessTexture) {
-      combinedTextureMaterials.push(i);
+    if (typeof sg.specularGlossinessTexture?.index === 'number') {
+      combinedTextureMaterials.push({
+        materialIndex: i,
+        specGlossTextureIndex: sg.specularGlossinessTexture.index,
+        ...(typeof sg.diffuseTexture?.index === 'number'
+          ? { diffuseTextureIndex: sg.diffuseTexture.index }
+          : {}),
+        diffuseFactor: [
+          sg.diffuseFactor?.[0] ?? 1,
+          sg.diffuseFactor?.[1] ?? 1,
+          sg.diffuseFactor?.[2] ?? 1,
+          sg.diffuseFactor?.[3] ?? 1,
+        ],
+        specularFactor: [
+          sg.specularFactor?.[0] ?? 1,
+          sg.specularFactor?.[1] ?? 1,
+          sg.specularFactor?.[2] ?? 1,
+        ],
+        glossinessFactor: sg.glossinessFactor ?? 1,
+      });
     }
     mat.pbrMetallicRoughness = pbr;
 
@@ -274,40 +398,4 @@ export function convertSpecGlossDocument(input: GltfDoc): SpecGlossConversionRes
   if (doc.extensionsRequired === undefined) delete doc.extensionsRequired;
 
   return { doc, combinedTextureMaterials };
-}
-
-/** The bytes-level result of converting a `.gltf` entry file (the ingest seam). */
-export interface SpecGlossBytesConversion {
-  /** The converted JSON bytes when `converted`, else the input bytes verbatim. */
-  bytes: Uint8Array;
-  /** True iff the document carried spec/gloss and was rewritten. */
-  converted: boolean;
-  /** Material indices needing the combined-texture pixel pass (increment 2). */
-  combinedTextureMaterials: number[];
-}
-
-/**
- * Parse a JSON-only `.gltf` entry's bytes, convert any spec/gloss materials to
- * metal-rough, and re-serialize. A no-op (returns the input bytes, converted:
- * false) when the bytes aren't valid JSON, aren't a glTF object, or carry no
- * spec/gloss — so it is safe to call on every `.gltf` entry at ingest. GLB
- * (`.glb`) is NOT handled here (it needs a binary re-pack — deferred, #214); the
- * caller gates on the `.gltf` extension.
- */
-export function convertSpecGlossGltfBytes(bytes: Uint8Array): SpecGlossBytesConversion {
-  let doc: unknown;
-  try {
-    doc = JSON.parse(new TextDecoder('utf-8').decode(bytes));
-  } catch {
-    return { bytes, converted: false, combinedTextureMaterials: [] };
-  }
-  if (doc === null || typeof doc !== 'object' || !hasSpecGlossMaterials(doc as GltfDoc)) {
-    return { bytes, converted: false, combinedTextureMaterials: [] };
-  }
-  const { doc: out, combinedTextureMaterials } = convertSpecGlossDocument(doc as GltfDoc);
-  return {
-    bytes: new TextEncoder().encode(JSON.stringify(out)),
-    converted: true,
-    combinedTextureMaterials,
-  };
 }

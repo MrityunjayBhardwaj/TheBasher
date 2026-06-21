@@ -12,8 +12,8 @@ import {
   hasSpecGlossMaterials,
   solveMetallic,
   specGlossFactorsToMetalRough,
+  specGlossPixelsToMetalRough,
   convertSpecGlossDocument,
-  convertSpecGlossGltfBytes,
   type GltfDoc,
 } from './specGlossToMetalRough';
 
@@ -131,13 +131,18 @@ describe('convertSpecGlossDocument', () => {
     expect(doc.extensionsUsed).toEqual(['KHR_materials_ior']);
   });
 
-  it('flags combined-texture materials and converts their diffuseTexture now', () => {
+  it('flags combined-texture materials with the info the pixel pass needs', () => {
     const { doc, combinedTextureMaterials } = convertSpecGlossDocument(gasStationLikeDoc());
-    expect(combinedTextureMaterials).toEqual([1]);
+    expect(combinedTextureMaterials).toHaveLength(1);
+    const c = combinedTextureMaterials[0];
+    expect(c.materialIndex).toBe(1);
+    expect(c.specGlossTextureIndex).toBe(3);
+    expect(c.diffuseTextureIndex).toBe(2);
+    expect(c.glossinessFactor).toBe(1);
     const m1 = doc.materials![1];
-    // diffuseTexture is converted in increment 1...
+    // diffuseTexture is converted to baseColorTexture in the factor pass...
     expect(m1.pbrMetallicRoughness!.baseColorTexture).toEqual({ index: 2 });
-    // ...but the combined MR map is left for the pixel pass (increment 2).
+    // ...the combined MR map is left for the per-pixel pass (app orchestrator).
     expect(m1.pbrMetallicRoughness!.metallicRoughnessTexture).toBeUndefined();
   });
 
@@ -172,29 +177,37 @@ describe('hasSpecGlossMaterials', () => {
   });
 });
 
-describe('convertSpecGlossGltfBytes', () => {
-  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
-
-  it('converts spec-gloss entry bytes and reports combined-texture materials', () => {
-    const r = convertSpecGlossGltfBytes(enc(gasStationLikeDoc()));
-    expect(r.converted).toBe(true);
-    expect(r.combinedTextureMaterials).toEqual([1]);
-    const doc = JSON.parse(new TextDecoder().decode(r.bytes)) as GltfDoc;
-    expect(doc.materials![0].extensions).toBeUndefined();
-    expect(doc.materials![0].pbrMetallicRoughness!.baseColorTexture).toEqual({ index: 0 });
+describe('specGlossPixelsToMetalRough', () => {
+  // One texel = 4 bytes RGBA. Output convention: R=AO(255), G=roughness, B=metal.
+  it('writes roughness from glossiness alpha (PNG) and metalness from specular', () => {
+    // A dielectric texel: black specular (RGB 0), gloss alpha 204 (~0.8).
+    const spec = new Uint8ClampedArray([0, 0, 0, 204]);
+    const out = specGlossPixelsToMetalRough(spec, null, [1, 1, 1], 1, true);
+    expect(out[0]).toBe(255); // R = AO unused
+    expect(out[2]).toBe(0); // B = metalness 0 (black specular → dielectric)
+    expect(out[1]).toBeCloseTo(Math.round((1 - 204 / 255) * 255), 0); // G = 1-gloss
+    expect(out[3]).toBe(255);
   });
 
-  it('is a no-op for a metal-rough document', () => {
-    const bytes = enc({ materials: [{ pbrMetallicRoughness: {} }] });
-    const r = convertSpecGlossGltfBytes(bytes);
-    expect(r.converted).toBe(false);
-    expect(r.bytes).toBe(bytes); // same reference — bytes untouched
+  it('uses the glossiness factor when there is no alpha (JPEG)', () => {
+    // A genuinely dielectric texel (specular below the 0.04 floor) + gloss factor
+    // 0.4 — roughness comes from the factor (no alpha), metalness is 0.
+    const spec = new Uint8ClampedArray([5, 5, 5, 255]); // ~0.02 specular < floor
+    const out = specGlossPixelsToMetalRough(spec, null, [0.084, 0.055, 0.128], 0.4, false);
+    expect(out[1]).toBe(Math.round(0.6 * 255)); // roughness = 1 - 0.4 (factor)
+    expect(out[2]).toBe(0); // below dielectric floor → metalness 0
   });
 
-  it('is a no-op for non-JSON bytes', () => {
-    const bytes = new TextEncoder().encode('not json {');
-    const r = convertSpecGlossGltfBytes(bytes);
-    expect(r.converted).toBe(false);
-    expect(r.bytes).toBe(bytes);
+  it('detects a metal from a bright specular texel', () => {
+    const spec = new Uint8ClampedArray([240, 240, 240, 255]); // bright spec
+    const out = specGlossPixelsToMetalRough(spec, null, [0.05, 0.05, 0.05], 1, false);
+    expect(out[2]).toBeGreaterThan(128); // high metalness
+  });
+
+  it('processes multiple texels independently', () => {
+    const spec = new Uint8ClampedArray([0, 0, 0, 255, 240, 240, 240, 255]);
+    const out = specGlossPixelsToMetalRough(spec, null, [0.05, 0.05, 0.05], 1, false);
+    expect(out[2]).toBeLessThan(30); // texel 0: dielectric
+    expect(out[6]).toBeGreaterThan(128); // texel 1: metal
   });
 });

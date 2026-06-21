@@ -50,7 +50,7 @@
 
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
-import { convertSpecGlossGltfBytes } from '../../core/import/specGlossToMetalRough';
+import { convertSpecGlossGltfFiles } from './specGlossIngest';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
 import { opfsSiblingPath, missingGltfSiblings } from './opfsGltfResolver';
@@ -235,18 +235,24 @@ export async function ingestGltfFolder(
     // capture (buildGltfImportOps re-parses) — see one converted source (render
     // == capture, V37/H40). A no-op for a metal-rough model. GLB repack deferred.
     const isGltfEntry = entry.relativePath.toLowerCase().endsWith('.gltf');
-    const entryConversion = isGltfEntry ? convertSpecGlossGltfBytes(entry.bytes) : null;
+    const conversion = isGltfEntry ? await convertSpecGlossGltfFiles(entry, files) : null;
     // Write each file under the chosen subdirectory, preserving its
     // full in-folder relativePath verbatim. OpfsStorage.write auto-
     // creates nested directories (OpfsStorage.ts:43-45), so no mkdir
-    // step is needed.
+    // step is needed. The entry `.gltf` is replaced with its converted bytes
+    // when spec/gloss was found.
     for (const f of files) {
       const opfsPath = `${USER_IMPORTS_ROOT}/${resolvedName}/${f.relativePath}`;
       const bytes =
-        entryConversion?.converted && f.relativePath === entry.relativePath
-          ? entryConversion.bytes
+        conversion?.converted && f.relativePath === entry.relativePath
+          ? conversion.entryBytes
           : f.bytes;
       await storage.write(opfsPath, bytes);
+    }
+    // Baked MR textures from combined specularGlossinessTexture materials are
+    // NEW siblings — write them too (they ride the .basher whole-folder embed).
+    for (const extra of conversion?.extraFiles ?? []) {
+      await storage.write(`${USER_IMPORTS_ROOT}/${resolvedName}/${extra.relativePath}`, extra.bytes);
     }
     return `${USER_IMPORTS_ROOT}/${resolvedName}/${entry.relativePath}`;
   } catch (err) {
