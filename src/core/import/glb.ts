@@ -196,6 +196,60 @@ export function parseGlb(buffer: ArrayBuffer): ParsedGlb {
   return { json, bin: bin ?? new Uint8Array(0) };
 }
 
+/** Pad `bytes` up to the next 4-byte boundary with `fill` (glTF 2.0 §4.4.2
+ *  requires each chunk's data to be 4-byte aligned). Returns the input verbatim
+ *  when already aligned (no copy). */
+function padChunkTo4(bytes: Uint8Array, fill: number): Uint8Array {
+  const remainder = bytes.byteLength % 4;
+  if (remainder === 0) return bytes;
+  const padded = new Uint8Array(bytes.byteLength + (4 - remainder));
+  padded.set(bytes);
+  padded.fill(fill, bytes.byteLength);
+  return padded;
+}
+
+/**
+ * Serialise a parsed GLB (`{ json, bin }`) back into GLB binary bytes — the
+ * inverse of `parseGlb`. Used by the spec/gloss `.glb` ingest conversion (#216):
+ * the `.glb`'s materials are converted in the JSON document, then the container
+ * is repacked so BOTH OPFS readers (the render GLTFLoader and the capture
+ * `buildGltfImportOps`) see normal metal-rough (render == capture, V37/H40).
+ *
+ * Layout per glTF 2.0 §4.4: 12-byte header (magic | version 2 | total length),
+ * the JSON chunk (UTF-8, padded with 0x20 SPACE to a 4-byte boundary), then —
+ * when `bin` is non-empty — the BIN chunk (padded with 0x00). An empty `bin`
+ * emits a JSON-only GLB (no BIN chunk), valid per §4.4.3. `json` is typed
+ * `unknown` because the converter operates on a looser document shape than
+ * `GltfJson`; only `JSON.stringify` is needed here.
+ */
+export function repackGlb(parsed: { json: unknown; bin: Uint8Array }): Uint8Array {
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(parsed.json));
+  const jsonChunk = padChunkTo4(jsonBytes, 0x20);
+  const hasBin = parsed.bin.byteLength > 0;
+  const binChunk = hasBin ? padChunkTo4(parsed.bin, 0x00) : null;
+
+  const totalLength =
+    12 + 8 + jsonChunk.byteLength + (binChunk ? 8 + binChunk.byteLength : 0);
+  const out = new Uint8Array(totalLength);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, MAGIC, true);
+  view.setUint32(4, 2, true);
+  view.setUint32(8, totalLength, true);
+
+  let cursor = 12;
+  view.setUint32(cursor, jsonChunk.byteLength, true);
+  view.setUint32(cursor + 4, CHUNK_JSON, true);
+  out.set(jsonChunk, cursor + 8);
+  cursor += 8 + jsonChunk.byteLength;
+
+  if (binChunk) {
+    view.setUint32(cursor, binChunk.byteLength, true);
+    view.setUint32(cursor + 4, CHUNK_BIN, true);
+    out.set(binChunk, cursor + 8);
+  }
+  return out;
+}
+
 /**
  * Parse a JSON-only `.gltf` container (#90) — plain UTF-8 JSON, no GLB
  * magic / chunks / embedded BIN. Buffers are always external or inline
