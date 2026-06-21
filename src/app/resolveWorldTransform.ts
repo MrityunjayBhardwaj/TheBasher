@@ -104,7 +104,8 @@ function refNode(binding: unknown): string | null {
  * The LOCAL matrix a single SceneChild value contributes — MIRRORING the R3F
  * element SceneFromDAG emits for that kind:
  *   - Transform → `<group pos/rot°/scale>`            (TransformR)
- *   - Group / MaterialOverride → pass-through, identity (GroupR / MaterialOverrideR)
+ *   - Group → `<group pos/rot°/scale><group -pivot>`   (GroupR, #222) — pivot-aware
+ *   - MaterialOverride → pass-through, identity         (MaterialOverrideR)
  *   - BoxMesh / SphereMesh → `<mesh pos/rot°/scale>`   (Box/SphereMeshR)
  *   - BakedMesh → `<mesh pos/rot° scale=[1,1,1]>`      (transform baked into verts)
  *   - other (GltfAsset root, etc.) → its TRS when present, else identity
@@ -121,9 +122,10 @@ function localMatrix(value: SceneChild): THREE.Matrix4 {
     position?: unknown;
     rotation?: unknown;
     scale?: unknown;
+    pivot?: unknown;
   };
-  // Group / MaterialOverride render as a pass-through (bare or no group) — identity.
-  if (v.kind === 'Group' || v.kind === 'MaterialOverride') return m;
+  // MaterialOverride renders as a pass-through (no group) — identity.
+  if (v.kind === 'MaterialOverride') return m;
   const pos = isVec3(v.position) ? v.position : ([0, 0, 0] as Vec3);
   const rot = isVec3(v.rotation) ? v.rotation : ([0, 0, 0] as Vec3);
   // A baked mesh renders at identity scale (the transform is in the geometry).
@@ -137,6 +139,13 @@ function localMatrix(value: SceneChild): THREE.Matrix4 {
     q,
     new THREE.Vector3(scl[0], scl[1], scl[2]),
   );
+  // #222 — a Group rotates/scales about its `pivot`: the renderer wraps children
+  // in an inner `<group position={-pivot}>` (GroupR), so the local matrix is
+  // Translate(pos)·R·S·Translate(-pivot). At pivot=0 this is identity (back-compat).
+  if (v.kind === 'Group' && isVec3(v.pivot)) {
+    const [px, py, pz] = v.pivot as Vec3;
+    m.multiply(new THREE.Matrix4().makeTranslation(-px, -py, -pz));
+  }
   return m;
 }
 

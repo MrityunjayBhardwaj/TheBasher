@@ -2635,11 +2635,25 @@ function TransformR({ value, override }: { value: TransformValue; override?: Mat
 }
 
 function GroupR({ value, override }: { value: GroupValue; override?: MaterialValue }) {
+  // #222 — a Group transforms as a unit, rotating/scaling about its `pivot`
+  // (the model's bbox centre for an import). Apply Translate(position)·R·S on the
+  // OUTER group, and Translate(-pivot) on an INNER group so the content stays put
+  // at identity: at defaults (position/pivot = 0) both groups are identity →
+  // byte-identical to the old bare-group render (V10/H14). The gizmo + resolver
+  // read `position` (where rotation happens in world), so the pivot is transparent
+  // to them — render == gizmo == inspector (V37/H40) holds without extra wiring.
+  const [px, py, pz] = value.pivot as [number, number, number];
   return (
-    <group>
-      {value.children.map((c, i) => (
-        <MeshChild key={`g:${i}`} value={c} override={override} />
-      ))}
+    <group
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      scale={value.scale as [number, number, number]}
+    >
+      <group position={[-px, -py, -pz]}>
+        {value.children.map((c, i) => (
+          <MeshChild key={`g:${i}`} value={c} override={override} />
+        ))}
+      </group>
     </group>
   );
 }

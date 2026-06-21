@@ -669,6 +669,14 @@ export interface TransformValue {
 
 export interface GroupValue {
   readonly kind: 'Group';
+  // #222 — a Group is transformable as a unit (Blender's parent/Empty). `pivot`
+  // is the local point rotation/scale happen around; the renderer applies
+  // Translate(position)·R·S·Translate(-pivot). All default to identity, so a
+  // pre-#222 Group renders as a bare in-place group (V10/H14 additive).
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+  readonly pivot: Vec3;
   readonly children: readonly SceneChild[];
 }
 

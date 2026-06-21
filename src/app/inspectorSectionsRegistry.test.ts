@@ -92,9 +92,14 @@ describe('C2 — inspectorSections declarations', () => {
 
   it('layout-only nodes declare only "layout"', () => {
     const snap = snapshotRegistry();
-    for (const type of ['Group', 'Shot', 'Cut']) {
+    for (const type of ['Shot', 'Cut']) {
       expect(snap[type].inspectorSections).toEqual(['layout']);
     }
+  });
+
+  it('Group is transform-primary then layout (#222 — a Group is movable as a unit)', () => {
+    const snap = snapshotRegistry();
+    expect(snap.Group.inspectorSections).toEqual(['transform', 'layout']);
   });
 
   it('Scene declares environment + layout (UX #9 — environment is the primary domain)', () => {
