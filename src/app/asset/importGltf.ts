@@ -51,6 +51,7 @@
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
 import { convertSpecGlossEntry } from './specGlossIngest';
+import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMaterials';
 import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
@@ -288,6 +289,25 @@ export async function ingestGltfFolder(
     }
     const resolvedName = await resolveFreeImportName(desired);
     const storage = await getStorage();
+    // Producer-side repair (#221, V53 family): some exporters (3D rippers like
+    // 3dripper) leave a mesh primitive with NO `material` while the file defines
+    // exactly one ORPHANED material (referenced by no primitive) — three.js then
+    // renders the default white material and the model imports untextured. Rebind
+    // the unbound primitives to that orphan HERE, the same one-point-before-both-
+    // readers seam as spec/gloss, so render == capture (both re-parse these bytes).
+    // Runs BEFORE spec/gloss so a rebound material still gets converted if needed.
+    const rebind = rebindOrphanMaterialsInEntry(entry.relativePath, entry.bytes);
+    const repairedEntry =
+      rebind.rebinds.length > 0 ? { ...entry, bytes: rebind.entryBytes } : entry;
+    if (rebind.rebinds.length > 0) {
+      for (const r of rebind.rebinds) {
+        // NO-SILENT-DROP (V38): we GUESSED at intent — say so. A console notice
+        // (the repair succeeds + the model now renders textured), not the banner.
+        console.warn(
+          `glTF import (${entry.relativePath}): ${r.primitiveCount} mesh primitive(s) had no material; bound them to the file's one orphaned material "${r.materialName ?? `#${r.materialIndex}`}" (likely an exporter bug). The model now renders with its material/textures.`,
+        );
+      }
+    }
     // Spec/gloss conversion (#214 / #216, V53): three.js dropped the spec-gloss
     // GLTFLoader plugin at ~r150 (we're on r169), so a
     // KHR_materials_pbrSpecularGlossiness model imports flat-gray — the render
@@ -299,7 +319,14 @@ export async function ingestGltfFolder(
     // capture, V37/H40). The dispatcher handles both containers (`.gltf` rewrites
     // the JSON + writes sibling MR textures; `.glb` repacks the binary container
     // with the baked MR map embedded as a data URI) and no-ops a metal-rough model.
-    const conversion = await convertSpecGlossEntry(entry, files);
+    const conversion = await convertSpecGlossEntry(repairedEntry, files);
+    // Entry-bytes precedence for the write below: spec/gloss (which ran on the
+    // already-rebound bytes) wins; else the rebind alone; else verbatim.
+    const entryBytesOverride = conversion?.converted
+      ? conversion.entryBytes
+      : rebind.rebinds.length > 0
+        ? rebind.entryBytes
+        : undefined;
     // Write each file under the chosen subdirectory, preserving its
     // full in-folder relativePath verbatim. OpfsStorage.write auto-
     // creates nested directories (OpfsStorage.ts:43-45), so no mkdir
@@ -308,8 +335,8 @@ export async function ingestGltfFolder(
     for (const f of files) {
       const opfsPath = `${USER_IMPORTS_ROOT}/${resolvedName}/${f.relativePath}`;
       const bytes =
-        conversion?.converted && f.relativePath === entry.relativePath
-          ? conversion.entryBytes
+        entryBytesOverride !== undefined && f.relativePath === entry.relativePath
+          ? entryBytesOverride
           : f.bytes;
       await storage.write(opfsPath, bytes);
     }
