@@ -38,12 +38,17 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   outputs: { out: { type: 'Mesh', cardinality: 'single' } },
   inspectorSections: ['transform', 'layout'],
   evaluate(params, inputs) {
+    // V10/H14 layer-2 guard: an OLD saved Group (pre-#222, version 1, params `{}`)
+    // is NOT re-parsed through the zod schema on load (migrateOneNode runs only
+    // versioned `migrations[]`, and Group's version is unchanged), so the zod
+    // `.default` does NOT fill these. Default here at the evaluator so a legacy
+    // Group evaluates to identity instead of surfacing `undefined` to the renderer.
     return {
       kind: 'Group',
-      position: params.position,
-      rotation: params.rotation,
-      scale: params.scale,
-      pivot: params.pivot,
+      position: params.position ?? [0, 0, 0],
+      rotation: params.rotation ?? [0, 0, 0],
+      scale: params.scale ?? [1, 1, 1],
+      pivot: params.pivot ?? [0, 0, 0],
       children: (inputs.children as SceneChild[] | undefined) ?? [],
     };
   },

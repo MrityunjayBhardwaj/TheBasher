@@ -39,4 +39,16 @@ describe('Group — transformable as a unit (#222)', () => {
   it('exposes a transform inspector section', () => {
     expect(GroupNode.inspectorSections).toContain('transform');
   });
+
+  it('legacy raw params (pre-#222 `{}`, not schema-parsed on load) evaluate to identity', () => {
+    // migrateOneNode does NOT re-parse params, and Group's version is unchanged,
+    // so an old saved Group reaches evaluate() with raw `{}` — the zod defaults
+    // never fire. The evaluator must default (V10/H14 layer 2) or the renderer
+    // would destructure `undefined` pivot and crash on load.
+    const v = GroupNode.evaluate({} as never, { children: [] });
+    expect(v.position).toEqual([0, 0, 0]);
+    expect(v.rotation).toEqual([0, 0, 0]);
+    expect(v.scale).toEqual([1, 1, 1]);
+    expect(v.pivot).toEqual([0, 0, 0]);
+  });
 });
