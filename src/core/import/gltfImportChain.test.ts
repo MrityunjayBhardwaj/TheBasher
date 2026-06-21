@@ -201,38 +201,39 @@ describe('buildGltfImportOps', () => {
     expect(result.transformClipIds).toHaveLength(1);
     expect(result.clipSelectId).not.toBeNull();
     expect(result.nodeNameMap.Cube).toBeDefined();
-    // Op order (P7.7 #91 — one GltfChild addNode per scene child is now
-    // emitted right after the GltfAsset addNode, before Transform):
-    // GltfAsset, GltfChild×N (here 1: 'Cube'), Transform, connect(gltf→tx),
-    // Group, connect(tx→grp), connect(grp→scene), TransformClip[0],
-    // ClipSelect, connect(clip[0]→sel), connect(sel→gltf.transformClip).
+    // Op order (#222 — the import root is ONE transformable Group, no separate
+    // Transform; P7.7 #91 — one GltfChild addNode per scene child right after the
+    // GltfAsset addNode):
+    // GltfAsset, GltfChild×N (here 1: 'Cube'), Group, connect(gltf→grp),
+    // connect(grp→scene), TransformClip[0], ClipSelect, connect(clip[0]→sel),
+    // connect(sel→gltf.transformClip).
     //
-    // P7.10 (#114): the connect(time→clip[0]) wire is GONE. TransformClip's
-    // value carries `.sample(seconds)` and time enters at the consumer
-    // (GltfAssetR's useFrame), so the importer no longer wires a TimeSource
-    // edge. One fewer Op per animation; total = 11 (was 12 with 1 clip).
+    // P7.10 (#114): the connect(time→clip[0]) wire is GONE. #222 dropped the
+    // Transform addNode + its gltf→tx connect (2 fewer ops); total = 9.
     const types = result.ops.map((o: Op) => o.type);
     expect(types).toEqual([
       'addNode', // GltfAsset
       'addNode', // GltfChild (Cube)
-      'addNode', // Transform
-      'connect',
-      'addNode', // Group
-      'connect',
-      'connect',
+      'addNode', // Group (transformable import root)
+      'connect', // gltf → group.children
+      'connect', // group → scene.children
       'addNode', // TransformClip[0]
       'addNode', // ClipSelect
       'connect', // clip[0] → ClipSelect.clips
       'connect', // ClipSelect.out → GltfAsset.transformClip
     ]);
-    // The first GltfChild addNode sits at index 1 (between GltfAsset and Transform).
+    // The first GltfChild addNode sits at index 1 (between GltfAsset and Group).
     const gcOp = result.ops[1];
     expect(gcOp.type).toBe('addNode');
     if (gcOp.type === 'addNode') {
       expect(gcOp.nodeType).toBe('GltfChild');
       expect(gcOp.nodeId).toBe(result.nodeNameMap.Cube);
     }
-    const tcOp = result.ops[7];
+    // The Group is at index 2 and carries the transform params.
+    const grpOp = result.ops[2];
+    expect(grpOp.type).toBe('addNode');
+    if (grpOp.type === 'addNode') expect(grpOp.nodeType).toBe('Group');
+    const tcOp = result.ops[5];
     expect(tcOp.type).toBe('addNode');
     if (tcOp.type === 'addNode') expect(tcOp.nodeType).toBe('TransformClip');
   });
@@ -671,13 +672,16 @@ describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
     return { state: { nodes, outputs: {} } as unknown as DagState, emitted };
   }
 
-  it('selects every emitted import node (GltfAsset + GltfChild + Transform + Group + TransformClip + ClipSelect)', async () => {
+  it('selects every emitted import node (GltfAsset + GltfChild + Group + TransformClip + ClipSelect)', async () => {
+    // #222 — the import no longer emits a separate Transform (the Group is the
+    // transformable root). importGroupNodeIds still includes the legacy `tx` id
+    // so pre-#222 saves' delete-cascade stays intact; it just matches no node here.
     const { state, emitted } = await importedState('asset/anim.glb');
     const group = new Set(importGroupNodeIds('asset/anim.glb', state));
     for (const id of emitted) expect(group.has(id)).toBe(true);
-    const types = new Set([...group].map((id) => state.nodes[id].type));
+    const types = new Set([...group].map((id) => state.nodes[id]?.type).filter(Boolean));
     expect(types).toEqual(
-      new Set(['GltfAsset', 'GltfChild', 'Transform', 'Group', 'TransformClip', 'ClipSelect']),
+      new Set(['GltfAsset', 'GltfChild', 'Group', 'TransformClip', 'ClipSelect']),
     );
   });
 

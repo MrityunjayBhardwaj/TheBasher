@@ -334,6 +334,92 @@ function defaultTRS(node: GltfJson['nodes'][number]): Required<PartialKeyframe> 
   };
 }
 
+function addVec3(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+/**
+ * #222 — the model's world-space bounding-box CENTRE, used as the import Group's
+ * `pivot` so the import rotates/scales about its own centre (not the world
+ * origin). Computed PURELY from the glTF accessor min/max — POSITION accessors
+ * declare their bounds per glTF 2.0 §3.6.1, so NO buffer reads are needed. Walks
+ * the scene node hierarchy accumulating world matrices, transforms each mesh
+ * primitive's 8 bbox corners by its node's world matrix, and centres the union.
+ * Returns [0,0,0] when no positioned geometry is found (→ identity pivot, so the
+ * Group behaves exactly as a non-centred one).
+ */
+export function computeGltfBoundsCenter(json: GltfJson): Vec3 {
+  const nodes = json.nodes ?? [];
+  const meshes = (json.meshes ?? []) as {
+    primitives?: { attributes?: Record<string, number> }[];
+  }[];
+  const accessors = (json.accessors ?? []) as { min?: number[]; max?: number[] }[];
+
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
+  const corner = new Vector3();
+
+  const localMatrix = (node: GltfJson['nodes'][number]): Matrix4 => {
+    if (node.matrix) return new Matrix4().fromArray(node.matrix);
+    const t = node.translation ?? [0, 0, 0];
+    const r = node.rotation ?? [0, 0, 0, 1];
+    const s = node.scale ?? [1, 1, 1];
+    return new Matrix4().compose(
+      new Vector3(t[0], t[1], t[2]),
+      new Quaternion(r[0], r[1], r[2], r[3]),
+      new Vector3(s[0], s[1], s[2]),
+    );
+  };
+
+  const visit = (nodeIdx: number, parent: Matrix4) => {
+    const node = nodes[nodeIdx];
+    if (!node) return;
+    const world = parent.clone().multiply(localMatrix(node));
+    if (typeof node.mesh === 'number') {
+      for (const prim of meshes[node.mesh]?.primitives ?? []) {
+        const posIdx = prim.attributes?.POSITION;
+        const acc = typeof posIdx === 'number' ? accessors[posIdx] : undefined;
+        const lo = acc?.min;
+        const hi = acc?.max;
+        if (Array.isArray(lo) && Array.isArray(hi) && lo.length === 3 && hi.length === 3) {
+          for (let i = 0; i < 8; i++) {
+            corner
+              .set(i & 1 ? hi[0] : lo[0], i & 2 ? hi[1] : lo[1], i & 4 ? hi[2] : lo[2])
+              .applyMatrix4(world);
+            minX = Math.min(minX, corner.x);
+            maxX = Math.max(maxX, corner.x);
+            minY = Math.min(minY, corner.y);
+            maxY = Math.max(maxY, corner.y);
+            minZ = Math.min(minZ, corner.z);
+            maxZ = Math.max(maxZ, corner.z);
+          }
+        }
+      }
+    }
+    for (const child of node.children ?? []) visit(child, world);
+  };
+
+  // Scene roots; fall back to nodes that aren't anyone's child (avoid double-
+  // transforming a child that's also walked as a root when no scene is declared).
+  const scenes = (json as { scenes?: { nodes?: number[] }[]; scene?: number }).scenes;
+  const sceneIdx = (json as { scene?: number }).scene ?? 0;
+  let roots = scenes?.[sceneIdx]?.nodes;
+  if (!roots) {
+    const childSet = new Set<number>();
+    for (const n of nodes) for (const c of n.children ?? []) childSet.add(c);
+    roots = nodes.map((_, i) => i).filter((i) => !childSet.has(i));
+  }
+  const identity = new Matrix4();
+  for (const r of roots) visit(r, identity);
+
+  if (minX > maxX) return [0, 0, 0]; // no positioned geometry
+  return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+}
+
 /**
  * P7.11 (#100, D-04) — per-skin bind metadata captured at import.
  * Everything is indexed in `skin.joints[]` order (the SPINE): jointKeys[i],
@@ -559,9 +645,12 @@ export async function buildGltfImportOps(
   // content-addressed off assetRef so re-import of the same file
   // produces identical Op stream.
   const gltfAssetId = hashId('gltf', args.assetRef);
-  const transformId = hashId('tx', args.assetRef);
   const groupId = hashId('grp', args.assetRef);
   const position = args.position ?? [0, 0, 0];
+  // #222 — the model's bbox centre, baked as the import Group's pivot so it
+  // rotates/scales about its own centre. position is offset by +pivot below so
+  // the content stays where the glTF authored it while the gizmo sits at centre.
+  const pivot = computeGltfBoundsCenter(json);
 
   const animations = json.animations ?? [];
   const hasClips = animations.length > 0;
@@ -631,21 +720,25 @@ export async function buildGltfImportOps(
       },
     });
   }
+  // #222 — the import root is ONE transformable Group (Blender's parent/Empty),
+  // NOT a Group wrapping a separate Transform. The Group carries the drop
+  // position, so selecting it shows the gizmo and moves the whole model as a
+  // unit. `pivot` is the model's bbox centre (computed below) so the import
+  // rotates/scales about its own centre, not the world origin.
   ops.push({
     type: 'addNode',
-    nodeId: transformId,
-    nodeType: 'Transform',
-    params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    nodeId: groupId,
+    nodeType: 'Group',
+    params: {
+      position: addVec3(position, pivot),
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      pivot,
+    },
   });
   ops.push({
     type: 'connect',
     from: { node: gltfAssetId, socket: 'out' },
-    to: { node: transformId, socket: 'target' },
-  });
-  ops.push({ type: 'addNode', nodeId: groupId, nodeType: 'Group', params: {} });
-  ops.push({
-    type: 'connect',
-    from: { node: transformId, socket: 'out' },
     to: { node: groupId, socket: 'children' },
   });
   ops.push({

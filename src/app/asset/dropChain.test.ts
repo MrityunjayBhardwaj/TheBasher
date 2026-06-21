@@ -19,27 +19,28 @@ beforeEach(() => {
 });
 
 describe('buildAssetDropOps', () => {
-  it('emits the 6-op chain (3 addNode + 3 connect) from NEXT_SESSION P1', () => {
+  it('emits the 4-op chain (2 addNode + 2 connect) — Group is the transformable root (#222)', () => {
     const ops = buildAssetDropOps({
       assetRef: 'assets/cube.gltf',
       sceneNodeId: 'n_scene',
-      ids: { gltf: 'g', transform: 't', group: 'r' },
+      position: [1, 2, 3],
+      ids: { gltf: 'g', group: 'r' },
     });
-    expect(ops).toHaveLength(6);
+    expect(ops).toHaveLength(4);
     expect(ops[0]).toMatchObject({ type: 'addNode', nodeType: 'GltfAsset', nodeId: 'g' });
-    expect(ops[1]).toMatchObject({ type: 'addNode', nodeType: 'Transform', nodeId: 't' });
+    // The Group carries the drop transform directly — no separate Transform node.
+    expect(ops[1]).toMatchObject({
+      type: 'addNode',
+      nodeType: 'Group',
+      nodeId: 'r',
+      params: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+    });
     expect(ops[2]).toMatchObject({
       type: 'connect',
       from: { node: 'g', socket: 'out' },
-      to: { node: 't', socket: 'target' },
-    });
-    expect(ops[3]).toMatchObject({ type: 'addNode', nodeType: 'Group', nodeId: 'r' });
-    expect(ops[4]).toMatchObject({
-      type: 'connect',
-      from: { node: 't', socket: 'out' },
       to: { node: 'r', socket: 'children' },
     });
-    expect(ops[5]).toMatchObject({
+    expect(ops[3]).toMatchObject({
       type: 'connect',
       from: { node: 'r', socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
@@ -50,7 +51,7 @@ describe('buildAssetDropOps', () => {
     const ops = buildAssetDropOps({
       assetRef: 'assets/cube.gltf',
       sceneNodeId: 'n_scene',
-      ids: { gltf: 'g', transform: 't', group: 'r' },
+      ids: { gltf: 'g', group: 'r' },
     });
     const first = ops[0];
     expect(first.type).toBe('addNode');
@@ -83,13 +84,13 @@ describe('drop chain → DAG', () => {
     const ops = buildAssetDropOps({
       assetRef: 'assets/cube.gltf',
       sceneNodeId: 'n_scene',
-      ids: { gltf: 'g', transform: 't', group: 'r' },
+      ids: { gltf: 'g', group: 'r' },
     });
     useDagStore.getState().dispatchAtomic(ops, 'user', 'import asset');
 
-    // After the drop: 3 new nodes plus the seed Scene = 4 total.
+    // After the drop: 2 new nodes (GltfAsset + Group) plus the seed Scene = 3.
     const after = useDagStore.getState().state;
-    expect(Object.keys(after.nodes).sort()).toEqual(['g', 'n_scene', 'r', 't']);
+    expect(Object.keys(after.nodes).sort()).toEqual(['g', 'n_scene', 'r']);
     expect(after.nodes.n_scene.inputs.children).toEqual([{ node: 'r', socket: 'out' }]);
 
     // Undo stack has exactly one entry (atomic group).
@@ -115,7 +116,7 @@ describe('drop chain → DAG', () => {
       buildAssetDropOps({
         assetRef: 'assets/cube.gltf',
         sceneNodeId: 'n_scene',
-        ids: { gltf: 'g1', transform: 't1', group: 'r1' },
+        ids: { gltf: 'g1', group: 'r1' },
       }),
       'user',
     );
@@ -123,7 +124,7 @@ describe('drop chain → DAG', () => {
       buildAssetDropOps({
         assetRef: 'assets/sphere.gltf',
         sceneNodeId: 'n_scene',
-        ids: { gltf: 'g2', transform: 't2', group: 'r2' },
+        ids: { gltf: 'g2', group: 'r2' },
       }),
       'user',
     );

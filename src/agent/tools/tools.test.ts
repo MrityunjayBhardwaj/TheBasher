@@ -412,7 +412,7 @@ describe('library.import tool', () => {
     currentStorage = new MemoryStorage();
   });
 
-  it('non-glTF assetRef → the static 6-op drop chain, no clip nodes (twice-call)', async () => {
+  it('non-glTF assetRef → the static 4-op drop chain, no clip nodes (twice-call)', async () => {
     const ctx: ToolContext = { dagState: buildSceneBaseline() };
 
     const result1 = await libraryImportTool.handler(
@@ -424,31 +424,28 @@ describe('library.import tool', () => {
       ctx,
     );
 
-    expect(result1.ops.length).toBe(6);
-    expect(result2.ops.length).toBe(6);
+    // #222 — the import root is ONE transformable Group (no separate Transform).
+    expect(result1.ops.length).toBe(4);
+    expect(result2.ops.length).toBe(4);
 
-    // Structure: addNode gltf → addNode transform → connect → addNode group → connect → connect
+    // Structure: addNode gltf → addNode group → connect(gltf→grp) → connect(grp→scene)
     const types1 = result1.ops.map((o) => o.type);
-    expect(types1).toEqual(['addNode', 'addNode', 'connect', 'addNode', 'connect', 'connect']);
+    expect(types1).toEqual(['addNode', 'addNode', 'connect', 'connect']);
     expect(result2.ops.map((o) => o.type)).toEqual(types1);
 
-    // Static path → GltfAsset → Transform → Group, NO TransformClip / ClipSelect.
-    expect(nodeTypesOf(result1.ops)).toEqual(['GltfAsset', 'Transform', 'Group']);
+    // Static path → GltfAsset → Group, NO Transform / TransformClip / ClipSelect.
+    expect(nodeTypesOf(result1.ops)).toEqual(['GltfAsset', 'Group']);
 
     // Each connect references ids from preceding addNode calls.
     const gltfId = (result1.ops[0] as { nodeId: string }).nodeId;
-    const txId = (result1.ops[1] as { nodeId: string }).nodeId;
-    const grpId = (result1.ops[3] as { nodeId: string }).nodeId;
+    const grpId = (result1.ops[1] as { nodeId: string }).nodeId;
     const connect1 = result1.ops[2] as { from: { node: string }; to: { node: string } };
-    const connect2 = result1.ops[4] as { from: { node: string }; to: { node: string } };
-    const connect3 = result1.ops[5] as { from: { node: string }; to: { node: string } };
+    const connect2 = result1.ops[3] as { from: { node: string }; to: { node: string } };
 
     expect(connect1.from.node).toBe(gltfId);
-    expect(connect1.to.node).toBe(txId);
-    expect(connect2.from.node).toBe(txId);
-    expect(connect2.to.node).toBe(grpId);
-    expect(connect3.from.node).toBe(grpId);
-    expect(connect3.to.node).toBe('scene');
+    expect(connect1.to.node).toBe(grpId);
+    expect(connect2.from.node).toBe(grpId);
+    expect(connect2.to.node).toBe('scene');
   });
 
   // #105 — the core parity proof: an animated glTF imported via the agent
@@ -467,12 +464,12 @@ describe('library.import tool', () => {
     expect(nodeTypes).toContain('ClipSelect');
     // H40 boundary-pair — the agent path now produces the SAME node-type set
     // the UI path emits for the same file (GltfAsset + the per-child
-    // GltfChild + Transform + Group + TransformClip + ClipSelect).
+    // GltfChild + Group + TransformClip + ClipSelect). #222: no separate
+    // Transform — the Group is the transformable import root.
     expect(nodeTypes).toEqual(
       expect.arrayContaining([
         'GltfAsset',
         'GltfChild',
-        'Transform',
         'Group',
         'TransformClip',
         'ClipSelect',
