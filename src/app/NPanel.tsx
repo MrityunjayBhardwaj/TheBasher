@@ -721,23 +721,31 @@ function MapRow({
 // precondition that could strand a non-identity transform with no reset ([[H75]]).
 // tiling/offset dispatch the WHOLE [x,y] array (setAtPath has no array-index path);
 // rotation is a scalar. NON-animated (D-02).
+// Texture-placement editor (tiling/offset/rotation), SHARED by the native and
+// glTF material editors (#217 parity). The caller supplies `onSet` — the
+// source-write convention differs: native dotted `setParam material.uvTransform.*`,
+// glTF a whole-`materials`-array replace (setAtPath can't index an array, V53 S4).
+// `testidBase`/`ariaBase` keep each caller's existing id scheme (H95: native stays
+// `inspector-uvtransform-<nodeId>`, glTF adds the slot).
 function UvTransformSection({
-  nodeId,
   uvTransform,
+  testidBase,
+  ariaBase,
+  onSet,
 }: {
-  nodeId: string;
   uvTransform: { tiling: [number, number]; offset: [number, number]; rotation: number };
+  testidBase: string;
+  ariaBase: string;
+  onSet: (field: 'tiling' | 'offset' | 'rotation', value: [number, number] | number) => void;
 }) {
-  const dispatch = useDagStore((s) => s.dispatch);
   const { tiling, offset, rotation } = uvTransform;
-  const setVec = (path: string, axis: 0 | 1, cur: [number, number], v: string) => {
+  const setVec = (field: 'tiling' | 'offset', axis: 0 | 1, cur: [number, number], v: string) => {
     const n = Number(v);
     if (!Number.isFinite(n)) return;
-    const next: [number, number] = axis === 0 ? [n, cur[1]] : [cur[0], n];
-    dispatch({ type: 'setParam', nodeId, paramPath: path, value: next }, 'user', `set ${path}`);
+    onSet(field, axis === 0 ? [n, cur[1]] : [cur[0], n]);
   };
   return (
-    <div className="flex flex-col" data-testid={`inspector-uvtransform-${nodeId}`}>
+    <div className="flex flex-col" data-testid={`inspector-uvtransform-${testidBase}`}>
       <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Texture Placement
       </div>
@@ -747,16 +755,16 @@ function UvTransformSection({
           <UvNumberInline
             value={tiling[0]}
             label="x"
-            testid={`inspector-uvtransform-tilingX-${nodeId}`}
-            ariaPath="material.uvTransform.tiling.x"
-            onCommit={(v) => setVec('material.uvTransform.tiling', 0, tiling, v)}
+            testid={`inspector-uvtransform-tilingX-${testidBase}`}
+            ariaPath={`${ariaBase}.uvTransform.tiling.x`}
+            onCommit={(v) => setVec('tiling', 0, tiling, v)}
           />
           <UvNumberInline
             value={tiling[1]}
             label="y"
-            testid={`inspector-uvtransform-tilingY-${nodeId}`}
-            ariaPath="material.uvTransform.tiling.y"
-            onCommit={(v) => setVec('material.uvTransform.tiling', 1, tiling, v)}
+            testid={`inspector-uvtransform-tilingY-${testidBase}`}
+            ariaPath={`${ariaBase}.uvTransform.tiling.y`}
+            onCommit={(v) => setVec('tiling', 1, tiling, v)}
           />
         </span>
       </div>
@@ -766,16 +774,16 @@ function UvTransformSection({
           <UvNumberInline
             value={offset[0]}
             label="x"
-            testid={`inspector-uvtransform-offsetX-${nodeId}`}
-            ariaPath="material.uvTransform.offset.x"
-            onCommit={(v) => setVec('material.uvTransform.offset', 0, offset, v)}
+            testid={`inspector-uvtransform-offsetX-${testidBase}`}
+            ariaPath={`${ariaBase}.uvTransform.offset.x`}
+            onCommit={(v) => setVec('offset', 0, offset, v)}
           />
           <UvNumberInline
             value={offset[1]}
             label="y"
-            testid={`inspector-uvtransform-offsetY-${nodeId}`}
-            ariaPath="material.uvTransform.offset.y"
-            onCommit={(v) => setVec('material.uvTransform.offset', 1, offset, v)}
+            testid={`inspector-uvtransform-offsetY-${testidBase}`}
+            ariaPath={`${ariaBase}.uvTransform.offset.y`}
+            onCommit={(v) => setVec('offset', 1, offset, v)}
           />
         </span>
       </div>
@@ -784,19 +792,89 @@ function UvTransformSection({
         <UvNumberInline
           value={rotation}
           label="rad"
-          testid={`inspector-uvtransform-rotation-${nodeId}`}
-          ariaPath="material.uvTransform.rotation"
+          testid={`inspector-uvtransform-rotation-${testidBase}`}
+          ariaPath={`${ariaBase}.uvTransform.rotation`}
           onCommit={(v) => {
             const n = Number(v);
             if (!Number.isFinite(n)) return;
-            dispatch(
-              { type: 'setParam', nodeId, paramPath: 'material.uvTransform.rotation', value: n },
-              'user',
-              'set material.uvTransform.rotation',
-            );
+            onSet('rotation', n);
           }}
         />
       </div>
+    </div>
+  );
+}
+
+// Render-mode flags (double-sided / alpha-cutout / vertex-colors) — the
+// geometry-lobe options captured from a glTF import but valid on any material,
+// SHARED by both editors (#217 parity). These are render MODES, not animatable
+// PBR scalars → plain controls, no ParamDiamond. The renderer reads
+// `alphaTest = alphaCutoff ?? 0`, `side = doubleSided ? DoubleSide : FrontSide`,
+// `vertexColors ?? false` (openpbrToThree), so an explicit value here is additive
+// and byte-identical for a material that never had one (V10/H14). vertexColors is
+// shown ONLY when captured (a native primitive has no COLOR_0 → toggling is a
+// no-op, so it's hidden to avoid a confusing dead control).
+function MaterialRenderOptions({
+  geometry,
+  testidBase,
+  onSet,
+}: {
+  geometry: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean };
+  testidBase: string;
+  onSet: (key: 'alphaCutoff' | 'vertexColors' | 'doubleSided', value: number | boolean) => void;
+}) {
+  return (
+    <div className="flex flex-col" data-testid={`inspector-render-options-${testidBase}`}>
+      <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        Render Options
+      </div>
+      <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+        <span className="font-mono text-fg/60">double-sided</span>
+        <input
+          type="checkbox"
+          checked={geometry.doubleSided ?? false}
+          aria-label="double-sided"
+          data-testid={`inspector-doublesided-${testidBase}`}
+          onChange={(e) => onSet('doubleSided', e.target.checked)}
+          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+        <span
+          className="font-mono text-fg/60"
+          title="Alpha cutout threshold — pixels below this alpha are discarded. 0 = off."
+        >
+          alpha cutout
+        </span>
+        <input
+          type="number"
+          step="0.05"
+          min={0}
+          max={1}
+          value={geometry.alphaCutoff ?? 0}
+          aria-label="alpha cutout"
+          data-testid={`inspector-alphacutoff-${testidBase}`}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value);
+            if (Number.isNaN(n)) return;
+            onSet('alphaCutoff', Math.min(Math.max(n, 0), 1));
+          }}
+          className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        />
+      </label>
+      {geometry.vertexColors !== undefined ? (
+        <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+          <span className="font-mono text-fg/60">vertex colors</span>
+          <input
+            type="checkbox"
+            checked={geometry.vertexColors}
+            aria-label="vertex colors"
+            data-testid={`inspector-vertexcolors-${testidBase}`}
+            onChange={(e) => onSet('vertexColors', e.target.checked)}
+            className="h-3.5 w-3.5 cursor-pointer accent-accent"
+          />
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -1089,7 +1167,37 @@ function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknow
           <MapRow key={slot} nodeId={nodeId} slot={slot} mapRef={maps[slot] ?? null} />
         ))}
       </div>
-      {uvt ? <UvTransformSection nodeId={nodeId} uvTransform={uvt} /> : null}
+      {uvt ? (
+        <UvTransformSection
+          uvTransform={uvt}
+          testidBase={nodeId}
+          ariaBase="material"
+          onSet={(field, value) =>
+            dispatch(
+              { type: 'setParam', nodeId, paramPath: `material.uvTransform.${field}`, value },
+              'user',
+              `set material.uvTransform.${field}`,
+            )
+          }
+        />
+      ) : null}
+      <MaterialRenderOptions
+        geometry={
+          (material.geometry ?? {}) as {
+            alphaCutoff?: number;
+            vertexColors?: boolean;
+            doubleSided?: boolean;
+          }
+        }
+        testidBase={nodeId}
+        onSet={(key, value) =>
+          dispatch(
+            { type: 'setParam', nodeId, paramPath: `material.geometry.${key}`, value },
+            'user',
+            `set material.geometry.${key}`,
+          )
+        }
+      />
     </div>
   );
 }
@@ -1373,6 +1481,19 @@ function GltfMaterialEditor({
       `edit material slot ${slot} maps.${mapSlot}`,
     );
   };
+  // #217 — whole-`materials`-array replace for a nested lobe field (geometry render
+  // flags + uvTransform). Same array-replace discipline as commitSource/commitMap
+  // (setAtPath can't index an array, V53 S4); merges into the active slot's lobe.
+  const commitLobeField = (lobe: string, key: string, value: unknown) => {
+    const cur = materials[slot] as unknown as Record<string, Record<string, unknown>>;
+    const nextMat = { ...cur, [lobe]: { ...(cur[lobe] ?? {}), [key]: value } };
+    const next = materials.map((m, i) => (i === slot ? nextMat : m));
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'materials', value: next },
+      'user',
+      `edit material slot ${slot} ${lobe}.${key}`,
+    );
+  };
   return (
     <div data-testid={`inspector-gltf-material-editor-${nodeId}`} className="flex flex-col">
       {materials.length > 1 ? (
@@ -1449,6 +1570,35 @@ function GltfMaterialEditor({
           );
         })}
       </div>
+      {/* #217 — KHR_texture_transform placement, now editable for glTF too (the
+          native editor already had it). Whole-array replace per the V53 S4 rule. */}
+      {mat.uvTransform ? (
+        <UvTransformSection
+          uvTransform={
+            mat.uvTransform as unknown as {
+              tiling: [number, number];
+              offset: [number, number];
+              rotation: number;
+            }
+          }
+          testidBase={`${nodeId}-${slot}`}
+          ariaBase={`materials.${slot}`}
+          onSet={(field, value) => commitLobeField('uvTransform', field, value)}
+        />
+      ) : null}
+      {/* #217 — render-mode flags (double-sided / alpha-cutout / vertex-colors)
+          captured from the import, now editable like a native base object. */}
+      <MaterialRenderOptions
+        geometry={
+          (mat.geometry ?? {}) as {
+            alphaCutoff?: number;
+            vertexColors?: boolean;
+            doubleSided?: boolean;
+          }
+        }
+        testidBase={`${nodeId}-${slot}`}
+        onSet={(key, value) => commitLobeField('geometry', key, value)}
+      />
     </div>
   );
 }
