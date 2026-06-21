@@ -222,4 +222,14 @@ describe('specGlossPixelsToMetalRough', () => {
     expect(out[2]).toBeLessThan(30); // texel 0: dielectric
     expect(out[6]).toBeGreaterThan(128); // texel 1: metal
   });
+
+  it('uses per-texel diffuse when a resampled diffuse texture is supplied', () => {
+    // A dielectric spec texel; the diffuse term comes from the resampled diffuse
+    // texture (not the factor). Roughness still tracks gloss; metalness stays low.
+    const spec = new Uint8ClampedArray([10, 10, 10, 255]); // ~0.04 specular
+    const diffuse = new Uint8ClampedArray([200, 50, 25, 255]);
+    const out = specGlossPixelsToMetalRough(spec, diffuse, [1, 1, 1], 0.5, false);
+    expect(out[1]).toBe(Math.round(0.5 * 255)); // roughness = 1 - gloss
+    expect(out[2]).toBeLessThan(40); // near-floor specular → low metalness
+  });
 });
