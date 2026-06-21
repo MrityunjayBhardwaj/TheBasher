@@ -52,7 +52,7 @@ async function ingest(page: import('@playwright/test').Page, file: string, folde
   );
 }
 
-/** The first GltfChild that captured materials, + its active-slot geometry/uv. */
+/** The first GltfChild that captured materials, + its active-slot geometry/uv/name. */
 function materialChild(page: import('@playwright/test').Page) {
   return page.evaluate(() => {
     const w = window as unknown as BasherWindow;
@@ -61,7 +61,7 @@ function materialChild(page: import('@playwright/test').Page) {
     );
     if (!c) return null;
     const m0 = (c.params.materials as Record<string, unknown>[])[0];
-    return { id: c.id, geometry: m0.geometry, uvTransform: m0.uvTransform };
+    return { id: c.id, geometry: m0.geometry, uvTransform: m0.uvTransform, name: m0.name };
   });
 }
 
@@ -120,6 +120,25 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
       })
       .toBe(0.5);
     await expect.poll(async () => (await firstMesh(page))?.alphaTest).toBe(0.5);
+  });
+
+  // #220 — the imported material name is a label (not appearance), so the proof is
+  // the DAG side (side A) + the read-side: the field resyncs to the committed name.
+  test('renaming a material in the inspector updates the DAG name', async ({ page }) => {
+    await ingest(page, 'cube-draco.glb', 'ro-name');
+    await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
+    const child = await materialChild(page);
+    await selectAndOpen(page, child!.id);
+
+    const input = page.getByTestId(`inspector-gltfmat-name-${child!.id}-0`);
+    await expect(input).toBeVisible();
+    await input.fill('brushed steel');
+    await input.blur();
+
+    // Side A — the DAG material carries the new name.
+    await expect.poll(async () => (await materialChild(page))?.name).toBe('brushed steel');
+    // Read-side — the input reflects the committed name (resync from the DAG).
+    await expect(input).toHaveValue('brushed steel');
   });
 
   test('editing UV tiling in the inspector re-tiles the rendered map', async ({ page }) => {

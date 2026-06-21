@@ -879,6 +879,46 @@ function MaterialRenderOptions({
   );
 }
 
+// #220 — the imported glTF material's `name` (a label, not appearance). Buffered
+// like MaterialColorRow's hex input — commit on blur/Enter, not per-keystroke — so
+// a rename is ONE undo entry, not one per character. The name mirrors back to the
+// submesh slot-button label (`m.name || index`). Non-animatable (no ParamDiamond).
+function MaterialNameRow({
+  name,
+  testid,
+  onCommit,
+}: {
+  name: string;
+  testid: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  // Resync when the name changes outside this field (undo, slot switch, agent edit).
+  useEffect(() => setDraft(name), [name]);
+  const commit = (next: string) => {
+    const trimmed = next.trim();
+    if (trimmed === name) return;
+    onCommit(trimmed);
+  };
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">name</span>
+      <input
+        type="text"
+        aria-label="material name"
+        value={draft}
+        data-testid={testid}
+        className="w-40 rounded border border-border bg-muted px-2 py-0.5 font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        }}
+      />
+    </label>
+  );
+}
+
 // A controlled number input for one component of a vec2 (commits via onCommit so
 // the parent merges it into the whole [x,y] array — setAtPath has no index path).
 function UvNumberInline({
@@ -1494,6 +1534,16 @@ function GltfMaterialEditor({
       `edit material slot ${slot} ${lobe}.${key}`,
     );
   };
+  // #220 — rename the active slot's material. `name` is a TOP-LEVEL string (not a
+  // lobe), so the whole-`materials`-array replace sets it directly on the slot.
+  const commitName = (value: string) => {
+    const next = materials.map((m, i) => (i === slot ? { ...m, name: value } : m));
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'materials', value: next },
+      'user',
+      `rename material slot ${slot}`,
+    );
+  };
   return (
     <div data-testid={`inspector-gltf-material-editor-${nodeId}`} className="flex flex-col">
       {materials.length > 1 ? (
@@ -1523,6 +1573,12 @@ function GltfMaterialEditor({
           </div>
         </div>
       ) : null}
+      {/* #220 — rename the imported material (a label; updates the slot button too). */}
+      <MaterialNameRow
+        name={typeof mat.name === 'string' ? (mat.name as unknown as string) : ''}
+        testid={`inspector-gltfmat-name-${nodeId}-${slot}`}
+        onCommit={commitName}
+      />
       {/* v0.7 Phase 4 (#198) — the SHARED lobe rows (the SAME MaterialRows the
           native primitive editor renders). glTF supplies the array fieldPath +
           the whole-array-replace commit; the diamond + Auto-Key routing + the H40
