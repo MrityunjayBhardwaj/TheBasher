@@ -20,6 +20,7 @@ function countLabel(opt: GltfEntryOption): string {
 export function GltfEntryChooser() {
   const request = useGltfEntryChooserStore((s) => s.request);
   const choose = useGltfEntryChooserStore((s) => s.choose);
+  const chooseAll = useGltfEntryChooserStore((s) => s.chooseAll);
   const cancel = useGltfEntryChooserStore((s) => s.cancel);
 
   // Esc dismisses (→ resolves null → the import aborts). Bound only while open.
@@ -68,14 +69,24 @@ export function GltfEntryChooser() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          data-testid="gltf-entry-cancel"
-          onClick={cancel}
-          className="self-end rounded border border-border bg-muted px-3 py-1 text-xs text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          Cancel
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            data-testid="gltf-entry-import-all"
+            onClick={chooseAll}
+            className="rounded border border-border bg-muted px-3 py-1 text-xs text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Import all {request.options.length} as separate models
+          </button>
+          <button
+            type="button"
+            data-testid="gltf-entry-cancel"
+            onClick={cancel}
+            className="rounded border border-border bg-muted px-3 py-1 text-xs text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

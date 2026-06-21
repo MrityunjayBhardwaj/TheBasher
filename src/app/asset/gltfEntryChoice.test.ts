@@ -87,4 +87,16 @@ describe('resolveGltfEntryChoice', () => {
     useGltfEntryChooserStore.getState().cancel();
     expect(await pending).toBeNull();
   });
+
+  it('resolves ALL entries (richest-first) when the user picks "import all" (#219)', async () => {
+    const files = [
+      file('plain.gltf', enc({ materials: [{}], textures: [] })),
+      file('textured.gltf', enc({ materials: [{}, {}], textures: [{}, {}] })),
+    ];
+    const pending = resolveGltfEntryChoice(files);
+    useGltfEntryChooserStore.getState().chooseAll();
+    // richest-first ordering preserved → textured before plain.
+    expect(await pending).toEqual({ all: ['textured.gltf', 'plain.gltf'] });
+    expect(useGltfEntryChooserStore.getState().request).toBeNull();
+  });
 });

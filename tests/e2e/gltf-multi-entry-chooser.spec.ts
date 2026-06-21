@@ -16,8 +16,19 @@ interface BasherWindow {
     folderName: string,
   ) => Promise<string>;
   __basher_gltf_meshes?: () => { name: string; hasMap: boolean }[];
+  __basher_dag: {
+    getState: () => { state: { nodes: Record<string, { type: string }> } };
+  };
   __p?: Promise<string>;
 }
+
+const gltfAssetCount = (page: import('@playwright/test').Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    return Object.values(w.__basher_dag.getState().state.nodes).filter(
+      (n) => n.type === 'GltfAsset',
+    ).length;
+  });
 
 // Kick off an import of a TWO-entry set (one textured, one plain) built from the
 // known-good albedo fixture, WITHOUT awaiting — so the chooser modal is up while
@@ -75,6 +86,25 @@ test.describe('multi-glTF entry chooser (#214)', () => {
         }),
       )
       .toBe(true);
+  });
+
+  test('"import all" imports every entry as its own model (#219)', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(
+      () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
+    );
+    const before = await gltfAssetCount(page);
+    await startMultiEntryImport(page);
+
+    const chooser = page.getByTestId('gltf-entry-chooser');
+    await expect(chooser).toBeVisible();
+    await page.getByTestId('gltf-entry-import-all').click();
+
+    // The seam resolves to the LAST imported entry's path, and BOTH entries
+    // landed as separate GltfAsset models.
+    await page.evaluate(() => (window as unknown as BasherWindow).__p);
+    await expect(chooser).toBeHidden();
+    await expect.poll(() => gltfAssetCount(page)).toBe(before + 2);
   });
 
   test('dismissing the chooser aborts the import (no model added)', async ({ page }) => {

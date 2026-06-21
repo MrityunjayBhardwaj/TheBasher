@@ -20,9 +20,16 @@ export interface GltfEntryOption {
   textures: number | null;
 }
 
+/** The user's pick from the chooser: ONE entry (by relativePath), ALL entries
+ *  (each imported as its own model, #219), or null (dismissed → abort). */
+export type GltfEntryChoice =
+  | { type: 'one'; relativePath: string }
+  | { type: 'all' }
+  | null;
+
 interface ChooserRequest {
   options: GltfEntryOption[];
-  resolve: (relativePath: string | null) => void;
+  resolve: (choice: GltfEntryChoice) => void;
 }
 
 export interface GltfEntryChooserStore {
@@ -30,6 +37,8 @@ export interface GltfEntryChooserStore {
   request: ChooserRequest | null;
   /** Resolve with the chosen entry's relativePath. */
   choose: (relativePath: string) => void;
+  /** Resolve with "import all entries as separate models" (#219). */
+  chooseAll: () => void;
   /** Resolve with null (dismissed) — the import aborts. */
   cancel: () => void;
 }
@@ -40,7 +49,13 @@ export const useGltfEntryChooserStore = create<GltfEntryChooserStore>((set, get)
     const req = get().request;
     if (!req) return;
     set({ request: null });
-    req.resolve(relativePath);
+    req.resolve({ type: 'one', relativePath });
+  },
+  chooseAll: () => {
+    const req = get().request;
+    if (!req) return;
+    set({ request: null });
+    req.resolve({ type: 'all' });
   },
   cancel: () => {
     const req = get().request;
@@ -51,11 +66,11 @@ export const useGltfEntryChooserStore = create<GltfEntryChooserStore>((set, get)
 }));
 
 /**
- * Open the chooser and resolve with the picked entry's relativePath (or null if
- * dismissed). Imports are sequential user actions, but if a request is somehow
- * already pending, resolve it null first so its awaiter never hangs.
+ * Open the chooser and resolve with the user's choice (one entry / all entries /
+ * null if dismissed). Imports are sequential user actions, but if a request is
+ * somehow already pending, resolve it null first so its awaiter never hangs.
  */
-export function chooseGltfEntry(options: GltfEntryOption[]): Promise<string | null> {
+export function chooseGltfEntry(options: GltfEntryOption[]): Promise<GltfEntryChoice> {
   const prev = useGltfEntryChooserStore.getState().request;
   if (prev) prev.resolve(null);
   return new Promise((resolve) => {
