@@ -21,12 +21,8 @@
 // hetvabhasa B12 (shared ingest chokepoint).
 
 import { inputFilesToFiles } from './ingestReaders';
-import {
-  importGltfFromOpfs,
-  ingestGltfFolder,
-  locateEntryFile,
-  type IngestFile,
-} from './importGltf';
+import { ingestGltfFolder, locateEntryFile, type IngestFile } from './importGltf';
+import { ingestAndImportGltf } from './gltfEntryChoice';
 import { missingGltfSiblings } from './opfsGltfResolver';
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
@@ -97,8 +93,9 @@ async function ingestOneModel(files: IngestFile[]): Promise<void> {
   if (files.length === 0) return;
   const folderName = deriveFolderName(files[0].relativePath);
   if (hasGltfEntry(files)) {
-    const entryPath = await ingestGltfFolder(files, folderName);
-    await importGltfFromOpfs(entryPath);
+    // A multi-glTF folder prompts the user to pick which model; one entry imports
+    // straight through (#214). Cancelling the chooser returns null → no-op.
+    await ingestAndImportGltf(files, folderName);
   } else if (files.length === 1) {
     const entryPath = await ingestSingleFile(files[0], folderName);
     await routeImportByExtension(entryPath);

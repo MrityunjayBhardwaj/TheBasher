@@ -11,7 +11,8 @@ import { useState, type DragEvent, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { DRAG_MIME } from './asset/catalog';
 import { buildAssetDropOps } from './asset/dropChain';
-import { importGltfFromOpfs, ingestGltfFolder, type IngestFile } from './asset/importGltf';
+import { type IngestFile } from './asset/importGltf';
+import { ingestAndImportGltf } from './asset/gltfEntryChoice';
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
 import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
@@ -103,8 +104,9 @@ async function routeIngest(files: IngestFile[], items: DataTransferItem[]): Prom
     return;
   }
 
-  const entryPath = await ingestGltfFolder(files, folderName);
-  await importGltfFromOpfs(entryPath);
+  // A multi-glTF folder prompts the user to pick which model; one entry imports
+  // straight through (#214). Cancelling the chooser returns null → no-op.
+  await ingestAndImportGltf(files, folderName);
 }
 
 export function AssetDropZone({ children }: Props) {

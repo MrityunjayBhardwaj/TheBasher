@@ -8,6 +8,7 @@ import { Layout } from './Layout';
 import { useRouteStore } from './stores/routeStore';
 import { ToastViewport } from './ToastViewport';
 import { RenderAnimationProgress } from './RenderAnimationProgress';
+import { GltfEntryChooser } from './GltfEntryChooser';
 
 type BootState = 'pending' | 'ready' | 'failed';
 
@@ -69,6 +70,7 @@ export function App() {
       <Layout />
       <AddMenu />
       <RenderAnimationProgress />
+      <GltfEntryChooser />
       <ToastViewport />
     </>
   );

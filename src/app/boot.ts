@@ -42,7 +42,8 @@ import { registerAllTools } from '../agent/tools';
 import { registerAllMutators } from '../agent/mutators';
 import { registerAllStrategies } from '../agent/strategy';
 import { seedAssetsIntoStorage } from './asset/seedOpfs';
-import { ingestGltfFolder, importGltfFromOpfs, type IngestFile } from './asset/importGltf';
+import { type IngestFile } from './asset/importGltf';
+import { ingestAndImportGltf } from './asset/gltfEntryChoice';
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
 import { useTimeStore } from './stores/timeStore';
@@ -438,20 +439,19 @@ export function boot(): Promise<void> {
           };
         };
       });
-      // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives
-      // the SHARED core: ingestGltfFolder (disk → OPFS write) → then
-      // importGltfFromOpfs (OPFS read → dispatchAtomic). Wave F e2e uses
-      // this to exercise the full write→ingest→dispatch→render pipeline
-      // (H41 — fixtures via the new path from day one, not a synthetic
-      // shortcut). The existing __basher_importGltf seam above is left
-      // intact — it is the P7.5/P7.6 fixture entry (Chesterton).
+      // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the
+      // SHARED interactive chokepoint `ingestAndImportGltf`: resolve the entry
+      // choice (the multi-glTF chooser, #214) → ingestGltfFolder (disk → OPFS
+      // write) → importGltfFromOpfs (OPFS read → dispatchAtomic). Wave F e2e
+      // uses this for the full write→ingest→dispatch→render pipeline; the #214
+      // e2e drives the chooser through it. Returns '' if the chooser is
+      // dismissed. The existing __basher_importGltf seam above is left intact —
+      // it is the P7.5/P7.6 fixture entry (Chesterton).
       w.__basher_ingestGltfFolder = async (
         files: ReadonlyArray<IngestFile>,
         folderName: string,
       ): Promise<string> => {
-        const entryPath = await ingestGltfFolder(files, folderName);
-        await importGltfFromOpfs(entryPath);
-        return entryPath;
+        return (await ingestAndImportGltf(files, folderName)) ?? '';
       };
       // Phase 7.14 (#111) — single-file BVH/FBX ingestion seams mirroring the
       // glTF one above. Drive the SHARED single-file core: ingestSingleFile

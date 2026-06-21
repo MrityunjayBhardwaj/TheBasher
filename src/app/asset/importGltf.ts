@@ -97,6 +97,51 @@ export function locateEntryFile(files: readonly IngestFile[]): IngestFile | null
 }
 
 /**
+ * Every glTF entry (.gltf / .glb) in an ingest set, shallowest-first then by
+ * path — the candidate list for the multi-entry chooser (#214 follow-up). A
+ * folder with more than one entry (e.g. a `model.gltf` + `model_Textured.gltf`
+ * variant pack) would otherwise have ONE silently auto-picked by
+ * `locateEntryFile`, leaving the user no say in which model loads.
+ */
+export function locateGltfEntries(files: readonly IngestFile[]): IngestFile[] {
+  return files
+    .filter((f) => {
+      const l = f.relativePath.toLowerCase();
+      return l.endsWith('.gltf') || l.endsWith('.glb');
+    })
+    .sort((a, b) => {
+      const da = a.relativePath.split('/').filter(Boolean).length;
+      const db = b.relativePath.split('/').filter(Boolean).length;
+      return da - db || a.relativePath.localeCompare(b.relativePath);
+    });
+}
+
+/**
+ * A cheap material/texture count for a glTF entry — shown in the chooser so the
+ * user can tell a textured model from a stripped variant. `null` when the bytes
+ * aren't JSON-parseable (a binary `.glb`: counts would need a full container
+ * parse, deliberately skipped here — the chooser just shows ".glb").
+ */
+export function summarizeGltfEntry(bytes: Uint8Array): {
+  materials: number | null;
+  textures: number | null;
+} {
+  try {
+    const doc = JSON.parse(new TextDecoder('utf-8').decode(bytes)) as {
+      materials?: unknown[];
+      textures?: unknown[];
+    };
+    if (doc === null || typeof doc !== 'object') return { materials: null, textures: null };
+    return {
+      materials: Array.isArray(doc.materials) ? doc.materials.length : 0,
+      textures: Array.isArray(doc.textures) ? doc.textures.length : 0,
+    };
+  } catch {
+    return { materials: null, textures: null };
+  }
+}
+
+/**
  * Non-dispatching core of the glTF import: read the OPFS bytes at `path`,
  * detach a plain ArrayBuffer, and build the deterministic import Op chain
  * (GltfAsset + per-child GltfChild + Transform + Group + — when the file
@@ -210,10 +255,16 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
 export async function ingestGltfFolder(
   files: readonly IngestFile[],
   folderName: string,
+  preferredEntryRelativePath?: string,
 ): Promise<string> {
   const desired = sanitizeFolderName(folderName);
   try {
-    const entry = locateEntryFile(files);
+    // When the entry chooser has picked a specific glTF from a multi-entry
+    // folder, honor it; otherwise auto-locate the shallowest entry (#214).
+    const entry =
+      (preferredEntryRelativePath !== undefined
+        ? files.find((f) => f.relativePath === preferredEntryRelativePath)
+        : undefined) ?? locateEntryFile(files);
     if (!entry) {
       const msg = 'import failed: no glTF/glb in folder';
       useAssetErrorStore.getState().report(desired, msg);
