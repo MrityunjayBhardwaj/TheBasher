@@ -1,0 +1,200 @@
+// Unit tests for the spec/gloss → metal-rough converter (#214, V53).
+// Grounded in the REAL gas_station material shapes observed on disk:
+//   - 74/74 materials are spec-gloss, 0 carry pbrMetallicRoughness
+//   - typical: diffuseFactor [1,1,1,1] + diffuseTexture, specularFactor [0,0,0]
+//     (dielectric), glossinessFactor 0.4
+//   - a few metals: specularFactor up to [0.97, 0.21, 0]
+//   - exactly 1 material carries a combined specularGlossinessTexture
+
+import { describe, it, expect } from 'vitest';
+import {
+  SPEC_GLOSS_EXTENSION,
+  hasSpecGlossMaterials,
+  solveMetallic,
+  specGlossFactorsToMetalRough,
+  convertSpecGlossDocument,
+  convertSpecGlossGltfBytes,
+  type GltfDoc,
+} from './specGlossToMetalRough';
+
+describe('solveMetallic', () => {
+  it('returns 0 when specular is below the dielectric floor (0.04)', () => {
+    expect(solveMetallic(0.8, 0.0, 1)).toBe(0);
+    expect(solveMetallic(0.5, 0.03, 0.97)).toBe(0);
+  });
+
+  it('returns a high metallic for a bright specular with a dark diffuse', () => {
+    // A pure metal: bright specular, no diffuse albedo.
+    const m = solveMetallic(0.0, 0.9, 0.1);
+    expect(m).toBeGreaterThan(0.9);
+  });
+
+  it('clamps to [0,1]', () => {
+    const m = solveMetallic(0.0, 1.0, 0.0);
+    expect(m).toBeGreaterThanOrEqual(0);
+    expect(m).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('specGlossFactorsToMetalRough', () => {
+  it('converts the common dielectric gas_station material (white diffuse, no specular, gloss 0.4)', () => {
+    const f = specGlossFactorsToMetalRough([1, 1, 1, 1], [0, 0, 0], 0.4);
+    expect(f.metallicFactor).toBe(0); // specular 0 → dielectric
+    expect(f.roughnessFactor).toBeCloseTo(0.6, 5); // 1 - 0.4
+    // White diffuse with zero specular reconstructs to ~white base color.
+    expect(f.baseColorFactor[0]).toBeCloseTo(1, 2);
+    expect(f.baseColorFactor[1]).toBeCloseTo(1, 2);
+    expect(f.baseColorFactor[2]).toBeCloseTo(1, 2);
+    expect(f.baseColorFactor[3]).toBe(1); // opacity preserved
+  });
+
+  it('preserves diffuse alpha as opacity', () => {
+    const f = specGlossFactorsToMetalRough([0.5, 0.5, 0.5, 0.25], [0, 0, 0], 1);
+    expect(f.baseColorFactor[3]).toBe(0.25);
+    expect(f.roughnessFactor).toBe(0); // gloss 1 → roughness 0
+  });
+
+  it('detects a metal from a bright specular factor', () => {
+    // gas_station's brightest metal: specularFactor [0.97, 0.21, 0].
+    const f = specGlossFactorsToMetalRough([0.05, 0.05, 0.05, 1], [0.97, 0.21, 0], 0.6);
+    expect(f.metallicFactor).toBeGreaterThan(0.5);
+    expect(f.roughnessFactor).toBeCloseTo(0.4, 5);
+  });
+
+  it('applies glTF spec defaults when factors are omitted', () => {
+    const f = specGlossFactorsToMetalRough(); // all defaults
+    // Default specular [1,1,1] is a full metal, so base derives from specular
+    // (≈ white) and opacity (diffuse alpha default) is exactly 1.
+    expect(f.baseColorFactor[0]).toBeCloseTo(1, 5);
+    expect(f.baseColorFactor[3]).toBe(1);
+    expect(f.metallicFactor).toBeGreaterThan(0);
+    expect(f.roughnessFactor).toBe(0); // default gloss 1
+  });
+});
+
+function gasStationLikeDoc(): GltfDoc {
+  return {
+    extensionsUsed: [SPEC_GLOSS_EXTENSION],
+    extensionsRequired: [SPEC_GLOSS_EXTENSION],
+    materials: [
+      {
+        name: 'dielectric-textured',
+        doubleSided: true,
+        extensions: {
+          [SPEC_GLOSS_EXTENSION]: {
+            diffuseFactor: [1, 1, 1, 1],
+            diffuseTexture: { index: 0 },
+            glossinessFactor: 0.4,
+            specularFactor: [0, 0, 0],
+          },
+        },
+      },
+      {
+        name: 'combined-texture',
+        extensions: {
+          [SPEC_GLOSS_EXTENSION]: {
+            diffuseFactor: [1, 1, 1, 1],
+            diffuseTexture: { index: 2 },
+            specularGlossinessTexture: { index: 3 },
+            glossinessFactor: 1,
+            specularFactor: [1, 1, 1],
+          },
+        },
+      },
+    ],
+  };
+}
+
+describe('convertSpecGlossDocument', () => {
+  it('converts each material to metal-rough and strips the extension', () => {
+    const { doc } = convertSpecGlossDocument(gasStationLikeDoc());
+    const m0 = doc.materials![0];
+    expect(m0.extensions).toBeUndefined(); // ext removed; bag dropped when empty
+    expect(m0.pbrMetallicRoughness!.metallicFactor).toBe(0);
+    expect(m0.pbrMetallicRoughness!.roughnessFactor).toBeCloseTo(0.6, 5);
+    // diffuseTexture → baseColorTexture (same index, reused sRGB color texture).
+    expect(m0.pbrMetallicRoughness!.baseColorTexture).toEqual({ index: 0 });
+    expect(m0.doubleSided).toBe(true); // non-extension fields pass through
+  });
+
+  it('strips the extension from extensionsUsed / extensionsRequired', () => {
+    const { doc } = convertSpecGlossDocument(gasStationLikeDoc());
+    // Lists held only spec-gloss → removed entirely.
+    expect(doc.extensionsUsed).toBeUndefined();
+    expect(doc.extensionsRequired).toBeUndefined();
+  });
+
+  it('keeps other extensions in the document lists', () => {
+    const input = gasStationLikeDoc();
+    input.extensionsUsed = [SPEC_GLOSS_EXTENSION, 'KHR_materials_ior'];
+    const { doc } = convertSpecGlossDocument(input);
+    expect(doc.extensionsUsed).toEqual(['KHR_materials_ior']);
+  });
+
+  it('flags combined-texture materials and converts their diffuseTexture now', () => {
+    const { doc, combinedTextureMaterials } = convertSpecGlossDocument(gasStationLikeDoc());
+    expect(combinedTextureMaterials).toEqual([1]);
+    const m1 = doc.materials![1];
+    // diffuseTexture is converted in increment 1...
+    expect(m1.pbrMetallicRoughness!.baseColorTexture).toEqual({ index: 2 });
+    // ...but the combined MR map is left for the pixel pass (increment 2).
+    expect(m1.pbrMetallicRoughness!.metallicRoughnessTexture).toBeUndefined();
+  });
+
+  it('does not mutate the input document (pure)', () => {
+    const input = gasStationLikeDoc();
+    const before = JSON.stringify(input);
+    convertSpecGlossDocument(input);
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it('is a no-op clone for a metal-rough document (no spec-gloss)', () => {
+    const mr: GltfDoc = {
+      materials: [{ name: 'mr', pbrMetallicRoughness: { metallicFactor: 1, roughnessFactor: 0.5 } }],
+    };
+    const { doc, combinedTextureMaterials } = convertSpecGlossDocument(mr);
+    expect(doc).toEqual(mr);
+    expect(combinedTextureMaterials).toEqual([]);
+  });
+});
+
+describe('hasSpecGlossMaterials', () => {
+  it('detects via extensionsUsed', () => {
+    expect(hasSpecGlossMaterials({ extensionsUsed: [SPEC_GLOSS_EXTENSION] })).toBe(true);
+  });
+  it('detects via a material extension', () => {
+    expect(
+      hasSpecGlossMaterials({ materials: [{ extensions: { [SPEC_GLOSS_EXTENSION]: {} } }] }),
+    ).toBe(true);
+  });
+  it('is false for a metal-rough document', () => {
+    expect(hasSpecGlossMaterials({ materials: [{ pbrMetallicRoughness: {} }] })).toBe(false);
+  });
+});
+
+describe('convertSpecGlossGltfBytes', () => {
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+
+  it('converts spec-gloss entry bytes and reports combined-texture materials', () => {
+    const r = convertSpecGlossGltfBytes(enc(gasStationLikeDoc()));
+    expect(r.converted).toBe(true);
+    expect(r.combinedTextureMaterials).toEqual([1]);
+    const doc = JSON.parse(new TextDecoder().decode(r.bytes)) as GltfDoc;
+    expect(doc.materials![0].extensions).toBeUndefined();
+    expect(doc.materials![0].pbrMetallicRoughness!.baseColorTexture).toEqual({ index: 0 });
+  });
+
+  it('is a no-op for a metal-rough document', () => {
+    const bytes = enc({ materials: [{ pbrMetallicRoughness: {} }] });
+    const r = convertSpecGlossGltfBytes(bytes);
+    expect(r.converted).toBe(false);
+    expect(r.bytes).toBe(bytes); // same reference — bytes untouched
+  });
+
+  it('is a no-op for non-JSON bytes', () => {
+    const bytes = new TextEncoder().encode('not json {');
+    const r = convertSpecGlossGltfBytes(bytes);
+    expect(r.converted).toBe(false);
+    expect(r.bytes).toBe(bytes);
+  });
+});

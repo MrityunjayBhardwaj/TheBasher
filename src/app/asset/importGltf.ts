@@ -50,6 +50,7 @@
 
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
+import { convertSpecGlossGltfBytes } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
 import { opfsSiblingPath, missingGltfSiblings } from './opfsGltfResolver';
@@ -224,13 +225,28 @@ export async function ingestGltfFolder(
     }
     const resolvedName = await resolveFreeImportName(desired);
     const storage = await getStorage();
+    // Spec/gloss conversion (#214, V53): three.js dropped the spec-gloss
+    // GLTFLoader plugin at ~r150 (we're on r169), so a
+    // KHR_materials_pbrSpecularGlossiness model imports flat-gray — the render
+    // clone gets a default white material with NO textures, and the captured IR
+    // is all-default (it reads only pbrMetallicRoughness). Convert the entry
+    // `.gltf`'s materials → metal-rough HERE, before the OPFS write, so BOTH
+    // readers of the OPFS bytes — the render clone (GLTFLoader re-parses) AND the
+    // capture (buildGltfImportOps re-parses) — see one converted source (render
+    // == capture, V37/H40). A no-op for a metal-rough model. GLB repack deferred.
+    const isGltfEntry = entry.relativePath.toLowerCase().endsWith('.gltf');
+    const entryConversion = isGltfEntry ? convertSpecGlossGltfBytes(entry.bytes) : null;
     // Write each file under the chosen subdirectory, preserving its
     // full in-folder relativePath verbatim. OpfsStorage.write auto-
     // creates nested directories (OpfsStorage.ts:43-45), so no mkdir
     // step is needed.
     for (const f of files) {
       const opfsPath = `${USER_IMPORTS_ROOT}/${resolvedName}/${f.relativePath}`;
-      await storage.write(opfsPath, f.bytes);
+      const bytes =
+        entryConversion?.converted && f.relativePath === entry.relativePath
+          ? entryConversion.bytes
+          : f.bytes;
+      await storage.write(opfsPath, bytes);
     }
     return `${USER_IMPORTS_ROOT}/${resolvedName}/${entry.relativePath}`;
   } catch (err) {
