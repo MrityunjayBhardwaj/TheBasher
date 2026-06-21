@@ -51,6 +51,7 @@
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
 import { convertSpecGlossGltfFiles } from './specGlossIngest';
+import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
 import { opfsSiblingPath, missingGltfSiblings } from './opfsGltfResolver';
@@ -157,15 +158,25 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       useDagStore.getState().state,
     );
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
-    // NO-SILENT-DROP (V38, V53 fork-3): the import is FAITHFUL — these glTF
-    // features render via the GLTFLoader clone and the scalar overlay never
-    // strips them — they are simply not yet captured into Basher's EDITABLE IR.
-    // So this is a console notice, NOT the red `asset failed:` error banner
-    // (which would mislabel a fine import as a failure and fire on most PBR
-    // models). The structured list rides on the result for a future notice UI.
-    if (result.unsupportedFeatures.length > 0) {
+    // NO-SILENT-DROP (V38, V53 fork-3). Two distinct notices:
+    //  (1) spec/gloss reaching here means an UN-converted source. A .gltf is
+    //      auto-converted to metal-rough at ingest (#214) so it never appears;
+    //      a .glb is NOT (binary re-pack deferred), and three r169 renders it
+    //      INCORRECTLY (flat/untextured — it dropped the plugin). So this is a
+    //      render-WRONG warning with a concrete remedy, not "renders fine".
+    //  (2) the rest are FAITHFUL: they render via the clone (the scalar overlay
+    //      never strips them); they're just not yet captured into the editable
+    //      IR. A console notice, NOT the red `asset failed:` banner.
+    const specGloss = result.unsupportedFeatures.includes(SPEC_GLOSS_EXTENSION);
+    const faithful = result.unsupportedFeatures.filter((f) => f !== SPEC_GLOSS_EXTENSION);
+    if (specGloss) {
       console.warn(
-        `glTF imported OK (${path}). These features render but aren't editable in Basher yet: ${result.unsupportedFeatures.join(', ')}`,
+        `glTF imported (${path}) uses KHR_materials_pbrSpecularGlossiness in a .glb — three.js no longer renders it (appears flat/untextured). Re-export as a .gltf folder: Basher converts .gltf spec/gloss to metal-rough automatically.`,
+      );
+    }
+    if (faithful.length > 0) {
+      console.warn(
+        `glTF imported OK (${path}). These features render but aren't editable in Basher yet: ${faithful.join(', ')}`,
       );
     }
     // Bump AFTER dispatchAtomic returns (pre-mortem #3): a pre-dispatch

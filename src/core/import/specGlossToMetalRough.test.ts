@@ -16,6 +16,7 @@ import {
   convertSpecGlossDocument,
   type GltfDoc,
 } from './specGlossToMetalRough';
+import { detectUnsupportedGltfFeatures } from './gltfImportChain';
 
 describe('solveMetallic', () => {
   it('returns 0 when specular is below the dielectric floor (0.04)', () => {
@@ -160,6 +161,17 @@ describe('convertSpecGlossDocument', () => {
     const { doc, combinedTextureMaterials } = convertSpecGlossDocument(mr);
     expect(doc).toEqual(mr);
     expect(combinedTextureMaterials).toEqual([]);
+  });
+});
+
+describe('no-silent-drop reconciliation (#214 increment 4)', () => {
+  it('a CONVERTED .gltf no longer flags spec/gloss as unsupported', () => {
+    // Pre-conversion: spec/gloss IS flagged (the unconverted .glb case).
+    expect(detectUnsupportedGltfFeatures(gasStationLikeDoc())).toContain(SPEC_GLOSS_EXTENSION);
+    // After ingest conversion (what render + capture read): stripped, no flag.
+    const { doc } = convertSpecGlossDocument(gasStationLikeDoc());
+    expect(detectUnsupportedGltfFeatures(doc)).not.toContain(SPEC_GLOSS_EXTENSION);
+    expect(detectUnsupportedGltfFeatures(doc)).toEqual([]);
   });
 });
 
