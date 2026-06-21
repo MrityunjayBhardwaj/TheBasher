@@ -50,7 +50,7 @@
 
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
-import { convertSpecGlossGltfFiles } from './specGlossIngest';
+import { convertSpecGlossEntry } from './specGlossIngest';
 import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
@@ -204,11 +204,12 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
     );
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
     // NO-SILENT-DROP (V38, V53 fork-3). Two distinct notices:
-    //  (1) spec/gloss reaching here means an UN-converted source. A .gltf is
-    //      auto-converted to metal-rough at ingest (#214) so it never appears;
-    //      a .glb is NOT (binary re-pack deferred), and three r169 renders it
-    //      INCORRECTLY (flat/untextured — it dropped the plugin). So this is a
-    //      render-WRONG warning with a concrete remedy, not "renders fine".
+    //  (1) spec/gloss reaching here means an UN-converted source. Both .gltf and
+    //      .glb are auto-converted to metal-rough at ingest (#214 / #216), so
+    //      this normally never fires. It only survives when the ingest conversion
+    //      could not run (e.g. a malformed container parseGlb rejected), in which
+    //      case three r169 renders it INCORRECTLY (flat/untextured — it dropped
+    //      the spec-gloss plugin). A render-WRONG warning, not "renders fine".
     //  (2) the rest are FAITHFUL: they render via the clone (the scalar overlay
     //      never strips them); they're just not yet captured into the editable
     //      IR. A console notice, NOT the red `asset failed:` banner.
@@ -216,7 +217,7 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
     const faithful = result.unsupportedFeatures.filter((f) => f !== SPEC_GLOSS_EXTENSION);
     if (specGloss) {
       console.warn(
-        `glTF imported (${path}) uses KHR_materials_pbrSpecularGlossiness in a .glb — three.js no longer renders it (appears flat/untextured). Re-export as a .gltf folder: Basher converts .gltf spec/gloss to metal-rough automatically.`,
+        `glTF imported (${path}) still carries KHR_materials_pbrSpecularGlossiness — the ingest conversion could not run (malformed container?), so three.js renders it flat/untextured. Re-export the model and import again.`,
       );
     }
     if (faithful.length > 0) {
@@ -287,17 +288,18 @@ export async function ingestGltfFolder(
     }
     const resolvedName = await resolveFreeImportName(desired);
     const storage = await getStorage();
-    // Spec/gloss conversion (#214, V53): three.js dropped the spec-gloss
+    // Spec/gloss conversion (#214 / #216, V53): three.js dropped the spec-gloss
     // GLTFLoader plugin at ~r150 (we're on r169), so a
     // KHR_materials_pbrSpecularGlossiness model imports flat-gray — the render
     // clone gets a default white material with NO textures, and the captured IR
-    // is all-default (it reads only pbrMetallicRoughness). Convert the entry
-    // `.gltf`'s materials → metal-rough HERE, before the OPFS write, so BOTH
-    // readers of the OPFS bytes — the render clone (GLTFLoader re-parses) AND the
-    // capture (buildGltfImportOps re-parses) — see one converted source (render
-    // == capture, V37/H40). A no-op for a metal-rough model. GLB repack deferred.
-    const isGltfEntry = entry.relativePath.toLowerCase().endsWith('.gltf');
-    const conversion = isGltfEntry ? await convertSpecGlossGltfFiles(entry, files) : null;
+    // is all-default (it reads only pbrMetallicRoughness). Convert the entry's
+    // materials → metal-rough HERE, before the OPFS write, so BOTH readers of the
+    // OPFS bytes — the render clone (GLTFLoader re-parses) AND the capture
+    // (buildGltfImportOps re-parses) — see one converted source (render ==
+    // capture, V37/H40). The dispatcher handles both containers (`.gltf` rewrites
+    // the JSON + writes sibling MR textures; `.glb` repacks the binary container
+    // with the baked MR map embedded as a data URI) and no-ops a metal-rough model.
+    const conversion = await convertSpecGlossEntry(entry, files);
     // Write each file under the chosen subdirectory, preserving its
     // full in-folder relativePath verbatim. OpfsStorage.write auto-
     // creates nested directories (OpfsStorage.ts:43-45), so no mkdir

@@ -34,9 +34,10 @@
 //
 // PURE + deterministic (V2/V22): no Date.now / Math.random / IO. Operates on the
 // parsed JSON document object, returns a NEW document (structuredClone) — the
-// caller (importGltf) re-serializes the converted entry bytes before the OPFS
-// write. GLB (.glb) is deferred (needs a binary re-pack); this targets the
-// JSON-only `.gltf` container.
+// caller (specGlossIngest) re-serializes the converted entry bytes before the
+// OPFS write. CONTAINER-AGNOSTIC: this same conversion runs for the JSON `.gltf`
+// container AND, since #216, the binary `.glb` container (parsed via parseGlb,
+// re-serialized via repackGlb) — the document shape is identical post-parse.
 //
 // REF: #214; .anvi/vyapti.md V53; src/core/import/gltfJsonMaterialToOpenpbr.ts
 //      (the capture path that reads the converted pbrMetallicRoughness);

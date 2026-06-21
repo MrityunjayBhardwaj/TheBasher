@@ -19,6 +19,16 @@
 // embed for free (no H77/H98 dual-key concern). The MR texture is LINEAR data →
 // PNG (lossless), never JPEG.
 //
+// GLB (#216): a `.glb` is self-contained (one binary file), so there is no
+// sibling to write — the conversion runs `parseGlb` → `convertSpecGlossDocument`
+// (the SAME pure factor + diffuseTexture conversion) → bakes each combined
+// texture by reading its source image from the BIN bufferView (the realistic GLB
+// case) → embeds the baked MR map as a `data:` URI image → `repackGlb` rewrites
+// the container. Both OPFS readers then see metal-rough (render == capture). The
+// `.gltf` and `.glb` paths share the decode→bake→encode math (`bakeMetalRoughPng`)
+// and the JSON wiring (`wireBakedMrTexture`); only image RESOLUTION (sibling file
+// vs BIN bufferView) and MR EMBEDDING (sibling PNG vs data URI) differ.
+//
 // GRACEFUL DEGRADATION (V38): if a combined material's image can't be decoded
 // (compressed KTX2, a bufferView image with no uri, a missing sibling), the pass
 // SKIPS that material's MR texture and leaves the factor-only conversion
@@ -36,6 +46,7 @@ import {
   type GltfDoc,
   type CombinedTextureMaterial,
 } from '../../core/import/specGlossToMetalRough';
+import { parseGlb, repackGlb } from '../../core/import/glb';
 import { opfsSiblingPath } from './opfsGltfResolver';
 import type { IngestFile } from './importCommon';
 
@@ -145,34 +156,38 @@ function resolveTextureBytes(
   return { bytes, mime: imageMime(uri, img?.mimeType) };
 }
 
+/** Raw image bytes + mime for one of a combined material's source textures. */
+interface ImageSource {
+  bytes: Uint8Array;
+  mime: string;
+}
+
 /**
- * Bake a metallic-roughness texture for one combined-texture material and wire
- * it into the document. Returns the new sibling file to write, or null when the
- * source image can't be decoded (the material keeps its factor-only conversion).
+ * The container-agnostic bake: decode the combined specularGlossinessTexture (+
+ * the optional diffuse texture, resampled to its dimensions), run the per-texel
+ * Khronos conversion, and encode the result as a PNG (linear MR data). Returns
+ * null when the spec image can't be decoded (the caller degrades to the
+ * factor-only conversion, V38). Shared by the `.gltf` and `.glb` paths — only
+ * how `specSource`/`diffuseSource` are RESOLVED differs (sibling file vs BIN
+ * bufferView).
  */
-async function bakeCombinedTexture(
-  doc: GltfDoc,
+async function bakeMetalRoughPng(
+  specSource: ImageSource,
+  diffuseSource: ImageSource | null,
   mat: CombinedTextureMaterial,
-  entryPath: string,
-  fileMap: Map<string, Uint8Array>,
-): Promise<{ relativePath: string; bytes: Uint8Array } | null> {
-  const specSource = resolveTextureBytes(doc, mat.specGlossTextureIndex, entryPath, fileMap);
-  if (!specSource) return null;
+): Promise<Uint8Array | null> {
   const spec = await decodeImageToRgba(specSource.bytes, specSource.mime);
   if (!spec) return null;
 
   // Resample the diffuse texture (if any) to the spec map's dimensions so the
   // per-texel metallic solve reads aligned pixels; else use diffuseFactor.
   let diffuse: Uint8ClampedArray | null = null;
-  if (typeof mat.diffuseTextureIndex === 'number') {
-    const diffSource = resolveTextureBytes(doc, mat.diffuseTextureIndex, entryPath, fileMap);
-    if (diffSource) {
-      const decoded = await decodeImageToRgba(diffSource.bytes, diffSource.mime, {
-        width: spec.width,
-        height: spec.height,
-      });
-      diffuse = decoded?.data ?? null;
-    }
+  if (diffuseSource) {
+    const decoded = await decodeImageToRgba(diffuseSource.bytes, diffuseSource.mime, {
+      width: spec.width,
+      height: spec.height,
+    });
+    diffuse = decoded?.data ?? null;
   }
 
   // JPEG carries no alpha → glossiness comes from the factor; PNG/webp carry the
@@ -185,11 +200,17 @@ async function bakeCombinedTexture(
     mat.glossinessFactor,
     glossFromAlpha,
   );
-  const pngBytes = await encodeRgbaToPng(mr, spec.width, spec.height);
+  return encodeRgbaToPng(mr, spec.width, spec.height);
+}
 
-  // Append a NEW image + texture for the baked MR map. Reuse the spec texture's
-  // sampler (same wrap/filter as the source map). URI relative to the .gltf dir.
-  const uri = `basher-mr-${mat.materialIndex}.png`;
+/**
+ * Wire a baked MR texture (already encoded, referenced by `uri` — a sibling
+ * filename for `.gltf` or a `data:` URI for `.glb`) into the document: append an
+ * image + texture (reusing the spec texture's sampler), point the material's
+ * metallicRoughnessTexture at it, and set the factors to 1× (the value now lives
+ * in the texture). Shared by both container paths.
+ */
+function wireBakedMrTexture(doc: GltfDoc, mat: CombinedTextureMaterial, uri: string): void {
   doc.images = doc.images ?? [];
   doc.textures = doc.textures ?? [];
   doc.images.push({ uri, mimeType: 'image/png' });
@@ -201,14 +222,37 @@ async function bakeCombinedTexture(
   });
   const newTextureIndex = doc.textures.length - 1;
 
-  // Point the material's metallicRoughnessTexture at the baked map. The full
-  // value lives in the texture now, so the factors become 1× (metal-rough
-  // multiplies factor × texture); leave roughnessFactor 1 too.
   const pbr = (doc.materials![mat.materialIndex].pbrMetallicRoughness ??= {});
   pbr.metallicRoughnessTexture = { index: newTextureIndex };
   pbr.metallicFactor = 1;
   pbr.roughnessFactor = 1;
+}
 
+/**
+ * Bake a metallic-roughness texture for one combined-texture material in a
+ * `.gltf` folder and wire it into the document. Returns the new sibling file to
+ * write, or null when the source image can't be decoded (the material keeps its
+ * factor-only conversion).
+ */
+async function bakeCombinedTextureGltf(
+  doc: GltfDoc,
+  mat: CombinedTextureMaterial,
+  entryPath: string,
+  fileMap: Map<string, Uint8Array>,
+): Promise<{ relativePath: string; bytes: Uint8Array } | null> {
+  const specSource = resolveTextureBytes(doc, mat.specGlossTextureIndex, entryPath, fileMap);
+  if (!specSource) return null;
+  const diffuseSource =
+    typeof mat.diffuseTextureIndex === 'number'
+      ? resolveTextureBytes(doc, mat.diffuseTextureIndex, entryPath, fileMap)
+      : null;
+
+  const pngBytes = await bakeMetalRoughPng(specSource, diffuseSource, mat);
+  if (!pngBytes) return null;
+
+  // URI relative to the .gltf dir; the baked PNG rides as a sibling file.
+  const uri = `basher-mr-${mat.materialIndex}.png`;
+  wireBakedMrTexture(doc, mat, uri);
   return { relativePath: opfsSiblingPath(entryPath, uri), bytes: pngBytes };
 }
 
@@ -216,8 +260,8 @@ async function bakeCombinedTexture(
  * Convert a `.gltf` ingest entry's spec/gloss materials → metal-rough, baking an
  * MR texture for each combined `specularGlossinessTexture` material. A no-op
  * (returns the entry bytes verbatim, converted:false) when the entry isn't valid
- * JSON or carries no spec/gloss. `.glb` is NOT handled here (binary re-pack
- * deferred — the caller gates on the `.gltf` extension).
+ * JSON or carries no spec/gloss. The `.glb` case is handled by
+ * `convertSpecGlossGlb`; `convertSpecGlossEntry` dispatches between them.
  */
 export async function convertSpecGlossGltfFiles(
   entry: IngestFile,
@@ -240,7 +284,7 @@ export async function convertSpecGlossGltfFiles(
     const fileMap = new Map(files.map((f) => [f.relativePath, f.bytes] as const));
     for (const mat of combinedTextureMaterials) {
       try {
-        const baked = await bakeCombinedTexture(doc, mat, entry.relativePath, fileMap);
+        const baked = await bakeCombinedTextureGltf(doc, mat, entry.relativePath, fileMap);
         if (baked) extraFiles.push(baked);
       } catch {
         // Degrade to the factor-only conversion already in `doc` (V38). The
@@ -254,4 +298,134 @@ export async function convertSpecGlossGltfFiles(
     converted: true,
     extraFiles,
   };
+}
+
+/** A glTF image / bufferView, narrowed to the fields the GLB combined-texture
+ *  resolver reads from the parsed document (the rest passes through). */
+interface GlbImageView {
+  uri?: string;
+  mimeType?: string;
+  bufferView?: number;
+}
+interface GlbBufferViewView {
+  buffer?: number;
+  byteOffset?: number;
+  byteLength: number;
+}
+
+/** Base64-encode bytes (chunked to avoid String.fromCharCode arg-count limits)
+ *  for embedding a baked PNG as a `data:` URI image in the GLB JSON chunk. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Resolve a glTF texture index → its source image bytes + mime, for a GLB. The
+ * image is either a `data:` URI (decoded inline) or — the realistic GLB case — a
+ * `bufferView` slice of the embedded BIN chunk. Returns null when unresolvable
+ * (the caller degrades to the factor-only conversion).
+ */
+function resolveGlbTextureBytes(
+  doc: GltfDoc,
+  textureIndex: number,
+  bin: Uint8Array,
+): ImageSource | null {
+  const tex = doc.textures?.[textureIndex];
+  if (!tex || typeof tex.source !== 'number') return null;
+  const img = doc.images?.[tex.source] as GlbImageView | undefined;
+  if (!img) return null;
+  if (typeof img.uri === 'string') {
+    if (!img.uri.startsWith('data:')) return null; // external sibling: GLB is self-contained
+    const comma = img.uri.indexOf(',');
+    if (comma < 0) return null;
+    const raw = atob(img.uri.slice(comma + 1));
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return { bytes, mime: imageMime(img.uri, img.mimeType) };
+  }
+  if (typeof img.bufferView !== 'number') return null;
+  const bufferViews = (doc as { bufferViews?: GlbBufferViewView[] }).bufferViews;
+  const bv = bufferViews?.[img.bufferView];
+  if (!bv) return null;
+  const start = bv.byteOffset ?? 0;
+  const end = start + bv.byteLength;
+  if (end > bin.byteLength) return null;
+  // A bufferView image MUST declare its mimeType (glTF 2.0 §3.9.1 — there is no
+  // URI extension to fall back on).
+  return { bytes: bin.subarray(start, end), mime: imageMime(undefined, img.mimeType) };
+}
+
+/**
+ * Convert a `.glb` ingest entry's spec/gloss materials → metal-rough by
+ * repacking the binary container (#216). Parses the GLB, runs the SAME pure
+ * factor + diffuseTexture conversion, bakes each combined `specularGlossinessTexture`
+ * (reading its source image from the BIN bufferView) and embeds the result as a
+ * `data:` URI image, then repacks. A no-op when the bytes aren't a valid GLB or
+ * carry no spec/gloss. `.glb` is self-contained → no sibling `extraFiles`.
+ */
+export async function convertSpecGlossGlb(entry: IngestFile): Promise<SpecGlossIngestResult> {
+  let json: unknown;
+  let bin: Uint8Array;
+  try {
+    // parseGlb wants a standalone ArrayBuffer; copy into a fresh one so an
+    // offset-backed / SharedArrayBuffer-backed view can't trip the DataView reads
+    // (the same copy discipline decodeImageToRgba uses at the OPFS read seam).
+    const copy = new Uint8Array(entry.bytes.byteLength);
+    copy.set(entry.bytes);
+    const parsed = parseGlb(copy.buffer);
+    json = parsed.json;
+    bin = parsed.bin;
+  } catch {
+    return NOT_CONVERTED(entry); // not a valid GLB (or truncated) — leave verbatim
+  }
+  if (json === null || typeof json !== 'object' || !hasSpecGlossMaterials(json as GltfDoc)) {
+    return NOT_CONVERTED(entry);
+  }
+
+  const { doc, combinedTextureMaterials } = convertSpecGlossDocument(json as GltfDoc);
+
+  for (const mat of combinedTextureMaterials) {
+    try {
+      const specSource = resolveGlbTextureBytes(doc, mat.specGlossTextureIndex, bin);
+      if (!specSource) continue; // degrade to factor-only (V38)
+      const diffuseSource =
+        typeof mat.diffuseTextureIndex === 'number'
+          ? resolveGlbTextureBytes(doc, mat.diffuseTextureIndex, bin)
+          : null;
+      const pngBytes = await bakeMetalRoughPng(specSource, diffuseSource, mat);
+      if (!pngBytes) continue;
+      wireBakedMrTexture(doc, mat, `data:image/png;base64,${bytesToBase64(pngBytes)}`);
+    } catch {
+      // Degrade to the factor-only conversion already in `doc` (V38).
+    }
+  }
+
+  // The baked MR images ride embedded in the JSON (data URIs); the BIN chunk is
+  // unchanged, so it passes through repackGlb verbatim.
+  return {
+    entryBytes: repackGlb({ json: doc, bin }),
+    converted: true,
+    extraFiles: [],
+  };
+}
+
+/**
+ * Convert a spec/gloss ingest entry → metal-rough, dispatching on the container
+ * extension: `.glb` → `convertSpecGlossGlb` (binary repack), `.gltf` →
+ * `convertSpecGlossGltfFiles` (JSON rewrite + sibling MR textures). Any other
+ * extension is a no-op. The single seam `ingestGltfFolder` calls.
+ */
+export async function convertSpecGlossEntry(
+  entry: IngestFile,
+  files: readonly IngestFile[],
+): Promise<SpecGlossIngestResult> {
+  const lower = entry.relativePath.toLowerCase();
+  if (lower.endsWith('.glb')) return convertSpecGlossGlb(entry);
+  if (lower.endsWith('.gltf')) return convertSpecGlossGltfFiles(entry, files);
+  return NOT_CONVERTED(entry);
 }
