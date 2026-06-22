@@ -27,6 +27,13 @@ import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
+// Row types that own a collapsible subtree and so get a chevron. GltfAsset
+// defaults COLLAPSED (node-flood, D-05); the rest default EXPANDED.
+const COLLAPSIBLE_TYPES = new Set(['Group', 'Transform', 'MaterialOverride', 'GltfAsset']);
+// The collapsible types that default EXPANDED (opt-out via `collapsedNodes`),
+// in contrast to GltfAsset which defaults collapsed (opt-in via `expandedAssets`).
+const CONTAINER_TYPES = new Set(['Group', 'Transform', 'MaterialOverride']);
+
 interface SceneTreeProps {
   /**
    * Substring filter from the outliner search box (Spline redesign Wave B).
@@ -104,35 +111,68 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     });
   }
 
-  // GltfAsset node ids that own at least one projected child row — only those
-  // rows get the collapse/expand chevron (an asset with no children doesn't).
-  const assetsWithChildren = useMemo(() => {
-    const s = new Set<NodeId>();
-    for (const r of allRows) if (r.gltfAssetOwner) s.add(r.gltfAssetOwner);
+  // Group / Transform / MaterialOverride subtrees start EXPANDED by default
+  // (these are the user's own small hierarchies, not a glTF node-flood). This
+  // is the set the user has explicitly COLLAPSED. Pure UI state, never the DAG.
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<NodeId>>(() => new Set());
+
+  function toggleCollapsed(nodeId: NodeId) {
+    setCollapsedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }
+
+  // A row "has children" when a later row's key nests under its own (the walk is
+  // pre-order, so descendants follow contiguously). Keyed by row key — only rows
+  // with children get a chevron. Covers glTF assets and Group/Transform/Material
+  // wrappers alike (the wrappers always project their child).
+  const rowsWithChildren = useMemo(() => {
+    const s = new Set<string>();
+    for (let i = 0; i < allRows.length - 1; i++) {
+      if (allRows[i + 1].key.startsWith(`${allRows[i].key}/`)) s.add(allRows[i].key);
+    }
     return s;
   }, [allRows]);
 
-  // Hide projected GltfChild rows whose owning asset is collapsed. The rows
-  // (and their GltfChild DAG nodes) still EXIST — this is purely which rows
-  // render (projection only, no DAG mutation).
+  // Visible rows = the pre-order walk with every COLLAPSED container's subtree
+  // cut. One pass: when a collapsed container is reached, skip every following
+  // row whose key nests under it. glTF assets default collapsed (opt-in via
+  // `expandedAssets`); Group/Transform/MaterialOverride default expanded (opt-out
+  // via `collapsedNodes`). The rows (and their DAG nodes) still EXIST — this is
+  // purely which rows render (projection only, no DAG mutation).
   const rows = useMemo(() => {
-    const collapsed = allRows.filter(
-      (r) => !r.gltfAssetOwner || expandedAssets.has(r.gltfAssetOwner),
-    );
-    if (!filtering) return collapsed;
-    // While filtering, search the FULL tree (ignore collapse) so a match inside
-    // a collapsed glTF subtree still surfaces. The Scene root (depth 0) stays as
-    // the anchor row so the panel never renders fully empty when the user is
-    // mid-type on a query that hasn't matched a child yet. Match the row's
-    // display (id/name) OR its node TYPE — display no longer carries the type
-    // (it's the icon now), so searching "BoxMesh" must still match unnamed boxes.
-    return allRows.filter(
-      (r) =>
-        r.depth === 0 ||
-        r.display.toLowerCase().includes(query) ||
-        r.nodeType.toLowerCase().includes(query),
-    );
-  }, [allRows, expandedAssets, filtering, query]);
+    if (filtering) {
+      // While filtering, search the FULL tree (ignore collapse) so a match inside
+      // a collapsed subtree still surfaces. The Scene root (depth 0) stays as the
+      // anchor row so the panel never renders fully empty when the user is mid-type
+      // on a query that hasn't matched a child yet. Match the row's display
+      // (id/name) OR its node TYPE — display no longer carries the type (it's the
+      // icon now), so searching "BoxMesh" must still match unnamed boxes.
+      return allRows.filter(
+        (r) =>
+          r.depth === 0 ||
+          r.display.toLowerCase().includes(query) ||
+          r.nodeType.toLowerCase().includes(query),
+      );
+    }
+    const visible: TreeRow[] = [];
+    let cutKey: string | null = null;
+    for (const row of allRows) {
+      if (cutKey !== null && row.key.startsWith(`${cutKey}/`)) continue; // hidden descendant
+      cutKey = null; // this row is not under the cut — we've left it
+      visible.push(row);
+      if (!rowsWithChildren.has(row.key)) continue;
+      const collapsed =
+        row.nodeType === 'GltfAsset'
+          ? !expandedAssets.has(row.nodeId)
+          : CONTAINER_TYPES.has(row.nodeType) && collapsedNodes.has(row.nodeId);
+      if (collapsed) cutKey = row.key;
+    }
+    return visible;
+  }, [allRows, expandedAssets, collapsedNodes, rowsWithChildren, filtering, query]);
 
   // #226 Slice 2 — modifier-aware row selection (Blender outliner parity):
   //   plain click → replace selection; Ctrl/Cmd-click → toggle the row in the
@@ -351,12 +391,17 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           const isActive = primary === row.nodeId;
           const isDragging = dragKey === row.key;
           const isHover = hoverKey === row.key;
-          // GltfAsset rows that own child rows get a collapse/expand chevron
-          // (D2 — the D-05 node-flood toggle). Collapsed by default. Suppressed
-          // while filtering (the filtered list isn't the contiguous subtree).
+          // Rows that own a child subtree get a collapse/expand chevron. glTF
+          // assets default collapsed (D2 node-flood); Group/Transform/Material
+          // wrappers default expanded. Suppressed while filtering (the filtered
+          // list isn't the contiguous subtree).
           const hasChildTree =
-            !filtering && row.nodeType === 'GltfAsset' && assetsWithChildren.has(row.nodeId);
-          const isExpanded = hasChildTree && expandedAssets.has(row.nodeId);
+            !filtering && COLLAPSIBLE_TYPES.has(row.nodeType) && rowsWithChildren.has(row.key);
+          const isExpanded =
+            hasChildTree &&
+            (row.nodeType === 'GltfAsset'
+              ? expandedAssets.has(row.nodeId)
+              : !collapsedNodes.has(row.nodeId));
           return (
             <li
               key={row.key}
@@ -366,7 +411,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               data-active={isActive || undefined}
               data-dragging={isDragging || undefined}
               data-drop-hover={isHover || undefined}
-              data-gltf-expanded={hasChildTree ? isExpanded : undefined}
+              data-expanded={hasChildTree ? isExpanded : undefined}
               // Drag-reorder is inert while filtering: a filtered list is not the
               // contiguous sibling set, so a dropped index would be wrong.
               draggable={Boolean(row.parent) && !filtering}
@@ -395,8 +440,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     aria-expanded={isExpanded}
                     className="shrink-0 text-[10px] text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onClick={(e) => {
-                      e.stopPropagation(); // toggle only — do NOT select the asset
-                      toggleAsset(row.nodeId);
+                      e.stopPropagation(); // toggle only — do NOT select the row
+                      if (row.nodeType === 'GltfAsset') toggleAsset(row.nodeId);
+                      else toggleCollapsed(row.nodeId);
                     }}
                   >
                     {isExpanded ? '▾' : '▸'}
