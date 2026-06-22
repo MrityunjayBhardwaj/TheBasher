@@ -84,6 +84,9 @@ import { RenameInput } from './RenameInput';
 import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam } from './resolveTransformParam';
+import * as THREE from 'three';
+import { useThreeRef } from './character/threeRef';
+import { originToGeometry } from './setOrigin';
 import {
   buildRevertedSet,
   isFieldOverridden,
@@ -1354,6 +1357,71 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   );
 }
 
+// #228 Slice D — "Set Origin to Geometry" for a Group (Blender origin.rst). The
+// Group's origin is its `pivot` (surfaced as a Transform row above). This button
+// recomputes the pivot so the origin sits at the geometry's bounding-box centre
+// WITHOUT moving the content: it reads the LIVE scene bounds (via useThreeRef —
+// the same non-Canvas access the Render/Frame actions use), then the pure
+// `originToGeometry` returns the compensated position+pivot (one undo). Only the
+// Group node type carries a pivot, so this renders for Groups only.
+// KNOWN-LIMIT (v1): correct for a top-level group; a non-identity parent makes
+// the world↔local centre approximate, and async glTF content needs to be loaded.
+function SetOriginControl({ nodeId }: { nodeId: string }) {
+  const onSetOrigin = () => {
+    const scene = useThreeRef.getState().scene;
+    if (!scene) return;
+    const obj = scene.getObjectByName(nodeId);
+    if (!obj) return;
+    const box = new THREE.Box3().setFromObject(obj);
+    if (box.isEmpty()) return;
+    const c = box.getCenter(new THREE.Vector3());
+    const params = useDagStore.getState().state.nodes[nodeId]?.params as
+      | { position?: unknown; rotation?: unknown; scale?: unknown; pivot?: unknown }
+      | undefined;
+    if (
+      !params ||
+      !isVec3(params.position) ||
+      !isVec3(params.rotation) ||
+      !isVec3(params.scale) ||
+      !isVec3(params.pivot)
+    )
+      return;
+    const next = originToGeometry(
+      {
+        position: params.position,
+        rotation: params.rotation,
+        scale: params.scale,
+        pivot: params.pivot,
+      },
+      [c.x, c.y, c.z],
+    );
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [
+          { type: 'setParam', nodeId, paramPath: 'pivot', value: next.pivot },
+          { type: 'setParam', nodeId, paramPath: 'position', value: next.position },
+        ],
+        'user',
+        'set origin to geometry',
+      );
+  };
+  return (
+    <div className="flex items-center gap-1 px-3 py-1.5" data-testid="npanel-set-origin">
+      <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">origin</span>
+      <button
+        type="button"
+        onClick={onSetOrigin}
+        data-testid="npanel-set-origin-geometry"
+        title="Move the origin to the geometry's bounding-box centre (Blender: Origin to Geometry)"
+        className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        To Geometry
+      </button>
+    </div>
+  );
+}
+
 /**
  * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a
  * MaterialOverride that wraps a MULTI-material glTF. Renders ONLY when the
@@ -2126,6 +2194,11 @@ export function NPanel() {
                       {sectionId === 'transform' &&
                       (node.type === 'BoxMesh' || node.type === 'SphereMesh') ? (
                         <ApplyTransformControl nodeId={node.id} />
+                      ) : null}
+                      {/* #228 Slice D — Set Origin to Geometry for a Group (its
+                          origin is the `pivot` row above). */}
+                      {sectionId === 'transform' && node.type === 'Group' ? (
+                        <SetOriginControl nodeId={node.id} />
                       ) : null}
                     </SectionCard>
                   ))}
