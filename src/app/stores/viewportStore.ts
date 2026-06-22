@@ -22,10 +22,12 @@
 import { create } from 'zustand';
 import { capturePendingEditorView } from '../editorViewCapture';
 
-/** Median is the only pivot mode shipped in v0.5 (dharana §3 default). The
- *  type stays open so future modes (individual / 3d-cursor / active) can land
- *  without a store rewrite. */
-export type Pivot = 'median' | 'individual' | 'cursor' | 'active';
+/** Transform pivot point (Blender pivot_point/index.rst) — where the multi-object
+ *  gizmo orbits/scales. `median` (default, average of origins), `boundingBox`
+ *  (centre of the origins' AABB), `active` (the primary node's origin),
+ *  `individual` (each object about its OWN origin). `cursor` (3D-cursor pivot) is
+ *  reserved but not yet offered — Basher has no 3D cursor (#228 follow-up). */
+export type Pivot = 'median' | 'boundingBox' | 'individual' | 'cursor' | 'active';
 
 /** Editor shading mode — Blender-style "Solid / Material / Rendered" plus
  *  Wireframe. v0.5 ships:

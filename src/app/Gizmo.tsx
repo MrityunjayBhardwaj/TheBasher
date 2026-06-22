@@ -60,7 +60,8 @@ import { useEditorStore } from './stores/editorStore';
 import { isModifierNode, resolveStackBase } from './operatorStack';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
-import { maybeSnapVec3, maybeSnapTransform } from './stores/viewportStore';
+import { maybeSnapVec3, maybeSnapTransform, useViewportStore } from './stores/viewportStore';
+import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
@@ -577,7 +578,12 @@ function SingleGizmo() {
 // one atomic (a drag = many undo entries, same as SingleGizmo).
 function MultiGizmo() {
   const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
+  const primaryId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
+  // #228 — pivot point (Blender pivot_point/index.rst). Drives WHERE the proxy
+  // seeds (median/boundingBox/active) and, for 'individual', that each node
+  // rotates/scales about its OWN origin instead of a shared pivot.
+  const pivotMode = useViewportStore((s) => s.pivot);
   const seconds = useTimeStore((s) => s.seconds);
   const frame = useTimeStore((s) => s.frame);
   const normalized = useTimeStore((s) => s.normalized);
@@ -590,6 +596,9 @@ function MultiGizmo() {
   // parent world, pivot, and which TRS params it owns.
   const seedRef = useRef<{
     proxyWorld: THREE.Matrix4;
+    /** The active pivot MODE at seed time — `onObjectChange` reads it to decide
+     *  the shared-delta path vs the per-origin 'individual' path. */
+    pivotMode: typeof pivotMode;
     nodes: {
       id: string;
       seedWorld: THREE.Matrix4;
@@ -630,15 +639,23 @@ function MultiGizmo() {
       seedRef.current = null;
       return;
     }
-    // Median = average of world-space origins.
-    const median = new THREE.Vector3();
-    for (const s of seeds) median.add(new THREE.Vector3().setFromMatrixPosition(s.seedWorld));
-    median.multiplyScalar(1 / seeds.length);
-    groupNode.position.copy(median);
+    // #228 — pivot point: where the proxy seeds + orbits/scales. median /
+    // boundingBox / active are computed from the world origins; 'individual'
+    // seeds at the median for DISPLAY but applies per-origin in onObjectChange.
+    const origins = seeds.map((s) => {
+      const p = new THREE.Vector3().setFromMatrixPosition(s.seedWorld);
+      return [p.x, p.y, p.z] as Vec3;
+    });
+    const activeIdx = seeds.findIndex((s) => s.id === primaryId);
+    const activeOrigin = activeIdx >= 0 ? origins[activeIdx] : null;
+    const pp = pivotPoint(pivotMode, origins, activeOrigin);
+    const pivotVec = new THREE.Vector3(pp[0], pp[1], pp[2]);
+    groupNode.position.copy(pivotVec);
     groupNode.rotation.set(0, 0, 0);
     groupNode.scale.set(1, 1, 1);
     seedRef.current = {
-      proxyWorld: new THREE.Matrix4().setPosition(median),
+      proxyWorld: new THREE.Matrix4().setPosition(pivotVec),
+      pivotMode,
       nodes: seeds,
     };
 
@@ -651,10 +668,11 @@ function MultiGizmo() {
       });
       w.__basher_gizmo_multi = () => ({
         count: seeds.length,
-        pivot: [median.x, median.y, median.z],
+        pivot: [pivotVec.x, pivotVec.y, pivotVec.z],
+        pivotMode,
       });
     }
-  }, [groupNode, selectedIds, seconds, frame, normalized, playing]);
+  }, [groupNode, selectedIds, primaryId, pivotMode, seconds, frame, normalized, playing]);
 
   function onObjectChange() {
     const g = groupNode;
@@ -663,9 +681,26 @@ function MultiGizmo() {
     const liveMode = useGizmoStore.getState().mode;
     const proxyWorld = new THREE.Matrix4().compose(g.position.clone(), g.quaternion.clone(), g.scale.clone());
     const delta = proxyWorld.clone().multiply(seed.proxyWorld.clone().invert());
+    // #228 — 'individual origins': for rotate/scale, apply only the LINEAR part
+    // of the delta (translation stripped) about EACH node's own origin, so each
+    // rotates/scales in place rather than orbiting the shared pivot. Translate is
+    // pivot-independent → it always uses the full shared delta (Blender parity).
+    const individual = seed.pivotMode === 'individual' && liveMode !== 'translate';
+    const linear = delta.clone().setPosition(0, 0, 0); // rotation/scale about world origin
     const ops: Op[] = [];
     for (const sn of seed.nodes) {
-      const newWorld = delta.clone().multiply(sn.seedWorld);
+      let newWorld: THREE.Matrix4;
+      if (individual) {
+        const o = new THREE.Vector3().setFromMatrixPosition(sn.seedWorld);
+        // T(o) · linear · T(-o) · seedWorld — rotate/scale about the node's origin.
+        newWorld = new THREE.Matrix4()
+          .makeTranslation(o.x, o.y, o.z)
+          .multiply(linear)
+          .multiply(new THREE.Matrix4().makeTranslation(-o.x, -o.y, -o.z))
+          .multiply(sn.seedWorld);
+      } else {
+        newWorld = delta.clone().multiply(sn.seedWorld);
+      }
       const local = matrixToLocalTRS(newWorld, sn.parentWorld, sn.pivot);
       // Position changes under translate AND under rotate/scale-about-pivot.
       ops.push({ type: 'setParam', nodeId: sn.id, paramPath: 'position', value: local.position });

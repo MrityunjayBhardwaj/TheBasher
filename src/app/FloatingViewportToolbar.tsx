@@ -279,6 +279,8 @@ export function FloatingViewportToolbar(): ReactNode {
   const toggleSnapAffect = useViewportStore((s) => s.toggleSnapAffect);
   const gizmoOrientation = useGizmoStore((s) => s.orientation);
   const toggleGizmoOrientation = useGizmoStore((s) => s.toggleOrientation);
+  const pivot = useViewportStore((s) => s.pivot);
+  const setPivot = useViewportStore((s) => s.setPivot);
   const cameraZoom = useViewportStore((s) => s.cameraZoom);
   const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
   const toggleTimelineDrawer = useViewportStore((s) => s.toggleTimelineDrawer);
@@ -439,6 +441,23 @@ export function FloatingViewportToolbar(): ReactNode {
       >
         cam
       </Chip>
+      <Divider />
+      {/* #228 — transform pivot point (Blender pivot_point/index.rst). Drives the
+          MULTI-object gizmo: median / bounding-box / individual / active. (3D
+          cursor reserved — Basher has no cursor yet.) */}
+      <select
+        value={pivot === 'cursor' ? 'median' : pivot}
+        onChange={(e) => setPivot(e.target.value as typeof pivot)}
+        data-testid="floating-toolbar-pivot"
+        aria-label="Transform pivot point"
+        title="Transform pivot point (multi-select gizmo)"
+        className="h-7 rounded-md border border-border bg-bg px-1.5 text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <option value="median">pivot: median</option>
+        <option value="boundingBox">pivot: bbox</option>
+        <option value="individual">pivot: individual</option>
+        <option value="active">pivot: active</option>
+      </select>
       <Divider />
       {/* #228 — transform orientation (Blender Global/Local). 'local' aligns the
           gizmo handles to the object's own axes. */}
