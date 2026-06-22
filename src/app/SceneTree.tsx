@@ -10,6 +10,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
@@ -173,6 +174,57 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     }
     return visible;
   }, [allRows, expandedAssets, collapsedNodes, rowsWithChildren, filtering, query]);
+
+  // #227 Slice 5(b) — scroll-to / expand-to the active row. The active row's
+  // element is captured here; `scrolledFor` debounces so we scroll once per
+  // selection change (not on every unrelated `rows` rebuild, e.g. a drag).
+  const activeRowRef = useRef<HTMLLIElement | null>(null);
+  const scrolledFor = useRef<NodeId | null>(null);
+
+  // When the active node changes (e.g. a viewport pick), EXPAND every collapsed
+  // ancestor so the row can surface. glTF asset ancestors → add to expandedAssets;
+  // Group/Transform/Material ancestors → remove from collapsedNodes. Ancestors are
+  // the rows whose key path is a strict prefix of the active row's key. Returns the
+  // SAME set reference when nothing changes so this never loops.
+  useEffect(() => {
+    if (!primary) return;
+    const selRow = allRows.find((r) => r.nodeId === primary);
+    if (!selRow) return;
+    const ancestors = allRows.filter(
+      (r) => r.key !== selRow.key && selRow.key.startsWith(`${r.key}/`),
+    );
+    const assetIds = ancestors.filter((r) => r.nodeType === 'GltfAsset').map((r) => r.nodeId);
+    const containerIds = ancestors
+      .filter((r) => CONTAINER_TYPES.has(r.nodeType))
+      .map((r) => r.nodeId);
+    if (assetIds.length) {
+      setExpandedAssets((prev) => {
+        if (assetIds.every((id) => prev.has(id))) return prev;
+        const next = new Set(prev);
+        assetIds.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+    if (containerIds.length) {
+      setCollapsedNodes((prev) => {
+        if (!containerIds.some((id) => prev.has(id))) return prev;
+        const next = new Set(prev);
+        containerIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+  }, [primary, allRows]);
+
+  // Scroll the active row into view once it's actually rendered. Depends on `rows`
+  // so it re-runs after the expand-to effect above reveals a previously-hidden row.
+  useEffect(() => {
+    if (!primary) return;
+    const el = activeRowRef.current;
+    if (!el) return; // row not visible yet — re-runs when `rows` updates after expand
+    if (scrolledFor.current === primary) return;
+    scrolledFor.current = primary;
+    el.scrollIntoView({ block: 'nearest' });
+  }, [primary, rows]);
 
   // #226 Slice 2 — modifier-aware row selection (Blender outliner parity):
   //   plain click → replace selection; Ctrl/Cmd-click → toggle the row in the
@@ -405,6 +457,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           return (
             <li
               key={row.key}
+              ref={isActive ? activeRowRef : undefined}
               data-testid={`scene-tree-row-${row.nodeId}`}
               data-depth={row.depth}
               data-selected={isInSet || undefined}
