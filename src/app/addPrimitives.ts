@@ -209,9 +209,9 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'AmbientLight':
       return { intensity: 0.3, color: '#ffffff' };
     case 'PerspectiveCamera':
-      return { fov: 45, near: 0.1, far: 1000, position, lookAt: [0, 0, 0] };
+      return { fov: 45, near: 0.01, far: 1000, position, lookAt: [0, 0, 0] };
     case 'OrthographicCamera':
-      return { zoom: 1, near: 0.1, far: 1000, position, lookAt: [0, 0, 0] };
+      return { zoom: 1, near: 0.01, far: 1000, position, lookAt: [0, 0, 0] };
     case 'Group':
       return {};
     case 'Transform':

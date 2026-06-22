@@ -52,7 +52,7 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     nodeType: 'PerspectiveCamera',
     params: {
       fov,
-      near: 0.1,
+      near: 0.01,
       far: 1000,
       position: [cam.position.x, cam.position.y, cam.position.z],
       lookAt: target ? [target.x, target.y, target.z] : [0, 0, 0],

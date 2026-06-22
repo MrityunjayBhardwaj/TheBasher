@@ -194,7 +194,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   viewportClipOverride: null,
   // Seeded with three's historical defaults; EditorViewCamera overwrites it
   // each frame with the live effective planes.
-  viewportClipReadout: { near: 0.1, far: 1000 },
+  viewportClipReadout: { near: 0.01, far: 1000 },
   // Created once here; the object reference is stable for the store lifetime.
   // `.current` is mutated only by timeStore's frame chokepoint — never
   // reassign this object. See D-W9-1, D-W9-9.

@@ -4,7 +4,7 @@ import type { OrthographicCameraValue } from './types';
 
 export const OrthographicCameraParams = z.object({
   zoom: z.number().positive().default(50),
-  near: z.number().positive().default(0.1),
+  near: z.number().positive().default(0.01),
   far: z.number().positive().default(1000),
   position: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 5]),
   lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),

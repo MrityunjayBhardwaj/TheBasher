@@ -78,7 +78,7 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       nodeType: 'PerspectiveCamera',
       params: {
         fov: args.fov,
-        near: 0.1,
+        near: 0.01,
         far: 1000,
         position: args.position,
         lookAt: args.lookAt,

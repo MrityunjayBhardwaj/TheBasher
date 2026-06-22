@@ -8,7 +8,7 @@ export const PerspectiveCameraParams = z.object({
   // focal-length inspector (UX #12). DEFAULTED so pre-#12 projects parse to
   // full-frame (V10/H14 first layer); the renderer reads `fov`, not this.
   sensorSize: z.number().positive().default(36),
-  near: z.number().positive().default(0.1),
+  near: z.number().positive().default(0.01),
   far: z.number().positive().default(1000),
   // Depth of field (UX #12 slice 2). All DEFAULTED so pre-DoF projects parse
   // (dofEnabled=false → no behavior change). focusDistance is in world units;

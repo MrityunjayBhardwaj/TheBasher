@@ -20,7 +20,7 @@ const DEFAULT_OPS: Op[] = [
     type: 'addNode',
     nodeId: 'n_camera',
     nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.1, far: 1000, position: [3, 2, 3], lookAt: [0, 0, 0] },
+    params: { fov: 45, near: 0.01, far: 1000, position: [3, 2, 3], lookAt: [0, 0, 0] },
   },
   {
     type: 'addNode',

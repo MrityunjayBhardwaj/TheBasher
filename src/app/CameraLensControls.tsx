@@ -84,7 +84,7 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   const near =
     typeof evaluatedScalar.near?.value === 'number'
       ? evaluatedScalar.near.value
-      : (params.near ?? 0.1);
+      : (params.near ?? 0.01);
   const far =
     typeof evaluatedScalar.far?.value === 'number'
       ? evaluatedScalar.far.value

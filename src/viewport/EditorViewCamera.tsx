@@ -50,7 +50,7 @@ import { computeSceneBounds } from './sceneBounds';
 
 // Default free-mode clip planes (three's near-ish / the pre-#186 constants).
 // The bounds-fit overrides them per-load so large/tiny models don't clip.
-const DEFAULT_FREE_NEAR = 0.1;
+const DEFAULT_FREE_NEAR = 0.01;
 const DEFAULT_FREE_FAR = 1000;
 
 // Settle loop (#186): glTF geometry loads ASYNC, AFTER the boot effect fires,

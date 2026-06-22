@@ -49,7 +49,7 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   position: [3, 2, 3],
   lookAt: [0, 0, 0],
   fov: 45,
-  near: 0.1,
+  near: 0.01,
   far: 1000,
 };
 
