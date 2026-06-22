@@ -23,7 +23,7 @@
 import { inputFilesToFiles } from './ingestReaders';
 import { ingestGltfFolder, locateEntryFile, type IngestFile } from './importGltf';
 import { ingestAndImportGltf } from './gltfEntryChoice';
-import { missingGltfSiblings } from './opfsGltfResolver';
+import { missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResolver';
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
 import { useAssetErrorStore, formatAssetError } from '../stores/assetErrorStore';
@@ -210,10 +210,7 @@ export function openGltfFilePicker(): void {
             onCancel: () => {
               useAssetErrorStore
                 .getState()
-                .report(
-                  need.entryName,
-                  `import failed: ${need.entryName} needs ${need.missing.join(', ')} — use File ▸ Import Folder…, or drag the whole folder in`,
-                );
+                .report(need.entryName, formatMissingSiblingsError(need.entryName, need.missing));
             },
           });
           return;

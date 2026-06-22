@@ -55,7 +55,7 @@ import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMate
 import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
-import { opfsSiblingPath, missingGltfSiblings } from './opfsGltfResolver';
+import { opfsSiblingPath, missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import {
@@ -282,7 +282,7 @@ export async function ingestGltfFolder(
       const missing = missingGltfSiblings(entry.bytes, entry.relativePath, present);
       if (missing.length > 0) {
         const name = entry.relativePath.split('/').pop() ?? entry.relativePath;
-        const msg = `import failed: ${name} needs ${missing.join(', ')} — pick the .gltf together with those files, or use File ▸ Import Folder…`;
+        const msg = formatMissingSiblingsError(name, missing);
         useAssetErrorStore.getState().report(desired, msg);
         throw new Error(msg);
       }

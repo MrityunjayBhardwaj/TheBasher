@@ -222,6 +222,26 @@ export function missingGltfSiblings(
 }
 
 /**
+ * A concise, actionable banner for a multi-file `.gltf` picked or dropped
+ * WITHOUT its sibling resources. A 3D-ripper export (or any unpacked `.gltf`)
+ * can reference dozens of textures / a `.bin` by relative URI; a browser hands
+ * the app only the single file the user picked, never its siblings. Dumping
+ * every long hashed filename is an unreadable wall that buries the one thing
+ * the user must do — import the whole FOLDER. So: lead with the fix, show the
+ * count, and give at most two example names.
+ */
+export function formatMissingSiblingsError(
+  entryName: string,
+  missing: readonly string[],
+): string {
+  const n = missing.length;
+  const sample = missing.slice(0, 2).map((m) => m.split('/').pop() ?? m);
+  const eg = n <= 2 ? sample.join(', ') : `${sample.join(', ')}, +${n - 2} more`;
+  const files = n === 1 ? 'file' : 'files';
+  return `import failed: "${entryName}" is a multi-file glTF — it needs ${n} sibling ${files} (e.g. ${eg}) that a single-file pick can't include. Import the whole FOLDER instead: drag the folder onto Basher, or use File ▸ Import Folder….`;
+}
+
+/**
  * Pre-resolve a multi-file `.gltf` and all its siblings into the
  * sentinel-URL cache. Returns the sentinel URL three.js should load
  * as the main asset. The caller is responsible for calling this

@@ -18,6 +18,7 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import {
   BASHER_OPFS_SCHEME,
   __resetOpfsGltfResolverCacheForTests,
+  formatMissingSiblingsError,
   gltfReferencesExternalSiblings,
   isBasherOpfsUrl,
   loadMultiFileGltf,
@@ -392,5 +393,27 @@ describe('missingGltfSiblings', () => {
     expect(
       missingGltfSiblings(new TextEncoder().encode('not json'), 'scene.gltf', new Set()),
     ).toEqual([]);
+  });
+});
+
+describe('formatMissingSiblingsError — concise, actionable banner (multi-file glTF)', () => {
+  it('leads with the FOLDER fix, not a wall of filenames', () => {
+    const msg = formatMissingSiblingsError('car_Textured.gltf', ['a.png', 'b.png', 'c.png']);
+    expect(msg).toContain('Import the whole FOLDER');
+    expect(msg).toContain('File ▸ Import Folder');
+    expect(msg.startsWith('import failed:')).toBe(true); // double-report guard relies on this
+  });
+
+  it('caps the example list and reports the true count (a 3D-ripper dumps dozens)', () => {
+    const many = Array.from({ length: 14 }, (_, i) => `${i}_RGB_Cars.png`);
+    const msg = formatMissingSiblingsError('toon_Textured.gltf', many);
+    expect(msg).toContain('14 sibling files');
+    expect(msg).toContain('+12 more'); // 2 shown, 12 summarized
+    expect(msg).not.toContain('13_RGB_Cars.png'); // not a full dump
+  });
+
+  it('singularizes for a lone missing sibling', () => {
+    const msg = formatMissingSiblingsError('scene.gltf', ['scene.bin']);
+    expect(msg).toContain('1 sibling file (e.g. scene.bin)');
   });
 });
