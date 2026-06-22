@@ -30,6 +30,9 @@ import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { EditorLights } from './EditorLights';
 import { EditorViewCamera } from './EditorViewCamera';
+import { BoxSelect } from './BoxSelectController';
+import { BoxSelectOverlay } from './BoxSelectOverlay';
+import { useBoxSelectStore } from '../app/stores/boxSelectStore';
 import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
 import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
@@ -213,6 +216,9 @@ export function Viewport() {
         // mesh. selectionStore is a UI projection, not the DAG (V1 stays
         // clean).
         onPointerMissed={() => {
+          // #226 — while box-select mode is armed the overlay owns the pointer;
+          // a missed click underneath must NOT clear the set (the box decides it).
+          if (useBoxSelectStore.getState().active) return;
           // #207 — while the Light Brush is active, a click that misses the model
           // is a missed brush stroke, NOT a deselect: keep the selected light so
           // the next stroke still has a target (else one stray click drops the
@@ -265,6 +271,9 @@ export function Viewport() {
           <GpuProbe />
           <GroundClick />
           <Gizmo />
+          {/* #226 — box-select: the in-Canvas projection + commit half. The DOM
+              marquee + pointer capture is BoxSelectOverlay, below the Canvas. */}
+          <BoxSelect />
           {/* #165: the editor owns a free orbit view camera (decoupled from
               the DAG scene cameras) so cameras render as selectable frustum
               objects. EditorOrbit drives whatever is the default camera. */}
@@ -289,6 +298,9 @@ export function Viewport() {
           Hidden in the narrow layout (its corner is taken by the full-width
           bottom stack); `M` still toggles projection. */}
       {!isNarrow ? <ProjectionToggle /> : null}
+      {/* #226 — box-select marquee overlay (DOM). Mounts only while box mode is
+          armed; covers the viewport, captures the drag, draws the marquee. */}
+      <BoxSelectOverlay />
       <FpsMeter />
     </div>
   );

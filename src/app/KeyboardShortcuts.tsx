@@ -51,6 +51,7 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
+import { useBoxSelectStore } from './stores/boxSelectStore';
 import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -173,6 +174,12 @@ export {
 // existing ephemeral flags as a priority ladder, no new store). Keys 1/2/3/4
 // are now unbound (the old MODE_KEYS).
 function dismissTopmostTransient(): void {
+  // 0. #226 — an armed box-select is the topmost transient: Esc cancels it
+  // (without changing the selection) before any deeper Esc behavior.
+  if (useBoxSelectStore.getState().active) {
+    useBoxSelectStore.getState().cancel();
+    return;
+  }
   const chrome = useChromeStore.getState();
   if (chrome.presentMode) {
     // 1. Leave the fullscreen present/director-cut first.
@@ -324,6 +331,15 @@ export function KeyboardShortcuts() {
           e.preventDefault();
           useRenameStore.getState().begin(primary, 'outliner');
         }
+        return;
+      }
+
+      // B — arm box (marquee) select (#226, Blender's idiom). The crosshair
+      // overlay then captures a drag; release selects the enclosed objects.
+      // Bare key (LMB-drag stays orbit, Basher's primary orbit gesture).
+      if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        useBoxSelectStore.getState().begin();
         return;
       }
 
