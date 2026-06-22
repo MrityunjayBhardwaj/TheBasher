@@ -138,6 +138,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     return Array.from(e.dataTransfer.types).includes(TREE_DRAG_MIME);
   }
 
+  // Same-parent reorder (the original behavior): both rows hang off the SAME
+  // parent socket → drag changes the sibling index.
   function canDropOn(srcRow: TreeRow, dstRow: TreeRow): boolean {
     if (!srcRow.parent || !dstRow.parent) return false;
     return (
@@ -145,12 +147,38 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     );
   }
 
+  // #227 Slice 1 — the `children` Mesh-list socket a row can RECEIVE the dragged
+  // node into (reparent target): a Group, or the Scene root (depth 0). Both type
+  // `children` as a Mesh list, so any scene-child row is type-compatible. Returns
+  // null for rows that can't hold scene children (leaves, Transform/Material
+  // wrappers — single `target` socket, glTF children).
+  function reparentSocket(dstRow: TreeRow): { node: NodeId; socket: string } | null {
+    if (dstRow.nodeType === 'Group') return { node: dstRow.nodeId, socket: 'children' };
+    if (dstRow.depth === 0) return { node: dstRow.nodeId, socket: 'children' }; // Scene root
+    return null;
+  }
+
+  // Can the dragged row be re-parented INTO dstRow's children? Requires: the src
+  // is a real scene child on the Mesh `children` list (glTF children have no
+  // parent → inert); dst is a Group/Scene; dst is NOT already src's parent (no-op);
+  // and dst is NOT src itself or one of src's descendants (cycle guard via the
+  // row key path — a descendant's key is prefixed by the src key).
+  function canReparent(srcRow: TreeRow, dstRow: TreeRow): boolean {
+    if (!srcRow.parent || srcRow.parent.socket !== 'children') return false;
+    const target = reparentSocket(dstRow);
+    if (!target) return false;
+    if (target.node === srcRow.parent.nodeId) return false;
+    if (dstRow.key === srcRow.key || dstRow.key.startsWith(`${srcRow.key}/`)) return false;
+    return true;
+  }
+
   function onDragOver(e: DragEvent, dstRow: TreeRow) {
     if (!isTreeRowDrag(e)) return;
     if (!dragKey) return;
     const srcRow = rows.find((r) => r.key === dragKey);
     if (!srcRow || srcRow === dstRow) return;
-    if (!canDropOn(srcRow, dstRow)) return;
+    // Reparent takes precedence when dst is a Group/Scene the node isn't already in.
+    if (!canReparent(srcRow, dstRow) && !canDropOn(srcRow, dstRow)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setHoverKey(dstRow.key);
@@ -163,20 +191,34 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     const srcKey = e.dataTransfer.getData(TREE_DRAG_MIME);
     setDragKey(null);
     const srcRow = rows.find((r) => r.key === srcKey);
-    if (!srcRow || !srcRow.parent || !dstRow.parent) return;
-    if (!canDropOn(srcRow, dstRow)) return;
-    if (srcRow.parent.index === dstRow.parent.index) return;
+    if (!srcRow || !srcRow.parent) return;
 
     const ref = { node: srcRow.nodeId, socket: 'out' };
+
+    // #227 — REPARENT: move into a Group / the Scene root (different parent).
+    // disconnect from the old parent socket, connect at the END of the new
+    // children list (a different list → no index-shift to compensate).
+    if (canReparent(srcRow, dstRow)) {
+      const target = reparentSocket(dstRow)!;
+      const dstChildren = state.nodes[target.node]?.inputs.children;
+      const appendIndex = Array.isArray(dstChildren) ? dstChildren.length : 0;
+      const ops: Op[] = [
+        { type: 'disconnect', from: ref, to: { node: srcRow.parent.nodeId, socket: srcRow.parent.socket } },
+        { type: 'connect', from: ref, to: target, index: appendIndex },
+      ];
+      dispatchAtomic(ops, 'user', 'reparent scene node');
+      return;
+    }
+
+    // REORDER: same-parent sibling index change (the original behavior).
+    if (!dstRow.parent || !canDropOn(srcRow, dstRow)) return;
+    if (srcRow.parent.index === dstRow.parent.index) return;
     const to = { node: dstRow.parent.nodeId, socket: dstRow.parent.socket };
-    // Drop semantic: source takes target's visual slot. After disconnecting
-    // the source from its current position, indices shift left for
-    // everything that was to its right — including the target row when
-    // dst > src. Compensate so the connected source lands precisely where
-    // the user dropped.
+    // Drop semantic: source takes target's visual slot. After disconnecting the
+    // source, indices shift left for everything to its right — including the
+    // target when dst > src. Compensate so the source lands where it was dropped.
     const adjusted =
       dstRow.parent.index > srcRow.parent.index ? dstRow.parent.index - 1 : dstRow.parent.index;
-
     const ops: Op[] = [
       { type: 'disconnect', from: ref, to },
       { type: 'connect', from: ref, to, index: adjusted },
