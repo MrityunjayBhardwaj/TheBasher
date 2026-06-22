@@ -185,6 +185,12 @@ function SingleGizmo() {
   });
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
   const mode = useGizmoStore((s) => s.mode);
+  // #228 — transform orientation (Blender Global/Local). Maps to three's
+  // TransformControls `space`. 'local' aligns the handles to the object's own
+  // axes (its proxy quaternion); 'global' to world. v1 limit: a Group-nested
+  // child is world-anchored (#230), so 'local' there orients to its WORLD pose,
+  // not its true local axes — top-level nodes (the common case) are exact.
+  const orientation = useGizmoStore((s) => s.orientation);
   // ref-as-state — setting `groupNode` triggers a re-render so the
   // TransformControls mounts the moment the proxy <group> attaches.
   // A bare useRef would silently break the deselect → re-select cycle:
@@ -532,6 +538,9 @@ function SingleGizmo() {
         <TransformControls
           object={groupNode}
           mode={effectiveMode}
+          // #228 — Global/Local orientation (three ignores it for scale, which is
+          // always object-local). 'local' aligns handles to the object's axes.
+          space={orientation === 'local' ? 'local' : 'world'}
           // D-03 (visible half): while playing the gizmo still display-
           // follows (the Wave-2 effect re-seeds on the `playing` dep + every
           // frame) but cannot be grabbed. Wave-3's onObjectChange

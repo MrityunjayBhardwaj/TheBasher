@@ -48,6 +48,7 @@ import { renderImageWithFeedback } from './renderImageAction';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
+import { useGizmoStore } from './stores/gizmoStore';
 import { centerSideReserved, ISLAND_GAP } from './layoutIslands';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useLeftSidebarStore } from './stores/leftSidebarStore';
@@ -276,6 +277,8 @@ export function FloatingViewportToolbar(): ReactNode {
   const setSnapStep = useViewportStore((s) => s.setSnapStep);
   const snapAffect = useViewportStore((s) => s.snapAffect);
   const toggleSnapAffect = useViewportStore((s) => s.toggleSnapAffect);
+  const gizmoOrientation = useGizmoStore((s) => s.orientation);
+  const toggleGizmoOrientation = useGizmoStore((s) => s.toggleOrientation);
   const cameraZoom = useViewportStore((s) => s.cameraZoom);
   const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
   const toggleTimelineDrawer = useViewportStore((s) => s.toggleTimelineDrawer);
@@ -435,6 +438,22 @@ export function FloatingViewportToolbar(): ReactNode {
         onClick={toggleLookThroughCamera}
       >
         cam
+      </Chip>
+      <Divider />
+      {/* #228 — transform orientation (Blender Global/Local). 'local' aligns the
+          gizmo handles to the object's own axes. */}
+      <Chip
+        active={gizmoOrientation === 'local'}
+        title={`Transform orientation: ${gizmoOrientation} (click to toggle Global/Local)`}
+        ariaLabel={
+          gizmoOrientation === 'local'
+            ? 'Switch to global orientation'
+            : 'Switch to local orientation'
+        }
+        testId="floating-toolbar-orientation"
+        onClick={toggleGizmoOrientation}
+      >
+        {gizmoOrientation === 'local' ? 'local' : 'global'}
       </Chip>
       <Divider />
       <Chip
