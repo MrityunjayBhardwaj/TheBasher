@@ -14,6 +14,7 @@ const PERSP: CameraPose = {
   fov: 45,
   near: 0.1,
   far: 1000,
+  roll: 0,
 };
 
 describe('buildRenderCamera', () => {
@@ -33,6 +34,20 @@ describe('buildRenderCamera', () => {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion).normalize();
     const toTarget = new THREE.Vector3(0, 0, 0).sub(cam.position).normalize();
     expect(fwd.dot(toTarget)).toBeCloseTo(1, 5);
+  });
+
+  it('banks the render camera by roll while keeping the aim (#229)', () => {
+    // Looking down -Z from +Z, a +90° roll rotates the camera up-vector to +X.
+    const rolled = buildRenderCamera(
+      { ...PERSP, position: [0, 0, 5], lookAt: [0, 0, 0], roll: 90 },
+      800,
+      800,
+    );
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(rolled.quaternion).normalize();
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(rolled.quaternion);
+    expect(fwd.z).toBeCloseTo(-1); // aim unchanged by roll
+    expect(up.x).toBeCloseTo(1); // up banked 90° about the view axis
+    expect(up.y).toBeCloseTo(0);
   });
 
   it('aspect changes with the requested resolution (square vs wide)', () => {

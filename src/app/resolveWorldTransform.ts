@@ -68,6 +68,7 @@ import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { directChannelValuesForTarget } from './nodeChannels';
 import { resolveRigLightSources } from './resolveRigLightSources';
+import { cameraOrientationQuat } from './cameraOrientation';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
@@ -241,20 +242,13 @@ function isIdentityMatrix(m: THREE.Matrix4): boolean {
   return true;
 }
 
-/** The world matrix of a camera from its pose: position + the orientation that
- *  rotates the camera's local -Z (three.js forward) onto (position → lookAt),
- *  identity scale. Mirrors CameraHelpers.frustumQuaternion so the resolved world
- *  matches the drawn frustum. */
-function cameraWorldMatrix(position: Vec3, lookAt: Vec3): THREE.Matrix4 {
+/** The world matrix of a camera from its pose: position + the orientation from
+ *  (position → lookAt) banked by `roll`° (#229), identity scale. Delegates to the
+ *  ONE shared `cameraOrientationQuat` so the resolved world matches the drawn
+ *  frustum + the rendered/look-through orientation exactly (V37). */
+function cameraWorldMatrix(position: Vec3, lookAt: Vec3, roll: number): THREE.Matrix4 {
   const pos = new THREE.Vector3(position[0], position[1], position[2]);
-  const dir = new THREE.Vector3(
-    lookAt[0] - position[0],
-    lookAt[1] - position[1],
-    lookAt[2] - position[2],
-  );
-  if (dir.lengthSq() === 0) dir.set(0, 0, -1);
-  dir.normalize();
-  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), dir);
+  const q = cameraOrientationQuat(position, lookAt, roll);
   return new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1));
 }
 
@@ -298,19 +292,20 @@ export function resolveWorldTransform(
     camNode &&
     (camNode.type === 'PerspectiveCamera' || camNode.type === 'OrthographicCamera')
   ) {
-    const cp = camNode.params as { position?: unknown; lookAt?: unknown };
-    let cam: { position: Vec3; lookAt: Vec3 } = {
+    const cp = camNode.params as { position?: unknown; lookAt?: unknown; roll?: unknown };
+    let cam: { position: Vec3; lookAt: Vec3; roll: number } = {
       // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
       position: isVec3(cp.position) ? cp.position : [3, 2, 3],
       lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
+      roll: typeof cp.roll === 'number' ? cp.roll : 0,
     };
     const camChannels = directChannelValuesForTarget(state.nodes, selectedId).filter(
-      (c) => c.paramPath === 'position' || c.paramPath === 'lookAt',
+      (c) => c.paramPath === 'position' || c.paramPath === 'lookAt' || c.paramPath === 'roll',
     );
     if (camChannels.length > 0) {
       cam = overlayChannels(cam, camChannels, 1, ctx.time.seconds) ?? cam;
     }
-    return decompose(cameraWorldMatrix(cam.position, cam.lookAt));
+    return decompose(cameraWorldMatrix(cam.position, cam.lookAt, cam.roll));
   }
 
   // 1. Render root — the same evaluate SceneFromDAG makes every render.

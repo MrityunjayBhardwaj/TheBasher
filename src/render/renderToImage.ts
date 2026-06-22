@@ -39,6 +39,7 @@ import {
   ToneMappingMode,
 } from 'postprocessing';
 import type { CameraPose } from '../app/activeCamera';
+import { cameraOrientationQuat } from '../app/cameraOrientation';
 import type { DofEffectSettings } from '../app/cameraDof';
 import type { PostFxConfig } from '../nodes/types';
 
@@ -83,7 +84,9 @@ export function buildRenderCamera(pose: CameraPose, width: number, height: numbe
     cam = new THREE.PerspectiveCamera(pose.fov, aspect, pose.near, pose.far);
   }
   cam.position.set(pose.position[0], pose.position[1], pose.position[2]);
-  cam.lookAt(new THREE.Vector3(pose.lookAt[0], pose.lookAt[1], pose.lookAt[2]));
+  // #229 — orient from the ONE shared camera-orientation math (incl. roll) so the
+  // rendered shot banks exactly as the viewport look-through + frustum do (V37).
+  cam.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
   cam.updateMatrixWorld(true);
   return cam;
 }
