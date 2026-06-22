@@ -60,8 +60,8 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
   pure: true,
   cost: 'cheap',
   paramSchema: MaterialOverrideParams,
-  inputs: { target: { type: 'Mesh', cardinality: 'single' } },
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['material'],
   evaluate(params, inputs) {
     return {

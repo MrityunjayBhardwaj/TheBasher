@@ -27,7 +27,7 @@ export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, Direct
   cost: 'cheap',
   paramSchema: DirectionalLightParams,
   inputs: {},
-  outputs: { out: { type: 'Light', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform'],
   evaluate(params) {
     // Defensive default for rotation — projects saved before the

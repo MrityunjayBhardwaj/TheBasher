@@ -42,7 +42,7 @@ export const GltfSkeletonNode: NodeDefinition<GltfSkeletonParams, SkeletonValue>
     // Connect a `GltfAsset.out`. It is typed `Mesh` (the asset's render
     // output socket type), but the resolved value is a `GltfAssetValue` whose
     // `skins` we project. We read it as `GltfAssetValue` in evaluate.
-    asset: { type: 'Mesh', cardinality: 'single' },
+    asset: { type: 'SceneObject', cardinality: 'single' },
   },
   outputs: { out: { type: 'Skeleton', cardinality: 'single' } },
   evaluate(params, inputs: ResolvedInputs): SkeletonValue {

@@ -23,7 +23,7 @@ export const OrthographicCameraNode: NodeDefinition<
   cost: 'cheap',
   paramSchema: OrthographicCameraParams,
   inputs: {},
-  outputs: { out: { type: 'Camera', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // UX #12 — Camera (lens) primary, Transform secondary (mirrors PerspectiveCamera).
   inspectorSections: ['camera', 'transform'],
   evaluate(params) {

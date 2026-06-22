@@ -39,7 +39,7 @@ export const LightRigNode: NodeDefinition<LightRigParams, LightRigValue> = {
   cost: 'cheap',
   paramSchema: LightRigParams,
   inputs: {
-    lights: { type: 'Light', cardinality: 'list' },
+    lights: { type: 'SceneObject', cardinality: 'list' },
   },
   outputs: { out: { type: 'LightRig', cardinality: 'single' } },
   inspectorSections: ['layout'],

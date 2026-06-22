@@ -49,6 +49,16 @@ export type SocketTypeName =
   | 'Boolean'
   | 'String'
   | 'Time'
+  // #231 — the UNIFIED scene-object socket. Every node that produces a thing
+  // that can live in a scene (mesh, light, camera, group) outputs 'SceneObject',
+  // and every scene-graph consumer (Scene/Group `children`, `lights`, `camera`,
+  // Transform/MaterialOverride/modifier `target`, …) accepts it. This mirrors
+  // Blender's "everything is an Object": lights & cameras become groupable /
+  // parentable through the same `children` socket as meshes (V44 index-corr by
+  // node id; renderer/outliner switch on `value.kind`). 'Mesh'/'Light'/'Camera'
+  // below are SUPERSEDED by this (no node decl uses them after #231 Inc 1); kept
+  // until a cleanup pass confirms zero references (Chesterton).
+  | 'SceneObject'
   | 'Mesh'
   | 'Material'
   | 'Texture'

@@ -95,7 +95,7 @@ export const BakedMeshNode: NodeDefinition<BakedMeshParams, BakedMeshValue> = {
   cost: 'cheap',
   paramSchema: BakedMeshParams,
   inputs: {},
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params) {
     return {

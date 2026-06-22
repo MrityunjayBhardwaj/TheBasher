@@ -38,7 +38,7 @@ export const DepthPassNode: NodeDefinition<DepthPassParams, ImageValue> = {
   paramSchema: DepthPassParams,
   inputs: {
     scene: { type: 'Scene', cardinality: 'single' },
-    camera: { type: 'Camera', cardinality: 'single' },
+    camera: { type: 'SceneObject', cardinality: 'single' },
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },

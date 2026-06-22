@@ -41,8 +41,8 @@ export const ScatterNode: NodeDefinition<ScatterNodeParams, ScatterValue> = {
   pure: true,
   cost: 'medium',
   paramSchema: ScatterNodeParams,
-  inputs: { assets: { type: 'Mesh', cardinality: 'list' } },
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inputs: { assets: { type: 'SceneObject', cardinality: 'list' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params, inputs) {
     const assets = (inputs.assets as SceneChild[] | undefined) ?? [];

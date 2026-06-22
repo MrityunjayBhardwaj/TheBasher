@@ -104,7 +104,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
     // EdgeKind (V13 — same as the AnimationLayer.animation socket).
     transformClip: { type: 'TransformClip', cardinality: 'single' },
   },
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material'],
   evaluate(params, inputs: ResolvedInputs): GltfAssetValue {
     return {

@@ -46,8 +46,8 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, SceneChild> 
   pure: true,
   cost: 'cheap',
   paramSchema: ArrayModifierParams,
-  inputs: { target: { type: 'Mesh', cardinality: 'single' } },
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['modifier'],
   evaluate(params, inputs) {
     const src = inputs.target as SceneChild | undefined;

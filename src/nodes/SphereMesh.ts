@@ -43,7 +43,7 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
   cost: 'cheap',
   paramSchema: SphereMeshParams,
   inputs: {},
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material', 'modifier'],
   // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless (V4 runner, §52).
   // v0.6 #2 (#178) — v2 ({name,color}) → v3 (OpenPBR IR), seeds current look (R1).

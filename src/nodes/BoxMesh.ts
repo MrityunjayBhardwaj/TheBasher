@@ -32,7 +32,7 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
   cost: 'cheap',
   paramSchema: BoxMeshParams,
   inputs: {},
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'material', 'modifier'],
   // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless: every other param
   // is preserved untouched; scale defaults to identity so the rendered result is

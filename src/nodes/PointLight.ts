@@ -27,7 +27,7 @@ export const PointLightNode: NodeDefinition<PointLightParams, PointLightValue> =
   cost: 'cheap',
   paramSchema: PointLightParams,
   inputs: {},
-  outputs: { out: { type: 'Light', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform'],
   evaluate(params) {
     // Defensive default for rotation — see DirectionalLight for the why.

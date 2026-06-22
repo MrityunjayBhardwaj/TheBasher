@@ -25,7 +25,7 @@ export const ShotNode: NodeDefinition<ShotParams, ShotValue> = {
   cost: 'cheap',
   paramSchema: ShotParams,
   inputs: {
-    camera: { type: 'Camera', cardinality: 'single' },
+    camera: { type: 'SceneObject', cardinality: 'single' },
     scene: { type: 'Scene', cardinality: 'single' },
   },
   outputs: { out: { type: 'Shot', cardinality: 'single' } },

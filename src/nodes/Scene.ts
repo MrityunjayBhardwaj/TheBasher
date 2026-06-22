@@ -39,9 +39,9 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
   cost: 'cheap',
   paramSchema: SceneParams,
   inputs: {
-    camera: { type: 'Camera', cardinality: 'single' },
-    lights: { type: 'Light', cardinality: 'list' },
-    children: { type: 'Mesh', cardinality: 'list' },
+    camera: { type: 'SceneObject', cardinality: 'single' },
+    lights: { type: 'SceneObject', cardinality: 'list' },
+    children: { type: 'SceneObject', cardinality: 'list' },
     // #208 — the active lighting PROFILE (a LightRig directly, or the rig a
     // LightProfileSelect picks). Kept SEPARATE from `lights` so the direct-light
     // index-correspondence with `inputs.lights` stays byte-identical.

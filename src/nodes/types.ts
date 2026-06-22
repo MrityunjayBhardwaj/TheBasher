@@ -19,7 +19,7 @@ export type Vec3 = readonly [number, number, number];
 export type Quat = readonly [number, number, number, number];
 
 // ---------------------------------------------------------------------------
-// Cameras (socket type: 'Camera')
+// Cameras (socket type: 'SceneObject')
 // ---------------------------------------------------------------------------
 
 export interface PerspectiveCameraValue {
@@ -47,7 +47,7 @@ export interface OrthographicCameraValue {
 export type CameraValue = PerspectiveCameraValue | OrthographicCameraValue;
 
 // ---------------------------------------------------------------------------
-// Lights (socket type: 'Light')
+// Lights (socket type: 'SceneObject')
 // ---------------------------------------------------------------------------
 
 export interface DirectionalLightValue {
@@ -460,7 +460,7 @@ export interface EvaluatedMesh {
 }
 
 // ---------------------------------------------------------------------------
-// Meshes (socket type: 'Mesh') — recursive union
+// Meshes (socket type: 'SceneObject') — recursive union
 // ---------------------------------------------------------------------------
 
 export interface BoxMeshValue {
@@ -882,6 +882,15 @@ export type SceneChild =
   | MaterialOverrideValue
   | ScatterValue
   | CharacterValue;
+
+// #231 — the UNIFIED scene-object value: anything that flows through a
+// 'SceneObject' socket (Scene/Group `children`, `lights`, `camera`, …). It is
+// the runtime counterpart of the `'SceneObject'` SocketTypeName: meshes (the
+// `SceneChild` union), lights, and cameras all converge here so a Group can hold
+// any of them (Blender's "everything is an Object"). Consumers discriminate on
+// `value.kind` exactly as the existing scene-child render band does — no DAG
+// type-system growth (a single socket type, a tagged value union).
+export type SceneObject = SceneChild | LightValue | CameraValue;
 
 // ---------------------------------------------------------------------------
 // P3 — Animation channels + shots (THESIS §42)

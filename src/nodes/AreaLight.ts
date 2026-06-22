@@ -44,7 +44,7 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
   cost: 'cheap',
   paramSchema: AreaLightParams,
   inputs: {},
-  outputs: { out: { type: 'Light', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform'],
   evaluate(params) {
     const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);

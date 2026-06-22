@@ -34,8 +34,8 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: GroupParams,
-  inputs: { children: { type: 'Mesh', cardinality: 'list' } },
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inputs: { children: { type: 'SceneObject', cardinality: 'list' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'layout'],
   evaluate(params, inputs) {
     // V10/H14 layer-2 guard: an OLD saved Group (pre-#222, version 1, params `{}`)

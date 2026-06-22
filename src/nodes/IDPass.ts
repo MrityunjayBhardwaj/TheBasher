@@ -36,7 +36,7 @@ export const IDPassNode: NodeDefinition<IDPassParams, ImageValue> = {
   paramSchema: IDPassParams,
   inputs: {
     scene: { type: 'Scene', cardinality: 'single' },
-    camera: { type: 'Camera', cardinality: 'single' },
+    camera: { type: 'SceneObject', cardinality: 'single' },
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },

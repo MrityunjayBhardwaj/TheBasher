@@ -36,7 +36,7 @@ export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, Came
   cost: 'cheap',
   paramSchema: PerspectiveCameraParams,
   inputs: {},
-  outputs: { out: { type: 'Camera', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // UX #12 — Camera (lens) is the primary domain for a camera node; Transform
   // (position / lookAt) is secondary. Mirrors Scene leading with Environment.
   inspectorSections: ['camera', 'transform'],

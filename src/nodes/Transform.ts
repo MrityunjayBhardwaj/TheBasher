@@ -25,8 +25,8 @@ export const TransformNode: NodeDefinition<TransformParams, TransformValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: TransformParams,
-  inputs: { target: { type: 'Mesh', cardinality: 'single' } },
-  outputs: { out: { type: 'Mesh', cardinality: 'single' } },
+  inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
+  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform'],
   evaluate(params, inputs) {
     return {
