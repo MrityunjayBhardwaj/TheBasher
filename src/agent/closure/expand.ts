@@ -219,6 +219,10 @@ export function opTargetNodeId(op: import('../../core/dag/types').Op): NodeId | 
       // #224 — rename mutates an existing node's identity (meta.name), so it
       // is closure-checked exactly like setParam.
       return op.nodeId;
+    case 'setHidden':
+      // #227 S4 — visibility toggle mutates an existing node's meta, same as
+      // setMeta/setParam → closure-checked on the target node.
+      return op.nodeId;
     case 'connect':
     case 'disconnect':
       return op.to.node;

@@ -169,6 +169,11 @@ export const NodeSchema = z.object({
     .object({
       name: z.string().optional(),
       position: z.tuple([z.number(), z.number()]).optional(),
+      // #227 S4 — per-object visibility. Absent/false = visible (the default, so
+      // existing projects need no migration); true = hidden in the viewport AND
+      // the render (the renderer skips it). Lives on meta, not a per-type param,
+      // because every node kind can be hidden uniformly (like meta.name).
+      hidden: z.boolean().optional(),
     })
     .optional(),
 });
@@ -229,6 +234,16 @@ export const OpSetMetaSchema = z.object({
   name: z.string().optional(),
 });
 
+// #227 S4 — visibility toggle. A dedicated op (not an `OpSetMeta` field) because
+// setMeta's `name: undefined` means CLEAR — there's no way to say "set hidden,
+// leave name untouched" in one op. `hidden` is an explicit boolean (no clear
+// semantics); the apply normalizes `false` away to keep saves minimal.
+export const OpSetHiddenSchema = z.object({
+  type: z.literal('setHidden'),
+  nodeId: NodeIdSchema,
+  hidden: z.boolean(),
+});
+
 export const OpSchema = z.discriminatedUnion('type', [
   OpAddNodeSchema,
   OpRemoveNodeSchema,
@@ -236,6 +251,7 @@ export const OpSchema = z.discriminatedUnion('type', [
   OpDisconnectSchema,
   OpSetParamSchema,
   OpSetMetaSchema,
+  OpSetHiddenSchema,
 ]);
 export type Op = z.infer<typeof OpSchema>;
 

@@ -101,6 +101,8 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
       return applySetParam(state, op);
     case 'setMeta':
       return applySetMeta(state, op);
+    case 'setHidden':
+      return applySetHidden(state, op);
   }
 }
 
@@ -313,5 +315,24 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
     nodes: { ...state.nodes, [node.id]: nextNode },
   };
   const inverse: Op = { type: 'setMeta', nodeId: op.nodeId, name: prior };
+  return { next, inverse };
+}
+
+function applySetHidden(state: DagState, op: Extract<Op, { type: 'setHidden' }>): ApplyResult {
+  // #227 S4 — visibility. Like setMeta, `hidden` is node identity/view data, not
+  // a per-type param. `hidden: false` DELETES the key (the default is visible, so
+  // an unhidden node is byte-identical to one never hidden → minimal save diffs).
+  const node = getNode(state, op.nodeId);
+  const prior = node.meta?.hidden ?? false;
+  const meta = { ...node.meta };
+  if (op.hidden) meta.hidden = true;
+  else delete meta.hidden;
+  const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
+  const nextNode: Node = { ...node, meta: nextMeta };
+  const next: DagState = {
+    ...state,
+    nodes: { ...state.nodes, [node.id]: nextNode },
+  };
+  const inverse: Op = { type: 'setHidden', nodeId: op.nodeId, hidden: prior };
   return { next, inverse };
 }
