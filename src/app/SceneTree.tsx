@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
@@ -180,6 +181,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // selection change (not on every unrelated `rows` rebuild, e.g. a drag).
   const activeRowRef = useRef<HTMLLIElement | null>(null);
   const scrolledFor = useRef<NodeId | null>(null);
+  // #227 Slice 5(c) — set when arrow-key nav moves the active row, so the scroll
+  // effect FOCUSES the new active row (keeping keystrokes flowing) instead of a
+  // plain scrollIntoView. Cleared once consumed.
+  const navByKeyboard = useRef(false);
 
   // When the active node changes (e.g. a viewport pick), EXPAND every collapsed
   // ancestor so the row can surface. glTF asset ancestors → add to expandedAssets;
@@ -221,9 +226,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     if (!primary) return;
     const el = activeRowRef.current;
     if (!el) return; // row not visible yet — re-runs when `rows` updates after expand
-    if (scrolledFor.current === primary) return;
+    if (scrolledFor.current === primary && !navByKeyboard.current) return;
     scrolledFor.current = primary;
-    el.scrollIntoView({ block: 'nearest' });
+    if (navByKeyboard.current) {
+      navByKeyboard.current = false;
+      el.focus(); // keep keystrokes on the moved row (focus() scrolls into view too)
+    } else {
+      el.scrollIntoView({ block: 'nearest' });
+    }
   }, [primary, rows]);
 
   // #226 Slice 2 — modifier-aware row selection (Blender outliner parity):
@@ -248,6 +258,91 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       }
     }
     select(row.nodeId);
+  }
+
+  // #227 Slice 5(c) — the expand state of a row, for arrow-key collapse/expand.
+  function rowExpansion(row: TreeRow): { expandable: boolean; expanded: boolean } {
+    const expandable = COLLAPSIBLE_TYPES.has(row.nodeType) && rowsWithChildren.has(row.key);
+    const expanded =
+      expandable &&
+      (row.nodeType === 'GltfAsset'
+        ? expandedAssets.has(row.nodeId)
+        : !collapsedNodes.has(row.nodeId));
+    return { expandable, expanded };
+  }
+
+  function setExpanded(row: TreeRow, open: boolean) {
+    const { expanded } = rowExpansion(row);
+    if (expanded === open) return;
+    if (row.nodeType === 'GltfAsset') toggleAsset(row.nodeId);
+    else toggleCollapsed(row.nodeId);
+  }
+
+  // The nearest visible ancestor row (longest key that strictly prefixes this row's).
+  function parentRowOf(row: TreeRow): TreeRow | undefined {
+    let best: TreeRow | undefined;
+    for (const r of rows) {
+      if (r.key !== row.key && row.key.startsWith(`${r.key}/`)) {
+        if (!best || r.key.length > best.key.length) best = r;
+      }
+    }
+    return best;
+  }
+
+  function moveActive(target: TreeRow | undefined) {
+    if (!target) return;
+    navByKeyboard.current = true;
+    select(target.nodeId);
+  }
+
+  // #227 Slice 5(c) — arrow-key tree navigation (ARIA tree pattern, roving
+  // tabindex). Up/Down move the active row; Right expands a collapsed container or
+  // steps into its first child; Left collapses an expanded container or steps to
+  // the parent; Enter/Space (re)select. Ignored while an inline rename input owns
+  // the keystroke.
+  function onRowKeyDown(e: ReactKeyboardEvent<HTMLLIElement>, row: TreeRow) {
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    const NAV_KEYS = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Enter', ' '];
+    if (!NAV_KEYS.includes(e.key)) return;
+    // The focused row OWNS these keys — stop them reaching the global shortcut
+    // handler (window keydown), or Space would also toggle playback. React's
+    // stopPropagation calls the native one, halting the bubble before window.
+    e.stopPropagation();
+    const idx = rows.findIndex((r) => r.key === row.key);
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        moveActive(rows[idx + 1]);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        moveActive(rows[idx - 1]);
+        break;
+      case 'ArrowRight': {
+        e.preventDefault();
+        const { expandable, expanded } = rowExpansion(row);
+        if (expandable && !expanded) setExpanded(row, true);
+        else {
+          const child = rows[idx + 1];
+          if (child && child.key.startsWith(`${row.key}/`)) moveActive(child);
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        e.preventDefault();
+        const { expandable, expanded } = rowExpansion(row);
+        if (expandable && expanded) setExpanded(row, false);
+        else moveActive(parentRowOf(row));
+        break;
+      }
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        moveActive(row);
+        break;
+      default:
+        break;
+    }
   }
 
   // Esc closes the context menu. CAPTURE phase + stopImmediatePropagation so it
@@ -474,6 +569,12 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               onDrop={(e) => onDrop(e, row)}
               onClick={(e) => onRowClick(e, row)}
               onContextMenu={(e) => onRowContextMenu(e, row)}
+              // Roving tabindex (ARIA tree): only the active row is tab-reachable;
+              // arrows move the active row, which moves the focus. When nothing is
+              // selected the Scene root anchors focus.
+              tabIndex={isActive || (!primary && row.depth === 0) ? 0 : -1}
+              onKeyDown={(e) => onRowKeyDown(e, row)}
+              className="outline-none"
             >
               <div
                 className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${
@@ -488,6 +589,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                 {hasChildTree ? (
                   <button
                     type="button"
+                    tabIndex={-1}
                     data-testid={`scene-tree-toggle-${row.nodeId}`}
                     aria-label={isExpanded ? 'Collapse children' : 'Expand children'}
                     aria-expanded={isExpanded}
