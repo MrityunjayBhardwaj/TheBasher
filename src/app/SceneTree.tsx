@@ -49,6 +49,28 @@ interface SceneTreeProps {
   readonly filter?: string;
 }
 
+// #227 S4 — eye / eye-off glyph for the visibility toggle. Inline SVG (stroke
+// currentColor) so it themes with the row's text token — no new bg-/text- pair.
+function EyeIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1.5 8S3.8 3.5 8 3.5 14.5 8 14.5 8 12.2 12.5 8 12.5 1.5 8 1.5 8Z" />
+      <circle cx="8" cy="8" r="2" />
+      {!open ? <line x1="2.5" y1="13.5" x2="13.5" y2="2.5" /> : null}
+    </svg>
+  );
+}
+
 // One context-menu item — mirrors the MenuBar Item styling (audited tokens, no new
 // bg-/text- pair → W8 gate clean).
 function CtxItem({
@@ -403,6 +425,17 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     setCtxMenu(null);
   }
 
+  // #227 S4 — toggle a node's visibility (one setHidden op → one undo). The
+  // renderer (SceneFromDAG) skips a hidden top-level node in the viewport AND the
+  // offscreen render (V37, one band). v1 affordance is on top-level rows only.
+  function toggleHidden(nodeId: NodeId, hidden: boolean) {
+    dispatchAtomic(
+      [{ type: 'setHidden', nodeId, hidden }],
+      'user',
+      hidden ? 'hide node' : 'show node',
+    );
+  }
+
   function ctxDelete(nodeId: NodeId) {
     const ids = ctxTargetIds(nodeId);
     const ops = buildDeleteNodesOps(state, ids);
@@ -549,6 +582,12 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
             (row.nodeType === 'GltfAsset'
               ? expandedAssets.has(row.nodeId)
               : !collapsedNodes.has(row.nodeId));
+          // #227 S4 — visibility. The eye lives on TOP-LEVEL rows (depth 1, the
+          // Scene's direct children) — the renderer skips exactly these by source
+          // node id, so the affordance can't lie. `hidden` dims the row + flips the
+          // glyph. Suppressed while filtering (same as the chevron).
+          const isHideable = !filtering && row.depth === 1;
+          const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
           return (
             <li
               key={row.key}
@@ -577,7 +616,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               className="outline-none"
             >
               <div
-                className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${
+                className={`group flex items-center gap-1.5 rounded-md px-2 py-1 ${
                   isActive
                     ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/40'
                     : isInSet
@@ -603,7 +642,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     {isExpanded ? '▾' : '▸'}
                   </button>
                 ) : null}
-                <SceneTreeIcon nodeType={row.nodeType} />
+                <span className={`flex shrink-0 ${hidden ? 'opacity-40' : ''}`}>
+                  <SceneTreeIcon nodeType={row.nodeType} />
+                </span>
                 {renaming?.scope === 'outliner' && renaming.nodeId === row.nodeId ? (
                   <RenameInput
                     nodeId={row.nodeId}
@@ -614,7 +655,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   />
                 ) : (
                   <span
-                    className="grow truncate"
+                    className={`grow truncate ${hidden ? 'opacity-40' : ''}`}
                     // Double-click renames in place (F2 does the same via the
                     // global shortcut). stopPropagation so the dbl-click doesn't
                     // re-fire the row's single-click select underneath.
@@ -626,6 +667,28 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     {row.display}
                   </span>
                 )}
+                {isHideable ? (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    data-testid={`scene-tree-eye-${row.nodeId}`}
+                    data-hidden={hidden || undefined}
+                    aria-label={hidden ? 'Show' : 'Hide'}
+                    aria-pressed={hidden}
+                    title={hidden ? 'Show' : 'Hide'}
+                    onClick={(e) => {
+                      e.stopPropagation(); // toggle only — do NOT select the row
+                      toggleHidden(row.nodeId, !hidden);
+                    }}
+                    // Visible on hover, or always when hidden (so the way back is
+                    // never invisible). Audited text tokens only → W8-clean.
+                    className={`shrink-0 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                      hidden ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                    }`}
+                  >
+                    <EyeIcon open={!hidden} />
+                  </button>
+                ) : null}
               </div>
             </li>
           );

@@ -292,6 +292,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           all N (H48 / B13). */}
       {value.scene.children.map((child, i) => {
         const cpid = childRefs[i]?.node ?? null;
+        // #227 S4 — a hidden top-level node renders NOTHING (null in its slot, so
+        // the array index still corresponds to childRefs[i] — the band invariant
+        // the direct-channel / constraint maps rely on is preserved). The live
+        // scene is what the offscreen still/animation render captures (V37), so a
+        // skipped node is absent from the render too — one band, no #168 denylist.
+        if (cpid != null && state.nodes[cpid]?.meta?.hidden) return null;
         return (
           <SceneChildNode
             key={`mesh:${i}`}
