@@ -31,13 +31,6 @@ export interface TreeRow {
    * itself does not. Drag-reorder uses these to emit disconnect+connect.
    */
   readonly parent?: { nodeId: NodeId; socket: string; index: number };
-  /**
-   * The owning GltfAsset's node id, set ONLY on projected GltfChild rows
-   * (Phase 7.7, #91). The outliner uses it to collapse/expand the whole
-   * child subtree under one toggle on the GltfAsset row (D2 — absorbs the
-   * 50-100-child node-flood, D-05). Absent on every non-glTF-child row.
-   */
-  readonly gltfAssetOwner?: NodeId;
 }
 
 interface WalkCtx {
@@ -161,7 +154,6 @@ function projectGltfChildren(
   };
   const nodeNameMap = params.nodeNameMap ?? {};
   const childHierarchy = params.childHierarchy ?? {};
-  const assetNodeId = assetNode.id;
 
   // Roots = child keys that appear in NO childHierarchy[parent] array. Build
   // the "is a child of someone" set once (O(n), not O(n^2)), then the roots
@@ -185,8 +177,9 @@ function projectGltfChildren(
       nodeType: 'GltfChild',
       depth,
       display: key,
-      // NO `parent` — glTF children are non-reorderable (no scene edge).
-      gltfAssetOwner: assetNodeId, // D2 collapse-by-owner toggle key
+      // NO `parent` — glTF children are non-reorderable (no scene edge). The
+      // outliner collapses them by row-key prefix (the key nests under the
+      // asset's), so no owner back-reference is needed.
     });
     const grandchildren = childHierarchy[key];
     if (Array.isArray(grandchildren)) {
