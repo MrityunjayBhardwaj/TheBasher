@@ -81,6 +81,7 @@ import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
+import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam } from './resolveTransformParam';
 import {
@@ -1871,6 +1872,9 @@ export function NPanel() {
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
+  // #225 — when >1 node is selected the inspector renders the shared-edit
+  // multi-state instead of the single primary node.
+  const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
 
   // #173 — Inspector (R7) per-panel collapse. Mirrors LeftSidebar's chevron
   // pattern (the flag/persistence already lived in chromeStore since P6; this
@@ -1969,6 +1973,10 @@ export function NPanel() {
             create one.
           </span>
         </div>
+      ) : selectedCount > 1 ? (
+        // #225 — N selected → the shared-edit multi-state (wires the
+        // previously-dead MULTI_SELECT_SECTIONS Transform section).
+        <MultiSelectInspector />
       ) : (
         <>
           <div className="border-b border-border px-3 py-2 text-fg/60">
