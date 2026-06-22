@@ -78,15 +78,18 @@ export function paramToSection(
 ): SectionId | null {
   // Transform params — position / rotation / scale. lookAt (camera aim target)
   // is positional, so it groups with Transform too (UX #12). pivot (a Group's
-  // origin, #222/#228) is the rotation/scale centre → also Transform, so it's a
-  // first-class labeled row instead of a stray raw-fallback row.
+  // origin, #222/#228) is the rotation/scale centre → also Transform. roll (a
+  // camera's bank about the view axis, #229) is an orientation property → also
+  // Transform, beside its position/lookAt. All first-class labeled rows instead
+  // of stray raw-fallback rows.
   if (
     declaredSections.includes('transform') &&
     (paramPath === 'position' ||
       paramPath === 'rotation' ||
       paramPath === 'scale' ||
       paramPath === 'pivot' ||
-      paramPath === 'lookAt')
+      paramPath === 'lookAt' ||
+      paramPath === 'roll')
   ) {
     return 'transform';
   }

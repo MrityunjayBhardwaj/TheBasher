@@ -65,6 +65,8 @@ import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
+import { resolveActiveCameraPoseAt } from './activeCamera';
+import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 
 type Vec3 = [number, number, number];
 
@@ -747,16 +749,194 @@ function MultiGizmo() {
   );
 }
 
-// Dispatcher — route to the multi gizmo when >1 manipulable node is selected,
-// else the single-node gizmo (byte-identical to pre-#225). Keeping the branch
-// at the component boundary (not inside one body) honors rules-of-hooks: each
+// #229 — the CAMERA gizmo. A Basher camera aims via position + lookAt (a POINT)
+// + roll, NOT an Euler rotation (V56), so the generic SingleGizmo can only
+// translate it (its `rotation` param is null → rotate coerces to translate, and
+// the lookAt aim point has no handle). CameraGizmo maps Blender's two camera
+// idioms onto Basher's lookAt model:
+//   - ROTATE the camera body (Blender "press R to rotate the camera object"):
+//     the rotate gizmo seeds from the camera's world ORIENTATION
+//     (cameraOrientationQuat) and a drag is converted BACK to authored lookAt +
+//     roll via lookAtRollFromQuat (V68 — manipulate in render/world space, store
+//     authored params), keeping the aim DISTANCE fixed so the aim orbits the
+//     camera (yaw/pitch re-aim, roll about the view axis banks).
+//   - DRAG THE AIM TARGET: a second translate handle at the world lookAt point;
+//     dragging it re-aims the camera (writes lookAt directly — the user's chosen
+//     "write lookAt directly", not a Track-To constraint).
+//   - TRANSLATE the body moves `position` only; the lookAt POINT stays put so the
+//     camera re-aims at it (the aim handle is how you move WHAT it looks at).
+// Every write funnels through the SAME routeAnimatedGrab → setParam →
+// autoKeyCommit chokepoint the generic gizmo + #190 camera authoring use (V1).
+// Cameras are flat (never nested, V68 null path) so there is no parent-world
+// round-trip — the proxy world IS the camera's world.
+function CameraGizmo() {
+  const camId = useSelectionStore((s) => s.primaryNodeId);
+  const mode = useGizmoStore((s) => s.mode);
+  const orientation = useGizmoStore((s) => s.orientation);
+  const seconds = useTimeStore((s) => s.seconds);
+  const frame = useTimeStore((s) => s.frame);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+
+  const [bodyNode, setBodyNode] = useState<THREE.Group | null>(null);
+  const [aimNode, setAimNode] = useState<THREE.Group | null>(null);
+  const bodyRefCb = useCallback((g: THREE.Group | null) => setBodyNode(g), []);
+  const aimRefCb = useCallback((g: THREE.Group | null) => setAimNode(g), []);
+
+  // Captured at seed time: the camera's evaluated position + the aim DISTANCE, so
+  // a rotate keeps the lookAt the same distance from the camera (the aim orbits,
+  // it does not slide toward/away).
+  const seedRef = useRef<{ position: Vec3; distance: number } | null>(null);
+
+  // Seed both proxies from the EVALUATED camera pose so the gizmo display-follows
+  // animation/scrub (the SingleGizmo discipline). The body proxy carries the
+  // camera's world ORIENTATION (so rotate spins from the rendered orientation);
+  // the aim proxy sits at the world lookAt point.
+  useEffect(() => {
+    if (!camId) return;
+    let pose;
+    try {
+      pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds);
+    } catch {
+      return;
+    }
+    const distance =
+      Math.hypot(
+        pose.lookAt[0] - pose.position[0],
+        pose.lookAt[1] - pose.position[1],
+        pose.lookAt[2] - pose.position[2],
+      ) || 1;
+    seedRef.current = { position: pose.position, distance };
+    if (bodyNode) {
+      bodyNode.position.set(...pose.position);
+      bodyNode.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
+      bodyNode.scale.set(1, 1, 1);
+    }
+    if (aimNode) {
+      aimNode.position.set(...pose.lookAt);
+      aimNode.quaternion.identity();
+      aimNode.scale.set(1, 1, 1);
+    }
+    if (import.meta.env.DEV) {
+      const w = window as unknown as Record<string, unknown>;
+      w.__basher_camera_gizmo = () => ({
+        position: bodyNode ? [bodyNode.position.x, bodyNode.position.y, bodyNode.position.z] : null,
+        aim: aimNode ? [aimNode.position.x, aimNode.position.y, aimNode.position.z] : null,
+      });
+    }
+  }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing]);
+
+  // ONE write chokepoint per camera param — animated → re-route (channel keyed),
+  // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,
+  // H36 single-write: route XOR setParam, never both).
+  function writeCameraParam(path: 'position' | 'lookAt' | 'roll', value: unknown) {
+    if (!camId) return;
+    if (routeAnimatedGrab(camId, path, value)) return;
+    useDagStore
+      .getState()
+      .dispatch({ type: 'setParam', nodeId: camId, paramPath: path, value }, 'user', `camera ${path}`);
+    autoKeyCommit(camId, path, value);
+  }
+
+  function onBodyChange() {
+    const g = bodyNode;
+    const seed = seedRef.current;
+    if (!g || !seed || !camId) return;
+    const liveMode = useGizmoStore.getState().mode;
+    if (liveMode === 'rotate') {
+      // Convert the dragged world orientation back to authored lookAt + roll,
+      // keeping the seeded aim distance. Two params → two routed writes (a drag is
+      // many undo entries, same as SingleGizmo; documented).
+      const { lookAt, roll } = lookAtRollFromQuat(g.quaternion, seed.position, seed.distance);
+      writeCameraParam('lookAt', lookAt);
+      writeCameraParam('roll', roll);
+    } else {
+      // translate (scale coerces here — cameras have no scale): move position
+      // only; the lookAt POINT stays put so the camera re-aims at it.
+      writeCameraParam('position', maybeSnapVec3([g.position.x, g.position.y, g.position.z]));
+    }
+  }
+
+  function onAimChange() {
+    const g = aimNode;
+    if (!g || !camId) return;
+    writeCameraParam('lookAt', maybeSnapVec3([g.position.x, g.position.y, g.position.z]));
+  }
+
+  // *** D-06 grab observation seam — dev-guarded (mirrors SingleGizmo). Drives the
+  // REAL onBodyChange/onAimChange so the boundary-pair observes the gizmo's own
+  // write path. kind='rotate' takes an absolute euler (deg); 'translate'/'aim'
+  // take a world point. ***
+  if (import.meta.env.DEV) {
+    const w = window as unknown as Record<string, unknown>;
+    w.__basher_camera_gizmo_grab = (
+      kind: 'rotate' | 'translate' | 'aim',
+      target: [number, number, number],
+    ) => {
+      if (kind === 'aim') {
+        if (!aimNode) return;
+        aimNode.position.set(...target);
+        onAimChange();
+        return;
+      }
+      if (!bodyNode) return;
+      useEditorStore.getState().setActiveTool(kind === 'rotate' ? 'rotate' : 'translate');
+      if (kind === 'rotate') bodyNode.rotation.set(...degVec3ToRad(target));
+      else bodyNode.position.set(...target);
+      onBodyChange();
+    };
+  }
+
+  if (!camId) return null;
+  // The body gizmo shows rotate or translate; scale coerces to translate (no
+  // scale on a camera). The aim handle is always a translate gizmo.
+  const bodyMode: GizmoMode = mode === 'rotate' ? 'rotate' : 'translate';
+  return (
+    <>
+      <group ref={bodyRefCb} />
+      <group ref={aimRefCb} />
+      {bodyNode ? (
+        <TransformControls
+          object={bodyNode}
+          mode={bodyMode}
+          space={orientation === 'local' ? 'local' : 'world'}
+          enabled={!playing}
+          onObjectChange={onBodyChange}
+          onMouseDown={() => useGizmoStore.getState().setDragging(true)}
+          onMouseUp={() => useGizmoStore.getState().setDragging(false)}
+        />
+      ) : null}
+      {aimNode ? (
+        <TransformControls
+          object={aimNode}
+          mode="translate"
+          enabled={!playing}
+          onObjectChange={onAimChange}
+          onMouseDown={() => useGizmoStore.getState().setDragging(true)}
+          onMouseUp={() => useGizmoStore.getState().setDragging(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+// Dispatcher — route to the multi gizmo when >1 manipulable node is selected, a
+// dedicated camera gizmo when the single selection is a camera (#229), else the
+// single-node gizmo (byte-identical to pre-#225). Keeping the branch at the
+// component boundary (not inside one body) honors rules-of-hooks: each
 // sub-component owns its own hook set.
 export function Gizmo() {
   // Reactively read BOTH stores so the dispatcher re-evaluates on either a
   // selection change or a DAG change (a node losing/gaining a position param).
   const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
+  const primaryId = useSelectionStore((s) => s.primaryNodeId);
   const nodes = useDagStore((s) => s.state.nodes);
   let manipCount = 0;
   for (const id of selectedIds) if (getManipulable(nodes[id] ?? null)) manipCount++;
-  return manipCount > 1 ? <MultiGizmo /> : <SingleGizmo />;
+  if (manipCount > 1) return <MultiGizmo />;
+  const primary = primaryId ? nodes[primaryId] : null;
+  if (primary && (primary.type === 'PerspectiveCamera' || primary.type === 'OrthographicCamera')) {
+    return <CameraGizmo />;
+  }
+  return <SingleGizmo />;
 }
