@@ -8,13 +8,14 @@
 // REF: epic #201, docs/OPERATORS-AND-LIGHTING-DESIGN.md §4.3; vyapti V37/V58.
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 
 const BOX_ID = 'n_box';
 const XF_ID = 'n_xf';
@@ -369,5 +370,69 @@ describe('resolveWorldTransform', () => {
   it('returns null for an unknown id (no crash)', () => {
     const state = buildNestedTransformState({});
     expect(resolveWorldTransform(state, 'not_a_node', ctxAt(0))).toBeNull();
+  });
+});
+
+// resolveParentWorldMatrix (#230) — the PARENT world matrix the gizmo anchors to.
+// null for top-level / flat / unresolvable (gizmo keeps the local path); the
+// ancestor world for a genuinely nested child. Pairs with the gizmo e2e
+// (tests/e2e/p230-nested-gizmo-world.spec.ts) which proves the same against the
+// REAL rendered object + the world→local write-back.
+describe('resolveParentWorldMatrix', () => {
+  // NESTED → the parent's world matrix (the Transform's translation).
+  it('returns the parent world matrix for a nested box (translation)', () => {
+    const state = buildNestedTransformState({ xfPos: [10, 0, 0], boxPos: [1, 2, 3] });
+    const m = resolveParentWorldMatrix(state, BOX_ID, ctxAt(0));
+    expect(m).not.toBeNull();
+    // Column-major translation lives in elements 12,13,14.
+    expect(m!.elements[12]).toBeCloseTo(10, 6);
+    expect(m!.elements[13]).toBeCloseTo(0, 6);
+    expect(m!.elements[14]).toBeCloseTo(0, 6);
+    // parentWorld · box.local == resolveWorldTransform(box): 10 + 1 = 11.
+    const w = resolveWorldTransform(state, BOX_ID, ctxAt(0));
+    expect(w!.position[0]).toBeCloseTo(11, 6);
+  });
+
+  // The parent must compose ROTATION too (a translation-only inverse would be wrong
+  // for the gizmo's world→local conversion under a rotated parent).
+  it('returns a rotated parent world matrix (90° Y)', () => {
+    const state = buildNestedTransformState({ xfRot: [0, 90, 0], boxPos: [1, 0, 0] });
+    const m = resolveParentWorldMatrix(state, BOX_ID, ctxAt(0));
+    expect(m).not.toBeNull();
+    // R_y(90°)·(1,0,0) applied via the parent maps the local +X to world -Z.
+    const v = new THREE.Vector3(1, 0, 0).applyMatrix4(m!);
+    expect(v.x).toBeCloseTo(0, 5);
+    expect(v.z).toBeCloseTo(-1, 5);
+  });
+
+  // TOP-LEVEL box → null (parent is the identity scene root; gizmo stays local).
+  it('returns null for a top-level box (identity parent)', () => {
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: BOX_ID,
+      paramPath: 'position',
+      value: [2, 3, 4],
+    }).next;
+    expect(resolveParentWorldMatrix(state, BOX_ID, ctxAt(0))).toBeNull();
+  });
+
+  // A nested child under an IDENTITY parent (Transform at origin) → null too
+  // (parent composes to identity → world == local → gizmo correctly stays local).
+  it('returns null when the parent composes to identity', () => {
+    const state = buildNestedTransformState({ xfPos: [0, 0, 0], boxPos: [1, 2, 3] });
+    expect(resolveParentWorldMatrix(state, BOX_ID, ctxAt(0))).toBeNull();
+  });
+
+  // FLAT light + camera → null (never nested; gizmo edits their own local params).
+  it('returns null for a flat light and a camera', () => {
+    const state = buildDefaultDagState();
+    expect(resolveParentWorldMatrix(state, 'n_camera', ctxAt(0))).toBeNull();
+  });
+
+  // Unknown id → null (no crash).
+  it('returns null for an unknown id', () => {
+    const state = buildNestedTransformState({ xfPos: [10, 0, 0] });
+    expect(resolveParentWorldMatrix(state, 'not_a_node', ctxAt(0))).toBeNull();
   });
 });

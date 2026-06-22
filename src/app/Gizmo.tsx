@@ -47,7 +47,7 @@
 // REF: THESIS.md §11, §15, §40; vyapti V1, V8; krama K7.
 
 import { TransformControls } from '@react-three/drei';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
@@ -62,12 +62,53 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 
 type Vec3 = [number, number, number];
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+}
+
+/** The node's LOCAL matrix T·R·S (·T(-pivot) for a Group) from the proxy's
+ *  currently-seeded local pos/rot°(as radians on the Object3D)/scale — MIRRORS
+ *  resolveWorldTransform.localMatrix so a re-anchor composes consistently (#230). */
+function localTRSMatrix(
+  pos: THREE.Vector3,
+  rotRad: THREE.Euler,
+  scale: THREE.Vector3,
+  pivot: Vec3 | null,
+): THREE.Matrix4 {
+  const q = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(rotRad.x, rotRad.y, rotRad.z, 'XYZ'),
+  );
+  const m = new THREE.Matrix4().compose(pos.clone(), q, scale.clone());
+  if (pivot) m.multiply(new THREE.Matrix4().makeTranslation(-pivot[0], -pivot[1], -pivot[2]));
+  return m;
+}
+
+/** Convert the proxy's WORLD transform back to the node's LOCAL params (#230):
+ *  local = parentWorld⁻¹ · proxyWorld, then strip a Group's own -pivot so the
+ *  decomposed T·R·S are the position/rotation(deg)/scale params. */
+function worldToLocalTRS(
+  g: THREE.Group,
+  parentWorld: THREE.Matrix4,
+  pivot: Vec3 | null,
+): { position: Vec3; rotation: Vec3; scale: Vec3 } {
+  const proxyWorld = new THREE.Matrix4().compose(g.position.clone(), g.quaternion.clone(), g.scale.clone());
+  const local = parentWorld.clone().invert().multiply(proxyWorld);
+  if (pivot) local.multiply(new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]));
+  const p = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  local.decompose(p, q, s);
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+  return {
+    position: [p.x, p.y, p.z],
+    rotation: radVec3ToDeg([e.x, e.y, e.z]),
+    scale: [s.x, s.y, s.z],
+  };
 }
 
 interface Manipulable {
@@ -132,6 +173,13 @@ export function Gizmo() {
   const groupRefCb = useCallback((g: THREE.Group | null) => {
     setGroupNode(g);
   }, []);
+  // #230 — the selected node's PARENT world matrix (null for top-level / flat
+  // light·camera / unresolvable), captured by the seeding effect and read by
+  // onObjectChange to convert a world-space drag back to local params. Non-null
+  // ⇒ the node is nested under a transformed ancestor (the gizmo runs in world
+  // space). Plus the dragged node's own pivot (Group) to strip on write-back.
+  const parentWorldRef = useRef<THREE.Matrix4 | null>(null);
+  const pivotRef = useRef<Vec3 | null>(null);
 
   const isCharacter = node?.type === 'Character';
   // The directly-manipulable params (position + rotation/scale-or-size). With
@@ -216,6 +264,41 @@ export function Gizmo() {
       if (evalT && evalT.scale) groupNode.scale.set(...evalT.scale);
       else if (!evalT && manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
       else groupNode.scale.set(1, 1, 1);
+
+      // #230 — the proxy now holds the node's LOCAL pose. If the node is nested
+      // under a transformed ancestor, RE-ANCHOR it to its WORLD pose so the gizmo
+      // sits where it renders (not detached by the parent transform). parentWorld
+      // is null for a top-level / flat (light·camera) / unresolvable (GltfChild)
+      // node → the local seed above stands, BYTE-IDENTICAL to pre-#230. The
+      // node's own pivot (a nested Group) is folded into localTRSMatrix here and
+      // stripped on write-back (worldToLocalTRS).
+      let parentWorld: THREE.Matrix4 | null = null;
+      try {
+        parentWorld = resolveParentWorldMatrix(useDagStore.getState().state, selectedId, {
+          time: { frame, seconds, normalized },
+        });
+      } catch {
+        parentWorld = null;
+      }
+      parentWorldRef.current = parentWorld;
+      const np = node?.params as { pivot?: unknown } | undefined;
+      pivotRef.current = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
+      if (parentWorld) {
+        const localM = localTRSMatrix(
+          groupNode.position,
+          groupNode.rotation,
+          groupNode.scale,
+          pivotRef.current,
+        );
+        const worldM = parentWorld.clone().multiply(localM);
+        const wp = new THREE.Vector3();
+        const wq = new THREE.Quaternion();
+        const ws = new THREE.Vector3();
+        worldM.decompose(wp, wq, ws);
+        groupNode.position.copy(wp);
+        groupNode.quaternion.copy(wq);
+        groupNode.scale.copy(ws);
+      }
       // NOTE: no early return here — fall through to the FLAG-C tail mirror
       // so the dev-only proxy attr reflects whichever branch committed.
     } else if (isCharacter) {
@@ -258,7 +341,7 @@ export function Gizmo() {
         (groupNode as unknown as { userData: Record<string, unknown> }).userData.__basher_gizmo ??
         null;
     }
-  }, [groupNode, manip, isCharacter, selectedId, seconds, frame, normalized, playing]);
+  }, [groupNode, manip, node, isCharacter, selectedId, seconds, frame, normalized, playing]);
 
   if (!selectedId) return null;
   if (!isCharacter && !manip) return null;
@@ -309,8 +392,16 @@ export function Gizmo() {
     const g = groupNode;
     if (!g || !selectedId) return;
     const liveMode = useGizmoStore.getState().mode;
+    // #230 — when the node is nested, the seeding effect captured its parent
+    // world matrix and anchored the proxy in WORLD space; convert the proxy's
+    // world transform back to the node's LOCAL params before writing. null ⇒
+    // top-level / flat (light·camera) / unresolvable (GltfChild) → the proxy IS
+    // local (parent identity), so use its value directly — byte-identical to
+    // pre-#230. (Snapping stays per-mode below, on the resolved local value.)
+    const parentWorld = parentWorldRef.current;
+    const local = parentWorld ? worldToLocalTRS(g, parentWorld, pivotRef.current) : null;
     if (liveMode === 'translate') {
-      const value = maybeSnapVec3([g.position.x, g.position.y, g.position.z]);
+      const value = maybeSnapVec3(local ? local.position : [g.position.x, g.position.y, g.position.z]);
       if (routeAnimatedGrab(selectedId, 'position', value)) return; // D-02: re-route BEFORE setParam
       // P7.7: a GltfChild has NO keyframe channel (the clip lives on the asset),
       // so routeAnimatedGrab returns false and we land here — the manual layer.
@@ -333,8 +424,9 @@ export function Gizmo() {
     }
     if (liveMode === 'rotate') {
       if (!manip.rotation) return; // node has no rotation param — no-op
-      // Object3D.rotation is radians — params.rotation is degrees.
-      const value: Vec3 = radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
+      // Object3D.rotation is radians — params.rotation is degrees. #230: when
+      // nested, the local rotation comes from the world→local conversion.
+      const value: Vec3 = local ? local.rotation : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
       if (routeAnimatedGrab(selectedId, 'rotation', value)) return; // D-02: re-route BEFORE setParam
       if (writeGltfChildOverride('rotation', value)) return; // P7.7 manual layer
       useDagStore
@@ -349,7 +441,8 @@ export function Gizmo() {
     }
     // scale
     if (!manip.scaleParamPath) return;
-    const value: Vec3 = [g.scale.x, g.scale.y, g.scale.z];
+    // #230: when nested, the local scale comes from the world→local conversion.
+    const value: Vec3 = local ? local.scale : [g.scale.x, g.scale.y, g.scale.z];
     if (routeAnimatedGrab(selectedId, manip.scaleParamPath, value)) return; // D-02: re-route BEFORE setParam
     // P7.7: a GltfChild declares `scale` (never `size`), so scaleParamPath is
     // 'scale' and the override flag is `overridden.scale`.

@@ -212,6 +212,35 @@ function walk(
   return null;
 }
 
+/** Like `walk`, but returns the target's PARENT world matrix — the accumulated
+ *  ANCESTOR world BEFORE the target's own local matrix (so `parentWorld ·
+ *  localMatrix(target) === walk(...)`). `acc` at the target IS that parent world.
+ *  Returns null if the target is not under this subtree. (#230 — the gizmo needs
+ *  the parent world to anchor in world space and convert a drag back to local.) */
+function walkParent(
+  state: DagState,
+  nodeId: string,
+  value: SceneChild,
+  acc: THREE.Matrix4,
+  targetId: string,
+): THREE.Matrix4 | null {
+  if (nodeId === targetId) return acc;
+  const world = acc.clone().multiply(localMatrix(value));
+  for (const edge of childEdges(state, nodeId, value)) {
+    const found = walkParent(state, edge.id, edge.value, world, targetId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function isIdentityMatrix(m: THREE.Matrix4): boolean {
+  const e = m.elements;
+  // Column-major identity. Tolerance absorbs compose/clone float noise.
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  for (let i = 0; i < 16; i++) if (Math.abs(e[i] - I[i]) > 1e-6) return false;
+  return true;
+}
+
 /** The world matrix of a camera from its pose: position + the orientation that
  *  rotates the camera's local -Z (three.js forward) onto (position → lookAt),
  *  identity scale. Mirrors CameraHelpers.frustumQuaternion so the resolved world
@@ -359,5 +388,76 @@ export function resolveWorldTransform(
     return decompose(identity.clone().multiply(localMatrix(lit)));
   }
 
+  return null;
+}
+
+/**
+ * The world matrix of `selectedId`'s PARENT — the accumulated ancestor transform
+ * the node hangs under — or **null** when the node has no non-trivial parent. Used
+ * by the gizmo (#230) to anchor in world space and convert a drag back to the
+ * node's local params.
+ *
+ * Returns null (→ caller keeps the local-only path, byte-identical to pre-#230)
+ * for: a top-level scene child (parent is the identity scene root); a parent that
+ * composes to identity (ancestors at origin / no rotation·scale — local == world);
+ * cameras and lights (wired FLAT into scene.camera / scene.lights, never nested);
+ * and unresolvable kinds (GltfChild — addressed by name; Scatter/Character
+ * sub-objects; not found). Returns the parent's world matrix ONLY for a genuinely
+ * nested scene child (under a transformed Transform/Group chain).
+ *
+ * MIRRORS `resolveWorldTransform`'s scene-child walk (same render-root evaluate,
+ * same index-correspondence, same channel→transient overlay on the top-level
+ * child) so the parent world tracks an animated ancestor exactly as the render does
+ * (one band, H40).
+ */
+export function resolveParentWorldMatrix(
+  state: DagState,
+  selectedId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix4 | null {
+  const node = state.nodes[selectedId];
+  if (!node) return null;
+  // Cameras + lights are wired FLAT (never nested under a Transform/Group), so
+  // world == local — no parent to compose. The scene-child walk below also never
+  // reaches them, but short-circuit to avoid the render-root evaluate.
+  if (node.type === 'PerspectiveCamera' || node.type === 'OrthographicCamera') return null;
+
+  const target = state.outputs.render;
+  if (!target) return null;
+  let value: RenderOutputValue;
+  try {
+    value = evaluate(state, target.node, { cache, ctx }).value as RenderOutputValue;
+  } catch {
+    return null;
+  }
+  if (!value?.scene?.children) return null;
+
+  const sceneRef = state.outputs.scene;
+  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
+  const childRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.children)
+      ? (sceneNode.inputs.children as NodeRef[])
+      : [];
+
+  const transients = useTransientEditStore.getState().edits;
+  const identity = new THREE.Matrix4();
+
+  for (let i = 0; i < value.scene.children.length; i++) {
+    const topId = childRefs[i]?.node;
+    if (!topId) continue;
+    let child: SceneChild | null = value.scene.children[i];
+    const directChannels = directChannelValuesForTarget(state.nodes, topId);
+    if (child && directChannels.length > 0) {
+      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
+    }
+    child = overlayTransients(child, topId, transients);
+    if (!child) continue;
+    const parent = walkParent(state, topId, child, identity, selectedId);
+    if (parent) return isIdentityMatrix(parent) ? null : parent;
+  }
+
+  // Lights (scene.lights / rig) are flat → world == local → no parent. Not found
+  // as a scene-child descendant above → null (GltfChild / Scatter / unreachable).
   return null;
 }
