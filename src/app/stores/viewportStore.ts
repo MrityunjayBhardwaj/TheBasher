@@ -58,8 +58,19 @@ export interface ViewportStore {
   /** World-space step size used by snap(). 0 disables snapping. */
   snapStep: number;
   /** True when snap is on (snapStep > 0 alone is not enough — the user may
-   *  want to keep their step value while toggling snap off). */
+   *  want to keep their step value while toggling snap off). This is the MASTER
+   *  toggle (Blender's magnet); `snapAffect` selects WHICH transforms it gates. */
   snapEnabled: boolean;
+  /** Which transform modes snapping affects — Blender's Snapping ▸ Affect
+   *  (snapping.rst): Move snaps by default, Rotate/Scale are opt-in. A transform
+   *  snaps iff `snapEnabled && snapAffect[mode]`. */
+  snapAffect: { move: boolean; rotate: boolean; scale: boolean };
+  /** Rotation snap increment in DEGREES (Blender's default rotate increment is
+   *  5°). Used when `snapAffect.rotate` is on. */
+  rotateSnapStep: number;
+  /** Scale snap increment (fraction; e.g. 0.1 → tenth steps). Used when
+   *  `snapAffect.scale` is on. */
+  scaleSnapStep: number;
   /** Whether the floor Grid renders. */
   gridVisible: boolean;
   /** Whether the bottom-right axis widget renders. */
@@ -144,6 +155,12 @@ export interface ViewportStore {
   setPivot(pivot: Pivot): void;
   setSnapStep(step: number): void;
   setSnapEnabled(enabled: boolean): void;
+  /** Set the rotation snap increment (degrees); clamped to ≥ 0. */
+  setRotateSnapStep(step: number): void;
+  /** Set the scale snap increment; clamped to ≥ 0. */
+  setScaleSnapStep(step: number): void;
+  /** Toggle whether snapping affects one transform mode (move/rotate/scale). */
+  toggleSnapAffect(mode: 'move' | 'rotate' | 'scale'): void;
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
   setShading(shading: ShadingMode): void;
@@ -170,6 +187,10 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   pivot: 'median',
   snapStep: 0.25,
   snapEnabled: false,
+  // Blender's Affect default: Move only (rotate/scale opt-in). snapping.rst.
+  snapAffect: { move: true, rotate: false, scale: false },
+  rotateSnapStep: 5, // degrees — Blender's default rotation increment
+  scaleSnapStep: 0.1,
   gridVisible: true,
   axisWidgetVisible: true,
   // Default 'studio' so a fresh seed scene with one DirectionalLight still
@@ -203,6 +224,10 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setPivot: (pivot) => set({ pivot }),
   setSnapStep: (snapStep) => set({ snapStep: Math.max(0, snapStep) }),
   setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
+  setRotateSnapStep: (rotateSnapStep) => set({ rotateSnapStep: Math.max(0, rotateSnapStep) }),
+  setScaleSnapStep: (scaleSnapStep) => set({ scaleSnapStep: Math.max(0, scaleSnapStep) }),
+  toggleSnapAffect: (mode) =>
+    set((s) => ({ snapAffect: { ...s.snapAffect, [mode]: !s.snapAffect[mode] } })),
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
   setShading: (shading) => set({ shading }),
@@ -283,8 +308,29 @@ export function cameraDistanceToZoomPercent(distance: number): number {
   return Math.max(1, Math.round((DEFAULT_CAMERA_DISTANCE / distance) * 100));
 }
 
-/** Convenience: read-once helper for non-React callers (Gizmo, GroundClick). */
+/** Mode-aware snap for the gizmo (Blender's Snapping ▸ Affect). A value snaps
+ *  iff the master toggle is on AND `snapAffect[mode]` AND that mode's step > 0:
+ *  translate → snapStep (world units), rotate → rotateSnapStep (degrees),
+ *  scale → scaleSnapStep (fraction). Otherwise the value passes through
+ *  unchanged. Read-once helper for non-React callers (Gizmo, GroundClick). */
+export function maybeSnapTransform(
+  mode: 'translate' | 'rotate' | 'scale',
+  value: readonly [number, number, number],
+): [number, number, number] {
+  const { snapEnabled, snapAffect, snapStep, rotateSnapStep, scaleSnapStep } =
+    useViewportStore.getState();
+  const passthrough: [number, number, number] = [value[0], value[1], value[2]];
+  if (!snapEnabled) return passthrough;
+  if (mode === 'translate') return snapAffect.move && snapStep > 0 ? snapVec3(value, snapStep) : passthrough;
+  if (mode === 'rotate')
+    return snapAffect.rotate && rotateSnapStep > 0 ? snapVec3(value, rotateSnapStep) : passthrough;
+  return snapAffect.scale && scaleSnapStep > 0 ? snapVec3(value, scaleSnapStep) : passthrough;
+}
+
+/** Translate-mode snap — the original helper, now a thin alias over
+ *  `maybeSnapTransform('translate', …)` so the move-Affect gate applies
+ *  uniformly to the gizmo translate path AND the character walk-to/ground-click
+ *  callers (a click-to-move is a translate). */
 export function maybeSnapVec3(value: readonly [number, number, number]): [number, number, number] {
-  const { snapEnabled, snapStep } = useViewportStore.getState();
-  return snapEnabled && snapStep > 0 ? snapVec3(value, snapStep) : [value[0], value[1], value[2]];
+  return maybeSnapTransform('translate', value);
 }

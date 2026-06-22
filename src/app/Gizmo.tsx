@@ -60,7 +60,7 @@ import { useEditorStore } from './stores/editorStore';
 import { isModifierNode, resolveStackBase } from './operatorStack';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
-import { maybeSnapVec3 } from './stores/viewportStore';
+import { maybeSnapVec3, maybeSnapTransform } from './stores/viewportStore';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
@@ -449,7 +449,11 @@ function SingleGizmo() {
       if (!manip.rotation) return; // node has no rotation param — no-op
       // Object3D.rotation is radians — params.rotation is degrees. #230: when
       // nested, the local rotation comes from the world→local conversion.
-      const value: Vec3 = local ? local.rotation : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
+      // #228: snap to the rotate increment (degrees) when Snap ▸ Affect ▸ Rotate.
+      const value: Vec3 = maybeSnapTransform(
+        'rotate',
+        local ? local.rotation : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]),
+      );
       if (routeAnimatedGrab(selectedId, 'rotation', value)) return; // D-02: re-route BEFORE setParam
       if (writeGltfChildOverride('rotation', value)) return; // P7.7 manual layer
       useDagStore
@@ -465,7 +469,11 @@ function SingleGizmo() {
     // scale
     if (!manip.scaleParamPath) return;
     // #230: when nested, the local scale comes from the world→local conversion.
-    const value: Vec3 = local ? local.scale : [g.scale.x, g.scale.y, g.scale.z];
+    // #228: snap to the scale increment when Snap ▸ Affect ▸ Scale.
+    const value: Vec3 = maybeSnapTransform(
+      'scale',
+      local ? local.scale : [g.scale.x, g.scale.y, g.scale.z],
+    );
     if (routeAnimatedGrab(selectedId, manip.scaleParamPath, value)) return; // D-02: re-route BEFORE setParam
     // P7.7: a GltfChild declares `scale` (never `size`), so scaleParamPath is
     // 'scale' and the override flag is `overridden.scale`.

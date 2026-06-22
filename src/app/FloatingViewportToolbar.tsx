@@ -274,6 +274,8 @@ export function FloatingViewportToolbar(): ReactNode {
   const snapStep = useViewportStore((s) => s.snapStep);
   const toggleSnapEnabled = useViewportStore((s) => s.toggleSnapEnabled);
   const setSnapStep = useViewportStore((s) => s.setSnapStep);
+  const snapAffect = useViewportStore((s) => s.snapAffect);
+  const toggleSnapAffect = useViewportStore((s) => s.toggleSnapAffect);
   const cameraZoom = useViewportStore((s) => s.cameraZoom);
   const timelineDrawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
   const toggleTimelineDrawer = useViewportStore((s) => s.toggleTimelineDrawer);
@@ -458,6 +460,40 @@ export function FloatingViewportToolbar(): ReactNode {
         className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         title="Snap step (world units)"
       />
+      {/* #228 — Snapping ▸ Affect (Blender snapping.rst): which transform modes
+          the snap gates. Shown only while snap is on; Move snaps by default,
+          Rotate (5°) / Scale (0.1) are opt-in. */}
+      {snapEnabled ? (
+        <>
+          <Chip
+            active={snapAffect.move}
+            title="Snap moves (translate)"
+            ariaLabel={snapAffect.move ? 'Disable move snap' : 'Enable move snap'}
+            testId="floating-toolbar-snap-affect-move"
+            onClick={() => toggleSnapAffect('move')}
+          >
+            M
+          </Chip>
+          <Chip
+            active={snapAffect.rotate}
+            title="Snap rotations (5° increments)"
+            ariaLabel={snapAffect.rotate ? 'Disable rotate snap' : 'Enable rotate snap'}
+            testId="floating-toolbar-snap-affect-rotate"
+            onClick={() => toggleSnapAffect('rotate')}
+          >
+            R
+          </Chip>
+          <Chip
+            active={snapAffect.scale}
+            title="Snap scaling (0.1 increments)"
+            ariaLabel={snapAffect.scale ? 'Disable scale snap' : 'Enable scale snap'}
+            testId="floating-toolbar-snap-affect-scale"
+            onClick={() => toggleSnapAffect('scale')}
+          >
+            S
+          </Chip>
+        </>
+      ) : null}
       <Divider />
       {/* Timeline reveal — a toolbar-level toggle for the timeline drawer body.
           The Timebar (with the Auto-Key indicator) stays always-visible below. */}

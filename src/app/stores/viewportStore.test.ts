@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   cameraDistanceToZoomPercent,
   DEFAULT_CAMERA_DISTANCE,
+  maybeSnapTransform,
   maybeSnapVec3,
   snap,
   snapVec3,
@@ -17,6 +18,9 @@ beforeEach(() => {
     pivot: 'median',
     snapStep: 0.25,
     snapEnabled: false,
+    snapAffect: { move: true, rotate: false, scale: false },
+    rotateSnapStep: 5,
+    scaleSnapStep: 0.1,
     gridVisible: true,
     axisWidgetVisible: true,
     shading: 'studio',
@@ -46,6 +50,57 @@ describe('viewportStore — snap math', () => {
     expect(maybeSnapVec3([0.7, 0.7, 0.7])).toEqual([0.7, 0.7, 0.7]);
     useViewportStore.getState().setSnapEnabled(true);
     expect(maybeSnapVec3([0.7, 0.7, 0.7])).toEqual([0.75, 0.75, 0.75]);
+  });
+});
+
+describe('viewportStore — snap Affect (#228, Blender snapping.rst)', () => {
+  it('rotate/scale pass through until their Affect is enabled', () => {
+    useViewportStore.getState().setSnapEnabled(true);
+    // Default Affect = move only → rotate/scale unsnapped.
+    expect(maybeSnapTransform('rotate', [7, 7, 7])).toEqual([7, 7, 7]);
+    expect(maybeSnapTransform('scale', [0.77, 0.77, 0.77])).toEqual([0.77, 0.77, 0.77]);
+    // Translate still snaps (move Affect on by default).
+    expect(maybeSnapTransform('translate', [0.7, 0.7, 0.7])).toEqual([0.75, 0.75, 0.75]);
+  });
+
+  it('rotate snaps to the 5° increment once Affect ▸ Rotate is on', () => {
+    useViewportStore.getState().setSnapEnabled(true);
+    useViewportStore.getState().toggleSnapAffect('rotate');
+    expect(maybeSnapTransform('rotate', [7, 12, -94])).toEqual([5, 10, -95]);
+  });
+
+  it('scale snaps to the scale increment once Affect ▸ Scale is on', () => {
+    useViewportStore.getState().setSnapEnabled(true);
+    useViewportStore.getState().toggleSnapAffect('scale');
+    const snapped = maybeSnapTransform('scale', [0.77, 1.23, 2.04]);
+    expect(snapped[0]).toBeCloseTo(0.8);
+    expect(snapped[1]).toBeCloseTo(1.2);
+    expect(snapped[2]).toBeCloseTo(2.0);
+  });
+
+  it('the master snap toggle gates every mode (Affect is moot when off)', () => {
+    useViewportStore.getState().toggleSnapAffect('rotate');
+    useViewportStore.getState().toggleSnapAffect('scale');
+    // snapEnabled still false → nothing snaps regardless of Affect.
+    expect(maybeSnapTransform('translate', [0.7, 0.7, 0.7])).toEqual([0.7, 0.7, 0.7]);
+    expect(maybeSnapTransform('rotate', [7, 7, 7])).toEqual([7, 7, 7]);
+    expect(maybeSnapTransform('scale', [0.77, 0.77, 0.77])).toEqual([0.77, 0.77, 0.77]);
+  });
+
+  it('move Affect off → translate stops snapping (and the alias follows)', () => {
+    useViewportStore.getState().setSnapEnabled(true);
+    useViewportStore.getState().toggleSnapAffect('move');
+    expect(maybeSnapTransform('translate', [0.7, 0.7, 0.7])).toEqual([0.7, 0.7, 0.7]);
+    expect(maybeSnapVec3([0.7, 0.7, 0.7])).toEqual([0.7, 0.7, 0.7]);
+  });
+
+  it('setRotateSnapStep / setScaleSnapStep clamp negatives to zero (snap disabled for that mode)', () => {
+    useViewportStore.getState().setSnapEnabled(true);
+    useViewportStore.getState().toggleSnapAffect('rotate');
+    useViewportStore.getState().setRotateSnapStep(-3);
+    expect(useViewportStore.getState().rotateSnapStep).toBe(0);
+    // step 0 → pass through even with Affect on.
+    expect(maybeSnapTransform('rotate', [7, 7, 7])).toEqual([7, 7, 7]);
   });
 });
 
