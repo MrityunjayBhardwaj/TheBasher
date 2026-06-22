@@ -57,7 +57,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
-import { buildDeleteNodesOps } from './sceneNodeActions';
+import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -286,6 +286,22 @@ export function KeyboardShortcuts() {
       if (!cmd && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         openAddMenuAtViewportCenter();
+        return;
+      }
+
+      // Shift + D — duplicate the active node's subtree as a sibling (#227 Slice 3,
+      // Blender's idiom). Selects the copy. Checked before the single-key guard.
+      if (!cmd && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        const sel = useSelectionStore.getState();
+        const primary = sel.primaryNodeId;
+        if (primary) {
+          const res = buildDuplicateNodeOps(useDagStore.getState().state, primary);
+          if (res) {
+            useDagStore.getState().dispatchAtomic(res.ops, 'user', 'duplicate node');
+            sel.select(res.newRootId);
+          }
+        }
         return;
       }
 

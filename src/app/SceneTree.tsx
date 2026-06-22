@@ -23,7 +23,7 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
-import { buildDeleteNodesOps } from './sceneNodeActions';
+import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
@@ -190,6 +190,16 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
 
   function ctxRename(nodeId: NodeId) {
     beginRename(nodeId, 'outliner');
+    setCtxMenu(null);
+  }
+
+  // Duplicate the node's subtree as a sibling and select the copy (#227 Slice 3).
+  function ctxDuplicate(nodeId: NodeId) {
+    const res = buildDuplicateNodeOps(state, nodeId);
+    if (res) {
+      dispatchAtomic(res.ops, 'user', 'duplicate node');
+      select(res.newRootId);
+    }
     setCtxMenu(null);
   }
 
@@ -445,6 +455,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   disabled={ctxTargetIds(ctxMenu.nodeId).length > 1}
                 >
                   Rename
+                </CtxItem>
+                <CtxItem testId="outliner-ctx-duplicate" onClick={() => ctxDuplicate(ctxMenu.nodeId)}>
+                  Duplicate
                 </CtxItem>
                 <CtxItem
                   testId="outliner-ctx-select-hierarchy"
