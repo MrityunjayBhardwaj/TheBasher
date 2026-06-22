@@ -57,6 +57,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -500,27 +501,9 @@ export function KeyboardShortcuts() {
             const sel = useSelectionStore.getState();
             const ids = [...sel.selectedNodeIds];
             if (ids.length === 0) return;
-            const dagState = dag.state;
-            const ops: Op[] = [];
-            for (const nodeId of ids) {
-              // Find every consumer that references this node in any input.
-              for (const [consumerId, consumer] of Object.entries(dagState.nodes)) {
-                if (ids.includes(consumerId)) continue; // being deleted too — skip
-                for (const [socketName, binding] of Object.entries(consumer.inputs)) {
-                  const refs = Array.isArray(binding) ? binding : [binding];
-                  for (const ref of refs) {
-                    if (ref.node === nodeId) {
-                      ops.push({
-                        type: 'disconnect',
-                        from: { node: nodeId, socket: ref.socket },
-                        to: { node: consumerId, socket: socketName },
-                      });
-                    }
-                  }
-                }
-              }
-              ops.push({ type: 'removeNode', nodeId });
-            }
+            // Shared op-builder (#227) — the SAME disconnect-consumers + removeNode
+            // path the outliner context menu uses, so the two can't drift.
+            const ops = buildDeleteNodesOps(dag.state, ids);
             if (ops.length === 0) return;
             dag.dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
             sel.clear();

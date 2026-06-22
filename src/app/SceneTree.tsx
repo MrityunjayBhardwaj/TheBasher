@@ -7,7 +7,15 @@
 //
 // REF: THESIS.md §12, §39, krama K2; vyapti V1.
 
-import { useMemo, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
@@ -15,6 +23,7 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
@@ -31,6 +40,33 @@ interface SceneTreeProps {
   readonly filter?: string;
 }
 
+// One context-menu item — mirrors the MenuBar Item styling (audited tokens, no new
+// bg-/text- pair → W8 gate clean).
+function CtxItem({
+  children,
+  onClick,
+  testId,
+  disabled,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  testId: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      data-testid={testId}
+      onClick={onClick}
+      className="block w-full px-3 py-1.5 text-left text-[12px] text-fg/80 hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      {children}
+    </button>
+  );
+}
+
 export function SceneTree({ filter = '' }: SceneTreeProps) {
   const state = useDagStore((s) => s.state);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
@@ -42,6 +78,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   const select = useSelectionStore((s) => s.select);
   const selectAdditive = useSelectionStore((s) => s.selectAdditive);
   const selectMany = useSelectionStore((s) => s.selectMany);
+  const clearSelection = useSelectionStore((s) => s.clear);
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
   const allRows = useMemo(() => buildSceneTreeRows(state), [state]);
@@ -50,6 +87,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
 
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  // #227 Slice 2 — right-click context menu, anchored at the cursor.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: NodeId } | null>(null);
   // GltfAsset child subtrees start COLLAPSED by default (D-05 node-flood:
   // a 50-100-bone character would otherwise flood the outliner). This is a
   // local set of the GltfAsset node ids the user has EXPANDED — empty =
@@ -117,6 +156,62 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       }
     }
     select(row.nodeId);
+  }
+
+  // Esc closes the context menu. CAPTURE phase + stopImmediatePropagation so it
+  // preempts the global Escape handler (which would otherwise also clear the
+  // selection). No-op when the menu is closed.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        setCtxMenu(null);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [ctxMenu]);
+
+  // #227 Slice 2 — right-click context menu. Opening it on a row that isn't part
+  // of the current multi-set selects it alone first (Blender's behavior), so the
+  // action targets what the user pointed at.
+  function onRowContextMenu(e: ReactMouseEvent, row: TreeRow) {
+    e.preventDefault();
+    if (!selectedIds.has(row.nodeId)) select(row.nodeId);
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: row.nodeId });
+  }
+
+  // The nodes a context action targets: the whole selection when the right-clicked
+  // row is part of a multi-set, else just that row.
+  function ctxTargetIds(nodeId: NodeId): NodeId[] {
+    return selectedIds.has(nodeId) && selectedIds.size > 1 ? [...selectedIds] : [nodeId];
+  }
+
+  function ctxRename(nodeId: NodeId) {
+    beginRename(nodeId, 'outliner');
+    setCtxMenu(null);
+  }
+
+  // Select the node + every descendant row (Blender "Select Hierarchy"). Descendants
+  // are the rows whose key path is prefixed by this row's key.
+  function ctxSelectHierarchy(nodeId: NodeId) {
+    const rootRow = rows.find((r) => r.nodeId === nodeId);
+    if (rootRow) {
+      const ids = rows
+        .filter((r) => r.key === rootRow.key || r.key.startsWith(`${rootRow.key}/`))
+        .map((r) => r.nodeId);
+      selectMany([...new Set(ids)]);
+    }
+    setCtxMenu(null);
+  }
+
+  function ctxDelete(nodeId: NodeId) {
+    const ids = ctxTargetIds(nodeId);
+    const ops = buildDeleteNodesOps(state, ids);
+    if (ops.length > 0) dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
+    clearSelection();
+    setCtxMenu(null);
   }
 
   function onDragStart(e: DragEvent, row: TreeRow) {
@@ -270,6 +365,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               onDragOver={(e) => onDragOver(e, row)}
               onDrop={(e) => onDrop(e, row)}
               onClick={(e) => onRowClick(e, row)}
+              onContextMenu={(e) => onRowContextMenu(e, row)}
             >
               <div
                 className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${
@@ -324,6 +420,49 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           );
         })}
       </ul>
+      {ctxMenu
+        ? createPortal(
+            <>
+              {/* Click-away backdrop. Portalled to body so a scroll/overflow
+                  ancestor can't clip the menu (the MenuBar overflow-clip trap). */}
+              <div
+                className="fixed inset-0 z-40"
+                onMouseDown={() => setCtxMenu(null)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu(null);
+                }}
+              />
+              <div
+                data-testid="outliner-context-menu"
+                role="menu"
+                className="fixed z-50 min-w-[160px] overflow-hidden rounded border border-border bg-bg py-1 shadow-lg"
+                style={{ left: ctxMenu.x, top: ctxMenu.y }}
+              >
+                <CtxItem
+                  testId="outliner-ctx-rename"
+                  onClick={() => ctxRename(ctxMenu.nodeId)}
+                  disabled={ctxTargetIds(ctxMenu.nodeId).length > 1}
+                >
+                  Rename
+                </CtxItem>
+                <CtxItem
+                  testId="outliner-ctx-select-hierarchy"
+                  onClick={() => ctxSelectHierarchy(ctxMenu.nodeId)}
+                >
+                  Select Hierarchy
+                </CtxItem>
+                <div className="my-1 h-px bg-border" />
+                <CtxItem testId="outliner-ctx-delete" onClick={() => ctxDelete(ctxMenu.nodeId)}>
+                  {ctxTargetIds(ctxMenu.nodeId).length > 1
+                    ? `Delete ${ctxTargetIds(ctxMenu.nodeId).length} Objects`
+                    : 'Delete'}
+                </CtxItem>
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
