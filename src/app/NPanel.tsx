@@ -79,6 +79,9 @@ import { ModifierStackControls } from './ModifierStackControls';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useRenameStore } from './stores/renameStore';
+import { RenameInput } from './RenameInput';
+import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam } from './resolveTransformParam';
 import {
   buildRevertedSet,
@@ -1866,6 +1869,8 @@ function SectionCard({
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
+  const renaming = useRenameStore((s) => s.renaming);
+  const beginRename = useRenameStore((s) => s.begin);
 
   // #173 — Inspector (R7) per-panel collapse. Mirrors LeftSidebar's chevron
   // pattern (the flag/persistence already lived in chromeStore since P6; this
@@ -1967,9 +1972,29 @@ export function NPanel() {
       ) : (
         <>
           <div className="border-b border-border px-3 py-2 text-fg/60">
-            <div className="font-mono text-fg">{node.id}</div>
-            <div className="text-[10px] text-fg/40">
-              {node.type} v{node.version}
+            {/* #224 — the header name is the editable identity. Double-click
+                (or F2 in the outliner) opens the inline editor; the raw id +
+                type still show beneath for debugging. */}
+            {renaming?.scope === 'inspector' && renaming.nodeId === node.id ? (
+              <RenameInput
+                nodeId={node.id}
+                priorName={node.meta?.name}
+                placeholder={node.id}
+                testId="inspector-rename"
+                className="w-full rounded-sm border border-accent bg-bg-2 px-1 text-fg outline-none"
+              />
+            ) : (
+              <div
+                data-testid="inspector-node-name"
+                className="cursor-text truncate font-medium text-fg"
+                title="Double-click to rename"
+                onDoubleClick={() => beginRename(node.id, 'inspector')}
+              >
+                {nodeDisplayName(node)}
+              </div>
+            )}
+            <div className="font-mono text-[10px] text-fg/40">
+              {node.type} v{node.version} · {node.id}
             </div>
           </div>
           {declared.length === 0 ? (

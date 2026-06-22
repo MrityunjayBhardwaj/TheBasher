@@ -11,6 +11,8 @@ import { useMemo, useState, type DragEvent } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
+import { useRenameStore } from './stores/renameStore';
+import { RenameInput } from './RenameInput';
 import { SceneTreeIcon } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
 
@@ -34,6 +36,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   const selected = useSelectionStore((s) => s.selectedNodeId);
   const select = useSelectionStore((s) => s.select);
+  const renaming = useRenameStore((s) => s.renaming);
+  const beginRename = useRenameStore((s) => s.begin);
   const allRows = useMemo(() => buildSceneTreeRows(state), [state]);
   const query = filter.trim().toLowerCase();
   const filtering = query.length > 0;
@@ -214,7 +218,28 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   </button>
                 ) : null}
                 <SceneTreeIcon nodeType={row.nodeType} />
-                <span className="grow truncate">{row.display}</span>
+                {renaming?.scope === 'outliner' && renaming.nodeId === row.nodeId ? (
+                  <RenameInput
+                    nodeId={row.nodeId}
+                    priorName={state.nodes[row.nodeId]?.meta?.name}
+                    placeholder={row.display}
+                    testId={`scene-tree-rename-${row.nodeId}`}
+                    className="grow rounded-sm border border-accent bg-bg-2 px-1 text-[13px] text-fg outline-none"
+                  />
+                ) : (
+                  <span
+                    className="grow truncate"
+                    // Double-click renames in place (F2 does the same via the
+                    // global shortcut). stopPropagation so the dbl-click doesn't
+                    // re-fire the row's single-click select underneath.
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      beginRename(row.nodeId, 'outliner');
+                    }}
+                  >
+                    {row.display}
+                  </span>
+                )}
               </div>
             </li>
           );

@@ -50,6 +50,7 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useRenameStore } from './stores/renameStore';
 import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -312,6 +313,19 @@ export function KeyboardShortcuts() {
 
       // Single-key shortcuts (only when no mod is held).
       if (cmd || e.altKey || e.shiftKey) return;
+
+      // F2 — rename the active node (Blender's idiom). Opens the inline editor
+      // in the OUTLINER row of the primary selection. No-op when nothing is
+      // selected. The typing-guard above already returned if a field is focused,
+      // so F2 can't fire while a rename editor is open.
+      if (e.key === 'F2') {
+        const primary = useSelectionStore.getState().primaryNodeId;
+        if (primary) {
+          e.preventDefault();
+          useRenameStore.getState().begin(primary, 'outliner');
+        }
+        return;
+      }
 
       // Whether the timeline drawer is revealed — the keyframe-editing context
       // that replaces the deleted `animate` mode (v0.6 #4). Keyframe ops (K/I/
