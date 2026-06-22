@@ -52,7 +52,7 @@ import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
 import { evaluate } from '../core/dag/evaluator';
-import type { Node } from '../core/dag/types';
+import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
@@ -62,7 +62,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 
 type Vec3 = [number, number, number];
@@ -111,6 +111,29 @@ function worldToLocalTRS(
   };
 }
 
+/** #225 — convert a node's new WORLD matrix back to its LOCAL params:
+ *  local = parentWorld⁻¹ · newWorld, then strip a Group's own -pivot. The
+ *  matrix sibling of worldToLocalTRS (which reads a live proxy group); used by
+ *  MultiGizmo where each node's new world is computed as delta·seedWorld. */
+function matrixToLocalTRS(
+  newWorld: THREE.Matrix4,
+  parentWorld: THREE.Matrix4 | null,
+  pivot: Vec3 | null,
+): { position: Vec3; rotation: Vec3; scale: Vec3 } {
+  const local = (parentWorld ? parentWorld.clone().invert() : new THREE.Matrix4()).multiply(newWorld);
+  if (pivot) local.multiply(new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]));
+  const p = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  local.decompose(p, q, s);
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+  return {
+    position: [p.x, p.y, p.z],
+    rotation: radVec3ToDeg([e.x, e.y, e.z]),
+    scale: [s.x, s.y, s.z],
+  };
+}
+
 interface Manipulable {
   position: Vec3;
   rotation: Vec3 | null;
@@ -146,7 +169,7 @@ function getManipulable(node: Node | null): Manipulable | null {
   };
 }
 
-export function Gizmo() {
+function SingleGizmo() {
   const primarySelectedId = useSelectionStore((s) => s.primaryNodeId);
   // When a geometry MODIFIER (Array/Mirror) is selected, the gizmo edits the BASE
   // mesh's transform: the modifier inherits the source's TRS and renders the
@@ -515,4 +538,173 @@ export function Gizmo() {
       ) : null}
     </>
   );
+}
+
+// #225 — the MULTI-object gizmo. When >1 manipulable node is selected, a single
+// proxy sits at the MEDIAN of their world positions and a drag applies the
+// proxy's incremental world transform to EVERY selected node about that shared
+// pivot (Blender's "median point" pivot). The single-node SingleGizmo path is
+// untouched (the dispatcher below routes ≤1 there, byte-identical).
+//
+// Math: seedProxyWorld = T(median). Each frame delta = proxyWorld·seedProxyWorld⁻¹
+// (a pure translation in translate mode; a rotation/scale ABOUT the median in
+// rotate/scale mode). Each node's new world = delta·seedWorld(node), converted
+// back to its LOCAL params (matrixToLocalTRS) — so render==gizmo holds per node
+// and the substrate keeps authored-local params (V34/V68 extended to the SET).
+//
+// KNOWN-LIMITS (v1, documented not silent): the multi path writes PLAIN setParam
+// (no per-node routeAnimatedGrab / autoKey / GltfChild-override-flag and no
+// snapping) — an animated node renders from its channel so a multi-drag may not
+// follow it, and relative spacing is preserved by NOT snapping. Static meshes
+// (the common multi-select target) transform correctly. Each onObjectChange is
+// one atomic (a drag = many undo entries, same as SingleGizmo).
+function MultiGizmo() {
+  const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
+  const mode = useGizmoStore((s) => s.mode);
+  const seconds = useTimeStore((s) => s.seconds);
+  const frame = useTimeStore((s) => s.frame);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+
+  const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
+  const groupRefCb = useCallback((g: THREE.Group | null) => setGroupNode(g), []);
+
+  // Captured at seed time: the proxy's seed world + each node's seed world,
+  // parent world, pivot, and which TRS params it owns.
+  const seedRef = useRef<{
+    proxyWorld: THREE.Matrix4;
+    nodes: {
+      id: string;
+      seedWorld: THREE.Matrix4;
+      parentWorld: THREE.Matrix4 | null;
+      pivot: Vec3 | null;
+      manip: Manipulable;
+    }[];
+  } | null>(null);
+
+  // Seed the proxy at the median of the selected nodes' WORLD positions and
+  // capture each node's seed world. Re-runs on selection/time change so the
+  // group gizmo display-follows animation (like SingleGizmo).
+  useEffect(() => {
+    if (!groupNode) return;
+    const state = useDagStore.getState().state;
+    const seeds: NonNullable<typeof seedRef.current>['nodes'] = [];
+    for (const id of selectedIds) {
+      const node = state.nodes[id];
+      const manip = getManipulable(node ?? null);
+      if (!manip) continue;
+      let world: THREE.Matrix4;
+      let parentWorld: THREE.Matrix4 | null = null;
+      try {
+        const wt = resolveWorldTransform(state, id, { time: { frame, seconds, normalized } });
+        world = wt
+          ? new THREE.Matrix4().fromArray(wt.matrix)
+          : new THREE.Matrix4().setPosition(...manip.position);
+        parentWorld = resolveParentWorldMatrix(state, id, { time: { frame, seconds, normalized } });
+      } catch {
+        world = new THREE.Matrix4().setPosition(...manip.position);
+        parentWorld = null;
+      }
+      const np = node?.params as { pivot?: unknown } | undefined;
+      const pivot = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
+      seeds.push({ id, seedWorld: world, parentWorld, pivot, manip });
+    }
+    if (seeds.length === 0) {
+      seedRef.current = null;
+      return;
+    }
+    // Median = average of world-space origins.
+    const median = new THREE.Vector3();
+    for (const s of seeds) median.add(new THREE.Vector3().setFromMatrixPosition(s.seedWorld));
+    median.multiplyScalar(1 / seeds.length);
+    groupNode.position.copy(median);
+    groupNode.rotation.set(0, 0, 0);
+    groupNode.scale.set(1, 1, 1);
+    seedRef.current = {
+      proxyWorld: new THREE.Matrix4().setPosition(median),
+      nodes: seeds,
+    };
+
+    if (import.meta.env.DEV) {
+      const w = window as unknown as Record<string, unknown>;
+      w.__basher_gizmo = () => ({
+        position: [groupNode.position.x, groupNode.position.y, groupNode.position.z],
+        rotation: radVec3ToDeg([groupNode.rotation.x, groupNode.rotation.y, groupNode.rotation.z]),
+        scale: [groupNode.scale.x, groupNode.scale.y, groupNode.scale.z],
+      });
+      w.__basher_gizmo_multi = () => ({
+        count: seeds.length,
+        pivot: [median.x, median.y, median.z],
+      });
+    }
+  }, [groupNode, selectedIds, seconds, frame, normalized, playing]);
+
+  function onObjectChange() {
+    const g = groupNode;
+    const seed = seedRef.current;
+    if (!g || !seed) return;
+    const liveMode = useGizmoStore.getState().mode;
+    const proxyWorld = new THREE.Matrix4().compose(g.position.clone(), g.quaternion.clone(), g.scale.clone());
+    const delta = proxyWorld.clone().multiply(seed.proxyWorld.clone().invert());
+    const ops: Op[] = [];
+    for (const sn of seed.nodes) {
+      const newWorld = delta.clone().multiply(sn.seedWorld);
+      const local = matrixToLocalTRS(newWorld, sn.parentWorld, sn.pivot);
+      // Position changes under translate AND under rotate/scale-about-pivot.
+      ops.push({ type: 'setParam', nodeId: sn.id, paramPath: 'position', value: local.position });
+      if (liveMode === 'rotate' && sn.manip.rotation) {
+        ops.push({ type: 'setParam', nodeId: sn.id, paramPath: 'rotation', value: local.rotation });
+      }
+      // Only an explicit `scale` band is multi-scaled (never a geometry `size`).
+      if (liveMode === 'scale' && sn.manip.scaleParamPath === 'scale') {
+        ops.push({ type: 'setParam', nodeId: sn.id, paramPath: 'scale', value: local.scale });
+      }
+    }
+    if (ops.length === 0) return;
+    useDagStore.getState().dispatchAtomic(ops, 'user', `multi ${liveMode} (${seed.nodes.length} objects)`);
+  }
+
+  // Test-observation seam — drive the REAL onObjectChange (mirrors SingleGizmo's
+  // __basher_gizmo_grab; only one gizmo is mounted so the name is unambiguous).
+  if (import.meta.env.DEV) {
+    const w = window as unknown as Record<string, unknown>;
+    w.__basher_gizmo_grab = (m: GizmoMode, target: [number, number, number]) => {
+      if (!groupNode) return;
+      useEditorStore.getState().setActiveTool(m);
+      if (m === 'translate') groupNode.position.set(...target);
+      else if (m === 'rotate') groupNode.rotation.set(...degVec3ToRad(target));
+      else groupNode.scale.set(...target);
+      onObjectChange();
+    };
+  }
+
+  return (
+    <>
+      <group ref={groupRefCb} />
+      {groupNode ? (
+        <TransformControls
+          object={groupNode}
+          mode={mode}
+          enabled={!playing}
+          onObjectChange={onObjectChange}
+          onMouseDown={() => useGizmoStore.getState().setDragging(true)}
+          onMouseUp={() => useGizmoStore.getState().setDragging(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+// Dispatcher — route to the multi gizmo when >1 manipulable node is selected,
+// else the single-node gizmo (byte-identical to pre-#225). Keeping the branch
+// at the component boundary (not inside one body) honors rules-of-hooks: each
+// sub-component owns its own hook set.
+export function Gizmo() {
+  // Reactively read BOTH stores so the dispatcher re-evaluates on either a
+  // selection change or a DAG change (a node losing/gaining a position param).
+  const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
+  const nodes = useDagStore((s) => s.state.nodes);
+  let manipCount = 0;
+  for (const id of selectedIds) if (getManipulable(nodes[id] ?? null)) manipCount++;
+  return manipCount > 1 ? <MultiGizmo /> : <SingleGizmo />;
 }
