@@ -350,6 +350,59 @@ describe('applyOp — setParam', () => {
   });
 });
 
+describe('applyOp — setMeta (#224 rename)', () => {
+  beforeEach(() => seedTestRegistry());
+
+  function withNode(): DagState {
+    return applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'n1',
+      nodeType: 'TestNumber',
+      params: { value: 1 },
+    }).next;
+  }
+
+  it('sets meta.name and returns a setMeta inverse restoring the prior name', () => {
+    const state = withNode();
+    const { next, inverse } = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'hero' });
+    expect(next.nodes.n1.meta?.name).toBe('hero');
+    // prior name was undefined → inverse clears it back
+    expect(inverse).toEqual({ type: 'setMeta', nodeId: 'n1', name: undefined });
+  });
+
+  it('renames an already-named node (inverse restores the old name)', () => {
+    let state = withNode();
+    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'first' }).next;
+    const { next, inverse } = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'second' });
+    expect(next.nodes.n1.meta?.name).toBe('second');
+    expect(inverse).toEqual({ type: 'setMeta', nodeId: 'n1', name: 'first' });
+  });
+
+  it('clearing the name (undefined) normalizes meta away when it is the only field', () => {
+    let state = withNode();
+    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'x' }).next;
+    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: undefined }).next;
+    expect(state.nodes.n1.meta).toBeUndefined();
+  });
+
+  it('preserves other meta fields (graph position) when renaming', () => {
+    let state = withNode();
+    // simulate a node carrying a graph position in meta
+    state = {
+      ...state,
+      nodes: { ...state.nodes, n1: { ...state.nodes.n1, meta: { position: [10, 20] } } },
+    };
+    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'named' }).next;
+    expect(state.nodes.n1.meta).toEqual({ position: [10, 20], name: 'named' });
+  });
+
+  it('throws on an unknown node id', () => {
+    expect(() =>
+      applyOp(emptyDagState(), { type: 'setMeta', nodeId: 'missing', name: 'x' }),
+    ).toThrow();
+  });
+});
+
 describe('inverse round-trip — every op restores prior state', () => {
   beforeEach(() => seedTestRegistry());
 
@@ -408,6 +461,19 @@ describe('inverse round-trip — every op restores prior state', () => {
       paramPath: 'value',
       value: 42,
     });
+    const back = applyOp(r.next, r.inverse).next;
+    expect(snapshot(back)).toBe(before);
+  });
+
+  it('setMeta → setMeta is identity (on an unnamed node)', () => {
+    const state = applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'n',
+      nodeType: 'TestNumber',
+      params: { value: 5 },
+    }).next;
+    const before = snapshot(state);
+    const r = applyOp(state, { type: 'setMeta', nodeId: 'n', name: 'renamed' });
     const back = applyOp(r.next, r.inverse).next;
     expect(snapshot(back)).toBe(before);
   });

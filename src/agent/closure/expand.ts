@@ -215,6 +215,10 @@ export function opTargetNodeId(op: import('../../core/dag/types').Op): NodeId | 
       return op.nodeId;
     case 'setParam':
       return op.nodeId;
+    case 'setMeta':
+      // #224 — rename mutates an existing node's identity (meta.name), so it
+      // is closure-checked exactly like setParam.
+      return op.nodeId;
     case 'connect':
     case 'disconnect':
       return op.to.node;

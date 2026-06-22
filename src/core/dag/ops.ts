@@ -99,6 +99,8 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
       return applyDisconnect(state, op);
     case 'setParam':
       return applySetParam(state, op);
+    case 'setMeta':
+      return applySetMeta(state, op);
   }
 }
 
@@ -286,5 +288,30 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
     paramPath: op.paramPath,
     value: prior,
   };
+  return { next, inverse };
+}
+
+function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): ApplyResult {
+  // #224 — rename. `meta` is node identity data, not a per-type param, so this
+  // bypasses paramSchema (validated only by OpSchema's `name: string?`). Other
+  // meta fields (graph `position`) are preserved; an undefined name DELETES the
+  // override key so the label cleanly falls back to the node id.
+  const node = getNode(state, op.nodeId);
+  const prior = node.meta?.name;
+  const meta = { ...node.meta };
+  if (op.name === undefined) {
+    delete meta.name;
+  } else {
+    meta.name = op.name;
+  }
+  // An empty meta object is normalized away so a renamed-then-cleared node is
+  // byte-identical to one that was never named (keeps save diffs minimal).
+  const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
+  const nextNode: Node = { ...node, meta: nextMeta };
+  const next: DagState = {
+    ...state,
+    nodes: { ...state.nodes, [node.id]: nextNode },
+  };
+  const inverse: Op = { type: 'setMeta', nodeId: op.nodeId, name: prior };
   return { next, inverse };
 }

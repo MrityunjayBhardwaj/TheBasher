@@ -218,12 +218,24 @@ export const OpSetParamSchema = z.object({
   value: z.unknown(),
 });
 
+// #224 — rename. `meta.name` is the canonical user-facing label (what
+// `nodeDisplayName`, the inspector header and the a11y summary resolve to:
+// meta.name ?? id). It is NOT a param (it lives on `node.meta`, outside the
+// per-type paramSchema), so renaming needs its own op rather than setParam.
+// `name: undefined` CLEARS the override → the label falls back to the node id.
+export const OpSetMetaSchema = z.object({
+  type: z.literal('setMeta'),
+  nodeId: NodeIdSchema,
+  name: z.string().optional(),
+});
+
 export const OpSchema = z.discriminatedUnion('type', [
   OpAddNodeSchema,
   OpRemoveNodeSchema,
   OpConnectSchema,
   OpDisconnectSchema,
   OpSetParamSchema,
+  OpSetMetaSchema,
 ]);
 export type Op = z.infer<typeof OpSchema>;
 
