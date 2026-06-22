@@ -7,7 +7,7 @@
 //
 // REF: THESIS.md §12, §39, krama K2; vyapti V1.
 
-import { useMemo, useState, type DragEvent } from 'react';
+import { useMemo, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
@@ -34,8 +34,14 @@ interface SceneTreeProps {
 export function SceneTree({ filter = '' }: SceneTreeProps) {
   const state = useDagStore((s) => s.state);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
-  const selected = useSelectionStore((s) => s.selectedNodeId);
+  // #226 Slice 2 — the outliner reads the whole SET + the active id (not just
+  // the primary) so ctrl/shift multi-select shows every member, with the active
+  // row distinguished (Blender's active-vs-selected highlight).
+  const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
+  const primary = useSelectionStore((s) => s.primaryNodeId);
   const select = useSelectionStore((s) => s.select);
+  const selectAdditive = useSelectionStore((s) => s.selectAdditive);
+  const selectMany = useSelectionStore((s) => s.selectMany);
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
   const allRows = useMemo(() => buildSceneTreeRows(state), [state]);
@@ -88,6 +94,30 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
         r.nodeType.toLowerCase().includes(query),
     );
   }, [allRows, expandedAssets, filtering, query]);
+
+  // #226 Slice 2 — modifier-aware row selection (Blender outliner parity):
+  //   plain click → replace selection; Ctrl/Cmd-click → toggle the row in the
+  //   set; Shift-click → select the inclusive range from the active row to the
+  //   clicked row (the clicked row becomes active). Selection is a UI projection
+  //   (V1/V8) — no DAG write.
+  function onRowClick(e: ReactMouseEvent, row: TreeRow) {
+    if (e.metaKey || e.ctrlKey) {
+      selectAdditive(row.nodeId);
+      return;
+    }
+    if (e.shiftKey && primary) {
+      const ids = rows.map((r) => r.nodeId);
+      const from = ids.indexOf(primary);
+      const to = ids.indexOf(row.nodeId);
+      if (from !== -1 && to !== -1) {
+        const range = from <= to ? ids.slice(from, to + 1) : ids.slice(to, from + 1).reverse();
+        // selectMany makes the LAST id active — `range` ends at the clicked row.
+        selectMany(range);
+        return;
+      }
+    }
+    select(row.nodeId);
+  }
 
   function onDragStart(e: DragEvent, row: TreeRow) {
     if (!row.parent) {
@@ -167,7 +197,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       ) : null}
       <ul className="flex flex-col px-1.5 py-1">
         {rows.map((row) => {
-          const isSel = selected === row.nodeId;
+          // #226 Slice 2 — a row is "in the set" (a selected member) and/or the
+          // "active" node (the primary, what the inspector/gizmo focus). Active
+          // gets the brighter ring; a non-active member gets the fill only.
+          const isInSet = selectedIds.has(row.nodeId);
+          const isActive = primary === row.nodeId;
           const isDragging = dragKey === row.key;
           const isHover = hoverKey === row.key;
           // GltfAsset rows that own child rows get a collapse/expand chevron
@@ -181,7 +215,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               key={row.key}
               data-testid={`scene-tree-row-${row.nodeId}`}
               data-depth={row.depth}
-              data-selected={isSel || undefined}
+              data-selected={isInSet || undefined}
+              data-active={isActive || undefined}
               data-dragging={isDragging || undefined}
               data-drop-hover={isHover || undefined}
               data-gltf-expanded={hasChildTree ? isExpanded : undefined}
@@ -192,13 +227,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               onDragEnd={onDragEnd}
               onDragOver={(e) => onDragOver(e, row)}
               onDrop={(e) => onDrop(e, row)}
-              onClick={() => select(row.nodeId)}
+              onClick={(e) => onRowClick(e, row)}
             >
               <div
                 className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${
-                  isSel
+                  isActive
                     ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/40'
-                    : 'text-fg-dim hover:bg-bg-1 hover:text-fg'
+                    : isInSet
+                      ? 'bg-accent/15 text-accent'
+                      : 'text-fg-dim hover:bg-bg-1 hover:text-fg'
                 } ${isHover ? 'outline outline-1 outline-accent' : ''}`}
                 style={{ paddingLeft: `${0.5 + row.depth * 0.75}rem` }}
               >
