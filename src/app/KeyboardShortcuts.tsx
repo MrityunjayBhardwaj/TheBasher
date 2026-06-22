@@ -9,7 +9,10 @@
 //                       (Blender idiom). 'R' overlaps with W2's scale —
 //                       handled by routing both through setActiveTool so
 //                       the canonical activeTool stays in sync.
-//   A                 — open Add menu at viewport center (W2; alongside Shift+A)
+//   A                 — select all (#226 Slice 3, Blender idiom). Add moved to
+//                       Shift+A only (+ the + button).
+//   Alt + A           — deselect all (#226 Slice 3)
+//   B                 — arm box (marquee) select (#226 Slice 1)
 //   Esc               — clear selection AND return mode → edit (W1)
 //   Cmd/Ctrl + Z      — undo
 //   Cmd/Ctrl + Shift + Z OR Cmd/Ctrl + Y — redo
@@ -17,7 +20,8 @@
 //   Delete / Backspace  — Animate-mode: when timelineSelection.activeKeyframeId
 //                       is set, remove THAT keyframe (W6 D-W6-2). Otherwise:
 //                       remove primary selected node (existing).
-//   Cmd/Ctrl + A      — select all top-level scene children
+//   Cmd/Ctrl + A      — select all (same full universe as bare A)
+//   Cmd/Ctrl + I      — invert selection (#226 Slice 3)
 //   Cmd/Ctrl + Shift + C — camera-from-view (snapshot orbit pose into a
 //                       new PerspectiveCamera node)
 //
@@ -52,6 +56,7 @@ import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
+import { getViewportSelectableIds } from './selectableNodes';
 import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -235,17 +240,6 @@ function openAddMenuAtViewportCenter(): void {
   useAddMenuStore.getState().openAt(window.innerWidth / 2, window.innerHeight / 2);
 }
 
-function getTopLevelChildIds(): string[] {
-  const dag = useDagStore.getState().state;
-  const sceneRef = dag.outputs.scene;
-  if (!sceneRef) return [];
-  const sceneNode = dag.nodes[sceneRef.node];
-  if (!sceneNode) return [];
-  const children = sceneNode.inputs.children;
-  if (!Array.isArray(children)) return [];
-  return children.map((c) => c.node);
-}
-
 export function KeyboardShortcuts() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -311,10 +305,30 @@ export function KeyboardShortcuts() {
       }
       // (Cmd/Ctrl + S — save — is handled above the typing-target guard so it
       // fires even while a field is focused.)
-      // Cmd/Ctrl + A — select all top-level scene children
+      // Cmd/Ctrl + A — select all (#226 Slice 3: Blender also binds this to bare
+      // `A`, handled in the switch below). The universe is the full selectable
+      // set — children + lights + camera (getViewportSelectableIds), matching
+      // box-select and Blender's "A selects everything".
       if (cmd && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
-        useSelectionStore.getState().selectAll(getTopLevelChildIds());
+        useSelectionStore
+          .getState()
+          .selectAll(getViewportSelectableIds(useDagStore.getState().state));
+        return;
+      }
+      // Ctrl/Cmd + I — invert selection over the same full universe (#226 Slice 3).
+      if (cmd && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        useSelectionStore.getState().invert(getViewportSelectableIds(useDagStore.getState().state));
+        return;
+      }
+
+      // Alt + A — deselect all (#226 Slice 3, Blender idiom). Checked BEFORE the
+      // single-key guard below (which returns on any modifier). e.code (not e.key)
+      // because Option/Alt remaps the character on macOS (Alt+A → 'å').
+      if (!cmd && e.altKey && !e.shiftKey && e.code === 'KeyA') {
+        e.preventDefault();
+        useSelectionStore.getState().clear();
         return;
       }
 
@@ -452,9 +466,12 @@ export function KeyboardShortcuts() {
         // there's no conflict — the canonical W2 binding wins.
         case 'a':
         case 'A':
-          // Bare 'A' opens the Add menu (UI-SPEC §6.2). Shift+A is
-          // handled earlier; this branch is the no-modifier case.
-          openAddMenuAtViewportCenter();
+          // #226 Slice 3 — bare 'A' is Select-All (Blender's idiom). Add moved to
+          // Shift+A only (handled earlier) + the + button. Same full universe as
+          // Cmd/Ctrl+A above.
+          useSelectionStore
+            .getState()
+            .selectAll(getViewportSelectableIds(useDagStore.getState().state));
           return;
         case 'Delete':
         case 'Backspace':

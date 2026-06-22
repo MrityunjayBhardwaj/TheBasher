@@ -37,6 +37,7 @@ import { renderImageWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { getViewportSelectableIds } from './selectableNodes';
 import { normalizeViewportClip, useViewportStore, type ShadingMode } from './stores/viewportStore';
 import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
@@ -244,15 +245,6 @@ const cmdKeyLabel =
 // ---------------------------------------------------------------------------
 // Menu actions
 // ---------------------------------------------------------------------------
-
-function getTopLevelChildIds(): string[] {
-  const dag = useDagStore.getState().state;
-  const sceneRef = dag.outputs.scene;
-  if (!sceneRef) return [];
-  const sceneNode = dag.nodes[sceneRef.node];
-  if (!sceneNode || !Array.isArray(sceneNode.inputs.children)) return [];
-  return (sceneNode.inputs.children as { node: string }[]).map((c) => c.node);
-}
 
 async function onNewProject() {
   const name = window.prompt('New project name', 'Untitled');
@@ -619,20 +611,29 @@ export function MenuBar() {
         onHover={hoverSwitch('select')}
       >
         <Item
-          label="All Top-Level"
-          shortcut={`${cmdKeyLabel}+A`}
-          onSelect={() => useSelectionStore.getState().selectAll(getTopLevelChildIds())}
+          label="All"
+          shortcut="A"
+          onSelect={() =>
+            useSelectionStore
+              .getState()
+              .selectAll(getViewportSelectableIds(useDagStore.getState().state))
+          }
           testId="menu-select-all"
         />
         <Item
           label="None"
-          shortcut="Esc"
+          shortcut="Alt+A"
           onSelect={() => useSelectionStore.getState().clear()}
           testId="menu-select-none"
         />
         <Item
           label="Invert"
-          onSelect={() => useSelectionStore.getState().invert(getTopLevelChildIds())}
+          shortcut={`${cmdKeyLabel}+I`}
+          onSelect={() =>
+            useSelectionStore
+              .getState()
+              .invert(getViewportSelectableIds(useDagStore.getState().state))
+          }
           testId="menu-select-invert"
         />
         <Divider />
