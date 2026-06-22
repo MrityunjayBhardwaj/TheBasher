@@ -1,15 +1,19 @@
-// UX #7 — double-click drill-in selection. A single click on a glTF model
-// selects the whole import; a double-click drills to the GltfChild under the
-// cursor; Esc pops back up. This is the BOUNDARY-PAIR gate: it drives a REAL
-// R3F raycast double-click (the make-or-break — proving the hit mesh reaches
-// the wrapper handler as e.object and maps through nodeNameMap to the
-// GltfChild). The chain math + drill-store stepping are unit-tested separately
-// (gltfDrillChain.test.ts, drillStore.test.ts).
+// #233 — nearest-SURFACE leaf-pick selection (V75, replaces the UX#7 broad-first
+// drill). A SINGLE click on a glTF model selects the LEAF (the GltfChild whose
+// visible surface is under the cursor), NOT the whole import. Alt+click selects
+// UP one level toward the import root (the Group / asset); at the root it is a
+// no-op. There is no double-click drill-in and no Esc pop-out anymore — Esc just
+// clears the selection.
+//
+// This is the BOUNDARY-PAIR gate: it drives a REAL R3F raycast click (the
+// make-or-break — proving the hit mesh reaches the wrapper handler via
+// e.intersections[0] and maps through the asset's nodeNameMap / stamped ids to
+// the GltfChild). The chain math is unit-tested separately (gltfDrillChain.test.ts).
 //
 // Fixture: the flat multifile glTF (one textured child "Box") → asset + ONE
-// GltfChild, so the drill is single-level (asset → child); that's enough to
-// prove the wiring end-to-end. The starter box is moved aside so the imported
-// model is the only thing under the click point (deterministic raycast).
+// GltfChild, so the chain is [root, child] (single level); that's enough to
+// prove single-click→leaf and Alt+click→up end-to-end. The starter box is moved
+// aside so the imported model is the only thing under the click point.
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
@@ -40,7 +44,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_mesh_world_position?: (id: string) => [number, number, number] | null;
 }
 
 const FIXTURE = [
@@ -77,14 +80,15 @@ const nodeTypeOf = (page: Page, id: string | null): Promise<string | null> =>
     );
   }, id);
 
-test('UX#7 double-click drills the import → GltfChild; Esc pops back up', async ({ page }) => {
+test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc clears', async ({
+  page,
+}) => {
   await openStarter(page);
 
   // Clear the origin so the imported model (at origin) owns the click point:
   // move the starter boxes far aside, and DELETE the camera + light nodes —
   // their helper gizmos (esp. the camera's far=1000 frustum LineSegments) span
-  // the origin and would intercept the raycast. (Starter scene =
-  // n_camera, n_light, n_box@[-0.7,0,0], n_box_2@[0.9,0,-0.4].)
+  // the origin and would intercept the raycast.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
@@ -98,7 +102,6 @@ test('UX#7 double-click drills the import → GltfChild; Esc pops back up', asyn
       'user',
       'aside',
     );
-    // disconnect then remove (removeNode refuses while still consumed)
     dag.dispatch(
       {
         type: 'disconnect',
@@ -121,7 +124,7 @@ test('UX#7 double-click drills the import → GltfChild; Esc pops back up', asyn
     dag.dispatch({ type: 'removeNode', nodeId: 'n_light' }, 'user', 'rm light');
   });
 
-  // Import the flat glTF (→ GltfAsset + one GltfChild "Box").
+  // Import the flat glTF (→ GltfAsset + one GltfChild "Box", under a Group root).
   await page.evaluate(
     async ({ files: f, name }) => {
       const w = window as unknown as BasherWindow;
@@ -132,7 +135,7 @@ test('UX#7 double-click drills the import → GltfChild; Esc pops back up', asyn
       }
       await w.__basher_ingestGltfFolder!(files, name);
     },
-    { files: FIXTURE, name: 'ux7-gltf' },
+    { files: FIXTURE, name: 'p233-gltf' },
   );
 
   // Wait for the asset + its GltfChild to exist and the camera seam to land.
@@ -146,42 +149,6 @@ test('UX#7 double-click drills the import → GltfChild; Esc pops back up', asyn
     undefined,
     { timeout: 20_000 },
   );
-
-  const assetId = await page.evaluate(() => {
-    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-    return Object.entries(nodes).find(([, n]) => n.type === 'GltfAsset')?.[0] ?? null;
-  });
-  expect(assetId).not.toBeNull();
-
-  // H90 — the import must persist keyByGltfNodeIndex (the glTF node index → key
-  // map), and GltfAssetR must STAMP the live clone object with its GltfChild id
-  // via that map + gltf.parser.associations. This is the robust drill path that
-  // a real export (dedup suffixes + material-split unnamed meshes) needs; the
-  // flat fixture exercises the wiring even though its single named child also
-  // round-trips by name. Assert both: the persisted map is non-empty, and the
-  // rendered "Box" mesh carries userData.basherGltfChildId pointing at a real
-  // GltfChild node.
-  const stampIntel = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const asset = Object.values(nodes).find((n) => n.type === 'GltfAsset');
-    const keyByIdx = (asset?.params.keyByGltfNodeIndex ?? {}) as Record<string, string>;
-    const scene = w.__basher_three!.getState().scene!;
-    let stampedId: string | null = null;
-    scene.traverse((o) => {
-      if (stampedId) return;
-      const id = (o.userData as { basherGltfChildId?: string }).basherGltfChildId;
-      if (o.name === 'Box' && id) stampedId = id;
-    });
-    return {
-      keyByIdxSize: Object.keys(keyByIdx).length,
-      stampedId,
-      stampedIsGltfChild: stampedId ? nodes[stampedId]?.type === 'GltfChild' : false,
-    };
-  });
-  expect(stampIntel.keyByIdxSize).toBeGreaterThan(0);
-  expect(stampIntel.stampedId).not.toBeNull();
-  expect(stampIntel.stampedIsGltfChild).toBe(true);
 
   // Project the imported model's actual "Box" mesh (in the live scene clone) to
   // canvas pixels — the distractors are moved far aside, so this point hits only
@@ -207,24 +174,35 @@ test('UX#7 double-click drills the import → GltfChild; Esc pops back up', asyn
   });
   expect(pt).not.toBeNull();
 
-  // SINGLE click → selects the whole import (its top-level Group wrapper, with
-  // the GltfAsset nested inside). Proves the raycast hits the imported model at
-  // centre, not a starter node. Capture that top id — Esc should pop back to it.
+  // SINGLE click → selects the LEAF (the GltfChild under the cursor), NOT the
+  // whole import. This is the #233 inversion of the old broad-first behavior.
   await page.mouse.click(pt!.x, pt!.y);
+  await expect.poll(async () => nodeTypeOf(page, await selectedIdOf(page))).toBe('GltfChild');
+  const leafId = await selectedIdOf(page);
+
+  // ALT+click at the same spot → selects UP one level (the import root: the
+  // Group, or the GltfAsset). The level above the GltfChild.
+  await page.keyboard.down('Alt');
+  await page.mouse.click(pt!.x, pt!.y);
+  await page.keyboard.up('Alt');
   await expect
     .poll(async () => nodeTypeOf(page, await selectedIdOf(page)))
     .toMatch(/Group|GltfAsset/);
-  const topId = await selectedIdOf(page);
+  const upId = await selectedIdOf(page);
+  expect(upId).not.toBe(leafId);
 
-  // DOUBLE click → drills into the GltfChild under the cursor.
-  await page.mouse.dblclick(pt!.x, pt!.y);
-  await expect.poll(async () => nodeTypeOf(page, await selectedIdOf(page))).toBe('GltfChild');
+  // ALT+click again → already at the root → no-op (selection stays put).
+  await page.keyboard.down('Alt');
+  await page.mouse.click(pt!.x, pt!.y);
+  await page.keyboard.up('Alt');
+  await expect.poll(() => selectedIdOf(page)).toBe(upId);
 
-  // Esc → pops back up one level to the whole import.
-  await page.keyboard.press('Escape');
-  await expect.poll(() => selectedIdOf(page)).toBe(topId);
+  // A plain (non-Alt) click re-selects the leaf — proving click is stateless
+  // nearest-surface, not a depth that has to be reset.
+  await page.mouse.click(pt!.x, pt!.y);
+  await expect.poll(() => selectedIdOf(page)).toBe(leafId);
 
-  // Esc again → past the top → clears.
+  // Esc → clears the selection (no more drill pop-out ladder).
   await page.keyboard.press('Escape');
   await expect.poll(() => selectedIdOf(page)).toBeNull();
 });

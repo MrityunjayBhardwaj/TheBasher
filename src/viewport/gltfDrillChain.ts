@@ -1,11 +1,15 @@
-// Map the deep three.js object under the cursor to a drill chain of DAG node
-// ids — the data half of UX-backlog #7 (double-click drill-in).
+// Map the deep three.js object under the cursor to the ancestor chain of DAG
+// node ids `[topPickId, child_root, …, child_leaf]` — the data half of #233
+// nearest-surface leaf-pick (V75). The caller selects `chain[last]` on a plain
+// click (the LEAF under the cursor) and walks toward `chain[0]` on Alt+click
+// (select-up). (Historically this was UX#7 double-click drill-in; the chain
+// math is identical, only the consumer changed.)
 //
 // A glTF import renders its whole SkeletonUtils clone under ONE selectable
-// top-level wrapper (SceneChildNode), so a viewport click on any sub-mesh
-// selects only that top node — which is the import's Group (`n_grp_…`), with the
-// GltfAsset nested inside it. To drill INTO the clone we must map the hit object
-// back to its GltfChild DAG node.
+// top-level wrapper (SceneChildNode), so the wrapper's own id is just the
+// import's Group (`n_grp_…`), with the GltfAsset nested inside it. To address the
+// actual sub-mesh under the cursor we must map the hit object back to its
+// GltfChild DAG node.
 //
 // PRIMARY path (H90): each clone object that corresponds to a GltfChild carries
 // `userData.basherGltfChildId`, stamped by `GltfAssetR` via the glTF node-INDEX
@@ -26,8 +30,8 @@
 //
 // The chain is `[topPickId, child_root, …, child_leaf]` — chain[0] is whatever
 // the top-level wrapper selects (the Group, or the GltfAsset itself when
-// unwrapped), so Esc pops back to "the whole model". The GltfAsset is not an
-// explicit drill level (selecting it specifically is an outliner action).
+// unwrapped), the top of the Alt+click select-up walk. The GltfAsset is not an
+// explicit level (selecting it specifically is an outliner action).
 //
 // Pure + three-free at the type level (Obj3DLike) so it unit-tests without a
 // real three.js scene or a GPU.

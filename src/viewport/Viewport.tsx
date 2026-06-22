@@ -20,7 +20,6 @@ import { ProjectionToggle } from '../app/ProjectionToggle';
 import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
-import { useDrillStore } from '../app/stores/drillStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { cameraDistanceToZoomPercent, useViewportStore } from '../app/stores/viewportStore';
 import { saveEditorView } from '../app/editorViewPersistence';
@@ -225,9 +224,6 @@ export function Viewport() {
           // light mid-painting).
           if (useLightBrushStore.getState().active) return;
           useSelectionStore.getState().clear();
-          // UX #7 — clicking empty space exits any drill context, so the next
-          // double-click on a model restarts at its first child.
-          useDrillStore.getState().reset();
         }}
       >
         <Suspense fallback={null}>

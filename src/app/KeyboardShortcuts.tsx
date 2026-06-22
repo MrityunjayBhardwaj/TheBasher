@@ -58,7 +58,6 @@ import { useRenameStore } from './stores/renameStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
-import { useDrillStore } from './stores/drillStore';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
@@ -195,16 +194,6 @@ function dismissTopmostTransient(): void {
   if (useAddMenuStore.getState().open) {
     // 2a. Close an open Add menu.
     useAddMenuStore.getState().close();
-    return;
-  }
-  // 2b. UX #7 — pop OUT one drill level (leaf → … → asset) before clearing.
-  // When the user has double-click-drilled into a dense glTF hierarchy, Esc
-  // walks back up a level at a time (mirrors the drill-in), selecting the
-  // parent. Only when already at the top (popOut returns null) do we fall
-  // through to the selection clear.
-  const popped = useDrillStore.getState().popOut();
-  if (popped) {
-    useSelectionStore.getState().select(popped);
     return;
   }
   // 3. Floor: clear the selection (the pre-existing Esc behavior). We do NOT

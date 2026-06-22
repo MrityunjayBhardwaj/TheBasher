@@ -54,7 +54,6 @@ import {
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { useDrillStore } from '../app/stores/drillStore';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -1013,43 +1012,37 @@ const SceneChildNode = memo(function SceneChildNode({
         return;
       }
       if (!pickId) return;
-      // #211 — the one shared viewport selection handler (stopPropagation +
-      // select/selectAdditive). v0.7 #199: a node is its own scene child now (no
-      // AnimationLayer wrapper to unwrap, V57), so the click selects the producing
-      // node directly. The brush gate above + the drill reset below are this
-      // picker's superset, layered around the shared select.
-      selectNode(pickId, e);
-      // UX #7: a single click on a DIFFERENT top-level node exits the drill
-      // context, so a later Esc doesn't pop back into the model we left. We key
-      // off the drill chain's ROOT (chain[0] === this pickId) rather than reset
-      // unconditionally — a browser double-click fires two clicks on the SAME
-      // node BEFORE onDoubleClick, and resetting those would defeat incremental
-      // drilling. Same node → keep depth; new node → reset. (Empty-space clicks
-      // reset via Viewport onPointerMissed.)
-      const drill = useDrillStore.getState();
-      if (drill.chain.length > 0 && drill.chain[0] !== pickId) drill.reset();
-    },
-    [pickId],
-  );
-  // UX #7 (drill-in): double-click drills ONE level deeper into a dense glTF
-  // hierarchy toward the sub-mesh under the cursor (asset → body → wheel → leaf;
-  // repeat to go deeper, Esc to pop out). The hit object reaches this wrapper
-  // handler as `e.object` (R3F sets it to the intersected mesh; `e.eventObject`
-  // is this wrapper) — map it to its GltfChild via the asset's nodeNameMap.
-  const onDoubleClick = useCallback(
-    (e: ThreeEvent<MouseEvent>) => {
-      if (!pickId) return;
-      e.stopPropagation();
+      // #233 — nearest-SURFACE leaf-pick (V75, replaces the UX#7 broad-first
+      // drill). A single click selects the LEAF whose visible surface is under
+      // the cursor: the frontmost ray hit (`e.intersections[0]`, depth-sorted
+      // nearest-first by R3F) mapped to its addressable DAG node. For a glTF that
+      // is the GltfChild under the cursor — exactly `buildGltfDrillChain`'s
+      // `chain[last]`; for a plain mesh the chain is null (≤1) and we select the
+      // top-level pickId itself.
+      //
+      // Alt+click selects UP one level (the inverse of the retired drill-in):
+      // from the current selection's place in the chain toward `chain[0]` (the
+      // import Group / asset root). At the root it is a no-op (stays). The whole
+      // asset / broader hierarchy is also reachable via the outliner + Select
+      // Hierarchy (#227 S2). The shared `selectNode` still owns the actual write
+      // (stopPropagation + shift-additive, V65) — this picker only chooses WHICH
+      // node id to hand it (the brush gate above is its other superset layer).
       const state = useDagStore.getState().state;
       const hit = (e.intersections?.[0]?.object ?? e.object) as unknown as Obj3DLike | null;
       const chain = buildGltfDrillChain(state, pickId, hit);
-      const sel = useSelectionStore.getState();
-      if (!chain || chain.length <= 1) {
-        // not a drillable glTF hierarchy → behave like a normal select
-        sel.select(pickId);
-        return;
+      let target = pickId;
+      if (chain && chain.length > 1) {
+        if (e.altKey) {
+          const cur = useSelectionStore.getState().primaryNodeId;
+          const idx = cur ? chain.indexOf(cur) : -1;
+          // step up from the current node; if it isn't in this chain, step up
+          // from the leaf; at the root (idx 0) Math.max keeps chain[0].
+          target = idx >= 0 ? chain[Math.max(0, idx - 1)] : chain[chain.length - 2];
+        } else {
+          target = chain[chain.length - 1]; // the leaf under the cursor
+        }
       }
-      sel.select(useDrillStore.getState().drillInto(chain));
+      selectNode(target, e);
     },
     [pickId],
   );
@@ -1057,7 +1050,7 @@ const SceneChildNode = memo(function SceneChildNode({
     // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer node id
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
-    <group name={pickId ?? undefined} onClick={onClick} onDoubleClick={onDoubleClick}>
+    <group name={pickId ?? undefined} onClick={onClick}>
       {isConstrained && pickId ? (
         // #204 — derived aim rotation (V58). ConstrainedR overlays channels too,
         // so it takes precedence over DirectChannelsR for a constrained node.
@@ -1812,8 +1805,8 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // can only be built AFTER stamping — the effect populates it, and the
   // consumers (later effects + the useFrame) read the populated ref.
   const childIdToObject = useRef<Map<string, THREE.Object3D>>(new Map());
-  // UX #7 / H90 — stamp each clone object that maps to a GltfChild with its DAG
-  // node id, so viewport drill-in (buildGltfDrillChain) can address children by a
+  // #233 / H90 — stamp each clone object that maps to a GltfChild with its DAG
+  // node id, so viewport leaf-pick (buildGltfDrillChain) can address children by a
   // STAMPED ID rather than by name. The producer's nodeNameMap KEY space
   // (sanitizeBoneName + `__n` dedup, `node_i` for unnamed nodes) DIVERGES from
   // three's GLTFLoader clone NAME space (sanitizeNodeName + `_n` dedup, `''` for
@@ -1825,7 +1818,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // clones children in array order, so index-paired walk is exact — read each
   // original's node index, and stamp the corresponding clone object. A
   // material-split `<unnamed>` sub-mesh carries a `.meshes` association (no
-  // `.nodes`) → no stamp; the drill walk falls back to its nearest stamped
+  // `.nodes`) → no stamp; the leaf-pick walk falls back to its nearest stamped
   // ancestor, which is the right target. The childId is globally unique
   // (content-addressed off assetRef), so it alone disambiguates which asset a hit
   // belongs to — no separate asset stamp is needed. Mutation is confined to the
