@@ -58,6 +58,7 @@ describe('activeCamera — cameraPoseFromNode', () => {
       fov: 45,
       near: 0.01,
       far: 1000,
+      roll: 0,
     });
   });
 
@@ -141,6 +142,17 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(resolveActiveCameraPoseAt(state, 0).fov).toBe(20);
     expect(resolveActiveCameraPoseAt(state, 1).fov).toBe(40);
     expect(resolveActiveCameraPoseAt(state, 2).fov).toBe(60);
+  });
+
+  it('overlays a scalar roll channel (#229)', () => {
+    expect(resolveActiveCameraPose(buildDefaultDagState()).roll).toBe(0); // base default
+    const state = addChannel(buildDefaultDagState(), 'KeyframeChannelNumber', 'roll', [
+      { time: 0, value: 0, easing: 'linear' },
+      { time: 2, value: 90, easing: 'linear' },
+    ]);
+    expect(resolveActiveCameraPoseAt(state, 0).roll).toBe(0);
+    expect(resolveActiveCameraPoseAt(state, 1).roll).toBe(45);
+    expect(resolveActiveCameraPoseAt(state, 2).roll).toBe(90);
   });
 
   it('sorts a scalar channel before sampling, matching the inspector read-side (#200)', () => {

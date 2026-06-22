@@ -20,6 +20,12 @@ export const PerspectiveCameraParams = z.object({
   fStop: z.number().positive().default(2.8),
   position: z.tuple([z.number(), z.number(), z.number()]),
   lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+  // Camera roll (#229) — rotation in DEGREES about the view axis (local -Z, the
+  // direction from position → lookAt), the Blender "R-Z roll". lookAt alone
+  // leaves the up-vector implicit (world +Y); roll banks it. DEFAULTED to 0 so
+  // pre-#229 projects parse to no-roll, byte-identical (no migration). Authored
+  // as a scalar → keyframeable on the camera-scalar channel path (V56).
+  roll: z.number().default(0),
 });
 export type PerspectiveCameraParams = z.infer<typeof PerspectiveCameraParams>;
 
@@ -42,6 +48,7 @@ export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, Came
       far: params.far,
       position: params.position,
       lookAt: params.lookAt,
+      roll: params.roll,
     };
   },
 };

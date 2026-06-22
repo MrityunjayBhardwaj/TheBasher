@@ -29,6 +29,8 @@ export interface PerspectiveCameraValue {
   readonly far: number;
   readonly position: Vec3;
   readonly lookAt: Vec3;
+  /** Roll about the view axis, in DEGREES (#229). */
+  readonly roll: number;
 }
 
 export interface OrthographicCameraValue {
@@ -38,6 +40,8 @@ export interface OrthographicCameraValue {
   readonly far: number;
   readonly position: Vec3;
   readonly lookAt: Vec3;
+  /** Roll about the view axis, in DEGREES (#229). */
+  readonly roll: number;
 }
 
 export type CameraValue = PerspectiveCameraValue | OrthographicCameraValue;

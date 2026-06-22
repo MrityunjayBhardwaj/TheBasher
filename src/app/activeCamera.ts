@@ -40,6 +40,9 @@ export interface CameraPose {
   fov: number;
   near: number;
   far: number;
+  /** Roll about the view axis, in DEGREES (#229). Banks the implicit up-vector
+   *  the lookAt model otherwise leaves at world +Y. 0 = no roll. */
+  roll: number;
 }
 
 /** Default editor framing — matches THESIS.md §11 and the default project's
@@ -51,6 +54,7 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   fov: 45,
   near: 0.01,
   far: 1000,
+  roll: 0,
 };
 
 function isVec3(v: unknown): v is [number, number, number] {
@@ -88,6 +92,7 @@ export function cameraPoseFromNode(node: Node | null): CameraPose | null {
     fov: typeof p.fov === 'number' ? p.fov : DEFAULT_CAMERA_POSE.fov,
     near: typeof p.near === 'number' ? p.near : DEFAULT_CAMERA_POSE.near,
     far: typeof p.far === 'number' ? p.far : DEFAULT_CAMERA_POSE.far,
+    roll: typeof p.roll === 'number' ? p.roll : DEFAULT_CAMERA_POSE.roll,
   };
 }
 
@@ -102,7 +107,7 @@ export function resolveActiveCameraPose(state: DagState): CameraPose {
  *  band, so position + lookAt are the spatial channels; fov/near/far are scalar.
  *  This is the closed set the resolver overlays and the authoring path keys. */
 export const ANIMATABLE_CAMERA_VEC3_PARAMS = ['position', 'lookAt'] as const;
-export const ANIMATABLE_CAMERA_SCALAR_PARAMS = ['fov', 'near', 'far'] as const;
+export const ANIMATABLE_CAMERA_SCALAR_PARAMS = ['fov', 'near', 'far', 'roll'] as const;
 
 /**
  * The active camera's EVALUATED pose at clip-time `seconds` (#190): the static
@@ -161,7 +166,7 @@ export function resolveActiveCameraPoseAt(
       // sampleVec3Keyframes returns a readonly Vec3; copy into the mutable tuple.
       pose[path] = [v[0], v[1], v[2]];
     } else if (
-      (path === 'fov' || path === 'near' || path === 'far') &&
+      (path === 'fov' || path === 'near' || path === 'far' || path === 'roll') &&
       ch.type === 'KeyframeChannelNumber'
     ) {
       pose ??= { ...base };
