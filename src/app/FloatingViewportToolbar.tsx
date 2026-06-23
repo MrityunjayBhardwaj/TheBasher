@@ -44,7 +44,7 @@
 import { useState, type ReactNode } from 'react';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
-import { renderImageWithFeedback } from './renderImageAction';
+import { renderToViewWithFeedback } from './renderImageAction';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
@@ -254,7 +254,7 @@ export function FloatingViewportToolbar(): ReactNode {
     if (rendering) return;
     setRendering(true);
     try {
-      await renderImageWithFeedback();
+      await renderToViewWithFeedback();
     } finally {
       setRendering(false);
     }

@@ -33,7 +33,7 @@ import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
-import { renderImageWithFeedback } from './renderImageAction';
+import { renderToViewWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -493,7 +493,7 @@ export function MenuBar() {
         <Divider />
         <Item
           label="Render Image…"
-          onSelect={() => void renderImageWithFeedback()}
+          onSelect={() => void renderToViewWithFeedback()}
           testId="menu-file-render-image"
         />
         <Submenu label="Render Animation" testId="menu-file-render-animation">

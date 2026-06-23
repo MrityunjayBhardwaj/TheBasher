@@ -22,6 +22,9 @@ import { resolveActiveCameraPoseAt, selectActiveCameraNode } from './activeCamer
 import { resolveCameraDof } from './cameraDof';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from './stores/timeStore';
+import { useEditorStore } from './stores/editorStore';
+import { useTwoDViewStore } from './stores/twoDViewStore';
+import { useRenderResultStore } from './stores/renderResultStore';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
 import type { RenderOutputValue } from '../nodes/types';
@@ -90,17 +93,51 @@ export async function renderActiveProjectBlob(): Promise<{
 }
 
 /**
- * Render the active project's production frame to a PNG and download it.
- * Returns a result so any future UI feedback can assert outcome.
+ * Render the active project's production frame INTO the Render Result view
+ * (Blender F12: render → Image Editor, NOT an immediate download). Switches to
+ * the 2D View + Render Result tab so the result is where the user looks, then
+ * renders through the shared `renderActiveProjectToDataUrl` path and parks the
+ * image in `renderResultStore`. Saving is a separate explicit action
+ * (`downloadRenderResult`). Returns a result so callers can toast the outcome.
  */
-export async function renderActiveProjectToPng(): Promise<RenderImageResult> {
-  const out = await renderActiveProjectBlob();
-  if (!out) return { ok: false, reason: 'viewport-not-ready' };
+export async function renderActiveProjectToView(): Promise<RenderImageResult> {
+  // Guard against a double-fire while a render is already in flight.
+  if (useRenderResultStore.getState().status === 'rendering') {
+    return { ok: false, reason: 'already-rendering' };
+  }
+  // Reveal the result where it lands BEFORE the blocking render, so the pane
+  // shows "Rendering…" immediately.
+  useEditorStore.getState().setSpace('uv');
+  useTwoDViewStore.getState().setMode('render');
+  useRenderResultStore.getState().setRendering();
 
+  const out = await renderActiveProjectToDataUrl();
+  if (!out) {
+    useRenderResultStore.getState().setError('Viewport isn’t ready yet — try again in a moment.');
+    return { ok: false, reason: 'viewport-not-ready' };
+  }
+  useRenderResultStore.getState().setResult({
+    dataUrl: out.dataUrl,
+    width: out.width,
+    height: out.height,
+    source: 'render',
+  });
+  return { ok: true, width: out.width, height: out.height };
+}
+
+/**
+ * Download the render currently SHOWN in the Render Result view (the explicit
+ * "Save" action — what you see is what you save, no re-render). Returns a
+ * result so the caller can toast the outcome.
+ */
+export async function downloadRenderResult(): Promise<RenderImageResult> {
+  const { dataUrl, width, height, status } = useRenderResultStore.getState();
+  if (!dataUrl || status !== 'ready') return { ok: false, reason: 'no-result' };
+  const blob = await (await fetch(dataUrl)).blob();
   const name = useProjectStore.getState().current?.name ?? 'untitled';
   const slug = name.replace(/\s+/g, '-').toLowerCase() || 'render';
-  downloadBlob(out.blob, `${slug}-${out.width}x${out.height}.png`);
-  return { ok: true, width: out.width, height: out.height };
+  downloadBlob(blob, `${slug}-${width}x${height}.png`);
+  return { ok: true, width, height };
 }
 
 /**
@@ -112,7 +149,7 @@ export function renderResultToToast(result: RenderImageResult): NotifyInput {
   if (result.ok) {
     return {
       severity: 'success',
-      message: `Rendered ${result.width}×${result.height} — downloaded.`,
+      message: `Rendered ${result.width}×${result.height} — shown in the 2D view.`,
     };
   }
   return {
@@ -123,12 +160,14 @@ export function renderResultToToast(result: RenderImageResult): NotifyInput {
 }
 
 /**
- * The user-facing render action wired to feedback (#170): render + download,
+ * The user-facing render action wired to feedback (#170): render INTO the view,
  * then surface the outcome as a toast. The toolbar button and File-menu item
- * call THIS, not the bare action, so a failure is never silent.
+ * call THIS, not the bare action, so a failure is never silent. A no-op
+ * (already rendering) skips the toast.
  */
-export async function renderImageWithFeedback(): Promise<RenderImageResult> {
-  const result = await renderActiveProjectToPng();
+export async function renderToViewWithFeedback(): Promise<RenderImageResult> {
+  const result = await renderActiveProjectToView();
+  if (result.reason === 'already-rendering') return result;
   useNotificationStore.getState().notify(renderResultToToast(result));
   return result;
 }

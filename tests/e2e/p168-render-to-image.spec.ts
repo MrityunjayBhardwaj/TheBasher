@@ -117,15 +117,25 @@ test.describe('#168 render to image', () => {
     expect(res.chromeRegionNonBg).toBeLessThan(20);
   });
 
-  test('File ▸ Render Image downloads a PNG named for the resolution', async ({ page }) => {
+  test('File ▸ Render Image shows the result in the 2D view, then Save downloads the PNG', async ({
+    page,
+  }) => {
     await waitReady(page);
-    // The render affordance lives in the File menu (the UX overhaul retired the
-    // top-toolbar button — render is a File action like Save/Export).
-    const downloadPromise = page.waitForEvent('download');
+    // Blender F12 model: Render shows the result in the Render Result view (no
+    // auto-download); Save is the explicit export. File ▸ Render Image renders
+    // into the 2D view and switches there.
     await page.getByTestId('menu-file-button').click();
     await page.getByTestId('menu-file-render-image').click();
+    await expect(page.getByTestId('render-result-status')).toHaveAttribute('data-status', 'ready', {
+      timeout: 15000,
+    });
+    await expect(page.getByTestId('twodview-render-pane')).toHaveAttribute('data-active', 'true');
+
+    // The explicit Save action downloads a PNG named for the resolution.
+    // Revert the Save affordance → no download event → times out.
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByTestId('render-result-save').click();
     const download = await downloadPromise;
-    // Revert the download affordance → no download event → times out.
     expect(download.suggestedFilename()).toMatch(/-1920x1080\.png$/);
   });
 });

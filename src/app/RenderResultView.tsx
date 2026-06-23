@@ -11,7 +11,7 @@
 // AI edit (follow-up) can write a new image into the same slot.
 
 import { useEffect, useRef } from 'react';
-import { renderActiveProjectToDataUrl } from './renderImageAction';
+import { downloadRenderResult, renderActiveProjectToView } from './renderImageAction';
 import { useRenderResultStore } from './stores/renderResultStore';
 
 export function RenderResultView() {
@@ -26,31 +26,7 @@ export function RenderResultView() {
   const error = useRenderResultStore((s) => s.error);
 
   const rendering = status === 'rendering';
-
-  async function onRender() {
-    // Guard against a double-fire while a render is already in flight.
-    if (useRenderResultStore.getState().status === 'rendering') return;
-    useRenderResultStore.getState().setRendering();
-    try {
-      const out = await renderActiveProjectToDataUrl();
-      if (!out) {
-        useRenderResultStore
-          .getState()
-          .setError('Viewport isn’t ready yet — try again in a moment.');
-        return;
-      }
-      useRenderResultStore.getState().setResult({
-        dataUrl: out.dataUrl,
-        width: out.width,
-        height: out.height,
-        source: 'render',
-      });
-    } catch (err) {
-      useRenderResultStore
-        .getState()
-        .setError(err instanceof Error ? err.message : 'Render failed.');
-    }
-  }
+  const hasResult = status === 'ready' && dataUrl !== null;
 
   // Repaint the canvas: fit the decoded image (imageRef) into the box,
   // letterboxed. ResizeObserver covers initial mount, resizes, and the
@@ -128,11 +104,21 @@ export function RenderResultView() {
             type="button"
             data-testid="render-result-render"
             disabled={rendering}
-            onClick={() => void onRender()}
+            onClick={() => void renderActiveProjectToView()}
             className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] normal-case text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
             title="Render the production frame at the current playhead"
           >
             {rendering ? 'Rendering…' : 'Render'}
+          </button>
+          <button
+            type="button"
+            data-testid="render-result-save"
+            disabled={!hasResult}
+            onClick={() => void downloadRenderResult()}
+            className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] normal-case text-fg/70 transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            title="Save the current render result as a PNG"
+          >
+            ⬇ Save
           </button>
         </span>
         <span
