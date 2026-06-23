@@ -99,7 +99,11 @@ function worldToLocalTRS(
   parentWorld: THREE.Matrix4,
   pivot: Vec3 | null,
 ): { position: Vec3; rotation: Vec3; scale: Vec3 } {
-  const proxyWorld = new THREE.Matrix4().compose(g.position.clone(), g.quaternion.clone(), g.scale.clone());
+  const proxyWorld = new THREE.Matrix4().compose(
+    g.position.clone(),
+    g.quaternion.clone(),
+    g.scale.clone(),
+  );
   const local = parentWorld.clone().invert().multiply(proxyWorld);
   if (pivot) local.multiply(new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]));
   const p = new THREE.Vector3();
@@ -123,7 +127,9 @@ function matrixToLocalTRS(
   parentWorld: THREE.Matrix4 | null,
   pivot: Vec3 | null,
 ): { position: Vec3; rotation: Vec3; scale: Vec3 } {
-  const local = (parentWorld ? parentWorld.clone().invert() : new THREE.Matrix4()).multiply(newWorld);
+  const local = (parentWorld ? parentWorld.clone().invert() : new THREE.Matrix4()).multiply(
+    newWorld,
+  );
   if (pivot) local.multiply(new THREE.Matrix4().makeTranslation(pivot[0], pivot[1], pivot[2]));
   const p = new THREE.Vector3();
   const q = new THREE.Quaternion();
@@ -433,7 +439,9 @@ function SingleGizmo() {
     const parentWorld = parentWorldRef.current;
     const local = parentWorld ? worldToLocalTRS(g, parentWorld, pivotRef.current) : null;
     if (liveMode === 'translate') {
-      const value = maybeSnapVec3(local ? local.position : [g.position.x, g.position.y, g.position.z]);
+      const value = maybeSnapVec3(
+        local ? local.position : [g.position.x, g.position.y, g.position.z],
+      );
       if (routeAnimatedGrab(selectedId, 'position', value)) return; // D-02: re-route BEFORE setParam
       // P7.7: a GltfChild has NO keyframe channel (the clip lives on the asset),
       // so routeAnimatedGrab returns false and we land here — the manual layer.
@@ -681,7 +689,11 @@ function MultiGizmo() {
     const seed = seedRef.current;
     if (!g || !seed) return;
     const liveMode = useGizmoStore.getState().mode;
-    const proxyWorld = new THREE.Matrix4().compose(g.position.clone(), g.quaternion.clone(), g.scale.clone());
+    const proxyWorld = new THREE.Matrix4().compose(
+      g.position.clone(),
+      g.quaternion.clone(),
+      g.scale.clone(),
+    );
     const delta = proxyWorld.clone().multiply(seed.proxyWorld.clone().invert());
     // #228 — 'individual origins': for rotate/scale, apply only the LINEAR part
     // of the delta (translation stripped) about EACH node's own origin, so each
@@ -715,7 +727,9 @@ function MultiGizmo() {
       }
     }
     if (ops.length === 0) return;
-    useDagStore.getState().dispatchAtomic(ops, 'user', `multi ${liveMode} (${seed.nodes.length} objects)`);
+    useDagStore
+      .getState()
+      .dispatchAtomic(ops, 'user', `multi ${liveMode} (${seed.nodes.length} objects)`);
   }
 
   // Test-observation seam — drive the REAL onObjectChange (mirrors SingleGizmo's
@@ -767,8 +781,12 @@ function MultiGizmo() {
 //     camera re-aims at it (the aim handle is how you move WHAT it looks at).
 // Every write funnels through the SAME routeAnimatedGrab → setParam →
 // autoKeyCommit chokepoint the generic gizmo + #190 camera authoring use (V1).
-// Cameras are flat (never nested, V68 null path) so there is no parent-world
-// round-trip — the proxy world IS the camera's world.
+// #231 Inc 3.3 — a camera CAN now be nested in a Group. The proxies seed at the
+// camera's WORLD pose (resolveActiveCameraPoseAt composes the parent), so a drag
+// must convert the world manipulation BACK to the camera's LOCAL params before
+// writing (the #230 round-trip, applied to the camera's point-based lookAt model).
+// `parentWorld` is null for a top-level camera → the proxy world IS the local pose,
+// byte-identical to the pre-Inc-3.3 (#229) direct write.
 function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
@@ -786,7 +804,14 @@ function CameraGizmo() {
   // Captured at seed time: the camera's evaluated position + the aim DISTANCE, so
   // a rotate keeps the lookAt the same distance from the camera (the aim orbits,
   // it does not slide toward/away).
-  const seedRef = useRef<{ position: Vec3; distance: number } | null>(null);
+  const seedRef = useRef<{
+    position: Vec3;
+    distance: number;
+    /** #231 Inc 3.3 — the parent Group's world matrix when the camera is nested
+     *  (null = top-level → world == local, the #229 direct path). Captured at seed
+     *  so the drag handlers convert world → local before writing authored params. */
+    parentWorld: THREE.Matrix4 | null;
+  } | null>(null);
 
   // Seed both proxies from the EVALUATED camera pose so the gizmo display-follows
   // animation/scrub (the SingleGizmo discipline). The body proxy carries the
@@ -806,7 +831,13 @@ function CameraGizmo() {
         pose.lookAt[1] - pose.position[1],
         pose.lookAt[2] - pose.position[2],
       ) || 1;
-    seedRef.current = { position: pose.position, distance };
+    // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
+    // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
+    // the drag handlers undo this matrix to recover the LOCAL authored params.
+    const parentWorld = resolveParentWorldMatrix(useDagStore.getState().state, camId, {
+      time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
+    });
+    seedRef.current = { position: pose.position, distance, parentWorld };
     if (bodyNode) {
       bodyNode.position.set(...pose.position);
       bodyNode.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
@@ -834,8 +865,21 @@ function CameraGizmo() {
     if (routeAnimatedGrab(camId, path, value)) return;
     useDagStore
       .getState()
-      .dispatch({ type: 'setParam', nodeId: camId, paramPath: path, value }, 'user', `camera ${path}`);
+      .dispatch(
+        { type: 'setParam', nodeId: camId, paramPath: path, value },
+        'user',
+        `camera ${path}`,
+      );
     autoKeyCommit(camId, path, value);
+  }
+
+  // #231 Inc 3.3 — a world-space point → the camera's LOCAL space when nested
+  // (parentWorld⁻¹ · world), else unchanged (top-level camera, world == local).
+  function toLocalPoint(world: Vec3): Vec3 {
+    const pw = seedRef.current?.parentWorld;
+    if (!pw) return world;
+    const v = new THREE.Vector3(world[0], world[1], world[2]).applyMatrix4(pw.clone().invert());
+    return [v.x, v.y, v.z];
   }
 
   function onBodyChange() {
@@ -844,23 +888,38 @@ function CameraGizmo() {
     if (!g || !seed || !camId) return;
     const liveMode = useGizmoStore.getState().mode;
     if (liveMode === 'rotate') {
-      // Convert the dragged world orientation back to authored lookAt + roll,
+      // Convert the dragged WORLD orientation back to authored lookAt + roll,
       // keeping the seeded aim distance. Two params → two routed writes (a drag is
-      // many undo entries, same as SingleGizmo; documented).
-      const { lookAt, roll } = lookAtRollFromQuat(g.quaternion, seed.position, seed.distance);
+      // many undo entries, same as SingleGizmo; documented). #231 Inc 3.3 — for a
+      // nested camera, strip the parent rotation and recover the lookAt about the
+      // LOCAL position so the authored params stay in the camera's own space.
+      const localPos = toLocalPoint(seed.position);
+      let quat = g.quaternion;
+      if (seed.parentWorld) {
+        const pQuat = new THREE.Quaternion();
+        seed.parentWorld.decompose(new THREE.Vector3(), pQuat, new THREE.Vector3());
+        quat = pQuat.clone().invert().multiply(g.quaternion);
+      }
+      const { lookAt, roll } = lookAtRollFromQuat(quat, localPos, seed.distance);
       writeCameraParam('lookAt', lookAt);
       writeCameraParam('roll', roll);
     } else {
       // translate (scale coerces here — cameras have no scale): move position
       // only; the lookAt POINT stays put so the camera re-aims at it.
-      writeCameraParam('position', maybeSnapVec3([g.position.x, g.position.y, g.position.z]));
+      writeCameraParam(
+        'position',
+        maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
+      );
     }
   }
 
   function onAimChange() {
     const g = aimNode;
     if (!g || !camId) return;
-    writeCameraParam('lookAt', maybeSnapVec3([g.position.x, g.position.y, g.position.z]));
+    writeCameraParam(
+      'lookAt',
+      maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
+    );
   }
 
   // *** D-06 grab observation seam — dev-guarded (mirrors SingleGizmo). Drives the

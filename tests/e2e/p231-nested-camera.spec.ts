@@ -14,10 +14,17 @@ interface W {
   __basher_dag: {
     getState: () => {
       dispatch: (op: unknown) => void;
-      state: { nodes: Record<string, { inputs: { children?: CamRef[] } }> };
+      state: {
+        nodes: Record<string, { inputs: { children?: CamRef[] }; params: Record<string, unknown> }>;
+      };
     };
   };
   __basher_view_camera?: () => { position: [number, number, number]; lookThrough: boolean } | null;
+  __basher_selection?: { getState: () => { select: (id: string | null) => void } };
+  __basher_camera_gizmo_grab?: (
+    kind: 'rotate' | 'translate' | 'aim',
+    target: [number, number, number],
+  ) => void;
 }
 
 async function dragRowOnto(page: Page, srcId: string, dstId: string) {
@@ -147,5 +154,74 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
     await dragRowOnto(page, CAM, 'n_scene');
     await expect.poll(() => groupChildren(page, GRP)).not.toContain(CAM);
     await expect(page.locator(`[data-testid="scene-tree-row-${CAM}"]`)).toBeVisible();
+  });
+
+  test('the gizmo writes LOCAL params for a nested camera (world→local round-trip)', async ({
+    page,
+  }: {
+    page: Page;
+  }) => {
+    await page.goto('/');
+    await page.waitForFunction(
+      () => {
+        const w = window as unknown as W;
+        return Boolean(w.__basher_dag && w.__basher_selection);
+      },
+      { timeout: 15000 },
+    );
+
+    // A camera nested in Group@[5,0,0] AND active (so the CameraGizmo mounts on it).
+    await page.evaluate(
+      ({ grp, cam }) => {
+        const d = (op: unknown) => (window as unknown as W).__basher_dag.getState().dispatch(op);
+        d({ type: 'addNode', nodeId: grp, nodeType: 'Group', params: { position: [5, 0, 0] } });
+        d({
+          type: 'connect',
+          from: { node: grp, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        });
+        d({
+          type: 'addNode',
+          nodeId: cam,
+          nodeType: 'PerspectiveCamera',
+          params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
+        });
+        d({
+          type: 'connect',
+          from: { node: cam, socket: 'out' },
+          to: { node: grp, socket: 'children' },
+        });
+        d({
+          type: 'connect',
+          from: { node: cam, socket: 'out' },
+          to: { node: 'n_scene', socket: 'camera' },
+        });
+        (window as unknown as W).__basher_selection!.getState().select(cam);
+      },
+      { grp: GRP, cam: CAM },
+    );
+    await page.waitForFunction(() => Boolean((window as unknown as W).__basher_camera_gizmo_grab));
+    await page.waitForTimeout(150);
+
+    // Grab the aim handle to WORLD point [5,2,0]. The camera lives at group-world
+    // [5,0,0], so aiming at world [5,2,0] must write the LOCAL lookAt [0,2,0]
+    // (world − group), not the raw world point — the world→local round-trip.
+    await page.evaluate(() => {
+      (window as unknown as W).__basher_camera_gizmo_grab!('aim', [5, 2, 0]);
+    });
+    await page.waitForTimeout(100);
+
+    const lookAt = await page.evaluate(
+      (cam) =>
+        (window as unknown as W).__basher_dag.getState().state.nodes[cam].params.lookAt as [
+          number,
+          number,
+          number,
+        ],
+      CAM,
+    );
+    expect(lookAt[0]).toBeCloseTo(0, 2); // world 5 − group 5
+    expect(lookAt[1]).toBeCloseTo(2, 2);
+    expect(lookAt[2]).toBeCloseTo(0, 2);
   });
 });
