@@ -99,7 +99,10 @@ function resolveActiveCameraFromSelect(
   const edges = Array.isArray(selectNode.inputs.cameras)
     ? (selectNode.inputs.cameras as NodeRef[])
     : [];
-  const idx = resolveCameraSelectIndex(sampleCameraSelectActive(state, selectNode, seconds), edges.length);
+  const idx = resolveCameraSelectIndex(
+    sampleCameraSelectActive(state, selectNode, seconds),
+    edges.length,
+  );
   if (idx === null) return null;
   const camId = edges[idx]?.node;
   if (!camId) return null;
