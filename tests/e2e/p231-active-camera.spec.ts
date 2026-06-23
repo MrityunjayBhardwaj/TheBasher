@@ -82,6 +82,13 @@ test.describe('#231 Inc 3.2 — multi-camera active model', () => {
     await expect(page.locator(`[data-testid="scene-tree-row-${SEED}"]`)).toBeVisible();
     await expect(page.locator(`[data-testid="scene-tree-row-${CAM2}"]`)).toBeVisible();
 
+    // Camera rows are drag-INERT (scene.camera is a single socket; reparent is
+    // Inc 3.3). A draggable camera-on-camera drop would corrupt the single binding.
+    await expect(page.locator(`[data-testid="scene-tree-row-${CAM2}"]`)).toHaveAttribute(
+      'draggable',
+      'false',
+    );
+
     // The seed camera is active (direct-wired) → solid-triangle marker on its row;
     // the 2nd camera offers a Set Active button.
     await expect(page.locator(`[data-testid="scene-tree-active-camera-${SEED}"]`)).toBeVisible();

@@ -482,6 +482,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // parent socket → drag changes the sibling index.
   function canDropOn(srcRow: TreeRow, dstRow: TreeRow): boolean {
     if (!srcRow.parent || !dstRow.parent) return false;
+    // #231 Inc 3.2 — `scene.camera` is a SINGLE socket, not a list; there is no
+    // sibling reorder for cameras (a disconnect/connect-index would corrupt the
+    // single binding). Camera rows are also non-draggable, but guard the target too.
+    if (srcRow.parent.socket === 'camera' || dstRow.parent.socket === 'camera') return false;
     return (
       srcRow.parent.nodeId === dstRow.parent.nodeId && srcRow.parent.socket === dstRow.parent.socket
     );
@@ -652,7 +656,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               data-expanded={hasChildTree ? isExpanded : undefined}
               // Drag-reorder is inert while filtering: a filtered list is not the
               // contiguous sibling set, so a dropped index would be wrong.
-              draggable={Boolean(row.parent) && !filtering}
+              // #231 Inc 3.2 — camera rows are drag-INERT: `scene.camera` is a
+              // single socket (no list reorder), and camera reparent is Inc 3.3.
+              draggable={Boolean(row.parent) && !filtering && row.parent?.socket !== 'camera'}
               onDragStart={(e) => onDragStart(e, row)}
               onDragEnd={onDragEnd}
               onDragOver={(e) => onDragOver(e, row)}
