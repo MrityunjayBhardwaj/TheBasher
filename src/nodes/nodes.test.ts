@@ -49,6 +49,7 @@ const ALL_TYPES = [
   'BeautyPass',
   'BoneNameMap',
   'BoxMesh',
+  'CameraSelect',
   'Character',
   'ClipSelect',
   'ComfyUIWorkflow',

@@ -25,9 +25,10 @@
 // REF: THESIS.md §11; vyapti V1, V8; issue #190.
 
 import type { DagState } from '../core/dag';
-import type { Node } from '../core/dag/types';
+import type { Node, NodeRef } from '../core/dag/types';
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
 import { sampleScalarKeyframes } from '../nodes/keyframeInterp';
+import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
 import { resolveTrackToTarget } from './nodeConstraints';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 
@@ -62,8 +63,15 @@ function isVec3(v: unknown): v is [number, number, number] {
 }
 
 /** Locate the node wired into `scene.camera`. Returns the Node object (stable
- *  identity) or null when no scene / no camera is wired. */
-export function selectActiveCameraNode(state: DagState): Node | null {
+ *  identity) or null when no scene / no camera is wired.
+ *
+ *  #231 Inc 3 — when a `CameraSelect` feeds `scene.camera` (the multi-camera
+ *  model), this resolves THROUGH it to the active camera node (by `active` index,
+ *  V44 index-correspondence on `inputs.cameras`). A camera wired DIRECTLY (every
+ *  pre-change project) is returned unchanged — the fallback, no migration. Pass
+ *  `seconds` to honour a keyframed `active` (camera CUTS at that frame); omit it
+ *  for the static "active now" used by the editor look-through + outliner marker. */
+export function selectActiveCameraNode(state: DagState, seconds?: number): Node | null {
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return null;
   const sceneNode = state.nodes[sceneRef.node];
@@ -74,7 +82,52 @@ export function selectActiveCameraNode(state: DagState): Node | null {
   if (!ref || typeof ref !== 'object' || !('node' in ref)) return null;
   const id = (ref as { node?: string }).node;
   if (!id) return null;
-  return state.nodes[id] ?? null;
+  const node = state.nodes[id] ?? null;
+  if (node?.type === 'CameraSelect') return resolveActiveCameraFromSelect(state, node, seconds);
+  return node;
+}
+
+/** Resolve a `CameraSelect` to its active camera NODE (id-side of the switch,
+ *  mirroring `CameraSelect.evaluate`'s value-side). Recovers the camera id from
+ *  `inputs.cameras[active].node` (edge order, V44) using the SHARED
+ *  `resolveCameraSelectIndex` clamp so render == resolver (H40). */
+function resolveActiveCameraFromSelect(
+  state: DagState,
+  selectNode: Node,
+  seconds?: number,
+): Node | null {
+  const edges = Array.isArray(selectNode.inputs.cameras)
+    ? (selectNode.inputs.cameras as NodeRef[])
+    : [];
+  const idx = resolveCameraSelectIndex(sampleCameraSelectActive(state, selectNode, seconds), edges.length);
+  if (idx === null) return null;
+  const camId = edges[idx]?.node;
+  if (!camId) return null;
+  return state.nodes[camId] ?? null;
+}
+
+/** The CameraSelect's `active` index at `seconds` — static param, overlaid by a
+ *  `KeyframeChannelNumber` targeting this node's `active` paramPath (the same
+ *  free-floating-channel mechanism every other animatable param uses, V57). Omit
+ *  `seconds` → the static authored index. */
+function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: number): number {
+  const params = selectNode.params as { active?: unknown };
+  const base = typeof params.active === 'number' ? params.active : 0;
+  if (seconds === undefined) return base;
+  for (const ch of Object.values(state.nodes)) {
+    if (ch.type !== 'KeyframeChannelNumber') continue;
+    const p = ch.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
+    if (p.target !== selectNode.id || p.paramPath !== 'active') continue;
+    const keyframes = Array.isArray(p.keyframes) ? p.keyframes : [];
+    if (keyframes.length === 0) continue;
+    // Same defensive sort the camera-pose scalar branch uses (#200): the sampler
+    // walks adjacent pairs with no internal sort.
+    const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
+      (a, b) => a.time - b.time,
+    );
+    return sampleScalarKeyframes(sorted, seconds);
+  }
+  return base;
 }
 
 /** Read a camera node's pose from its params, with defensive defaults so a
@@ -144,7 +197,11 @@ export function resolveActiveCameraPoseAt(
   seconds: number,
   cache?: EvaluatorCache,
 ): CameraPose {
-  const node = selectActiveCameraNode(state);
+  // #231 Inc 3 — resolve the active camera AT `seconds`, so a keyframed
+  // `CameraSelect.active` CUTS the rendered/look-through shot to the camera live
+  // at that frame. A direct-wired camera (or static `active`) resolves to the
+  // same node every frame (byte-identical to pre-Inc-3).
+  const node = selectActiveCameraNode(state, seconds);
   const base = cameraPoseFromNode(node) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
 

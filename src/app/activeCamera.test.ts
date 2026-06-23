@@ -47,6 +47,123 @@ describe('activeCamera — selectActiveCameraNode', () => {
   });
 });
 
+// #231 Inc 3 — the multi-camera "active" model. A CameraSelect feeds scene.camera;
+// `selectActiveCameraNode` resolves THROUGH it to the active camera node (by index,
+// keyframeable → cuts). A direct-wired camera (every pre-change project) still
+// resolves to itself — the fallback, no migration.
+describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
+  /** Default project + a 2nd camera + a CameraSelect wired into scene.camera.
+   *  cameras edge order: [n_camera (idx 0), n_cam2 (idx 1)]. */
+  function buildMultiCamera(active = 0): DagState {
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_cam2',
+      nodeType: 'PerspectiveCamera',
+      params: { position: [10, 0, 0], lookAt: [0, 0, 0], fov: 60 },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_camsel',
+      nodeType: 'CameraSelect',
+      params: { active },
+    }).next;
+    // Edge order defines the index (V44): n_camera first, then n_cam2.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_camera', socket: 'out' },
+      to: { node: 'n_camsel', socket: 'cameras' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_cam2', socket: 'out' },
+      to: { node: 'n_camsel', socket: 'cameras' },
+    }).next;
+    // Single-cardinality scene.camera → this REPLACES the direct n_camera wiring.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_camsel', socket: 'out' },
+      to: { node: 'n_scene', socket: 'camera' },
+    }).next;
+    return state;
+  }
+
+  it('resolves through CameraSelect to the active camera node (active:0)', () => {
+    const node = selectActiveCameraNode(buildMultiCamera(0));
+    expect(node?.id).toBe('n_camera');
+  });
+
+  it('resolves to the 2nd camera when active:1', () => {
+    const node = selectActiveCameraNode(buildMultiCamera(1));
+    expect(node?.id).toBe('n_cam2');
+  });
+
+  it('clamps an out-of-range active to the last camera (matches the value side)', () => {
+    const node = selectActiveCameraNode(buildMultiCamera(9));
+    expect(node?.id).toBe('n_cam2');
+  });
+
+  it('the resolved active camera drives the pose', () => {
+    // active:1 → n_cam2 at [10,0,0] with fov 60.
+    const pose = resolveActiveCameraPose(buildMultiCamera(1));
+    expect(pose.position).toEqual([10, 0, 0]);
+    expect(pose.fov).toBe(60);
+  });
+
+  it('a direct-wired camera (no CameraSelect) still resolves — the fallback', () => {
+    // The default project wires n_camera DIRECTLY; unchanged.
+    expect(selectActiveCameraNode(buildDefaultDagState())?.id).toBe('n_camera');
+  });
+
+  it('CUTS the pose between cameras when `active` is keyframed (camera cut)', () => {
+    let state = buildMultiCamera(0);
+    // Keyframe the CameraSelect's `active` index 0→1 over [0,1]s.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_active',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'active',
+        target: 'n_camsel',
+        paramPath: 'active',
+        keyframes: [
+          { time: 0, value: 0, easing: 'linear' },
+          { time: 1, value: 1, easing: 'linear' },
+        ],
+      },
+    }).next;
+    // At t=0 the live camera is n_camera ([3,2,3]); at t=1 it cuts to n_cam2
+    // ([10,0,0]). The pose resolver reads the active camera AT that time.
+    expect(resolveActiveCameraPoseAt(state, 0).position).toEqual([3, 2, 3]);
+    expect(resolveActiveCameraPoseAt(state, 1).position).toEqual([10, 0, 0]);
+    // Mid-interpolation rounds: 0.4 → still camera 0, 0.6 → camera 1 (the cut snaps).
+    expect(resolveActiveCameraPoseAt(state, 0.4).position).toEqual([3, 2, 3]);
+    expect(resolveActiveCameraPoseAt(state, 0.6).position).toEqual([10, 0, 0]);
+  });
+
+  it('the STATIC selector (no seconds) ignores the keyframed active — editor "now"', () => {
+    let state = buildMultiCamera(0);
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_active',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'active',
+        target: 'n_camsel',
+        paramPath: 'active',
+        keyframes: [
+          { time: 0, value: 0, easing: 'linear' },
+          { time: 1, value: 1, easing: 'linear' },
+        ],
+      },
+    }).next;
+    // selectActiveCameraNode WITHOUT seconds → static param (0) → n_camera.
+    expect(selectActiveCameraNode(state)?.id).toBe('n_camera');
+    // WITH seconds=1 → the cut camera.
+    expect(selectActiveCameraNode(state, 1)?.id).toBe('n_cam2');
+  });
+});
+
 describe('activeCamera — cameraPoseFromNode', () => {
   it('reads pose from the default seed camera (matches default.ts)', () => {
     const state = buildDefaultDagState();

@@ -14,6 +14,7 @@ import { BakedMeshNode } from './BakedMesh';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
+import { CameraSelectNode } from './CameraSelect';
 import { CharacterNode } from './Character';
 import { ClipSelectNode } from './ClipSelect';
 import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
@@ -119,6 +120,10 @@ const ALL: NodeDefinition[] = [
   // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
   TransformClipNode as unknown as NodeDefinition,
   ClipSelectNode as unknown as NodeDefinition,
+  // #231 Inc 3 — multi-camera "active" model. CameraSelect (the ClipSelect
+  // pattern) picks the active camera by index to feed Scene.camera; `active` is
+  // keyframeable → camera cuts. selectActiveCameraNode resolves through it.
+  CameraSelectNode as unknown as NodeDefinition,
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,
   BoneNameMapNode as unknown as NodeDefinition,
