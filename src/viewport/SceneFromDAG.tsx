@@ -99,6 +99,7 @@ import type {
   RenderOutputValue,
   ScatterValue,
   SceneChild,
+  SceneObject,
   SpotLightValue,
   SphereMeshValue,
   TransformValue,
@@ -389,6 +390,24 @@ function MeshScaleProbe() {
       obj.getWorldQuaternion(q);
       return [q.x, q.y, q.z, q.w];
     };
+    // #231 Inc 2a — the H40 side-A observation for a GROUPED light. A nested light
+    // (Group child) renders through MeshChild → LightKindR (nodeId=null), so it
+    // has no name to address by id; instead traverse for every THREE.Light and
+    // report its WORLD position. The boundary-pair e2e asserts a light renders at
+    // the GROUP-composed world (= resolveWorldTransform side B), proving GroupR's
+    // `<group>` nesting composes a nested light's world exactly as it does a mesh's.
+    w.__basher_light_world_positions = (): [number, number, number][] => {
+      const out: [number, number, number][] = [];
+      scene.traverse((o) => {
+        if ((o as THREE.Light).isLight) {
+          o.updateWorldMatrix(true, false);
+          const p = new THREE.Vector3();
+          o.getWorldPosition(p);
+          out.push([p.x, p.y, p.z]);
+        }
+      });
+      return out;
+    };
     // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
     // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
     // `__basher_mesh_world_scale` always reports [1,1,1] for it. The size now
@@ -475,6 +494,7 @@ function MeshScaleProbe() {
       delete w.__basher_mesh_material;
       delete w.__basher_mesh_world_position;
       delete w.__basher_mesh_world_quaternion;
+      delete w.__basher_light_world_positions;
     };
   }, [scene]);
   return null;
@@ -904,7 +924,12 @@ function StudioAreaLightR({ value, tex, nodeId, constrained }: AreaLightRProps &
 // ---------------------------------------------------------------------------
 
 interface MeshChildProps {
-  value: SceneChild;
+  // #231 Inc 2 — a child can now be any SceneObject (mesh, light, camera), since
+  // a Group holds lights/cameras too. Mesh kinds render their R3F primitive; light
+  // kinds render LightKindR (inheriting the group's world via GroupR's `<group>`
+  // nesting). Camera bodies render nothing here — their frustum helper is drawn
+  // globally from `cameraNodeIds` (Inc 2b composes that with the parent world).
+  value: SceneObject;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
 }
@@ -919,6 +944,24 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
       return <BakedMeshR value={value} override={override} />;
     case 'ModifiedMesh':
       return <ModifiedMeshR value={value} override={override} />;
+    // #231 Inc 2 — a light nested in a Group. nodeId=null/constrained=false: the
+    // nested light renders STATIC (it inherits the group's world transform from
+    // GroupR's `<group>` for free), but does not yet carry its own direct-channel
+    // animation or Track-To aim — those stay on the top-level scene.lights band
+    // (known-limit; follow-up). The per-kind projection is the SAME LightKindR the
+    // top-level band uses, so render == resolver (H40).
+    case 'DirectionalLight':
+    case 'PointLight':
+    case 'SpotLight':
+    case 'AreaLight':
+    case 'AmbientLight':
+      return <LightKindR value={value} nodeId={null} constrained={false} />;
+    // #231 Inc 2b — a nested camera has no scene-graph body; its frustum is drawn
+    // globally (cameraNodeIds). Composing that frustum/look-through with the parent
+    // world is Inc 2b — render nothing here for now.
+    case 'PerspectiveCamera':
+    case 'OrthographicCamera':
+      return null;
     case 'GltfAsset':
       // #83 gap 2 — per-asset error boundary. A load/parse failure
       // (bad bytes, unsupported extension, missing #82 sibling, Draco

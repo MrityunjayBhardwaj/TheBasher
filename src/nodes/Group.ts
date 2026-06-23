@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { GroupValue, SceneChild } from './types';
+import type { GroupValue, SceneObject } from './types';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -49,7 +49,7 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
       rotation: params.rotation ?? [0, 0, 0],
       scale: params.scale ?? [1, 1, 1],
       pivot: params.pivot ?? [0, 0, 0],
-      children: (inputs.children as SceneChild[] | undefined) ?? [],
+      children: (inputs.children as SceneObject[] | undefined) ?? [],
     };
   },
 };

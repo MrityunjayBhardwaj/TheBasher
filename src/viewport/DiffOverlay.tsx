@@ -12,7 +12,7 @@ import { useDiffStore } from '../agent/diff';
 import { evaluate, createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
 import { degVec3ToRad } from './rotation';
-import type { RenderOutputValue, CameraValue, LightValue, SceneChild } from '../nodes/types';
+import type { RenderOutputValue, CameraValue, LightValue, SceneObject } from '../nodes/types';
 
 export function DiffOverlay() {
   const pendingDiff = useDiffStore((s) => s.pendingDiff);
@@ -83,7 +83,7 @@ function GhostLight({ value }: { value: LightValue }) {
   );
 }
 
-function GhostChild({ value }: { value: SceneChild }) {
+function GhostChild({ value }: { value: SceneObject }) {
   switch (value.kind) {
     case 'BoxMesh':
       return (
@@ -173,5 +173,9 @@ function GhostChild({ value }: { value: SceneChild }) {
           />
         </mesh>
       );
+    // #231 Inc 2 — lights/cameras can be group children but have no diff-ghost
+    // preview (the ghost is geometry-only); render nothing for them.
+    default:
+      return null;
   }
 }

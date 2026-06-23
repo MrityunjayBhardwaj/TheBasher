@@ -681,7 +681,12 @@ export interface GroupValue {
   readonly rotation: Vec3;
   readonly scale: Vec3;
   readonly pivot: Vec3;
-  readonly children: readonly SceneChild[];
+  // #231 Inc 2 — a Group holds any SceneObject (mesh, light, camera), not only
+  // meshes, so lights & cameras are groupable/parentable (Blender's "everything
+  // is an Object"). The renderer (GroupR → MeshChild) and the world resolver
+  // (childEdges/localMatrix) discriminate on `kind`; a light nested here renders
+  // at the group-composed world via three.js `<group>` nesting.
+  readonly children: readonly SceneObject[];
 }
 
 export interface MaterialOverrideValue {

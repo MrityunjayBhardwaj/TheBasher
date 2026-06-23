@@ -436,3 +436,54 @@ describe('resolveParentWorldMatrix', () => {
     expect(resolveParentWorldMatrix(state, 'not_a_node', ctxAt(0))).toBeNull();
   });
 });
+
+// #231 Inc 2a — a LIGHT nested in a Group. The unified socket (Inc 1) lets a
+// light wire into Group.children; the world resolver's scene-child walk already
+// descends Group children and localMatrix handles a light's position/rotation/
+// scale, so a nested light's WORLD composes the group's transform — and the
+// gizmo (#230) gets the group as the light's parent world. NO resolver change
+// was needed; these prove the nested light flows through the existing walk.
+const LIT_ID = 'n_grouped_light';
+const LGRP_ID = 'n_light_group';
+
+/** scene.children → Group(pos) → children:[DirectionalLight(localPos)]. */
+function buildGroupedLightState(groupPos: [number, number, number], lightPos: [number, number, number]): DagState {
+  let state = buildDefaultDagState();
+  const ops: Op[] = [
+    { type: 'addNode', nodeId: LGRP_ID, nodeType: 'Group', params: { position: groupPos } },
+    {
+      type: 'addNode',
+      nodeId: LIT_ID,
+      nodeType: 'DirectionalLight',
+      params: { intensity: 1, position: lightPos, color: '#ffffff' },
+    },
+    { type: 'connect', from: { node: LIT_ID, socket: 'out' }, to: { node: LGRP_ID, socket: 'children' } },
+    { type: 'connect', from: { node: LGRP_ID, socket: 'out' }, to: { node: 'n_scene', socket: 'children' } },
+  ];
+  for (const op of ops) state = applyOp(state, op).next;
+  return state;
+}
+
+describe('resolveWorldTransform — #231 Inc 2a grouped light', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+  });
+
+  it("composes a nested light's world position through its parent Group translation", () => {
+    const state = buildGroupedLightState([5, 0, 0], [1, 0, 0]);
+    const w = resolveWorldTransform(state, LIT_ID, ctxAt(0));
+    expect(w).not.toBeNull();
+    expect(w!.position[0]).toBeCloseTo(6, 6); // 5 (group) + 1 (light local)
+    expect(w!.position[1]).toBeCloseTo(0, 6);
+    expect(w!.position[2]).toBeCloseTo(0, 6);
+  });
+
+  it('gives the gizmo the Group as the nested light parent world (not null)', () => {
+    const state = buildGroupedLightState([5, 0, 0], [1, 0, 0]);
+    const parent = resolveParentWorldMatrix(state, LIT_ID, ctxAt(0));
+    expect(parent).not.toBeNull();
+    // The parent world is the Group's translation: its 4th column is [5,0,0].
+    expect(parent!.elements[12]).toBeCloseTo(5, 6);
+  });
+});
