@@ -134,9 +134,14 @@ export async function renderImageWithFeedback(): Promise<RenderImageResult> {
 }
 
 /**
- * DEV-only — render and return the PNG as a data URL (no download), so the
- * falsifiable e2e can decode pixels and assert non-blank / correct size /
- * no-chrome. H65-safe: only installed under import.meta.env.DEV in boot.ts.
+ * Render the active project's production frame and return it as a PNG data URL
+ * (no download). Two consumers:
+ *   - the 2D View's Render Result pane (#168 follow-up) — draws it in-app and,
+ *     later, hands it to the fal AI edit (sync_mode returns the same data-URL
+ *     shape, so the render and the AI output round-trip through one path);
+ *   - the falsifiable e2e seam — decode pixels to assert non-blank / correct
+ *     size / no-chrome. That window install is H65-safe (only under
+ *     import.meta.env.DEV in boot.ts); the function itself leaks nothing.
  */
 export async function renderActiveProjectToDataUrl(): Promise<{
   width: number;

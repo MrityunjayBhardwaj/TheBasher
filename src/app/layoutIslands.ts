@@ -38,6 +38,14 @@ export const INSPECTOR_WIDTH = 300;
  *  affordance stays reachable). Mirrors the old 28px collapsed column. */
 export const COLLAPSED_STRIP = 28;
 
+/** Top inset for a CENTER-anchored bounded surface (the 2D View editor) so it
+ *  starts BELOW the floating toolbar pill (which sits at top-4 ≈ 16px and is
+ *  ~40px tall). The side islands don't need this — they hug the left/right
+ *  edges, clear of the centered toolbar — but a centered surface shares the
+ *  toolbar's horizontal band and must drop below it (the H91/V45 floating-
+ *  overlap family). */
+export const CENTER_SURFACE_TOP = 60;
+
 /** Reserved clear strip along the bottom of the viewport. The side islands'
  *  bottom edge sits this far above the viewport's bottom, leaving room for the
  *  bottom-right orbit gizmo (≈ bottom 40–120px) + Persp/Ortho pill and the

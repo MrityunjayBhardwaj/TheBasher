@@ -742,7 +742,7 @@ export function MenuBar() {
           {(
             [
               { value: 'view3d', label: '3D Viewport' },
-              { value: 'uv', label: 'UV Editor' },
+              { value: 'uv', label: '2D View' },
             ] as { value: SpaceType; label: string }[]
           ).map((s) => (
             <Item

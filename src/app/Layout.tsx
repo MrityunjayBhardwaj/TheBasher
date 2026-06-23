@@ -44,7 +44,7 @@ import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
-import { UVEditor } from './UVEditor';
+import { TwoDView } from './TwoDView';
 import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
@@ -53,6 +53,7 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import {
   BOTTOM_BAND,
+  CENTER_SURFACE_TOP,
   centerSideReserved,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
@@ -138,6 +139,29 @@ export function Layout() {
   const centerSurfaceWidth = isNarrow
     ? `calc(100% - ${2 * ISLAND_GAP}px)`
     : `min(960px, calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px))`;
+
+  // The 2D View (UV + Render Result) is a BOUNDED center surface — a Blender-
+  // style editor area, not a full-bleed backdrop — so its tabs and pane chrome
+  // never slide under the floating toolbar or the side islands (the H91/V45
+  // overlap family). It uses the SAME collapse-aware reserve as the other
+  // centered surfaces (V46: one geometry source), but no 960px cap — the editor
+  // fills the clear band. Starts below the toolbar (CENTER_SURFACE_TOP) and
+  // stops above the bottom agent/timeline stack (BOTTOM_BAND).
+  const twoDViewWidth = isNarrow
+    ? `calc(100% - ${2 * ISLAND_GAP}px)`
+    : `calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px)`;
+  const twoDViewStyle: CSSProperties = {
+    // 'block' (not 'flex') — TwoDView is h-full/w-full and owns its own flex
+    // column; the wrapper just bounds it. Keeps the p26 display:block contract.
+    display: space === 'uv' ? 'block' : 'none',
+    position: 'absolute',
+    top: CENTER_SURFACE_TOP,
+    bottom: BOTTOM_BAND,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: twoDViewWidth,
+    zIndex: 15,
+  };
   return (
     <div
       data-testid="layout"
@@ -225,14 +249,12 @@ export function Layout() {
               (grid, axis widget) move to W7's FloatingViewportToolbar. */}
         </div>
         <div
-          style={{
-            display: space === 'uv' ? 'block' : 'none',
-            position: 'absolute',
-            inset: 0,
-          }}
+          style={twoDViewStyle}
           data-testid="uv-slot"
+          className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          onContextMenu={(e) => e.stopPropagation()}
         >
-          <UVEditor />
+          <TwoDView />
         </div>
         {/* v0.6 #4 W1 — the ONE consolidated toolbar (Spline region ②).
             Mounted at the <main> level (not inside the 3D slot) so its Space

@@ -91,7 +91,7 @@ interface SpaceEntry {
 
 const SPACES: readonly SpaceEntry[] = [
   { value: 'view3d', label: '3D View', key: 'Tab' },
-  { value: 'uv', label: 'UV Editor', key: 'Tab' },
+  { value: 'uv', label: '2D View', key: 'Tab' },
 ];
 
 /** Click handler for the Home (⌂) button. frameSelected early-returns
