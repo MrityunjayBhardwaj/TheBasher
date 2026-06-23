@@ -2,7 +2,11 @@
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
+import {
+  cameraOrientationQuat,
+  composeCameraPoseWithParent,
+  lookAtRollFromQuat,
+} from './cameraOrientation';
 
 const FWD = new THREE.Vector3(0, 0, -1);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -58,5 +62,48 @@ describe('lookAtRollFromQuat (inverse — gizmo write-back)', () => {
       expect(out.lookAt[2]).toBeCloseTo(c.look[2]);
       expect(out.roll).toBeCloseTo(c.roll);
     }
+  });
+});
+
+// #231 Inc 3.3 — composing a camera's local pose with a parent Group's world.
+describe('composeCameraPoseWithParent', () => {
+  const basePose = {
+    position: [0, 0, 0] as [number, number, number],
+    lookAt: [0, 0, -1] as [number, number, number],
+    roll: 0,
+    fov: 45,
+  };
+
+  it('identity parent → pose unchanged (byte-identical framing)', () => {
+    const out = composeCameraPoseWithParent(basePose, new THREE.Matrix4());
+    expect(out.position[0]).toBeCloseTo(0);
+    expect(out.position[1]).toBeCloseTo(0);
+    expect(out.position[2]).toBeCloseTo(0);
+    expect(out.lookAt[2]).toBeCloseTo(-1);
+    expect(out.roll).toBeCloseTo(0);
+    expect(out.fov).toBe(45); // spread carries the extra fields
+  });
+
+  it('a translating parent shifts BOTH position and lookAt (aim direction preserved)', () => {
+    const parent = new THREE.Matrix4().makeTranslation(5, 1, 0);
+    const out = composeCameraPoseWithParent(basePose, parent);
+    expect(out.position[0]).toBeCloseTo(5);
+    expect(out.position[1]).toBeCloseTo(1);
+    expect(out.position[2]).toBeCloseTo(0);
+    // lookAt translated too → still looking down -Z one unit ahead.
+    expect(out.lookAt[0]).toBeCloseTo(5);
+    expect(out.lookAt[1]).toBeCloseTo(1);
+    expect(out.lookAt[2]).toBeCloseTo(-1);
+  });
+
+  it('a parent rotated 90° about +Y re-aims the camera (−Z → −X) at the same distance', () => {
+    const parent = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+    const out = composeCameraPoseWithParent(basePose, parent);
+    // Position stays at origin (rotation about origin).
+    expect(out.position[0]).toBeCloseTo(0);
+    expect(out.position[2]).toBeCloseTo(0);
+    // Local forward -Z rotated +90° about Y → -X. lookAt one unit along -X.
+    expect(out.lookAt[0]).toBeCloseTo(-1);
+    expect(out.lookAt[2]).toBeCloseTo(0);
   });
 });

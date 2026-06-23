@@ -61,8 +61,8 @@ import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import {
-  cameraPoseFromNode,
   enumerateCameraNodeIds,
+  resolveCameraFrustumPose,
   selectActiveCameraNode,
 } from '../app/activeCamera';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
@@ -283,7 +283,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         ? cameraNodeIds.map((id) => {
             const active = id === activeCameraId;
             if (active && lookThrough) return null;
-            const pose = cameraPoseFromNode(state.nodes[id]);
+            // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the
+            // group-composed WORLD pose (null parent → flat local pose, unchanged).
+            // Frame-0 ctx mirrors this component's static (time-decoupled) evaluate.
+            const pose = resolveCameraFrustumPose(
+              state,
+              id,
+              { time: { frame: 0, seconds: 0, normalized: 0 } },
+              cache,
+            );
             if (!pose) return null;
             return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
           })

@@ -43,15 +43,18 @@
 //   is uniform across node kinds. Still out of scope: a GltfChild's world
 //   (addressed BY NAME inside a GltfAsset, not a scene-child edge) and
 //   Scatter-instance / Character-bone worlds (sub-objects that are not addressable
-//   DAG nodes). CAMERAS (#210 slice 3.2) resolve via their POSE — a camera is
-//   wired through scene.camera (a single ref) and never appears in the walks
-//   below, so a dedicated early branch returns position + look-orientation
-//   (-Z → lookAt, the frame CameraHelpers draws) + identity scale, with the
-//   position/lookAt channels overlaid by the SAME primitive (one band, H40). It
-//   does NOT import the camera resolver (activeCamera → trackTo →
-//   resolveWorldTransform would cycle) and does NOT reflect a camera Track-To aim
-//   (that is the active-camera RENDER path, resolveActiveCameraPoseAt).
-//   Descent stops at out-of-scope nodes and returns null. Documented, not silent.
+//   DAG nodes). CAMERAS (#210 slice 3.2) resolve via their POSE — a dedicated
+//   early branch returns position + look-orientation (-Z → lookAt, the frame
+//   CameraHelpers draws) + identity scale, with the position/lookAt channels
+//   overlaid by the SAME primitive (one band, H40). #231 Inc 3.3 — a camera can
+//   now be a Group CHILD (groupable cameras): the early branch composes the
+//   parent's world via `resolveParentWorldMatrix` (which DOES walk scene.children
+//   to find the nested camera), so a nested camera's world == parentWorld · its
+//   pose matrix. A camera wired only to scene.camera (not in a Group) → parentWorld
+//   null → byte-identical to the flat local-pose world. It does NOT import the
+//   camera resolver (activeCamera → trackTo → resolveWorldTransform would cycle)
+//   and does NOT reflect a camera Track-To aim (that is the active-camera RENDER
+//   path, resolveActiveCameraPoseAt). Descent stops at out-of-scope nodes, null.
 //
 // V8 file-location: lives in src/app/ beside resolveEvaluatedTransform — its
 //   consumers (constraints, the camera migration) and its tests sit in
@@ -288,10 +291,7 @@ export function resolveWorldTransform(
   //    why this stays inline (the activeCamera import would cycle) and why a camera
   //    Track-To aim is not reflected here.
   const camNode = state.nodes[selectedId];
-  if (
-    camNode &&
-    (camNode.type === 'PerspectiveCamera' || camNode.type === 'OrthographicCamera')
-  ) {
+  if (camNode && (camNode.type === 'PerspectiveCamera' || camNode.type === 'OrthographicCamera')) {
     const cp = camNode.params as { position?: unknown; lookAt?: unknown; roll?: unknown };
     let cam: { position: Vec3; lookAt: Vec3; roll: number } = {
       // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
@@ -305,7 +305,13 @@ export function resolveWorldTransform(
     if (camChannels.length > 0) {
       cam = overlayChannels(cam, camChannels, 1, ctx.time.seconds) ?? cam;
     }
-    return decompose(cameraWorldMatrix(cam.position, cam.lookAt, cam.roll));
+    // #231 Inc 3.3 — a camera nested in a Group composes the parent's world (the
+    // groupable-camera path). `resolveParentWorldMatrix` returns null for a
+    // top-level camera (wired only to scene.camera) → byte-identical to the flat
+    // local-pose world. The local matrix is the camera's own pose orientation.
+    const camLocal = cameraWorldMatrix(cam.position, cam.lookAt, cam.roll);
+    const parentWorld = resolveParentWorldMatrix(state, selectedId, ctx, cache);
+    return decompose(parentWorld ? parentWorld.clone().multiply(camLocal) : camLocal);
   }
 
   // 1. Render root — the same evaluate SceneFromDAG makes every render.
@@ -413,10 +419,13 @@ export function resolveParentWorldMatrix(
 ): THREE.Matrix4 | null {
   const node = state.nodes[selectedId];
   if (!node) return null;
-  // Cameras + lights are wired FLAT (never nested under a Transform/Group), so
-  // world == local — no parent to compose. The scene-child walk below also never
-  // reaches them, but short-circuit to avoid the render-root evaluate.
-  if (node.type === 'PerspectiveCamera' || node.type === 'OrthographicCamera') return null;
+  // #231 Inc 3.3 — a camera is NO LONGER always flat: it can be a Group child
+  // (groupable cameras). So cameras now fall through to the scene-child walk,
+  // which finds a nested camera as a Group descendant (childEdges descends
+  // Group.children, V78) and returns the Group's accumulated world. A camera wired
+  // ONLY to scene.camera (every pre-Inc-3.3 project) is not in scene.children →
+  // the walk returns null → byte-identical to the old flat short-circuit. A
+  // top-level light is likewise flat (scene.lights) and the walk returns null.
 
   const target = state.outputs.render;
   if (!target) return null;

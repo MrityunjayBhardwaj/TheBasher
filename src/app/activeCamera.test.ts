@@ -7,6 +7,7 @@ import {
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPose,
   resolveActiveCameraPoseAt,
+  resolveCameraFrustumPose,
   selectActiveCameraNode,
 } from './activeCamera';
 import { buildDefaultDagState } from '../core/project/default';
@@ -161,6 +162,73 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
     expect(selectActiveCameraNode(state)?.id).toBe('n_camera');
     // WITH seconds=1 → the cut camera.
     expect(selectActiveCameraNode(state, 1)?.id).toBe('n_cam2');
+  });
+});
+
+// #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.
+describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
+  /** Default project + a Group@[gx,gy,gz] in scene.children + a 2nd camera nested
+   *  in that Group's children AND wired active into scene.camera. */
+  function buildNestedActiveCamera(group: [number, number, number]): DagState {
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_grp',
+      nodeType: 'Group',
+      params: { position: group },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_grp', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_cam2',
+      nodeType: 'PerspectiveCamera',
+      params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
+    }).next;
+    // Nest the camera under the Group.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_cam2', socket: 'out' },
+      to: { node: 'n_grp', socket: 'children' },
+    }).next;
+    // Make it the active camera (replace the seed direct wire on the single socket).
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_cam2', socket: 'out' },
+      to: { node: 'n_scene', socket: 'camera' },
+    }).next;
+    return state;
+  }
+
+  it('the active nested camera pose is lifted by the group world', () => {
+    const pose = resolveActiveCameraPoseAt(buildNestedActiveCamera([5, 1, 0]), 0);
+    // local position [0,0,0] under Group@[5,1,0] → world [5,1,0].
+    expect(pose.position[0]).toBeCloseTo(5);
+    expect(pose.position[1]).toBeCloseTo(1);
+    expect(pose.position[2]).toBeCloseTo(0);
+    // local lookAt [0,0,-1] translated by the group → [5,1,-1] (aim preserved).
+    expect(pose.lookAt[0]).toBeCloseTo(5);
+    expect(pose.lookAt[1]).toBeCloseTo(1);
+    expect(pose.lookAt[2]).toBeCloseTo(-1);
+  });
+
+  it('a top-level (un-nested) active camera is unchanged (byte-identical fallback)', () => {
+    // Default project: n_camera wired direct, not in any Group.
+    const pose = resolveActiveCameraPoseAt(buildDefaultDagState(), 0);
+    expect(pose.position).toEqual([3, 2, 3]);
+    expect(pose.lookAt).toEqual([0, 0, 0]);
+  });
+
+  it('the frustum pose helper lifts a nested camera the same way', () => {
+    const state = buildNestedActiveCamera([5, 1, 0]);
+    const pose = resolveCameraFrustumPose(state, 'n_cam2', {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    });
+    expect(pose?.position[0]).toBeCloseTo(5);
+    expect(pose?.position[1]).toBeCloseTo(1);
   });
 });
 

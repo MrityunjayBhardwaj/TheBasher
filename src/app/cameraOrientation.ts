@@ -69,6 +69,47 @@ export function cameraOrientationQuat(
 }
 
 /**
+ * Compose a camera's LOCAL pose with its parent's world matrix → its WORLD pose,
+ * still expressed in the (position + lookAt point + roll°) model every consumer
+ * rebuilds its orientation from (#231 Inc 3.3). When a camera is nested in a Group,
+ * the frustum, viewport look-through, and render all frame from the group-composed
+ * world; this is the ONE place that composition happens so they stay in lockstep
+ * (V37/H40). Pure.
+ *
+ * Builds the local orientation matrix (`cameraOrientationQuat` → no-scale compose),
+ * premultiplies the parent world, decomposes, then reads the world (lookAt, roll)
+ * back via the SAME inverse bijection (`lookAtRollFromQuat`) — so the result
+ * renders identically through `cameraOrientationQuat`. The aim distance is
+ * preserved from the local pose (a non-uniform parent scale shears the basis — the
+ * documented #230 limit; framing under translate + rotation is exact).
+ */
+export function composeCameraPoseWithParent<
+  T extends {
+    position: [number, number, number];
+    lookAt: [number, number, number];
+    roll: number;
+  },
+>(pose: T, parentWorld: THREE.Matrix4): T {
+  const localQuat = cameraOrientationQuat(pose.position, pose.lookAt, pose.roll);
+  const localPos = new THREE.Vector3(pose.position[0], pose.position[1], pose.position[2]);
+  const localM = new THREE.Matrix4().compose(localPos, localQuat, new THREE.Vector3(1, 1, 1));
+  const worldM = parentWorld.clone().multiply(localM);
+  const wp = new THREE.Vector3();
+  const wq = new THREE.Quaternion();
+  const ws = new THREE.Vector3();
+  worldM.decompose(wp, wq, ws);
+  const dist =
+    Math.hypot(
+      pose.lookAt[0] - pose.position[0],
+      pose.lookAt[1] - pose.position[1],
+      pose.lookAt[2] - pose.position[2],
+    ) || 1;
+  const worldPos: [number, number, number] = [wp.x, wp.y, wp.z];
+  const { lookAt, roll } = lookAtRollFromQuat(wq, worldPos, dist);
+  return { ...pose, position: worldPos, lookAt, roll };
+}
+
+/**
  * Inverse of `cameraOrientationQuat`: recover the (lookAt point, roll°) a world
  * orientation quaternion implies, given the camera position and the aim distance
  * to keep (so the lookAt stays the same distance away). Used by the gizmo rotate

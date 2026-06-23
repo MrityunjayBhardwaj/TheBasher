@@ -30,6 +30,8 @@ import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/Keyfr
 import { sampleScalarKeyframes } from '../nodes/keyframeInterp';
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
 import { resolveTrackToTarget } from './nodeConstraints';
+import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { composeCameraPoseWithParent } from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 
 export type CameraKind = 'PerspectiveCamera' | 'OrthographicCamera';
@@ -143,6 +145,24 @@ export function enumerateCameraNodeIds(state: DagState): string[] {
   return Object.values(state.nodes)
     .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
     .map((n) => n.id);
+}
+
+/** A camera's WORLD pose for the viewport FRUSTUM (#231 Inc 3.3): its static
+ *  authored local pose lifted by the parent Group's world when nested. Returns
+ *  null for a missing/non-camera node. `resolveParentWorldMatrix` returns null for
+ *  a top-level camera → the local pose unchanged (byte-identical to pre-Inc-3.3).
+ *  Static (not channel-evaluated) — the frustum mirrors the editor's static read;
+ *  the ACTIVE camera's animated pose comes from `resolveActiveCameraPoseAt`. */
+export function resolveCameraFrustumPose(
+  state: DagState,
+  cameraId: string,
+  ctx: { time: { frame: number; seconds: number; normalized: number } },
+  cache?: EvaluatorCache,
+): CameraPose | null {
+  const local = cameraPoseFromNode(state.nodes[cameraId] ?? null);
+  if (!local) return null;
+  const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
+  return parentWorld ? composeCameraPoseWithParent(local, parentWorld) : local;
 }
 
 /** Read a camera node's pose from its params, with defensive defaults so a
@@ -262,15 +282,19 @@ export function resolveActiveCameraPoseAt(
   // fixed aimPoint), through the SAME resolver meshes use. It takes over the
   // lookAt (over the static param + any lookAt channel above). null → no camera
   // constraint → the channel/static lookAt stands (byte-identical to pre-#204).
-  const aimTarget = resolveTrackToTarget(
-    state,
-    node.id,
-    { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
-    cache,
-  );
+  const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+  const aimTarget = resolveTrackToTarget(state, node.id, ctx, cache);
   if (aimTarget) {
     pose ??= { ...base };
     pose.lookAt = aimTarget;
   }
-  return pose ?? base;
+
+  // #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.
+  // Compose AFTER the channel + Track-To overlays so the animated/aimed LOCAL pose
+  // is what gets lifted into world. `resolveParentWorldMatrix` returns null for a
+  // top-level camera (wired only to scene.camera) → byte-identical to the flat pose,
+  // so this is a safe drop-in for every pre-Inc-3.3 project.
+  const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
+  const result = pose ?? base;
+  return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
 }
