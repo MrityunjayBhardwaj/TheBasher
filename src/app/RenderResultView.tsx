@@ -10,13 +10,16 @@
 // tab/space switch (the pane is display:none, not unmounted) and so the fal
 // AI edit (follow-up) can write a new image into the same slot.
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { downloadRenderResult, renderActiveProjectToView } from './renderImageAction';
 import { useRenderResultStore } from './stores/renderResultStore';
+import { usePanZoomCanvas } from './usePanZoomCanvas';
 
 export function RenderResultView() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
+  // The decoded image lives in state so a fresh decode re-runs the draw closure
+  // (which the pan/zoom hook repaints on).
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
 
   const status = useRenderResultStore((s) => s.status);
   const dataUrl = useRenderResultStore((s) => s.dataUrl);
@@ -28,62 +31,26 @@ export function RenderResultView() {
   const rendering = status === 'rendering';
   const hasResult = status === 'ready' && dataUrl !== null;
 
-  // Repaint the canvas: fit the decoded image (imageRef) into the box,
-  // letterboxed. ResizeObserver covers initial mount, resizes, and the
-  // display:none → block transition on tab/space switch (the box jumps from
-  // 0×0 to its real size, firing the observer) — same trick as UVEditor.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const repaint = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const dpr = window.devicePixelRatio || 1;
-      const r = canvas.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      const W = Math.floor(r.width * dpr);
-      const H = Math.floor(r.height * dpr);
-      if (canvas.width !== W || canvas.height !== H) {
-        canvas.width = W;
-        canvas.height = H;
-      }
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.scale(dpr, dpr);
-      drawRenderResult(ctx, r.width, r.height, imageRef.current);
-    };
-    repaint();
-    const ro = new ResizeObserver(repaint);
-    ro.observe(canvas);
-    return () => ro.disconnect();
-    // Re-run on dataUrl/status so the observer + initial repaint re-fire after
-    // the image element is swapped (the actual draw uses the imageRef set by
-    // the load effect below). drawRenderResult is module-level (stable).
-  }, [dataUrl, status]);
-
-  // Decode the data URL into an <img> off-DOM, then repaint when it loads.
+  // Decode the data URL into an <img> off-DOM; setImage when it loads.
   useEffect(() => {
     if (!dataUrl) {
-      imageRef.current = null;
+      setImage(null);
       return;
     }
     const img = new Image();
-    img.onload = () => {
-      imageRef.current = img;
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (!canvas || !ctx) return;
-      const r = canvas.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      const dpr = window.devicePixelRatio || 1;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.scale(dpr, dpr);
-      drawRenderResult(ctx, r.width, r.height, img);
-    };
+    img.onload = () => setImage(img);
     img.src = dataUrl;
     return () => {
       img.onload = null;
     };
   }, [dataUrl]);
+
+  const draw = useCallback(
+    (ctx: CanvasRenderingContext2D, cssW: number, cssH: number) =>
+      drawRenderResult(ctx, cssW, cssH, image),
+    [image],
+  );
+  const { reset } = usePanZoomCanvas(canvasRef, draw);
 
   const dims = width > 0 && height > 0 ? `${width}×${height}` : '';
   const statusText =
@@ -119,6 +86,16 @@ export function RenderResultView() {
             title="Save the current render result as a PNG"
           >
             ⬇ Save
+          </button>
+          <button
+            type="button"
+            data-testid="render-result-fit"
+            disabled={!hasResult}
+            onClick={reset}
+            className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] normal-case text-fg/70 transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            title="Fit to view (or double-click the canvas)"
+          >
+            ⤢ Fit
           </button>
         </span>
         <span

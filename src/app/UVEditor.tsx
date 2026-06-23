@@ -13,11 +13,12 @@
 // visibility flips via display:none so the Canvas (and its GPU state) survives the
 // space toggle (K1 step 6 discipline).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
 import { resolveMeshUVs } from './resolveMeshUVs';
 import { resolveMeshTexture, type MeshTextureSource } from './resolveMeshTexture';
+import { usePanZoomCanvas } from './usePanZoomCanvas';
 
 // Opacity of the texture backdrop. Dimmed (Blender default) so the bright island
 // outlines stay readable on top of the image.
@@ -82,37 +83,18 @@ export function UVEditor() {
           }${texNote} (read-only).`
         : `${node.id} · ${node.type} — no UV layout.`;
 
-  // ResizeObserver handles three triggers in one place:
-  //   - initial mount once the canvas has a layout box,
-  //   - window/parent resizes,
-  //   - display:none → block transitions when the user switches space
-  //     (Layout flips visibility; the canvas's box jumps from 0×0 to its
-  //     actual size, which triggers the observer).
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const repaint = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const dpr = window.devicePixelRatio || 1;
-      const r = canvas.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      const W = Math.floor(r.width * dpr);
-      const H = Math.floor(r.height * dpr);
-      if (canvas.width !== W || canvas.height !== H) {
-        canvas.width = W;
-        canvas.height = H;
-      }
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.scale(dpr, dpr);
+  // Pan/zoom + all the canvas boilerplate (DPR sizing, ResizeObserver, the view
+  // transform) live in the ONE shared hook; this pane supplies only its fit-draw.
+  // zoom is passed so the grid/island hairlines and labels stay crisp/constant
+  // while the texture backdrop scales (divide by zoom).
+  const draw = useCallback(
+    (ctx: CanvasRenderingContext2D, cssW: number, cssH: number, zoom: number) => {
       const backdrop = showTexture && texture.image ? texture : null;
-      drawUVCanvas(ctx, r.width, r.height, polygons, backdrop);
-    };
-    repaint();
-    const ro = new ResizeObserver(repaint);
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, [polygons, texture, showTexture]);
+      drawUVCanvas(ctx, cssW, cssH, polygons, backdrop, zoom);
+    },
+    [polygons, texture, showTexture],
+  );
+  const { reset } = usePanZoomCanvas(canvasRef, draw);
 
   return (
     <div data-testid="uv-editor" className="flex h-full w-full flex-col bg-bg">
@@ -135,6 +117,15 @@ export function UVEditor() {
               Texture
             </button>
           )}
+          <button
+            type="button"
+            data-testid="uv-editor-fit"
+            onClick={reset}
+            className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] normal-case text-fg/50 transition-colors hover:text-fg/80"
+            title="Fit to view (or double-click the canvas)"
+          >
+            ⤢ Fit
+          </button>
         </span>
         <span data-testid="uv-editor-status" className="text-fg/50 normal-case">
           {status}
@@ -152,14 +143,19 @@ export function UVEditor() {
 }
 
 /** Paint the 2D canvas: 0..1 grid, axis labels, and any polygon outlines.
- *  Pure given (width, height, polygons, backdrop) — testable separately if needed. */
+ *  Pure given (width, height, polygons, backdrop, zoom). The view transform
+ *  (pan/zoom) is applied by the canvas before this runs; `zoom` lets the
+ *  hairlines + labels stay constant on-screen (divide by zoom) while the
+ *  texture backdrop scales — so zooming in inspects texels, not fat lines. */
 function drawUVCanvas(
   ctx: CanvasRenderingContext2D,
   cssW: number,
   cssH: number,
   polygons: (readonly (readonly [number, number])[])[],
   backdrop: { image: CanvasImageSource | null; flipY: boolean } | null,
+  zoom: number,
 ) {
+  const hair = 1 / zoom; // a 1px hairline regardless of zoom
   // Background.
   ctx.fillStyle = '#0a0a0a';
   ctx.fillRect(0, 0, cssW, cssH);
@@ -189,7 +185,7 @@ function drawUVCanvas(
 
   // Sub-grid (every 0.1).
   ctx.strokeStyle = '#1f1f1f';
-  ctx.lineWidth = 1;
+  ctx.lineWidth = hair;
   for (let i = 1; i < 10; i++) {
     const f = i / 10;
     ctx.beginPath();
@@ -202,21 +198,21 @@ function drawUVCanvas(
 
   // Outer 0..1 frame.
   ctx.strokeStyle = '#3a3a4a';
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = 1.4 * hair;
   ctx.strokeRect(ox, oy, sz, sz);
 
-  // Axis labels.
+  // Axis labels — kept constant on-screen (font + offsets divided by zoom).
   ctx.fillStyle = '#888';
-  ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText('U=0', ox - 4, oy + sz + 14);
-  ctx.fillText('U=1', ox + sz - 14, oy + sz + 14);
-  ctx.fillText('V=0', ox - 28, oy + sz);
-  ctx.fillText('V=1', ox - 28, oy + 8);
+  ctx.font = `${10 * hair}px ui-monospace, monospace`;
+  ctx.fillText('U=0', ox - 4 * hair, oy + sz + 14 * hair);
+  ctx.fillText('U=1', ox + sz - 14 * hair, oy + sz + 14 * hair);
+  ctx.fillText('V=0', ox - 28 * hair, oy + sz);
+  ctx.fillText('V=1', ox - 28 * hair, oy + 8 * hair);
 
   // UV polygons. canvas Y is top-down; UV V is bottom-up — flip vertically
   // so V=0 sits at the bottom of the visible square (matches Blender / glTF).
   ctx.strokeStyle = '#5af07a';
-  ctx.lineWidth = 1;
+  ctx.lineWidth = hair;
   for (const poly of polygons) {
     ctx.beginPath();
     poly.forEach(([u, v], i) => {
