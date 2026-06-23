@@ -82,11 +82,11 @@ test.describe('#231 Inc 3.2 — multi-camera active model', () => {
     await expect(page.locator(`[data-testid="scene-tree-row-${SEED}"]`)).toBeVisible();
     await expect(page.locator(`[data-testid="scene-tree-row-${CAM2}"]`)).toBeVisible();
 
-    // Camera rows are drag-INERT (scene.camera is a single socket; reparent is
-    // Inc 3.3). A draggable camera-on-camera drop would corrupt the single binding.
+    // Camera rows are draggable (Inc 3.3 reparent into/out of a Group) but never
+    // REORDER (scene.camera is a single socket — canDropOn rejects it).
     await expect(page.locator(`[data-testid="scene-tree-row-${CAM2}"]`)).toHaveAttribute(
       'draggable',
-      'false',
+      'true',
     );
 
     // The seed camera is active (direct-wired) → solid-triangle marker on its row;

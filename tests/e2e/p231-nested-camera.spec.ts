@@ -5,12 +5,38 @@
 // nested cameras (mirrors p231-grouped-light for lights).
 
 import { expect, test } from './_fixtures';
-import type { Page } from '@playwright/test';
+import type { JSHandle, Page } from '@playwright/test';
 
+interface CamRef {
+  node: string;
+}
 interface W {
-  __basher_dag: { getState: () => { dispatch: (op: unknown) => void } };
+  __basher_dag: {
+    getState: () => {
+      dispatch: (op: unknown) => void;
+      state: { nodes: Record<string, { inputs: { children?: CamRef[] } }> };
+    };
+  };
   __basher_view_camera?: () => { position: [number, number, number]; lookThrough: boolean } | null;
 }
+
+async function dragRowOnto(page: Page, srcId: string, dstId: string) {
+  const dt: JSHandle = await page.evaluateHandle(() => new DataTransfer());
+  const src = page.locator(`[data-testid="scene-tree-row-${srcId}"]`);
+  const dst = page.locator(`[data-testid="scene-tree-row-${dstId}"]`);
+  await src.dispatchEvent('dragstart', { dataTransfer: dt });
+  await dst.dispatchEvent('dragover', { dataTransfer: dt });
+  await dst.dispatchEvent('drop', { dataTransfer: dt });
+}
+
+const groupChildren = (page: Page, groupId: string) =>
+  page.evaluate(
+    (g) =>
+      ((window as unknown as W).__basher_dag.getState().state.nodes[g]?.inputs.children ?? []).map(
+        (r) => r.node,
+      ),
+    groupId,
+  );
 
 const GRP = 'n_p231nc_grp';
 const CAM = 'n_p231nc_cam';
@@ -77,5 +103,49 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
       .toBe('5,1,0');
 
     await page.screenshot({ path: 'test-results/p231-nested-camera.png' });
+  });
+
+  test('a camera drags into a Group and back out (outliner reparent)', async ({
+    page,
+  }: {
+    page: Page;
+  }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), {
+      timeout: 15000,
+    });
+
+    // A Group + a floating top-level camera (both project as outliner rows).
+    await page.evaluate(
+      ({ grp, cam }) => {
+        const d = (op: unknown) => (window as unknown as W).__basher_dag.getState().dispatch(op);
+        d({ type: 'addNode', nodeId: grp, nodeType: 'Group', params: { position: [4, 0, 0] } });
+        d({
+          type: 'connect',
+          from: { node: grp, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        });
+        d({
+          type: 'addNode',
+          nodeId: cam,
+          nodeType: 'PerspectiveCamera',
+          params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
+        });
+      },
+      { grp: GRP, cam: CAM },
+    );
+
+    await expect(page.locator(`[data-testid="scene-tree-row-${CAM}"]`)).toBeVisible();
+    expect(await groupChildren(page, GRP)).not.toContain(CAM);
+
+    // Drag the camera onto the Group → it joins the Group's children (parented).
+    await dragRowOnto(page, CAM, GRP);
+    await expect.poll(() => groupChildren(page, GRP)).toContain(CAM);
+
+    // Drag the (now-nested) camera back onto the Scene root → leaves the Group
+    // (floating top-level again, still enumerated).
+    await dragRowOnto(page, CAM, 'n_scene');
+    await expect.poll(() => groupChildren(page, GRP)).not.toContain(CAM);
+    await expect(page.locator(`[data-testid="scene-tree-row-${CAM}"]`)).toBeVisible();
   });
 });

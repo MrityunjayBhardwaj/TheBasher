@@ -541,13 +541,37 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     return true;
   }
 
+  // #231 Inc 3.3 — camera reparent. A camera has NO scene-level list socket (it
+  // wires to `scene.camera`, a single ref, managed by Set Active) — so its parent
+  // is purely Group membership: nested in a Group (`parent.socket === 'children'`)
+  // or floating top-level (`parent.socket === 'camera'`, the enumeration fiction).
+  // Reparent moves ONLY that Group.children membership; the active (`scene.camera`)
+  // edge is independent and untouched. Returns the move kind or null.
+  //   - 'into' : connect into dstRow (a Group), disconnecting a prior Group edge.
+  //   - 'root' : a NESTED camera dropped on the Scene root → disconnect from its
+  //              Group → floating top-level (still enumerated + still active if it was).
+  function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
+    if (!srcRow.nodeType.endsWith('Camera')) return null;
+    if (dstRow.key === srcRow.key) return null;
+    if (dstRow.nodeType === 'Group') {
+      return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current group
+    }
+    if (dstRow.depth === 0) return srcRow.parent?.socket === 'children' ? 'root' : null; // unparent
+    return null;
+  }
+
   function onDragOver(e: DragEvent, dstRow: TreeRow) {
     if (!isTreeRowDrag(e)) return;
     if (!dragKey) return;
     const srcRow = rows.find((r) => r.key === dragKey);
     if (!srcRow || srcRow === dstRow) return;
     // Reparent takes precedence when dst is a Group/Scene the node isn't already in.
-    if (!canReparent(srcRow, dstRow) && !canDropOn(srcRow, dstRow)) return;
+    if (
+      !canReparent(srcRow, dstRow) &&
+      !canDropOn(srcRow, dstRow) &&
+      !cameraReparent(srcRow, dstRow)
+    )
+      return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setHoverKey(dstRow.key);
@@ -563,6 +587,47 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     if (!srcRow || !srcRow.parent) return;
 
     const ref = { node: srcRow.nodeId, socket: 'out' };
+
+    // #231 Inc 3.3 — camera reparent (handled FIRST; cameras never reorder/reparent
+    // via the list path — they have no scene-level list socket). Moves Group.children
+    // membership only; the active (`scene.camera`) edge is untouched.
+    const camMove = cameraReparent(srcRow, dstRow);
+    if (camMove === 'into') {
+      const dstList = state.nodes[dstRow.nodeId]?.inputs.children;
+      const appendIndex = Array.isArray(dstList) ? dstList.length : 0;
+      const ops: Op[] = [];
+      // If it was already nested in a Group, disconnect that edge first.
+      if (srcRow.parent?.socket === 'children') {
+        ops.push({
+          type: 'disconnect',
+          from: ref,
+          to: { node: srcRow.parent.nodeId, socket: 'children' },
+        });
+      }
+      ops.push({
+        type: 'connect',
+        from: ref,
+        to: { node: dstRow.nodeId, socket: 'children' },
+        index: appendIndex,
+      });
+      dispatchAtomic(ops, 'user', 'parent camera to group');
+      return;
+    }
+    if (camMove === 'root') {
+      // Unparent a nested camera → floating top-level (disconnect its Group edge).
+      dispatchAtomic(
+        [
+          {
+            type: 'disconnect',
+            from: ref,
+            to: { node: srcRow.parent!.nodeId, socket: 'children' },
+          },
+        ],
+        'user',
+        'unparent camera',
+      );
+      return;
+    }
 
     // #227 — REPARENT: move into a Group / the Scene root (different parent).
     // disconnect from the old parent socket, connect at the END of the new
@@ -656,9 +721,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               data-expanded={hasChildTree ? isExpanded : undefined}
               // Drag-reorder is inert while filtering: a filtered list is not the
               // contiguous sibling set, so a dropped index would be wrong.
-              // #231 Inc 3.2 — camera rows are drag-INERT: `scene.camera` is a
-              // single socket (no list reorder), and camera reparent is Inc 3.3.
-              draggable={Boolean(row.parent) && !filtering && row.parent?.socket !== 'camera'}
+              // #231 Inc 3.3 — camera rows ARE draggable now (reparent into / out of
+              // a Group via the camera-specific onDrop path); they still never
+              // REORDER (canDropOn rejects the single `scene.camera` socket).
+              draggable={Boolean(row.parent) && !filtering}
               onDragStart={(e) => onDragStart(e, row)}
               onDragEnd={onDragEnd}
               onDragOver={(e) => onDragOver(e, row)}
