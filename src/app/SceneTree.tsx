@@ -472,27 +472,45 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     );
   }
 
-  // #227 Slice 1 — the `children` Mesh-list socket a row can RECEIVE the dragged
-  // node into (reparent target): a Group, or the Scene root (depth 0). Both type
-  // `children` as a Mesh list, so any scene-child row is type-compatible. Returns
-  // null for rows that can't hold scene children (leaves, Transform/Material
+  // #231 Inc 2a — a light's "home list" on the Scene is `lights` (the rich
+  // top-level band: helpers, direct channels, Track-To), a mesh's is `children`.
+  // A Group only has `children`, so a light dropped into a Group goes there.
+  const LIGHT_NODE_TYPES = new Set([
+    'DirectionalLight',
+    'PointLight',
+    'SpotLight',
+    'AreaLight',
+    'AmbientLight',
+  ]);
+
+  // #227 Slice 1 — the list socket a row can RECEIVE the dragged node into
+  // (reparent target): a Group's `children`, or one of the Scene root's lists.
+  // #231 Inc 2a — the Scene-root target is kind-aware: a light rejoins
+  // `scene.lights`, everything else `scene.children` (so unparenting a grouped
+  // light returns it to the rich light band, not the generic children band).
+  // Returns null for rows that can't hold children (leaves, Transform/Material
   // wrappers — single `target` socket, glTF children).
-  function reparentSocket(dstRow: TreeRow): { node: NodeId; socket: string } | null {
+  function reparentSocket(srcRow: TreeRow, dstRow: TreeRow): { node: NodeId; socket: string } | null {
     if (dstRow.nodeType === 'Group') return { node: dstRow.nodeId, socket: 'children' };
-    if (dstRow.depth === 0) return { node: dstRow.nodeId, socket: 'children' }; // Scene root
+    if (dstRow.depth === 0) {
+      const socket = LIGHT_NODE_TYPES.has(srcRow.nodeType) ? 'lights' : 'children';
+      return { node: dstRow.nodeId, socket }; // Scene root
+    }
     return null;
   }
 
-  // Can the dragged row be re-parented INTO dstRow's children? Requires: the src
-  // is a real scene child on the Mesh `children` list (glTF children have no
-  // parent → inert); dst is a Group/Scene; dst is NOT already src's parent (no-op);
-  // and dst is NOT src itself or one of src's descendants (cycle guard via the
-  // row key path — a descendant's key is prefixed by the src key).
+  // Can the dragged row be re-parented INTO dstRow? Requires: the src is a real
+  // scene child on the `children` OR `lights` list (#231 — a top-level light hangs
+  // off `lights`; glTF children have no parent → inert); dst is a Group/Scene; dst
+  // is NOT already src's parent socket (no-op); and dst is NOT src itself or one of
+  // src's descendants (cycle guard via the row key path — a descendant's key is
+  // prefixed by the src key).
   function canReparent(srcRow: TreeRow, dstRow: TreeRow): boolean {
-    if (!srcRow.parent || srcRow.parent.socket !== 'children') return false;
-    const target = reparentSocket(dstRow);
+    if (!srcRow.parent || (srcRow.parent.socket !== 'children' && srcRow.parent.socket !== 'lights'))
+      return false;
+    const target = reparentSocket(srcRow, dstRow);
     if (!target) return false;
-    if (target.node === srcRow.parent.nodeId) return false;
+    if (target.node === srcRow.parent.nodeId && target.socket === srcRow.parent.socket) return false;
     if (dstRow.key === srcRow.key || dstRow.key.startsWith(`${srcRow.key}/`)) return false;
     return true;
   }
@@ -524,9 +542,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     // disconnect from the old parent socket, connect at the END of the new
     // children list (a different list → no index-shift to compensate).
     if (canReparent(srcRow, dstRow)) {
-      const target = reparentSocket(dstRow)!;
-      const dstChildren = state.nodes[target.node]?.inputs.children;
-      const appendIndex = Array.isArray(dstChildren) ? dstChildren.length : 0;
+      const target = reparentSocket(srcRow, dstRow)!;
+      // #231 — append at the END of the TARGET socket's list (children OR lights).
+      const dstList = state.nodes[target.node]?.inputs[target.socket];
+      const appendIndex = Array.isArray(dstList) ? dstList.length : 0;
       const ops: Op[] = [
         { type: 'disconnect', from: ref, to: { node: srcRow.parent.nodeId, socket: srcRow.parent.socket } },
         { type: 'connect', from: ref, to: target, index: appendIndex },

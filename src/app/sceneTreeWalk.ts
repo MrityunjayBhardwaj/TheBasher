@@ -221,5 +221,21 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
       });
     });
   }
+  // #231 Inc 2a — project the scene's direct LIGHTS as depth-1 rows too (Blender
+  // shows lights in the outliner). They were previously invisible here (only
+  // viewport helper-pick selected them). Carrying `parent.socket: 'lights'` lets
+  // a light be drag-reparented into a Group's `children` (cross-socket reparent,
+  // SceneTree.canReparent) and back to the scene's light list.
+  const lights = sceneNode.inputs.lights;
+  if (Array.isArray(lights)) {
+    lights.forEach((ref, i) => {
+      ctx.visited.delete(ref.node);
+      walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
+        nodeId: sceneRef.node,
+        socket: 'lights',
+        index: i,
+      });
+    });
+  }
   return rows;
 }
