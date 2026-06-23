@@ -18,6 +18,7 @@
 // V8 file-rooted: src/app/stores/. No DAG mutation.
 
 import { create } from 'zustand';
+import type { RenderPassKind } from '../../render/renderToImage';
 
 export type RenderResultStatus = 'idle' | 'rendering' | 'ready' | 'error';
 export type RenderResultSource = 'render' | 'ai';
@@ -29,17 +30,22 @@ export interface RenderResultState {
   width: number;
   height: number;
   source: RenderResultSource | null;
+  /** Which control pass the shown result is (beauty/depth/normal). The pane's
+   *  pass selector reads this to highlight the active pass and to re-render the
+   *  SAME pass when "Render" is pressed. Defaults to 'beauty'. */
+  pass: RenderPassKind;
   /** Human-readable failure reason when status === 'error'. */
   error: string | null;
 }
 
 export interface RenderResultStore extends RenderResultState {
-  setRendering(): void;
+  setRendering(pass: RenderPassKind): void;
   setResult(result: {
     dataUrl: string;
     width: number;
     height: number;
     source: RenderResultSource;
+    pass: RenderPassKind;
   }): void;
   setError(message: string): void;
 }
@@ -50,17 +56,18 @@ const INITIAL: RenderResultState = {
   width: 0,
   height: 0,
   source: null,
+  pass: 'beauty',
   error: null,
 };
 
 export const useRenderResultStore = create<RenderResultStore>((set) => ({
   ...INITIAL,
 
-  setRendering() {
-    set({ status: 'rendering', error: null });
+  setRendering(pass) {
+    set({ status: 'rendering', pass, error: null });
   },
-  setResult({ dataUrl, width, height, source }) {
-    set({ status: 'ready', dataUrl, width, height, source, error: null });
+  setResult({ dataUrl, width, height, source, pass }) {
+    set({ status: 'ready', dataUrl, width, height, source, pass, error: null });
   },
   setError(message) {
     set({ status: 'error', error: message });

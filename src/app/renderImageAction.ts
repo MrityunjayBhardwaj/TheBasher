@@ -29,7 +29,7 @@ import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
 import type { RenderOutputValue } from '../nodes/types';
 import { DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH } from '../nodes/RenderOutput';
-import { renderSceneToPngBlob } from '../render/renderToImage';
+import { type RenderPassKind, renderSceneToPngBlob } from '../render/renderToImage';
 import { useThreeRef } from './character/threeRef';
 import { downloadBlob } from './downloadBlob';
 import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
@@ -48,7 +48,7 @@ export interface RenderImageResult {
 /** Core — render the active project's production frame to a PNG Blob. Returns
  *  null when the viewport isn't ready. Shared by the download action and the
  *  DEV inspection seam so they render through one identical path. */
-export async function renderActiveProjectBlob(): Promise<{
+export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): Promise<{
   blob: Blob;
   width: number;
   height: number;
@@ -88,7 +88,18 @@ export async function renderActiveProjectBlob(): Promise<{
   // when off → the fast manual render path. (Animated DoF is a future follow-up
   // — focus/aperture read static here; framing is the #190 scope.)
   const dof = resolveCameraDof(activeCamera);
-  const blob = await renderSceneToPngBlob({ gl, scene, pose, width, height, postFx, dof });
+  // Control passes (depth/normal) ignore DoF — they encode geometry, not a
+  // photographic frame; the override path renders raw values without the bokeh.
+  const blob = await renderSceneToPngBlob({
+    gl,
+    scene,
+    pose,
+    width,
+    height,
+    postFx,
+    dof: pass === 'beauty' ? dof : null,
+    pass,
+  });
   return { blob, width, height };
 }
 
@@ -100,7 +111,9 @@ export async function renderActiveProjectBlob(): Promise<{
  * image in `renderResultStore`. Saving is a separate explicit action
  * (`downloadRenderResult`). Returns a result so callers can toast the outcome.
  */
-export async function renderActiveProjectToView(): Promise<RenderImageResult> {
+export async function renderActiveProjectToView(
+  pass: RenderPassKind = 'beauty',
+): Promise<RenderImageResult> {
   // Guard against a double-fire while a render is already in flight.
   if (useRenderResultStore.getState().status === 'rendering') {
     return { ok: false, reason: 'already-rendering' };
@@ -109,9 +122,9 @@ export async function renderActiveProjectToView(): Promise<RenderImageResult> {
   // shows "Rendering…" immediately.
   useEditorStore.getState().setSpace('uv');
   useTwoDViewStore.getState().setMode('render');
-  useRenderResultStore.getState().setRendering();
+  useRenderResultStore.getState().setRendering(pass);
 
-  const out = await renderActiveProjectToDataUrl();
+  const out = await renderActiveProjectToDataUrl(pass);
   if (!out) {
     useRenderResultStore.getState().setError('Viewport isn’t ready yet — try again in a moment.');
     return { ok: false, reason: 'viewport-not-ready' };
@@ -121,6 +134,7 @@ export async function renderActiveProjectToView(): Promise<RenderImageResult> {
     width: out.width,
     height: out.height,
     source: 'render',
+    pass,
   });
   return { ok: true, width: out.width, height: out.height };
 }
@@ -182,12 +196,12 @@ export async function renderToViewWithFeedback(): Promise<RenderImageResult> {
  *     size / no-chrome. That window install is H65-safe (only under
  *     import.meta.env.DEV in boot.ts); the function itself leaks nothing.
  */
-export async function renderActiveProjectToDataUrl(): Promise<{
+export async function renderActiveProjectToDataUrl(pass: RenderPassKind = 'beauty'): Promise<{
   width: number;
   height: number;
   dataUrl: string;
 } | null> {
-  const out = await renderActiveProjectBlob();
+  const out = await renderActiveProjectBlob(pass);
   if (!out) return null;
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

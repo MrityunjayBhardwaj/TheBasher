@@ -14,6 +14,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { downloadRenderResult, renderActiveProjectToView } from './renderImageAction';
 import { useRenderResultStore } from './stores/renderResultStore';
 import { usePanZoomCanvas } from './usePanZoomCanvas';
+import type { RenderPassKind } from '../render/renderToImage';
+
+/** The control passes the pane can render + eyeball (ComfyUI Inc 1). */
+const PASS_OPTIONS: readonly { value: RenderPassKind; label: string }[] = [
+  { value: 'beauty', label: 'Beauty' },
+  { value: 'depth', label: 'Depth' },
+  { value: 'normal', label: 'Normal' },
+];
 
 export function RenderResultView() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -26,6 +34,7 @@ export function RenderResultView() {
   const width = useRenderResultStore((s) => s.width);
   const height = useRenderResultStore((s) => s.height);
   const source = useRenderResultStore((s) => s.source);
+  const pass = useRenderResultStore((s) => s.pass);
   const error = useRenderResultStore((s) => s.error);
 
   const rendering = status === 'rendering';
@@ -52,6 +61,7 @@ export function RenderResultView() {
   );
   const { reset } = usePanZoomCanvas(canvasRef, draw);
 
+  const passLabel = PASS_OPTIONS.find((p) => p.value === pass)?.label ?? '';
   const dims = width > 0 && height > 0 ? `${width}×${height}` : '';
   const statusText =
     status === 'rendering'
@@ -59,7 +69,7 @@ export function RenderResultView() {
       : status === 'error'
         ? (error ?? 'Render failed.')
         : status === 'ready'
-          ? `${dims}${source === 'ai' ? ' · AI' : ''}`
+          ? `${dims} · ${passLabel}${source === 'ai' ? ' · AI' : ''}`
           : 'No render yet — press Render.';
 
   return (
@@ -67,13 +77,34 @@ export function RenderResultView() {
       <header className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-fg/70">
         <span className="flex items-center gap-2">
           <span>Render Result</span>
+          {/* Control-pass selector (ComfyUI Inc 1): switch beauty/depth/normal
+              and re-render so the geometry passes feeding the ComfyUI bridge can
+              be scrubbed + eyeballed (observation, not inference). */}
+          <span className="flex items-center gap-0.5" role="group" aria-label="Render pass">
+            {PASS_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                data-testid={`render-result-pass-${opt.value}`}
+                data-active={pass === opt.value || undefined}
+                disabled={rendering}
+                onClick={() => void renderActiveProjectToView(opt.value)}
+                className={`rounded px-1.5 py-0.5 text-[10px] normal-case transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  pass === opt.value ? 'bg-accent/15 text-accent' : 'text-fg/60 hover:text-fg'
+                }`}
+                title={`Render the ${opt.label.toLowerCase()} pass at the current playhead`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </span>
           <button
             type="button"
             data-testid="render-result-render"
             disabled={rendering}
-            onClick={() => void renderActiveProjectToView()}
+            onClick={() => void renderActiveProjectToView(pass)}
             className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] normal-case text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
-            title="Render the production frame at the current playhead"
+            title="Re-render the current pass at the current playhead"
           >
             {rendering ? 'Rendering…' : 'Render'}
           </button>

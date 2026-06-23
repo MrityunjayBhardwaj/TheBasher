@@ -43,6 +43,11 @@ import { cameraOrientationQuat } from '../app/cameraOrientation';
 import type { DofEffectSettings } from '../app/cameraDof';
 import type { PostFxConfig } from '../nodes/types';
 
+/** Which control pass to render. 'beauty' is the lit production frame (the #168
+ *  default); 'depth'/'normal' are the ControlNet-style geometry passes the
+ *  ComfyUI bridge consumes (real pixels from the live scene, not stub hashes). */
+export type RenderPassKind = 'beauty' | 'depth' | 'normal';
+
 export interface RenderToImageOptions {
   gl: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -56,6 +61,13 @@ export interface RenderToImageOptions {
    *  exactly (V37 parity); when absent, the fast manual MSAA path is used
    *  unchanged (so non-DoF renders — incl. #168 — are byte-for-byte as before). */
   dof?: DofEffectSettings | null;
+  /** Control pass to render (ComfyUI Inc 1). Defaults to 'beauty' — the lit
+   *  frame, byte-identical to before. 'depth'/'normal' apply a scene-wide
+   *  material override into a RAW target (no tone-map, NoColorSpace) so the
+   *  encoded values are the linear depth ramp / (n+1)/2 normal field a
+   *  ControlNet consumes — and that read back recognizable in the Render Result
+   *  view. Chrome is still excluded by the shared hide-pass. */
+  pass?: RenderPassKind;
 }
 
 /** PURE — build the production render camera from a camera-node pose at the
@@ -227,12 +239,16 @@ export async function renderSceneToImageCanvas(
   });
 
   try {
-    // DoF on → go through the postprocessing EffectComposer so the bokeh
-    // matches the live viewport (V37). DoF off → the fast manual MSAA path,
-    // unchanged (non-DoF renders, incl. #168, are byte-for-byte as before).
-    const buf = opts.dof
-      ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
-      : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
+    // Control pass (depth/normal) → material-override path into a raw target.
+    // Else: DoF on → postprocessing EffectComposer (bokeh matches the viewport,
+    // V37); DoF off → the fast manual MSAA path, byte-for-byte as before.
+    const pass = opts.pass ?? 'beauty';
+    const buf =
+      pass !== 'beauty'
+        ? renderViaPass(gl, scene, camera, width, height, pass, sc.readBuf, samples)
+        : opts.dof
+          ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
+          : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
     const flipped = flipRowsY(buf, width, height);
     // Reuse the scratch ImageData buffer (set() copies into it) → no per-frame
     // 8MB ImageData allocation on the animation path.
@@ -289,6 +305,129 @@ function renderViaManual(
     gl.setRenderTarget(prevTarget);
     gl.toneMapping = prevToneMapping;
     gl.toneMappingExposure = prevExposure;
+  }
+}
+
+/** The bounding sphere of the VISIBLE scene content (chrome already hidden by the
+ *  caller's hide-pass, so invisible objects are skipped — matching exactly what
+ *  renders). Used to normalize the depth pass over the content's own depth range
+ *  rather than the whole camera frustum. Returns null when nothing visible. */
+function visibleContentSphere(scene: THREE.Scene): THREE.Sphere | null {
+  const box = new THREE.Box3();
+  let any = false;
+  scene.traverse((o) => {
+    if (!o.visible) return;
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const bb = mesh.geometry.boundingBox;
+    if (!bb) return;
+    box.union(bb.clone().applyMatrix4(mesh.matrixWorld));
+    any = true;
+  });
+  if (!any || box.isEmpty()) return null;
+  return box.getBoundingSphere(new THREE.Sphere());
+}
+
+/** The [near, far] eye-space range to normalize the depth pass over: the visible
+ *  content's bounding sphere as seen from the camera (centre distance ± radius),
+ *  clamped to the camera's near. Falls back to the camera frustum when nothing
+ *  is visible. This is what turns a far-cube into a real white→black ramp rather
+ *  than a flat silhouette. */
+function depthRange(scene: THREE.Scene, camera: THREE.Camera): { near: number; far: number } {
+  const camNear = (camera as THREE.PerspectiveCamera).near ?? 0.1;
+  const camFar = (camera as THREE.PerspectiveCamera).far ?? 1000;
+  const sphere = visibleContentSphere(scene);
+  if (!sphere || sphere.radius <= 0) return { near: camNear, far: camFar };
+  const dist = camera.position.distanceTo(sphere.center);
+  const near = Math.max(camNear, dist - sphere.radius);
+  const far = Math.max(near + 1e-3, dist + sphere.radius);
+  return { near, far };
+}
+
+/** A scene-wide override that encodes LINEAR eye-space depth normalized over the
+ *  [uNear, uFar] range, inverted so near = white / far = black (the ControlNet
+ *  depth convention). MeshDepthMaterial's BasicDepthPacking writes the non-linear
+ *  `gl_FragCoord.z`, which saturates to ~1 for everything past the near plane
+ *  (→ a near-black, useless ramp) — so we compute view-space distance directly.
+ *  The caller normalizes over the visible CONTENT's depth range (not the whole
+ *  camera frustum) so a small object fills the ramp instead of reading as a flat
+ *  white silhouette (observed: frustum-normalized depth of the default cube was
+ *  a uniform mask). */
+function makeLinearDepthMaterial(near: number, far: number): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uNear: { value: near }, uFar: { value: far } },
+    vertexShader: /* glsl */ `
+      varying float vViewZ;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vViewZ = -mv.z; // distance in front of the camera (eye space)
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uNear;
+      uniform float uFar;
+      varying float vViewZ;
+      void main() {
+        float d = clamp((vViewZ - uNear) / (uFar - uNear), 0.0, 1.0);
+        gl_FragColor = vec4(vec3(1.0 - d), 1.0); // near bright, far dark
+      }`,
+  });
+}
+
+/** Render a CONTROL PASS (depth/normal) via a scene-wide material override into
+ *  a RAW target — NoColorSpace + NoToneMapping — so the read-back bytes are the
+ *  linear values a ControlNet consumes (depth: linear eye-depth ramp, near
+ *  bright; normal: MeshNormalMaterial's view-space (n+1)/2 packed RGB) rather
+ *  than display-curved sRGB. View-space normals are the pragmatic v1 (world-space
+ *  normals refine later by observation). Owns a one-shot target (the pass preview
+ *  isn't the reused animation scratch); restores render target / tone-mapping /
+ *  scene override + background in a finally so the live viewport is untouched.
+ *  The env/HDRI backdrop is dropped (background=null) — not part of a control pass. */
+function renderViaPass(
+  gl: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera,
+  width: number,
+  height: number,
+  pass: Exclude<RenderPassKind, 'beauty'>,
+  readBuf: Uint8Array,
+  samples: number,
+): Uint8Array {
+  const target = new THREE.WebGLRenderTarget(width, height, {
+    samples,
+    colorSpace: THREE.NoColorSpace,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
+  let override: THREE.Material;
+  if (pass === 'depth') {
+    const { near, far } = depthRange(scene, camera);
+    override = makeLinearDepthMaterial(near, far);
+  } else {
+    override = new THREE.MeshNormalMaterial();
+  }
+  const prevTarget = gl.getRenderTarget();
+  const prevToneMapping = gl.toneMapping;
+  const prevOverride = scene.overrideMaterial;
+  const prevBackground = scene.background;
+  try {
+    gl.toneMapping = THREE.NoToneMapping; // raw encoded values, not the ACES curve
+    scene.overrideMaterial = override;
+    scene.background = null; // an env/HDRI backdrop is not part of a control pass
+    gl.setRenderTarget(target);
+    gl.clear();
+    gl.render(scene, camera);
+    gl.readRenderTargetPixels(target, 0, 0, width, height, readBuf);
+    return readBuf;
+  } finally {
+    gl.setRenderTarget(prevTarget);
+    gl.toneMapping = prevToneMapping;
+    scene.overrideMaterial = prevOverride;
+    scene.background = prevBackground;
+    override.dispose();
+    target.dispose();
   }
 }
 
