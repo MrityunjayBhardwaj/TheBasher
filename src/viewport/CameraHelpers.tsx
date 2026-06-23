@@ -140,6 +140,24 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
     return g;
   }, [segs]);
 
+  // #231 Inc 3.2 — the ACTIVE camera draws a SOLID FILLED triangle on the top of
+  // its frustum (Blender's filled-triangle active-camera indicator), over the wire
+  // "up" triangle. Built from the same hh/hw/z the segments use so it sits exactly
+  // on the wire triangle. null (no fill) for any non-active camera.
+  const activeTriGeom = useMemo(() => {
+    if (!active) return null;
+    const hh =
+      pose.kind === 'OrthographicCamera'
+        ? FRUSTUM_DEPTH / (Number.isFinite(pose.fov) && pose.fov > 0 ? pose.fov : 1)
+        : Math.tan((THREE.MathUtils.degToRad(pose.fov) || 0) / 2) * FRUSTUM_DEPTH;
+    const hw = hh * FRUSTUM_ASPECT;
+    const z = pose.kind === 'OrthographicCamera' ? 0 : -FRUSTUM_DEPTH;
+    const tri = [-hw * 0.5, hh, z, hw * 0.5, hh, z, 0, hh * 1.5, z];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(tri, 3));
+    return g;
+  }, [active, pose.kind, pose.fov]);
+
   // Approx base half-extents for the invisible hitbox (perspective only; the
   // ortho box hitbox uses the same shape, close enough for picking).
   const halfH = Math.tan((THREE.MathUtils.degToRad(pose.fov) || 0) / 2) * FRUSTUM_DEPTH;
@@ -158,6 +176,13 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
         <primitive object={geom} attach="geometry" />
         <lineBasicMaterial color={color} />
       </lineSegments>
+      {/* #231 Inc 3.2 — solid filled triangle marking the ACTIVE camera. */}
+      {activeTriGeom ? (
+        <mesh>
+          <primitive object={activeTriGeom} attach="geometry" />
+          <meshBasicMaterial color={COLOR_ACTIVE} side={THREE.DoubleSide} />
+        </mesh>
+      ) : null}
       {/* Small body box at the apex so the camera reads as an object. */}
       <mesh>
         <boxGeometry args={[BODY * 2, BODY * 2, BODY * 2]} />

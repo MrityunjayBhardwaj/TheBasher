@@ -26,6 +26,8 @@ import { RenameInput } from './RenameInput';
 import { SceneTreeIcon } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
+import { selectActiveCameraNode } from './activeCamera';
+import { buildSetActiveCameraOps } from './setActiveCamera';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
@@ -113,6 +115,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
   const allRows = useMemo(() => buildSceneTreeRows(state), [state]);
+  // #231 Inc 3.2 — the scene's active camera (resolved THROUGH any CameraSelect,
+  // V79). Drives the solid-triangle marker + which camera rows offer "Set Active".
+  const activeCameraId = useMemo(() => selectActiveCameraNode(state)?.id ?? null, [state]);
   const query = filter.trim().toLowerCase();
   const filtering = query.length > 0;
 
@@ -436,6 +441,16 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     );
   }
 
+  // #231 Inc 3.2 — make a camera the scene's active camera (Blender Ctrl-Numpad0).
+  // The ONE op-builder lazily inserts a CameraSelect when 2+ cameras exist (V79);
+  // a single camera wires directly. No-op when already active (null → nothing
+  // dispatched). Closes the menu when invoked from there.
+  function setActiveCameraAction(nodeId: NodeId, closeMenu = false) {
+    const ops = buildSetActiveCameraOps(state, nodeId);
+    if (ops && ops.length > 0) dispatchAtomic(ops, 'user', 'set active camera');
+    if (closeMenu) setCtxMenu(null);
+  }
+
   function ctxDelete(nodeId: NodeId) {
     const ids = ctxTargetIds(nodeId);
     const ops = buildDeleteNodesOps(state, ids);
@@ -490,7 +505,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // light returns it to the rich light band, not the generic children band).
   // Returns null for rows that can't hold children (leaves, Transform/Material
   // wrappers — single `target` socket, glTF children).
-  function reparentSocket(srcRow: TreeRow, dstRow: TreeRow): { node: NodeId; socket: string } | null {
+  function reparentSocket(
+    srcRow: TreeRow,
+    dstRow: TreeRow,
+  ): { node: NodeId; socket: string } | null {
     if (dstRow.nodeType === 'Group') return { node: dstRow.nodeId, socket: 'children' };
     if (dstRow.depth === 0) {
       const socket = LIGHT_NODE_TYPES.has(srcRow.nodeType) ? 'lights' : 'children';
@@ -506,11 +524,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // src's descendants (cycle guard via the row key path — a descendant's key is
   // prefixed by the src key).
   function canReparent(srcRow: TreeRow, dstRow: TreeRow): boolean {
-    if (!srcRow.parent || (srcRow.parent.socket !== 'children' && srcRow.parent.socket !== 'lights'))
+    if (
+      !srcRow.parent ||
+      (srcRow.parent.socket !== 'children' && srcRow.parent.socket !== 'lights')
+    )
       return false;
     const target = reparentSocket(srcRow, dstRow);
     if (!target) return false;
-    if (target.node === srcRow.parent.nodeId && target.socket === srcRow.parent.socket) return false;
+    if (target.node === srcRow.parent.nodeId && target.socket === srcRow.parent.socket)
+      return false;
     if (dstRow.key === srcRow.key || dstRow.key.startsWith(`${srcRow.key}/`)) return false;
     return true;
   }
@@ -547,7 +569,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       const dstList = state.nodes[target.node]?.inputs[target.socket];
       const appendIndex = Array.isArray(dstList) ? dstList.length : 0;
       const ops: Op[] = [
-        { type: 'disconnect', from: ref, to: { node: srcRow.parent.nodeId, socket: srcRow.parent.socket } },
+        {
+          type: 'disconnect',
+          from: ref,
+          to: { node: srcRow.parent.nodeId, socket: srcRow.parent.socket },
+        },
         { type: 'connect', from: ref, to: target, index: appendIndex },
       ];
       dispatchAtomic(ops, 'user', 'reparent scene node');
@@ -605,7 +631,13 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // Scene's direct children) — the renderer skips exactly these by source
           // node id, so the affordance can't lie. `hidden` dims the row + flips the
           // glyph. Suppressed while filtering (same as the chevron).
-          const isHideable = !filtering && row.depth === 1;
+          // #231 Inc 3.2 — a camera row shows the active-marker / Set-Active
+          // affordance instead of the eye (the eye toggles `meta.hidden`, which the
+          // renderer only honours for top-level CHILDREN — a camera frustum isn't in
+          // that band, so the eye would be a lying affordance on a camera).
+          const isCamera = row.nodeType.endsWith('Camera');
+          const isActiveCamera = isCamera && row.nodeId === activeCameraId;
+          const isHideable = !filtering && row.depth === 1 && !isCamera;
           const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
           return (
             <li
@@ -686,6 +718,34 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     {row.display}
                   </span>
                 )}
+                {isActiveCamera ? (
+                  // The scene's active camera — a persistent solid triangle marker
+                  // (Blender's filled-triangle active-camera indicator).
+                  <span
+                    data-testid={`scene-tree-active-camera-${row.nodeId}`}
+                    title="Active camera"
+                    aria-label="Active camera"
+                    className="shrink-0 text-[11px] leading-none text-accent"
+                  >
+                    ▲
+                  </span>
+                ) : isCamera ? (
+                  // Any other camera — hover-reveal "Set Active" (hollow triangle).
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    data-testid={`scene-tree-set-active-${row.nodeId}`}
+                    aria-label="Set active camera"
+                    title="Set active camera"
+                    onClick={(e) => {
+                      e.stopPropagation(); // set-active only — do NOT re-select
+                      setActiveCameraAction(row.nodeId);
+                    }}
+                    className="shrink-0 text-[11px] leading-none text-fg-dim opacity-0 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover:opacity-100"
+                  >
+                    △
+                  </button>
+                ) : null}
                 {isHideable ? (
                   <button
                     type="button"
@@ -739,7 +799,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                 >
                   Rename
                 </CtxItem>
-                <CtxItem testId="outliner-ctx-duplicate" onClick={() => ctxDuplicate(ctxMenu.nodeId)}>
+                <CtxItem
+                  testId="outliner-ctx-duplicate"
+                  onClick={() => ctxDuplicate(ctxMenu.nodeId)}
+                >
                   Duplicate
                 </CtxItem>
                 <CtxItem
@@ -748,6 +811,16 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                 >
                   Select Hierarchy
                 </CtxItem>
+                {/* #231 Inc 3.2 — only on a camera that isn't already active. */}
+                {state.nodes[ctxMenu.nodeId]?.type.endsWith('Camera') &&
+                ctxMenu.nodeId !== activeCameraId ? (
+                  <CtxItem
+                    testId="outliner-ctx-set-active-camera"
+                    onClick={() => setActiveCameraAction(ctxMenu.nodeId, true)}
+                  >
+                    Set Active Camera
+                  </CtxItem>
+                ) : null}
                 <div className="my-1 h-px bg-border" />
                 <CtxItem testId="outliner-ctx-delete" onClick={() => ctxDelete(ctxMenu.nodeId)}>
                   {ctxTargetIds(ctxMenu.nodeId).length > 1

@@ -58,6 +58,7 @@ import { useRenameStore } from './stores/renameStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
+import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
@@ -326,6 +327,19 @@ export function KeyboardShortcuts() {
       if (cmd && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault();
         useSelectionStore.getState().invert(getViewportSelectableIds(useDagStore.getState().state));
+        return;
+      }
+      // Ctrl/Cmd + 0 — set the selected camera active (#231 Inc 3.2, Blender's
+      // Ctrl-Numpad0). e.key === '0' is identical for the number row and numpad.
+      // No-op when the selection isn't a camera (or is already active → null ops).
+      if (cmd && e.key === '0') {
+        e.preventDefault();
+        const primary = useSelectionStore.getState().primaryNodeId;
+        if (primary) {
+          const dag = useDagStore.getState();
+          const ops = buildSetActiveCameraOps(dag.state, primary);
+          if (ops && ops.length > 0) dag.dispatchAtomic(ops, 'user', 'set active camera');
+        }
         return;
       }
 

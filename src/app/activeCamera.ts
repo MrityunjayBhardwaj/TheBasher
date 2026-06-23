@@ -133,6 +133,18 @@ function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: n
   return base;
 }
 
+/** Every camera NODE id in the DAG, in stable enumeration order (Object.values
+ *  insertion order). Blender draws every camera object, not just the active one:
+ *  the viewport frustums (#165, SceneFromDAG), the outliner camera rows (#231 Inc
+ *  3.2), and the `CameraSelect` lazy-insert (`buildSetActiveCameraOps`) all share
+ *  this ONE list so they agree on the camera set + its order (the index a
+ *  CameraSelect addresses by). */
+export function enumerateCameraNodeIds(state: DagState): string[] {
+  return Object.values(state.nodes)
+    .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
+    .map((n) => n.id);
+}
+
 /** Read a camera node's pose from its params, with defensive defaults so a
  *  malformed or pre-field-existed project never throws. Returns null only for
  *  a null node (caller falls back to DEFAULT_CAMERA_POSE). */

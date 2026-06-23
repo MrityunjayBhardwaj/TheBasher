@@ -13,6 +13,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId } from '../core/dag/types';
+import { enumerateCameraNodeIds } from './activeCamera';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -237,5 +238,20 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
       });
     });
   }
+  // #231 Inc 3.2 — project the scene's CAMERAS as depth-1 rows (Blender shows
+  // every camera object in the outliner). Cameras are NOT in children/lights —
+  // they're wired to `scene.camera` (directly or through a `CameraSelect`) — so
+  // enumerate them directly via the SAME list the viewport frustums use
+  // (`enumerateCameraNodeIds`). A camera already shown as a Group child (Inc 3.3)
+  // is in `visited` → skipped, never duplicated. The `parent.socket: 'camera'`
+  // marks these as camera-band rows (the active marker + Set Active read it).
+  enumerateCameraNodeIds(state).forEach((camId, i) => {
+    if (ctx.visited.has(camId)) return;
+    walkOneAsChild(ctx, camId, 1, sceneRef.node, {
+      nodeId: sceneRef.node,
+      socket: 'camera',
+      index: i,
+    });
+  });
   return rows;
 }

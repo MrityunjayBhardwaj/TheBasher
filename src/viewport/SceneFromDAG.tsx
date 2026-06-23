@@ -60,7 +60,11 @@ import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
-import { cameraPoseFromNode, selectActiveCameraNode } from '../app/activeCamera';
+import {
+  cameraPoseFromNode,
+  enumerateCameraNodeIds,
+  selectActiveCameraNode,
+} from '../app/activeCamera';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { resolveCameraDof } from '../app/cameraDof';
 import { degVec3ToRad } from './rotation';
@@ -201,9 +205,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
   // object, not just the active one). They are NOT in value.scene.children —
   // only one camera is wired to scene.camera — so we read them from state.
-  const cameraNodeIds = Object.values(state.nodes)
-    .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
-    .map((n) => n.id);
+  const cameraNodeIds = enumerateCameraNodeIds(state);
   const activeCameraId = selectActiveCameraNode(state)?.id ?? null;
   // UX #12 — the active camera's depth-of-field, resolved through the SAME pure
   // helper the offscreen still uses (cameraDof.ts) so the live bokeh matches the
