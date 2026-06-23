@@ -426,6 +426,30 @@ export function resolveParentWorldMatrix(
   // ONLY to scene.camera (every pre-Inc-3.3 project) is not in scene.children →
   // the walk returns null → byte-identical to the old flat short-circuit. A
   // top-level light is likewise flat (scene.lights) and the walk returns null.
+  //
+  // PERF — a node referenced by NO HIERARCHY socket (`children` for Group/Scene,
+  // `target` for Transform/MaterialOverride — the exact sockets `childEdges`
+  // descends) cannot be a scene-graph descendant, so it has no parent world: return
+  // null WITHOUT the render-root evaluate. This restores the old flat-camera/light
+  // fast path generally (a top-level camera/light is wired to scene.camera/.lights,
+  // NOT children/target), while a NESTED node (Group child OR Transform target)
+  // still walks. Cheap O(N) scan, no evaluate — matters for the uncached per-frame
+  // render-export pose resolve. MUST mirror childEdges' socket set or a genuinely
+  // nested node would be wrongly short-circuited to null (a Transform-nested mesh
+  // is referenced by `target`, not `children`).
+  let nested = false;
+  for (const n of Object.values(state.nodes)) {
+    for (const socket of ['children', 'target'] as const) {
+      const b = n.inputs[socket];
+      const refs = Array.isArray(b) ? b : b ? [b] : [];
+      if (refs.some((r) => (r as NodeRef | undefined)?.node === selectedId)) {
+        nested = true;
+        break;
+      }
+    }
+    if (nested) break;
+  }
+  if (!nested) return null;
 
   const target = state.outputs.render;
   if (!target) return null;
