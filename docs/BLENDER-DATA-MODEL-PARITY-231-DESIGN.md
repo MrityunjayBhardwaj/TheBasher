@@ -159,17 +159,40 @@ re-validate, Increment 1 needs a migration that is still a pure string remap.
   (a mesh could be mis-wired into `lights`). Acceptable transitionally; the
   full fix is Inc 4 (flatten). **OPEN QUESTION Q-A** (see §7).
 
-### Inc 2 — Groupable / parentable lights & cameras (capability A)
-- `GroupValue.children: SceneObject[]`; `GroupR` + `SceneChildNode` render
-  light/camera kinds (reuse `LightNode`; camera body = existing frustum helper).
-- Nested light/camera world transform via #230 `resolveParentWorldMatrix`;
-  DirectChannelsR / ConstrainedR / gizmo for nested lights (the #230 nested path).
-- Outliner: nested lights/cameras project + reparent-drag into a Group
-  (`canReparent` now passes for SceneObject); duplicate/delete already generic.
-- **Observe:** drag a light into a Group → moving the Group moves the light
-  (render + gizmo + world readout agree). e2e + screenshot.
+### Inc 2 — Groupable / parentable lights & cameras (capability A) — SPLIT 2a/2b
+Split into 2a (lights, DONE) and 2b (cameras, deferred to fold with Inc 3) once
+grounding revealed the camera coupling (see the note after 2a).
 
-### Inc 3 — Multi-camera active model (capability B)
+**Inc 2a — LIGHTS ✅ SHIPPED** (`b9a77d3` capability + `7ea7bf9` authoring + `5e6c1c7`
+catalogue):
+- `GroupValue.children: readonly SceneObject[]`; `MeshChild` gains light kind
+  cases → `LightKindR`. A nested light inherits the group's WORLD via `GroupR`'s
+  `<group>` nesting (render == resolver, H40) — the world resolver needed NO
+  change (its `walk`/`childEdges`/`localMatrix` already descend `Group.children`
+  and handle a light's TRS, so nested-light world + the #230 gizmo parent-world
+  resolve through the existing path).
+- Outliner: top-level lights now project as rows (`buildSceneTreeRows` walks
+  `scene.lights`); kind-aware reparent (`SceneTree.canReparent`/`reparentSocket`)
+  — a light drags into a Group's `children` and back to `scene.lights` (its rich
+  band).
+- OBSERVED: `p231-grouped-light` (rendered light at group-composed world [6,0,0]
+  == resolver, new `__basher_light_world_positions` seam) + `p231-light-reparent`.
+- KNOWN-LIMITS (v1): a nested light renders STATIC — its direct-channel
+  animation / Track-To / viewport helper stay on the top-level band (nodes still
+  in the DAG → no data loss; reparent-back restores). [[V78]] status extended.
+
+**Inc 2b — CAMERAS (DEFERRED → fold with Inc 3).** Grounding finding: a camera is
+NOT in `children`/`lights` — it's wired to `Scene.camera`, a SINGLE socket. Making
+a camera groupable cleanly needs Inc 3's model first (cameras coexist + a
+`CameraSelect` picks active), because with one camera socket "a camera nested in a
+group" is awkward to wire. And the nested-camera POSE work — frustum-at-world
+(`resolveWorldTransform` camera branch :290 ignores parent;
+`resolveParentWorldMatrix` short-circuits cameras :419), look-through, render
+camera (all read LOCAL pose via `cameraPoseFromNode`) — is the SAME
+camera-pose-under-parent machinery Inc 3 touches. So do Inc 3 first (or combined),
+then nested-camera pose builds on it.
+
+### Inc 3 — Multi-camera active model (capability B) + cameras-grouping (2b)
 - New `CameraSelect` node (ClipSelect pattern): `cameras: list 'SceneObject'`,
   param `active` (index or name), output single `'SceneObject'` → `Scene.camera`.
 - `selectActiveCameraNode` resolves through `CameraSelect` (fallback to direct
