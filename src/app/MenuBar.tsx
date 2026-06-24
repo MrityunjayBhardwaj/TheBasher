@@ -37,6 +37,7 @@ import { renderToViewWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
 import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { useSettingsStore } from './stores/settingsStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { normalizeViewportClip, useViewportStore, type ShadingMode } from './stores/viewportStore';
 import { saveViewportClip } from './viewportClipPersistence';
@@ -523,6 +524,12 @@ export function MenuBar() {
         <Item label="Open Scene…" onSelect={openSceneFilePicker} testId="menu-file-open-scene" />
         <Item label="Import glTF…" onSelect={openGltfFilePicker} testId="menu-file-import-gltf" />
         <Item label="Import Folder…" onSelect={openImportPicker} testId="menu-file-import" />
+        <Divider />
+        <Item
+          label="Settings…"
+          onSelect={() => useSettingsStore.getState().open()}
+          testId="menu-file-settings"
+        />
       </Menu>
 
       {/* No top-level "Add" menu: the floating viewport toolbar's prominent

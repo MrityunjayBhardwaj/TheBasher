@@ -36,6 +36,9 @@ export interface HttpComfyOptions {
   readonly pollIntervalMs?: number;
   /** Override fetch (test injection). Defaults to globalThis.fetch. */
   readonly fetchImpl?: typeof fetch;
+  /** Optional `Authorization` header value sent on every request (a guarded /
+   *  tunnelled ComfyUI behind auth). Empty/undefined → no header. */
+  readonly authHeader?: string;
 }
 
 interface ComfyHistoryEntry {
@@ -63,6 +66,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
   private readonly pollIntervalMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly clientId: string;
+  private readonly authHeader?: string;
 
   constructor(url: string, opts: HttpComfyOptions = {}) {
     this.url = url.replace(/\/+$/, '');
@@ -71,12 +75,22 @@ export class HttpComfyUICapability implements ComfyUICapability {
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.clientId = `basher_${Math.floor(Date.now() / 1000)}_${Math.floor(Math.random() * 1e6)}`;
+    this.authHeader =
+      opts.authHeader && opts.authHeader.trim() ? opts.authHeader.trim() : undefined;
+  }
+
+  /** Merge the optional Authorization header into a request's headers — applied
+   *  to EVERY call so a guarded server is reachable on all endpoints, not just
+   *  the probe. No-op when no auth is configured. */
+  private headers(base: Record<string, string> = {}): Record<string, string> {
+    return this.authHeader ? { ...base, Authorization: this.authHeader } : base;
   }
 
   async isAvailable(): Promise<boolean> {
     try {
       const res = await this.fetchImpl(`${this.url}/system_stats`, {
         method: 'GET',
+        headers: this.headers(),
       });
       return res.ok;
     } catch {
@@ -99,7 +113,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
       //    poll on.
       const promptRes = await this.fetchImpl(`${this.url}/prompt`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.headers({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ prompt: workflowJson, client_id: this.clientId }),
         signal: controller.signal,
       });
@@ -133,7 +147,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
     // ComfyUI's interrupt is server-wide. We send it best-effort and rely
     // on the server matching by current prompt id internally.
     try {
-      await this.fetchImpl(`${this.url}/interrupt`, { method: 'POST' });
+      await this.fetchImpl(`${this.url}/interrupt`, { method: 'POST', headers: this.headers() });
     } catch {
       // best-effort
     }
@@ -153,6 +167,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
     form.append('overwrite', 'true');
     const res = await this.fetchImpl(`${this.url}/upload/image`, {
       method: 'POST',
+      headers: this.headers(), // no Content-Type: the browser sets the multipart boundary
       body: form,
       signal,
     });
@@ -169,6 +184,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
     while (!signal.aborted) {
       const res = await this.fetchImpl(`${this.url}/history/${jobId}`, {
         method: 'GET',
+        headers: this.headers(),
         signal,
       });
       if (!res.ok) {
@@ -195,6 +211,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
     if (image.subfolder) params.set('subfolder', image.subfolder);
     const res = await this.fetchImpl(`${this.url}/view?${params.toString()}`, {
       method: 'GET',
+      headers: this.headers(),
       signal,
     });
     if (!res.ok) {

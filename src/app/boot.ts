@@ -34,6 +34,7 @@ import {
 } from '../core/project';
 import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/examples';
 import { useRouteStore } from './stores/routeStore';
+import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
@@ -115,12 +116,27 @@ export function getBlenderBridge(): BlenderBridgeCapability {
 export function getComfyCapability(): Promise<ComfyUICapability> {
   if (cachedComfyUI) return Promise.resolve(cachedComfyUI);
   if (!comfyUIPromise) {
-    comfyUIPromise = pickComfyUI().then((cap) => {
-      cachedComfyUI = cap;
-      return cap;
-    });
+    // ComfyUI Inc 2 — target the configured server (settings store), not the
+    // hardcoded default; an empty auth header means none. The session cache is
+    // reset by resetComfyCapability() when the user changes the settings.
+    const { comfyUrl, comfyAuthHeader } = useSettingsStore.getState();
+    comfyUIPromise = pickComfyUI(comfyUrl, { authHeader: comfyAuthHeader || undefined }).then(
+      (cap) => {
+        cachedComfyUI = cap;
+        return cap;
+      },
+    );
   }
   return comfyUIPromise;
+}
+
+/** Forget the cached ComfyUI capability so the next getComfyCapability() re-probes
+ *  the (possibly changed) configured URL/auth. Called when the user saves new
+ *  ComfyUI connection settings — the session cache would otherwise pin the old
+ *  server for the whole session. */
+export function resetComfyCapability(): void {
+  cachedComfyUI = null;
+  comfyUIPromise = null;
 }
 
 /**

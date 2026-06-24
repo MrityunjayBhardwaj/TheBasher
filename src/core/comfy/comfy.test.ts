@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HttpComfyUICapability } from './HttpComfyUICapability';
+import { probeComfyUI } from './index';
 import { StubComfyUICapability } from './StubComfyUICapability';
 import type { ComfyInputs } from './ComfyUICapability';
 
@@ -164,5 +165,77 @@ describe('HttpComfyUICapability', () => {
       },
     });
     await expect(cap.submit({}, baseInputs)).rejects.toThrow(/rejected: 400/);
+  });
+});
+
+describe('auth header (Inc 2 — guarded server)', () => {
+  function captureHeaders() {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      const headers = new Headers(init?.headers);
+      seen.push({ url, auth: headers.get('Authorization') });
+      if (url.endsWith('/system_stats')) return new Response('{}', { status: 200 });
+      return new Response('{}', { status: 200 });
+    };
+    return { seen, fetchImpl };
+  }
+
+  it('sends the Authorization header on every request when authHeader is set', async () => {
+    const { seen, fetchImpl } = captureHeaders();
+    const cap = new HttpComfyUICapability('http://example.invalid', {
+      authHeader: 'Bearer secret',
+      fetchImpl,
+    });
+    await cap.isAvailable();
+    expect(seen.every((c) => c.auth === 'Bearer secret')).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('omits the Authorization header when authHeader is empty/whitespace', async () => {
+    const { seen, fetchImpl } = captureHeaders();
+    const cap = new HttpComfyUICapability('http://example.invalid', {
+      authHeader: '   ',
+      fetchImpl,
+    });
+    await cap.isAvailable();
+    expect(seen.every((c) => c.auth === null)).toBe(true);
+  });
+});
+
+describe('probeComfyUI (Inc 2 — Test Connection)', () => {
+  it('reports reachable + version + device from /system_stats', async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({ system: { comfyui_version: '0.26.0' }, devices: [{ type: 'mps' }] }),
+        { status: 200 },
+      );
+    const res = await probeComfyUI('http://127.0.0.1:8188', {}, fetchImpl);
+    expect(res).toEqual({ reachable: true, version: '0.26.0', device: 'mps' });
+  });
+
+  it('reports unreachable with the status on a non-ok response (e.g. CORS 403)', async () => {
+    const fetchImpl: typeof fetch = async () => new Response('Forbidden', { status: 403 });
+    const res = await probeComfyUI('http://127.0.0.1:8188', {}, fetchImpl);
+    expect(res.reachable).toBe(false);
+    expect(res.error).toContain('403');
+  });
+
+  it('reports unreachable with the error message when fetch throws', async () => {
+    const fetchImpl: typeof fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    const res = await probeComfyUI('http://nope.invalid', {}, fetchImpl);
+    expect(res).toEqual({ reachable: false, error: 'Failed to fetch' });
+  });
+
+  it('forwards the auth header to the probe', async () => {
+    let seenAuth: string | null = null;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      seenAuth = new Headers(init?.headers).get('Authorization');
+      return new Response('{}', { status: 200 });
+    };
+    await probeComfyUI('http://x', { authHeader: 'Bearer t' }, fetchImpl);
+    expect(seenAuth).toBe('Bearer t');
   });
 });

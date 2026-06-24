@@ -13,6 +13,13 @@ import type { ComfyUICapability } from './ComfyUICapability';
 
 export const DEFAULT_COMFYUI_URL = 'http://127.0.0.1:8188';
 
+/** Connection options shared by `pickComfyUI` + `probeComfyUI` (ComfyUI Inc 2:
+ *  the URL/auth come from the settings store at boot). */
+export interface ComfyConnectionOptions {
+  /** `Authorization` header value for a guarded server ('' / undefined = none). */
+  readonly authHeader?: string;
+}
+
 /**
  * Pick the best available ComfyUI capability for the current runtime.
  *
@@ -20,11 +27,57 @@ export const DEFAULT_COMFYUI_URL = 'http://127.0.0.1:8188';
  *   →  Stub  (offline / tests / no server reachable)
  *
  * Mirrors `pickStorage()` from src/core/storage. D-07 (locked):
- * URL defaults to `DEFAULT_COMFYUI_URL`; boot wiring overrides via
- * `settings.get('comfyui.serverUrl')`.
+ * URL defaults to `DEFAULT_COMFYUI_URL`; boot wiring overrides via the settings
+ * store (`comfyui.serverUrl` + auth — ComfyUI Inc 2).
  */
-export async function pickComfyUI(url: string = DEFAULT_COMFYUI_URL): Promise<ComfyUICapability> {
-  const http = new HttpComfyUICapability(url);
+export async function pickComfyUI(
+  url: string = DEFAULT_COMFYUI_URL,
+  opts: ComfyConnectionOptions = {},
+): Promise<ComfyUICapability> {
+  const http = new HttpComfyUICapability(url, { authHeader: opts.authHeader });
   if (await http.isAvailable()) return http;
   return new StubComfyUICapability();
+}
+
+/** The result of a live connection probe — what the Settings "Test Connection"
+ *  button shows. `reachable` is the boundary verdict; `version`/`device` enrich
+ *  the success badge; `error` carries the failure reason (incl. the CORS 403 a
+ *  ComfyUI without `--enable-cors-header` returns to the browser). */
+export interface ComfyProbeResult {
+  reachable: boolean;
+  version?: string;
+  device?: string;
+  error?: string;
+}
+
+/**
+ * Probe a ComfyUI server's `/system_stats` and report reachability + version.
+ * Unlike `pickComfyUI` (which silently falls back to the stub), this surfaces
+ * WHY a probe failed so the user can fix it — the boundary the Settings modal
+ * observes. Never throws.
+ */
+export async function probeComfyUI(
+  url: string = DEFAULT_COMFYUI_URL,
+  opts: ComfyConnectionOptions = {},
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<ComfyProbeResult> {
+  const base = url.replace(/\/+$/, '');
+  const headers = opts.authHeader?.trim() ? { Authorization: opts.authHeader.trim() } : undefined;
+  try {
+    const res = await fetchImpl(`${base}/system_stats`, { method: 'GET', headers });
+    if (!res.ok) return { reachable: false, error: `Server responded ${res.status}` };
+    const body = (await res.json()) as {
+      system?: { comfyui_version?: string };
+      devices?: Array<{ type?: string }>;
+    };
+    return {
+      reachable: true,
+      version: body.system?.comfyui_version,
+      device: body.devices?.[0]?.type,
+    };
+  } catch (e) {
+    // A browser CORS block (no `--enable-cors-header`) and an unreachable host
+    // both land here as a TypeError — the message distinguishes them in DevTools.
+    return { reachable: false, error: e instanceof Error ? e.message : 'Network error' };
+  }
 }
