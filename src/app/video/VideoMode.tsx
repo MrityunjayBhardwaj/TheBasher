@@ -24,6 +24,8 @@ import { LayerTimeline } from './LayerTimeline';
 import { CompositeViewer } from './CompositeViewer';
 import { VideoTransport } from './VideoTransport';
 import { compDurationSeconds } from './videoTimelineGeometry';
+import { exportCompositionWithFeedback } from './exportCompositionAction';
+import { useRenderAnimationStore } from '../stores/renderAnimationStore';
 
 interface ActiveComposition {
   id: NodeId;
@@ -134,6 +136,7 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
           </span>
           <div className="flex-1" />
           <AddLayerMenu compId={comp.id} />
+          <ExportMenu />
         </div>
         <LayerTimeline compId={comp.id} comp={comp.params} />
       </div>
@@ -186,6 +189,62 @@ function AddLayerMenu({ compId }: { compId: NodeId }) {
             className="flex w-full items-center px-3 py-1.5 text-left text-[11px] text-fg/40"
           >
             3D Scene Render (soon)
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Export the active composition to a video file (spine 1e) — MP4 (WebCodecs, →
+ *  PNG-sequence fallback) or a PNG sequence (.zip). Disabled while a render runs
+ *  (the global progress modal + cancel handle the in-flight UX). */
+function ExportMenu() {
+  const [open, setOpen] = useState(false);
+  const rendering = useRenderAnimationStore((s) => s.active);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        data-testid="video-mode-export"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={rendering}
+        onClick={() => setOpen((v) => !v)}
+        className="rounded bg-bg-2 px-2 py-0.5 text-[11px] text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:text-fg/40"
+      >
+        Export ▾
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Export video"
+          data-testid="video-mode-export-menu"
+          className="absolute bottom-full right-0 z-10 mb-1 w-44 overflow-hidden rounded border border-border bg-bg shadow-lg"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="video-mode-export-mp4"
+            onClick={() => {
+              setOpen(false);
+              void exportCompositionWithFeedback('mp4');
+            }}
+            className="flex w-full items-center px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            MP4 (H.264)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="video-mode-export-png"
+            onClick={() => {
+              setOpen(false);
+              void exportCompositionWithFeedback('png-sequence');
+            }}
+            className="flex w-full items-center px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            PNG Sequence (.zip)
           </button>
         </div>
       ) : null}
