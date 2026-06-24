@@ -23,6 +23,10 @@ export interface LayerRow {
   readonly outPoint: number;
   /** The source's length in source frames (1 for a still); falls back to 1. */
   readonly srcFrames: number;
+  /** Composite opacity 0..1 (keyframeable, paramPath 'opacity'). */
+  readonly opacity: number;
+  /** 2D transform rotation in degrees (keyframeable, paramPath 'transform.rotation'). */
+  readonly rotation: number;
 }
 
 /** Normalize a socket binding to an ordered list of NodeRefs (node + socket). */
@@ -57,6 +61,7 @@ export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
     const srcId = refNodeIds(layer.inputs?.source)[0];
     const src = srcId ? state.nodes[srcId] : undefined;
     const srcFrames = src ? num((src.params as Record<string, unknown>).srcFrames, 1) : 1;
+    const transform = (p.transform ?? {}) as Record<string, unknown>;
     rows.push({
       id: layerId,
       name: String(p.name ?? 'Layer'),
@@ -67,6 +72,8 @@ export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
       inPoint: num(p.inPoint, 0),
       outPoint: num(p.outPoint, -1),
       srcFrames: Math.max(1, srcFrames),
+      opacity: num(p.opacity, 1),
+      rotation: num(transform.rotation, 0),
     });
   }
   return rows;
@@ -101,4 +108,30 @@ export function buildReorderLayerOps(
     { type: 'disconnect', from: movedRef, to: { node: compId, socket: 'layers' } },
     { type: 'connect', from: movedRef, to: { node: compId, socket: 'layers' }, index: to },
   ];
+}
+
+/**
+ * The keyframe TIMES (seconds, ascending) of the free-floating [[V57]] channel that
+ * animates (`layerId`, `paramPath`), for rendering the dopesheet diamonds on the
+ * comp ruler. Mirrors `resolveChannel`'s node scan (a channel is any node whose
+ * params carry `target` + `paramPath` + `keyframes`) — there is no separate channel
+ * registry, so reading it is the same scan the keying path uses (no drift). Returns
+ * [] when no channel targets the param.
+ */
+export function collectChannelKeyframes(
+  state: DagState,
+  layerId: NodeId,
+  paramPath: string,
+): number[] {
+  const times: number[] = [];
+  for (const node of Object.values(state.nodes)) {
+    const p = node.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
+    if (p.target !== layerId || p.paramPath !== paramPath) continue;
+    if (!Array.isArray(p.keyframes)) continue;
+    for (const kf of p.keyframes) {
+      const t = (kf as { time?: unknown }).time;
+      if (typeof t === 'number' && Number.isFinite(t)) times.push(t);
+    }
+  }
+  return times.sort((a, b) => a - b);
 }

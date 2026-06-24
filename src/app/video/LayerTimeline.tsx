@@ -3,21 +3,31 @@
 // track area (each layer's time bar on a frame ruler, with the playhead). Rows
 // render FRONT-on-top (the `layers` list is back→front; AE shows front first).
 //
-// Bars are draggable in 3b: the left/right handles trim inPoint/outPoint, the
-// body slides startFrame, and a locked layer ignores the gesture. Drag-reorder
-// of rows + twirl-down keyframe property rows land in 3b-ii/3c. Geometry +
-// the drag math live in videoTimelineGeometry (H95: one place for the constants
-// the e2e mirrors). Edits go through setParam ops (V1), one atomic per drag.
+// Bars are draggable (3b): the left/right handles trim inPoint/outPoint, the body
+// slides startFrame, a locked layer ignores the gesture, and rows reorder by drag.
+// 3c folds the dopesheet IN: a twirl opens per-layer property rows (opacity +
+// rotation) whose values keyframe via the SAME free-floating [[V57]] channels +
+// ParamDiamond the 3D inspector uses (H104 — wire the affordance once), with the
+// channel's keyframes drawn as diamonds on the comp ruler. Geometry + the drag
+// math live in videoTimelineGeometry (H95: one place for the constants the e2e
+// mirrors). Edits go through setParam ops (V1), one atomic per drag.
 //
 // REF: docs/COMPOSITOR-DESIGN.md §7; vyapti V1 (ops) + V34 + V50 (shared timeline
-//      geometry); hetvabhasa H95; issue #237.
+//      geometry) + V57 (keyframe channels); hetvabhasa H95 + H104; issue #237.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId, Op } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
-import { buildReorderLayerOps, collectLayerRows, type LayerRow } from './videoLayers';
+import { ParamDiamond } from '../ParamDiamond';
+import { useAnimatableField } from '../animate/useAnimatableField';
+import {
+  buildReorderLayerOps,
+  collectChannelKeyframes,
+  collectLayerRows,
+  type LayerRow,
+} from './videoLayers';
 import {
   BAR_TRIM_HANDLE_PX,
   OUTLINE_WIDTH_PX,
@@ -35,6 +45,33 @@ import {
 const RULER_TICKS = 4; // → ticks at 0, ¼, ½, ¾, end
 /** Movement (CSS px) past which a press becomes a drag, not a click-to-select. */
 const DRAG_THRESHOLD_PX = 3;
+
+/** A keyframeable scalar property of a layer, shown as a twirl-down dopesheet row.
+ *  `paramPath` is the channel target path; `get` reads the authored base from the
+ *  row. (Vec2 position/scale rows — needing a vector read path — land in 3c-ii.) */
+interface LayerProp {
+  key: string;
+  label: string;
+  paramPath: string;
+  step: number;
+  get: (r: LayerRow) => number;
+}
+
+const LAYER_PROPS: readonly LayerProp[] = [
+  { key: 'opacity', label: 'Opacity', paramPath: 'opacity', step: 0.05, get: (r) => r.opacity },
+  {
+    key: 'rotation',
+    label: 'Rotation',
+    paramPath: 'transform.rotation',
+    step: 1,
+    get: (r) => r.rotation,
+  },
+];
+
+/** A row in the rendered timeline: a layer, or one of its open property rows. */
+type VisualRow =
+  | { kind: 'layer'; row: LayerRow; layerIndex: number }
+  | { kind: 'prop'; row: LayerRow; layerIndex: number; prop: LayerProp };
 
 function clamp(n: number, lo: number, hi: number): number {
   return n < lo ? lo : n > hi ? hi : n;
@@ -68,6 +105,15 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
   const rows = useDagStore((s) => collectLayerRows(s.state, compId));
   const frame = useTimeStore((s) => s.frame);
   const [selectedId, setSelectedId] = useState<NodeId | null>(null);
+  const [openRows, setOpenRows] = useState<ReadonlySet<NodeId>>(() => new Set());
+  const toggleTwirl = useCallback((id: NodeId) => {
+    setOpenRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const totalFrames = Math.max(1, comp.durationFrames ?? 150);
   const fps = comp.fps ?? 30;
@@ -178,27 +224,31 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     setSelectedId(id);
   }, []);
 
-  // Row drag (3b-ii): drag an outline row vertically to reorder comp.layers. The
-  // rows render front-on-top (display index 0 = top/front); the dropped DISPLAY
-  // slot converts to a raw layer index (back→front) for the reorder op.
+  // Row drag (3b-ii): drag an outline row vertically to reorder comp.layers. Rows
+  // render front-on-top (display index 0 = top/front). With twirls open, the rows
+  // aren't uniform layers — every VISUAL row is still ROW_HEIGHT, so a drop maps to
+  // a visual slot whose owning layer (`visualMap`) is the reorder target; the
+  // dropped layer index converts to a raw index (back→front) for the op.
   const rowsRef = useRef<HTMLDivElement>(null);
+  const visualRowsRef = useRef<VisualRow[]>([]);
   const rowDragRef = useRef<{
     layerId: NodeId;
     containerTop: number;
-    rowCount: number;
+    visualMap: number[]; // visual-row index → owning layer's display index
+    layerCount: number;
     moved: boolean;
   } | null>(null);
   const [rowDragId, setRowDragId] = useState<NodeId | null>(null);
   const [dropDisplay, setDropDisplay] = useState<number | null>(null);
 
-  const dropIndexAt = (clientY: number, top: number, rowCount: number) =>
-    clamp(Math.floor((clientY - top) / ROW_HEIGHT_PX), 0, rowCount - 1);
+  const dropIndexAt = (clientY: number, top: number, visualCount: number) =>
+    clamp(Math.floor((clientY - top) / ROW_HEIGHT_PX), 0, visualCount - 1);
 
   const onRowWindowMove = useCallback((e: PointerEvent) => {
     const d = rowDragRef.current;
     if (!d) return;
     d.moved = true;
-    setDropDisplay(dropIndexAt(e.clientY, d.containerTop, d.rowCount));
+    setDropDisplay(dropIndexAt(e.clientY, d.containerTop, d.visualMap.length));
   }, []);
 
   const onRowWindowUp = useCallback(
@@ -211,8 +261,9 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
       setDropDisplay(null);
       if (!d || !d.moved) return;
       suppressClickRef.current = true;
-      const display = dropIndexAt(e.clientY, d.containerTop, d.rowCount);
-      const rawTo = d.rowCount - 1 - display; // display (front-on-top) → raw (back→front)
+      const visualIdx = dropIndexAt(e.clientY, d.containerTop, d.visualMap.length);
+      const targetLayer = d.visualMap[visualIdx]; // which layer the drop slot belongs to
+      const rawTo = d.layerCount - 1 - targetLayer; // display (front-on-top) → raw (back→front)
       const ops = buildReorderLayerOps(useDagStore.getState().state, compId, d.layerId, rawTo);
       if (ops.length) useDagStore.getState().dispatchAtomic(ops, 'user', 'reorder layer');
     },
@@ -225,10 +276,12 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
       if ((e.target as HTMLElement).closest('button')) return; // a toggle, not a drag-grab
       const container = rowsRef.current;
       if (!container) return;
+      const visual = visualRowsRef.current;
       rowDragRef.current = {
         layerId: row.id,
         containerTop: container.getBoundingClientRect().top,
-        rowCount: rows.length,
+        visualMap: visual.map((v) => v.layerIndex),
+        layerCount: rows.length,
         moved: false,
       };
       setRowDragId(row.id);
@@ -246,8 +299,18 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     };
   }, [onRowWindowMove, onRowWindowUp]);
 
-  // Front-on-top: the layers list is back→front; reverse for display.
+  // Front-on-top: the layers list is back→front; reverse for display. A twirl-open
+  // layer expands into its property rows (the dopesheet folding in). `visualRows`
+  // is the ONE ordered list both columns render, so outline + track stay aligned.
   const display = [...rows].reverse();
+  const visualRows: VisualRow[] = [];
+  display.forEach((row, layerIndex) => {
+    visualRows.push({ kind: 'layer', row, layerIndex });
+    if (openRows.has(row.id)) {
+      for (const prop of LAYER_PROPS) visualRows.push({ kind: 'prop', row, layerIndex, prop });
+    }
+  });
+  visualRowsRef.current = visualRows;
 
   return (
     <div
@@ -267,16 +330,27 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
           Layers
         </div>
         <div ref={rowsRef} className="relative">
-          {display.map((row) => (
-            <OutlineRow
-              key={row.id}
-              row={row}
-              selected={row.id === selectedId}
-              dragging={row.id === rowDragId}
-              onSelect={() => onRowClick(row.id)}
-              onPointerDownDrag={(e) => onRowPointerDown(e, row)}
-            />
-          ))}
+          {visualRows.map((v) =>
+            v.kind === 'layer' ? (
+              <OutlineRow
+                key={v.row.id}
+                row={v.row}
+                open={openRows.has(v.row.id)}
+                selected={v.row.id === selectedId}
+                dragging={v.row.id === rowDragId}
+                onSelect={() => onRowClick(v.row.id)}
+                onToggleTwirl={() => toggleTwirl(v.row.id)}
+                onPointerDownDrag={(e) => onRowPointerDown(e, v.row)}
+              />
+            ) : (
+              <OutlinePropRow
+                key={`${v.row.id}-${v.prop.key}`}
+                layerId={v.row.id}
+                prop={v.prop}
+                base={v.prop.get(v.row)}
+              />
+            ),
+          )}
           {/* Drop indicator — where a dragged row would land. */}
           {dropDisplay !== null && (
             <div
@@ -305,20 +379,31 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
             );
           })}
         </div>
-        {/* Layer bars. */}
+        {/* Layer bars + (when open) keyframe rows. */}
         <div>
-          {display.map((row) => {
-            // While dragging this row, render from the live preview params.
+          {visualRows.map((v) => {
+            if (v.kind === 'prop') {
+              return (
+                <TrackPropRow
+                  key={`${v.row.id}-${v.prop.key}`}
+                  layerId={v.row.id}
+                  prop={v.prop}
+                  totalFrames={totalFrames}
+                  fps={fps}
+                />
+              );
+            }
+            // While dragging this layer, render from the live preview params.
             const shown =
-              preview && preview.layerId === row.id ? { ...row, ...preview.params } : row;
+              preview && preview.layerId === v.row.id ? { ...v.row, ...preview.params } : v.row;
             return (
               <TrackRow
-                key={row.id}
+                key={v.row.id}
                 row={shown}
                 totalFrames={totalFrames}
-                selected={row.id === selectedId}
-                onSelect={() => onRowClick(row.id)}
-                onPointerDownMode={(e, mode) => onBarPointerDown(e, row, mode)}
+                selected={v.row.id === selectedId}
+                onSelect={() => onRowClick(v.row.id)}
+                onPointerDownMode={(e, mode) => onBarPointerDown(e, v.row, mode)}
               />
             );
           })}
@@ -336,15 +421,19 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
 
 function OutlineRow({
   row,
+  open,
   selected,
   dragging,
   onSelect,
+  onToggleTwirl,
   onPointerDownDrag,
 }: {
   row: LayerRow;
+  open: boolean;
   selected: boolean;
   dragging: boolean;
   onSelect: () => void;
+  onToggleTwirl: () => void;
   onPointerDownDrag: (e: React.PointerEvent) => void;
 }) {
   return (
@@ -359,10 +448,21 @@ function OutlineRow({
       } ${dragging ? 'opacity-50' : ''} ${selected ? 'bg-accent/15' : 'hover:bg-muted/30'}`}
       style={{ height: ROW_HEIGHT_PX }}
     >
-      {/* Twirl — opens the property rows in 3c (inert for now). */}
-      <span className="w-3 text-center text-mute" aria-hidden>
-        ▸
-      </span>
+      {/* Twirl — opens the layer's keyframe property rows (the dopesheet, 3c). */}
+      <button
+        type="button"
+        data-testid={`layer-twirl-${row.id}`}
+        data-open={open}
+        aria-label={open ? 'Collapse layer properties' : 'Expand layer properties'}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleTwirl();
+        }}
+        className="w-3 select-none text-center text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        {open ? '▾' : '▸'}
+      </button>
       <span className="flex-1 truncate text-fg" title={row.name}>
         {row.name}
       </span>
@@ -421,6 +521,105 @@ function ToggleButton({
     >
       {glyph}
     </button>
+  );
+}
+
+/** Round to 2 decimals as a display string (drops float noise on the readout). */
+function round2(n: number): string {
+  return String(Math.round(n * 100) / 100);
+}
+
+/** An open twirl-down property row in the OUTLINE column: an indented label, an
+ *  editable value field routed through the [[V57]] animatable seam (auto-keys when
+ *  animated), and the inspector ParamDiamond keying at the playhead (H104). */
+function OutlinePropRow({
+  layerId,
+  prop,
+  base,
+}: {
+  layerId: NodeId;
+  prop: LayerProp;
+  base: number;
+}) {
+  const { effective, readOnly, onEdit } = useAnimatableField<number>(
+    layerId,
+    prop.paramPath,
+    base,
+    (next) => setLayerParam(layerId, prop.paramPath, next, `set ${prop.label}`),
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    if (Number.isFinite(n)) onEdit(n);
+    setDraft(null);
+  };
+  return (
+    <div
+      data-testid={`layer-prop-row-${layerId}-${prop.key}`}
+      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <span className="flex-1 truncate pl-4 text-mute" title={prop.label}>
+        {prop.label}
+      </span>
+      <input
+        type="number"
+        step={prop.step}
+        value={draft ?? round2(effective)}
+        readOnly={readOnly}
+        data-testid={`layer-prop-input-${layerId}-${prop.key}`}
+        onFocus={() => setDraft(round2(effective))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            commit();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className="w-14 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      />
+      <ParamDiamond
+        nodeId={layerId}
+        paramPath={prop.paramPath}
+        value={base}
+        testid={`layer-prop-diamond-${layerId}-${prop.key}`}
+      />
+    </div>
+  );
+}
+
+/** The TRACK half of an open property row: the channel's keyframes drawn as
+ *  diamonds on the comp ruler (keyframe seconds → comp frame → percent). Read-only
+ *  in 3c-i; drag-to-retime is a follow-up. */
+function TrackPropRow({
+  layerId,
+  prop,
+  totalFrames,
+  fps,
+}: {
+  layerId: NodeId;
+  prop: LayerProp;
+  totalFrames: number;
+  fps: number;
+}) {
+  const times = useDagStore((s) => collectChannelKeyframes(s.state, layerId, prop.paramPath));
+  return (
+    <div className="relative border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }}>
+      {times.map((t, i) => (
+        <span
+          key={i}
+          data-testid={`layer-keyframe-${layerId}-${prop.key}`}
+          aria-hidden
+          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-[10px] leading-none text-accent"
+          style={{ left: `${frameToPercent(t * fps, totalFrames)}%` }}
+        >
+          ◆
+        </span>
+      ))}
+    </div>
   );
 }
 

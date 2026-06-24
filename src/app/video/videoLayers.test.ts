@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { DagState } from '../../core/dag/state';
-import { buildReorderLayerOps, collectLayerRows } from './videoLayers';
+import { buildReorderLayerOps, collectChannelKeyframes, collectLayerRows } from './videoLayers';
 
 function state(nodes: Record<string, unknown>): DagState {
   return { nodes } as unknown as DagState;
@@ -110,5 +110,29 @@ describe('buildReorderLayerOps', () => {
   it('is a no-op for a missing comp or unknown layer', () => {
     expect(buildReorderLayerOps(comp(['a']), 'nope', 'a', 0)).toEqual([]);
     expect(buildReorderLayerOps(comp(['a']), 'comp', 'ghost', 0)).toEqual([]);
+  });
+});
+
+describe('collectChannelKeyframes', () => {
+  const withChannel = (target: string, paramPath: string, times: number[]) =>
+    state({
+      ch: {
+        id: 'ch',
+        type: 'KeyframeChannelScalar',
+        params: { target, paramPath, keyframes: times.map((time) => ({ time, value: 1 })) },
+        inputs: {},
+      },
+      other: { id: 'other', type: 'Layer', params: { name: 'L' }, inputs: {} },
+    });
+
+  it('returns the keyframe times (ascending) of the channel for a (layer, param)', () => {
+    const s = withChannel('l1', 'opacity', [2, 0.5, 1]);
+    expect(collectChannelKeyframes(s, 'l1', 'opacity')).toEqual([0.5, 1, 2]);
+  });
+
+  it('returns [] when no channel targets the param', () => {
+    const s = withChannel('l1', 'opacity', [0, 1]);
+    expect(collectChannelKeyframes(s, 'l1', 'transform.rotation')).toEqual([]);
+    expect(collectChannelKeyframes(s, 'l2', 'opacity')).toEqual([]);
   });
 });
