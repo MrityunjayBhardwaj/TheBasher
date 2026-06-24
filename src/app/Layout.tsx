@@ -45,6 +45,7 @@ import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
+import { VideoMode } from './video/VideoMode';
 import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
@@ -255,6 +256,26 @@ export function Layout() {
           onContextMenu={(e) => e.stopPropagation()}
         >
           <TwoDView />
+        </div>
+        {/* Video mode (the third editor space) — the AE-style compositor. Like
+            the 2D View it swaps in via display:none (Canvas stays mounted, K1
+            step 6). It is full-bleed over <main> and sits ABOVE the 3D/2D
+            floating chrome (toolbar + side islands + bottom stack) via a high
+            z-index, so the compositor reads as its own surface. Properly HIDING
+            that 3D-specific chrome in video mode is a follow-up (#237) — for now
+            it is covered, not unmounted. */}
+        <div
+          style={{
+            display: space === 'video' ? 'block' : 'none',
+            position: 'absolute',
+            inset: 0,
+            zIndex: 45,
+          }}
+          data-testid="video-slot"
+          className="bg-bg"
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <VideoMode />
         </div>
         {/* v0.6 #4 W1 — the ONE consolidated toolbar (Spline region ②).
             Mounted at the <main> level (not inside the 3D slot) so its Space

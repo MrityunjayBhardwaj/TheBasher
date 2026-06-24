@@ -552,8 +552,9 @@ export function KeyboardShortcuts() {
           useViewportStore.getState().toggleCameraProjection();
           return;
         case 'Tab':
-          // Toggle 3D Viewport ↔ UV Editor (Blender's Tab idiom). Skip
-          // when the user is typing — already handled by isTypingTarget
+          // Cycle editor space: 3D Viewport → 2D View → Video → 3D
+          // (SPACE_CYCLE; Blender's Tab idiom, extended for the compositor).
+          // Skip when the user is typing — already handled by isTypingTarget
           // earlier in this function. preventDefault so the browser
           // doesn't tab-focus into chrome.
           e.preventDefault();

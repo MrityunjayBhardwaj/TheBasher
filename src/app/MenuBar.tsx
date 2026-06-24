@@ -43,6 +43,7 @@ import { normalizeViewportClip, useViewportStore, type ShadingMode } from './sto
 import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
 import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './asset/importPicker';
+import { createNewComposition } from './video/newComposition';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 import { useFlyoutSide } from './menu/useFlyoutSide';
 
@@ -521,9 +522,21 @@ export function MenuBar() {
           testId="menu-file-save-bundle"
         />
         <Divider />
+        <Item
+          label="New Composition"
+          onSelect={() => {
+            createNewComposition();
+            setSpace('video');
+          }}
+          testId="menu-file-new-composition"
+        />
         <Item label="Open Scene…" onSelect={openSceneFilePicker} testId="menu-file-open-scene" />
         <Item label="Import glTF…" onSelect={openGltfFilePicker} testId="menu-file-import-gltf" />
-        <Item label="Import Media…" onSelect={openMediaFilePicker} testId="menu-file-import-media" />
+        <Item
+          label="Import Media…"
+          onSelect={openMediaFilePicker}
+          testId="menu-file-import-media"
+        />
         <Item label="Import Folder…" onSelect={openImportPicker} testId="menu-file-import" />
         <Divider />
         <Item
@@ -751,6 +764,7 @@ export function MenuBar() {
             [
               { value: 'view3d', label: '3D Viewport' },
               { value: 'uv', label: '2D View' },
+              { value: 'video', label: 'Video' },
             ] as { value: SpaceType; label: string }[]
           ).map((s) => (
             <Item
@@ -762,6 +776,54 @@ export function MenuBar() {
           ))}
         </Submenu>
       </Menu>
+
+      {/* The content-space switcher — 3D / 2D / Video (the third top-level
+          space, the AE compositor). Always visible, mirrors View ▸ Editor Space
+          and the Tab cycle (SPACE_CYCLE). Right-aligned via the flex spacer. */}
+      <div className="flex-1" />
+      <SpaceSwitcher space={space} setSpace={setSpace} />
+    </div>
+  );
+}
+
+const SPACE_SWITCHER_OPTIONS: { value: SpaceType; label: string }[] = [
+  { value: 'view3d', label: '3D' },
+  { value: 'uv', label: '2D' },
+  { value: 'video', label: 'Video' },
+];
+
+function SpaceSwitcher({
+  space,
+  setSpace,
+}: {
+  space: SpaceType;
+  setSpace: (s: SpaceType) => void;
+}) {
+  return (
+    <div
+      data-testid="space-switcher"
+      role="group"
+      aria-label="Editor space"
+      className="flex items-center overflow-hidden rounded border border-border"
+    >
+      {SPACE_SWITCHER_OPTIONS.map((opt) => {
+        const active = space === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            aria-pressed={active}
+            data-testid={`space-switch-${opt.value}`}
+            data-active={active}
+            onClick={() => setSpace(opt.value)}
+            className={`px-2 py-0.5 text-[11px] uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+              active ? 'bg-muted text-accent' : 'text-fg/70 hover:bg-muted/60 hover:text-fg'
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

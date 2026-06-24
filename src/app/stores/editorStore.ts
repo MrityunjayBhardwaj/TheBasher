@@ -2,11 +2,15 @@
 // fills the center pane of the layout) and the active tool (which
 // pointer interaction the viewport is set up to perform).
 //
-// Blender-style space toggling: 3D Viewport ↔ UV Editor (later: Timeline,
-// Graph editor, Outliner). The 3D Canvas does NOT unmount when the user
-// switches space — Layout flips slot visibility via display:none,
-// mirroring K1 step 6's discipline (Canvas mounts ONCE; mode/space
-// switches must not drop GPU state).
+// Blender-style space toggling: 3D Viewport ↔ 2D View ↔ Video (the AE-style
+// compositor). The 3D Canvas does NOT unmount when the user switches space —
+// Layout flips slot visibility via display:none, mirroring K1 step 6's
+// discipline (Canvas mounts ONCE; mode/space switches must not drop GPU state).
+//
+// `space` is the editor's top-level "content mode" — 3D (scene), 2D (image),
+// Video (compositor). This is a CONTENT axis, distinct from the dissolved
+// v0.6 operational-mode enum (edit/run/animate/director), which was a WORKFLOW
+// axis over one 3D scene. Tab cycles 3D → 2D → Video → 3D (SPACE_CYCLE).
 //
 // activeTool — added P6 W2 per UI-SPEC §5.4 / §6.2. The four primary
 // tools are Select / Translate / Rotate / Scale. Translate / Rotate /
@@ -27,8 +31,12 @@
 import { create } from 'zustand';
 import { useGizmoStore } from './gizmoStore';
 
-export type SpaceType = 'view3d' | 'uv';
+export type SpaceType = 'view3d' | 'uv' | 'video';
 export type ActiveTool = 'select' | 'translate' | 'rotate' | 'scale';
+
+// Tab cycle order: 3D → 2D → Video → 3D. One source so the keyboard cycle and
+// any UI affordance agree on the order.
+export const SPACE_CYCLE: readonly SpaceType[] = ['view3d', 'uv', 'video'];
 
 export interface EditorStore {
   /** Which editor occupies the center pane right now. */
@@ -48,7 +56,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set({ space });
   },
   toggleSpace() {
-    set({ space: get().space === 'view3d' ? 'uv' : 'view3d' });
+    const cur = get().space;
+    const idx = SPACE_CYCLE.indexOf(cur);
+    // Defensive: an unknown space falls back to the start of the cycle.
+    const next = SPACE_CYCLE[(idx + 1) % SPACE_CYCLE.length] ?? SPACE_CYCLE[0];
+    set({ space: next });
   },
   setActiveTool(tool) {
     set({ activeTool: tool });

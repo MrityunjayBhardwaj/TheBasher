@@ -19,9 +19,16 @@ describe('editorStore — space', () => {
     expect(useEditorStore.getState().space).toBe('uv');
   });
 
-  it('toggleSpace flips view3d ↔ uv', () => {
+  it('setSpace updates to video', () => {
+    useEditorStore.getState().setSpace('video');
+    expect(useEditorStore.getState().space).toBe('video');
+  });
+
+  it('toggleSpace cycles view3d → uv → video → view3d', () => {
     useEditorStore.getState().toggleSpace();
     expect(useEditorStore.getState().space).toBe('uv');
+    useEditorStore.getState().toggleSpace();
+    expect(useEditorStore.getState().space).toBe('video');
     useEditorStore.getState().toggleSpace();
     expect(useEditorStore.getState().space).toBe('view3d');
   });
