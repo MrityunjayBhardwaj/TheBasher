@@ -1060,6 +1060,63 @@ export interface CutValue {
 }
 
 // ---------------------------------------------------------------------------
+// The Compositor — After Effects-style layer timeline (docs/COMPOSITOR-DESIGN.md).
+//
+// A `Composition` holds an ordered list of `Layer`s; a Layer wraps a time-varying
+// Image `source` (a MediaClip / scene-render / ComfyWorkflow / nested Composition)
+// with composite params (transform / opacity / blend / trim). The evaluators are
+// pure metadata (V2/V3) — the actual per-frame decode + pixel composite happen at
+// the viewer/runtime seam (mirrors Scene→renderer; ImageValue is lazy P4 metadata).
+// ---------------------------------------------------------------------------
+
+export type LayerBlendMode = 'normal' | 'add' | 'multiply' | 'screen';
+
+/** 2D composite transform of a layer within its comp (AE-style). rotation in
+ *  degrees; anchor/position in comp pixels; scale as a unit multiplier per axis. */
+export interface Layer2DTransform {
+  readonly anchor: readonly [number, number];
+  readonly position: readonly [number, number];
+  readonly scale: readonly [number, number];
+  readonly rotation: number;
+}
+
+export interface LayerValue {
+  readonly kind: 'Layer';
+  readonly name: string;
+  readonly enabled: boolean;
+  /** Position of the layer's in-point on the comp timeline, in comp frames. */
+  readonly startFrame: number;
+  /** Trim of the SOURCE, in source-local frames. */
+  readonly inPoint: number;
+  readonly outPoint: number;
+  readonly blendMode: LayerBlendMode;
+  /** 0..1, keyframeable (V57 channel paramPath 'opacity'). */
+  readonly opacity: number;
+  readonly transform: Layer2DTransform;
+  /**
+   * The source Image as evaluated at the incoming ctx. The compositor RE-EVALUATES
+   * the source node at a time-shifted ctx (comp playhead → source-local time via
+   * startFrame/inPoint) to fetch the actual frame — this field is the structural
+   * handle, not the final composited pixels (the remap is a 1d/runtime concern).
+   */
+  readonly source: ImageValue | null;
+}
+
+export interface CompositionValue {
+  readonly kind: 'Composition';
+  readonly name: string;
+  readonly width: number;
+  readonly height: number;
+  readonly fps: number;
+  readonly durationFrames: number;
+  /** Solid background colour (hex) painted under all layers. */
+  readonly background: string;
+  /** Composite z-order: index 0 = BACK, last = FRONT (renderer composites
+   *  bottom→top). The outline UI displays front-on-top by reversing for view. */
+  readonly layers: readonly LayerValue[];
+}
+
+// ---------------------------------------------------------------------------
 // P3.1 — Animation import + retargeting (THESIS §42.1)
 // ---------------------------------------------------------------------------
 

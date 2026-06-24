@@ -18,7 +18,10 @@ import { CameraSelectNode } from './CameraSelect';
 import { CharacterNode } from './Character';
 import { ClipSelectNode } from './ClipSelect';
 import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
+import { CompositionNode } from './Composition';
 import { CutNode } from './Cut';
+import { LayerNode } from './Layer';
+import { MediaClipNode } from './MediaClip';
 import { DepthPassNode } from './DepthPass';
 import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
@@ -126,6 +129,10 @@ const ALL: NodeDefinition[] = [
   CameraSelectNode as unknown as NodeDefinition,
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,
+  // The Compositor — AE-style layer timeline (docs/COMPOSITOR-DESIGN.md).
+  CompositionNode as unknown as NodeDefinition,
+  LayerNode as unknown as NodeDefinition,
+  MediaClipNode as unknown as NodeDefinition,
   BoneNameMapNode as unknown as NodeDefinition,
   // P4 — Render graph (THESIS §43)
   BeautyPassNode as unknown as NodeDefinition,

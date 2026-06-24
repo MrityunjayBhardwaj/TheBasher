@@ -94,6 +94,13 @@ export type SocketTypeName =
   | 'LightRig'
   | 'Shot'
   | 'Cut'
+  // The Compositor (After Effects-style layer timeline) — docs/COMPOSITOR-DESIGN.md.
+  // A `Composition` holds an ordered list of `Layer`s (composite z-order); a Layer's
+  // `source` input is the existing `Image` socket (any time-varying Image producer:
+  // a MediaClip, a scene-render, a ComfyWorkflow, or a nested Composition). The
+  // node-graph view is a deferred projection of these nodes (V34).
+  | 'Composition'
+  | 'Layer'
   // P3.1 — Animation import + retargeting (THESIS §42.1)
   | 'BoneNameMap'
   // P4 — Render graph = render nodes (THESIS §43)
