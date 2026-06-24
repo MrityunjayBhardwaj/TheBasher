@@ -3,29 +3,38 @@
 // track area (each layer's time bar on a frame ruler, with the playhead). Rows
 // render FRONT-on-top (the `layers` list is back→front; AE shows front first).
 //
-// Read-only bars in 3a — drag-trim/slide/reorder land in 3b; twirl-down keyframe
-// property rows land in 3c. Geometry lives in videoTimelineGeometry (H95: one
-// place for the constants the e2e mirrors). Edits go through setParam ops (V1).
+// Bars are draggable in 3b: the left/right handles trim inPoint/outPoint, the
+// body slides startFrame, and a locked layer ignores the gesture. Drag-reorder
+// of rows + twirl-down keyframe property rows land in 3b-ii/3c. Geometry +
+// the drag math live in videoTimelineGeometry (H95: one place for the constants
+// the e2e mirrors). Edits go through setParam ops (V1), one atomic per drag.
 //
 // REF: docs/COMPOSITOR-DESIGN.md §7; vyapti V1 (ops) + V34 + V50 (shared timeline
 //      geometry); hetvabhasa H95; issue #237.
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
-import type { NodeId } from '../../core/dag/types';
+import type { NodeId, Op } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import { collectLayerRows, type LayerRow } from './videoLayers';
 import {
+  BAR_TRIM_HANDLE_PX,
   OUTLINE_WIDTH_PX,
   ROW_HEIGHT_PX,
   RULER_HEIGHT_PX,
+  applyBarDrag,
   barPercent,
   frameToPercent,
   layerBarSpan,
+  xDeltaToFrameDelta,
+  type BarDragMode,
+  type LayerBarParams,
 } from './videoTimelineGeometry';
 
 const RULER_TICKS = 4; // → ticks at 0, ¼, ½, ¾, end
+/** Movement (CSS px) past which a press becomes a drag, not a click-to-select. */
+const DRAG_THRESHOLD_PX = 3;
 
 function clamp(n: number, lo: number, hi: number): number {
   return n < lo ? lo : n > hi ? hi : n;
@@ -37,6 +46,24 @@ function setLayerParam(layerId: NodeId, paramPath: string, value: unknown, label
     .dispatchAtomic([{ type: 'setParam', nodeId: layerId, paramPath, value }], 'user', label);
 }
 
+/** An in-flight bar drag — the start anchor + the layer's params at grab time. */
+interface BarDrag {
+  layerId: NodeId;
+  mode: BarDragMode;
+  startClientX: number;
+  trackWidthPx: number;
+  totalFrames: number;
+  srcFrames: number;
+  orig: LayerBarParams;
+  moved: boolean;
+}
+
+const DRAG_LABELS: Record<BarDragMode, string> = {
+  'trim-left': 'trim layer in-point',
+  'trim-right': 'trim layer out-point',
+  slide: 'slide layer in time',
+};
+
 export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: CompositionParams }) {
   const rows = useDagStore((s) => collectLayerRows(s.state, compId));
   const frame = useTimeStore((s) => s.frame);
@@ -47,6 +74,109 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
   // The global playhead (60fps seconds) mapped into this comp's frame space.
   const playheadFrame = clamp(Math.round((frame / FRAMES_PER_SECOND) * fps), 0, totalFrames);
   const playheadPct = frameToPercent(playheadFrame, totalFrames);
+
+  // Bar drag (3b): the track element (for measuring px width), the live drag, a
+  // preview of the dragged layer's params, and a flag to swallow the trailing
+  // click so a drag never also selects.
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<BarDrag | null>(null);
+  const suppressClickRef = useRef(false);
+  const [preview, setPreview] = useState<{ layerId: NodeId; params: LayerBarParams } | null>(null);
+
+  const onWindowMove = useCallback((e: PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const deltaPx = e.clientX - d.startClientX;
+    if (Math.abs(deltaPx) > DRAG_THRESHOLD_PX) d.moved = true;
+    const deltaFrames = xDeltaToFrameDelta(deltaPx, d.trackWidthPx, d.totalFrames);
+    setPreview({
+      layerId: d.layerId,
+      params: applyBarDrag(d.orig, d.srcFrames, d.mode, deltaFrames),
+    });
+  }, []);
+
+  const onWindowUp = useCallback(
+    (e: PointerEvent) => {
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+      const d = dragRef.current;
+      dragRef.current = null;
+      setPreview(null);
+      if (!d) return;
+      if (!d.moved) return; // a click, not a drag → selection handled by onClick
+      suppressClickRef.current = true;
+      const deltaFrames = xDeltaToFrameDelta(
+        e.clientX - d.startClientX,
+        d.trackWidthPx,
+        d.totalFrames,
+      );
+      const next = applyBarDrag(d.orig, d.srcFrames, d.mode, deltaFrames);
+      const ops: Op[] = [];
+      if (next.startFrame !== d.orig.startFrame)
+        ops.push({
+          type: 'setParam',
+          nodeId: d.layerId,
+          paramPath: 'startFrame',
+          value: next.startFrame,
+        });
+      if (next.inPoint !== d.orig.inPoint)
+        ops.push({
+          type: 'setParam',
+          nodeId: d.layerId,
+          paramPath: 'inPoint',
+          value: next.inPoint,
+        });
+      if (next.outPoint !== d.orig.outPoint)
+        ops.push({
+          type: 'setParam',
+          nodeId: d.layerId,
+          paramPath: 'outPoint',
+          value: next.outPoint,
+        });
+      if (ops.length) useDagStore.getState().dispatchAtomic(ops, 'user', DRAG_LABELS[d.mode]);
+    },
+    [onWindowMove],
+  );
+
+  // Stop listening if the timeline unmounts mid-drag.
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+    };
+  }, [onWindowMove, onWindowUp]);
+
+  const onBarPointerDown = useCallback(
+    (e: React.PointerEvent, row: LayerRow, mode: BarDragMode) => {
+      if (row.locked) return; // lock gates drag (the L toggle)
+      const track = trackRef.current;
+      if (!track) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragRef.current = {
+        layerId: row.id,
+        mode,
+        startClientX: e.clientX,
+        trackWidthPx: track.getBoundingClientRect().width,
+        totalFrames,
+        srcFrames: row.srcFrames,
+        orig: { startFrame: row.startFrame, inPoint: row.inPoint, outPoint: row.outPoint },
+        moved: false,
+      };
+      setPreview(null);
+      window.addEventListener('pointermove', onWindowMove);
+      window.addEventListener('pointerup', onWindowUp);
+    },
+    [totalFrames, onWindowMove, onWindowUp],
+  );
+
+  const onBarClick = useCallback((id: NodeId) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return; // the press was a drag, not a select
+    }
+    setSelectedId(id);
+  }, []);
 
   // Front-on-top: the layers list is back→front; reverse for display.
   const display = [...rows].reverse();
@@ -79,7 +209,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
       </div>
 
       {/* Track column (right): the coordinate space for bars + ruler + playhead. */}
-      <div className="relative flex-1 bg-bg-2" style={{ minWidth: 0 }}>
+      <div ref={trackRef} className="relative flex-1 bg-bg-2" style={{ minWidth: 0 }}>
         {/* Frame ruler. */}
         <div className="relative border-b border-line" style={{ height: RULER_HEIGHT_PX }}>
           {Array.from({ length: RULER_TICKS + 1 }, (_, i) => {
@@ -97,15 +227,21 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
         </div>
         {/* Layer bars. */}
         <div>
-          {display.map((row) => (
-            <TrackRow
-              key={row.id}
-              row={row}
-              totalFrames={totalFrames}
-              selected={row.id === selectedId}
-              onSelect={() => setSelectedId(row.id)}
-            />
-          ))}
+          {display.map((row) => {
+            // While dragging this row, render from the live preview params.
+            const shown =
+              preview && preview.layerId === row.id ? { ...row, ...preview.params } : row;
+            return (
+              <TrackRow
+                key={row.id}
+                row={shown}
+                totalFrames={totalFrames}
+                selected={row.id === selectedId}
+                onSelect={() => onBarClick(row.id)}
+                onPointerDownMode={(e, mode) => onBarPointerDown(e, row, mode)}
+              />
+            );
+          })}
         </div>
         {/* Playhead — spans the rows below the ruler. */}
         <div
@@ -207,29 +343,66 @@ function TrackRow({
   totalFrames,
   selected,
   onSelect,
+  onPointerDownMode,
 }: {
   row: LayerRow;
   totalFrames: number;
   selected: boolean;
   onSelect: () => void;
+  onPointerDownMode: (e: React.PointerEvent, mode: BarDragMode) => void;
 }) {
   const span = layerBarSpan(row, row.srcFrames);
   const { leftPct, widthPct } = barPercent(span, totalFrames);
+  // A locked layer is a plain select target — no drag handles, no grab cursor.
+  const draggable = !row.locked;
   return (
     <div
       className="relative border-b border-line"
       style={{ height: ROW_HEIGHT_PX, opacity: row.enabled ? 1 : 0.4 }}
     >
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         data-testid={`layer-bar-${row.id}`}
+        data-locked={row.locked}
         onClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
         title={row.name}
-        className={`absolute top-1/2 -translate-y-1/2 overflow-hidden rounded ${
+        className={`absolute top-1/2 flex -translate-y-1/2 overflow-hidden rounded ${
           selected ? 'bg-accent' : 'bg-accent-dim'
         } focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
         style={{ left: `${leftPct}%`, width: `${widthPct}%`, height: ROW_HEIGHT_PX - 10 }}
-      />
+      >
+        {draggable && (
+          <div
+            data-testid={`layer-bar-trim-left-${row.id}`}
+            aria-hidden
+            onPointerDown={(e) => onPointerDownMode(e, 'trim-left')}
+            className="h-full shrink-0 cursor-ew-resize"
+            style={{ width: BAR_TRIM_HANDLE_PX }}
+          />
+        )}
+        <div
+          data-testid={`layer-bar-body-${row.id}`}
+          aria-hidden
+          onPointerDown={draggable ? (e) => onPointerDownMode(e, 'slide') : undefined}
+          className={`h-full flex-1 ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        />
+        {draggable && (
+          <div
+            data-testid={`layer-bar-trim-right-${row.id}`}
+            aria-hidden
+            onPointerDown={(e) => onPointerDownMode(e, 'trim-right')}
+            className="h-full shrink-0 cursor-ew-resize"
+            style={{ width: BAR_TRIM_HANDLE_PX }}
+          />
+        )}
+      </div>
     </div>
   );
 }

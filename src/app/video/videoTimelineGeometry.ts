@@ -60,3 +60,79 @@ export function barPercent(span: LayerBarSpan, totalFrames: number): BarPercent 
   const rightPct = frameToPercent(span.startFrame + span.lengthFrames, totalFrames);
   return { leftPct, widthPct: Math.max(0, rightPct - leftPct) };
 }
+
+// ── Bar drag (1c.3b) ────────────────────────────────────────────────────────
+// The bar is drawn in percentages (responsive), but a DRAG arrives in pixels —
+// so dragging needs the inverse map, measured against the live track width. The
+// pixel→frame delta + the param math both live here (the H95 guard: the drag
+// e2e mirrors these, so they must have ONE home shared with the component).
+
+/** Width (CSS px) of the trim-handle hit zone at each end of a layer bar. The
+ *  body between the two handles is the slide zone. */
+export const BAR_TRIM_HANDLE_PX = 8;
+
+/** Which part of a bar a drag is moving. */
+export type BarDragMode = 'trim-left' | 'trim-right' | 'slide';
+
+/** A layer's raw trim/position params (outPoint < 0 = "to source end"). */
+export interface LayerBarParams {
+  readonly startFrame: number;
+  readonly inPoint: number;
+  readonly outPoint: number;
+}
+
+/**
+ * Convert a pixel delta along the track to a (rounded, integer) comp-frame
+ * delta. Inverse of `frameToPercent` against the measured track width. A
+ * zero/negative width returns 0 (no drag possible) — never NaN.
+ */
+export function xDeltaToFrameDelta(
+  deltaPx: number,
+  trackWidthPx: number,
+  totalFrames: number,
+): number {
+  if (trackWidthPx <= 0) return 0;
+  const span = Math.max(totalFrames, 1);
+  return Math.round((deltaPx / trackWidthPx) * span);
+}
+
+/**
+ * Apply a drag of `mode` by `deltaFrames` to a layer's bar params, returning the
+ * new {startFrame, inPoint, outPoint}. `srcFrames` resolves an "to source end"
+ * outPoint (< 0) to an absolute frame so trimming the right edge works on it.
+ *
+ * - `slide`      — move the whole bar: startFrame += delta (floored at 0).
+ * - `trim-left`  — move the LEFT edge: startFrame += delta AND inPoint += delta,
+ *                  so the right edge (startFrame + length) stays put. Clamped so
+ *                  inPoint >= 0, startFrame >= 0, and length stays >= 1.
+ * - `trim-right` — move the RIGHT edge: outPoint = effectiveOut + delta, clamped
+ *                  so length stays >= 1. startFrame + inPoint unchanged.
+ *
+ * Pure + total: any delta yields a valid bar (the invariants are clamped here,
+ * not at the call site), so the component just renders the result.
+ */
+export function applyBarDrag(
+  p: LayerBarParams,
+  srcFrames: number,
+  mode: BarDragMode,
+  deltaFrames: number,
+): LayerBarParams {
+  const effectiveOut = p.outPoint < 0 ? srcFrames : p.outPoint;
+  switch (mode) {
+    case 'slide': {
+      return { ...p, startFrame: Math.max(0, p.startFrame + deltaFrames) };
+    }
+    case 'trim-left': {
+      // delta clamped so inPoint+delta ∈ [0, effectiveOut-1] and startFrame+delta >= 0.
+      const lo = Math.max(-p.inPoint, -p.startFrame);
+      const hi = effectiveOut - 1 - p.inPoint;
+      const d = deltaFrames < lo ? lo : deltaFrames > hi ? hi : deltaFrames;
+      return { startFrame: p.startFrame + d, inPoint: p.inPoint + d, outPoint: p.outPoint };
+    }
+    case 'trim-right': {
+      // newOut >= inPoint + 1 (length >= 1).
+      const newOut = Math.max(p.inPoint + 1, effectiveOut + deltaFrames);
+      return { ...p, outPoint: newOut };
+    }
+  }
+}
