@@ -27,6 +27,7 @@ import { missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResol
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
 import { useAssetErrorStore, formatAssetError } from '../stores/assetErrorStore';
+import { importMediaClipFromFile } from './importMediaClip';
 
 /** The reason a lone FILE pick can't be fulfilled — its missing siblings. */
 export interface GltfFolderNeed {
@@ -231,6 +232,35 @@ export function openGltfFilePicker(): void {
         // the banner before re-throwing — don't double-report them here.
         if (!message.startsWith('import failed:')) {
           useAssetErrorStore.getState().report('menu-import-gltf', message);
+        }
+      } finally {
+        input.remove();
+      }
+    })();
+  };
+  input.click();
+}
+
+/**
+ * Open a FILE picker for media clips (Compositor spine 1b). Each picked file
+ * becomes a MediaClip node (additive — repeated imports stack clips up). Images
+ * only for now; video (`.mp4`/…) lands in slice 1b.2 with the WebCodecs decoder.
+ * Failures route to `useAssetErrorStore` (V38 — never a silent no-op).
+ */
+export function openMediaFilePicker(): void {
+  const input = makeHiddenInput('.png,.jpg,.jpeg,.webp,.gif,.bmp,.avif', false);
+  input.onchange = () => {
+    void (async () => {
+      try {
+        if (!input.files || input.files.length === 0) return;
+        const files = await inputFilesToFiles(input.files);
+        for (const file of files) {
+          await importMediaClipFromFile(file);
+        }
+      } catch (err) {
+        const message = formatAssetError(err);
+        if (!message.startsWith('import failed:')) {
+          useAssetErrorStore.getState().report('menu-import-media', message);
         }
       } finally {
         input.remove();

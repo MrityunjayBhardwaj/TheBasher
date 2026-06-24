@@ -42,7 +42,7 @@ import { getViewportSelectableIds } from './selectableNodes';
 import { normalizeViewportClip, useViewportStore, type ShadingMode } from './stores/viewportStore';
 import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
-import { openImportPicker, openGltfFilePicker } from './asset/importPicker';
+import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './asset/importPicker';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 import { useFlyoutSide } from './menu/useFlyoutSide';
 
@@ -523,6 +523,7 @@ export function MenuBar() {
         <Divider />
         <Item label="Open Scene…" onSelect={openSceneFilePicker} testId="menu-file-open-scene" />
         <Item label="Import glTF…" onSelect={openGltfFilePicker} testId="menu-file-import-gltf" />
+        <Item label="Import Media…" onSelect={openMediaFilePicker} testId="menu-file-import-media" />
         <Item label="Import Folder…" onSelect={openImportPicker} testId="menu-file-import" />
         <Divider />
         <Item
