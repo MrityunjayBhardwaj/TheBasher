@@ -19,6 +19,7 @@ import { useCompositionStore } from '../stores/compositionStore';
 import { createNewComposition } from './newComposition';
 import { openAddMediaLayerPicker } from './addLayer';
 import { LayerTimeline } from './LayerTimeline';
+import { CompositeViewer } from './CompositeViewer';
 
 interface ActiveComposition {
   id: NodeId;
@@ -88,23 +89,12 @@ function useCompositionLayerCount(compId: NodeId): number {
 }
 
 function CompositionShell({ comp }: { comp: ActiveComposition }) {
-  const { name, width, height, fps, durationFrames } = comp.params;
+  const { name } = comp.params;
   const layerCount = useCompositionLayerCount(comp.id);
   return (
     <>
-      {/* Composite viewer (top) — placeholder until 1d wires the live composite. */}
-      <div
-        data-testid="video-mode-viewer"
-        className="flex flex-1 items-center justify-center bg-bg-2"
-        style={{ minHeight: 0 }}
-      >
-        <div className="flex flex-col items-center gap-1 text-center">
-          <p className="text-xs text-mute">Composite viewer</p>
-          <p className="text-[11px] text-mute">
-            {width}×{height} · {fps}fps · {durationFrames}f
-          </p>
-        </div>
-      </div>
+      {/* Composite viewer (top) — the live ordered composite at the playhead (1d). */}
+      <CompositeViewer compId={comp.id} comp={comp.params} />
       {/* Layer timeline (bottom) — the outline + bars + twirl-down property rows
           land in 1c.3. For now the strip carries the comp name, the live layer
           count, and the Add Layer affordance (the layer Add path, 1c.2). */}
