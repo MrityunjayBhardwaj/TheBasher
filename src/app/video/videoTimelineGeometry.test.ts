@@ -4,9 +4,13 @@ import { describe, expect, it } from 'vitest';
 import {
   applyBarDrag,
   barPercent,
+  compDurationSeconds,
+  compFrameToSeconds,
   frameToPercent,
+  globalFrameToCompFrame,
   layerBarSpan,
   xDeltaToFrameDelta,
+  xToCompFrame,
 } from './videoTimelineGeometry';
 
 describe('layerBarSpan', () => {
@@ -109,5 +113,48 @@ describe('applyBarDrag', () => {
 
   it('trim-right clamps so length stays >= 1', () => {
     expect(applyBarDrag(base, 30, 'trim-right', -100).outPoint).toBe(1);
+  });
+});
+
+describe('transport scrub mapping', () => {
+  it('globalFrameToCompFrame converts the 60fps global playhead into comp frames', () => {
+    // 1s at 30fps comp = frame 30; the global playhead reaches 1s at frame 60.
+    expect(globalFrameToCompFrame(60, 60, 30, 150)).toBe(30);
+    expect(globalFrameToCompFrame(0, 60, 30, 150)).toBe(0);
+  });
+
+  it('globalFrameToCompFrame clamps to [0, totalFrames]', () => {
+    expect(globalFrameToCompFrame(-30, 60, 30, 150)).toBe(0);
+    expect(globalFrameToCompFrame(100000, 60, 30, 150)).toBe(150);
+  });
+
+  it('compFrameToSeconds is the inverse used for setTime (frame / fps)', () => {
+    expect(compFrameToSeconds(30, 30)).toBe(1);
+    expect(compFrameToSeconds(0, 30)).toBe(0);
+    expect(compFrameToSeconds(15, 0)).toBe(0); // degenerate fps → 0, never NaN
+  });
+
+  it('xToCompFrame maps a pixel offset across the track to a clamped comp frame', () => {
+    // halfway across a 200px track over 150 frames → frame 75.
+    expect(xToCompFrame(100, 200, 150)).toBe(75);
+    expect(xToCompFrame(0, 200, 150)).toBe(0);
+    expect(xToCompFrame(200, 200, 150)).toBe(150);
+    expect(xToCompFrame(400, 200, 150)).toBe(150); // past the end clamps
+    expect(xToCompFrame(-50, 200, 150)).toBe(0); // before the start clamps
+    expect(xToCompFrame(50, 0, 150)).toBe(0); // zero width → frame 0, never NaN
+  });
+
+  it('compDurationSeconds sizes the playhead range to the comp boundary', () => {
+    expect(compDurationSeconds(150, 30)).toBe(5);
+    expect(compDurationSeconds(150, 0)).toBe(0); // degenerate fps → 0
+  });
+
+  it('scrub round-trips: a comp frame → seconds → comp frame is stable', () => {
+    const fps = 30;
+    for (const cf of [0, 30, 75, 150]) {
+      const secs = compFrameToSeconds(cf, fps);
+      const back = globalFrameToCompFrame(Math.round(secs * 60), 60, fps, 150);
+      expect(back).toBe(cf);
+    }
   });
 });

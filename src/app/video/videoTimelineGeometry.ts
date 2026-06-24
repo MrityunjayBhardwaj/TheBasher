@@ -136,3 +136,53 @@ export function applyBarDrag(
     }
   }
 }
+
+// ── Playhead transport (video-mode scrub) ────────────────────────────────────
+// The global playhead (timeStore, in seconds at GLOBAL_FPS) is the ONE clock the
+// composite reads. The comp works in its own fps, so the playhead ruler + the
+// viewer + a ruler-scrub must agree on a single global↔comp mapping. These pure
+// helpers are that single map (H95: the transport e2e mirrors them).
+
+/**
+ * The global playhead frame (timeStore frames at `globalFps`) → this comp's
+ * frame, clamped to [0, totalFrames]. The drawn ruler playhead and the
+ * composited frame both route through this, so they never disagree.
+ */
+export function globalFrameToCompFrame(
+  globalFrame: number,
+  globalFps: number,
+  compFps: number,
+  totalFrames: number,
+): number {
+  const f = Math.round((globalFrame / globalFps) * compFps);
+  return f < 0 ? 0 : f > totalFrames ? totalFrames : f;
+}
+
+/**
+ * A comp frame → the global playhead time in SECONDS (what `timeStore.setTime`
+ * takes). Inverse of the comp-frame mapping; a ruler scrub routes through this
+ * so a click lands on the same frame the playhead draws.
+ */
+export function compFrameToSeconds(compFrame: number, compFps: number): number {
+  return compFps > 0 ? compFrame / compFps : 0;
+}
+
+/**
+ * A pixel offset along the track → the comp frame under it, clamped to
+ * [0, totalFrames]. Inverse of `frameToPercent` against the live track width
+ * (the scrub equivalent of `xDeltaToFrameDelta`). Zero/negative width → frame 0.
+ */
+export function xToCompFrame(offsetX: number, trackWidthPx: number, totalFrames: number): number {
+  if (trackWidthPx <= 0) return 0;
+  const f = Math.round((offsetX / trackWidthPx) * Math.max(totalFrames, 1));
+  return f < 0 ? 0 : f > totalFrames ? totalFrames : f;
+}
+
+/**
+ * The comp's playable duration in seconds — used to size the global playhead
+ * range while in video mode so playback loops at the comp boundary (not the
+ * unrelated 3D default). `compFps <= 0` is degenerate → 0.
+ */
+export function compDurationSeconds(totalFrames: number, compFps: number): number {
+  return compFps > 0 ? totalFrames / compFps : 0;
+}

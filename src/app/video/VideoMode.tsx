@@ -11,15 +11,19 @@
 // REF: docs/COMPOSITOR-DESIGN.md §2 (chrome) / §6 (viewer); vyapti V8 + V34 +
 //      V80 (the 2D-View viewer this will reuse); issue #237.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import type { CompositionParams } from '../../nodes/Composition';
 import type { NodeId } from '../../core/dag/types';
 import { useCompositionStore } from '../stores/compositionStore';
+import { useEditorStore } from '../stores/editorStore';
+import { useTimeStore } from '../stores/timeStore';
 import { createNewComposition } from './newComposition';
 import { openAddMediaLayerPicker } from './addLayer';
 import { LayerTimeline } from './LayerTimeline';
 import { CompositeViewer } from './CompositeViewer';
+import { VideoTransport } from './VideoTransport';
+import { compDurationSeconds } from './videoTimelineGeometry';
 
 interface ActiveComposition {
   id: NodeId;
@@ -91,18 +95,36 @@ function useCompositionLayerCount(compId: NodeId): number {
 function CompositionShell({ comp }: { comp: ActiveComposition }) {
   const { name } = comp.params;
   const layerCount = useCompositionLayerCount(comp.id);
+  const fps = comp.params.fps ?? 30;
+  const totalFrames = Math.max(1, comp.params.durationFrames ?? 150);
+
+  // Size the GLOBAL playhead range to this comp WHILE in video mode, so playback
+  // loops at the comp boundary (the 3D default is 10s, unrelated). The video slot
+  // stays mounted (display:none) across space switches, so this is gated on the
+  // active space — not an unmount — and restores the prior duration on exit.
+  const space = useEditorStore((s) => s.space);
+  useEffect(() => {
+    if (space !== 'video') return;
+    const prev = useTimeStore.getState().durationSeconds;
+    useTimeStore.getState().setDuration(compDurationSeconds(totalFrames, fps));
+    return () => {
+      useTimeStore.getState().setDuration(prev);
+    };
+  }, [space, totalFrames, fps]);
+
   return (
     <>
       {/* Composite viewer (top) — the live ordered composite at the playhead (1d). */}
       <CompositeViewer compId={comp.id} comp={comp.params} />
-      {/* Layer timeline (bottom) — the outline + bars + twirl-down property rows
-          land in 1c.3. For now the strip carries the comp name, the live layer
-          count, and the Add Layer affordance (the layer Add path, 1c.2). */}
+      {/* Layer timeline (bottom) — a transport bar over the outline + bars +
+          twirl-down property rows. The strip header carries the comp name, the
+          live layer count, and the Add Layer affordance (the layer Add path). */}
       <div
         data-testid="video-mode-timeline"
         className="flex flex-col border-t border-line bg-bg"
-        style={{ height: 260 }}
+        style={{ height: 300 }}
       >
+        <VideoTransport comp={comp.params} />
         <div className="flex items-center gap-3 border-b border-line px-3 py-1.5 text-xs">
           <span className="text-fg" data-testid="video-mode-comp-name">
             {name}

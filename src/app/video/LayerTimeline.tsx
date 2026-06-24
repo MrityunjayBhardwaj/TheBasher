@@ -35,9 +35,12 @@ import {
   RULER_HEIGHT_PX,
   applyBarDrag,
   barPercent,
+  compFrameToSeconds,
   frameToPercent,
+  globalFrameToCompFrame,
   layerBarSpan,
   xDeltaToFrameDelta,
+  xToCompFrame,
   type BarDragMode,
   type LayerBarParams,
 } from './videoTimelineGeometry';
@@ -117,8 +120,9 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
 
   const totalFrames = Math.max(1, comp.durationFrames ?? 150);
   const fps = comp.fps ?? 30;
-  // The global playhead (60fps seconds) mapped into this comp's frame space.
-  const playheadFrame = clamp(Math.round((frame / FRAMES_PER_SECOND) * fps), 0, totalFrames);
+  // The global playhead (60fps seconds) mapped into this comp's frame space
+  // (the SAME shared map the viewer + transport readout use — H95).
+  const playheadFrame = globalFrameToCompFrame(frame, FRAMES_PER_SECOND, fps, totalFrames);
   const playheadPct = frameToPercent(playheadFrame, totalFrames);
 
   // Bar drag (3b): the track element (for measuring px width), the live drag, a
@@ -223,6 +227,42 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     }
     setSelectedId(id);
   }, []);
+
+  // Ruler scrub (transport): press/drag anywhere on the frame ruler to move the
+  // GLOBAL playhead. The pointer x (relative to the track) → comp frame → global
+  // seconds via the SHARED map (H95), so the press lands on the frame the playhead
+  // draws and the composite redraws there. Measures the live track width (the bars
+  // are laid out in %; a pointer arrives in px).
+  const scrubToClientX = useCallback(
+    (clientX: number) => {
+      const track = trackRef.current;
+      if (!track) return;
+      const rect = track.getBoundingClientRect();
+      const compFrame = xToCompFrame(clientX - rect.left, rect.width, totalFrames);
+      useTimeStore.getState().setTime(compFrameToSeconds(compFrame, fps));
+    },
+    [totalFrames, fps],
+  );
+  const onScrubMove = useCallback((e: PointerEvent) => scrubToClientX(e.clientX), [scrubToClientX]);
+  const onScrubUp = useCallback(() => {
+    window.removeEventListener('pointermove', onScrubMove);
+    window.removeEventListener('pointerup', onScrubUp);
+  }, [onScrubMove]);
+  const onRulerPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      scrubToClientX(e.clientX);
+      window.addEventListener('pointermove', onScrubMove);
+      window.addEventListener('pointerup', onScrubUp);
+    },
+    [scrubToClientX, onScrubMove, onScrubUp],
+  );
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('pointermove', onScrubMove);
+      window.removeEventListener('pointerup', onScrubUp);
+    };
+  }, [onScrubMove, onScrubUp]);
 
   // Row drag (3b-ii): drag an outline row vertically to reorder comp.layers. Rows
   // render front-on-top (display index 0 = top/front). With twirls open, the rows
@@ -364,8 +404,13 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
 
       {/* Track column (right): the coordinate space for bars + ruler + playhead. */}
       <div ref={trackRef} className="relative flex-1 bg-bg-2" style={{ minWidth: 0 }}>
-        {/* Frame ruler. */}
-        <div className="relative border-b border-line" style={{ height: RULER_HEIGHT_PX }}>
+        {/* Frame ruler — press/drag to scrub the playhead (transport). */}
+        <div
+          data-testid="layer-timeline-ruler"
+          onPointerDown={onRulerPointerDown}
+          className="relative cursor-ew-resize border-b border-line"
+          style={{ height: RULER_HEIGHT_PX }}
+        >
           {Array.from({ length: RULER_TICKS + 1 }, (_, i) => {
             const tickFrame = Math.round((totalFrames * i) / RULER_TICKS);
             return (
