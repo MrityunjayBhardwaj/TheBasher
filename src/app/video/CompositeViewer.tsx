@@ -32,10 +32,7 @@ import {
   type LayerComposite,
   type ResolvedLayerInput,
 } from './composite';
-
-function clamp(n: number, lo: number, hi: number): number {
-  return n < lo ? lo : n > hi ? hi : n;
-}
+import { globalFrameToCompFrame } from './videoTimelineGeometry';
 
 function num(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
@@ -175,7 +172,10 @@ export function CompositeViewer({ compId, comp }: { compId: NodeId; comp: Compos
   const fps = comp.fps ?? 30;
   const durationFrames = Math.max(1, comp.durationFrames ?? 150);
   const background = comp.background ?? '#000000';
-  const compFrame = clamp(Math.round((frame / FRAMES_PER_SECOND) * fps), 0, durationFrames);
+  // The global playhead → this comp's frame, via the ONE shared map the ruler
+  // playhead + the transport readout also use (H95: the composited frame, the
+  // drawn playhead and the readout can never disagree).
+  const compFrame = globalFrameToCompFrame(frame, FRAMES_PER_SECOND, fps, durationFrames);
 
   const inputs = useMemo(
     () => collectCompositeInputs(dagState, compId, { time: { frame, seconds, normalized } }),
