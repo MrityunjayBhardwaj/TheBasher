@@ -29,9 +29,10 @@ export function buildAddLayerOps(
   compId: NodeId,
   sourceNodeId: NodeId,
   name: string,
+  extraParams: Record<string, unknown> = {},
 ): Op[] {
   return [
-    { type: 'addNode', nodeId: layerId, nodeType: 'Layer', params: { name } },
+    { type: 'addNode', nodeId: layerId, nodeType: 'Layer', params: { name, ...extraParams } },
     {
       type: 'connect',
       from: { node: sourceNodeId, socket: 'out' },
@@ -71,9 +72,19 @@ export async function importMediaClipAsLayer(
   usedIds.add(mediaId);
   const layerId = freshLayerId(usedIds);
 
+  // A still (one source frame) is HELD: default its out-point to the comp's
+  // duration so it spans the comp (AE's default-still-duration), rather than
+  // showing a 1-frame sliver. The compositor clamps source access to frame 0, so
+  // an out-point beyond the source length just holds the still. Video (real
+  // srcFrames) keeps the default outPoint -1 ("to source end").
+  const durRaw = (dag.state.nodes[compId]?.params as { durationFrames?: unknown } | undefined)
+    ?.durationFrames;
+  const compDurationFrames = typeof durRaw === 'number' && Number.isFinite(durRaw) ? durRaw : 150;
+  const extraParams = ingested.probe.mediaKind === 'image' ? { outPoint: compDurationFrames } : {};
+
   const ops: Op[] = [
     ...buildMediaClipOps(mediaId, ingested.name, ingested.opfsPath, ingested.probe),
-    ...buildAddLayerOps(layerId, compId, mediaId, ingested.name),
+    ...buildAddLayerOps(layerId, compId, mediaId, ingested.name, extraParams),
   ];
   dag.dispatchAtomic(ops, 'user', `add media layer: ${ingested.name}`);
   return layerId;

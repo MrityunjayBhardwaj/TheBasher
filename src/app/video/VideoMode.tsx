@@ -18,6 +18,7 @@ import type { NodeId } from '../../core/dag/types';
 import { useCompositionStore } from '../stores/compositionStore';
 import { createNewComposition } from './newComposition';
 import { openAddMediaLayerPicker } from './addLayer';
+import { LayerTimeline } from './LayerTimeline';
 
 interface ActiveComposition {
   id: NodeId;
@@ -122,7 +123,7 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
           <div className="flex-1" />
           <AddLayerMenu compId={comp.id} />
         </div>
-        <div className="flex-1" />
+        <LayerTimeline compId={comp.id} comp={comp.params} />
       </div>
     </>
   );

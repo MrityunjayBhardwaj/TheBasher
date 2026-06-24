@@ -26,7 +26,12 @@ const Vec2 = z.tuple([z.number(), z.number()]);
 
 export const LayerParams = z.object({
   name: z.string().default('Layer'),
+  /** Visibility (AE's eyeball). A disabled layer is skipped by the compositor. */
   enabled: z.boolean().default(true),
+  /** Solo (AE): when any layer in a comp is solo, only solo layers composite. */
+  solo: z.boolean().default(false),
+  /** Lock: protects the layer from timeline edits (trim/slide/reorder). */
+  locked: z.boolean().default(false),
   /** In-point on the comp timeline, in comp frames. */
   startFrame: z.number().int().default(0),
   /** Source-local trim, in source frames. outPoint -1 = "to source end". */
@@ -63,6 +68,8 @@ export const LayerNode: NodeDefinition<LayerParams, LayerValue> = {
       kind: 'Layer',
       name: params.name,
       enabled: params.enabled ?? true,
+      solo: params.solo ?? false,
+      locked: params.locked ?? false,
       startFrame: params.startFrame ?? 0,
       inPoint: params.inPoint ?? 0,
       outPoint: params.outPoint ?? -1,

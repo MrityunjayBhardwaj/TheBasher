@@ -395,7 +395,12 @@ export type GeometryDescriptor =
   // source `count` times, each translated by `i*offset` (local space), and merges.
   // Sync-buildable when the source is sync-buildable (box/sphere) — a glTF/baked
   // source is a follow-up (its geometry is async, outside the sync registry).
-  | { readonly kind: 'array'; readonly source: GeometryRef; readonly count: number; readonly offset: Vec3 }
+  | {
+      readonly kind: 'array';
+      readonly source: GeometryRef;
+      readonly count: number;
+      readonly offset: Vec3;
+    }
   // `mirror` (epic #201, #209) — the SECOND modifier: reflect the source across the
   // plane perpendicular to `axis` at `offset` along it (offset 0 = the LOCAL origin,
   // Blender's default) and merge the reflection back with the original → a symmetric
@@ -403,7 +408,12 @@ export type GeometryDescriptor =
   // primitives, where an origin mirror would overlap the source exactly). The
   // reflection has determinant −1, so the registry reverses the reflected copy's
   // triangle winding (else the mirrored half renders inside-out). Same sync scope.
-  | { readonly kind: 'mirror'; readonly source: GeometryRef; readonly axis: MirrorAxis; readonly offset: number };
+  | {
+      readonly kind: 'mirror';
+      readonly source: GeometryRef;
+      readonly axis: MirrorAxis;
+      readonly offset: number;
+    };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */
 export type MirrorAxis = 'x' | 'y' | 'z';
@@ -1084,6 +1094,10 @@ export interface LayerValue {
   readonly kind: 'Layer';
   readonly name: string;
   readonly enabled: boolean;
+  /** Solo (AE): when any layer in a comp is solo, only solo layers composite. */
+  readonly solo: boolean;
+  /** Lock: protects the layer from timeline edits (trim/slide/reorder). */
+  readonly locked: boolean;
   /** Position of the layer's in-point on the comp timeline, in comp frames. */
   readonly startFrame: number;
   /** Trim of the SOURCE, in source-local frames. */
