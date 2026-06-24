@@ -56,25 +56,27 @@ function clipNameFromFile(file: IngestFile): string {
   return base.replace(/\.[^.]+$/, '') || base;
 }
 
+/** A media file probed + written to OPFS, ready to become a MediaClip node.
+ *  The shared ingest core (decode probe → OPFS write), with no DAG dispatch — so
+ *  callers can either add a bare MediaClip (`importMediaClipFromFile`) or fold the
+ *  node into a larger atomic op chain (e.g. wrap it as a compositor Layer). */
+export interface IngestedMediaClip {
+  name: string;
+  opfsPath: string;
+  probe: MediaProbe;
+}
+
 /**
- * Ingest one media file → a MediaClip node. Returns the new node id, or null on
- * failure (the reason is surfaced through `useAssetErrorStore`). Does NOT throw.
+ * Probe + OPFS-write one media file. Returns the ingested clip (no DAG mutation),
+ * or null on failure (surfaced through `useAssetErrorStore`). Does NOT throw.
  */
-export async function importMediaClipFromFile(file: IngestFile): Promise<NodeId | null> {
+export async function ingestMediaClipFile(file: IngestFile): Promise<IngestedMediaClip | null> {
   const name = clipNameFromFile(file);
   try {
     const decode = pickMediaDecode();
     const probe = await decode.probe(file.bytes, file.relativePath);
     const opfsPath = await ingestSingleFile(file, name);
-
-    const dag = useDagStore.getState();
-    const nodeId = nextFreshId('media', new Set(Object.keys(dag.state.nodes)));
-    dag.dispatchAtomic(
-      buildMediaClipOps(nodeId, name, opfsPath, probe),
-      'user',
-      `import media: ${name}`,
-    );
-    return nodeId;
+    return { name, opfsPath, probe };
   } catch (err) {
     const message = formatAssetError(err);
     if (!message.startsWith('import failed:')) {
@@ -82,4 +84,28 @@ export async function importMediaClipFromFile(file: IngestFile): Promise<NodeId 
     }
     return null;
   }
+}
+
+/** A fresh MediaClip node id given the ids already in use. Exposed so a combined
+ *  op chain (clip + Layer) can mint the clip id before building its ops. */
+export function freshMediaClipId(usedIds: Iterable<NodeId>): NodeId {
+  return nextFreshId('media', new Set(usedIds));
+}
+
+/**
+ * Ingest one media file → a MediaClip node. Returns the new node id, or null on
+ * failure (the reason is surfaced through `useAssetErrorStore`). Does NOT throw.
+ */
+export async function importMediaClipFromFile(file: IngestFile): Promise<NodeId | null> {
+  const ingested = await ingestMediaClipFile(file);
+  if (!ingested) return null;
+
+  const dag = useDagStore.getState();
+  const nodeId = freshMediaClipId(Object.keys(dag.state.nodes));
+  dag.dispatchAtomic(
+    buildMediaClipOps(nodeId, ingested.name, ingested.opfsPath, ingested.probe),
+    'user',
+    `import media: ${ingested.name}`,
+  );
+  return nodeId;
 }
