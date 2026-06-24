@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { DagState } from '../../core/dag/state';
-import { collectLayerRows } from './videoLayers';
+import { buildReorderLayerOps, collectLayerRows } from './videoLayers';
 
 function state(nodes: Record<string, unknown>): DagState {
   return { nodes } as unknown as DagState;
@@ -66,5 +66,49 @@ describe('collectLayerRows', () => {
 
   it('returns [] for a missing comp', () => {
     expect(collectLayerRows(state({}), 'nope')).toEqual([]);
+  });
+});
+
+describe('buildReorderLayerOps', () => {
+  const comp = (layerIds: string[]) =>
+    state({
+      comp: {
+        id: 'comp',
+        type: 'Composition',
+        params: {},
+        inputs: { layers: layerIds.map((node) => ({ node, socket: 'out' })) },
+      },
+    });
+
+  it('moves a layer to a new index via disconnect + connect-with-index', () => {
+    // [a,b,c]; move a (index 0) to index 2 → [b,c,a].
+    const ops = buildReorderLayerOps(comp(['a', 'b', 'c']), 'comp', 'a', 2);
+    expect(ops).toEqual([
+      {
+        type: 'disconnect',
+        from: { node: 'a', socket: 'out' },
+        to: { node: 'comp', socket: 'layers' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'a', socket: 'out' },
+        to: { node: 'comp', socket: 'layers' },
+        index: 2,
+      },
+    ]);
+  });
+
+  it('clamps an out-of-range target to the last index', () => {
+    const ops = buildReorderLayerOps(comp(['a', 'b', 'c']), 'comp', 'a', 99);
+    expect((ops[1] as { index: number }).index).toBe(2);
+  });
+
+  it('is a no-op when the target equals the current index', () => {
+    expect(buildReorderLayerOps(comp(['a', 'b', 'c']), 'comp', 'b', 1)).toEqual([]);
+  });
+
+  it('is a no-op for a missing comp or unknown layer', () => {
+    expect(buildReorderLayerOps(comp(['a']), 'nope', 'a', 0)).toEqual([]);
+    expect(buildReorderLayerOps(comp(['a']), 'comp', 'ghost', 0)).toEqual([]);
   });
 });

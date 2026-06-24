@@ -47,9 +47,9 @@ async function addClip(page: import('@playwright/test').Page) {
 }
 
 async function firstLayerId(page: import('@playwright/test').Page): Promise<string> {
-  const bar = page.locator('[data-testid^="layer-bar-trim-left-"]').first();
+  const bar = page.locator('[data-testid^="layer-handle-trim-left-"]').first();
   const testId = await bar.getAttribute('data-testid');
-  return testId!.replace('layer-bar-trim-left-', '');
+  return testId!.replace('layer-handle-trim-left-', '');
 }
 
 /** Press at the center of `box`, drag horizontally by `dx`, release. */
@@ -83,7 +83,7 @@ test('dragging the left handle right trims inPoint + startFrame, the right edge 
   expect(before.inPoint).toBe(0);
   const rightEdge = before.startFrame + (before.outPoint - before.inPoint);
 
-  const handle = await page.getByTestId(`layer-bar-trim-left-${id}`).boundingBox();
+  const handle = await page.getByTestId(`layer-handle-trim-left-${id}`).boundingBox();
   await dragX(page, handle!, 140);
 
   const after = await layerParams(page, id);
@@ -99,7 +99,7 @@ test('dragging the body slides startFrame without re-trimming', async ({ page })
   const id = await firstLayerId(page);
   const before = await layerParams(page, id);
 
-  const body = await page.getByTestId(`layer-bar-body-${id}`).boundingBox();
+  const body = await page.getByTestId(`layer-handle-slide-${id}`).boundingBox();
   await dragX(page, body!, 120);
 
   const after = await layerParams(page, id);
@@ -114,8 +114,8 @@ test('a locked layer has no drag handles', async ({ page }) => {
 
   await page.getByTestId(`layer-lock-${id}`).click();
 
-  await expect(page.getByTestId(`layer-bar-trim-left-${id}`)).toHaveCount(0);
-  await expect(page.getByTestId(`layer-bar-trim-right-${id}`)).toHaveCount(0);
+  await expect(page.getByTestId(`layer-handle-trim-left-${id}`)).toHaveCount(0);
+  await expect(page.getByTestId(`layer-handle-trim-right-${id}`)).toHaveCount(0);
   // The bar itself still renders (selectable), it just can't be dragged.
   await expect(page.getByTestId(`layer-bar-${id}`)).toBeVisible();
 });

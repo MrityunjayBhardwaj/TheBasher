@@ -17,7 +17,7 @@ import { useDagStore } from '../../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId, Op } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
-import { collectLayerRows, type LayerRow } from './videoLayers';
+import { buildReorderLayerOps, collectLayerRows, type LayerRow } from './videoLayers';
 import {
   BAR_TRIM_HANDLE_PX,
   OUTLINE_WIDTH_PX,
@@ -170,13 +170,81 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     [totalFrames, onWindowMove, onWindowUp],
   );
 
-  const onBarClick = useCallback((id: NodeId) => {
+  const onRowClick = useCallback((id: NodeId) => {
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return; // the press was a drag, not a select
     }
     setSelectedId(id);
   }, []);
+
+  // Row drag (3b-ii): drag an outline row vertically to reorder comp.layers. The
+  // rows render front-on-top (display index 0 = top/front); the dropped DISPLAY
+  // slot converts to a raw layer index (back→front) for the reorder op.
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const rowDragRef = useRef<{
+    layerId: NodeId;
+    containerTop: number;
+    rowCount: number;
+    moved: boolean;
+  } | null>(null);
+  const [rowDragId, setRowDragId] = useState<NodeId | null>(null);
+  const [dropDisplay, setDropDisplay] = useState<number | null>(null);
+
+  const dropIndexAt = (clientY: number, top: number, rowCount: number) =>
+    clamp(Math.floor((clientY - top) / ROW_HEIGHT_PX), 0, rowCount - 1);
+
+  const onRowWindowMove = useCallback((e: PointerEvent) => {
+    const d = rowDragRef.current;
+    if (!d) return;
+    d.moved = true;
+    setDropDisplay(dropIndexAt(e.clientY, d.containerTop, d.rowCount));
+  }, []);
+
+  const onRowWindowUp = useCallback(
+    (e: PointerEvent) => {
+      window.removeEventListener('pointermove', onRowWindowMove);
+      window.removeEventListener('pointerup', onRowWindowUp);
+      const d = rowDragRef.current;
+      rowDragRef.current = null;
+      setRowDragId(null);
+      setDropDisplay(null);
+      if (!d || !d.moved) return;
+      suppressClickRef.current = true;
+      const display = dropIndexAt(e.clientY, d.containerTop, d.rowCount);
+      const rawTo = d.rowCount - 1 - display; // display (front-on-top) → raw (back→front)
+      const ops = buildReorderLayerOps(useDagStore.getState().state, compId, d.layerId, rawTo);
+      if (ops.length) useDagStore.getState().dispatchAtomic(ops, 'user', 'reorder layer');
+    },
+    [compId, onRowWindowMove],
+  );
+
+  const onRowPointerDown = useCallback(
+    (e: React.PointerEvent, row: LayerRow) => {
+      if (row.locked) return; // lock gates reorder
+      if ((e.target as HTMLElement).closest('button')) return; // a toggle, not a drag-grab
+      const container = rowsRef.current;
+      if (!container) return;
+      rowDragRef.current = {
+        layerId: row.id,
+        containerTop: container.getBoundingClientRect().top,
+        rowCount: rows.length,
+        moved: false,
+      };
+      setRowDragId(row.id);
+      window.addEventListener('pointermove', onRowWindowMove);
+      window.addEventListener('pointerup', onRowWindowUp);
+    },
+    [rows.length, onRowWindowMove, onRowWindowUp],
+  );
+
+  // Stop listening if the timeline unmounts mid row-drag.
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('pointermove', onRowWindowMove);
+      window.removeEventListener('pointerup', onRowWindowUp);
+    };
+  }, [onRowWindowMove, onRowWindowUp]);
 
   // Front-on-top: the layers list is back→front; reverse for display.
   const display = [...rows].reverse();
@@ -198,14 +266,26 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
         >
           Layers
         </div>
-        {display.map((row) => (
-          <OutlineRow
-            key={row.id}
-            row={row}
-            selected={row.id === selectedId}
-            onSelect={() => setSelectedId(row.id)}
-          />
-        ))}
+        <div ref={rowsRef} className="relative">
+          {display.map((row) => (
+            <OutlineRow
+              key={row.id}
+              row={row}
+              selected={row.id === selectedId}
+              dragging={row.id === rowDragId}
+              onSelect={() => onRowClick(row.id)}
+              onPointerDownDrag={(e) => onRowPointerDown(e, row)}
+            />
+          ))}
+          {/* Drop indicator — where a dragged row would land. */}
+          {dropDisplay !== null && (
+            <div
+              data-testid="layer-row-drop-indicator"
+              className="pointer-events-none absolute left-0 right-0 h-0.5 bg-accent"
+              style={{ top: dropDisplay * ROW_HEIGHT_PX }}
+            />
+          )}
+        </div>
       </div>
 
       {/* Track column (right): the coordinate space for bars + ruler + playhead. */}
@@ -237,7 +317,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
                 row={shown}
                 totalFrames={totalFrames}
                 selected={row.id === selectedId}
-                onSelect={() => onBarClick(row.id)}
+                onSelect={() => onRowClick(row.id)}
                 onPointerDownMode={(e, mode) => onBarPointerDown(e, row, mode)}
               />
             );
@@ -257,20 +337,26 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
 function OutlineRow({
   row,
   selected,
+  dragging,
   onSelect,
+  onPointerDownDrag,
 }: {
   row: LayerRow;
   selected: boolean;
+  dragging: boolean;
   onSelect: () => void;
+  onPointerDownDrag: (e: React.PointerEvent) => void;
 }) {
   return (
     <div
       data-testid={`layer-row-${row.id}`}
       data-selected={selected}
+      data-dragging={dragging}
       onClick={onSelect}
+      onPointerDown={onPointerDownDrag}
       className={`flex items-center gap-1 border-b border-line px-1.5 text-[11px] ${
-        selected ? 'bg-accent/15' : 'hover:bg-muted/30'
-      }`}
+        row.locked ? '' : 'cursor-grab active:cursor-grabbing'
+      } ${dragging ? 'opacity-50' : ''} ${selected ? 'bg-accent/15' : 'hover:bg-muted/30'}`}
       style={{ height: ROW_HEIGHT_PX }}
     >
       {/* Twirl — opens the property rows in 3c (inert for now). */}
@@ -380,7 +466,7 @@ function TrackRow({
       >
         {draggable && (
           <div
-            data-testid={`layer-bar-trim-left-${row.id}`}
+            data-testid={`layer-handle-trim-left-${row.id}`}
             aria-hidden
             onPointerDown={(e) => onPointerDownMode(e, 'trim-left')}
             className="h-full shrink-0 cursor-ew-resize"
@@ -388,14 +474,14 @@ function TrackRow({
           />
         )}
         <div
-          data-testid={`layer-bar-body-${row.id}`}
+          data-testid={`layer-handle-slide-${row.id}`}
           aria-hidden
           onPointerDown={draggable ? (e) => onPointerDownMode(e, 'slide') : undefined}
           className={`h-full flex-1 ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
         />
         {draggable && (
           <div
-            data-testid={`layer-bar-trim-right-${row.id}`}
+            data-testid={`layer-handle-trim-right-${row.id}`}
             aria-hidden
             onPointerDown={(e) => onPointerDownMode(e, 'trim-right')}
             className="h-full shrink-0 cursor-ew-resize"

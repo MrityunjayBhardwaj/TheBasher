@@ -10,7 +10,7 @@
 //      sibling: videoTimelineGeometry; issue #237.
 
 import type { DagState } from '../../core/dag/state';
-import type { NodeId } from '../../core/dag/types';
+import type { NodeId, NodeRef, Op } from '../../core/dag/types';
 
 export interface LayerRow {
   readonly id: NodeId;
@@ -25,13 +25,16 @@ export interface LayerRow {
   readonly srcFrames: number;
 }
 
+/** Normalize a socket binding to an ordered list of NodeRefs (node + socket). */
+function refList(binding: unknown): NodeRef[] {
+  if (Array.isArray(binding)) return binding as NodeRef[];
+  if (binding && typeof binding === 'object' && 'node' in binding) return [binding as NodeRef];
+  return [];
+}
+
 /** Normalize a socket binding to an ordered list of node ids. */
 function refNodeIds(binding: unknown): NodeId[] {
-  if (Array.isArray(binding)) return binding.map((r) => (r as { node: NodeId }).node);
-  if (binding && typeof binding === 'object' && 'node' in binding) {
-    return [(binding as { node: NodeId }).node];
-  }
-  return [];
+  return refList(binding).map((r) => r.node);
 }
 
 function num(value: unknown, fallback: number): number {
@@ -67,4 +70,35 @@ export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
     });
   }
   return rows;
+}
+
+/**
+ * Ops to move `layerId` to raw index `toIndex` (0=back…last=front) in the comp's
+ * ordered `layers` list — the disconnect + connect-with-index reorder protocol
+ * (cf. P1 drag-reorder, src/core/dag/ops.test.ts): drop the moved edge (the list
+ * shrinks by one), then re-insert it at the target index. Because the array is
+ * removed-then-reinserted, `toIndex` IS the moved layer's final index. One atomic
+ * batch → one undo.
+ *
+ * Returns [] (a no-op) when the comp/layer is missing or the target equals the
+ * current index. `toIndex` is clamped into the valid range.
+ */
+export function buildReorderLayerOps(
+  state: DagState,
+  compId: NodeId,
+  layerId: NodeId,
+  toIndex: number,
+): Op[] {
+  const comp = state.nodes[compId];
+  if (!comp) return [];
+  const refs = refList(comp.inputs?.layers);
+  const from = refs.findIndex((r) => r.node === layerId);
+  if (from === -1) return [];
+  const movedRef = refs[from];
+  const to = toIndex < 0 ? 0 : toIndex > refs.length - 1 ? refs.length - 1 : toIndex;
+  if (to === from) return [];
+  return [
+    { type: 'disconnect', from: movedRef, to: { node: compId, socket: 'layers' } },
+    { type: 'connect', from: movedRef, to: { node: compId, socket: 'layers' }, index: to },
+  ];
 }
