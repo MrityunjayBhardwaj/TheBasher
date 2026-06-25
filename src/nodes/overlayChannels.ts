@@ -107,6 +107,18 @@ function blend(
     return original + (channelValue - original) * w;
   }
   if (
+    valueType === 'vec2' &&
+    Array.isArray(original) &&
+    original.length === 2 &&
+    Array.isArray(channelValue) &&
+    channelValue.length === 2
+  ) {
+    return [
+      (original[0] as number) + ((channelValue[0] as number) - (original[0] as number)) * w,
+      (original[1] as number) + ((channelValue[1] as number) - (original[1] as number)) * w,
+    ];
+  }
+  if (
     valueType === 'vec3' &&
     Array.isArray(original) &&
     original.length === 3 &&

@@ -13,6 +13,7 @@ import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
 // P7.12 D-04 — node defs for the inputs:{} purity assertion.
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
+import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
@@ -26,6 +27,7 @@ import type {
   KeyframeChannelColorValue,
   KeyframeChannelNumberValue,
   KeyframeChannelQuatValue,
+  KeyframeChannelVec2Value,
   KeyframeChannelVec3Value,
   MaterialOverrideValue,
   PosedSkeletonValue,
@@ -66,6 +68,7 @@ const ALL_TYPES = [
   'KeyframeChannelColor',
   'KeyframeChannelNumber',
   'KeyframeChannelQuat',
+  'KeyframeChannelVec2',
   'KeyframeChannelVec3',
   'Layer',
   'LightProfileSelect',
@@ -1147,6 +1150,45 @@ describe('P3 — KeyframeChannelVec3 (pure, function-of-time D-04)', () => {
     expect(mid[0]).toBeCloseTo(5, 6);
     expect(mid[1]).toBeCloseTo(10, 6);
     expect(mid[2]).toBeCloseTo(15, 6);
+  });
+});
+
+describe('P3 — KeyframeChannelVec2 (pure, function-of-time D-04)', () => {
+  const params = {
+    name: 'pos',
+    target: 'layer',
+    paramPath: 'transform.position',
+    keyframes: [
+      { time: 0, value: [0, 0] as const, easing: 'linear' as const },
+      { time: 1, value: [10, 20] as const, easing: 'linear' as const },
+    ],
+  };
+
+  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d (sample parity)', (t) => {
+    const state = buildChannelState('KeyframeChannelVec2', params);
+    const a = evalAt<KeyframeChannelVec2Value>(state, 'ch', 0);
+    const b = evalAt<KeyframeChannelVec2Value>(state, 'ch', 0);
+    expect(a.sample(t)).toEqual(b.sample(t));
+  });
+
+  it('per-component lerp at t=0.5 → [5, 10]', () => {
+    const state = buildChannelState('KeyframeChannelVec2', params);
+    const v = evalAt<KeyframeChannelVec2Value>(state, 'ch', 0);
+    expect(v.valueType).toBe('vec2');
+    const s = v.sample(0.5);
+    expect(s[0]).toBeCloseTo(5, 6);
+    expect(s[1]).toBeCloseTo(10, 6);
+  });
+
+  it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
+    expect(KeyframeChannelVec2Node.inputs).toEqual({});
+  });
+
+  it('clamps to the endpoints outside the keyed range', () => {
+    const state = buildChannelState('KeyframeChannelVec2', params);
+    const v = evalAt<KeyframeChannelVec2Value>(state, 'ch', 0);
+    expect(v.sample(-1)).toEqual([0, 0]);
+    expect(v.sample(5)).toEqual([10, 20]);
   });
 });
 

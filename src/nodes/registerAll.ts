@@ -32,6 +32,7 @@ import { IDPassNode } from './IDPass';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
+import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
 import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
@@ -103,6 +104,7 @@ const ALL: NodeDefinition[] = [
   CharacterNode as unknown as NodeDefinition,
   // P3 — Timeline = animation nodes
   KeyframeChannelNumberNode as unknown as NodeDefinition,
+  KeyframeChannelVec2Node as unknown as NodeDefinition,
   KeyframeChannelVec3Node as unknown as NodeDefinition,
   KeyframeChannelQuatNode as unknown as NodeDefinition,
   KeyframeChannelColorNode as unknown as NodeDefinition,

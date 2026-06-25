@@ -13,6 +13,8 @@
 
 import type { OverriddenSet } from '../core/override/overrideSet';
 
+export type Vec2 = readonly [number, number];
+
 export type Vec3 = readonly [number, number, number];
 
 /** Quaternion stored as xyzw (THREE convention). */
@@ -999,6 +1001,11 @@ export interface KeyframeChannelNumberValue extends KeyframeChannelValueBase {
   sample(seconds: number): number;
 }
 
+export interface KeyframeChannelVec2Value extends KeyframeChannelValueBase {
+  readonly valueType: 'vec2';
+  sample(seconds: number): Vec2;
+}
+
 export interface KeyframeChannelVec3Value extends KeyframeChannelValueBase {
   readonly valueType: 'vec3';
   sample(seconds: number): Vec3;
@@ -1016,6 +1023,7 @@ export interface KeyframeChannelColorValue extends KeyframeChannelValueBase {
 
 export type KeyframeChannelValue =
   | KeyframeChannelNumberValue
+  | KeyframeChannelVec2Value
   | KeyframeChannelVec3Value
   | KeyframeChannelQuatValue
   | KeyframeChannelColorValue;

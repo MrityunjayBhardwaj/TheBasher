@@ -449,10 +449,13 @@ function safePath(paramPath: string): string {
  * authoritative: a number → scalar, a string → color, a 3-tuple →
  * vec3, a 4-tuple → quat.
  */
-function inferValueType(value: unknown): 'number' | 'vec3' | 'quat' | 'color' | null {
+function inferValueType(value: unknown): 'number' | 'vec2' | 'vec3' | 'quat' | 'color' | null {
   if (typeof value === 'number') return 'number';
   if (typeof value === 'string') return 'color';
   if (Array.isArray(value)) {
+    if (value.length === 2 && value.every((x) => typeof x === 'number')) {
+      return 'vec2';
+    }
     if (value.length === 3 && value.every((x) => typeof x === 'number')) {
       return 'vec3';
     }
@@ -495,11 +498,13 @@ function isGltfChildNodeType(type: string | undefined): boolean {
 }
 
 /** The KeyframeChannel* node type + default easing for a value type. */
-function channelNodeFor(valueType: 'number' | 'vec3' | 'color' | 'quat'): {
+function channelNodeFor(valueType: 'number' | 'vec2' | 'vec3' | 'color' | 'quat'): {
   nodeType: string;
   easing: 'linear' | 'cubic';
 } {
   switch (valueType) {
+    case 'vec2':
+      return { nodeType: 'KeyframeChannelVec2', easing: 'cubic' };
     case 'vec3':
       return { nodeType: 'KeyframeChannelVec3', easing: 'cubic' };
     case 'color':
@@ -533,7 +538,7 @@ function dispatchDirectFirstKey(
   args: FirstKeyCompositeArgs,
   base: DagState,
   opts: {
-    allowed: readonly ('number' | 'vec3' | 'color' | 'quat')[];
+    allowed: readonly ('number' | 'vec2' | 'vec3' | 'color' | 'quat')[];
     intentTag: string;
     surface: string;
   },
@@ -608,7 +613,7 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   // DirectChannelsR and read by resolveEvaluatedTransform (#197), both via
   // overlayChannels.
   return dispatchDirectFirstKey(args, base, {
-    allowed: ['number', 'vec3', 'color', 'quat'],
+    allowed: ['number', 'vec2', 'vec3', 'color', 'quat'],
     intentTag: 'user:mesh.firstKey',
     surface: 'Mesh',
   });

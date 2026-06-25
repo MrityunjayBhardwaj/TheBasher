@@ -27,7 +27,7 @@
 // REF: UX-BACKLOG #11; KeyframeChannelNumber.ts / KeyframeChannelVec3.ts (the
 //      callers); vyapti V49.
 
-import type { Vec3 } from './types';
+import type { Vec2, Vec3 } from './types';
 
 export type Easing = 'linear' | 'cubic';
 
@@ -35,6 +35,10 @@ export type Easing = 'linear' | 'cubic';
 export interface ScalarHandle {
   readonly time: number;
   readonly value: number;
+}
+export interface Vec2Handle {
+  readonly time: number;
+  readonly value: Vec2;
 }
 export interface Vec3Handle {
   readonly time: number;
@@ -47,6 +51,13 @@ export interface ScalarKey {
   readonly easing: Easing;
   readonly inHandle?: ScalarHandle;
   readonly outHandle?: ScalarHandle;
+}
+export interface Vec2Key {
+  readonly time: number;
+  readonly value: Vec2;
+  readonly easing: Easing;
+  readonly inHandle?: Vec2Handle;
+  readonly outHandle?: Vec2Handle;
 }
 export interface Vec3Key {
   readonly time: number;
@@ -161,6 +172,41 @@ export function sampleVec3Keyframes(keys: readonly Vec3Key[], t: number): Vec3 {
   if (t >= last.time) return last.value;
   for (let i = 0; i < keys.length - 1; i++) {
     if (t >= keys[i].time && t <= keys[i + 1].time) return segmentVec3(keys[i], keys[i + 1], t);
+  }
+  return last.value;
+}
+
+/** Interpolate ONE vec2 segment a→b at absolute time t. The 2-component sibling of
+ *  {@link segmentVec3} — one shared x→s solve, per-component Y control points. */
+function segmentVec2(a: Vec2Key, b: Vec2Key, t: number): Vec2 {
+  const span = b.time - a.time;
+  if (span <= 0) return a.value;
+  if (!a.outHandle && !b.inHandle) {
+    const u = (t - a.time) / span;
+    const f = b.easing === 'cubic' ? smoothstep(u) : u;
+    return [a.value[0] + (b.value[0] - a.value[0]) * f, a.value[1] + (b.value[1] - a.value[1]) * f];
+  }
+  const ohTime = a.outHandle ? a.outHandle.time : span / 3;
+  const ihTime = b.inHandle ? b.inHandle.time : -span / 3;
+  const s = solveParamForX(a.time, a.time + ohTime, b.time + ihTime, b.time, t);
+  const out: [number, number] = [0, 0];
+  for (let i = 0; i < 2; i++) {
+    const delta = b.value[i] - a.value[i];
+    const ohV = a.outHandle ? a.outHandle.value[i] : autoValueOffset(a.easing, delta);
+    const ihV = b.inHandle ? b.inHandle.value[i] : autoValueOffset(b.easing, delta);
+    out[i] = bezierAt(a.value[i], a.value[i] + ohV, b.value[i] + ihV, b.value[i], s);
+  }
+  return out;
+}
+
+/** Sample a sorted vec2 keyframe list at time t (clamp ends, interpolate mid). */
+export function sampleVec2Keyframes(keys: readonly Vec2Key[], t: number): Vec2 {
+  if (keys.length === 0) return [0, 0];
+  if (t <= keys[0].time) return keys[0].value;
+  const last = keys[keys.length - 1];
+  if (t >= last.time) return last.value;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (t >= keys[i].time && t <= keys[i + 1].time) return segmentVec2(keys[i], keys[i + 1], t);
   }
   return last.value;
 }
