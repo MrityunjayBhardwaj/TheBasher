@@ -27,6 +27,8 @@ export type KeyframeSpec = z.infer<typeof KeyframeSpec>;
 
 const VALUE_SHAPE_BY_TYPE: Record<string, (v: unknown) => boolean> = {
   KeyframeChannelNumber: (v) => typeof v === 'number',
+  KeyframeChannelVec2: (v) =>
+    Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number'),
   KeyframeChannelVec3: (v) =>
     Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number'),
   KeyframeChannelQuat: (v) =>
@@ -36,6 +38,7 @@ const VALUE_SHAPE_BY_TYPE: Record<string, (v: unknown) => boolean> = {
 
 const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
   KeyframeChannelNumber: 'linear',
+  KeyframeChannelVec2: 'cubic',
   KeyframeChannelVec3: 'cubic',
   KeyframeChannelQuat: 'cubic',
   KeyframeChannelColor: 'cubic',

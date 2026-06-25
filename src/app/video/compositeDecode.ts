@@ -87,6 +87,17 @@ export function collectCompositeInputs(
       resolveEvaluatedParam(state, layerId, 'transform.rotation', ctx)?.value,
       num(t.rotation, 0),
     );
+    // Position + scale overlay their evaluated [[V57]] channel value too (vec2),
+    // so a keyframed 2D transform animates in viewer + export (H40) — same path
+    // as opacity/rotation, just a 2-vector.
+    const position = vec2(
+      resolveEvaluatedParam(state, layerId, 'transform.position', ctx)?.value,
+      vec2(t.position, [0, 0]),
+    );
+    const scale = vec2(
+      resolveEvaluatedParam(state, layerId, 'transform.scale', ctx)?.value,
+      vec2(t.scale, [1, 1]),
+    );
 
     // The layer's source edge may pass through an EFFECT chain (Image→Image
     // operators on the V58 stack): Layer.source → topEffect … → baseMediaClip.
@@ -144,8 +155,8 @@ export function collectCompositeInputs(
       outPoint: num(p.outPoint, -1),
       opacity,
       rotation,
-      position: vec2(t.position, [0, 0]),
-      scale: vec2(t.scale, [1, 1]),
+      position,
+      scale,
       blendMode: (p.blendMode as LayerBlendMode) ?? 'normal',
       source,
       effects,

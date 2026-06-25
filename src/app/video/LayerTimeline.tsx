@@ -21,7 +21,7 @@ import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId, Op } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import { ParamDiamond } from '../ParamDiamond';
-import { useAnimatableField } from '../animate/useAnimatableField';
+import { useAnimatableField, useAnimatableVec2Field } from '../animate/useAnimatableField';
 import {
   buildAddLayerEffectOps,
   buildReorderLayerOps,
@@ -75,6 +75,28 @@ const LAYER_PROPS: readonly LayerProp[] = [
   },
 ];
 
+/** A keyframeable Vec2 property of a layer (2D transform position/scale), shown as
+ *  a twirl-down row with TWO axis fields + ONE diamond keying the whole vector
+ *  (the NPanel VectorField precedent). `paramPath` is the channel target path. */
+interface LayerVec2Prop {
+  key: string;
+  label: string;
+  paramPath: string;
+  step: number;
+  get: (r: LayerRow) => readonly [number, number];
+}
+
+const LAYER_VEC2_PROPS: readonly LayerVec2Prop[] = [
+  {
+    key: 'position',
+    label: 'Position',
+    paramPath: 'transform.position',
+    step: 1,
+    get: (r) => r.position,
+  },
+  { key: 'scale', label: 'Scale', paramPath: 'transform.scale', step: 0.05, get: (r) => r.scale },
+];
+
 /** A keyframeable scalar param of an EFFECT node, shown as a sub-row under the
  *  effect's twirl. `paramPath` targets the effect node directly (free-floating
  *  [[V57]] channel); `get` reads the authored value off the effect row. */
@@ -109,6 +131,7 @@ const EFFECT_PROPS: readonly EffectProp[] = [
 type VisualRow =
   | { kind: 'layer'; row: LayerRow; layerIndex: number }
   | { kind: 'prop'; row: LayerRow; layerIndex: number; prop: LayerProp }
+  | { kind: 'vec2-prop'; row: LayerRow; layerIndex: number; prop: LayerVec2Prop }
   | { kind: 'effect'; row: LayerRow; layerIndex: number; effect: LayerEffectRow }
   | {
       kind: 'effect-prop';
@@ -421,6 +444,8 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     visualRows.push({ kind: 'layer', row, layerIndex });
     if (openRows.has(row.id)) {
       for (const prop of LAYER_PROPS) visualRows.push({ kind: 'prop', row, layerIndex, prop });
+      for (const prop of LAYER_VEC2_PROPS)
+        visualRows.push({ kind: 'vec2-prop', row, layerIndex, prop });
       // The layer's effect stack (V58 on the Image socket) + an add-effect row. An
       // open effect expands into its keyframeable param sub-rows (2b).
       for (const effect of collectLayerEffects(dagState, row.id)) {
@@ -471,6 +496,16 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
             if (v.kind === 'prop') {
               return (
                 <OutlinePropRow
+                  key={`${v.row.id}-${v.prop.key}`}
+                  layerId={v.row.id}
+                  prop={v.prop}
+                  base={v.prop.get(v.row)}
+                />
+              );
+            }
+            if (v.kind === 'vec2-prop') {
+              return (
+                <OutlineVec2PropRow
                   key={`${v.row.id}-${v.prop.key}`}
                   layerId={v.row.id}
                   prop={v.prop}
@@ -535,7 +570,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
         {/* Layer bars + (when open) keyframe rows. */}
         <div>
           {visualRows.map((v) => {
-            if (v.kind === 'prop') {
+            if (v.kind === 'prop' || v.kind === 'vec2-prop') {
               return (
                 <TrackKeyframeRow
                   key={`${v.row.id}-${v.prop.key}`}
@@ -756,6 +791,81 @@ function OutlinePropRow({
         }}
         className="w-14 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       />
+      <ParamDiamond
+        nodeId={layerId}
+        paramPath={prop.paramPath}
+        value={base}
+        testid={`layer-prop-diamond-${layerId}-${prop.key}`}
+      />
+    </div>
+  );
+}
+
+/** An open twirl-down Vec2 property row in the OUTLINE column (Position / Scale):
+ *  an indented label, TWO axis fields (X, Y), and ONE inspector ParamDiamond keying
+ *  the WHOLE vector at the playhead (the NPanel VectorField precedent; H104). Routed
+ *  through the Vec2 animatable seam — keys a KeyframeChannelVec2 targeting the Layer
+ *  node directly ([[V57]]). An edit to either axis writes the whole [x,y]. */
+function OutlineVec2PropRow({
+  layerId,
+  prop,
+  base,
+}: {
+  layerId: NodeId;
+  prop: LayerVec2Prop;
+  base: readonly [number, number];
+}) {
+  const { effective, readOnly, onEdit } = useAnimatableVec2Field(
+    layerId,
+    prop.paramPath,
+    base,
+    (next) => setLayerParam(layerId, prop.paramPath, next, `set ${prop.label}`),
+  );
+  // A per-axis local draft; committing applies the WHOLE vector (the other axis
+  // taken from `effective`) through the single-write seam.
+  const [draft, setDraft] = useState<{ axis: 0 | 1; text: string } | null>(null);
+  const commitAxis = (axis: 0 | 1) => {
+    if (!draft || draft.axis !== axis) return;
+    const n = parseFloat(draft.text);
+    if (Number.isFinite(n)) {
+      const next: [number, number] = [effective[0], effective[1]];
+      next[axis] = n;
+      onEdit(next);
+    }
+    setDraft(null);
+  };
+  const axisField = (axis: 0 | 1, label: string) => (
+    <input
+      type="number"
+      step={prop.step}
+      aria-label={`${prop.label} ${label}`}
+      value={draft?.axis === axis ? draft.text : round2(effective[axis])}
+      readOnly={readOnly}
+      data-testid={`layer-prop-input-${layerId}-${prop.key}-${label.toLowerCase()}`}
+      onFocus={() => setDraft({ axis, text: round2(effective[axis]) })}
+      onChange={(e) => setDraft({ axis, text: e.target.value })}
+      onBlur={() => commitAxis(axis)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          commitAxis(axis);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      className="w-10 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    />
+  );
+  return (
+    <div
+      data-testid={`layer-prop-row-${layerId}-${prop.key}`}
+      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <span className="flex-1 truncate pl-4 text-mute" title={prop.label}>
+        {prop.label}
+      </span>
+      {axisField(0, 'X')}
+      {axisField(1, 'Y')}
       <ParamDiamond
         nodeId={layerId}
         paramPath={prop.paramPath}

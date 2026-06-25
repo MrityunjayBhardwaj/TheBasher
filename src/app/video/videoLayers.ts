@@ -28,6 +28,16 @@ export interface LayerRow {
   readonly opacity: number;
   /** 2D transform rotation in degrees (keyframeable, paramPath 'transform.rotation'). */
   readonly rotation: number;
+  /** 2D transform position offset [x,y] in px (keyframeable, 'transform.position'). */
+  readonly position: readonly [number, number];
+  /** 2D transform scale [x,y] (keyframeable, 'transform.scale'). */
+  readonly scale: readonly [number, number];
+}
+
+function vec2(value: unknown, fallback: readonly [number, number]): readonly [number, number] {
+  return Array.isArray(value) && value.length >= 2
+    ? [num(value[0], fallback[0]), num(value[1], fallback[1])]
+    : fallback;
 }
 
 /** Normalize a socket binding to an ordered list of NodeRefs (node + socket). */
@@ -79,6 +89,8 @@ export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
       srcFrames: Math.max(1, srcFrames),
       opacity: num(p.opacity, 1),
       rotation: num(transform.rotation, 0),
+      position: vec2(transform.position, [0, 0]),
+      scale: vec2(transform.scale, [1, 1]),
     });
   }
   return rows;

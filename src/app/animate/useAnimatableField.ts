@@ -72,3 +72,53 @@ export function useAnimatableField<T extends number | string>(
   };
   return { effective, readOnly, onEdit };
 }
+
+export interface AnimatableVec2Field {
+  /** The evaluated [x,y] the renderer shows (transient → channel → base). */
+  readonly effective: readonly [number, number];
+  /** True iff a channel actively drives this field during playback → read-only. */
+  readonly readOnly: boolean;
+  /** Commit a whole-vector edit through the single-write seam (animated → channel/
+   *  transient; un-animated → caller's source write, then an Auto-Key first key). */
+  readonly onEdit: (next: readonly [number, number]) => void;
+}
+
+/**
+ * The Vec2 sibling of {@link useAnimatableField} (the H104 affordance for a 2-vector
+ * param — a Compositor layer's `transform.position` / `transform.scale`). The scalar
+ * hook is `T extends number | string`, so a 2-tuple needs this variant: it keys the
+ * WHOLE vector (the channel is a KeyframeChannelVec2; the diamond's `value` is the
+ * whole array), reads the evaluated vec2 via the SAME `resolveEvaluatedParam` path,
+ * and routes the single-write edit identically. `base` is the authored vector.
+ */
+export function useAnimatableVec2Field(
+  nodeId: string,
+  paramPath: string,
+  base: readonly [number, number],
+  onSource: (next: readonly [number, number]) => void,
+): AnimatableVec2Field {
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const dagState = useDagStore((s) => s.state);
+  const resolved = useMemo(
+    () =>
+      resolveEvaluatedParam(dagState, nodeId, paramPath, {
+        time: { frame, seconds, normalized },
+      }),
+    [dagState, nodeId, paramPath, frame, seconds, normalized],
+  );
+  const v = resolved?.value;
+  const effective: readonly [number, number] =
+    Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number'
+      ? (v as [number, number])
+      : base;
+  const readOnly = playing && resolved !== null;
+  const onEdit = (next: readonly [number, number]) => {
+    if (routeAnimatedGrab(nodeId, paramPath, next)) return;
+    onSource(next);
+    autoKeyCommit(nodeId, paramPath, next);
+  };
+  return { effective, readOnly, onEdit };
+}
