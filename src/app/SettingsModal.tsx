@@ -22,12 +22,15 @@ export function SettingsModal() {
   const close = useSettingsStore((s) => s.close);
   const storedUrl = useSettingsStore((s) => s.comfyUrl);
   const storedAuth = useSettingsStore((s) => s.comfyAuthHeader);
+  const storedLive = useSettingsStore((s) => s.comfyLiveGenerate);
   const setComfyUrl = useSettingsStore((s) => s.setComfyUrl);
   const setComfyAuthHeader = useSettingsStore((s) => s.setComfyAuthHeader);
+  const setComfyLiveGenerate = useSettingsStore((s) => s.setComfyLiveGenerate);
 
   // Draft state — edits commit only on Save, so Cancel/Esc discards them.
   const [url, setUrl] = useState(storedUrl);
   const [auth, setAuth] = useState(storedAuth);
+  const [live, setLive] = useState(storedLive);
   const [test, setTest] = useState<TestState>({ status: 'idle' });
 
   // Re-seed the draft from the store each time the modal opens.
@@ -35,9 +38,10 @@ export function SettingsModal() {
     if (isOpen) {
       setUrl(storedUrl);
       setAuth(storedAuth);
+      setLive(storedLive);
       setTest({ status: 'idle' });
     }
-  }, [isOpen, storedUrl, storedAuth]);
+  }, [isOpen, storedUrl, storedAuth, storedLive]);
 
   // Esc dismisses (discards the draft). Bound only while open.
   useEffect(() => {
@@ -60,6 +64,7 @@ export function SettingsModal() {
   const onSave = () => {
     setComfyUrl(url);
     setComfyAuthHeader(auth);
+    setComfyLiveGenerate(live);
     resetComfyCapability(); // next getComfyCapability() re-probes the new server
     close();
   };
@@ -120,6 +125,19 @@ export function SettingsModal() {
               placeholder="Bearer …"
               className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             />
+          </label>
+
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              data-testid="settings-comfy-live"
+              checked={live}
+              onChange={(e) => setLive(e.target.checked)}
+              className="accent-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+            <span className="text-[11px] text-fg/60">
+              Live generate <span className="text-fg/40">(submit to the server, not the stub)</span>
+            </span>
           </label>
 
           <div className="flex items-center gap-3">

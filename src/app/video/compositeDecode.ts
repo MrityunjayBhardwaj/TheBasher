@@ -25,10 +25,15 @@ import { pickMediaDecode, type MediaProbe } from '../../core/media';
 import { hashValue } from '../../core/dag/hash';
 import {
   comfyParamPath,
+  compilePreviewFrame,
   importComfyGraph,
+  type BakedTrack,
   type ComfyApiJson,
   type ComfyGraphMeta,
 } from '../../core/comfy/comfyGraph';
+import { getComfyCapability } from '../boot';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useAssetErrorStore } from '../stores/assetErrorStore';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx, NodeId } from '../../core/dag/types';
@@ -72,6 +77,9 @@ interface ResolvedComfy {
   readonly values: Record<string, number | string | boolean>;
   /** The first schedulable prompt (CLIPTextEncode.text) value — labels the stub. */
   readonly promptText?: string;
+  /** The per-frame compiled workflow (apiJson with the resolved values substituted)
+   *  — what a real /prompt submit sends (design §7.2). null when no graph. */
+  readonly compiledJson: ComfyApiJson | null;
 }
 
 /** Resolve a ComfyUIWorkflow node's schedulable params at `ctx.time`: each is its
@@ -87,10 +95,11 @@ function resolveComfyParamsAtFrame(
   ctx: EvalCtx,
 ): ResolvedComfy {
   const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
-  if (!gp?.apiJson) return { graphJson: null, values: {} };
+  if (!gp?.apiJson) return { graphJson: null, values: {}, compiledJson: null };
   const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
   const graph = importComfyGraph(gp.apiJson, meta);
   const values: Record<string, number | string | boolean> = {};
+  const tracks: BakedTrack[] = [];
   let promptText: string | undefined;
   for (const param of graph.params) {
     if (param.scheduleHint !== 'schedulable') continue;
@@ -101,8 +110,10 @@ function resolveComfyParamsAtFrame(
       ctx,
     );
     const v = r ? r.value : param.literal;
-    if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean')
+    if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') {
       values[`${param.nodeId}.${param.inputName}`] = v;
+      tracks.push({ nodeId: param.nodeId, inputName: param.inputName, values: [v] });
+    }
     if (
       promptText === undefined &&
       param.classType === 'CLIPTextEncode' &&
@@ -111,7 +122,10 @@ function resolveComfyParamsAtFrame(
     )
       promptText = v;
   }
-  return { graphJson: gp.apiJson, name: meta.name, values, promptText };
+  // The single-frame compiled workflow: every schedulable param substituted with
+  // its resolved-at-frame value (preview path, design §7.2). Sent to a real server.
+  const compiledJson = compilePreviewFrame(graph, tracks, 0);
+  return { graphJson: gp.apiJson, name: meta.name, values, promptText, compiledJson };
 }
 
 /** Resolve the comp's layers (back→front) to composite inputs: authored params with
@@ -196,6 +210,7 @@ export function collectCompositeInputs(
           kind: 'comfy',
           path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, vals: resolved.values })}`,
           label: resolved.promptText ?? resolved.name ?? 'ComfyUI',
+          comfyWorkflow: resolved.compiledJson,
           mediaKind: 'image',
           width: num(cp.width, 512),
           height: num(cp.height, 512),
@@ -282,6 +297,32 @@ async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | n
   return await createImageBitmap(canvas);
 }
 
+/** Submit a comfy layer's per-frame compiled workflow to a REAL ComfyUI server and
+ *  decode the returned PNG (inc 3 real submit). Only when `comfyLiveGenerate` is on
+ *  AND the capability resolved to a reachable HTTP server; otherwise (CI / offline /
+ *  opt-out) the deterministic GPU-free stub. A submit failure surfaces to the asset
+ *  error store (B23/B24: never silently blank) and falls back to the stub. */
+async function decodeComfy(source: CompositeSource): Promise<ImageBitmap | null> {
+  const live = useSettingsStore.getState().comfyLiveGenerate;
+  if (live && source.comfyWorkflow) {
+    try {
+      const cap = await getComfyCapability();
+      if (cap.kind === 'http') {
+        const { frame } = await cap.submit(source.comfyWorkflow, { images: {}, scalars: {} });
+        const blob = new Blob([frame.slice()], { type: 'image/png' });
+        const bmp = await createImageBitmap(blob);
+        useAssetErrorStore.getState().clear(source.path);
+        return bmp;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'ComfyUI submit failed';
+      useAssetErrorStore.getState().report(source.path, `ComfyUI generate failed: ${msg}`);
+      // fall through to the stub so the layer still shows SOMETHING (not blank)
+    }
+  }
+  return await decodeComfyStub(source);
+}
+
 async function ensureBitmap(
   source: CompositeSource,
   frameIndex: number,
@@ -289,9 +330,11 @@ async function ensureBitmap(
   const key = `${source.path}#${frameIndex}`;
   const cached = bitmapCache.get(key);
   if (cached) return cached;
-  // A ComfyUIWorkflow generator → a deterministic stub frame (no OPFS / no server).
+  // A ComfyUIWorkflow generator. Real submit (opt-in `comfyLiveGenerate` + a
+  // reachable server) → the per-frame compiled workflow is sent to ComfyUI and a
+  // REAL frame composited; otherwise the deterministic GPU-free stub (CI/offline).
   if (source.kind === 'comfy') {
-    const bmp = await decodeComfyStub(source);
+    const bmp = await decodeComfy(source);
     if (bmp) bitmapCache.set(key, bmp);
     return bmp;
   }

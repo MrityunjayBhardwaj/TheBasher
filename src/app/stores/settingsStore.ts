@@ -23,11 +23,20 @@ export interface PersistedSettings {
   comfyUrl: string;
   /** Optional value for the `Authorization` header sent to ComfyUI ('' = none). */
   comfyAuthHeader: string;
+  /**
+   * When true, a ComfyUIWorkflow layer SUBMITS its per-frame compiled workflow to
+   * the configured server (real /prompt → /view) instead of drawing the
+   * deterministic placeholder stub (inc 3 real submit). Default FALSE so the app
+   * (and CI / offline) stays on the GPU-free stub — real generation is opt-in,
+   * expensive, and server-dependent.
+   */
+  comfyLiveGenerate: boolean;
 }
 
 const DEFAULT_SETTINGS: PersistedSettings = {
   comfyUrl: DEFAULT_COMFYUI_URL,
   comfyAuthHeader: '',
+  comfyLiveGenerate: false,
 };
 
 export interface SettingsStore extends PersistedSettings {
@@ -37,6 +46,7 @@ export interface SettingsStore extends PersistedSettings {
   close: () => void;
   setComfyUrl: (url: string) => void;
   setComfyAuthHeader: (header: string) => void;
+  setComfyLiveGenerate: (on: boolean) => void;
 }
 
 function safeGetItem(key: string): string | null {
@@ -73,6 +83,10 @@ function readPersisted(): PersistedSettings {
         typeof parsed.comfyAuthHeader === 'string'
           ? parsed.comfyAuthHeader
           : DEFAULT_SETTINGS.comfyAuthHeader,
+      comfyLiveGenerate:
+        typeof parsed.comfyLiveGenerate === 'boolean'
+          ? parsed.comfyLiveGenerate
+          : DEFAULT_SETTINGS.comfyLiveGenerate,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -101,6 +115,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   setComfyAuthHeader(header) {
     const comfyAuthHeader = header.trim();
     set({ comfyAuthHeader });
-    writePersisted({ comfyUrl: get().comfyUrl, comfyAuthHeader });
+    writePersisted({
+      comfyUrl: get().comfyUrl,
+      comfyAuthHeader,
+      comfyLiveGenerate: get().comfyLiveGenerate,
+    });
+  },
+  setComfyLiveGenerate(on) {
+    set({ comfyLiveGenerate: on });
+    writePersisted({
+      comfyUrl: get().comfyUrl,
+      comfyAuthHeader: get().comfyAuthHeader,
+      comfyLiveGenerate: on,
+    });
   },
 }));

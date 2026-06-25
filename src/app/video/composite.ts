@@ -39,6 +39,11 @@ export interface CompositeSource {
   /** A human label drawn into a generator (comfy) stub frame — e.g. the imported
    *  workflow's name. Ignored by media sources. */
   readonly label?: string;
+  /** A comfy generator's per-frame compiled workflow (the ComfyUI API json with
+   *  this frame's resolved params substituted). The decoder submits it to a real
+   *  server when live-generate is on; typed `unknown` to keep composite.ts free of
+   *  the comfy data model. */
+  readonly comfyWorkflow?: unknown;
 }
 
 /** A resolved video effect to apply to a layer's decoded frame, in apply order

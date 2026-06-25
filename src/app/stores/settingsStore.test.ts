@@ -61,7 +61,11 @@ describe('settingsStore', () => {
     useSettingsStore.getState().setComfyUrl('http://x:1');
     useSettingsStore.getState().setComfyAuthHeader('Bearer abc');
     const persisted = JSON.parse(localStorage.getItem(KEY)!);
-    expect(persisted).toEqual({ comfyUrl: 'http://x:1', comfyAuthHeader: 'Bearer abc' });
+    expect(persisted).toEqual({
+      comfyUrl: 'http://x:1',
+      comfyAuthHeader: 'Bearer abc',
+      comfyLiveGenerate: false,
+    });
   });
 
   it('open/close toggles the modal flag WITHOUT persisting it (ephemeral chrome)', () => {
