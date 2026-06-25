@@ -21,6 +21,7 @@ import { useTimeStore } from '../stores/timeStore';
 import { createNewComposition } from './newComposition';
 import { addComfyWorkflowLayer, openAddMediaLayerPicker } from './addLayer';
 import { LayerTimeline } from './LayerTimeline';
+import { ControlsPanel } from './ControlsPanel';
 import { CompositeViewer } from './CompositeViewer';
 import { VideoTransport } from './VideoTransport';
 import { compDurationSeconds } from './videoTimelineGeometry';
@@ -115,32 +116,39 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
   }, [space, totalFrames, fps]);
 
   return (
-    <>
-      {/* Composite viewer (top) — the live ordered composite at the playhead (1d). */}
-      <CompositeViewer compId={comp.id} comp={comp.params} />
-      {/* Layer timeline (bottom) — a transport bar over the outline + bars +
-          twirl-down property rows. The strip header carries the comp name, the
-          live layer count, and the Add Layer affordance (the layer Add path). */}
-      <div
-        data-testid="video-mode-timeline"
-        className="flex flex-col border-t border-line bg-bg"
-        style={{ height: 300 }}
-      >
-        <VideoTransport comp={comp.params} />
-        <div className="flex items-center gap-3 border-b border-line px-3 py-1.5 text-xs">
-          <span className="text-fg" data-testid="video-mode-comp-name">
-            {name}
-          </span>
-          <span className="text-mute" data-testid="video-mode-layer-count">
-            {layerCount} {layerCount === 1 ? 'layer' : 'layers'}
-          </span>
-          <div className="flex-1" />
-          <AddLayerMenu compId={comp.id} />
-          <ExportMenu />
+    // Horizontal split: the viewer+timeline stack (left, grows) beside the Controls
+    // panel (right rail, §7.1 — the AE Effect Controls home for the selected layer's
+    // producer pipeline). The rail follows videoSelectionStore, shared with the
+    // timeline's row selection.
+    <div className="flex h-full w-full min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Composite viewer (top) — the live ordered composite at the playhead (1d). */}
+        <CompositeViewer compId={comp.id} comp={comp.params} />
+        {/* Layer timeline (bottom) — a transport bar over the outline + bars +
+            twirl-down property rows. The strip header carries the comp name, the
+            live layer count, and the Add Layer affordance (the layer Add path). */}
+        <div
+          data-testid="video-mode-timeline"
+          className="flex flex-col border-t border-line bg-bg"
+          style={{ height: 300 }}
+        >
+          <VideoTransport comp={comp.params} />
+          <div className="flex items-center gap-3 border-b border-line px-3 py-1.5 text-xs">
+            <span className="text-fg" data-testid="video-mode-comp-name">
+              {name}
+            </span>
+            <span className="text-mute" data-testid="video-mode-layer-count">
+              {layerCount} {layerCount === 1 ? 'layer' : 'layers'}
+            </span>
+            <div className="flex-1" />
+            <AddLayerMenu compId={comp.id} />
+            <ExportMenu />
+          </div>
+          <LayerTimeline compId={comp.id} comp={comp.params} />
         </div>
-        <LayerTimeline compId={comp.id} comp={comp.params} />
       </div>
-    </>
+      <ControlsPanel />
+    </div>
   );
 }
 

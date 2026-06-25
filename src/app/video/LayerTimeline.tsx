@@ -32,6 +32,7 @@ import {
   type LayerRow,
 } from './videoLayers';
 import { buildRemoveEffectOps, buildToggleEffectMuteOp } from '../operatorStack';
+import { useVideoSelectionStore } from './videoSelectionStore';
 import {
   BAR_TRIM_HANDLE_PX,
   OUTLINE_WIDTH_PX,
@@ -192,7 +193,11 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
   const rows = useDagStore((s) => collectLayerRows(s.state, compId));
   const dagState = useDagStore((s) => s.state);
   const frame = useTimeStore((s) => s.frame);
-  const [selectedId, setSelectedId] = useState<NodeId | null>(null);
+  // Selection is LIFTED to a shared store (videoSelectionStore) so the Controls
+  // panel (the right rail) reads the SAME selected layer this timeline highlights
+  // — one source of truth, two surfaces (§7.1, the AE contract).
+  const selectedId = useVideoSelectionStore((s) => s.selectedLayerId);
+  const setSelectedId = useVideoSelectionStore((s) => s.setSelectedLayer);
   const [openRows, setOpenRows] = useState<ReadonlySet<NodeId>>(() => new Set());
   const toggleTwirl = useCallback((id: NodeId) => {
     setOpenRows((prev) => {
@@ -316,13 +321,16 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     [totalFrames, onWindowMove, onWindowUp],
   );
 
-  const onRowClick = useCallback((id: NodeId) => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return; // the press was a drag, not a select
-    }
-    setSelectedId(id);
-  }, []);
+  const onRowClick = useCallback(
+    (id: NodeId) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return; // the press was a drag, not a select
+      }
+      setSelectedId(id);
+    },
+    [setSelectedId],
+  );
 
   // Ruler scrub (transport): press/drag anywhere on the frame ruler to move the
   // GLOBAL playhead. The pointer x (relative to the track) → comp frame → global
