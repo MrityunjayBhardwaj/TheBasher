@@ -270,11 +270,22 @@ uses ([[V57]]):
 ```
 
 `directChannelNodesForTarget(nodes, comfyWorkflowNodeId)` (`nodeChannels.ts:40`) already
-enumerates these. The **only new thing** is teaching the inspector + dopesheet to:
-(a) list a ComfyWorkflow node's `graph.params` as animatable rows (an `inspectorSection`),
-and (b) route the diamond/autoKey for those rows — note [[H104]]: a custom inspector
-control must explicitly wire the shared keyframe diamond, or its params are silently
-non-animatable. The `useAnimatableField` spine ([[#213]]) is the reuse target.
+enumerates these. The **only new thing** is teaching the UI to:
+(a) list a ComfyWorkflow node's `graph.params` as animatable rows, and (b) route the
+diamond/autoKey for those rows — note [[H104]]: a custom control must explicitly wire
+the shared keyframe diamond, or its params are silently non-animatable. The
+`useAnimatableField` spine ([[#213]]) is the reuse target.
+
+**WHERE these rows live (LOCKED — supersedes the earlier "an `inspectorSection`" note).**
+The ComfyUIWorkflow node is now homed as a compositor *layer source* ([[V83]]), not a
+free node selected in the 3D NPanel inspector. So the rows live in the compositor's
+**Controls panel** (`docs/COMPOSITOR-DESIGN.md` §7.1) — the AE "Effect Controls"
+analogue, generalized to "all inputs of the layer's producer pipeline." The comfy graph
+manifest is the **first SOURCE-section renderer** in that panel: Schedulable params as
+animatable rows (diamond + `useAnimatableField`, channel type dispatched EXPLICITLY by
+`valueKind`), Structural params read-only with a "preview-only" note (§7.4). It is NOT
+the NPanel inspector — in the VIDEO space NPanel is covered (`z-index 45`) and compositor
+selection is local, so a dedicated VIDEO-space rail is the domain-aligned home.
 
 `paramPath` namespacing: `comfy:<nodeId>.<inputName>` distinguishes workflow params from
 the existing transform/material paramPaths so resolvers don't collide.

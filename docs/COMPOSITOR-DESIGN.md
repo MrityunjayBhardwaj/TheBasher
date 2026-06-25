@@ -237,12 +237,58 @@ Evolve the existing `src/timeline/` drawer into the **Composition timeline**:
 - **Track area** (right): each layer's bar (trim/move handles); twirled-open property
   rows show V57 keyframes on the SAME ruler/playhead/zoom as today ([[V50]]); the
   graph-editor toggle swaps to `CurveEditor`.
-- **Inspector** (right island): selected layer/effect params (the "Effect Controls"
-  analogue) — reuses NPanel sections + `useAnimatableField` diamonds ([[H104]] guard).
+- **Controls panel** (right rail, in the VIDEO space — see §7.1): selected layer's
+  full producer-pipeline input surface (the AE "Effect Controls" analogue, generalized).
 - **Viewer**: the 2D View shows the comp composite ([[V80]]).
 
 The current dopesheet/curve tabs become _views of a selected layer_, not top-level
 peers — one timeline, not three.
+
+### 7.1 The Controls panel — "all the inputs of the producer pipeline" (LOCKED)
+
+A layer is produced by a **pipeline**: a `source` (polymorphic on the Image socket —
+MediaClip / ComfyUIWorkflow / scene-render / nested comp) feeding through an `effect`
+chain ([[V58]] Image→Image operators). The **Controls panel** exposes the *complete
+input surface of that pipeline* for the selected layer. It is the After Effects
+**Effect Controls** panel, generalized one step: because a Basher `source` can itself
+be a parameterized **generative process** (ComfyUI, a 3D render) — not the dumb footage
+AE assumes — the source's inputs belong in the same panel as the effects' inputs.
+
+**This is the domain-aligned home (not the NPanel inspector).** Decisive constraint:
+in the VIDEO space the NPanel inspector is **covered** by the compositor (`z-index 45`,
+`Layout.tsx`) and compositor layer selection is **local** (`LayerTimeline` `useState`),
+not the global `selectionStore` NPanel reads. A dedicated VIDEO-space rail sidesteps
+both — and gives "expose all params" real vertical room a 220px twirl-down can't.
+
+Shape (mirrors AE; the reference system → pre-validated boundary):
+
+- **Header** — the selected layer name.
+- **One collapsible section per producer**, in pipeline order: the `SOURCE` section
+  first, then each `EFFECT` section. The **section body is rendered by producer kind**
+  (a registry of section renderers), so the panel is generic and producer-agnostic:
+  - `source = ComfyUIWorkflow` → the graph manifest (`importComfyGraph`): **Schedulable**
+    params as animatable rows; **Structural** params read-only with a "preview-only"
+    note (design §7.4 — never silently dropped). ← the first source renderer (inc 3 D).
+  - `source = MediaClip` → its clip props.
+  - `source = scene-render` → render settings (later).
+  - each effect (ColorCorrect today) → its param rows.
+- **Every animatable row wires the ONE shared seam** — `useAnimatableField` +
+  `ParamDiamond` ([[H104]] guard) — regardless of producer, so the keying affordance is
+  written once. The channel TYPE is dispatched EXPLICITLY by the param's `valueKind`
+  (float/int → `KeyframeChannelNumber`, string → `KeyframeChannelText`, image →
+  `KeyframeChannelImage`); do NOT rely on `inferValueType` (it was deliberately not
+  taught `text`). `paramPath` for a comfy param = `comfy:<nodeId>.<inputName>`.
+
+**Two surfaces, one source of truth (the AE contract):** the Controls panel is the
+*full* input surface; the timeline twirl-down shows the *animated subset* as rows with
+keyframes for timing. Both read the SAME [[V57]] channels, so they cannot drift. An
+animated comfy/effect param appears in BOTH (panel = author values/keys; timeline =
+retime), exactly as AE shows an effect in Effect Controls AND the timeline.
+
+**Why this is the right module boundary (diminishing-returns test):** the panel's span =
+the layer's whole production pipeline; the next producer kind is "add one section
+renderer," not "add a panel." Control-pass bindings (depth/normal → ControlNet) later
+land as inputs in the SOURCE section — same boundary, no new surface.
 
 ---
 
