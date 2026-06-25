@@ -11,6 +11,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { NodeId, NodeRef, Op } from '../../core/dag/types';
+import { buildAddEffectOps, enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 
 export interface LayerRow {
   readonly id: NodeId;
@@ -108,6 +109,54 @@ export function buildReorderLayerOps(
     { type: 'disconnect', from: movedRef, to: { node: compId, socket: 'layers' } },
     { type: 'connect', from: movedRef, to: { node: compId, socket: 'layers' }, index: to },
   ];
+}
+
+/** One video effect on a layer's source edge, base→top of the [[V58]] stack. */
+export interface LayerEffectRow {
+  readonly nodeId: NodeId;
+  readonly type: string;
+  readonly muted: boolean;
+  readonly brightness: number;
+  readonly contrast: number;
+  readonly saturation: number;
+}
+
+/**
+ * The effect stack on `layerId`'s source edge (base → top), read from the DAG via
+ * the shared operatorStack enumeration (the SAME engine geometry modifiers use —
+ * [[V58]] lifted to the Image socket). Returns [] when the layer has no source or no
+ * effects. Each entry carries its authored colour params for the inspector field.
+ */
+export function collectLayerEffects(state: DagState, layerId: NodeId): LayerEffectRow[] {
+  const layer = state.nodes[layerId];
+  if (!layer) return [];
+  const srcId = refNodeIds(layer.inputs?.source)[0];
+  if (!srcId) return [];
+  const baseId = resolveEffectBase(state, srcId);
+  return enumerateEffectStack(state, baseId).map((e) => {
+    const p = state.nodes[e.nodeId].params as Record<string, unknown>;
+    return {
+      nodeId: e.nodeId,
+      type: e.type,
+      muted: e.muted,
+      brightness: num(p.brightness, 1),
+      contrast: num(p.contrast, 1),
+      saturation: num(p.saturation, 1),
+    };
+  });
+}
+
+/** Ops to add an `effectType` effect onto `layerId`'s source edge (top of the
+ *  stack, closest to the Layer). Resolves the base Image source (the MediaClip)
+ *  then splices via the shared {@link buildAddEffectOps}. [] when no source. */
+export function buildAddLayerEffectOps(state: DagState, layerId: NodeId, effectType: string): Op[] {
+  const layer = state.nodes[layerId];
+  if (!layer) return [];
+  const srcId = refNodeIds(layer.inputs?.source)[0];
+  if (!srcId) return [];
+  const base = resolveEffectBase(state, srcId);
+  const res = buildAddEffectOps(state, base, effectType);
+  return res ? res.ops : [];
 }
 
 /**

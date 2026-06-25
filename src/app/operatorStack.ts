@@ -30,13 +30,30 @@ import { nodeDisplayName } from './sceneTreeWalk';
  *  is a modifier iff its type is registered here — new modifiers (Mirror, Subdiv…)
  *  register by adding their type, nothing else. They all share the Mesh `target`
  *  input / Mesh `out` output shape, which is what makes the sub-chain uniform. */
-export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set(['ArrayModifier', 'MirrorModifier']);
+export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set([
+  'ArrayModifier',
+  'MirrorModifier',
+]);
+
+/** The video-effect (Image→Image) node types — the [[V58]] lift to the Image socket
+ *  (epic #235 / spine 1e+). An effect is a typed `target: Image`/`out: Image`
+ *  operator on the SAME sub-chain engine as a geometry modifier; new effects
+ *  register by adding their type here, nothing else. The stack helpers are socket-
+ *  agnostic (they re-wire `target`/`out` edges) — only this predicate differs. */
+export const EFFECT_NODE_TYPES: ReadonlySet<string> = new Set(['ColorCorrect']);
+
+/** Predicate over the set of node types an OperatorStack instance manages. */
+export type OperatorPredicate = (node: Node | undefined) => boolean;
 
 export function isModifierNode(node: Node | undefined): boolean {
   return !!node && MODIFIER_NODE_TYPES.has(node.type);
 }
 
-/** One entry in a mesh's modifier stack, bottom (closest to the base) → top. */
+export function isEffectNode(node: Node | undefined): boolean {
+  return !!node && EFFECT_NODE_TYPES.has(node.type);
+}
+
+/** One entry in an operator stack, bottom (closest to the base) → top. */
 export interface ModifierEntry {
   readonly nodeId: string;
   readonly type: string;
@@ -88,7 +105,11 @@ function muted(node: Node): boolean {
  * collecting each modifier until the chain reaches a NON-modifier consumer (the
  * Scene / Transform / Group that renders the result). Bottom → top order. Pure.
  */
-export function enumerateModifierStack(state: DagState, baseNodeId: string): ModifierEntry[] {
+export function enumerateOperatorStack(
+  state: DagState,
+  baseNodeId: string,
+  isOp: OperatorPredicate,
+): ModifierEntry[] {
   const out: ModifierEntry[] = [];
   const seen = new Set<string>([baseNodeId]); // cycle guard (a DAG shouldn't, but be safe)
   let producer = baseNodeId;
@@ -96,12 +117,29 @@ export function enumerateModifierStack(state: DagState, baseNodeId: string): Mod
     const consumer = findConsumer(state, producer, OUT);
     if (!consumer) break;
     const node = state.nodes[consumer.node];
-    if (!isModifierNode(node) || consumer.socket !== TARGET || seen.has(consumer.node)) break;
+    if (!isOp(node) || consumer.socket !== TARGET || seen.has(consumer.node)) break;
     seen.add(consumer.node);
-    out.push({ nodeId: node!.id, type: node!.type, muted: muted(node!), label: nodeDisplayName(node!) });
+    out.push({
+      nodeId: node!.id,
+      type: node!.type,
+      muted: muted(node!),
+      label: nodeDisplayName(node!),
+    });
     producer = consumer.node;
   }
   return out;
+}
+
+/** The geometry-modifier stack on `baseNodeId` (bottom → top). The geometry
+ *  instantiation of {@link enumerateOperatorStack}. */
+export function enumerateModifierStack(state: DagState, baseNodeId: string): ModifierEntry[] {
+  return enumerateOperatorStack(state, baseNodeId, isModifierNode);
+}
+
+/** The Image→Image effect stack on `baseNodeId` (bottom → top). The video-effect
+ *  instantiation of {@link enumerateOperatorStack}. */
+export function enumerateEffectStack(state: DagState, baseNodeId: string): ModifierEntry[] {
+  return enumerateOperatorStack(state, baseNodeId, isEffectNode);
 }
 
 /**
@@ -111,25 +149,42 @@ export function enumerateModifierStack(state: DagState, baseNodeId: string): Mod
  * show the SAME stack whether the user selected the base mesh or one of its
  * modifiers (the rendered arrayed mesh click-selects the top modifier).
  */
-export function resolveStackBase(state: DagState, nodeId: string): string {
+export function resolveOperatorBase(
+  state: DagState,
+  nodeId: string,
+  isOp: OperatorPredicate,
+): string {
   let cur = nodeId;
   const seen = new Set<string>();
-  while (isModifierNode(state.nodes[cur]) && !seen.has(cur)) {
+  while (isOp(state.nodes[cur]) && !seen.has(cur)) {
     seen.add(cur);
     const up = singleRef(state.nodes[cur], TARGET);
-    if (!up) break; // dangling modifier — treat it as the base
+    if (!up) break; // dangling operator — treat it as the base
     cur = up.node;
   }
   return cur;
 }
 
+/** The base mesh of a geometry-modifier stack from any node in it. */
+export function resolveStackBase(state: DagState, nodeId: string): string {
+  return resolveOperatorBase(state, nodeId, isModifierNode);
+}
+
+/** The base Image source of an effect stack from any node in it (an effect or the
+ *  source itself). Lets the UI add/enumerate the SAME stack from the Layer's source
+ *  whether or not effects are already spliced on. */
+export function resolveEffectBase(state: DagState, nodeId: string): string {
+  return resolveOperatorBase(state, nodeId, isEffectNode);
+}
+
 /** The top of the stack (the last producer) + where it feeds. lastProducer is the
- *  base when the stack is empty, else the topmost modifier. */
+ *  base when the stack is empty, else the topmost operator. */
 function stackTail(
   state: DagState,
   baseNodeId: string,
+  isOp: OperatorPredicate,
 ): { lastProducer: string; consumer: { node: string; socket: string } | null } {
-  const stack = enumerateModifierStack(state, baseNodeId);
+  const stack = enumerateOperatorStack(state, baseNodeId, isOp);
   const lastProducer = stack.length ? stack[stack.length - 1].nodeId : baseNodeId;
   return { lastProducer, consumer: findConsumer(state, lastProducer, OUT) };
 }
@@ -152,6 +207,53 @@ export interface AddModifierResult {
  * (the new modifier's out is left for the caller to place). Returns null only when
  * baseNodeId is unknown.
  */
+export function buildAddOperatorOps(
+  state: DagState,
+  baseNodeId: string,
+  operatorType: string,
+  isOp: OperatorPredicate,
+  params: Record<string, unknown> = {},
+  explicitId?: string,
+  idPrefix = 'op',
+): AddModifierResult | null {
+  if (!state.nodes[baseNodeId]) return null;
+  const { lastProducer, consumer } = stackTail(state, baseNodeId, isOp);
+  // The UI lets the registry mint a random id; the agent passes a deterministic
+  // one (the closure spec needs the id before build, and the LLM references it).
+  const modifierId = explicitId ?? newId(idPrefix);
+
+  const ops: Op[] = [{ type: 'addNode', nodeId: modifierId, nodeType: operatorType, params }];
+  if (consumer) {
+    // Splice the operator between the current top producer and its consumer.
+    ops.push(
+      {
+        type: 'disconnect',
+        from: { node: lastProducer, socket: OUT },
+        to: { node: consumer.node, socket: consumer.socket },
+      },
+      {
+        type: 'connect',
+        from: { node: lastProducer, socket: OUT },
+        to: { node: modifierId, socket: TARGET },
+      },
+      {
+        type: 'connect',
+        from: { node: modifierId, socket: OUT },
+        to: { node: consumer.node, socket: consumer.socket },
+      },
+    );
+  } else {
+    // Base not consumed yet — just feed it into the operator (out left dangling).
+    ops.push({
+      type: 'connect',
+      from: { node: lastProducer, socket: OUT },
+      to: { node: modifierId, socket: TARGET },
+    });
+  }
+  return { ops, modifierId };
+}
+
+/** Insert a geometry modifier at the top of `baseNodeId`'s stack. */
 export function buildAddModifierOps(
   state: DagState,
   baseNodeId: string,
@@ -159,25 +261,28 @@ export function buildAddModifierOps(
   params: Record<string, unknown> = {},
   explicitId?: string,
 ): AddModifierResult | null {
-  if (!state.nodes[baseNodeId]) return null;
-  const { lastProducer, consumer } = stackTail(state, baseNodeId);
-  // The UI lets the registry mint a random id; the agent passes a deterministic
-  // one (the closure spec needs the id before build, and the LLM references it).
-  const modifierId = explicitId ?? newId('mod');
+  return buildAddOperatorOps(
+    state,
+    baseNodeId,
+    modifierType,
+    isModifierNode,
+    params,
+    explicitId,
+    'mod',
+  );
+}
 
-  const ops: Op[] = [{ type: 'addNode', nodeId: modifierId, nodeType: modifierType, params }];
-  if (consumer) {
-    // Splice the modifier between the current top producer and its consumer.
-    ops.push(
-      { type: 'disconnect', from: { node: lastProducer, socket: OUT }, to: { node: consumer.node, socket: consumer.socket } },
-      { type: 'connect', from: { node: lastProducer, socket: OUT }, to: { node: modifierId, socket: TARGET } },
-      { type: 'connect', from: { node: modifierId, socket: OUT }, to: { node: consumer.node, socket: consumer.socket } },
-    );
-  } else {
-    // Base not consumed yet — just feed it into the modifier (out left dangling).
-    ops.push({ type: 'connect', from: { node: lastProducer, socket: OUT }, to: { node: modifierId, socket: TARGET } });
-  }
-  return { ops, modifierId };
+/** Insert a video effect at the top of the Image source's effect stack (closest to
+ *  the Layer, so it runs on the cumulative result below it). `baseNodeId` is the
+ *  base Image source (the MediaClip) — pass `resolveEffectBase(state, layerSourceId)`. */
+export function buildAddEffectOps(
+  state: DagState,
+  baseNodeId: string,
+  effectType: string,
+  params: Record<string, unknown> = {},
+  explicitId?: string,
+): AddModifierResult | null {
+  return buildAddOperatorOps(state, baseNodeId, effectType, isEffectNode, params, explicitId, 'fx');
 }
 
 /**
@@ -186,33 +291,71 @@ export function buildAddModifierOps(
  * (the node consuming its `out`). Disconnect both edges before `removeNode`
  * (V1 refuse-while-consumed). Returns null when the node isn't a modifier.
  */
-export function buildRemoveModifierOps(state: DagState, modifierId: string): Op[] | null {
-  const node = state.nodes[modifierId];
-  if (!isModifierNode(node)) return null;
-  const upstream = singleRef(node, TARGET); // producer feeding this modifier
-  const consumer = findConsumer(state, modifierId, OUT); // node consuming this modifier
+export function buildRemoveOperatorOps(
+  state: DagState,
+  operatorId: string,
+  isOp: OperatorPredicate,
+): Op[] | null {
+  const node = state.nodes[operatorId];
+  if (!isOp(node)) return null;
+  const upstream = singleRef(node, TARGET); // producer feeding this operator
+  const consumer = findConsumer(state, operatorId, OUT); // node consuming this operator
 
   const ops: Op[] = [];
   if (upstream) {
-    ops.push({ type: 'disconnect', from: { node: upstream.node, socket: upstream.socket }, to: { node: modifierId, socket: TARGET } });
+    ops.push({
+      type: 'disconnect',
+      from: { node: upstream.node, socket: upstream.socket },
+      to: { node: operatorId, socket: TARGET },
+    });
   }
   if (consumer) {
-    ops.push({ type: 'disconnect', from: { node: modifierId, socket: OUT }, to: { node: consumer.node, socket: consumer.socket } });
+    ops.push({
+      type: 'disconnect',
+      from: { node: operatorId, socket: OUT },
+      to: { node: consumer.node, socket: consumer.socket },
+    });
   }
   // Splice closed: re-wire the producer directly to the consumer (skip the gap).
   if (upstream && consumer) {
-    ops.push({ type: 'connect', from: { node: upstream.node, socket: upstream.socket }, to: { node: consumer.node, socket: consumer.socket } });
+    ops.push({
+      type: 'connect',
+      from: { node: upstream.node, socket: upstream.socket },
+      to: { node: consumer.node, socket: consumer.socket },
+    });
   }
-  ops.push({ type: 'removeNode', nodeId: modifierId });
+  ops.push({ type: 'removeNode', nodeId: operatorId });
   return ops;
 }
 
-/** Toggle a modifier's mute (the stack bypass — V58). One keyframeable setParam:
- *  a muted modifier passes its source through unchanged at evaluate. */
+/** Remove a geometry modifier from its stack, splicing the chain closed. */
+export function buildRemoveModifierOps(state: DagState, modifierId: string): Op[] | null {
+  return buildRemoveOperatorOps(state, modifierId, isModifierNode);
+}
+
+/** Remove a video effect from its stack, splicing the Image chain closed. */
+export function buildRemoveEffectOps(state: DagState, effectId: string): Op[] | null {
+  return buildRemoveOperatorOps(state, effectId, isEffectNode);
+}
+
+/** Toggle an operator's mute (the stack bypass — V58). One keyframeable setParam:
+ *  a muted operator passes its source through unchanged at evaluate. */
+export function buildToggleOperatorMuteOp(
+  state: DagState,
+  operatorId: string,
+  isOp: OperatorPredicate,
+): Op | null {
+  const node = state.nodes[operatorId];
+  if (!isOp(node)) return null;
+  return { type: 'setParam', nodeId: operatorId, paramPath: 'muted', value: !muted(node!) };
+}
+
 export function buildToggleModifierMuteOp(state: DagState, modifierId: string): Op | null {
-  const node = state.nodes[modifierId];
-  if (!isModifierNode(node)) return null;
-  return { type: 'setParam', nodeId: modifierId, paramPath: 'muted', value: !muted(node!) };
+  return buildToggleOperatorMuteOp(state, modifierId, isModifierNode);
+}
+
+export function buildToggleEffectMuteOp(state: DagState, effectId: string): Op | null {
+  return buildToggleOperatorMuteOp(state, effectId, isEffectNode);
 }
 
 /**
@@ -222,25 +365,26 @@ export function buildToggleModifierMuteOp(state: DagState, modifierId: string): 
  * already at the end in that direction). The base mesh is found by walking the
  * `target` chain down to the first non-modifier producer.
  */
-export function buildMoveModifierOps(
+export function buildMoveOperatorOps(
   state: DagState,
   modifierId: string,
   dir: 'up' | 'down',
+  isOp: OperatorPredicate,
 ): Op[] | null {
   const node = state.nodes[modifierId];
-  if (!isModifierNode(node)) return null;
+  if (!isOp(node)) return null;
 
-  // Find the base (walk `target` down past modifiers) so we can enumerate order.
+  // Find the base (walk `target` down past operators) so we can enumerate order.
   let base = modifierId;
   for (;;) {
     const up = singleRef(state.nodes[base], TARGET);
-    if (!up || !isModifierNode(state.nodes[up.node])) {
+    if (!up || !isOp(state.nodes[up.node])) {
       base = up ? up.node : base;
       break;
     }
     base = up.node;
   }
-  const stack = enumerateModifierStack(state, base);
+  const stack = enumerateOperatorStack(state, base, isOp);
   const idx = stack.findIndex((m) => m.nodeId === modifierId);
   if (idx < 0) return null;
   // 'up' = toward the consumer = higher index; 'down' = toward the base = lower.
@@ -257,18 +401,60 @@ export function buildMoveModifierOps(
   // Before: below → lower.target ; lower.out → upper.target ; upper.out → above
   // After:  below → upper.target ; upper.out → lower.target ; lower.out → above
   const ops: Op[] = [
-    { type: 'disconnect', from: { node: below.node, socket: below.socket }, to: { node: lowerId, socket: TARGET } },
-    { type: 'disconnect', from: { node: lowerId, socket: OUT }, to: { node: upperId, socket: TARGET } },
+    {
+      type: 'disconnect',
+      from: { node: below.node, socket: below.socket },
+      to: { node: lowerId, socket: TARGET },
+    },
+    {
+      type: 'disconnect',
+      from: { node: lowerId, socket: OUT },
+      to: { node: upperId, socket: TARGET },
+    },
   ];
   if (above) {
-    ops.push({ type: 'disconnect', from: { node: upperId, socket: OUT }, to: { node: above.node, socket: above.socket } });
+    ops.push({
+      type: 'disconnect',
+      from: { node: upperId, socket: OUT },
+      to: { node: above.node, socket: above.socket },
+    });
   }
   ops.push(
-    { type: 'connect', from: { node: below.node, socket: below.socket }, to: { node: upperId, socket: TARGET } },
-    { type: 'connect', from: { node: upperId, socket: OUT }, to: { node: lowerId, socket: TARGET } },
+    {
+      type: 'connect',
+      from: { node: below.node, socket: below.socket },
+      to: { node: upperId, socket: TARGET },
+    },
+    {
+      type: 'connect',
+      from: { node: upperId, socket: OUT },
+      to: { node: lowerId, socket: TARGET },
+    },
   );
   if (above) {
-    ops.push({ type: 'connect', from: { node: lowerId, socket: OUT }, to: { node: above.node, socket: above.socket } });
+    ops.push({
+      type: 'connect',
+      from: { node: lowerId, socket: OUT },
+      to: { node: above.node, socket: above.socket },
+    });
   }
   return ops;
+}
+
+/** Move a geometry modifier one slot up/down its stack. */
+export function buildMoveModifierOps(
+  state: DagState,
+  modifierId: string,
+  dir: 'up' | 'down',
+): Op[] | null {
+  return buildMoveOperatorOps(state, modifierId, dir, isModifierNode);
+}
+
+/** Move a video effect one slot up/down its stack. */
+export function buildMoveEffectOps(
+  state: DagState,
+  effectId: string,
+  dir: 'up' | 'down',
+): Op[] | null {
+  return buildMoveOperatorOps(state, effectId, dir, isEffectNode);
 }

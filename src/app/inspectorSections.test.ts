@@ -23,6 +23,8 @@ describe('SECTION_IDS', () => {
       'constraint',
       // Operator substrate — SOP/modifiers (epic #201, #209, V58).
       'modifier',
+      // Operator substrate — video effects (epic #235, V58 lift to Image).
+      'effect',
       'environment',
       'camera',
       'layout',

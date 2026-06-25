@@ -28,11 +28,13 @@ import type { EvalCtx, NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
+import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
   drawComposite,
   planComposite,
   type CompositeSource,
+  type EffectOp,
   type LayerComposite,
   type ResolvedLayerInput,
 } from './composite';
@@ -86,21 +88,50 @@ export function collectCompositeInputs(
       num(t.rotation, 0),
     );
 
+    // The layer's source edge may pass through an EFFECT chain (Image→Image
+    // operators on the V58 stack): Layer.source → topEffect … → baseMediaClip.
+    // Walk down to the base source, then collect the effect chain (base→top, the
+    // apply order) with each effect's EVALUATED params (channel overlay → H40).
     let source: CompositeSource | null = null;
+    const effects: EffectOp[] = [];
     const srcId = firstSourceId(layer.inputs?.source);
-    const src = srcId ? state.nodes[srcId] : undefined;
-    if (src && src.type === 'MediaClip') {
-      const sp = src.params as Record<string, unknown>;
-      const path = String(sp.src ?? '');
-      if (path) {
-        source = {
-          path,
-          mediaKind: (sp.mediaKind as 'video' | 'image') ?? 'image',
-          width: num(sp.width, 1),
-          height: num(sp.height, 1),
-          srcFps: num(sp.srcFps, 30),
-          srcFrames: Math.max(1, num(sp.srcFrames, 1)),
-        };
+    if (srcId) {
+      const baseId = resolveEffectBase(state, srcId);
+      const base = state.nodes[baseId];
+      if (base && base.type === 'MediaClip') {
+        const sp = base.params as Record<string, unknown>;
+        const path = String(sp.src ?? '');
+        if (path) {
+          source = {
+            path,
+            mediaKind: (sp.mediaKind as 'video' | 'image') ?? 'image',
+            width: num(sp.width, 1),
+            height: num(sp.height, 1),
+            srcFps: num(sp.srcFps, 30),
+            srcFrames: Math.max(1, num(sp.srcFrames, 1)),
+          };
+        }
+      }
+      for (const entry of enumerateEffectStack(state, baseId)) {
+        if (entry.muted) continue; // V58 mute-bypass — passes the frame through
+        if (entry.type === 'ColorCorrect') {
+          const ep = state.nodes[entry.nodeId].params as Record<string, unknown>;
+          effects.push({
+            type: 'ColorCorrect',
+            brightness: num(
+              resolveEvaluatedParam(state, entry.nodeId, 'brightness', ctx)?.value,
+              num(ep.brightness, 1),
+            ),
+            contrast: num(
+              resolveEvaluatedParam(state, entry.nodeId, 'contrast', ctx)?.value,
+              num(ep.contrast, 1),
+            ),
+            saturation: num(
+              resolveEvaluatedParam(state, entry.nodeId, 'saturation', ctx)?.value,
+              num(ep.saturation, 1),
+            ),
+          });
+        }
       }
     }
 
@@ -117,6 +148,7 @@ export function collectCompositeInputs(
       scale: vec2(t.scale, [1, 1]),
       blendMode: (p.blendMode as LayerBlendMode) ?? 'normal',
       source,
+      effects,
     });
   }
   return inputs;
@@ -162,17 +194,58 @@ async function ensureBitmap(
   }
 }
 
-/** Decode every planned draw's source frame, returning a map keyed by
- *  compositeBitmapKey (the same key drawComposite looks up). A draw that fails to
- *  decode is simply absent → drawComposite skips it (no throw, no blank crash). */
+// Graded frames are cached separately from the base decodes, keyed by the FULL
+// compositeBitmapKey (path#frame#effectChain) — so a re-scrub / re-export with the
+// same grade reuses the graded bitmap, and a param change (new effectsKey) misses.
+const gradedCache = new Map<string, ImageBitmap>();
+
+/** Apply a layer's effect chain (base → top) to a decoded frame, returning a new
+ *  graded bitmap. Local effects are pure GPU canvas filters (the [[V58]] "local
+ *  effects = shaders" path); the apply order is the chain order. ColorCorrect maps
+ *  to canvas `brightness()/contrast()/saturate()`. PURE of the DAG. */
+async function applyEffects(bmp: ImageBitmap, effects: readonly EffectOp[]): Promise<ImageBitmap> {
+  const filters: string[] = [];
+  for (const e of effects) {
+    if (e.type === 'ColorCorrect') {
+      filters.push(`brightness(${e.brightness}) contrast(${e.contrast}) saturate(${e.saturation})`);
+    }
+  }
+  if (!filters.length) return bmp;
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return bmp;
+  ctx.filter = filters.join(' ');
+  ctx.drawImage(bmp, 0, 0);
+  return await createImageBitmap(canvas);
+}
+
+/** Decode every planned draw's source frame (and apply its effect chain), returning
+ *  a map keyed by compositeBitmapKey (the same key drawComposite looks up — now
+ *  effect-aware). A draw that fails to decode is simply absent → drawComposite skips
+ *  it (no throw, no blank crash). */
 export async function decodeDraws(
   draws: readonly LayerComposite[],
 ): Promise<Map<string, ImageBitmap>> {
   const map = new Map<string, ImageBitmap>();
   await Promise.all(
     draws.map(async (d) => {
-      const bmp = await ensureBitmap(d.source, d.sourceFrameIndex);
-      if (bmp) map.set(compositeBitmapKey(d), bmp);
+      const key = compositeBitmapKey(d);
+      const cachedGraded = gradedCache.get(key);
+      if (cachedGraded) {
+        map.set(key, cachedGraded);
+        return;
+      }
+      const base = await ensureBitmap(d.source, d.sourceFrameIndex);
+      if (!base) return;
+      if (!d.effects.length) {
+        map.set(key, base); // no grade → the base IS the frame (key ends in '#')
+        return;
+      }
+      const graded = await applyEffects(base, d.effects);
+      gradedCache.set(key, graded);
+      map.set(key, graded);
     }),
   );
   return map;

@@ -24,6 +24,7 @@ export type SectionId =
   | 'channel'
   | 'constraint'
   | 'modifier'
+  | 'effect'
   | 'environment'
   | 'camera'
   | 'layout';
@@ -41,6 +42,9 @@ export const SECTION_IDS: readonly SectionId[] = [
   // Operator substrate — SOP/modifiers (epic #201, #209, V58). The geometry
   // operator stack (ArrayModifier et al.) declares this section.
   'modifier',
+  // Operator substrate — video effects (epic #235, V58 lift to Image). The effect
+  // stack (ColorCorrect et al.) declares this section.
+  'effect',
   'environment',
   'camera',
   'layout',
@@ -189,9 +193,7 @@ export function paramToSection(
   // count/offset, mute). Routed here so they group under the Modifier section.
   if (
     declaredSections.includes('modifier') &&
-    (paramPath === 'count' ||
-      paramPath === 'offset' ||
-      paramPath === 'muted')
+    (paramPath === 'count' || paramPath === 'offset' || paramPath === 'muted')
   ) {
     return 'modifier';
   }

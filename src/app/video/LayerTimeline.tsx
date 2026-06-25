@@ -23,11 +23,15 @@ import type { CompositionParams } from '../../nodes/Composition';
 import { ParamDiamond } from '../ParamDiamond';
 import { useAnimatableField } from '../animate/useAnimatableField';
 import {
+  buildAddLayerEffectOps,
   buildReorderLayerOps,
   collectChannelKeyframes,
+  collectLayerEffects,
   collectLayerRows,
+  type LayerEffectRow,
   type LayerRow,
 } from './videoLayers';
+import { buildRemoveEffectOps, buildToggleEffectMuteOp } from '../operatorStack';
 import {
   BAR_TRIM_HANDLE_PX,
   OUTLINE_WIDTH_PX,
@@ -71,10 +75,13 @@ const LAYER_PROPS: readonly LayerProp[] = [
   },
 ];
 
-/** A row in the rendered timeline: a layer, or one of its open property rows. */
+/** A row in the rendered timeline: a layer, one of its open property rows, one of
+ *  its effect rows, or its "add effect" row. */
 type VisualRow =
   | { kind: 'layer'; row: LayerRow; layerIndex: number }
-  | { kind: 'prop'; row: LayerRow; layerIndex: number; prop: LayerProp };
+  | { kind: 'prop'; row: LayerRow; layerIndex: number; prop: LayerProp }
+  | { kind: 'effect'; row: LayerRow; layerIndex: number; effect: LayerEffectRow }
+  | { kind: 'effect-add'; row: LayerRow; layerIndex: number };
 
 function clamp(n: number, lo: number, hi: number): number {
   return n < lo ? lo : n > hi ? hi : n;
@@ -84,6 +91,24 @@ function setLayerParam(layerId: NodeId, paramPath: string, value: unknown, label
   useDagStore
     .getState()
     .dispatchAtomic([{ type: 'setParam', nodeId: layerId, paramPath, value }], 'user', label);
+}
+
+/** Add a video effect onto a layer's source edge (V58 stack, top), one atomic. */
+function addLayerEffect(layerId: NodeId, effectType: string): void {
+  const ops = buildAddLayerEffectOps(useDagStore.getState().state, layerId, effectType);
+  if (ops.length) useDagStore.getState().dispatchAtomic(ops, 'user', `add ${effectType}`);
+}
+
+/** Remove an effect, splicing the Image chain closed (one atomic). */
+function removeEffect(effectId: NodeId): void {
+  const ops = buildRemoveEffectOps(useDagStore.getState().state, effectId);
+  if (ops?.length) useDagStore.getState().dispatchAtomic(ops, 'user', 'remove effect');
+}
+
+/** Toggle an effect's mute (the V58 stack bypass). */
+function toggleEffectMute(effectId: NodeId): void {
+  const op = buildToggleEffectMuteOp(useDagStore.getState().state, effectId);
+  if (op) useDagStore.getState().dispatchAtomic([op], 'user', 'toggle effect mute');
 }
 
 /** An in-flight bar drag — the start anchor + the layer's params at grab time. */
@@ -106,6 +131,7 @@ const DRAG_LABELS: Record<BarDragMode, string> = {
 
 export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: CompositionParams }) {
   const rows = useDagStore((s) => collectLayerRows(s.state, compId));
+  const dagState = useDagStore((s) => s.state);
   const frame = useTimeStore((s) => s.frame);
   const [selectedId, setSelectedId] = useState<NodeId | null>(null);
   const [openRows, setOpenRows] = useState<ReadonlySet<NodeId>>(() => new Set());
@@ -348,6 +374,11 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     visualRows.push({ kind: 'layer', row, layerIndex });
     if (openRows.has(row.id)) {
       for (const prop of LAYER_PROPS) visualRows.push({ kind: 'prop', row, layerIndex, prop });
+      // The layer's effect stack (V58 on the Image socket) + an add-effect row.
+      for (const effect of collectLayerEffects(dagState, row.id)) {
+        visualRows.push({ kind: 'effect', row, layerIndex, effect });
+      }
+      visualRows.push({ kind: 'effect-add', row, layerIndex });
     }
   });
   visualRowsRef.current = visualRows;
@@ -370,27 +401,36 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
           Layers
         </div>
         <div ref={rowsRef} className="relative">
-          {visualRows.map((v) =>
-            v.kind === 'layer' ? (
-              <OutlineRow
-                key={v.row.id}
-                row={v.row}
-                open={openRows.has(v.row.id)}
-                selected={v.row.id === selectedId}
-                dragging={v.row.id === rowDragId}
-                onSelect={() => onRowClick(v.row.id)}
-                onToggleTwirl={() => toggleTwirl(v.row.id)}
-                onPointerDownDrag={(e) => onRowPointerDown(e, v.row)}
-              />
-            ) : (
-              <OutlinePropRow
-                key={`${v.row.id}-${v.prop.key}`}
-                layerId={v.row.id}
-                prop={v.prop}
-                base={v.prop.get(v.row)}
-              />
-            ),
-          )}
+          {visualRows.map((v) => {
+            if (v.kind === 'layer') {
+              return (
+                <OutlineRow
+                  key={v.row.id}
+                  row={v.row}
+                  open={openRows.has(v.row.id)}
+                  selected={v.row.id === selectedId}
+                  dragging={v.row.id === rowDragId}
+                  onSelect={() => onRowClick(v.row.id)}
+                  onToggleTwirl={() => toggleTwirl(v.row.id)}
+                  onPointerDownDrag={(e) => onRowPointerDown(e, v.row)}
+                />
+              );
+            }
+            if (v.kind === 'prop') {
+              return (
+                <OutlinePropRow
+                  key={`${v.row.id}-${v.prop.key}`}
+                  layerId={v.row.id}
+                  prop={v.prop}
+                  base={v.prop.get(v.row)}
+                />
+              );
+            }
+            if (v.kind === 'effect') {
+              return <OutlineEffectRow key={v.effect.nodeId} effect={v.effect} />;
+            }
+            return <OutlineAddEffectRow key={`${v.row.id}-add-fx`} layerId={v.row.id} />;
+          })}
           {/* Drop indicator — where a dragged row would land. */}
           {dropDisplay !== null && (
             <div
@@ -437,6 +477,14 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
                   fps={fps}
                 />
               );
+            }
+            // Effect + add-effect rows have no track content yet (effect keyframes
+            // on the ruler land in 2b) — an empty row keeps both columns aligned.
+            if (v.kind === 'effect') {
+              return <TrackSpacerRow key={`${v.effect.nodeId}-track`} />;
+            }
+            if (v.kind === 'effect-add') {
+              return <TrackSpacerRow key={`${v.row.id}-add-fx-track`} />;
             }
             // While dragging this layer, render from the live preview params.
             const shown =
@@ -634,6 +682,91 @@ function OutlinePropRow({
       />
     </div>
   );
+}
+
+/** An effect row in the OUTLINE column (a member of the layer's V58 Image-effect
+ *  stack): a mute toggle, the effect name, a Brightness field, and a remove ✕.
+ *  Static params in 2a; keyframeable effect-param rows (ParamDiamond) land in 2b. */
+function OutlineEffectRow({ effect }: { effect: LayerEffectRow }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    if (Number.isFinite(n)) setLayerParam(effect.nodeId, 'brightness', n, 'set Brightness');
+    setDraft(null);
+  };
+  return (
+    <div
+      data-testid={`layer-effect-row-${effect.nodeId}`}
+      data-muted={effect.muted}
+      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <ToggleButton
+        testId={`layer-effect-mute-${effect.nodeId}`}
+        label="Toggle effect mute"
+        active={!effect.muted}
+        glyph={effect.muted ? '⊘' : '◉'}
+        onToggle={() => toggleEffectMute(effect.nodeId)}
+      />
+      <span className="flex-1 truncate pl-1 text-mute" title={effect.type}>
+        {effect.type}
+      </span>
+      <input
+        type="number"
+        step={0.05}
+        value={draft ?? round2(effect.brightness)}
+        title="Brightness"
+        data-testid={`layer-effect-bright-${effect.nodeId}`}
+        onFocus={() => setDraft(round2(effect.brightness))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            commit();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className="w-12 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      />
+      <button
+        type="button"
+        data-testid={`layer-effect-remove-${effect.nodeId}`}
+        aria-label="Remove effect"
+        onClick={() => removeEffect(effect.nodeId)}
+        className="flex h-4 w-4 items-center justify-center rounded text-[10px] text-fg/40 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/** The "+ Color Correct" add-effect row at the bottom of a layer's twirl-down. */
+function OutlineAddEffectRow({ layerId }: { layerId: NodeId }) {
+  return (
+    <div
+      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <button
+        type="button"
+        data-testid={`layer-add-effect-${layerId}`}
+        onClick={() => addLayerEffect(layerId, 'ColorCorrect')}
+        className="rounded px-1 text-[11px] text-accent hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        + Color Correct
+      </button>
+    </div>
+  );
+}
+
+/** An empty TRACK-column row, keeping the two columns row-aligned for outline rows
+ *  that have no track content yet (effect rows; effect keyframes land in 2b). */
+function TrackSpacerRow() {
+  return <div className="border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }} />;
 }
 
 /** The TRACK half of an open property row: the channel's keyframes drawn as

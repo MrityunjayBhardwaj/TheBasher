@@ -33,6 +33,25 @@ export interface CompositeSource {
   readonly srcFrames: number;
 }
 
+/** A resolved video effect to apply to a layer's decoded frame, in apply order
+ *  (base → top of the [[V58]] stack). Today only ColorCorrect; new effect types add
+ *  a member here + a branch in `applyEffects`. Params are already EVALUATED (channel
+ *  overlay) so a keyframed effect param shows in both viewer and export (H40). */
+export interface ColorCorrectOp {
+  readonly type: 'ColorCorrect';
+  readonly brightness: number;
+  readonly contrast: number;
+  readonly saturation: number;
+}
+export type EffectOp = ColorCorrectOp;
+
+/** A stable key for an effect chain — folded into the bitmap cache key so a graded
+ *  frame is content-addressed distinctly from the ungraded source (and from a
+ *  different grade). Empty chain → '' (the source decodes/draws unchanged). PURE. */
+export function effectsKey(effects: readonly EffectOp[]): string {
+  return effects.map((e) => `${e.type}:${e.brightness},${e.contrast},${e.saturation}`).join('|');
+}
+
 /** A layer's composite inputs at a playhead: authored params with `opacity` +
  *  `rotation` already overlaid by their evaluated channel value (the rest are
  *  authored until 3c-ii makes them keyframeable). `source` is null when the layer
@@ -50,6 +69,8 @@ export interface ResolvedLayerInput {
   readonly scale: readonly [number, number];
   readonly blendMode: LayerBlendMode;
   readonly source: CompositeSource | null;
+  /** The layer's effect chain (base → top), already evaluated. Empty = no effects. */
+  readonly effects: readonly EffectOp[];
 }
 
 /** A visible layer resolved to exactly what `drawComposite` needs to draw it. */
@@ -62,14 +83,19 @@ export interface LayerComposite {
   readonly position: readonly [number, number];
   readonly scale: readonly [number, number];
   readonly blendMode: LayerBlendMode;
+  /** The effect chain to apply to the decoded frame (base → top). */
+  readonly effects: readonly EffectOp[];
 }
 
-/** The cache key for a decoded source frame (path + which frame). */
+/** The cache key for a decoded + graded source frame (path + frame + effect chain).
+ *  The effect chain is part of the key so a graded frame caches distinctly from the
+ *  ungraded source AND from a different grade. */
 export function compositeBitmapKey(c: {
   source: CompositeSource;
   sourceFrameIndex: number;
+  effects?: readonly EffectOp[];
 }): string {
-  return `${c.source.path}#${c.sourceFrameIndex}`;
+  return `${c.source.path}#${c.sourceFrameIndex}#${effectsKey(c.effects ?? [])}`;
 }
 
 /**
@@ -112,6 +138,7 @@ export function planComposite(
       position: i.position,
       scale: i.scale,
       blendMode: i.blendMode,
+      effects: i.effects,
     });
   }
   return out;

@@ -52,6 +52,7 @@ const ALL_TYPES = [
   'CameraSelect',
   'Character',
   'ClipSelect',
+  'ColorCorrect',
   'ComfyUIWorkflow',
   'Composition',
   'Cut',
