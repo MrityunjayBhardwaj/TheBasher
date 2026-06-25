@@ -108,7 +108,13 @@ function Menu({ label, testId, children, open, onOpen, onClose, onHover }: MenuP
           // 260px panel. `overflow-hidden` here CLIPPED every flyout out of
           // existence — present in the DOM (false-green for tests) but invisible
           // and hit-testing to the canvas behind, so no submenu was reachable.
-          className="absolute left-0 top-full z-40 mt-0.5 w-[260px] overflow-visible rounded border border-border bg-bg shadow-lg"
+          // z-50 (NOT z-40): the global top-bar dropdown must sit ABOVE the Video
+          // editor surface (the video-slot is zIndex:45, Layout.tsx) — at z-40 the
+          // panel opened BEHIND the compositor in video mode (occluded, clicks fell
+          // through to the canvas), so every top menu was dead in VIDEO. Matches the
+          // sibling global-chrome dropdowns (ProjectTabs/ProjectsMenu, z-50); stays
+          // below the modal/overlay tier (z-[100]).
+          className="absolute left-0 top-full z-50 mt-0.5 w-[260px] overflow-visible rounded border border-border bg-bg shadow-lg"
           onClick={onClose}
         >
           {children}
