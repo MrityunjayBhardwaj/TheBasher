@@ -17,6 +17,7 @@ import { useDagStore } from '../../core/dag/store';
 import { buildMediaClipOps, freshMediaClipId, ingestMediaClipFile } from '../asset/importMediaClip';
 import { pickMediaFiles } from '../asset/importPicker';
 import type { IngestFile } from '../asset/importGltf';
+import { SD15_TEXT2IMG, SD15_TEXT2IMG_META } from '../../core/comfy/starterGraphs';
 
 /**
  * Build the ops wrapping `sourceNodeId` (an Image producer) as a new Layer in the
@@ -121,8 +122,11 @@ export function addComfyWorkflowLayer(compId: NodeId): NodeId {
     ?.durationFrames;
   const compDurationFrames = typeof durRaw === 'number' && Number.isFinite(durRaw) ? durRaw : 150;
 
+  // Seed the node with a built-in starter workflow (design §6.1) so the layer
+  // carries real, keyframeable params immediately — file import is a follow-up.
+  const graph = { apiJson: SD15_TEXT2IMG, meta: SD15_TEXT2IMG_META };
   const ops: Op[] = [
-    { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: {} },
+    { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: { graph } },
     ...buildAddLayerOps(layerId, compId, comfyId, 'ComfyUI', { outPoint: compDurationFrames }),
   ];
   dag.dispatchAtomic(ops, 'user', 'add ComfyUI workflow layer');

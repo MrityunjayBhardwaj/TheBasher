@@ -47,8 +47,35 @@ import {
 export const STYLIZED_PRESET_IDS = ['stylizedRealism'] as const;
 export type StylizedPresetId = (typeof STYLIZED_PRESET_IDS)[number];
 
+/**
+ * An imported ComfyUI workflow carried by the node (design §6.2 — the evolution
+ * of the preset-only model). Stored as the verbatim API json + meta; the
+ * animatable param manifest is DERIVED on read via importComfyGraph (never
+ * stored, so it can't go stale against the json). `null` = legacy / preset-only
+ * node with no imported graph. apiJson is `unknown`-keyed so we don't lock into a
+ * ComfyUI schema version (the format evolves with releases).
+ */
+export const ComfyGraphParamSchema = z
+  .object({
+    apiJson: z.record(z.string(), z.unknown()),
+    meta: z.object({
+      name: z.string(),
+      importedAt: z.string(),
+      fps: z.number(),
+      frames: z.number(),
+    }),
+  })
+  .nullable();
+export type ComfyGraphParam = z.infer<typeof ComfyGraphParamSchema>;
+
 export const ComfyUIWorkflowParams = z.object({
   presetId: z.enum(STYLIZED_PRESET_IDS).default('stylizedRealism'),
+  /**
+   * The imported workflow (design §6.2). Additive over the v0.5 preset model:
+   * a node may carry a preset (legacy render path) AND/OR an imported graph (the
+   * keyframe-compiler path). Defaults null so legacy projects load unchanged.
+   */
+  graph: ComfyGraphParamSchema.default(null),
   /**
    * Inclusive frame range. Defaults match RenderJob's 0..60 @ 30fps so
    * a fresh ComfyUIWorkflow on a fresh RenderJob produces parallel
@@ -112,6 +139,12 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
       sourceHash: hashValue({
         passKind: 'stylized',
         presetId: params.presetId ?? 'stylizedRealism',
+        // The imported graph participates by its json: a different workflow (or
+        // an edited literal) produces a different stylized frame. Bound keyframe
+        // channels target this node externally (free-floating V57) — they are
+        // folded at the decode/render site, not here, since evaluate sees only
+        // params + inputs.
+        graph: params.graph ?? null,
         prompt: prompt ?? null,
         // Upstream pass results participate by sourceHash — different
         // beauty bytes produce different stylized bytes (parallels stub

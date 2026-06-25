@@ -22,6 +22,7 @@
 
 import { pickStorage } from '../../core/storage';
 import { pickMediaDecode, type MediaProbe } from '../../core/media';
+import { hashValue } from '../../core/dag/hash';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx, NodeId } from '../../core/dag/types';
@@ -124,13 +125,17 @@ export function collectCompositeInputs(
           };
         }
       } else if (base && base.type === 'ComfyUIWorkflow') {
-        // A ComfyUIWorkflow generator layer (inc 3 spine). Decoded as a deterministic
+        // A ComfyUIWorkflow generator layer (inc 3). Decoded as a deterministic
         // STUB frame (CI-safe, no server) — real /prompt → /view submit is a later
-        // slice. The synthetic `comfy:<nodeId>` path is the stable decode cache key.
+        // slice. The cache key folds the imported graph's hash so a different /
+        // edited workflow re-renders (the spine's `comfy:<nodeId>` carry-in fix).
         const cp = base.params as Record<string, unknown>;
+        const graph = cp.graph as { apiJson?: unknown; meta?: { name?: string } } | null;
+        const graphKey = graph ? hashValue(graph.apiJson ?? null) : 'none';
         source = {
           kind: 'comfy',
-          path: `comfy:${baseId}`,
+          path: `comfy:${baseId}#${graphKey}`,
+          label: graph?.meta?.name ?? 'ComfyUI',
           mediaKind: 'image',
           width: num(cp.width, 512),
           height: num(cp.height, 512),
@@ -211,7 +216,11 @@ async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | n
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.font = `${Math.max(16, Math.round(canvas.height / 12))}px sans-serif`;
   ctx.textBaseline = 'middle';
-  ctx.fillText('ComfyUI', Math.round(canvas.width / 12), Math.round(canvas.height / 2));
+  ctx.fillText(
+    source.label ?? 'ComfyUI',
+    Math.round(canvas.width / 12),
+    Math.round(canvas.height / 2),
+  );
   return await createImageBitmap(canvas);
 }
 

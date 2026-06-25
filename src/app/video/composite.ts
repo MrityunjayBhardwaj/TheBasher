@@ -36,6 +36,9 @@ export interface CompositeSource {
   readonly height: number;
   readonly srcFps: number;
   readonly srcFrames: number;
+  /** A human label drawn into a generator (comfy) stub frame — e.g. the imported
+   *  workflow's name. Ignored by media sources. */
+  readonly label?: string;
 }
 
 /** A resolved video effect to apply to a layer's decoded frame, in apply order
