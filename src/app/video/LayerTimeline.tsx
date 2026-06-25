@@ -75,12 +75,48 @@ const LAYER_PROPS: readonly LayerProp[] = [
   },
 ];
 
+/** A keyframeable scalar param of an EFFECT node, shown as a sub-row under the
+ *  effect's twirl. `paramPath` targets the effect node directly (free-floating
+ *  [[V57]] channel); `get` reads the authored value off the effect row. */
+interface EffectProp {
+  key: string;
+  label: string;
+  paramPath: string;
+  step: number;
+  get: (e: LayerEffectRow) => number;
+}
+
+const EFFECT_PROPS: readonly EffectProp[] = [
+  {
+    key: 'brightness',
+    label: 'Brightness',
+    paramPath: 'brightness',
+    step: 0.05,
+    get: (e) => e.brightness,
+  },
+  { key: 'contrast', label: 'Contrast', paramPath: 'contrast', step: 0.05, get: (e) => e.contrast },
+  {
+    key: 'saturation',
+    label: 'Saturation',
+    paramPath: 'saturation',
+    step: 0.05,
+    get: (e) => e.saturation,
+  },
+];
+
 /** A row in the rendered timeline: a layer, one of its open property rows, one of
- *  its effect rows, or its "add effect" row. */
+ *  its effect rows, one of an open effect's param sub-rows, or its "add effect" row. */
 type VisualRow =
   | { kind: 'layer'; row: LayerRow; layerIndex: number }
   | { kind: 'prop'; row: LayerRow; layerIndex: number; prop: LayerProp }
   | { kind: 'effect'; row: LayerRow; layerIndex: number; effect: LayerEffectRow }
+  | {
+      kind: 'effect-prop';
+      row: LayerRow;
+      layerIndex: number;
+      effect: LayerEffectRow;
+      prop: EffectProp;
+    }
   | { kind: 'effect-add'; row: LayerRow; layerIndex: number };
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -137,6 +173,17 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
   const [openRows, setOpenRows] = useState<ReadonlySet<NodeId>>(() => new Set());
   const toggleTwirl = useCallback((id: NodeId) => {
     setOpenRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  // Per-effect twirl (the AE "Effect Controls" expand): an open effect shows its
+  // keyframeable param sub-rows (Brightness/Contrast/Saturation).
+  const [openEffects, setOpenEffects] = useState<ReadonlySet<NodeId>>(() => new Set());
+  const toggleEffectTwirl = useCallback((id: NodeId) => {
+    setOpenEffects((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -374,9 +421,14 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     visualRows.push({ kind: 'layer', row, layerIndex });
     if (openRows.has(row.id)) {
       for (const prop of LAYER_PROPS) visualRows.push({ kind: 'prop', row, layerIndex, prop });
-      // The layer's effect stack (V58 on the Image socket) + an add-effect row.
+      // The layer's effect stack (V58 on the Image socket) + an add-effect row. An
+      // open effect expands into its keyframeable param sub-rows (2b).
       for (const effect of collectLayerEffects(dagState, row.id)) {
         visualRows.push({ kind: 'effect', row, layerIndex, effect });
+        if (openEffects.has(effect.nodeId)) {
+          for (const prop of EFFECT_PROPS)
+            visualRows.push({ kind: 'effect-prop', row, layerIndex, effect, prop });
+        }
       }
       visualRows.push({ kind: 'effect-add', row, layerIndex });
     }
@@ -427,7 +479,23 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
               );
             }
             if (v.kind === 'effect') {
-              return <OutlineEffectRow key={v.effect.nodeId} effect={v.effect} />;
+              return (
+                <OutlineEffectRow
+                  key={v.effect.nodeId}
+                  effect={v.effect}
+                  open={openEffects.has(v.effect.nodeId)}
+                  onToggleTwirl={() => toggleEffectTwirl(v.effect.nodeId)}
+                />
+              );
+            }
+            if (v.kind === 'effect-prop') {
+              return (
+                <OutlineEffectPropRow
+                  key={`${v.effect.nodeId}-${v.prop.key}`}
+                  effect={v.effect}
+                  prop={v.prop}
+                />
+              );
             }
             return <OutlineAddEffectRow key={`${v.row.id}-add-fx`} layerId={v.row.id} />;
           })}
@@ -469,17 +537,31 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
           {visualRows.map((v) => {
             if (v.kind === 'prop') {
               return (
-                <TrackPropRow
+                <TrackKeyframeRow
                   key={`${v.row.id}-${v.prop.key}`}
-                  layerId={v.row.id}
-                  prop={v.prop}
+                  nodeId={v.row.id}
+                  paramPath={v.prop.paramPath}
+                  testid={`layer-keyframe-${v.row.id}-${v.prop.key}`}
                   totalFrames={totalFrames}
                   fps={fps}
                 />
               );
             }
-            // Effect + add-effect rows have no track content yet (effect keyframes
-            // on the ruler land in 2b) — an empty row keeps both columns aligned.
+            // An open effect's param sub-row draws its channel keyframes on the ruler.
+            if (v.kind === 'effect-prop') {
+              return (
+                <TrackKeyframeRow
+                  key={`${v.effect.nodeId}-${v.prop.key}`}
+                  nodeId={v.effect.nodeId}
+                  paramPath={v.prop.paramPath}
+                  testid={`layer-effect-keyframe-${v.effect.nodeId}-${v.prop.key}`}
+                  totalFrames={totalFrames}
+                  fps={fps}
+                />
+              );
+            }
+            // Effect header + add-effect rows have no track content — an empty row
+            // keeps both columns aligned.
             if (v.kind === 'effect') {
               return <TrackSpacerRow key={`${v.effect.nodeId}-track`} />;
             }
@@ -685,16 +767,18 @@ function OutlinePropRow({
 }
 
 /** An effect row in the OUTLINE column (a member of the layer's V58 Image-effect
- *  stack): a mute toggle, the effect name, a Brightness field, and a remove ✕.
- *  Static params in 2a; keyframeable effect-param rows (ParamDiamond) land in 2b. */
-function OutlineEffectRow({ effect }: { effect: LayerEffectRow }) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const commit = () => {
-    if (draft === null) return;
-    const n = parseFloat(draft);
-    if (Number.isFinite(n)) setLayerParam(effect.nodeId, 'brightness', n, 'set Brightness');
-    setDraft(null);
-  };
+ *  stack): a twirl that opens its keyframeable param sub-rows, a mute toggle, the
+ *  effect name, and a remove ✕. The params (Brightness/Contrast/Saturation) live in
+ *  the twirl-down sub-rows (OutlineEffectPropRow) so each can be keyframed (2b). */
+function OutlineEffectRow({
+  effect,
+  open,
+  onToggleTwirl,
+}: {
+  effect: LayerEffectRow;
+  open: boolean;
+  onToggleTwirl: () => void;
+}) {
   return (
     <div
       data-testid={`layer-effect-row-${effect.nodeId}`}
@@ -702,7 +786,17 @@ function OutlineEffectRow({ effect }: { effect: LayerEffectRow }) {
       className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
       style={{ height: ROW_HEIGHT_PX }}
     >
-      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <button
+        type="button"
+        data-testid={`layer-effect-twirl-${effect.nodeId}`}
+        data-open={open}
+        aria-label={open ? 'Collapse effect params' : 'Expand effect params'}
+        aria-expanded={open}
+        onClick={onToggleTwirl}
+        className="w-3 select-none text-center text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        {open ? '▾' : '▸'}
+      </button>
       <ToggleButton
         testId={`layer-effect-mute-${effect.nodeId}`}
         label="Toggle effect mute"
@@ -713,23 +807,6 @@ function OutlineEffectRow({ effect }: { effect: LayerEffectRow }) {
       <span className="flex-1 truncate pl-1 text-mute" title={effect.type}>
         {effect.type}
       </span>
-      <input
-        type="number"
-        step={0.05}
-        value={draft ?? round2(effect.brightness)}
-        title="Brightness"
-        data-testid={`layer-effect-bright-${effect.nodeId}`}
-        onFocus={() => setDraft(round2(effect.brightness))}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            commit();
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        className="w-12 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-      />
       <button
         type="button"
         data-testid={`layer-effect-remove-${effect.nodeId}`}
@@ -739,6 +816,63 @@ function OutlineEffectRow({ effect }: { effect: LayerEffectRow }) {
       >
         ✕
       </button>
+    </div>
+  );
+}
+
+/** An open effect's keyframeable param sub-row in the OUTLINE column: an indented
+ *  label, an editable field routed through the [[V57]] animatable seam, and the
+ *  inspector ParamDiamond keying at the playhead — targeting the EFFECT node
+ *  directly (H104: a custom control wires the affordance or its params can't
+ *  animate). The diamond testid is distinct from the layer-prop scheme (H95). */
+function OutlineEffectPropRow({ effect, prop }: { effect: LayerEffectRow; prop: EffectProp }) {
+  const base = prop.get(effect);
+  const { effective, readOnly, onEdit } = useAnimatableField<number>(
+    effect.nodeId,
+    prop.paramPath,
+    base,
+    (next) => setLayerParam(effect.nodeId, prop.paramPath, next, `set ${prop.label}`),
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    if (Number.isFinite(n)) onEdit(n);
+    setDraft(null);
+  };
+  return (
+    <div
+      data-testid={`layer-effect-prop-row-${effect.nodeId}-${prop.key}`}
+      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <span className="flex-1 truncate pl-8 text-mute" title={prop.label}>
+        {prop.label}
+      </span>
+      <input
+        type="number"
+        step={prop.step}
+        value={draft ?? round2(effective)}
+        readOnly={readOnly}
+        data-testid={`layer-effect-prop-input-${effect.nodeId}-${prop.key}`}
+        onFocus={() => setDraft(round2(effective))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            commit();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className="w-14 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      />
+      <ParamDiamond
+        nodeId={effect.nodeId}
+        paramPath={prop.paramPath}
+        value={base}
+        testid={`layer-effect-diamond-${effect.nodeId}-${prop.key}`}
+      />
     </div>
   );
 }
@@ -769,27 +903,31 @@ function TrackSpacerRow() {
   return <div className="border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }} />;
 }
 
-/** The TRACK half of an open property row: the channel's keyframes drawn as
- *  diamonds on the comp ruler (keyframe seconds → comp frame → percent). Read-only
- *  in 3c-i; drag-to-retime is a follow-up. */
-function TrackPropRow({
-  layerId,
-  prop,
+/** The TRACK half of an open property row (a layer prop OR an effect param): the
+ *  channel's keyframes drawn as diamonds on the comp ruler (keyframe seconds → comp
+ *  frame → percent). The channel target is `(nodeId, paramPath)` — the Layer node
+ *  for layer props, the effect node for effect params. Read-only; drag-to-retime is
+ *  a follow-up. */
+function TrackKeyframeRow({
+  nodeId,
+  paramPath,
+  testid,
   totalFrames,
   fps,
 }: {
-  layerId: NodeId;
-  prop: LayerProp;
+  nodeId: NodeId;
+  paramPath: string;
+  testid: string;
   totalFrames: number;
   fps: number;
 }) {
-  const times = useDagStore((s) => collectChannelKeyframes(s.state, layerId, prop.paramPath));
+  const times = useDagStore((s) => collectChannelKeyframes(s.state, nodeId, paramPath));
   return (
     <div className="relative border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }}>
       {times.map((t, i) => (
         <span
           key={i}
-          data-testid={`layer-keyframe-${layerId}-${prop.key}`}
+          data-testid={testid}
           aria-hidden
           className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-[10px] leading-none text-accent"
           style={{ left: `${frameToPercent(t * fps, totalFrames)}%` }}

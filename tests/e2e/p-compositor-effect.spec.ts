@@ -47,8 +47,11 @@ test('adding a Color Correct effect grades the composite; mute bypasses; remove 
   // Identity (brightness 1) leaves the composite unchanged.
   await expect.poll(() => meanBrightness(page)).toBeCloseTo(base, -1);
 
+  // Open the effect twirl → its param sub-rows (Brightness/Contrast/Saturation).
+  await page.locator('[data-testid^="layer-effect-twirl-"]').first().click();
+
   // Darken (brightness 0.3) grades the live composite.
-  const bright = page.locator('[data-testid^="layer-effect-bright-"]').first();
+  const bright = page.locator('[data-testid^="layer-effect-prop-input-"]').first();
   await bright.click();
   await bright.fill('0.3');
   await bright.press('Enter');
