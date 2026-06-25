@@ -59,8 +59,12 @@ export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
     const layer = state.nodes[layerId];
     if (!layer || layer.type !== 'Layer') continue;
     const p = layer.params as Record<string, unknown>;
+    // The source edge may pass through an effect chain (Image→Image) — resolve to
+    // the BASE source (the MediaClip) so the bar length reads the real frame count,
+    // not an effect node's (which has no srcFrames → would shrink the bar).
     const srcId = refNodeIds(layer.inputs?.source)[0];
-    const src = srcId ? state.nodes[srcId] : undefined;
+    const baseSrcId = srcId ? resolveEffectBase(state, srcId) : undefined;
+    const src = baseSrcId ? state.nodes[baseSrcId] : undefined;
     const srcFrames = src ? num((src.params as Record<string, unknown>).srcFrames, 1) : 1;
     const transform = (p.transform ?? {}) as Record<string, unknown>;
     rows.push({
