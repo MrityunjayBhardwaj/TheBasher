@@ -30,8 +30,10 @@ import { GltfChildNode } from './GltfChild';
 import { GroupNode } from './Group';
 import { IDPassNode } from './IDPass';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
+import { KeyframeChannelImageNode } from './KeyframeChannelImage';
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
+import { KeyframeChannelTextNode } from './KeyframeChannelText';
 import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
 import { LightProfileSelectNode } from './LightProfileSelect';
@@ -108,6 +110,8 @@ const ALL: NodeDefinition[] = [
   KeyframeChannelVec3Node as unknown as NodeDefinition,
   KeyframeChannelQuatNode as unknown as NodeDefinition,
   KeyframeChannelColorNode as unknown as NodeDefinition,
+  KeyframeChannelTextNode as unknown as NodeDefinition,
+  KeyframeChannelImageNode as unknown as NodeDefinition,
   // Operator substrate — CHOP/constraints (epic #201, V58). Edge-less, enumerated
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).

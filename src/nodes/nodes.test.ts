@@ -17,6 +17,8 @@ import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
 import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
+import { KeyframeChannelTextNode } from './KeyframeChannelText';
+import { KeyframeChannelImageNode } from './KeyframeChannelImage';
 import type {
   AnimationClipValue,
   CharacterValue,
@@ -25,8 +27,10 @@ import type {
   ImageValue,
   PromptValue,
   KeyframeChannelColorValue,
+  KeyframeChannelImageValue,
   KeyframeChannelNumberValue,
   KeyframeChannelQuatValue,
+  KeyframeChannelTextValue,
   KeyframeChannelVec2Value,
   KeyframeChannelVec3Value,
   MaterialOverrideValue,
@@ -66,8 +70,10 @@ const ALL_TYPES = [
   'Group',
   'IDPass',
   'KeyframeChannelColor',
+  'KeyframeChannelImage',
   'KeyframeChannelNumber',
   'KeyframeChannelQuat',
+  'KeyframeChannelText',
   'KeyframeChannelVec2',
   'KeyframeChannelVec3',
   'Layer',
@@ -1263,6 +1269,48 @@ describe('P3 — KeyframeChannelColor (pure, time-aware)', () => {
 
   it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
     expect(KeyframeChannelColorNode.inputs).toEqual({});
+  });
+});
+
+describe('P3 — KeyframeChannelText / Image (discrete step, inc 3)', () => {
+  const params = {
+    name: 'prompt',
+    target: 'comfy_1',
+    paramPath: 'comfy:6.text',
+    keyframes: [
+      { time: 0, value: 'a green cube', easing: 'linear' as const },
+      { time: 1, value: 'a red sphere', easing: 'linear' as const },
+    ],
+  };
+
+  it('holds the latest key value (step, no interpolation)', () => {
+    const state = buildChannelState('KeyframeChannelText', params);
+    const v = evalAt<KeyframeChannelTextValue>(state, 'ch', 0);
+    expect(v.valueType).toBe('text');
+    expect(v.sample(0)).toBe('a green cube');
+    expect(v.sample(0.5)).toBe('a green cube'); // held until the next key
+    expect(v.sample(1)).toBe('a red sphere');
+    expect(v.sample(2)).toBe('a red sphere'); // clamps to last
+  });
+
+  it('image channel samples the held reference string', () => {
+    const state = buildChannelState('KeyframeChannelImage', {
+      ...params,
+      paramPath: 'comfy:10.image',
+      keyframes: [
+        { time: 0, value: 'ref_a.png', easing: 'linear' as const },
+        { time: 1, value: 'ref_b.png', easing: 'linear' as const },
+      ],
+    });
+    const v = evalAt<KeyframeChannelImageValue>(state, 'ch', 0);
+    expect(v.valueType).toBe('image');
+    expect(v.sample(0.9)).toBe('ref_a.png');
+    expect(v.sample(1)).toBe('ref_b.png');
+  });
+
+  it('D-04: nodes declare NO inputs (function-of-time)', () => {
+    expect(KeyframeChannelTextNode.inputs).toEqual({});
+    expect(KeyframeChannelImageNode.inputs).toEqual({});
   });
 });
 

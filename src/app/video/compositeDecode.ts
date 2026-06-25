@@ -23,6 +23,12 @@
 import { pickStorage } from '../../core/storage';
 import { pickMediaDecode, type MediaProbe } from '../../core/media';
 import { hashValue } from '../../core/dag/hash';
+import {
+  comfyParamPath,
+  importComfyGraph,
+  type ComfyApiJson,
+  type ComfyGraphMeta,
+} from '../../core/comfy/comfyGraph';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx, NodeId } from '../../core/dag/types';
@@ -55,6 +61,57 @@ function firstSourceId(binding: unknown): NodeId | undefined {
   if (binding && typeof binding === 'object' && 'node' in binding)
     return (binding as { node: NodeId }).node;
   return undefined;
+}
+
+interface ResolvedComfy {
+  /** The verbatim apiJson (folded into the cache key) — null when no graph. */
+  readonly graphJson: unknown;
+  readonly name?: string;
+  /** Schedulable `<nodeId>.<inputName>` → its value AT THIS FRAME (channel sample
+   *  or authored literal). Folded into the cache key so an animated param redraws. */
+  readonly values: Record<string, number | string | boolean>;
+  /** The first schedulable prompt (CLIPTextEncode.text) value — labels the stub. */
+  readonly promptText?: string;
+}
+
+/** Resolve a ComfyUIWorkflow node's schedulable params at `ctx.time`: each is its
+ *  bound V57 channel sample (the render-identical resolveEvaluatedParam path, H40)
+ *  or the authored literal when unbound. This is the per-frame PREVIEW read (design
+ *  §7.1/§7.2) — the stub renders the resolved prompt; the real submit slice feeds
+ *  these into compilePreviewFrame → /prompt. STRUCTURAL params are excluded (they
+ *  can't be scheduled — design §7.4). */
+function resolveComfyParamsAtFrame(
+  state: DagState,
+  comfyNodeId: NodeId,
+  graphParam: unknown,
+  ctx: EvalCtx,
+): ResolvedComfy {
+  const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
+  if (!gp?.apiJson) return { graphJson: null, values: {} };
+  const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
+  const graph = importComfyGraph(gp.apiJson, meta);
+  const values: Record<string, number | string | boolean> = {};
+  let promptText: string | undefined;
+  for (const param of graph.params) {
+    if (param.scheduleHint !== 'schedulable') continue;
+    const r = resolveEvaluatedParam(
+      state,
+      comfyNodeId,
+      comfyParamPath(param.nodeId, param.inputName),
+      ctx,
+    );
+    const v = r ? r.value : param.literal;
+    if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean')
+      values[`${param.nodeId}.${param.inputName}`] = v;
+    if (
+      promptText === undefined &&
+      param.classType === 'CLIPTextEncode' &&
+      param.inputName === 'text' &&
+      typeof v === 'string'
+    )
+      promptText = v;
+  }
+  return { graphJson: gp.apiJson, name: meta.name, values, promptText };
 }
 
 /** Resolve the comp's layers (back→front) to composite inputs: authored params with
@@ -127,15 +184,18 @@ export function collectCompositeInputs(
       } else if (base && base.type === 'ComfyUIWorkflow') {
         // A ComfyUIWorkflow generator layer (inc 3). Decoded as a deterministic
         // STUB frame (CI-safe, no server) — real /prompt → /view submit is a later
-        // slice. The cache key folds the imported graph's hash so a different /
-        // edited workflow re-renders (the spine's `comfy:<nodeId>` carry-in fix).
+        // slice. Keyframe-any-param (V81): resolve every SCHEDULABLE graph param at
+        // THIS frame (a bound V57 channel sample, else the authored literal — the
+        // render-identical resolveEvaluatedParam path, H40), so an animated param
+        // changes the frame across a scrub. The cache key folds those resolved
+        // values + the graph json → an edited or animated workflow re-renders (the
+        // spine's bare `comfy:<nodeId>` carry-in fix). The stub draws the prompt.
         const cp = base.params as Record<string, unknown>;
-        const graph = cp.graph as { apiJson?: unknown; meta?: { name?: string } } | null;
-        const graphKey = graph ? hashValue(graph.apiJson ?? null) : 'none';
+        const resolved = resolveComfyParamsAtFrame(state, baseId, cp.graph, ctx);
         source = {
           kind: 'comfy',
-          path: `comfy:${baseId}#${graphKey}`,
-          label: graph?.meta?.name ?? 'ComfyUI',
+          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, vals: resolved.values })}`,
+          label: resolved.promptText ?? resolved.name ?? 'ComfyUI',
           mediaKind: 'image',
           width: num(cp.width, 512),
           height: num(cp.height, 512),
@@ -214,13 +274,11 @@ async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | n
   ctx.fillStyle = `rgb(${r},${g},${b})`;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.font = `${Math.max(16, Math.round(canvas.height / 12))}px sans-serif`;
+  ctx.font = `${Math.max(14, Math.round(canvas.height / 16))}px sans-serif`;
   ctx.textBaseline = 'middle';
-  ctx.fillText(
-    source.label ?? 'ComfyUI',
-    Math.round(canvas.width / 12),
-    Math.round(canvas.height / 2),
-  );
+  const raw = source.label ?? 'ComfyUI';
+  const label = raw.length > 26 ? `${raw.slice(0, 25)}…` : raw;
+  ctx.fillText(label, Math.round(canvas.width / 12), Math.round(canvas.height / 2));
   return await createImageBitmap(canvas);
 }
 

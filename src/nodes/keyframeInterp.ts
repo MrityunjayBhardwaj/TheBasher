@@ -199,6 +199,29 @@ function segmentVec2(a: Vec2Key, b: Vec2Key, t: number): Vec2 {
   return out;
 }
 
+/** A discrete (step) keyframe — a value held from its time until the next key.
+ *  Used by the text / image channels (prompt travel + reference-image triggers,
+ *  COMFYUI-KEYFRAME-COMPILER-DESIGN.md §6.4): no interpolation, a value snaps to
+ *  the latest key at/before `t`. */
+export interface StepKey<T> {
+  readonly time: number;
+  readonly value: T;
+}
+
+/** Sample a sorted discrete keyframe list at time t: the value of the latest key
+ *  with `time <= t` (clamp to the first key before its time). `fallback` is
+ *  returned for an empty list. No interpolation — this is the step/hold model. */
+export function sampleStepKeyframes<T>(keys: readonly StepKey<T>[], t: number, fallback: T): T {
+  if (keys.length === 0) return fallback;
+  if (t < keys[0].time) return keys[0].value;
+  let value = keys[0].value;
+  for (const k of keys) {
+    if (k.time <= t) value = k.value;
+    else break;
+  }
+  return value;
+}
+
 /** Sample a sorted vec2 keyframe list at time t (clamp ends, interpolate mid). */
 export function sampleVec2Keyframes(keys: readonly Vec2Key[], t: number): Vec2 {
   if (keys.length === 0) return [0, 0];

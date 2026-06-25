@@ -1021,12 +1021,30 @@ export interface KeyframeChannelColorValue extends KeyframeChannelValueBase {
   sample(seconds: number): string;
 }
 
+/** A discrete (step) STRING channel — prompt travel: `CLIPTextEncode.text` holds
+ *  a value from its key until the next (COMFYUI-KEYFRAME-COMPILER-DESIGN.md §6.4).
+ *  No interpolation. */
+export interface KeyframeChannelTextValue extends KeyframeChannelValueBase {
+  readonly valueType: 'text';
+  sample(seconds: number): string;
+}
+
+/** A discrete (step) IMAGE-REFERENCE channel — the reference-image trigger: a
+ *  `LoadImage.image` filename held from its key until the next (design §6.4). The
+ *  sampled value is the image reference (an uploaded filename); no interpolation. */
+export interface KeyframeChannelImageValue extends KeyframeChannelValueBase {
+  readonly valueType: 'image';
+  sample(seconds: number): string;
+}
+
 export type KeyframeChannelValue =
   | KeyframeChannelNumberValue
   | KeyframeChannelVec2Value
   | KeyframeChannelVec3Value
   | KeyframeChannelQuatValue
-  | KeyframeChannelColorValue;
+  | KeyframeChannelColorValue
+  | KeyframeChannelTextValue
+  | KeyframeChannelImageValue;
 
 // ---------------------------------------------------------------------------
 // Operator substrate — constraints (CHOP) — epic #201 / V58

@@ -34,6 +34,12 @@ const VALUE_SHAPE_BY_TYPE: Record<string, (v: unknown) => boolean> = {
   KeyframeChannelQuat: (v) =>
     Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === 'number'),
   KeyframeChannelColor: (v) => typeof v === 'string',
+  // Step (discrete) string channels — prompt travel + reference-image triggers.
+  // Teaching THIS gate is mandatory: a new KeyframeChannel<T> fans out across the
+  // value-shape gates, and a 2nd key is SILENTLY rejected if any is missed (the
+  // 3c-ii trap — dharana B24).
+  KeyframeChannelText: (v) => typeof v === 'string',
+  KeyframeChannelImage: (v) => typeof v === 'string',
 };
 
 const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
@@ -42,6 +48,9 @@ const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
   KeyframeChannelVec3: 'cubic',
   KeyframeChannelQuat: 'cubic',
   KeyframeChannelColor: 'cubic',
+  // Step channels ignore easing; 'linear' is the inert default.
+  KeyframeChannelText: 'linear',
+  KeyframeChannelImage: 'linear',
 };
 
 export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
