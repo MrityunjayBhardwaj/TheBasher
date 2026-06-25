@@ -245,12 +245,15 @@ export function openGltfFilePicker(): void {
  * Open a FILE picker for media clips and run `handle` on each picked file. The
  * shared media-picker core (Compositor spine 1b/1c): `openMediaFilePicker` adds a
  * bare MediaClip; the compositor's "Add Media Layer" wraps each clip as a Layer in
- * the active comp. Images only for now; video (`.mp4`/…) lands in slice 1b.2 with
- * the WebCodecs decoder. Failures route to `useAssetErrorStore` (V38 — never a
- * silent no-op).
+ * the active comp. Images AND video (slice 1b.2 — video decodes via an
+ * HTMLVideoElement in WebCodecsMediaDecode). Failures route to `useAssetErrorStore`
+ * (V38 — never a silent no-op).
  */
 export function pickMediaFiles(handle: (file: IngestFile) => Promise<void>): void {
-  const input = makeHiddenInput('.png,.jpg,.jpeg,.webp,.gif,.bmp,.avif', false);
+  const input = makeHiddenInput(
+    '.png,.jpg,.jpeg,.webp,.gif,.bmp,.avif,.mp4,.webm,.mov,.m4v',
+    false,
+  );
   input.onchange = () => {
     void (async () => {
       try {
