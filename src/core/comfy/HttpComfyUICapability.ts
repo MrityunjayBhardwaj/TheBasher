@@ -73,7 +73,10 @@ export class HttpComfyUICapability implements ComfyUICapability {
     this.id = `http:${this.url}`;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+    // Bind to the global: a bare `globalThis.fetch` stored on the instance and
+    // later called as `this.fetchImpl(...)` rebinds `this` to the instance, which
+    // the browser rejects with "Illegal invocation". (Tests inject their own fn.)
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.clientId = `basher_${Math.floor(Date.now() / 1000)}_${Math.floor(Math.random() * 1e6)}`;
     this.authHeader =
       opts.authHeader && opts.authHeader.trim() ? opts.authHeader.trim() : undefined;
