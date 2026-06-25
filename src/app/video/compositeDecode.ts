@@ -114,6 +114,7 @@ export function collectCompositeInputs(
         const path = String(sp.src ?? '');
         if (path) {
           source = {
+            kind: 'media',
             path,
             mediaKind: (sp.mediaKind as 'video' | 'image') ?? 'image',
             width: num(sp.width, 1),
@@ -122,6 +123,20 @@ export function collectCompositeInputs(
             srcFrames: Math.max(1, num(sp.srcFrames, 1)),
           };
         }
+      } else if (base && base.type === 'ComfyUIWorkflow') {
+        // A ComfyUIWorkflow generator layer (inc 3 spine). Decoded as a deterministic
+        // STUB frame (CI-safe, no server) — real /prompt → /view submit is a later
+        // slice. The synthetic `comfy:<nodeId>` path is the stable decode cache key.
+        const cp = base.params as Record<string, unknown>;
+        source = {
+          kind: 'comfy',
+          path: `comfy:${baseId}`,
+          mediaKind: 'image',
+          width: num(cp.width, 512),
+          height: num(cp.height, 512),
+          srcFps: 30,
+          srcFrames: 1,
+        };
       }
       for (const entry of enumerateEffectStack(state, baseId)) {
         if (entry.muted) continue; // V58 mute-bypass — passes the frame through
@@ -171,6 +186,35 @@ const bitmapCache = new Map<string, ImageBitmap>();
 const decoder = pickMediaDecode();
 let storagePromise: Promise<StorageCapability> | null = null;
 
+/** A deterministic RGB derived from a seed string (FNV-ish), so a ComfyUIWorkflow
+ *  layer's stub frame is a stable, distinct colour per node. */
+function stubColor(seed: string): [number, number, number] {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++)
+    h = (Math.imul(h ^ seed.charCodeAt(i), 16777619) >>> 0) >>> 0;
+  return [h & 0xff, (h >>> 8) & 0xff, (h >>> 16) & 0xff];
+}
+
+/** Decode a ComfyUIWorkflow layer's STUB frame (inc 3 spine): a deterministic
+ *  solid colour (from the synthetic `comfy:<nodeId>` path) with a "ComfyUI" label,
+ *  so the generator layer composites a real, distinct, CI-safe frame before the
+ *  server submit lands. */
+async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | null> {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, source.width);
+  canvas.height = Math.max(1, source.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const [r, g, b] = stubColor(source.path);
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = `${Math.max(16, Math.round(canvas.height / 12))}px sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.fillText('ComfyUI', Math.round(canvas.width / 12), Math.round(canvas.height / 2));
+  return await createImageBitmap(canvas);
+}
+
 async function ensureBitmap(
   source: CompositeSource,
   frameIndex: number,
@@ -178,6 +222,12 @@ async function ensureBitmap(
   const key = `${source.path}#${frameIndex}`;
   const cached = bitmapCache.get(key);
   if (cached) return cached;
+  // A ComfyUIWorkflow generator → a deterministic stub frame (no OPFS / no server).
+  if (source.kind === 'comfy') {
+    const bmp = await decodeComfyStub(source);
+    if (bmp) bitmapCache.set(key, bmp);
+    return bmp;
+  }
   try {
     storagePromise ??= pickStorage();
     const bytes = await (await storagePromise).read(source.path);

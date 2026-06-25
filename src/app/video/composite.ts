@@ -23,8 +23,13 @@ import type { LayerBlendMode } from '../../nodes/types';
 import { mediaClipFrameAt, type MediaClipParams } from '../../nodes/MediaClip';
 import { layerBarSpan } from './videoTimelineGeometry';
 
-/** A decodable layer source (a MediaClip resolved to its OPFS path + metadata). */
+/** A decodable layer source. `kind` discriminates the decode route: 'media' (the
+ *  default) = a MediaClip resolved to its OPFS path + metadata; 'comfy' = a
+ *  ComfyUIWorkflow generator decoded as a deterministic STUB frame (real ComfyUI
+ *  submit is a later inc 3 slice). `path` is the OPFS path (media) or a synthetic
+ *  cache key `comfy:<nodeId>` (comfy). */
 export interface CompositeSource {
+  readonly kind?: 'media' | 'comfy';
   readonly path: string;
   readonly mediaKind: 'video' | 'image';
   readonly width: number;

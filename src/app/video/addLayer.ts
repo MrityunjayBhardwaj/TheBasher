@@ -94,3 +94,37 @@ export async function importMediaClipAsLayer(
 export function openAddMediaLayerPicker(compId: NodeId): void {
   pickMediaFiles((file) => importMediaClipAsLayer(file, compId).then(() => undefined));
 }
+
+/** A fresh node id `${prefix}_N` not already in use. */
+function freshId(prefix: string, usedIds: Set<NodeId>): NodeId {
+  let n = 1;
+  while (usedIds.has(`${prefix}_${n}`)) n++;
+  return `${prefix}_${n}`;
+}
+
+/**
+ * Add a ComfyUIWorkflow generator as a Layer in `compId` — a ComfyUIWorkflow node
+ * (the polymorphic Image source, V83) + Layer + connects in ONE atomic op (a single
+ * undo). The generator is a STILL (one frame) for now, so its out-point defaults to
+ * the comp duration (AE default-still-duration), exactly like a media still; the
+ * compositor decodes a deterministic stub frame until the real ComfyUI submit lands
+ * (a later inc 3 slice). Returns the new Layer id.
+ */
+export function addComfyWorkflowLayer(compId: NodeId): NodeId {
+  const dag = useDagStore.getState();
+  const usedIds = new Set(Object.keys(dag.state.nodes));
+  const comfyId = freshId('comfy', usedIds);
+  usedIds.add(comfyId);
+  const layerId = freshLayerId(usedIds);
+
+  const durRaw = (dag.state.nodes[compId]?.params as { durationFrames?: unknown } | undefined)
+    ?.durationFrames;
+  const compDurationFrames = typeof durRaw === 'number' && Number.isFinite(durRaw) ? durRaw : 150;
+
+  const ops: Op[] = [
+    { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: {} },
+    ...buildAddLayerOps(layerId, compId, comfyId, 'ComfyUI', { outPoint: compDurationFrames }),
+  ];
+  dag.dispatchAtomic(ops, 'user', 'add ComfyUI workflow layer');
+  return layerId;
+}
