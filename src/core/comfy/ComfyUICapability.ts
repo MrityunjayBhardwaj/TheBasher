@@ -48,6 +48,26 @@ export interface ComfySubmitResult {
   readonly frame: Uint8Array;
 }
 
+/**
+ * The result of a BATCHED submit (the compiled coherent path, design §8). One
+ * `/prompt` runs a whole animated sequence as a single batch, so the result is N
+ * frames (or a muxed video from a VideoCombine-style node) — not one. This is the
+ * hard contract change single-frame `submit` could not express; the coherent
+ * compiled render (Inc 4) needs it.
+ */
+export interface ComfyBatchResult {
+  /** Server-assigned prompt id (parity with ComfySubmitResult). */
+  readonly jobId: string;
+  /** PNG bytes per frame, in batch-index order. Collected from ALL output nodes
+   *  of the batched workflow (not just the first), so a SaveImage emitting N
+   *  images yields N frames. Empty only if the workflow produced no images. */
+  readonly frames: readonly Uint8Array[];
+  /** A muxed video blob, when the workflow ends in a video-combine node that
+   *  emits a single file instead of a frame batch. Mutually exclusive with a
+   *  populated `frames` in practice; the caller prefers `video` when present. */
+  readonly video?: Uint8Array;
+}
+
 export interface ComfyUICapability {
   readonly id: string;
   readonly kind: 'http' | 'stub';
@@ -66,6 +86,18 @@ export interface ComfyUICapability {
    * never from `src/core/comfy/`).
    */
   submit(workflowJson: ComfyWorkflowJson, inputs: ComfyInputs): Promise<ComfySubmitResult>;
+
+  /**
+   * Submit a COMPILED BATCHED workflow + inputs and return ALL the frames it
+   * produced (the coherent path, design §8). One `/prompt` runs the whole batch;
+   * the result collects every output image (a SaveImage emitting N images → N
+   * frames), or a muxed video blob from a video-combine node. Distinct from
+   * `submit` so the per-frame preview path stays a clean single-frame contract.
+   *
+   * Implementations may throw on transport failure, timeout, or workflow
+   * validation rejection (same as `submit`).
+   */
+  submitBatch(workflowJson: ComfyWorkflowJson, inputs: ComfyInputs): Promise<ComfyBatchResult>;
 
   /**
    * Best-effort cancel. Implementations may no-op when the job has

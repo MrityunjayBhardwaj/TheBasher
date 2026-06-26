@@ -20,6 +20,7 @@
 // REF: project_p5_context D-07; THESIS §28, §44; vyapti V6.
 
 import type {
+  ComfyBatchResult,
   ComfyInputs,
   ComfySubmitResult,
   ComfyUICapability,
@@ -141,6 +142,58 @@ export class HttpComfyUICapability implements ComfyUICapability {
       }
       const frame = await this.fetchImage(firstImage, controller.signal);
       return { jobId, frame };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async submitBatch(
+    workflowJson: ComfyWorkflowJson,
+    inputs: ComfyInputs,
+  ): Promise<ComfyBatchResult> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      // 1. Upload input images (same as submit — the workflow references them by
+      //    `${name}.png`).
+      for (const [name, bytes] of Object.entries(inputs.images)) {
+        await this.uploadImage(name, bytes, controller.signal);
+      }
+
+      // 2. Queue the compiled batched prompt.
+      const promptRes = await this.fetchImpl(`${this.url}/prompt`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ prompt: workflowJson, client_id: this.clientId }),
+        signal: controller.signal,
+      });
+      if (!promptRes.ok) {
+        const text = await promptRes.text();
+        throw new Error(`ComfyUI /prompt rejected: ${promptRes.status} ${text}`);
+      }
+      const promptBody = (await promptRes.json()) as { prompt_id?: string };
+      const jobId = promptBody.prompt_id;
+      if (!jobId) throw new Error('ComfyUI /prompt response missing prompt_id');
+
+      // 3. Poll until the batched outputs land.
+      const outputs = await this.pollUntilComplete(jobId, controller.signal);
+
+      // 4. Collect EVERY output image across ALL output nodes (node-id sorted for
+      //    a deterministic batch order) — a batched SaveImage emits N images, so
+      //    unlike `submit` (first node → first image) we must gather them all
+      //    (design §8). A video-combine node emits a single file with type
+      //    'output' too; for now it is collected as a frame (the muxed-video
+      //    branch is a later refinement against a real VHS workflow).
+      const frames: Uint8Array[] = [];
+      for (const nodeId of Object.keys(outputs).sort()) {
+        for (const image of outputs[nodeId]?.images ?? []) {
+          frames.push(await this.fetchImage(image, controller.signal));
+        }
+      }
+      if (frames.length === 0) {
+        throw new Error(`ComfyUI prompt ${jobId} completed but produced no output images`);
+      }
+      return { jobId, frames };
     } finally {
       clearTimeout(timer);
     }

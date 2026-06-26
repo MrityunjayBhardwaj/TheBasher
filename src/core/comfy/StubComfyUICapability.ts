@@ -16,6 +16,7 @@
 // REF: vyapti V6, project_p4 stub-encoder pattern.
 
 import type {
+  ComfyBatchResult,
   ComfyInputs,
   ComfySubmitResult,
   ComfyUICapability,
@@ -73,6 +74,34 @@ export class StubComfyUICapability implements ComfyUICapability {
     return { jobId, frame };
   }
 
+  async submitBatch(
+    workflowJson: ComfyWorkflowJson,
+    inputs: ComfyInputs,
+  ): Promise<ComfyBatchResult> {
+    if (this.errorQueue.length > 0) {
+      const err = this.errorQueue.shift()!;
+      throw err;
+    }
+    if (this.perSubmitDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.perSubmitDelayMs));
+    }
+    const jobId = `stub_${this.nextJobId++}`;
+    // N frames, deterministic per (graphHash, batchIndex) — the batched test seam
+    // (design §8). N is intrinsic to the compiled workflow (its batch dimension),
+    // mirroring the real server where N output images fall out of execution.
+    const n = inferBatchCount(workflowJson);
+    const base = digest(workflowJson, inputs);
+    const frames: Uint8Array[] = [];
+    for (let i = 0; i < n; i++) {
+      // per-frame digest = base hash mixed with the batch index → a distinct,
+      // deterministic colour per (graphHash, batchIndex).
+      const h = mixString(mixString(0x811c9dc5, base), String(i)) >>> 0;
+      const [r, g, b] = pixelFromHash(h.toString(16).padStart(8, '0'));
+      frames.push(encode1x1Png(r, g, b));
+    }
+    return { jobId, frames };
+  }
+
   async cancel(jobId: string): Promise<void> {
     this.cancelled.add(jobId);
   }
@@ -81,6 +110,26 @@ export class StubComfyUICapability implements ComfyUICapability {
   wasCancelled(jobId: string): boolean {
     return this.cancelled.has(jobId);
   }
+}
+
+/** Infer the batch length N from a compiled batched workflow the way the real
+ *  server does — from the batch dimension baked into the graph. Prefers a
+ *  `BasherSchedule` node's `frame_count`, else an `EmptyLatentImage.batch_size`,
+ *  else 1. The stub treats the JSON shallowly (it is `unknown`), scanning node
+ *  values for those two known keys. */
+function inferBatchCount(workflowJson: ComfyWorkflowJson): number {
+  if (!workflowJson || typeof workflowJson !== 'object') return 1;
+  let n = 1;
+  for (const node of Object.values(workflowJson as Record<string, unknown>)) {
+    if (!node || typeof node !== 'object') continue;
+    const inputs = (node as { inputs?: Record<string, unknown> }).inputs;
+    if (!inputs || typeof inputs !== 'object') continue;
+    const fc = inputs.frame_count;
+    if (typeof fc === 'number' && Number.isFinite(fc) && fc > n) n = Math.floor(fc);
+    const bs = inputs.batch_size;
+    if (typeof bs === 'number' && Number.isFinite(bs) && bs > n) n = Math.floor(bs);
+  }
+  return Math.max(1, n);
 }
 
 // --------------------------------------------------------------------------

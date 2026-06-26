@@ -1,4 +1,5 @@
 export type {
+  ComfyBatchResult,
   ComfyInputs,
   ComfySubmitResult,
   ComfyUICapability,
