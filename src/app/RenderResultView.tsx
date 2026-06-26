@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { downloadRenderResult, renderActiveProjectToView } from './renderImageAction';
+import { saveRenderPassesToProject } from './saveRenderPassesToProject';
 import { useRenderResultStore } from './stores/renderResultStore';
 import { usePanZoomCanvas } from './usePanZoomCanvas';
 import type { RenderPassKind } from '../render/renderToImage';
@@ -117,6 +118,19 @@ export function RenderResultView() {
             title="Save the current render result as a PNG"
           >
             ⬇ Save
+          </button>
+          {/* Save beauty/depth/normal at the current frame as project images so a
+              video-mode ComfyUI layer can reference them in its image inputs (the
+              3D scene as control rig — render_<frame>_<pass>.png). */}
+          <button
+            type="button"
+            data-testid="render-result-save-passes"
+            disabled={rendering}
+            onClick={() => void saveRenderPassesToProject()}
+            className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] normal-case text-fg/70 transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            title="Render beauty/depth/normal at the current frame and add them to the project — usable as image inputs in video mode"
+          >
+            → Project
           </button>
           <button
             type="button"
