@@ -33,7 +33,7 @@ import {
 } from '../../core/comfy/comfyGraph';
 import { getComfyCapability } from '../boot';
 import { useSettingsStore } from '../stores/settingsStore';
-import { useAssetErrorStore } from '../stores/assetErrorStore';
+import { useNotificationStore } from '../stores/notificationStore';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx, NodeId } from '../../core/dag/types';
@@ -358,18 +358,29 @@ async function decodeComfy(source: CompositeSource): Promise<ImageBitmap | null>
         }
         const { frame } = await cap.submit(source.comfyWorkflow, { images, scalars: {} });
         const blob = new Blob([frame.slice()], { type: 'image/png' });
-        const bmp = await createImageBitmap(blob);
-        useAssetErrorStore.getState().clear(source.path);
-        return bmp;
+        return await createImageBitmap(blob);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'ComfyUI submit failed';
-      useAssetErrorStore.getState().report(source.path, `ComfyUI generate failed: ${msg}`);
+      // The app-root TOAST, NOT assetErrorStore — that banner mounts in the view3d
+      // slot the compositor COVERS in VIDEO mode ([[H122]]), so a live-generate error
+      // would be invisible exactly where it happens. notify() dedups (severity,message).
+      useNotificationStore
+        .getState()
+        .notify({ severity: 'error', message: `ComfyUI generate failed: ${msg}` });
       // fall through to the stub so the layer still shows SOMETHING (not blank)
     }
   }
   return await decodeComfyStub(source);
 }
+
+// In-flight decodes deduped by `path#frame`. A comfy live submit takes SECONDS, and
+// the composite re-renders many times meanwhile — without this, each re-render fires
+// ANOTHER /prompt, piling redundant jobs on a serial GPU until each blows past the
+// submit timeout and NO frame ever displays (OBSERVED: the live cube stuck on the
+// stub). One decode per key in flight; concurrent callers await the same promise,
+// then hit the bitmap cache.
+const inFlight = new Map<string, Promise<ImageBitmap | null>>();
 
 async function ensureBitmap(
   source: CompositeSource,
@@ -378,6 +389,18 @@ async function ensureBitmap(
   const key = `${source.path}#${frameIndex}`;
   const cached = bitmapCache.get(key);
   if (cached) return cached;
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const work = decodeBitmap(source, frameIndex, key).finally(() => inFlight.delete(key));
+  inFlight.set(key, work);
+  return work;
+}
+
+async function decodeBitmap(
+  source: CompositeSource,
+  frameIndex: number,
+  key: string,
+): Promise<ImageBitmap | null> {
   // A ComfyUIWorkflow generator. Real submit (opt-in `comfyLiveGenerate` + a
   // reachable server) → the per-frame compiled workflow is sent to ComfyUI and a
   // REAL frame composited; otherwise the deterministic GPU-free stub (CI/offline).
