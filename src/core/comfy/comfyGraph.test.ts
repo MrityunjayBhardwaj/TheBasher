@@ -4,9 +4,12 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  type BatchedTrack,
   type ComfyApiJson,
   type ComfyGraphMeta,
+  BASHER_SCHEDULE_NODE_TYPES,
   comfyParamPath,
+  compileBatchedWorkflow,
   compilePreviewFrame,
   importComfyGraph,
   isComfyLink,
@@ -236,6 +239,187 @@ describe('compilePreviewFrame — per-frame substitution (design §7.2)', () => 
               "8",
               0,
             ],
+          },
+        },
+      }
+    `);
+  });
+});
+
+describe('compileBatchedWorkflow — coherent batched path (design §7.3)', () => {
+  const graph = importComfyGraph(SD15, META);
+  const cfgTrack: BatchedTrack = {
+    nodeId: '3',
+    inputName: 'cfg',
+    classType: 'KSampler',
+    valueKind: 'float',
+    values: [6.5, 7.0, 9.0, 8.0],
+  };
+
+  it('inserts a BasherValueSchedule for a float param and rewires its input to read it', () => {
+    const { apiJson, scheduleNodeIds } = compileBatchedWorkflow(graph, [cfgTrack], {
+      frameCount: 4,
+    });
+    expect(scheduleNodeIds).toEqual(['bsched_3_cfg']);
+    const sched = apiJson['bsched_3_cfg'];
+    expect(sched.class_type).toBe(BASHER_SCHEDULE_NODE_TYPES.float);
+    expect(sched.inputs.values_json).toBe('[6.5,7,9,8]');
+    expect(sched.inputs.frame_count).toBe(4);
+    // the KSampler.cfg literal is now a link to the schedule node's output 0
+    expect((apiJson['3'].inputs as Record<string, unknown>).cfg).toEqual(['bsched_3_cfg', 0]);
+    // source graph untouched
+    expect((graph.apiJson['3'].inputs as Record<string, unknown>).cfg).toBe(6.5);
+  });
+
+  it('sets EmptyLatentImage.batch_size to N (the batch length matches the schedule)', () => {
+    const { apiJson } = compileBatchedWorkflow(graph, [cfgTrack], { frameCount: 4 });
+    expect((apiJson['5'].inputs as Record<string, unknown>).batch_size).toBe(4);
+  });
+
+  it('demotes STRUCTURAL params (kept as literal, reported — never silent §7.4)', () => {
+    const widthTrack: BatchedTrack = {
+      nodeId: '5',
+      inputName: 'width',
+      classType: 'EmptyLatentImage',
+      valueKind: 'int',
+      values: [512, 768],
+    };
+    const { apiJson, demotions, scheduleNodeIds } = compileBatchedWorkflow(graph, [widthTrack], {
+      frameCount: 2,
+    });
+    expect(scheduleNodeIds).toEqual([]);
+    expect(demotions).toEqual([{ nodeId: '5', inputName: 'width', reason: 'structural' }]);
+    // the literal is preserved (the rest pose), not rewired
+    expect((apiJson['5'].inputs as Record<string, unknown>).width).toBe(512);
+  });
+
+  it('demotes string (prompt-travel) + image as unsupported-kind in this increment', () => {
+    const promptTrack: BatchedTrack = {
+      nodeId: '6',
+      inputName: 'text',
+      classType: 'CLIPTextEncode',
+      valueKind: 'string',
+      values: ['a', 'b'],
+    };
+    const { demotions, scheduleNodeIds } = compileBatchedWorkflow(graph, [promptTrack], {
+      frameCount: 2,
+    });
+    expect(scheduleNodeIds).toEqual([]);
+    expect(demotions).toEqual([{ nodeId: '6', inputName: 'text', reason: 'unsupported-kind' }]);
+  });
+
+  it('demotes a track whose input is now wired (graph edited), keeping the link', () => {
+    const wired: BatchedTrack = {
+      nodeId: '3',
+      inputName: 'model', // a [4,0] link in SD15, not a literal
+      classType: 'KSampler',
+      valueKind: 'float',
+      values: [1, 2],
+    };
+    const { apiJson, demotions } = compileBatchedWorkflow(graph, [wired], { frameCount: 2 });
+    expect(demotions).toEqual([{ nodeId: '3', inputName: 'model', reason: 'wired-input' }]);
+    expect((apiJson['3'].inputs as Record<string, unknown>).model).toEqual(['4', 0]);
+  });
+
+  it('is the testable IP: the full compiled batched workflow is a stable snapshot', () => {
+    const { apiJson } = compileBatchedWorkflow(graph, [cfgTrack], { frameCount: 4 });
+    expect(apiJson).toMatchInlineSnapshot(`
+      {
+        "3": {
+          "class_type": "KSampler",
+          "inputs": {
+            "cfg": [
+              "bsched_3_cfg",
+              0,
+            ],
+            "denoise": 1,
+            "latent_image": [
+              "5",
+              0,
+            ],
+            "model": [
+              "4",
+              0,
+            ],
+            "negative": [
+              "7",
+              0,
+            ],
+            "positive": [
+              "6",
+              0,
+            ],
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "seed": 42,
+            "steps": 20,
+          },
+        },
+        "4": {
+          "class_type": "CheckpointLoaderSimple",
+          "inputs": {
+            "ckpt_name": "v1-5-pruned-emaonly.safetensors",
+          },
+        },
+        "5": {
+          "class_type": "EmptyLatentImage",
+          "inputs": {
+            "batch_size": 4,
+            "height": 512,
+            "width": 512,
+          },
+        },
+        "6": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {
+            "clip": [
+              "4",
+              1,
+            ],
+            "text": "a green cube on a table",
+          },
+        },
+        "7": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {
+            "clip": [
+              "4",
+              1,
+            ],
+            "text": "blurry",
+          },
+        },
+        "8": {
+          "class_type": "VAEDecode",
+          "inputs": {
+            "samples": [
+              "3",
+              0,
+            ],
+            "vae": [
+              "4",
+              2,
+            ],
+          },
+        },
+        "9": {
+          "class_type": "SaveImage",
+          "inputs": {
+            "filename_prefix": "basher",
+            "images": [
+              "8",
+              0,
+            ],
+          },
+        },
+        "bsched_3_cfg": {
+          "_meta": {
+            "title": "Basher Schedule: 3.cfg",
+          },
+          "class_type": "BasherValueSchedule",
+          "inputs": {
+            "frame_count": 4,
+            "values_json": "[6.5,7,9,8]",
           },
         },
       }

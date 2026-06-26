@@ -250,3 +250,157 @@ export function compilePreviewFrame(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// compiled batched path (the coherent path, design §7.3) — the bridge nodes
+// ---------------------------------------------------------------------------
+
+/** The custom ComfyUI node types Basher's compiler emits to carry a baked
+ *  per-frame array IN-GRAPH (design §7.3). These are a SEPARATE GPL/MIT ComfyUI
+ *  extension (`custom_nodes/BasherSchedule/`) installed in the user's ComfyUI —
+ *  NEVER vendored into Basher's proprietary core (design §3). Basher only emits
+ *  their JSON shape (type name + inputs) and detects their presence via
+ *  `/object_info`; the Python is authored arm's-length. Keyed by the param's
+ *  valueKind so the compiler dispatches the right batch-aware variant. */
+export const BASHER_SCHEDULE_NODE_TYPES = {
+  float: 'BasherValueSchedule',
+  int: 'BasherValueSchedule',
+  string: 'BasherPromptSchedule',
+  image: 'BasherImageSchedule',
+} as const satisfies Partial<Record<ComfyValueKind, string>>;
+
+/** The full set of node-type names the bridge extension must provide — used by
+ *  presence detection (`hasBasherScheduleNodes`, design §16 Q-E). */
+export const BASHER_SCHEDULE_NODE_TYPE_SET: ReadonlySet<string> = new Set(
+  Object.values(BASHER_SCHEDULE_NODE_TYPES),
+);
+
+/** A param's curve baked to a value PER FRAME over the whole batch range (design
+ *  §7.1), plus the node-class + valueKind needed to pick the schedule variant and
+ *  decide whether it can be scheduled in-graph at all. Length of `values` = N. */
+export interface BatchedTrack {
+  readonly nodeId: string;
+  readonly inputName: string;
+  readonly classType: string;
+  readonly valueKind: ComfyValueKind;
+  readonly values: readonly (number | string | boolean)[];
+}
+
+/** A param the compiled path could NOT schedule in-graph, with the reason. The
+ *  compiler keeps its first-frame literal (the rest pose) and NEVER silently
+ *  drops it — the caller logs every demotion (design §7.4: "silent truncation
+ *  reads as 'it all animates' when it doesn't"). */
+export interface ScheduleDemotion {
+  readonly nodeId: string;
+  readonly inputName: string;
+  readonly reason: 'structural' | 'unsupported-kind' | 'wired-input';
+}
+
+export interface CompiledBatch {
+  /** The compiled batched workflow: schedule nodes inserted, animated inputs
+   *  rewired to read them, batch size set to N. Openable in ComfyUI (the schedule
+   *  nodes are right there — design §12 milestone). The source graph is untouched. */
+  readonly apiJson: ComfyApiJson;
+  /** Params demoted to preview-only (kept as literal) — never silent (§7.4). */
+  readonly demotions: readonly ScheduleDemotion[];
+  /** The schedule node ids inserted, in track order (for tests/inspection). */
+  readonly scheduleNodeIds: readonly string[];
+  /** The batch length N (frameEnd - frameStart + 1). */
+  readonly frameCount: number;
+}
+
+/** A stable, ComfyUI-safe id for the schedule node injected for one param.
+ *  Deterministic (not a counter) so the compiled JSON snapshots reproducibly and
+ *  the node is recognisable when the workflow opens in ComfyUI. */
+function scheduleNodeId(nodeId: string, inputName: string): string {
+  return `bsched_${nodeId}_${inputName}`.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+/**
+ * Compile the COHERENT BATCHED path (design §7.3): bake each animated param into
+ * one workflow that ComfyUI runs as a single batch, so an in-graph temporal model
+ * (AnimateDiff context windows for SD1.5, native video models for modern stacks)
+ * can keep the sequence coherent — unlike the preview path's N independent runs.
+ *
+ * For each SCHEDULABLE float/int track: insert a `BasherValueSchedule` carrying
+ * the baked array and rewire the param's input to read it (`inputs[name] =
+ * [scheduleId, 0]`) — the FizzNodes BatchValueSchedule model, except the schedule
+ * is baked by Basher's curve editor, not a text DSL (§7.3). The batch size of
+ * every `EmptyLatentImage` is set to N so the latent batch length matches.
+ *
+ * What is NOT scheduled in-graph here (kept as the first-frame literal + reported
+ * in `demotions`, NEVER silently dropped — §7.4):
+ *   - STRUCTURAL params (resolution / ckpt / sampler type) — can't be a per-batch
+ *     value; only the preview path's separate runs can vary them.
+ *   - string (prompt-travel) + image (reference-travel) — these are genuine
+ *     producer-replacement rewires (a CONDITIONING / IMAGE batch must replace the
+ *     CLIPTextEncode / LoadImage output and every consumer of it), validated
+ *     against a real AnimateDiff+IPAdapter workflow (needs models); the node-type
+ *     dispatch table is in place (`BASHER_SCHEDULE_NODE_TYPES`) for that increment.
+ *   - tracks pointing at a now-wired input (the graph was edited) — `wired-input`.
+ *
+ * PURE: deep-clones the graph; the input is never mutated. The IP, GPU-free and
+ * fully snapshot-testable (design §15).
+ */
+export function compileBatchedWorkflow(
+  graph: ComfyGraph,
+  tracks: readonly BatchedTrack[],
+  opts: { readonly frameCount: number },
+): CompiledBatch {
+  const out = structuredClone(graph.apiJson) as ComfyApiJson;
+  const frameCount = Math.max(1, Math.floor(opts.frameCount));
+  const demotions: ScheduleDemotion[] = [];
+  const scheduleNodeIds: string[] = [];
+
+  for (const track of tracks) {
+    const target = out[track.nodeId];
+    // The graph was edited and this input is now wired — keep the wired link.
+    if (!target || !target.inputs || isComfyLink(target.inputs[track.inputName])) {
+      demotions.push({ nodeId: track.nodeId, inputName: track.inputName, reason: 'wired-input' });
+      continue;
+    }
+    const hint = scheduleHintFor(track.classType, track.inputName, track.valueKind);
+    if (hint === 'structural') {
+      demotions.push({ nodeId: track.nodeId, inputName: track.inputName, reason: 'structural' });
+      continue;
+    }
+    // Only float/int get an in-graph schedule in this increment (the validated
+    // FizzNodes input-literal-rewire). string/image are producer-replacement — a
+    // later increment; demote them honestly rather than emit a node that won't run.
+    if (track.valueKind !== 'float' && track.valueKind !== 'int') {
+      demotions.push({
+        nodeId: track.nodeId,
+        inputName: track.inputName,
+        reason: 'unsupported-kind',
+      });
+      continue;
+    }
+    const schedId = scheduleNodeId(track.nodeId, track.inputName);
+    out[schedId] = {
+      class_type: BASHER_SCHEDULE_NODE_TYPES[track.valueKind],
+      inputs: {
+        values_json: JSON.stringify(track.values),
+        frame_count: frameCount,
+      },
+      _meta: { title: `Basher Schedule: ${track.nodeId}.${track.inputName}` },
+    };
+    (target.inputs as Record<string, ComfyInputValue>)[track.inputName] = [schedId, 0];
+    scheduleNodeIds.push(schedId);
+  }
+
+  // Match the latent batch length to N so the scheduled arrays line up with the
+  // batch index. EmptyLatentImage.batch_size is the canonical knob; an img2img /
+  // video workflow with no EmptyLatentImage supplies its own batch dimension (the
+  // temporal/context node) and is left untouched.
+  for (const nodeId of Object.keys(out)) {
+    const node = out[nodeId];
+    if (
+      node?.class_type === 'EmptyLatentImage' &&
+      node.inputs &&
+      !isComfyLink(node.inputs.batch_size)
+    )
+      (node.inputs as Record<string, ComfyInputValue>).batch_size = frameCount;
+  }
+
+  return { apiJson: out, demotions, scheduleNodeIds, frameCount };
+}
