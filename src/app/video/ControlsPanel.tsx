@@ -34,6 +34,7 @@ import type { NodeId } from '../../core/dag/types';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
 import { ComfySourceSection } from './ComfyControlsSection';
+import { EffectControlsSection } from './EffectControlsSection';
 
 /** The first source-edge producer id of a layer (single or list binding). */
 function firstSourceId(state: DagState, layerId: NodeId): NodeId | undefined {
@@ -102,9 +103,11 @@ type SectionRenderer = (props: { nodeId: NodeId }) => ReactNode;
  *  as later registrations (steps 2–3). An unregistered kind shows a neutral note
  *  rather than nothing — the section header is still discoverable. */
 const SECTION_RENDERERS: Record<string, SectionRenderer> = {
-  // ComfyUIWorkflow = the first source renderer (Slice D). ColorCorrect (effects)
-  // registers in step 3. The shell renders a neutral note for any unregistered kind.
+  // ComfyUIWorkflow = the first SOURCE renderer (Slice D); ColorCorrect = the first
+  // EFFECT renderer. The shell renders a neutral note for any unregistered kind, so a
+  // new producer/effect kind is "register one renderer," not "touch the panel."
   ComfyUIWorkflow: ComfySourceSection,
+  ColorCorrect: EffectControlsSection,
 };
 
 function NoControlsBody({ nodeType }: { nodeType: string }) {

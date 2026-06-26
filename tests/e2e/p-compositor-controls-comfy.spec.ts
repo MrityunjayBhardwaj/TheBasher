@@ -124,3 +124,39 @@ test('keying the prompt mints a TEXT channel and drives the composite across a s
   await page.waitForTimeout(200);
   expect(await pixelChecksum(page)).toBe(atStart);
 });
+
+test('the panel folds the effect chain in as EFFECT sections (step 3)', async ({ page }) => {
+  // Add a ColorCorrect effect onto the layer via the timeline twirl, then confirm the
+  // Controls panel grows a second (EFFECT) section beside the SOURCE section, and that
+  // keying a scalar effect param mints a KeyframeChannelNumber (the native road —
+  // correct for a plain scalar; no comfy valueKind dispatch needed here).
+  const layerId = await page.evaluate(
+    () =>
+      Object.values((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).find(
+        (n) => n.type === 'Layer',
+      )!.id,
+  );
+  await page.getByTestId(`layer-twirl-${layerId}`).click();
+  await page.getByTestId(`layer-add-effect-${layerId}`).click();
+  await page.waitForTimeout(150);
+  await page.locator('[data-testid^="layer-bar-"]').first().click();
+
+  // Two sections now: SOURCE (ComfyUI) + EFFECT (ColorCorrect).
+  await expect(page.locator('[data-testid^="controls-section-"][data-role="source"]')).toHaveCount(
+    1,
+  );
+  await expect(page.locator('[data-testid^="controls-section-"][data-role="effect"]')).toHaveCount(
+    1,
+  );
+
+  const effectId = await page.evaluate(
+    () =>
+      Object.values((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).find(
+        (n) => n.type === 'ColorCorrect',
+      )!.id,
+  );
+  await expect(page.getByTestId(`controls-effect-input-${effectId}-brightness`)).toBeVisible();
+  await page.getByTestId(`controls-effect-diamond-${effectId}-brightness`).click();
+  await page.waitForTimeout(150);
+  expect(await dagNodeTypes(page)).toContain('KeyframeChannelNumber');
+});
