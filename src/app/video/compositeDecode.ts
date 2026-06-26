@@ -40,6 +40,7 @@ import type { EvalCtx, NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
+import { resolveComfyImageBindings } from './comfyImageBinding';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
@@ -83,13 +84,6 @@ interface ResolvedComfy {
   /** Bound image inputs to upload before submit: each project-image OPFS `path` →
    *  the stable ComfyUI `name` the LoadImage input was rewritten to reference. */
   readonly imageUploads: readonly { path: string; name: string }[];
-}
-
-/** A stable, filesystem-safe ComfyUI upload name for a bound image input. The
- *  compiled workflow's input is rewritten to `${name}.png` and the bytes are
- *  uploaded under the same name — so the LoadImage node resolves on the server. */
-function comfyImageUploadName(nodeId: string, inputName: string): string {
-  return `basher_img_${nodeId}_${inputName}`.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
 /** Resolve a ComfyUIWorkflow node's schedulable params at `ctx.time`: each is its
@@ -139,23 +133,13 @@ function resolveComfyParamsAtFrame(
   // are uploaded under `name` at submit. A binding for a node/input that no longer
   // exists is skipped by compilePreviewFrame (it keeps the authored literal). The
   // filename folds into `values` so the cache key busts when the bound image changes.
+  // resolveComfyImageBindings is the SHARED rewrite the batched compile reuses
+  // (compileComfyBatch) — preview == compiled image handling (V81 thesis).
   const imageUploads: { path: string; name: string }[] = [];
-  const bindings =
-    imageBindingsParam && typeof imageBindingsParam === 'object'
-      ? (imageBindingsParam as Record<string, unknown>)
-      : {};
-  for (const key of Object.keys(bindings)) {
-    const path = bindings[key];
-    if (typeof path !== 'string' || !path) continue;
-    const dot = key.indexOf('.');
-    if (dot <= 0 || dot >= key.length - 1) continue;
-    const nodeId = key.slice(0, dot);
-    const inputName = key.slice(dot + 1);
-    const name = comfyImageUploadName(nodeId, inputName);
-    const filename = `${name}.png`;
-    values[key] = filename;
-    tracks.push({ nodeId, inputName, values: [filename] });
-    imageUploads.push({ path, name });
+  for (const b of resolveComfyImageBindings(imageBindingsParam)) {
+    values[`${b.nodeId}.${b.inputName}`] = b.filename;
+    tracks.push({ nodeId: b.nodeId, inputName: b.inputName, values: [b.filename] });
+    imageUploads.push(b.upload);
   }
   // The single-frame compiled workflow: every schedulable param + bound image input
   // substituted with its resolved-at-frame value (preview path, design §7.2).

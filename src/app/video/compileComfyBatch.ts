@@ -32,15 +32,18 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useComfyRenderProgressStore } from '../stores/comfyRenderProgressStore';
 import { buildMediaClipOps, freshMediaClipId } from '../asset/importMediaClip';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
+import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
 import { createMp4Sink } from '../../render/renderAnimation';
 import {
   compileBatchedWorkflow,
   comfyParamPath,
   importComfyGraph,
+  isComfyLink,
   type BatchedTrack,
   type ComfyApiJson,
   type ComfyGraph,
   type ComfyGraphMeta,
+  type ComfyInputValue,
   type ScheduleDemotion,
 } from '../../core/comfy/comfyGraph';
 import type { DagState } from '../../core/dag/state';
@@ -99,6 +102,14 @@ export function bakeComfyBatchedTracks(
           : param.literal,
       );
     }
+    // An image param is handled by the dedicated image-binding rewrite (a static
+    // bound image → ONE upload, the same filename every frame — applyComfyImageBindings),
+    // not an in-graph schedule. Only surface it as a track here when it genuinely
+    // VARIES across the range — a reference-travel (KeyframeChannelImage) the compiler
+    // can't schedule yet, so it must demote honestly (§7.4) rather than be dropped. A
+    // CONSTANT image (the authored literal, or a static binding) needs no track: the
+    // binding rewrite sets it, and an unbound literal stays as authored.
+    if (param.valueKind === 'image' && values.every((x) => x === values[0])) continue;
     tracks.push({
       nodeId: param.nodeId,
       inputName: param.inputName,
@@ -108,6 +119,28 @@ export function bakeComfyBatchedTracks(
     });
   }
   return tracks;
+}
+
+/** Rewrite each statically-bound image input in a compiled batched workflow to its
+ *  stable upload filename (mutating `apiJson` in place) and return the uploads to read
+ *  + send. A binding whose node is missing or whose input is now wired is skipped (it
+ *  keeps the authored literal) — the SAME guard compilePreviewFrame applies, so the
+ *  batched image handling matches the per-frame preview (the V81 preview==compiled
+ *  thesis). A static bound image is constant across the batch → ONE upload, the same
+ *  name on every frame; a keyframed/varying image is reference-travel, demoted by the
+ *  compiler and never reaching here. */
+export function applyComfyImageBindings(
+  apiJson: ComfyApiJson,
+  imageBindingsParam: unknown,
+): ComfyImageUpload[] {
+  const uploads: ComfyImageUpload[] = [];
+  for (const b of resolveComfyImageBindings(imageBindingsParam)) {
+    const target = apiJson[b.nodeId];
+    if (!target || !target.inputs || isComfyLink(target.inputs[b.inputName])) continue;
+    (target.inputs as Record<string, ComfyInputValue>)[b.inputName] = b.filename;
+    uploads.push(b.upload);
+  }
+  return uploads;
 }
 
 /** Draw a decoded PNG frame onto a fixed width×height canvas (the comfy node's output
@@ -166,6 +199,13 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   );
   const compiled = compileBatchedWorkflow(graph, tracks, { frameCount });
 
+  // Image inputs (the 3D-scene-as-control-rig thesis: a depth/normal pass bound to a
+  // LoadImage → img2img). Rewrite each statically-bound image input in the compiled
+  // batch to its stable upload filename and collect the bytes to read — the SAME
+  // rewrite the per-frame preview decode applies, so "Render coherent clip" is driven
+  // by the bound passes end-to-end, not just the live scrub preview.
+  const imageUploads = applyComfyImageBindings(compiled.apiJson, params.imageBindings);
+
   // §7.4 — surface every demotion (a param that can't be scheduled in-graph keeps its
   // first-frame literal). Never a silent "it all animates".
   if (compiled.demotions.length) {
@@ -211,7 +251,22 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
           return { ok: false, frameCount, demotions: compiled.demotions, reason: 'bridge-missing' };
         }
       }
-      const res = await cap.submitBatch(compiled.apiJson, { images: {}, scalars: {} }, onProgress);
+      // Read each bound image's OPFS bytes → upload under its stable name (the
+      // workflow's LoadImage input was already rewritten to `${name}.png`). A
+      // missing/unreadable file is skipped (surfaced via console.warn) → the server
+      // errors on the absent filename → the submit catch toasts it (never silent).
+      const images: Record<string, Uint8Array> = {};
+      if (imageUploads.length) {
+        const storage = await pickStorage();
+        for (const up of imageUploads) {
+          try {
+            images[up.name] = await storage.read(up.path);
+          } catch (e) {
+            console.warn(`comfy batch: bound image ${up.path} unreadable`, e);
+          }
+        }
+      }
+      const res = await cap.submitBatch(compiled.apiJson, { images, scalars: {} }, onProgress);
       frames = res.frames;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'batch submit failed';

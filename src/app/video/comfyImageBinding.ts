@@ -36,6 +36,55 @@ export function comfyImageBindingKey(nodeId: string, inputName: string): string 
   return `${nodeId}.${inputName}`;
 }
 
+/** Bytes to upload to ComfyUI before a submit: the OPFS `path` to read, and the
+ *  stable `name` (no extension) the LoadImage input was rewritten to reference. */
+export interface ComfyImageUpload {
+  readonly path: string;
+  readonly name: string;
+}
+
+/** One resolved image binding: the node/input to rewrite, the stable `${name}.png`
+ *  filename it now references on the server, and the bytes to upload under `name`. */
+export interface ResolvedImageBinding {
+  readonly nodeId: string;
+  readonly inputName: string;
+  /** The stable filename the LoadImage input is rewritten to (`${name}.png`). */
+  readonly filename: string;
+  readonly upload: ComfyImageUpload;
+}
+
+/** A stable, filesystem-safe ComfyUI upload name for a bound image input. The
+ *  compiled workflow's input is rewritten to `${name}.png` and the bytes are
+ *  uploaded under the same name — so the LoadImage node resolves on the server. */
+export function comfyImageUploadName(nodeId: string, inputName: string): string {
+  return `basher_img_${nodeId}_${inputName}`.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+/** Resolve a node's `imageBindings` map (`"<nodeId>.<inputName>" → OPFS path`) into
+ *  rewrite targets + uploads. Each binding yields the stable filename its LoadImage
+ *  input must reference and the bytes to upload under that name. Malformed keys and
+ *  empty paths are skipped. Shared by the per-frame PREVIEW decode AND the BATCHED
+ *  coherent compile so both rewrite + upload identically — a static bound image is
+ *  constant across the batch → ONE upload, the same name on every frame. */
+export function resolveComfyImageBindings(imageBindingsParam: unknown): ResolvedImageBinding[] {
+  const out: ResolvedImageBinding[] = [];
+  const bindings =
+    imageBindingsParam && typeof imageBindingsParam === 'object'
+      ? (imageBindingsParam as Record<string, unknown>)
+      : {};
+  for (const key of Object.keys(bindings)) {
+    const path = bindings[key];
+    if (typeof path !== 'string' || !path) continue;
+    const dot = key.indexOf('.');
+    if (dot <= 0 || dot >= key.length - 1) continue;
+    const nodeId = key.slice(0, dot);
+    const inputName = key.slice(dot + 1);
+    const name = comfyImageUploadName(nodeId, inputName);
+    out.push({ nodeId, inputName, filename: `${name}.png`, upload: { path, name } });
+  }
+  return out;
+}
+
 /** Every image available in this project: MediaClip nodes with mediaKind:'image'.
  *  Pure read over the DAG — the source of truth for the image-input picker. */
 export function listProjectImages(state: DagState): ProjectImage[] {

@@ -4,7 +4,7 @@
 // the e2e that animates cfg and renders. design §7.1.
 
 import { describe, expect, it } from 'vitest';
-import { bakeComfyBatchedTracks } from './compileComfyBatch';
+import { applyComfyImageBindings, bakeComfyBatchedTracks } from './compileComfyBatch';
 import {
   importComfyGraph,
   type ComfyApiJson,
@@ -68,5 +68,53 @@ describe('bakeComfyBatchedTracks — range bake (design §7.1)', () => {
     const text = tracks.find((t) => t.inputName === 'text')!;
     expect(text.valueKind).toBe('string');
     expect(text.values).toEqual(['a cube', 'a cube', 'a cube']);
+  });
+
+  it('does NOT bake a CONSTANT image param (it is handled by the binding rewrite, not a track)', () => {
+    // A LoadImage.image with no bound channel bakes to a constant filename → no
+    // schedule track here (so it is not a spurious unsupported-kind demotion); the
+    // static binding rewrite (applyComfyImageBindings) sets it instead.
+    const withLoad = importComfyGraph(
+      { ...SD15, '10': { class_type: 'LoadImage', inputs: { image: 'placeholder.png' } } },
+      META,
+    );
+    const tracks = bakeComfyBatchedTracks(EMPTY_STATE, 'comfy1', withLoad, 0, 3, 30, 4);
+    expect(tracks.some((t) => t.nodeId === '10' && t.inputName === 'image')).toBe(false);
+  });
+});
+
+describe('applyComfyImageBindings — rewrite bound image inputs in the batch (design §7.1)', () => {
+  const baseJson = (): ComfyApiJson => ({
+    '3': {
+      class_type: 'KSampler',
+      inputs: { seed: 1, cfg: 7, model: ['4', 0], latent_image: ['11', 0] },
+    },
+    '10': { class_type: 'LoadImage', inputs: { image: 'placeholder.png' } },
+    '11': { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } },
+  });
+
+  it('rewrites a bound LoadImage.image to a stable upload name + returns the bytes to upload', () => {
+    const apiJson = baseJson();
+    const uploads = applyComfyImageBindings(apiJson, { '10.image': 'media/depth-abc.png' });
+    expect(apiJson['10'].inputs.image).toBe('basher_img_10_image.png');
+    expect(uploads).toEqual([{ path: 'media/depth-abc.png', name: 'basher_img_10_image' }]);
+  });
+
+  it('leaves the authored literal + no uploads when nothing is bound', () => {
+    const apiJson = baseJson();
+    const uploads = applyComfyImageBindings(apiJson, {});
+    expect(apiJson['10'].inputs.image).toBe('placeholder.png');
+    expect(uploads).toEqual([]);
+  });
+
+  it('skips a binding whose node is missing or whose input is now wired (keeps the link)', () => {
+    const apiJson = baseJson();
+    // node 99 does not exist; node 3's latent_image is a [11,0] link, not a literal
+    const uploads = applyComfyImageBindings(apiJson, {
+      '99.image': 'media/x.png',
+      '3.latent_image': 'media/y.png',
+    });
+    expect(apiJson['3'].inputs.latent_image).toEqual(['11', 0]);
+    expect(uploads).toEqual([]);
   });
 });
