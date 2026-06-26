@@ -27,6 +27,13 @@ import { useDiffStore, acceptSelectedOps } from '../../agent/diff/store';
 import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
+import {
+  importComfyGraph,
+  parseComfyParamPath,
+  type ComfyApiJson,
+  type ComfyGraphMeta,
+  type ComfyValueKind,
+} from '../../core/comfy/comfyGraph';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -574,10 +581,114 @@ function dispatchDirectFirstKey(
   return proposeAndAccept(base, [op], intent, [opts.intentTag], closureSpec, []);
 }
 
+/** A ComfyUIWorkflow param's KeyframeChannel* type, dispatched EXPLICITLY by the
+ *  manifest `valueKind` (design §7.1). This is the load-bearing difference from the
+ *  native road: `inferValueType` maps a string → 'color' (KeyframeChannelColor),
+ *  which is WRONG for a comfy prompt (it must be a STEP text channel). The compiler
+ *  was deliberately not taught a 'text'/'image' JS-type guess, so the manifest's
+ *  declared kind is the only honest source. Returns null for kinds that can't be a
+ *  per-frame schedule (bool/enum — structural / non-schedulable). */
+function comfyChannelNodeFor(
+  kind: ComfyValueKind,
+): { nodeType: string; easing: 'linear' | 'cubic' } | null {
+  switch (kind) {
+    case 'float':
+    case 'int':
+      return { nodeType: 'KeyframeChannelNumber', easing: 'linear' };
+    case 'string':
+      return { nodeType: 'KeyframeChannelText', easing: 'linear' };
+    case 'image':
+      return { nodeType: 'KeyframeChannelImage', easing: 'linear' };
+    default:
+      return null; // bool / enum — not a schedulable per-frame value
+  }
+}
+
+/** The declared valueKind of one imported-graph param, or null if the node carries
+ *  no graph / the param is no longer present. Derived (never stored) so it can't go
+ *  stale against the json — the SAME importComfyGraph the decode read uses. */
+function comfyParamValueKind(
+  graphParam: unknown,
+  nodeId: string,
+  inputName: string,
+): ComfyValueKind | null {
+  const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
+  if (!gp?.apiJson) return null;
+  const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
+  const param = importComfyGraph(gp.apiJson, meta).params.find(
+    (p) => p.nodeId === nodeId && p.inputName === inputName,
+  );
+  return param ? param.valueKind : null;
+}
+
+/**
+ * The first-key for a ComfyUIWorkflow graph param (Inc 3 Slice D). A free-floating
+ * channel targeting the ComfyUIWorkflow node directly (the post-#199 road, V57), the
+ * channel TYPE chosen by the manifest `valueKind` — NOT inferValueType (string→color
+ * would silently mis-type the prompt). The decode resolves the param at the playhead
+ * via the render-identical resolveEvaluatedParam (H40), so an authored key shows in
+ * the composite for free (Slice C read path). Subsequent keys flow through the
+ * existing channel-id keyframe path (autoKey's 'animated' branch).
+ */
+function dispatchComfyFirstKey(
+  args: FirstKeyCompositeArgs,
+  base: DagState,
+  parsed: { nodeId: string; inputName: string },
+): DispatchResult {
+  const { targetId, paramPath, value, seconds } = args;
+  const intent = `Animate ${targetId}.${paramPath}`;
+  const node = base.nodes[targetId];
+  const kind = comfyParamValueKind(
+    (node?.params as { graph?: unknown } | undefined)?.graph,
+    parsed.nodeId,
+    parsed.inputName,
+  );
+  if (!kind) {
+    return { ok: false, reason: `ComfyUI param "${paramPath}" is not in the workflow.` };
+  }
+  const channel = comfyChannelNodeFor(kind);
+  if (!channel) {
+    return {
+      ok: false,
+      reason: `ComfyUI param "${paramPath}" (${kind}) can't be animated (structural / non-schedulable).`,
+    };
+  }
+  const channelId = `${targetId}_${safePath(paramPath)}_channel`;
+  if (base.nodes[channelId]) {
+    return { ok: false, reason: `Channel "${channelId}" already exists.` };
+  }
+  // Coerce the first sample to the channel's stored shape: a number channel needs a
+  // number; text/image need a string (the comfy literal already matches, this is
+  // belt-and-suspenders against a stray string-typed numeric field).
+  const sample = channel.nodeType === 'KeyframeChannelNumber' ? Number(value) : String(value);
+  const op: Op = {
+    type: 'addNode',
+    nodeId: channelId,
+    nodeType: channel.nodeType,
+    params: {
+      name: paramPath,
+      target: targetId,
+      paramPath,
+      keyframes: [{ time: seconds, value: sample, easing: channel.easing }],
+    },
+  };
+  const closureSpec: ClosureSpec = { rootSelectors: [channelId], followedEdges: [] };
+  return proposeAndAccept(base, [op], intent, ['user:comfy.firstKey'], closureSpec, []);
+}
+
 export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): DispatchResult {
-  const { targetId } = args;
+  const { targetId, paramPath } = args;
 
   const base = useDagStore.getState().state;
+
+  // Inc 3 Slice D — a ComfyUIWorkflow graph param (paramPath `comfy:<nodeId>.<input>`)
+  // keys a free-floating channel whose TYPE is dispatched by the manifest valueKind,
+  // NOT inferValueType (which would mis-type a string prompt as a colour). Routed
+  // before the native road below; only fires for a ComfyUIWorkflow target.
+  const comfyParsed = parseComfyParamPath(paramPath);
+  if (comfyParsed && base.nodes[targetId]?.type === 'ComfyUIWorkflow') {
+    return dispatchComfyFirstKey(args, base, comfyParsed);
+  }
 
   // #190 — a camera is wired via scene.camera (a single Camera-typed ref), NOT
   // scene.children, so it sits OUTSIDE the AnimationLayer machinery. Its first

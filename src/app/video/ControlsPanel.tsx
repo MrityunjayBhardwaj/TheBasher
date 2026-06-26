@@ -33,6 +33,7 @@ import type { DagState } from '../../core/dag/state';
 import type { NodeId } from '../../core/dag/types';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
+import { ComfySourceSection } from './ComfyControlsSection';
 
 /** The first source-edge producer id of a layer (single or list binding). */
 function firstSourceId(state: DagState, layerId: NodeId): NodeId | undefined {
@@ -101,8 +102,9 @@ type SectionRenderer = (props: { nodeId: NodeId }) => ReactNode;
  *  as later registrations (steps 2–3). An unregistered kind shows a neutral note
  *  rather than nothing — the section header is still discoverable. */
 const SECTION_RENDERERS: Record<string, SectionRenderer> = {
-  // ComfyUIWorkflow (the first source renderer) + ColorCorrect (effects) register
-  // in steps 2–3. The shell renders a neutral note for any unregistered kind.
+  // ComfyUIWorkflow = the first source renderer (Slice D). ColorCorrect (effects)
+  // registers in step 3. The shell renders a neutral note for any unregistered kind.
+  ComfyUIWorkflow: ComfySourceSection,
 };
 
 function NoControlsBody({ nodeType }: { nodeType: string }) {
