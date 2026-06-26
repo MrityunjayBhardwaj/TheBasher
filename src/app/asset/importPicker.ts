@@ -27,6 +27,7 @@ import { missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResol
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
 import { useAssetErrorStore, formatAssetError } from '../stores/assetErrorStore';
+import { useNotificationStore } from '../stores/notificationStore';
 import { importMediaClipFromFile } from './importMediaClip';
 
 /** The reason a lone FILE pick can't be fulfilled — its missing siblings. */
@@ -278,4 +279,32 @@ export function pickMediaFiles(handle: (file: IngestFile) => Promise<void>): voi
 /** Open a media file picker that adds each clip as a bare MediaClip node. */
 export function openMediaFilePicker(): void {
   pickMediaFiles((file) => importMediaClipFromFile(file).then(() => undefined));
+}
+
+/**
+ * Open a FILE picker for a single ComfyUI workflow `.json` and run `handle` on it.
+ * Hands back the raw `File` (the caller reads `.text()` + parses); a `.json` carries
+ * no OPFS bytes to ingest, so it skips `inputFilesToFiles`. Failures route to
+ * `useAssetErrorStore` (V38 — never a silent no-op), same discipline as the other
+ * pickers.
+ */
+export function pickWorkflowJsonFile(handle: (file: File) => Promise<void>): void {
+  const input = makeHiddenInput('.json,application/json', false);
+  input.onchange = () => {
+    void (async () => {
+      try {
+        if (!input.files || input.files.length === 0) return;
+        await handle(input.files[0]);
+      } catch (err) {
+        // Toast (app-root, visible in VIDEO mode) — the asset-error banner sits in the
+        // view3d slot the compositor covers (H122).
+        useNotificationStore
+          .getState()
+          .notify({ severity: 'error', message: formatAssetError(err) });
+      } finally {
+        input.remove();
+      }
+    })();
+  };
+  input.click();
 }

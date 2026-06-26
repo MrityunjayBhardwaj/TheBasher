@@ -15,9 +15,11 @@
 import type { NodeId, Op } from '../../core/dag/types';
 import { useDagStore } from '../../core/dag/store';
 import { buildMediaClipOps, freshMediaClipId, ingestMediaClipFile } from '../asset/importMediaClip';
-import { pickMediaFiles } from '../asset/importPicker';
+import { pickMediaFiles, pickWorkflowJsonFile } from '../asset/importPicker';
 import type { IngestFile } from '../asset/importGltf';
 import { SD15_TEXT2IMG, SD15_TEXT2IMG_META } from '../../core/comfy/starterGraphs';
+import { parseComfyWorkflowJson, type ParsedComfyGraph } from '../../core/comfy/importWorkflowJson';
+import { useNotificationStore } from '../stores/notificationStore';
 
 /**
  * Build the ops wrapping `sourceNodeId` (an Image producer) as a new Layer in the
@@ -111,7 +113,17 @@ function freshId(prefix: string, usedIds: Set<NodeId>): NodeId {
  * compositor decodes a deterministic stub frame until the real ComfyUI submit lands
  * (a later inc 3 slice). Returns the new Layer id.
  */
-export function addComfyWorkflowLayer(compId: NodeId): NodeId {
+/**
+ * Add a ComfyUIWorkflow generator carrying `graph` as a Layer in `compId` (one
+ * atomic op). The shared builder behind both the starter-graph path and the
+ * load-from-JSON path — the layer label is `name`. Still a one-frame STILL, so its
+ * out-point defaults to the comp duration. Returns the new Layer id.
+ */
+export function addComfyWorkflowLayerFromGraph(
+  compId: NodeId,
+  graph: ParsedComfyGraph,
+  name: string,
+): NodeId {
   const dag = useDagStore.getState();
   const usedIds = new Set(Object.keys(dag.state.nodes));
   const comfyId = freshId('comfy', usedIds);
@@ -122,13 +134,40 @@ export function addComfyWorkflowLayer(compId: NodeId): NodeId {
     ?.durationFrames;
   const compDurationFrames = typeof durRaw === 'number' && Number.isFinite(durRaw) ? durRaw : 150;
 
-  // Seed the node with a built-in starter workflow (design §6.1) so the layer
-  // carries real, keyframeable params immediately — file import is a follow-up.
-  const graph = { apiJson: SD15_TEXT2IMG, meta: SD15_TEXT2IMG_META };
   const ops: Op[] = [
     { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: { graph } },
-    ...buildAddLayerOps(layerId, compId, comfyId, 'ComfyUI', { outPoint: compDurationFrames }),
+    ...buildAddLayerOps(layerId, compId, comfyId, name, { outPoint: compDurationFrames }),
   ];
-  dag.dispatchAtomic(ops, 'user', 'add ComfyUI workflow layer');
+  dag.dispatchAtomic(ops, 'user', `add ComfyUI workflow layer: ${name}`);
   return layerId;
+}
+
+/** Add a ComfyUIWorkflow layer seeded with the built-in SD1.5 starter graph (design
+ *  §6.1) so the layer carries real, keyframeable params immediately. */
+export function addComfyWorkflowLayer(compId: NodeId): NodeId {
+  return addComfyWorkflowLayerFromGraph(
+    compId,
+    { apiJson: SD15_TEXT2IMG, meta: SD15_TEXT2IMG_META },
+    'ComfyUI',
+  );
+}
+
+/**
+ * Open a file picker for a ComfyUI API-format workflow `.json` and add it as a layer
+ * in `compId`. Parse + validate is the pure `parseComfyWorkflowJson`; a bad file (not
+ * JSON, UI-format, not API-format) reports an actionable banner via the asset error
+ * store (V38 — never a silent no-op) rather than creating an empty layer.
+ */
+export function openAddComfyWorkflowLayerPicker(compId: NodeId): void {
+  pickWorkflowJsonFile(async (file) => {
+    const text = await file.text();
+    const result = parseComfyWorkflowJson(text, file.name.replace(/\.json$/i, ''));
+    if (!result.ok) {
+      // The error toast (app-root) is visible in VIDEO mode; the asset-error banner
+      // lives in the view3d slot, which the compositor covers (H122).
+      useNotificationStore.getState().notify({ severity: 'error', message: result.reason });
+      return;
+    }
+    addComfyWorkflowLayerFromGraph(compId, result.graph, result.graph.meta.name);
+  });
 }

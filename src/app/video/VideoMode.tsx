@@ -19,7 +19,11 @@ import { useCompositionStore } from '../stores/compositionStore';
 import { useEditorStore } from '../stores/editorStore';
 import { useTimeStore } from '../stores/timeStore';
 import { createNewComposition } from './newComposition';
-import { addComfyWorkflowLayer, openAddMediaLayerPicker } from './addLayer';
+import {
+  addComfyWorkflowLayer,
+  openAddComfyWorkflowLayerPicker,
+  openAddMediaLayerPicker,
+} from './addLayer';
 import { LayerTimeline } from './LayerTimeline';
 import { ControlsPanel } from './ControlsPanel';
 import { CompositeViewer } from './CompositeViewer';
@@ -198,7 +202,21 @@ function AddLayerMenu({ compId }: { compId: NodeId }) {
             }}
             className="flex w-full items-center px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
-            ComfyUI Workflow
+            ComfyUI Workflow (starter)
+          </button>
+          {/* Load a workflow exported from ComfyUI as “Save (API Format)” — parsed by
+              the pure parseComfyWorkflowJson, a bad file surfaces an actionable banner. */}
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="video-mode-add-comfy-json"
+            onClick={() => {
+              setOpen(false);
+              openAddComfyWorkflowLayerPicker(compId);
+            }}
+            className="flex w-full items-center px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            ComfyUI Workflow (from JSON…)
           </button>
           {/* The 3D-scene-render source needs a rendered animation persisted to
               OPFS first (the V82/1a open finding) — surfaced as "coming soon"
