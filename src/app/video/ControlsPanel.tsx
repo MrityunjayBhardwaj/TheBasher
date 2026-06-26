@@ -35,6 +35,7 @@ import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
 import { ComfySourceSection } from './ComfyControlsSection';
 import { EffectControlsSection } from './EffectControlsSection';
+import { ComfyRenderProgress } from './ComfyRenderProgress';
 
 /** The first source-edge producer id of a layer (single or list binding). */
 function firstSourceId(state: DagState, layerId: NodeId): NodeId | undefined {
@@ -143,6 +144,9 @@ export function ControlsPanel() {
       >
         Controls
       </div>
+      {/* Live "Render coherent clip" progress (slice 5b) — shows iff a batch render
+          is in flight, above the layer controls, regardless of the current selection. */}
+      <ComfyRenderProgress />
       {layerName === null ? (
         <div
           data-testid="controls-panel-empty"
