@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HttpComfyUICapability } from './HttpComfyUICapability';
-import { probeComfyUI } from './index';
+import { comfyHasNodeTypes, probeComfyUI } from './index';
 import { StubComfyUICapability } from './StubComfyUICapability';
 import type { ComfyInputs } from './ComfyUICapability';
 
@@ -329,5 +329,47 @@ describe('probeComfyUI (Inc 2 — Test Connection)', () => {
     };
     await probeComfyUI('http://x', { authHeader: 'Bearer t' }, fetchImpl);
     expect(seenAuth).toBe('Bearer t');
+  });
+});
+
+describe('comfyHasNodeTypes (Inc 4 — BasherSchedule presence detect, §16 Q-E)', () => {
+  function objectInfoFetch(types: string[]): typeof fetch {
+    return async (input) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (url.endsWith('/object_info')) {
+        const body: Record<string, unknown> = {};
+        for (const t of types) body[t] = { input: {}, output: [] };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    };
+  }
+
+  it('returns true when ALL requested node types are present', async () => {
+    const fetchImpl = objectInfoFetch(['KSampler', 'BasherValueSchedule', 'CLIPTextEncode']);
+    expect(
+      await comfyHasNodeTypes(['BasherValueSchedule'], 'http://example.invalid', {}, fetchImpl),
+    ).toBe(true);
+  });
+
+  it('returns false when any requested type is missing', async () => {
+    const fetchImpl = objectInfoFetch(['KSampler', 'CLIPTextEncode']); // no Basher node
+    expect(
+      await comfyHasNodeTypes(['BasherValueSchedule'], 'http://example.invalid', {}, fetchImpl),
+    ).toBe(false);
+  });
+
+  it('treats an empty request as satisfied (nothing to check)', async () => {
+    const fetchImpl = objectInfoFetch([]);
+    expect(await comfyHasNodeTypes([], 'http://example.invalid', {}, fetchImpl)).toBe(true);
+  });
+
+  it('returns false on a network error (can’t tell → not installed, the safe direction)', async () => {
+    const fetchImpl: typeof fetch = async () => {
+      throw new Error('refused');
+    };
+    expect(
+      await comfyHasNodeTypes(['BasherValueSchedule'], 'http://example.invalid', {}, fetchImpl),
+    ).toBe(false);
   });
 });

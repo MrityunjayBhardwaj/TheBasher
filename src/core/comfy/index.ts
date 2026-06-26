@@ -82,3 +82,30 @@ export async function probeComfyUI(
     return { reachable: false, error: e instanceof Error ? e.message : 'Network error' };
   }
 }
+
+/**
+ * Check whether a ComfyUI server has ALL the given node types installed (via
+ * `/object_info`, whose top-level keys are the registered class types). Used to
+ * detect the `BasherSchedule` bridge extension before submitting a compiled batch
+ * that references it — if absent, the batch would be rejected, so the caller warns
+ * + falls back rather than failing opaquely (design §16 Q-E). Returns false on any
+ * error (treat "can't tell" as "not installed" — the safe direction). Never throws.
+ */
+export async function comfyHasNodeTypes(
+  nodeTypes: readonly string[],
+  url: string = DEFAULT_COMFYUI_URL,
+  opts: ComfyConnectionOptions = {},
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<boolean> {
+  if (nodeTypes.length === 0) return true;
+  const base = url.replace(/\/+$/, '');
+  const headers = opts.authHeader?.trim() ? { Authorization: opts.authHeader.trim() } : undefined;
+  try {
+    const res = await fetchImpl(`${base}/object_info`, { method: 'GET', headers });
+    if (!res.ok) return false;
+    const body = (await res.json()) as Record<string, unknown>;
+    return nodeTypes.every((t) => Object.prototype.hasOwnProperty.call(body, t));
+  } catch {
+    return false;
+  }
+}

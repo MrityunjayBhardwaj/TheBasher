@@ -25,8 +25,10 @@
 
 import { useDagStore } from '../../core/dag/store';
 import { pickStorage } from '../../core/storage';
+import { comfyHasNodeTypes } from '../../core/comfy';
 import { getComfyCapability } from '../boot';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { buildMediaClipOps, freshMediaClipId } from '../asset/importMediaClip';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { createMp4Sink } from '../../render/renderAnimation';
@@ -176,6 +178,25 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   let frames: readonly Uint8Array[];
   try {
     const cap = await getComfyCapability();
+    // A compiled batch with schedule nodes needs the BasherSchedule extension
+    // installed on a REAL server — else /prompt rejects the unknown node type with
+    // an opaque 400. Detect it up front (the stub accepts anything → skip the check)
+    // and surface an actionable message instead of an opaque failure (§16 Q-E).
+    if (cap.kind === 'http' && compiled.scheduleNodeIds.length > 0) {
+      const types = compiled.scheduleNodeIds.map((id) => compiled.apiJson[id].class_type);
+      const { comfyUrl, comfyAuthHeader } = useSettingsStore.getState();
+      const installed = await comfyHasNodeTypes(types, comfyUrl, {
+        authHeader: comfyAuthHeader || undefined,
+      });
+      if (!installed) {
+        notify({
+          severity: 'error',
+          message:
+            'Coherent render needs the BasherSchedule extension — install it in ComfyUI/custom_nodes and restart, or remove the animated params.',
+        });
+        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'bridge-missing' };
+      }
+    }
     const res = await cap.submitBatch(compiled.apiJson, { images: {}, scalars: {} });
     frames = res.frames;
   } catch (err) {
