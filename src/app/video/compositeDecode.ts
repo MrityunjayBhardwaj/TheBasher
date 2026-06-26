@@ -80,6 +80,16 @@ interface ResolvedComfy {
   /** The per-frame compiled workflow (apiJson with the resolved values substituted)
    *  — what a real /prompt submit sends (design §7.2). null when no graph. */
   readonly compiledJson: ComfyApiJson | null;
+  /** Bound image inputs to upload before submit: each project-image OPFS `path` →
+   *  the stable ComfyUI `name` the LoadImage input was rewritten to reference. */
+  readonly imageUploads: readonly { path: string; name: string }[];
+}
+
+/** A stable, filesystem-safe ComfyUI upload name for a bound image input. The
+ *  compiled workflow's input is rewritten to `${name}.png` and the bytes are
+ *  uploaded under the same name — so the LoadImage node resolves on the server. */
+function comfyImageUploadName(nodeId: string, inputName: string): string {
+  return `basher_img_${nodeId}_${inputName}`.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
 /** Resolve a ComfyUIWorkflow node's schedulable params at `ctx.time`: each is its
@@ -92,10 +102,11 @@ function resolveComfyParamsAtFrame(
   state: DagState,
   comfyNodeId: NodeId,
   graphParam: unknown,
+  imageBindingsParam: unknown,
   ctx: EvalCtx,
 ): ResolvedComfy {
   const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
-  if (!gp?.apiJson) return { graphJson: null, values: {}, compiledJson: null };
+  if (!gp?.apiJson) return { graphJson: null, values: {}, compiledJson: null, imageUploads: [] };
   const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
   const graph = importComfyGraph(gp.apiJson, meta);
   const values: Record<string, number | string | boolean> = {};
@@ -122,10 +133,34 @@ function resolveComfyParamsAtFrame(
     )
       promptText = v;
   }
-  // The single-frame compiled workflow: every schedulable param substituted with
-  // its resolved-at-frame value (preview path, design §7.2). Sent to a real server.
+  // Static image-input bindings (the generic image-source affordance, §7.1). Each
+  // bound project image is treated as ONE more baked track whose value is a stable
+  // ComfyUI filename: the LoadImage input is rewritten to `${name}.png`, the bytes
+  // are uploaded under `name` at submit. A binding for a node/input that no longer
+  // exists is skipped by compilePreviewFrame (it keeps the authored literal). The
+  // filename folds into `values` so the cache key busts when the bound image changes.
+  const imageUploads: { path: string; name: string }[] = [];
+  const bindings =
+    imageBindingsParam && typeof imageBindingsParam === 'object'
+      ? (imageBindingsParam as Record<string, unknown>)
+      : {};
+  for (const key of Object.keys(bindings)) {
+    const path = bindings[key];
+    if (typeof path !== 'string' || !path) continue;
+    const dot = key.indexOf('.');
+    if (dot <= 0 || dot >= key.length - 1) continue;
+    const nodeId = key.slice(0, dot);
+    const inputName = key.slice(dot + 1);
+    const name = comfyImageUploadName(nodeId, inputName);
+    const filename = `${name}.png`;
+    values[key] = filename;
+    tracks.push({ nodeId, inputName, values: [filename] });
+    imageUploads.push({ path, name });
+  }
+  // The single-frame compiled workflow: every schedulable param + bound image input
+  // substituted with its resolved-at-frame value (preview path, design §7.2).
   const compiledJson = compilePreviewFrame(graph, tracks, 0);
-  return { graphJson: gp.apiJson, name: meta.name, values, promptText, compiledJson };
+  return { graphJson: gp.apiJson, name: meta.name, values, promptText, compiledJson, imageUploads };
 }
 
 /** Resolve the comp's layers (back→front) to composite inputs: authored params with
@@ -205,12 +240,13 @@ export function collectCompositeInputs(
         // values + the graph json → an edited or animated workflow re-renders (the
         // spine's bare `comfy:<nodeId>` carry-in fix). The stub draws the prompt.
         const cp = base.params as Record<string, unknown>;
-        const resolved = resolveComfyParamsAtFrame(state, baseId, cp.graph, ctx);
+        const resolved = resolveComfyParamsAtFrame(state, baseId, cp.graph, cp.imageBindings, ctx);
         source = {
           kind: 'comfy',
-          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, vals: resolved.values })}`,
+          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, vals: resolved.values, imgs: resolved.imageUploads })}`,
           label: resolved.promptText ?? resolved.name ?? 'ComfyUI',
           comfyWorkflow: resolved.compiledJson,
+          comfyImageUploads: resolved.imageUploads,
           mediaKind: 'image',
           width: num(cp.width, 512),
           height: num(cp.height, 512),
@@ -308,7 +344,19 @@ async function decodeComfy(source: CompositeSource): Promise<ImageBitmap | null>
     try {
       const cap = await getComfyCapability();
       if (cap.kind === 'http') {
-        const { frame } = await cap.submit(source.comfyWorkflow, { images: {}, scalars: {} });
+        // Read each bound image's OPFS bytes → upload under its stable name (the
+        // workflow's LoadImage input was already rewritten to `${name}.png`). A
+        // missing/unreadable file is skipped (the input keeps its authored literal).
+        const images: Record<string, Uint8Array> = {};
+        for (const up of source.comfyImageUploads ?? []) {
+          try {
+            storagePromise ??= pickStorage();
+            images[up.name] = await (await storagePromise).read(up.path);
+          } catch (e) {
+            console.warn(`composite: bound image ${up.path} unreadable`, e);
+          }
+        }
+        const { frame } = await cap.submit(source.comfyWorkflow, { images, scalars: {} });
         const blob = new Blob([frame.slice()], { type: 'image/png' });
         const bmp = await createImageBitmap(blob);
         useAssetErrorStore.getState().clear(source.path);

@@ -77,6 +77,17 @@ export const ComfyUIWorkflowParams = z.object({
    */
   graph: ComfyGraphParamSchema.default(null),
   /**
+   * Static image-input bindings (the generic image-source affordance, COMPOSITOR
+   * §7.1). A map from a comfy image param key `"<nodeId>.<inputName>"` (an
+   * 'image'-valueKind input, e.g. a LoadImage.image) to the OPFS path of a project
+   * image (a `MediaClip` mediaKind:'image' src, or one uploaded through the picker).
+   * At /prompt submit the decode reads those bytes, uploads them to ComfyUI under a
+   * stable filename, and rewrites the bound input to reference it. Default {} so
+   * legacy projects load unchanged. Deliberately NOT ControlNet-specific — every
+   * image input uses the same generic binding.
+   */
+  imageBindings: z.record(z.string(), z.string()).default({}),
+  /**
    * Inclusive frame range. Defaults match RenderJob's 0..60 @ 30fps so
    * a fresh ComfyUIWorkflow on a fresh RenderJob produces parallel
    * frame counts without per-node coordination.
@@ -145,6 +156,11 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
         // folded at the decode/render site, not here, since evaluate sees only
         // params + inputs.
         graph: params.graph ?? null,
+        // Image bindings participate: a different bound project image (or a cleared
+        // binding) produces a different stylized frame. The bytes are uploaded +
+        // the input rewritten at the decode/submit site; here only the binding map
+        // discriminates the value.
+        imageBindings: params.imageBindings ?? {},
         prompt: prompt ?? null,
         // Upstream pass results participate by sourceHash — different
         // beauty bytes produce different stylized bytes (parallels stub

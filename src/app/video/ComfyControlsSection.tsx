@@ -37,6 +37,12 @@ import {
 } from '../../core/comfy/comfyGraph';
 import { ParamDiamond } from '../ParamDiamond';
 import { useAnimatableField } from '../animate/useAnimatableField';
+import {
+  comfyImageBindingKey,
+  listProjectImages,
+  setComfyImageBinding,
+  uploadImageAndBind,
+} from './comfyImageBinding';
 
 /** Write a comfy param's authored literal back into the stored graph json (the
  *  un-animated source write): clone `params.graph`, substitute the one input, and
@@ -93,10 +99,12 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
   return (
     <div data-testid={`comfy-controls-${nodeId}`} className="flex flex-col">
       {params.map((p) =>
-        p.scheduleHint === 'schedulable' ? (
-          <ComfyParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
-        ) : (
+        p.scheduleHint !== 'schedulable' ? (
           <ComfyStructuralRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
+        ) : p.valueKind === 'image' ? (
+          <ComfyImageParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
+        ) : (
+          <ComfyParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
         ),
       )}
     </div>
@@ -168,6 +176,61 @@ function ComfyParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param: Com
         value={base}
         testid={`comfy-param-diamond-${comfyNodeId}-${key}`}
       />
+    </div>
+  );
+}
+
+/** An 'image'-valueKind comfy param (e.g. LoadImage.image) — the GENERIC image-input
+ *  affordance (§7.1): pick an image already in this project from a dropdown, or upload
+ *  a new one. NOT a typed server-side filename, NOT a ControlNet special case. The
+ *  choice is stored as an OPFS path in the node's imageBindings map; the decode uploads
+ *  the bytes + rewrites the input at /prompt time. "None" falls back to the authored
+ *  literal (the workflow's own filename). */
+function ComfyImageParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param: ComfyParam }) {
+  const key = comfyImageBindingKey(param.nodeId, param.inputName);
+  // Select the stable `state` ref (changes only per dispatch) and memo the list, so
+  // the selector never returns a fresh array per render (useSyncExternalStore churn).
+  const state = useDagStore((s) => s.state);
+  const images = useMemo(() => listProjectImages(state), [state]);
+  const bound = useDagStore(
+    (s) =>
+      (s.state.nodes[comfyNodeId]?.params as { imageBindings?: Record<string, string> } | undefined)
+        ?.imageBindings?.[key] ?? '',
+  );
+  const rowKey = `${param.nodeId}-${param.inputName}`;
+  return (
+    <div
+      data-testid={`comfy-param-row-${comfyNodeId}-${rowKey}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+    >
+      <span
+        className="flex-1 truncate text-mute"
+        title={`comfy:${param.nodeId}.${param.inputName}`}
+      >
+        {paramLabel(param)}
+      </span>
+      <select
+        value={bound}
+        data-testid={`comfy-param-input-${comfyNodeId}-${rowKey}`}
+        onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
+        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <option value="">{`None · ${String(param.literal)}`}</option>
+        {images.map((img) => (
+          <option key={img.src} value={img.src}>
+            {img.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid={`comfy-param-upload-${comfyNodeId}-${rowKey}`}
+        title="Upload an image and bind it to this input"
+        onClick={() => uploadImageAndBind(comfyNodeId, key)}
+        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        ⬆
+      </button>
     </div>
   );
 }

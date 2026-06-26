@@ -44,6 +44,11 @@ export interface CompositeSource {
    *  server when live-generate is on; typed `unknown` to keep composite.ts free of
    *  the comfy data model. */
   readonly comfyWorkflow?: unknown;
+  /** A comfy generator's bound image inputs to upload before submit: each OPFS
+   *  `path` is read to bytes and sent to ComfyUI under `name` (the same stable
+   *  filename the compiled workflow's LoadImage input was rewritten to reference).
+   *  Empty/absent when no image input is bound. */
+  readonly comfyImageUploads?: readonly { readonly path: string; readonly name: string }[];
 }
 
 /** A resolved video effect to apply to a layer's decoded frame, in apply order
