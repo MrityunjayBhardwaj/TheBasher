@@ -43,6 +43,7 @@ import {
   setComfyImageBinding,
   uploadImageAndBind,
 } from './comfyImageBinding';
+import { compileComfyBatch } from './compileComfyBatch';
 
 /** Write a comfy param's authored literal back into the stored graph json (the
  *  un-animated source write): clone `params.graph`, substitute the one input, and
@@ -107,7 +108,36 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
           <ComfyParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
         ),
       )}
+      <RenderCoherentClipButton comfyNodeId={nodeId} />
     </div>
+  );
+}
+
+/** "Render coherent clip" — the COMPILED batched path (Inc 4). Bakes the keyframes
+ *  over the node's frame range into ONE batched workflow, submits it as a single
+ *  batch, and stitches the result into a project video MediaClip. Distinct from the
+ *  live per-frame preview (which the scrub already shows): coherent render is a
+ *  deliberate, heavier action. Disabled while in flight; outcome → app-root toast. */
+function RenderCoherentClipButton({ comfyNodeId }: { comfyNodeId: NodeId }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      data-testid={`comfy-render-clip-${comfyNodeId}`}
+      title="Compile the keyframes into one batched workflow and render a coherent clip"
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await compileComfyBatch(comfyNodeId);
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="m-2 rounded border border-line bg-bg-2 px-2 py-1 text-[11px] text-fg hover:border-accent disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      {busy ? 'Rendering…' : '🎬 Render coherent clip'}
+    </button>
   );
 }
 

@@ -293,6 +293,25 @@ describe('compileBatchedWorkflow — coherent batched path (design §7.3)', () =
     expect((apiJson['5'].inputs as Record<string, unknown>).width).toBe(512);
   });
 
+  it('does NOT schedule a CONSTANT float track (substitutes the literal, no node)', () => {
+    // An unbound / flat param needs no BasherSchedule — the render stays a plain
+    // workflow that runs without the bridge extension installed (§16 Q-E).
+    const flat: BatchedTrack = {
+      nodeId: '3',
+      inputName: 'cfg',
+      classType: 'KSampler',
+      valueKind: 'float',
+      values: [8, 8, 8, 8],
+    };
+    const { apiJson, scheduleNodeIds, demotions } = compileBatchedWorkflow(graph, [flat], {
+      frameCount: 4,
+    });
+    expect(scheduleNodeIds).toEqual([]);
+    expect(demotions).toEqual([]); // constant ≠ demotion; it just stays a literal
+    expect((apiJson['3'].inputs as Record<string, unknown>).cfg).toBe(8);
+    expect(apiJson['bsched_3_cfg']).toBeUndefined();
+  });
+
   it('demotes string (prompt-travel) + image as unsupported-kind in this increment', () => {
     const promptTrack: BatchedTrack = {
       nodeId: '6',

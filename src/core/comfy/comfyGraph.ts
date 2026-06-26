@@ -375,6 +375,14 @@ export function compileBatchedWorkflow(
       });
       continue;
     }
+    // A CONSTANT track (unbound param, or a channel holding a flat value) needs no
+    // schedule node — substitute the literal and move on. This keeps an un-animated
+    // render a PLAIN workflow that runs WITHOUT the BasherSchedule extension installed
+    // (only a genuinely-animated param requires the bridge node — design §16 Q-E).
+    if (track.values.length > 0 && track.values.every((v) => v === track.values[0])) {
+      (target.inputs as Record<string, ComfyInputValue>)[track.inputName] = track.values[0];
+      continue;
+    }
     const schedId = scheduleNodeId(track.nodeId, track.inputName);
     out[schedId] = {
       class_type: BASHER_SCHEDULE_NODE_TYPES[track.valueKind],

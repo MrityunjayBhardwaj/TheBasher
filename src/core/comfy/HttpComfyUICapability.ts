@@ -28,11 +28,19 @@ import type {
 } from './ComfyUICapability';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// A BATCHED render runs N frames through one /prompt — inherently long (seconds per
+// frame × N, plus model load). The 30s single-frame budget starves it: a 3-frame
+// SD1.5 batch on MPS already takes ~43s, so the abort fires while the SERVER is still
+// succeeding (the H125-family trap — server execution_success while the app shows
+// nothing ⇒ a client-side timeout). 10 minutes covers realistic batch + model-load.
+const DEFAULT_BATCH_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 
 export interface HttpComfyOptions {
   /** Per-submit timeout in ms (default 30000). */
   readonly timeoutMs?: number;
+  /** Per-BATCH-submit timeout in ms (default 600000 — batches are long, §16 Q-F). */
+  readonly batchTimeoutMs?: number;
   /** Poll interval for /history (default 250ms). */
   readonly pollIntervalMs?: number;
   /** Override fetch (test injection). Defaults to globalThis.fetch. */
@@ -64,6 +72,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
   readonly kind = 'http' as const;
   private readonly url: string;
   private readonly timeoutMs: number;
+  private readonly batchTimeoutMs: number;
   private readonly pollIntervalMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly clientId: string;
@@ -73,6 +82,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
     this.url = url.replace(/\/+$/, '');
     this.id = `http:${this.url}`;
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.batchTimeoutMs = opts.batchTimeoutMs ?? DEFAULT_BATCH_TIMEOUT_MS;
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     // Bind to the global: a bare `globalThis.fetch` stored on the instance and
     // later called as `this.fetchImpl(...)` rebinds `this` to the instance, which
@@ -152,7 +162,9 @@ export class HttpComfyUICapability implements ComfyUICapability {
     inputs: ComfyInputs,
   ): Promise<ComfyBatchResult> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Batches are long — use the generous batch budget, not the 30s single-frame one
+    // (else the abort fires while the server is still succeeding — see the constant).
+    const timer = setTimeout(() => controller.abort(), this.batchTimeoutMs);
     try {
       // 1. Upload input images (same as submit — the workflow references them by
       //    `${name}.png`).
