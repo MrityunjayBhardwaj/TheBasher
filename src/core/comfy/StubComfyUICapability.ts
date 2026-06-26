@@ -22,6 +22,7 @@ import type {
   ComfyUICapability,
   ComfyWorkflowJson,
 } from './ComfyUICapability';
+import type { ComfyProgressEvent } from './comfyProgress';
 
 const PNG_SIGNATURE = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
 
@@ -77,6 +78,7 @@ export class StubComfyUICapability implements ComfyUICapability {
   async submitBatch(
     workflowJson: ComfyWorkflowJson,
     inputs: ComfyInputs,
+    onEvent?: (event: ComfyProgressEvent) => void,
   ): Promise<ComfyBatchResult> {
     if (this.errorQueue.length > 0) {
       const err = this.errorQueue.shift()!;
@@ -98,6 +100,15 @@ export class StubComfyUICapability implements ComfyUICapability {
       const h = mixString(mixString(0x811c9dc5, base), String(i)) >>> 0;
       const [r, g, b] = pixelFromHash(h.toString(16).padStart(8, '0'));
       frames.push(encode1x1Png(r, g, b));
+    }
+    // Emit synthetic progress so the live-progress UI is exercisable WITHOUT a server
+    // (mirrors the real /ws stream: an executing node, a step ramp, and a preview
+    // frame). Deterministic — the test seam for the progress surface.
+    if (onEvent) {
+      onEvent({ kind: 'executing', node: '3' });
+      onEvent({ kind: 'progress', value: 0, max: n, node: '3' });
+      if (frames.length > 0) onEvent({ kind: 'preview', mime: 'image/png', bytes: frames[0] });
+      onEvent({ kind: 'progress', value: n, max: n, node: '3' });
     }
     return { jobId, frames };
   }

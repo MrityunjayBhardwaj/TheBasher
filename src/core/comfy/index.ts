@@ -5,6 +5,8 @@ export type {
   ComfyUICapability,
   ComfyWorkflowJson,
 } from './ComfyUICapability';
+export type { ComfyProgressEvent } from './comfyProgress';
+export { parseComfyWsMessage, comfyWsUrl } from './comfyProgress';
 export { HttpComfyUICapability, type HttpComfyOptions } from './HttpComfyUICapability';
 export { StubComfyUICapability, type StubComfyOptions } from './StubComfyUICapability';
 

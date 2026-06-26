@@ -119,6 +119,20 @@ describe('StubComfyUICapability', () => {
     const { frames } = await stub.submitBatch({ nodes: {} }, baseInputs);
     expect(frames).toHaveLength(1);
   });
+
+  it('submitBatch emits synthetic progress events when onEvent is given (the UI seam)', async () => {
+    const stub = new StubComfyUICapability();
+    const wf = { '5': { class_type: 'EmptyLatentImage', inputs: { batch_size: 3 } } };
+    const events: string[] = [];
+    let previewBytes = 0;
+    await stub.submitBatch(wf, baseInputs, (e) => {
+      events.push(e.kind);
+      if (e.kind === 'preview') previewBytes = e.bytes.length;
+      if (e.kind === 'progress') expect(e.max).toBe(3);
+    });
+    expect(events).toEqual(['executing', 'progress', 'preview', 'progress']);
+    expect(previewBytes).toBeGreaterThan(0); // a real (1×1 PNG) preview frame
+  });
 });
 
 describe('HttpComfyUICapability', () => {

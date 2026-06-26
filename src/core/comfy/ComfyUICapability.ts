@@ -24,6 +24,10 @@
  */
 export type ComfyWorkflowJson = unknown;
 
+// Re-export so callers depending on the capability get the progress event shape too.
+export type { ComfyProgressEvent } from './comfyProgress';
+import type { ComfyProgressEvent } from './comfyProgress';
+
 /**
  * Inputs to substitute into the workflow JSON before submission.
  *
@@ -94,10 +98,19 @@ export interface ComfyUICapability {
    * frames), or a muxed video blob from a video-combine node. Distinct from
    * `submit` so the per-frame preview path stays a clean single-frame contract.
    *
+   * `onEvent` (optional) receives LIVE progress from ComfyUI's `/ws` stream while
+   * the batch runs — sampler step k/N, the executing node, and partial preview
+   * images (design §8/§16 Q-F). Best-effort: a server/transport that can't stream
+   * still completes the submit; the callback simply never fires.
+   *
    * Implementations may throw on transport failure, timeout, or workflow
    * validation rejection (same as `submit`).
    */
-  submitBatch(workflowJson: ComfyWorkflowJson, inputs: ComfyInputs): Promise<ComfyBatchResult>;
+  submitBatch(
+    workflowJson: ComfyWorkflowJson,
+    inputs: ComfyInputs,
+    onEvent?: (event: ComfyProgressEvent) => void,
+  ): Promise<ComfyBatchResult>;
 
   /**
    * Best-effort cancel. Implementations may no-op when the job has

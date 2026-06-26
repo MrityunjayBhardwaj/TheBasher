@@ -26,6 +26,7 @@ import type {
   ComfyUICapability,
   ComfyWorkflowJson,
 } from './ComfyUICapability';
+import { comfyWsUrl, parseComfyWsMessage, type ComfyProgressEvent } from './comfyProgress';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 // A BATCHED render runs N frames through one /prompt — inherently long (seconds per
@@ -45,6 +46,9 @@ export interface HttpComfyOptions {
   readonly pollIntervalMs?: number;
   /** Override fetch (test injection). Defaults to globalThis.fetch. */
   readonly fetchImpl?: typeof fetch;
+  /** Override the WebSocket ctor (test injection). Defaults to globalThis.WebSocket;
+   *  undefined when the runtime has no WebSocket → live progress is silently skipped. */
+  readonly webSocketImpl?: typeof WebSocket;
   /** Optional `Authorization` header value sent on every request (a guarded /
    *  tunnelled ComfyUI behind auth). Empty/undefined → no header. */
   readonly authHeader?: string;
@@ -75,6 +79,7 @@ export class HttpComfyUICapability implements ComfyUICapability {
   private readonly batchTimeoutMs: number;
   private readonly pollIntervalMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly webSocketImpl?: typeof WebSocket;
   private readonly clientId: string;
   private readonly authHeader?: string;
 
@@ -88,6 +93,10 @@ export class HttpComfyUICapability implements ComfyUICapability {
     // later called as `this.fetchImpl(...)` rebinds `this` to the instance, which
     // the browser rejects with "Illegal invocation". (Tests inject their own fn.)
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    // WebSocket is a global constructor (no `this` rebind concern like fetch had —
+    // it's invoked with `new`); undefined in a runtime without it → progress skipped.
+    this.webSocketImpl =
+      opts.webSocketImpl ?? (typeof WebSocket !== 'undefined' ? WebSocket : undefined);
     this.clientId = `basher_${Math.floor(Date.now() / 1000)}_${Math.floor(Math.random() * 1e6)}`;
     this.authHeader =
       opts.authHeader && opts.authHeader.trim() ? opts.authHeader.trim() : undefined;
@@ -160,11 +169,15 @@ export class HttpComfyUICapability implements ComfyUICapability {
   async submitBatch(
     workflowJson: ComfyWorkflowJson,
     inputs: ComfyInputs,
+    onEvent?: (event: ComfyProgressEvent) => void,
   ): Promise<ComfyBatchResult> {
     const controller = new AbortController();
     // Batches are long — use the generous batch budget, not the 30s single-frame one
     // (else the abort fires while the server is still succeeding — see the constant).
     const timer = setTimeout(() => controller.abort(), this.batchTimeoutMs);
+    // Open the live progress socket BEFORE /prompt so no early `executing`/`progress`
+    // event is missed. Best-effort: any failure leaves the submit unaffected.
+    const ws = onEvent ? this.openProgressSocket(onEvent) : null;
     try {
       // 1. Upload input images (same as submit — the workflow references them by
       //    `${name}.png`).
@@ -208,6 +221,37 @@ export class HttpComfyUICapability implements ComfyUICapability {
       return { jobId, frames };
     } finally {
       clearTimeout(timer);
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // already closed / never opened — nothing to release.
+        }
+      }
+    }
+  }
+
+  /** Open the `/ws` progress socket bound to this client's id (so it receives only
+   *  THIS client's events) and route each parsed message to `onEvent`. Best-effort:
+   *  the WebSocket ctor or connection failing leaves the render unaffected (progress
+   *  just never arrives). Returns null when no WebSocket impl is available. Note:
+   *  browsers can't set an Authorization header on a WebSocket — a header-guarded
+   *  server won't stream progress, but the submit still completes over fetch. */
+  private openProgressSocket(onEvent: (e: ComfyProgressEvent) => void): WebSocket | null {
+    if (!this.webSocketImpl) return null;
+    try {
+      const ws = new this.webSocketImpl(comfyWsUrl(this.url, this.clientId));
+      ws.binaryType = 'arraybuffer';
+      ws.onmessage = (ev: MessageEvent) => {
+        const parsed = parseComfyWsMessage(ev.data as string | ArrayBuffer);
+        if (parsed) onEvent(parsed);
+      };
+      ws.onerror = () => {
+        /* best-effort — swallow; the submit path does not depend on the socket */
+      };
+      return ws;
+    } catch {
+      return null;
     }
   }
 
