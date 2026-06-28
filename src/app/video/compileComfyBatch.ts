@@ -253,6 +253,16 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
     // SAME machinery Mode-B LoadImage rows use), so nothing extra is needed here.
     const allDecls = scanBasherControllers(gp.apiJson);
     const scalarDecls = allDecls.filter((d) => isScalarControllerKind(d.kind));
+    // NOTE on N (the contract's "N comes from the input media"): a PURE kind=video
+    // controller drives N automatically at runtime — its OUTPUT_IS_LIST emits the
+    // container's native frame count, so the batch is exactly that many (no Basher-side
+    // N needed; observed). MIXING a video controller with a KEYFRAMED scalar is a
+    // KNOWN-LIMIT: scalars bake over the node's frame range, which need not equal the
+    // video's native count (Basher's media probe is 30fps-RESAMPLED, so srcFrames ≠ the
+    // PyAV-native count for a non-30fps source — they can't be reconciled from the probe
+    // alone). Aligning them needs the controller to resample to a Basher-supplied N — a
+    // follow-up. Until then, keyframe scalars on a video workflow only when the video is
+    // ~30fps and the node range matches its length.
     const valuesById = bakeBasherControllerValues(
       state,
       comfyNodeId,
