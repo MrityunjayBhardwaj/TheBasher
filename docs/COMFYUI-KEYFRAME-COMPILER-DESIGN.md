@@ -1,5 +1,12 @@
 # Design — Keyframe-Driven ComfyUI (Timeline → Schedule Compiler)
 
+> ⚠️ **SUPERSEDED (2026-06-28) by `COMFYUI-BASHER-NODES.md`.** This compiler had Basher
+> walk + classify + rewire a foreign workflow's internal params — the wrong side of the
+> boundary. The go-forward contract is the two-node `basher_controller` / `basher_export`
+> model: the author *declares* the control surface by wiring, Basher only enumerates its
+> own nodes. Inc 1–4 below SHIPPED and remain as reference / staged-for-removal; do not
+> extend this doc. See `COMFYUI-BASHER-NODES.md`.
+>
 > **Status:** DRAFT / design milestone. Not yet scheduled. Author: session 2026-06-24.
 > **Branch base:** `ux-overhall` tip `75e04ee`.
 > **Supersedes nothing** — extends the v0.5 ComfyUI bridge (P5) and the v0.7 keyframe
