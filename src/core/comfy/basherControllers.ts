@@ -72,6 +72,33 @@ function defaultFor(kind: BasherControllerKind, valuesJson: ComfyInputValue | un
   return typeof first === 'number' ? first : 0;
 }
 
+/** True iff the workflow declares ANY `basher_controller` node. The render + control
+ *  surface DISPATCHES on this: present → the controller contract (Basher drives the
+ *  declared nodes, inference OFF); absent → the legacy inference compiler. One author
+ *  who drops a single controller has opted into declaring their whole surface, so
+ *  Basher must NOT also infer-expose every other literal (that would re-create the
+ *  wall-of-params the contract exists to avoid). */
+export function hasBasherControllers(apiJson: ComfyApiJson): boolean {
+  for (const nodeId of Object.keys(apiJson)) {
+    if (apiJson[nodeId]?.class_type === BASHER_CONTROLLER_TYPE) return true;
+  }
+  return false;
+}
+
+/** The namespaced V57 paramPath for a controller channel: `controller:<nodeId>`
+ *  (distinct from the legacy `comfy:<nodeId>.<inputName>` so resolvers don't collide).
+ *  A bound channel here drives the controller's baked array; unbound → its default. */
+export function comfyControllerPath(nodeId: string): string {
+  return `controller:${nodeId}`;
+}
+
+/** Inverse of comfyControllerPath. Returns null if not a controller path. */
+export function parseComfyControllerPath(path: string): string | null {
+  if (!path.startsWith('controller:')) return null;
+  const id = path.slice('controller:'.length);
+  return id.length > 0 ? id : null;
+}
+
 /** Enumerate every `basher_controller` node in a workflow, in stable (nodeId) order.
  *  Reads ONLY those nodes' own declared inputs (name/kind/values_json) — never a
  *  foreign node. A node missing `name`/`kind` falls back to its id / 'float'. */

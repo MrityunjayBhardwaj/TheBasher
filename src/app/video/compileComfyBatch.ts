@@ -33,6 +33,14 @@ import { useComfyRenderProgressStore } from '../stores/comfyRenderProgressStore'
 import { buildMediaClipOps, freshMediaClipId } from '../asset/importMediaClip';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
+import {
+  comfyControllerPath,
+  hasBasherControllers,
+  isScalarControllerKind,
+  scanBasherControllers,
+  writeBasherControllerValues,
+  type BasherControllerDecl,
+} from '../../core/comfy/basherControllers';
 import { createMp4Sink } from '../../render/renderAnimation';
 import {
   compileBatchedWorkflow,
@@ -121,6 +129,45 @@ export function bakeComfyBatchedTracks(
   return tracks;
 }
 
+/** Bake each scalar `basher_controller`'s curve to a per-frame array over [frameStart,
+ *  frameEnd] — the Mode-A (controller contract) generalization of bakeComfyBatchedTracks.
+ *  Each frame samples the render-identical resolveEvaluatedParam on the controller's V57
+ *  paramPath (`controller:<nodeId>`), falling back to the controller's declared default
+ *  when no channel is bound (an un-animated render → a constant array → a single value).
+ *  Returns the node-id → array map writeBasherControllerValues injects. No manifest, no
+ *  classification, no rewire — the author already wired the controller to its target. */
+export function bakeBasherControllerValues(
+  state: DagState,
+  comfyNodeId: NodeId,
+  decls: readonly BasherControllerDecl[],
+  frameStart: number,
+  frameEnd: number,
+  fps: number,
+  durationFrames: number,
+): Record<string, (number | string | boolean)[]> {
+  const n = Math.max(1, frameEnd - frameStart + 1);
+  const out: Record<string, (number | string | boolean)[]> = {};
+  for (const decl of decls) {
+    const values: (number | string | boolean)[] = [];
+    for (let i = 0; i < n; i++) {
+      const frame = frameStart + i;
+      const seconds = fps > 0 ? frame / fps : 0;
+      const ctx: EvalCtx = {
+        time: { frame, seconds, normalized: durationFrames > 0 ? frame / durationFrames : 0 },
+      };
+      const r = resolveEvaluatedParam(state, comfyNodeId, comfyControllerPath(decl.nodeId), ctx);
+      const v = r ? r.value : decl.defaultValue;
+      values.push(
+        typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean'
+          ? v
+          : decl.defaultValue,
+      );
+    }
+    out[decl.nodeId] = values;
+  }
+  return out;
+}
+
 /** Rewrite each statically-bound image input in a compiled batched workflow to its
  *  stable upload filename (mutating `apiJson` in place) and return the uploads to read
  *  + send. A binding whose node is missing or whose input is now wired is skipped (it
@@ -179,7 +226,6 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
     return { ok: false, frameCount: 0, demotions: [], reason: 'no-graph' };
   }
   const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
-  const graph = importComfyGraph(gp.apiJson, meta);
 
   const frameStart = Math.max(0, Math.floor(numParam(params.frameStart, 0)));
   const frameEnd = Math.max(frameStart, Math.floor(numParam(params.frameEnd, 60)));
@@ -188,16 +234,51 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   const width = Math.max(2, Math.floor(numParam(params.width, 512)));
   const height = Math.max(2, Math.floor(numParam(params.height, 512)));
 
-  const tracks = bakeComfyBatchedTracks(
-    state,
-    comfyNodeId,
-    graph,
-    frameStart,
-    frameEnd,
-    fps,
-    frameCount,
-  );
-  const compiled = compileBatchedWorkflow(graph, tracks, { frameCount });
+  // DISPATCH (docs/COMFYUI-BASHER-NODES.md): a workflow that declares basher_controller
+  // nodes opts into the CONTROLLER CONTRACT (Mode A) — Basher drives the author-declared
+  // nodes and never walks the foreign graph. Otherwise fall back to the legacy inference
+  // compiler (Mode B — the previous approach). Both yield {apiJson, scheduleNodeIds,
+  // demotions} so the submit → MP4 → MediaClip tail is shared.
+  let compiled: {
+    apiJson: ComfyApiJson;
+    scheduleNodeIds: readonly string[];
+    demotions: readonly ScheduleDemotion[];
+  };
+  if (hasBasherControllers(gp.apiJson)) {
+    // Mode A — the author wired each basher_controller into its target. Bake every
+    // SCALAR controller's channel and write its array onto the node; no manifest, no
+    // inference, no rewire (media kinds = image/video are a later slice — skipped here).
+    const decls = scanBasherControllers(gp.apiJson).filter((d) => isScalarControllerKind(d.kind));
+    const valuesById = bakeBasherControllerValues(
+      state,
+      comfyNodeId,
+      decls,
+      frameStart,
+      frameEnd,
+      fps,
+      frameCount,
+    );
+    compiled = {
+      apiJson: writeBasherControllerValues(gp.apiJson, valuesById),
+      // every basher_controller is authored INTO the graph (present even at a constant
+      // value), so the extension must be installed — surface it via the presence check.
+      scheduleNodeIds: decls.map((d) => d.nodeId),
+      demotions: [],
+    };
+  } else {
+    // Mode B — the legacy inference compiler (the previous approach).
+    const graph = importComfyGraph(gp.apiJson, meta);
+    const tracks = bakeComfyBatchedTracks(
+      state,
+      comfyNodeId,
+      graph,
+      frameStart,
+      frameEnd,
+      fps,
+      frameCount,
+    );
+    compiled = compileBatchedWorkflow(graph, tracks, { frameCount });
+  }
 
   // Image inputs (the 3D-scene-as-control-rig thesis: a depth/normal pass bound to a
   // LoadImage → img2img). Rewrite each statically-bound image input in the compiled

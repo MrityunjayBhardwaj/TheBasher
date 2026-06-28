@@ -6,7 +6,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   BASHER_CONTROLLER_TYPE,
+  comfyControllerPath,
+  hasBasherControllers,
   isScalarControllerKind,
+  parseComfyControllerPath,
   scanBasherControllers,
   writeBasherControllerValues,
 } from './basherControllers';
@@ -88,6 +91,31 @@ describe('isScalarControllerKind', () => {
     expect(['float', 'int', 'string', 'bool'].every(isScalarControllerKind)).toBe(true);
     expect(isScalarControllerKind('image')).toBe(false);
     expect(isScalarControllerKind('video')).toBe(false);
+  });
+});
+
+describe('hasBasherControllers — the render/control dispatch predicate', () => {
+  it('is true when ANY basher_controller is present (→ controller contract)', () => {
+    expect(hasBasherControllers(AUTHORED)).toBe(true);
+  });
+
+  it('is false for a vanilla workflow (→ legacy inference fallback)', () => {
+    const vanilla: ComfyApiJson = {
+      '3': { class_type: 'KSampler', inputs: { cfg: 7, model: ['4', 0] } },
+      '10': { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+    };
+    expect(hasBasherControllers(vanilla)).toBe(false);
+  });
+});
+
+describe('comfyControllerPath / parseComfyControllerPath', () => {
+  it('round-trips the controller V57 paramPath (distinct from comfy: param paths)', () => {
+    expect(comfyControllerPath('10')).toBe('controller:10');
+    expect(parseComfyControllerPath('controller:10')).toBe('10');
+  });
+  it('rejects non-controller paths', () => {
+    expect(parseComfyControllerPath('comfy:3.cfg')).toBeNull();
+    expect(parseComfyControllerPath('controller:')).toBeNull();
   });
 });
 

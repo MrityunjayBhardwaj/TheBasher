@@ -4,12 +4,17 @@
 // the e2e that animates cfg and renders. design §7.1.
 
 import { describe, expect, it } from 'vitest';
-import { applyComfyImageBindings, bakeComfyBatchedTracks } from './compileComfyBatch';
+import {
+  applyComfyImageBindings,
+  bakeBasherControllerValues,
+  bakeComfyBatchedTracks,
+} from './compileComfyBatch';
 import {
   importComfyGraph,
   type ComfyApiJson,
   type ComfyGraphMeta,
 } from '../../core/comfy/comfyGraph';
+import { scanBasherControllers } from '../../core/comfy/basherControllers';
 import type { DagState } from '../../core/dag/state';
 
 const SD15: ComfyApiJson = {
@@ -116,5 +121,29 @@ describe('applyComfyImageBindings — rewrite bound image inputs in the batch (d
     });
     expect(apiJson['3'].inputs.latent_image).toEqual(['11', 0]);
     expect(uploads).toEqual([]);
+  });
+});
+
+describe('bakeBasherControllerValues — Mode-A range bake (the controller contract)', () => {
+  // An author-built graph: a basher_controller (float) wired into KSampler.cfg.
+  const CONTROLLED: ComfyApiJson = {
+    '3': { class_type: 'KSampler', inputs: { cfg: ['10', 0], model: ['4', 0] } },
+    '10': {
+      class_type: 'basher_controller',
+      inputs: { name: 'CFG', kind: 'float', values_json: '[7.5]', frame_count: 1 },
+    },
+  };
+
+  it('with no bound channel, bakes each controller to its declared default across the range', () => {
+    const decls = scanBasherControllers(CONTROLLED);
+    const valuesById = bakeBasherControllerValues(EMPTY_STATE, 'comfy1', decls, 0, 3, 30, 4);
+    // default 7.5 (the authored values_json first element) held over all 4 frames
+    expect(valuesById['10']).toEqual([7.5, 7.5, 7.5, 7.5]);
+  });
+
+  it('produces one array per scalar controller, length = the render range', () => {
+    const decls = scanBasherControllers(CONTROLLED);
+    const valuesById = bakeBasherControllerValues(EMPTY_STATE, 'comfy1', decls, 5, 9, 30, 10);
+    expect(valuesById['10']).toHaveLength(5);
   });
 });
