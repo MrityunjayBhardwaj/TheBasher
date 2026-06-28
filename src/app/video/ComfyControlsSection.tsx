@@ -113,7 +113,7 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
       <div data-testid={`comfy-controls-${nodeId}`} className="flex flex-col">
         {controllers.map((c) =>
           !isScalarControllerKind(c.kind) ? (
-            <ComfyMediaControllerRow key={c.nodeId} decl={c} />
+            <ComfyMediaControllerRow key={c.nodeId} comfyNodeId={nodeId} decl={c} />
           ) : c.kind === 'bool' ? (
             <ComfyControllerBoolRow key={c.nodeId} comfyNodeId={nodeId} decl={c} />
           ) : (
@@ -448,19 +448,86 @@ function ComfyControllerBoolRow({
   );
 }
 
-/** An image/video `basher_controller` — a MEDIA input. Binding (project-asset pick +
- *  upload) is the next slice; surfaced read-only so it's never silently invisible. */
-function ComfyMediaControllerRow({ decl }: { decl: BasherControllerDecl }) {
+/** An image/video `basher_controller` — a MEDIA input. kind=image is a real bind:
+ *  pick a project image or upload one, stored under `${controllerNodeId}.image` in
+ *  the node's imageBindings map — the SAME generic image-binding machinery the Mode-B
+ *  LoadImage rows use, so the compile path's applyComfyImageBindings uploads the bytes
+ *  + rewrites the controller's `image` input at submit FOR FREE (the out-of-band media
+ *  transport, docs/COMFYUI-BASHER-NODES.md). kind=video binding is the next slice. */
+function ComfyMediaControllerRow({
+  comfyNodeId,
+  decl,
+}: {
+  comfyNodeId: NodeId;
+  decl: BasherControllerDecl;
+}) {
+  if (decl.kind === 'image') {
+    return <ComfyImageControllerRow comfyNodeId={comfyNodeId} decl={decl} />;
+  }
+  // kind=video — surfaced read-only so it's never silently invisible (next slice).
   return (
     <div
       data-testid={`comfy-controller-row-media-${decl.nodeId}`}
       className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
-      title={`controller:${decl.nodeId} (${decl.kind}) — media binding is a later slice`}
+      title={`controller:${decl.nodeId} (${decl.kind}) — video binding is a later slice`}
     >
       <span className="flex-1 truncate text-fg">{decl.name}</span>
       <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">
         {decl.kind} · bind soon
       </span>
+    </div>
+  );
+}
+
+/** An image `basher_controller` — bind a project image (or upload) to drive the
+ *  controller's IMAGE output. Mirrors ComfyImageParamRow but keyed on the controller's
+ *  own `image` input (`${controllerNodeId}.image`). "None" falls back to the node's
+ *  authored filename. */
+function ComfyImageControllerRow({
+  comfyNodeId,
+  decl,
+}: {
+  comfyNodeId: NodeId;
+  decl: BasherControllerDecl;
+}) {
+  const key = comfyImageBindingKey(decl.nodeId, 'image');
+  const state = useDagStore((s) => s.state);
+  const images = useMemo(() => listProjectImages(state), [state]);
+  const bound = useDagStore(
+    (s) =>
+      (s.state.nodes[comfyNodeId]?.params as { imageBindings?: Record<string, string> } | undefined)
+        ?.imageBindings?.[key] ?? '',
+  );
+  return (
+    <div
+      data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+    >
+      <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (image)`}>
+        {decl.name}
+      </span>
+      <select
+        value={bound}
+        data-testid={`comfy-controller-input-${comfyNodeId}-${decl.nodeId}`}
+        onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
+        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <option value="">None</option>
+        {images.map((img) => (
+          <option key={img.src} value={img.src}>
+            {img.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid={`comfy-controller-upload-${comfyNodeId}-${decl.nodeId}`}
+        title="Upload an image and bind it to this controller"
+        onClick={() => uploadImageAndBind(comfyNodeId, key)}
+        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        ⬆
+      </button>
     </div>
   );
 }

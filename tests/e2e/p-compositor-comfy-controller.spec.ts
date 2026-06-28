@@ -92,3 +92,60 @@ test('keying a float controller mints a KeyframeChannelNumber targeting controll
   // a float controller is a Number channel — NOT Text/Color (the kind-dispatch is honest)
   expect(nodes.some((n) => n.type === 'KeyframeChannelText')).toBe(false);
 });
+
+// node 12 is an image-kind basher_controller wired into VAEEncode.pixels (cfg=['10',0]
+// stays a scalar controller too — both kinds coexist on one workflow).
+const MEDIA_WORKFLOW = {
+  '3': { class_type: 'KSampler', inputs: { seed: 7, cfg: ['10', 0], latent_image: ['11', 0] } },
+  '11': { class_type: 'VAEEncode', inputs: { pixels: ['12', 0] } },
+  '10': {
+    class_type: 'basher_controller',
+    inputs: { name: 'Denoise CFG', kind: 'float', values_json: '[6.5]', frame_count: 1 },
+  },
+  '12': {
+    class_type: 'basher_controller',
+    inputs: { name: 'Source Image', kind: 'image', values_json: '[]', frame_count: 1, image: '' },
+  },
+};
+
+// A tiny valid 8×8 PNG so the upload ingest probes as an image (no server, no GPU).
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGM8oaHBgA0wYRUdtBIA4DgBKJ8lCQoAAAAASUVORK5CYII=',
+  'base64',
+);
+
+test('Mode A: a kind=image controller renders a picker row and binds an uploaded image', async ({
+  page,
+}) => {
+  await page.getByTestId('video-mode-add-layer').click();
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByTestId('video-mode-add-comfy-json').click();
+  (await chooserPromise).setFiles({
+    name: 'media-control.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(MEDIA_WORKFLOW)),
+  });
+  await expect(page.getByTestId('video-mode-layer-count')).toHaveText('1 layer', { timeout: 8000 });
+  await page.locator('[data-testid^="layer-bar-"]').first().click();
+  const comfyId = (await dagNodes(page)).find((n) => n.type === 'ComfyUIWorkflow')!.id;
+
+  // The scalar controller (10) stays a keyframe row; the image controller (12) is a picker.
+  await expect(page.getByTestId(`comfy-controller-diamond-${comfyId}-10`)).toBeVisible();
+  const imgRow = page.getByTestId(`comfy-controller-row-${comfyId}-12`);
+  await expect(imgRow).toBeVisible();
+  await expect(imgRow).toContainText('Source Image');
+  // an image controller has NO keyframe diamond (it's a media bind, not a scalar channel)
+  await expect(page.getByTestId(`comfy-controller-diamond-${comfyId}-12`)).toHaveCount(0);
+
+  // Upload + bind an image to the controller's own image input (`12.image`).
+  const upChooser = page.waitForEvent('filechooser');
+  await page.getByTestId(`comfy-controller-upload-${comfyId}-12`).click();
+  (await upChooser).setFiles({ name: 'src.png', mimeType: 'image/png', buffer: TINY_PNG });
+  await expect
+    .poll(async () => {
+      const node = (await dagNodes(page)).find((n) => n.id === comfyId)!;
+      const b = (node.params as { imageBindings?: Record<string, string> }).imageBindings ?? {};
+      return Object.keys(b);
+    })
+    .toContain('12.image');
+});

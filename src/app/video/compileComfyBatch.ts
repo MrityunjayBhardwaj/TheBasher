@@ -246,13 +246,16 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   };
   if (hasBasherControllers(gp.apiJson)) {
     // Mode A — the author wired each basher_controller into its target. Bake every
-    // SCALAR controller's channel and write its array onto the node; no manifest, no
-    // inference, no rewire (media kinds = image/video are a later slice — skipped here).
-    const decls = scanBasherControllers(gp.apiJson).filter((d) => isScalarControllerKind(d.kind));
+    // SCALAR controller's channel and write its array onto the node (the inline
+    // transport); IMAGE controllers travel out-of-band — their bound bytes upload +
+    // their `image` input rewrites via the shared applyComfyImageBindings below (the
+    // SAME machinery Mode-B LoadImage rows use), so nothing extra is needed here.
+    const allDecls = scanBasherControllers(gp.apiJson);
+    const scalarDecls = allDecls.filter((d) => isScalarControllerKind(d.kind));
     const valuesById = bakeBasherControllerValues(
       state,
       comfyNodeId,
-      decls,
+      scalarDecls,
       frameStart,
       frameEnd,
       fps,
@@ -260,9 +263,10 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
     );
     compiled = {
       apiJson: writeBasherControllerValues(gp.apiJson, valuesById),
-      // every basher_controller is authored INTO the graph (present even at a constant
-      // value), so the extension must be installed — surface it via the presence check.
-      scheduleNodeIds: decls.map((d) => d.nodeId),
+      // EVERY basher_controller (scalar OR media) is authored INTO the graph, so the
+      // extension must be installed — surface ALL of them via the presence check (else
+      // an image-only controller workflow would skip the check and 400 opaquely).
+      scheduleNodeIds: allDecls.map((d) => d.nodeId),
       demotions: [],
     };
   } else {
