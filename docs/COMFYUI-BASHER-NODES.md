@@ -105,6 +105,12 @@ models) is the author's job in ComfyUI.
 2. **Slice 2** — media kinds on `basher_controller` (image, then video png-seq/mp4),
    reusing the upload path.
 3. **Slice 3** — `basher_export` collection (image, then video) → project MediaClips.
+   ✅ **SHIPPED + LIVE-OBSERVED 2026-06-29:** `basher_export` node (OUTPUT_NODE sink +
+   `name`) in the extension; `scanBasherExports` (pure); `ComfyBatchResult.framesByNode`
+   (Http groups by producing node, Stub by declared export ids); `compileComfyBatch`
+   routes EACH declared export's frames → its OWN named project MediaClip (path suffixed
+   by node id). Observed: a workflow with both a SaveImage and a `basher_export` → ONLY
+   the declared export was collected ("Final" clip), the SaveImage ignored.
 4. **Slice 4** — deprecate then delete the compiler once 1–3 are observed working.
 
 ## Open grounding items (verify live, do not infer)
