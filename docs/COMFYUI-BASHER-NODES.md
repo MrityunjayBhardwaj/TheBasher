@@ -95,7 +95,13 @@ models) is the author's job in ComfyUI.
 ## Migration (build → prove → cut)
 
 1. **Slice 1** — `basher_controller` (scalar kinds) node + Basher scan + one **float**
-   channel driving one input, baked → batched → frames back. Live-observe.
+   channel driving one input, baked → batched → frames back. ✅ **LIVE-OBSERVED
+   2026-06-29:** a `basher_controller(float)` `*` output wired into `KSampler.cfg`
+   (a real FLOAT input) validated against live ComfyUI 0.26 (no 400 — the AnyType
+   grounding item is now confirmed live); a 2-key cfg ramp 1.5→16 over 5 frames →
+   `OUTPUT_IS_LIST` → 5 KSampler runs → MP4 → MediaClip, and the eyeballed frames
+   ramp exactly as cfg dictates (washed → balanced → oversaturated). Mode B img2img
+   (a bound depth-like image shaping the render) eyeballed in the same pass.
 2. **Slice 2** — media kinds on `basher_controller` (image, then video png-seq/mp4),
    reusing the upload path.
 3. **Slice 3** — `basher_export` collection (image, then video) → project MediaClips.
