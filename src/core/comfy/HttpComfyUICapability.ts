@@ -210,15 +210,20 @@ export class HttpComfyUICapability implements ComfyUICapability {
       //    'output' too; for now it is collected as a frame (the muxed-video
       //    branch is a later refinement against a real VHS workflow).
       const frames: Uint8Array[] = [];
+      const framesByNode: Record<string, Uint8Array[]> = {};
       for (const nodeId of Object.keys(outputs).sort()) {
+        const nodeFrames: Uint8Array[] = [];
         for (const image of outputs[nodeId]?.images ?? []) {
-          frames.push(await this.fetchImage(image, controller.signal));
+          const bytes = await this.fetchImage(image, controller.signal);
+          nodeFrames.push(bytes);
+          frames.push(bytes);
         }
+        if (nodeFrames.length > 0) framesByNode[nodeId] = nodeFrames;
       }
       if (frames.length === 0) {
         throw new Error(`ComfyUI prompt ${jobId} completed but produced no output images`);
       }
-      return { jobId, frames };
+      return { jobId, frames, framesByNode };
     } finally {
       clearTimeout(timer);
       if (ws) {

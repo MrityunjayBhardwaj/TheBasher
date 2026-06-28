@@ -23,6 +23,8 @@ import type {
   ComfyWorkflowJson,
 } from './ComfyUICapability';
 import type { ComfyProgressEvent } from './comfyProgress';
+import type { ComfyApiJson } from './comfyGraph';
+import { scanBasherExports } from './basherExports';
 
 const PNG_SIGNATURE = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
 
@@ -110,7 +112,15 @@ export class StubComfyUICapability implements ComfyUICapability {
       if (frames.length > 0) onEvent({ kind: 'preview', mime: 'image/png', bytes: frames[0] });
       onEvent({ kind: 'progress', value: n, max: n, node: '3' });
     }
-    return { jobId, frames };
+    // Group frames by declared basher_export node id so the export-collection path is
+    // exercisable WITHOUT a server (the real impl groups by the producing output node;
+    // the stub has no execution graph, so it routes the full frame set to each declared
+    // export). Absent → callers fall back to the flat `frames`.
+    const exports = scanBasherExports((workflowJson as ComfyApiJson) ?? {});
+    const framesByNode = exports.length
+      ? Object.fromEntries(exports.map((e) => [e.nodeId, frames]))
+      : undefined;
+    return { jobId, frames, framesByNode };
   }
 
   async cancel(jobId: string): Promise<void> {

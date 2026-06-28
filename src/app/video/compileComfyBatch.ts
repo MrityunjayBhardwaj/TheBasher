@@ -41,6 +41,7 @@ import {
   writeBasherControllerValues,
   type BasherControllerDecl,
 } from '../../core/comfy/basherControllers';
+import { scanBasherExports } from '../../core/comfy/basherExports';
 import { createMp4Sink } from '../../render/renderAnimation';
 import {
   compileBatchedWorkflow,
@@ -55,7 +56,7 @@ import {
   type ScheduleDemotion,
 } from '../../core/comfy/comfyGraph';
 import type { DagState } from '../../core/dag/state';
-import type { EvalCtx, NodeId } from '../../core/dag/types';
+import type { EvalCtx, NodeId, Op } from '../../core/dag/types';
 import type { MediaProbe } from '../../core/media';
 
 export interface CompileComfyBatchResult {
@@ -291,6 +292,15 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   // by the bound passes end-to-end, not just the live scrub preview.
   const imageUploads = applyComfyImageBindings(compiled.apiJson, params.imageBindings);
 
+  // The OUTPUT half of the contract (docs/COMFYUI-BASHER-NODES.md): a declared
+  // basher_export is the author's collection point. When present, each export's frames
+  // become their OWN project MediaClip (routed via the submit result's framesByNode);
+  // absent → the legacy "every output image → one clip" path. Export nodes are authored
+  // INTO the graph, so the extension must be installed — fold their ids into the
+  // presence check alongside the controllers.
+  const exportDecls = scanBasherExports(gp.apiJson);
+  const extensionNodeIds = [...compiled.scheduleNodeIds, ...exportDecls.map((e) => e.nodeId)];
+
   // §7.4 — surface every demotion (a param that can't be scheduled in-graph keeps its
   // first-frame literal). Never a silent "it all animates".
   if (compiled.demotions.length) {
@@ -315,14 +325,15 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   };
   try {
     let frames: readonly Uint8Array[];
+    let framesByNode: Readonly<Record<string, readonly Uint8Array[]>> | undefined;
     try {
       const cap = await getComfyCapability();
       // A compiled batch with schedule nodes needs the BasherSchedule extension
       // installed on a REAL server — else /prompt rejects the unknown node type with
       // an opaque 400. Detect it up front (the stub accepts anything → skip the check)
       // and surface an actionable message instead of an opaque failure (§16 Q-E).
-      if (cap.kind === 'http' && compiled.scheduleNodeIds.length > 0) {
-        const types = compiled.scheduleNodeIds.map((id) => compiled.apiJson[id].class_type);
+      if (cap.kind === 'http' && extensionNodeIds.length > 0) {
+        const types = extensionNodeIds.map((id) => compiled.apiJson[id].class_type);
         const { comfyUrl, comfyAuthHeader } = useSettingsStore.getState();
         const installed = await comfyHasNodeTypes(types, comfyUrl, {
           authHeader: comfyAuthHeader || undefined,
@@ -353,6 +364,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
       }
       const res = await cap.submitBatch(compiled.apiJson, { images, scalars: {} }, onProgress);
       frames = res.frames;
+      framesByNode = res.framesByNode;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'batch submit failed';
       notify({ severity: 'error', message: `Coherent render failed: ${msg}` });
@@ -363,60 +375,105 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
       return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-frames' };
     }
 
-    // Stitch the batch into an MP4 (the SAME encoder the 3D Render Animation uses). If
-    // WebCodecs H.264 is unavailable, fall back honestly to a notify rather than
-    // mis-registering a non-video blob as a video clip (V38: never a silent degrade).
-    const sink = await createMp4Sink(width, height, fps);
-    if (!sink) {
-      notify({
-        severity: 'error',
-        message:
-          'MP4 encoding unavailable in this browser — coherent render needs WebCodecs H.264.',
-      });
-      return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-mp4' };
+    // Plan the clips to register. With declared basher_export sinks → ONE clip per
+    // export, from that export node's frames (the author-declared collection); else ONE
+    // clip from the flat frames (the legacy collect-everything path). A declared export
+    // that produced no frames is dropped with a warning (never silently — §7.4/V38).
+    interface ClipPlan {
+      readonly frames: readonly Uint8Array[];
+      readonly name: string;
+      readonly suffix: string;
     }
-    let out;
-    try {
-      for (let i = 0; i < frames.length; i++) {
-        const canvas = await frameToCanvas(frames[i], width, height);
-        await sink.addFrame(canvas, i);
+    let plans: ClipPlan[];
+    if (exportDecls.length > 0) {
+      plans = exportDecls
+        .map((e) => ({
+          frames: framesByNode?.[e.nodeId] ?? [],
+          name: e.name,
+          suffix: `_${e.nodeId}`,
+        }))
+        .filter((p) => p.frames.length > 0);
+      const empty = exportDecls.length - plans.length;
+      if (empty > 0) {
+        notify({
+          severity: 'warn',
+          message: `${empty} basher_export node(s) produced no frames (skipped).`,
+        });
       }
-      out = await sink.finish(frames.length);
-    } catch (err) {
-      sink.abort();
-      const msg = err instanceof Error ? err.message : 'encode failed';
-      notify({ severity: 'error', message: `Coherent render encode failed: ${msg}` });
-      return { ok: false, frameCount, demotions: compiled.demotions, reason: 'encode-failed' };
+      if (plans.length === 0) {
+        notify({
+          severity: 'error',
+          message: 'Coherent render produced no frames for the declared basher_export node(s).',
+        });
+        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-frames' };
+      }
+    } else {
+      plans = [{ frames, name: `${meta.name} clip`, suffix: '' }];
     }
 
-    // Persist + register as a project video MediaClip — the clip becomes a droppable
-    // video layer (the on-ramp saveRenderPassesToProject uses for image passes).
-    const path = `renders/comfy_batch_${comfyNodeId}.${out.ext}`;
+    // Stitch each plan into an MP4 (the SAME encoder the 3D Render Animation uses) and
+    // register it as a project video MediaClip — the clip becomes a droppable layer (the
+    // on-ramp saveRenderPassesToProject uses). All clips land in ONE atomic dispatch (one
+    // undo). WebCodecs absence → an honest notify, never a mis-registered non-video blob.
     const storage = await pickStorage();
-    await storage.write(path, new Uint8Array(await out.blob.arrayBuffer()));
-    const probe: MediaProbe = {
-      mediaKind: 'video',
-      width,
-      height,
-      srcFps: fps,
-      srcFrames: frames.length,
-      durationSeconds: frames.length / fps,
-    };
     const usedIds = new Set<string>(Object.keys(useDagStore.getState().state.nodes));
-    const clipId = freshMediaClipId(usedIds);
-    const name = `${meta.name} clip (${frames.length}f)`;
-    useDagStore
-      .getState()
-      .dispatchAtomic(
-        buildMediaClipOps(clipId, name, path, probe),
-        'user',
-        `comfy coherent render ${comfyNodeId}`,
-      );
+    const ops: Op[] = [];
+    const registered: { name: string; path: string; clipId: NodeId; count: number }[] = [];
+    for (const plan of plans) {
+      const sink = await createMp4Sink(width, height, fps);
+      if (!sink) {
+        notify({
+          severity: 'error',
+          message:
+            'MP4 encoding unavailable in this browser — coherent render needs WebCodecs H.264.',
+        });
+        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-mp4' };
+      }
+      let out;
+      try {
+        for (let i = 0; i < plan.frames.length; i++) {
+          const canvas = await frameToCanvas(plan.frames[i], width, height);
+          await sink.addFrame(canvas, i);
+        }
+        out = await sink.finish(plan.frames.length);
+      } catch (err) {
+        sink.abort();
+        const msg = err instanceof Error ? err.message : 'encode failed';
+        notify({ severity: 'error', message: `Coherent render encode failed: ${msg}` });
+        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'encode-failed' };
+      }
+      const path = `renders/comfy_batch_${comfyNodeId}${plan.suffix}.${out.ext}`;
+      await storage.write(path, new Uint8Array(await out.blob.arrayBuffer()));
+      const probe: MediaProbe = {
+        mediaKind: 'video',
+        width,
+        height,
+        srcFps: fps,
+        srcFrames: plan.frames.length,
+        durationSeconds: plan.frames.length / fps,
+      };
+      const clipId = freshMediaClipId(usedIds);
+      usedIds.add(clipId);
+      const name = `${plan.name} (${plan.frames.length}f)`;
+      ops.push(...buildMediaClipOps(clipId, name, path, probe));
+      registered.push({ name, path, clipId, count: plan.frames.length });
+    }
+    useDagStore.getState().dispatchAtomic(ops, 'user', `comfy coherent render ${comfyNodeId}`);
+    const first = registered[0];
     notify({
       severity: 'success',
-      message: `Rendered ${frames.length}-frame coherent clip → project (${name})`,
+      message:
+        registered.length === 1
+          ? `Rendered ${first.count}-frame coherent clip → project (${first.name})`
+          : `Rendered ${registered.length} coherent clips → project (${registered.map((r) => r.name).join(', ')})`,
     });
-    return { ok: true, frameCount: frames.length, path, clipId, demotions: compiled.demotions };
+    return {
+      ok: true,
+      frameCount: first.count,
+      path: first.path,
+      clipId: first.clipId,
+      demotions: compiled.demotions,
+    };
   } finally {
     progress.end();
   }

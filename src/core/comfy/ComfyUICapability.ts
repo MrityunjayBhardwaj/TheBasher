@@ -66,6 +66,13 @@ export interface ComfyBatchResult {
    *  of the batched workflow (not just the first), so a SaveImage emitting N
    *  images yields N frames. Empty only if the workflow produced no images. */
   readonly frames: readonly Uint8Array[];
+  /** Frames grouped by the output node id that produced them (node-id → frames, in
+   *  batch order). Lets a caller route a DECLARED output sink (`basher_export`) to its
+   *  own MediaClip instead of merging every output node into one clip. `frames` (above)
+   *  is the flattened, node-id-sorted concatenation of these — kept for the legacy
+   *  collect-everything path. Absent when an impl doesn't group (callers fall back to
+   *  `frames`). */
+  readonly framesByNode?: Readonly<Record<string, readonly Uint8Array[]>>;
   /** A muxed video blob, when the workflow ends in a video-combine node that
    *  emits a single file instead of a frame batch. Mutually exclusive with a
    *  populated `frames` in practice; the caller prefers `video` when present. */
