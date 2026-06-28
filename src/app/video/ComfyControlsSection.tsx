@@ -48,8 +48,10 @@ import { useAnimatableField } from '../animate/useAnimatableField';
 import {
   comfyImageBindingKey,
   listProjectImages,
+  listProjectVideos,
   setComfyImageBinding,
   uploadImageAndBind,
+  uploadMediaAndBind,
 } from './comfyImageBinding';
 import { compileComfyBatch } from './compileComfyBatch';
 
@@ -464,17 +466,73 @@ function ComfyMediaControllerRow({
   if (decl.kind === 'image') {
     return <ComfyImageControllerRow comfyNodeId={comfyNodeId} decl={decl} />;
   }
-  // kind=video — surfaced read-only so it's never silently invisible (next slice).
+  if (decl.kind === 'video') {
+    return <ComfyVideoControllerRow comfyNodeId={comfyNodeId} decl={decl} />;
+  }
+  // any other media kind — surfaced read-only so it's never silently invisible.
   return (
     <div
       data-testid={`comfy-controller-row-media-${decl.nodeId}`}
       className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
-      title={`controller:${decl.nodeId} (${decl.kind}) — video binding is a later slice`}
+      title={`controller:${decl.nodeId} (${decl.kind}) — binding is a later slice`}
     >
       <span className="flex-1 truncate text-fg">{decl.name}</span>
       <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">
         {decl.kind} · bind soon
       </span>
+    </div>
+  );
+}
+
+/** A video `basher_controller` — bind a project video (or upload) to drive the
+ *  controller's IMAGE-batch output. Mirrors ComfyImageControllerRow but keyed on the
+ *  controller's `video` input (`${controllerNodeId}.video`) and sourced from project
+ *  VIDEOS. The bound video's frame count sets the batch N at render. */
+function ComfyVideoControllerRow({
+  comfyNodeId,
+  decl,
+}: {
+  comfyNodeId: NodeId;
+  decl: BasherControllerDecl;
+}) {
+  const key = comfyImageBindingKey(decl.nodeId, 'video');
+  const state = useDagStore((s) => s.state);
+  const videos = useMemo(() => listProjectVideos(state), [state]);
+  const bound = useDagStore(
+    (s) =>
+      (s.state.nodes[comfyNodeId]?.params as { imageBindings?: Record<string, string> } | undefined)
+        ?.imageBindings?.[key] ?? '',
+  );
+  return (
+    <div
+      data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+    >
+      <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (video)`}>
+        {decl.name}
+      </span>
+      <select
+        value={bound}
+        data-testid={`comfy-controller-input-${comfyNodeId}-${decl.nodeId}`}
+        onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
+        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <option value="">None</option>
+        {videos.map((v) => (
+          <option key={v.src} value={v.src}>
+            {v.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid={`comfy-controller-upload-${comfyNodeId}-${decl.nodeId}`}
+        title="Upload a video and bind it to this controller"
+        onClick={() => uploadMediaAndBind(comfyNodeId, key, 'video')}
+        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        ⬆
+      </button>
     </div>
   );
 }

@@ -72,7 +72,7 @@ describe('collectCompositeInputs — comfy image bindings', () => {
 
     // …and the OPFS bytes are queued for upload under that same name.
     expect(source?.comfyImageUploads).toEqual([
-      { path: 'media/pose-abc123.png', name: 'basher_img_10_image' },
+      { path: 'media/pose-abc123.png', filename: 'basher_img_10_image.png' },
     ]);
   });
 

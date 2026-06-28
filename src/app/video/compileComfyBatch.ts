@@ -356,7 +356,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
         const storage = await pickStorage();
         for (const up of imageUploads) {
           try {
-            images[up.name] = await storage.read(up.path);
+            images[up.filename] = await storage.read(up.path);
           } catch (e) {
             console.warn(`comfy batch: bound image ${up.path} unreadable`, e);
           }

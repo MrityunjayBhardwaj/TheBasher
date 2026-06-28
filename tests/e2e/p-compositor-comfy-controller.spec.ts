@@ -149,3 +149,50 @@ test('Mode A: a kind=image controller renders a picker row and binds an uploaded
     })
     .toContain('12.image');
 });
+
+// node 14 = a video-kind basher_controller wired into VAEEncode.pixels.
+const VIDEO_WORKFLOW = {
+  '3': { class_type: 'KSampler', inputs: { seed: 7, latent_image: ['11', 0] } },
+  '11': { class_type: 'VAEEncode', inputs: { pixels: ['14', 0] } },
+  '14': {
+    class_type: 'basher_controller',
+    inputs: { name: 'Source Video', kind: 'video', values_json: '[]', frame_count: 1, video: '' },
+  },
+};
+
+// A real VP9-in-MP4 fixture so the upload ingest probes as a video in chromium.
+const VIDEO_FIXTURE = 'public/fixtures/video/clip-vp9.mp4';
+
+test('Mode A: a kind=video controller renders a picker row and binds an uploaded video', async ({
+  page,
+}) => {
+  await page.getByTestId('video-mode-add-layer').click();
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.getByTestId('video-mode-add-comfy-json').click();
+  (await chooserPromise).setFiles({
+    name: 'video-control.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(VIDEO_WORKFLOW)),
+  });
+  await expect(page.getByTestId('video-mode-layer-count')).toHaveText('1 layer', { timeout: 8000 });
+  await page.locator('[data-testid^="layer-bar-"]').first().click();
+  const comfyId = (await dagNodes(page)).find((n) => n.type === 'ComfyUIWorkflow')!.id;
+
+  const vidRow = page.getByTestId(`comfy-controller-row-${comfyId}-14`);
+  await expect(vidRow).toBeVisible();
+  await expect(vidRow).toContainText('Source Video');
+  // a video controller has NO keyframe diamond (it's a media bind, not a scalar channel)
+  await expect(page.getByTestId(`comfy-controller-diamond-${comfyId}-14`)).toHaveCount(0);
+
+  // Upload + bind a video to the controller's own video input (`14.video`).
+  const upChooser = page.waitForEvent('filechooser');
+  await page.getByTestId(`comfy-controller-upload-${comfyId}-14`).click();
+  (await upChooser).setFiles(VIDEO_FIXTURE);
+  await expect
+    .poll(async () => {
+      const node = (await dagNodes(page)).find((n) => n.id === comfyId)!;
+      const b = (node.params as { imageBindings?: Record<string, string> }).imageBindings ?? {};
+      return Object.keys(b);
+    })
+    .toContain('14.video');
+});

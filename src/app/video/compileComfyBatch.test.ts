@@ -102,7 +102,7 @@ describe('applyComfyImageBindings — rewrite bound image inputs in the batch (d
     const apiJson = baseJson();
     const uploads = applyComfyImageBindings(apiJson, { '10.image': 'media/depth-abc.png' });
     expect(apiJson['10'].inputs.image).toBe('basher_img_10_image.png');
-    expect(uploads).toEqual([{ path: 'media/depth-abc.png', name: 'basher_img_10_image' }]);
+    expect(uploads).toEqual([{ path: 'media/depth-abc.png', filename: 'basher_img_10_image.png' }]);
   });
 
   it('leaves the authored literal + no uploads when nothing is bound', () => {

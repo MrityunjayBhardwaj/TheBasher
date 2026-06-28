@@ -135,7 +135,7 @@ function resolveComfyParamsAtFrame(
   // filename folds into `values` so the cache key busts when the bound image changes.
   // resolveComfyImageBindings is the SHARED rewrite the batched compile reuses
   // (compileComfyBatch) — preview == compiled image handling (V81 thesis).
-  const imageUploads: { path: string; name: string }[] = [];
+  const imageUploads: { path: string; filename: string }[] = [];
   for (const b of resolveComfyImageBindings(imageBindingsParam)) {
     values[`${b.nodeId}.${b.inputName}`] = b.filename;
     tracks.push({ nodeId: b.nodeId, inputName: b.inputName, values: [b.filename] });
@@ -335,7 +335,7 @@ async function decodeComfy(source: CompositeSource): Promise<ImageBitmap | null>
         for (const up of source.comfyImageUploads ?? []) {
           try {
             storagePromise ??= pickStorage();
-            images[up.name] = await (await storagePromise).read(up.path);
+            images[up.filename] = await (await storagePromise).read(up.path);
           } catch (e) {
             console.warn(`composite: bound image ${up.path} unreadable`, e);
           }

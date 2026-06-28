@@ -37,6 +37,16 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_BATCH_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 
+/** Best-effort upload mime by container extension (kind=video media controllers). The
+ *  loader sniffs content, so this is only a hint; unknown → application/octet-stream. */
+const VIDEO_MIME: Record<string, string> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
+};
+
 export interface HttpComfyOptions {
   /** Per-submit timeout in ms (default 30000). */
   readonly timeoutMs?: number;
@@ -274,12 +284,22 @@ export class HttpComfyUICapability implements ComfyUICapability {
 
   // ----- helpers --------------------------------------------------------
 
-  private async uploadImage(name: string, bytes: Uint8Array, signal: AbortSignal): Promise<void> {
-    const filename = `${name}.png`;
+  private async uploadImage(
+    filename: string,
+    bytes: Uint8Array,
+    signal: AbortSignal,
+  ): Promise<void> {
+    // `filename` is the EXACT name the workflow input references (with extension) — an
+    // image (`.png`) or a video container (`.mp4`/`.webm`/...) for a media controller.
+    // /upload/image accepts any bytes keyed on the filename (comfyui/server.py
+    // image_upload); the mime is a best-effort label, the loader sniffs content.
+    const dot = filename.lastIndexOf('.');
+    const ext = dot >= 0 ? filename.slice(dot + 1).toLowerCase() : 'png';
+    const mime = ext === 'png' ? 'image/png' : (VIDEO_MIME[ext] ?? `application/octet-stream`);
     const form = new FormData();
     const ab = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(ab).set(bytes);
-    const blob = new Blob([ab], { type: 'image/png' });
+    const blob = new Blob([ab], { type: mime });
     form.append('image', blob, filename);
     form.append('overwrite', 'true');
     const res = await this.fetchImpl(`${this.url}/upload/image`, {

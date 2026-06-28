@@ -40,7 +40,10 @@ export function comfyImageBindingKey(nodeId: string, inputName: string): string 
  *  stable `name` (no extension) the LoadImage input was rewritten to reference. */
 export interface ComfyImageUpload {
   readonly path: string;
-  readonly name: string;
+  /** The exact filename uploaded to ComfyUI's input dir (WITH extension, e.g.
+   *  `basher_img_3_image.png` or `basher_img_12_video.mp4`) — the media input is
+   *  rewritten to reference it, and the bytes are uploaded under it. */
+  readonly filename: string;
 }
 
 /** One resolved image binding: the node/input to rewrite, the stable `${name}.png`
@@ -58,6 +61,19 @@ export interface ResolvedImageBinding {
  *  uploaded under the same name — so the LoadImage node resolves on the server. */
 export function comfyImageUploadName(nodeId: string, inputName: string): string {
   return `basher_img_${nodeId}_${inputName}`.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+/** The video container extensions a `basher_controller` kind=video round-trips. The
+ *  upload filename must KEEP the real container ext so ComfyUI's LoadVideo/PyAV picks
+ *  the right demuxer (an image sniffs content, so `.png` is always fine for it). */
+const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv']);
+
+/** The server-filename extension for a bound OPFS path: the real container ext for a
+ *  known video, else `png` (images upload as bytes; ComfyUI sniffs image content). */
+export function comfyUploadExt(opfsPath: string): string {
+  const dot = opfsPath.lastIndexOf('.');
+  const ext = dot >= 0 ? opfsPath.slice(dot + 1).toLowerCase() : '';
+  return VIDEO_EXTS.has(ext) ? ext : 'png';
 }
 
 /** Resolve a node's `imageBindings` map (`"<nodeId>.<inputName>" → OPFS path`) into
@@ -79,8 +95,8 @@ export function resolveComfyImageBindings(imageBindingsParam: unknown): Resolved
     if (dot <= 0 || dot >= key.length - 1) continue;
     const nodeId = key.slice(0, dot);
     const inputName = key.slice(dot + 1);
-    const name = comfyImageUploadName(nodeId, inputName);
-    out.push({ nodeId, inputName, filename: `${name}.png`, upload: { path, name } });
+    const filename = `${comfyImageUploadName(nodeId, inputName)}.${comfyUploadExt(path)}`;
+    out.push({ nodeId, inputName, filename, upload: { path, filename } });
   }
   return out;
 }
@@ -94,6 +110,22 @@ export function listProjectImages(state: DagState): ProjectImage[] {
     if (!n || n.type !== 'MediaClip') continue;
     const p = n.params as Record<string, unknown>;
     if ((p.mediaKind ?? 'video') !== 'image') continue;
+    const src = typeof p.src === 'string' ? p.src : '';
+    if (!src) continue;
+    out.push({ nodeId: id, name: typeof p.name === 'string' ? p.name : id, src });
+  }
+  return out;
+}
+
+/** Every video available in this project: MediaClip nodes with mediaKind:'video' (the
+ *  source of truth for a kind=video controller's asset picker). Pure read over the DAG. */
+export function listProjectVideos(state: DagState): ProjectImage[] {
+  const out: ProjectImage[] = [];
+  for (const id of Object.keys(state.nodes)) {
+    const n = state.nodes[id];
+    if (!n || n.type !== 'MediaClip') continue;
+    const p = n.params as Record<string, unknown>;
+    if ((p.mediaKind ?? 'video') !== 'video') continue;
     const src = typeof p.src === 'string' ? p.src : '';
     if (!src) continue;
     out.push({ nodeId: id, name: typeof p.name === 'string' ? p.name : id, src });
@@ -127,18 +159,22 @@ export function setComfyImageBinding(
     );
 }
 
-/** Upload an image into the project and bind it to this comfy image param in ONE
- *  atomic op chain (an orphan MediaClip node + the binding). A non-image pick is
- *  rejected to the app-root toast (NOT assetErrorStore — covered in VIDEO mode,
- *  [[H122]]). Fire-and-forget through the shared media picker. */
-export function uploadImageAndBind(comfyNodeId: NodeId, paramKey: string): void {
+/** Upload a media file into the project and bind it to this comfy media param in ONE
+ *  atomic op chain (an orphan MediaClip node + the binding). A pick whose kind doesn't
+ *  match `accept` is rejected to the app-root toast (NOT assetErrorStore — covered in
+ *  VIDEO mode, [[H122]]). Fire-and-forget through the shared media picker. */
+export function uploadMediaAndBind(
+  comfyNodeId: NodeId,
+  paramKey: string,
+  accept: 'image' | 'video' = 'image',
+): void {
   pickMediaFiles(async (file) => {
     const ingested = await ingestMediaClipFile(file);
     if (!ingested) return; // ingest failure already surfaced by importMediaClip
-    if (ingested.probe.mediaKind !== 'image') {
+    if (ingested.probe.mediaKind !== accept) {
       useNotificationStore.getState().notify({
         severity: 'error',
-        message: `“${ingested.name}” isn’t an image — image inputs take an image file.`,
+        message: `“${ingested.name}” isn’t ${accept === 'image' ? 'an image' : 'a video'} — this input takes ${accept === 'image' ? 'an image' : 'a video'} file.`,
       });
       return;
     }
@@ -150,6 +186,11 @@ export function uploadImageAndBind(comfyNodeId: NodeId, paramKey: string): void 
       ...buildMediaClipOps(mediaId, ingested.name, ingested.opfsPath, ingested.probe),
       { type: 'setParam', nodeId: comfyNodeId, paramPath: 'imageBindings', value: next },
     ];
-    dag.dispatchAtomic(ops, 'user', `upload + bind image ${paramKey}`);
+    dag.dispatchAtomic(ops, 'user', `upload + bind ${accept} ${paramKey}`);
   });
+}
+
+/** Back-compat alias — an image-only upload+bind (the LoadImage rows + image controllers). */
+export function uploadImageAndBind(comfyNodeId: NodeId, paramKey: string): void {
+  uploadMediaAndBind(comfyNodeId, paramKey, 'image');
 }
