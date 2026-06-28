@@ -35,6 +35,14 @@ import {
   type ComfyGraphMeta,
   type ComfyParam,
 } from '../../core/comfy/comfyGraph';
+import {
+  BASHER_CONTROLLER_TYPE,
+  comfyControllerPath,
+  hasBasherControllers,
+  isScalarControllerKind,
+  scanBasherControllers,
+  type BasherControllerDecl,
+} from '../../core/comfy/basherControllers';
 import { ParamDiamond } from '../ParamDiamond';
 import { useAnimatableField } from '../animate/useAnimatableField';
 import {
@@ -73,9 +81,20 @@ function setComfyLiteral(
 }
 
 export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
-  // Subscribe to the node so an edited literal re-derives the manifest.
+  // Subscribe to the node so an edited literal / controller re-derives the surface.
   const graphParam = useDagStore(
     (s) => (s.state.nodes[nodeId]?.params as { graph?: unknown } | undefined)?.graph,
+  );
+  const apiJson = (graphParam as { apiJson?: ComfyApiJson } | null | undefined)?.apiJson;
+
+  // DISPATCH (docs/COMFYUI-BASHER-NODES.md), mirroring the render-time dispatch: a
+  // workflow that declares basher_controller nodes shows the CONTROLLER CONTRACT rows
+  // (the author's named knobs only) — NOT the inferred manifest. Otherwise the legacy
+  // inference manifest (Mode B).
+  const controllerMode = useMemo(() => !!apiJson && hasBasherControllers(apiJson), [apiJson]);
+  const controllers = useMemo<readonly BasherControllerDecl[]>(
+    () => (apiJson ? scanBasherControllers(apiJson) : []),
+    [apiJson],
   );
   const params = useMemo<readonly ComfyParam[]>(() => {
     const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
@@ -88,6 +107,23 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
     };
     return importComfyGraph(gp.apiJson, meta).params;
   }, [graphParam]);
+
+  if (controllerMode) {
+    return (
+      <div data-testid={`comfy-controls-${nodeId}`} className="flex flex-col">
+        {controllers.map((c) =>
+          !isScalarControllerKind(c.kind) ? (
+            <ComfyMediaControllerRow key={c.nodeId} decl={c} />
+          ) : c.kind === 'bool' ? (
+            <ComfyControllerBoolRow key={c.nodeId} comfyNodeId={nodeId} decl={c} />
+          ) : (
+            <ComfyControllerScalarRow key={c.nodeId} comfyNodeId={nodeId} decl={c} />
+          ),
+        )}
+        <RenderCoherentClipButton comfyNodeId={nodeId} />
+      </div>
+    );
+  }
 
   if (params.length === 0) {
     return (
@@ -111,6 +147,34 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
       <RenderCoherentClipButton comfyNodeId={nodeId} />
     </div>
   );
+}
+
+/** Write a basher_controller's default back into the stored graph json: set its
+ *  `values_json` to `[value]` (the resting value scanBasherControllers reads as the
+ *  default) + frame_count 1. The render bake reads the controller via the same
+ *  resolveEvaluatedParam, so an un-animated edit flows to the coherent clip. Mirrors
+ *  setComfyLiteral, but targets the controller node's own payload. */
+function setControllerDefault(
+  comfyNodeId: NodeId,
+  controllerNodeId: string,
+  value: number | string | boolean,
+): void {
+  const node = useDagStore.getState().state.nodes[comfyNodeId];
+  const gp = (node?.params as { graph?: { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } })?.graph;
+  if (!gp?.apiJson) return;
+  const next = structuredClone(gp) as { apiJson: ComfyApiJson; meta?: ComfyGraphMeta };
+  const target = next.apiJson[controllerNodeId];
+  if (!target || target.class_type !== BASHER_CONTROLLER_TYPE || !target.inputs) return;
+  const inputs = target.inputs as Record<string, number | string | boolean>;
+  inputs.values_json = JSON.stringify([value]);
+  inputs.frame_count = 1;
+  useDagStore
+    .getState()
+    .dispatchAtomic(
+      [{ type: 'setParam', nodeId: comfyNodeId, paramPath: 'graph', value: next }],
+      'user',
+      `set controller ${controllerNodeId}`,
+    );
 }
 
 /** "Render coherent clip" — the COMPILED batched path (Inc 4). Bakes the keyframes
@@ -279,6 +343,123 @@ function ComfyStructuralRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
       <span className="truncate text-fg/60">{String(param.literal)}</span>
       <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">
         preview-only
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mode A — the basher_controller contract rows (the author's DECLARED knobs).
+// ---------------------------------------------------------------------------
+
+/** A scalar `basher_controller` (float/int/string) — a keyframeable row labelled with
+ *  the author's declared NAME. The value field routes through the shared animatable
+ *  seam (paramPath `controller:<nodeId>`); the ParamDiamond keys it via the controller
+ *  first-key (channel type = the declared kind, H124). An un-animated edit writes the
+ *  controller's default. Mirrors ComfyParamRow, sourced from a declared controller. */
+function ComfyControllerScalarRow({
+  comfyNodeId,
+  decl,
+}: {
+  comfyNodeId: NodeId;
+  decl: BasherControllerDecl;
+}) {
+  const isNumber = decl.kind === 'float' || decl.kind === 'int';
+  const base = decl.defaultValue as number | string;
+  const paramPath = comfyControllerPath(decl.nodeId);
+  const { effective, readOnly, onEdit } = useAnimatableField<number | string>(
+    comfyNodeId,
+    paramPath,
+    base,
+    (next) => setControllerDefault(comfyNodeId, decl.nodeId, next),
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    if (isNumber) {
+      const n = parseFloat(draft);
+      if (Number.isFinite(n)) onEdit(n);
+    } else {
+      onEdit(draft);
+    }
+    setDraft(null);
+  };
+  const display = isNumber ? String(effective) : (effective as string);
+  return (
+    <div
+      data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+    >
+      <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (${decl.kind})`}>
+        {decl.name}
+      </span>
+      <input
+        type={isNumber ? 'number' : 'text'}
+        value={draft ?? display}
+        readOnly={readOnly}
+        data-testid={`comfy-controller-input-${comfyNodeId}-${decl.nodeId}`}
+        onFocus={() => setDraft(display)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            commit();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className={`${isNumber ? 'w-16 text-right' : 'w-32'} rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+      />
+      <ParamDiamond
+        nodeId={comfyNodeId}
+        paramPath={paramPath}
+        value={base}
+        testid={`comfy-controller-diamond-${comfyNodeId}-${decl.nodeId}`}
+      />
+    </div>
+  );
+}
+
+/** A bool `basher_controller` — a constant toggle (bool isn't a keyframeable per-frame
+ *  channel, so no diamond; it sets the controller default). */
+function ComfyControllerBoolRow({
+  comfyNodeId,
+  decl,
+}: {
+  comfyNodeId: NodeId;
+  decl: BasherControllerDecl;
+}) {
+  const checked = decl.defaultValue === true;
+  return (
+    <div
+      data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+    >
+      <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (bool)`}>
+        {decl.name}
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        data-testid={`comfy-controller-input-${comfyNodeId}-${decl.nodeId}`}
+        onChange={(e) => setControllerDefault(comfyNodeId, decl.nodeId, e.target.checked)}
+        className="accent-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      />
+    </div>
+  );
+}
+
+/** An image/video `basher_controller` — a MEDIA input. Binding (project-asset pick +
+ *  upload) is the next slice; surfaced read-only so it's never silently invisible. */
+function ComfyMediaControllerRow({ decl }: { decl: BasherControllerDecl }) {
+  return (
+    <div
+      data-testid={`comfy-controller-row-media-${decl.nodeId}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      title={`controller:${decl.nodeId} (${decl.kind}) — media binding is a later slice`}
+    >
+      <span className="flex-1 truncate text-fg">{decl.name}</span>
+      <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">
+        {decl.kind} · bind soon
       </span>
     </div>
   );

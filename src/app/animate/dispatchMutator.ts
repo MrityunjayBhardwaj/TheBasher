@@ -34,6 +34,11 @@ import {
   type ComfyGraphMeta,
   type ComfyValueKind,
 } from '../../core/comfy/comfyGraph';
+import {
+  parseComfyControllerPath,
+  scanBasherControllers,
+  type BasherControllerKind,
+} from '../../core/comfy/basherControllers';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -676,10 +681,88 @@ function dispatchComfyFirstKey(
   return proposeAndAccept(base, [op], intent, ['user:comfy.firstKey'], closureSpec, []);
 }
 
+/** A `basher_controller`'s KeyframeChannel* type, chosen EXPLICITLY by the controller's
+ *  declared `kind` — the same H124 discipline as comfyChannelNodeFor (never infer from
+ *  the value, which would mis-type a string as a colour). float/int → Number, string →
+ *  Text. Returns null for kinds that aren't a keyframeable per-frame scalar (bool — a
+ *  constant toggle; image/video — media binds, a later slice). */
+function controllerChannelNodeFor(
+  kind: BasherControllerKind,
+): { nodeType: string; easing: 'linear' | 'cubic' } | null {
+  switch (kind) {
+    case 'float':
+    case 'int':
+      return { nodeType: 'KeyframeChannelNumber', easing: 'linear' };
+    case 'string':
+      return { nodeType: 'KeyframeChannelText', easing: 'linear' };
+    default:
+      return null; // bool / image / video — not a keyframeable scalar here
+  }
+}
+
+/**
+ * The first-key for a `basher_controller` (the two-node contract, Mode A). A
+ * free-floating channel targeting the ComfyUIWorkflow node at paramPath
+ * `controller:<nodeId>`, the channel TYPE chosen by the controller's DECLARED kind
+ * (controllerChannelNodeFor — never inferValueType). The render bake + the decode read
+ * the controller channel through the SAME resolveEvaluatedParam (H40), so an authored
+ * key drives the coherent clip. Subsequent keys flow through the generic channel-id
+ * path. Mirrors dispatchComfyFirstKey, but the kind comes from the declared controller,
+ * not the inferred manifest.
+ */
+function dispatchControllerFirstKey(
+  args: FirstKeyCompositeArgs,
+  base: DagState,
+  controllerNodeId: string,
+): DispatchResult {
+  const { targetId, paramPath, value, seconds } = args;
+  const intent = `Animate ${targetId}.${paramPath}`;
+  const node = base.nodes[targetId];
+  const gp = (node?.params as { graph?: { apiJson?: ComfyApiJson } } | undefined)?.graph;
+  if (!gp?.apiJson) return { ok: false, reason: `No workflow on "${targetId}".` };
+  const decl = scanBasherControllers(gp.apiJson).find((d) => d.nodeId === controllerNodeId);
+  if (!decl) {
+    return { ok: false, reason: `Controller "${paramPath}" is not in the workflow.` };
+  }
+  const channel = controllerChannelNodeFor(decl.kind);
+  if (!channel) {
+    return {
+      ok: false,
+      reason: `Controller "${decl.name}" (${decl.kind}) can't be keyframed (not a scalar value).`,
+    };
+  }
+  const channelId = `${targetId}_${safePath(paramPath)}_channel`;
+  if (base.nodes[channelId]) {
+    return { ok: false, reason: `Channel "${channelId}" already exists.` };
+  }
+  const sample = channel.nodeType === 'KeyframeChannelNumber' ? Number(value) : String(value);
+  const op: Op = {
+    type: 'addNode',
+    nodeId: channelId,
+    nodeType: channel.nodeType,
+    params: {
+      name: paramPath,
+      target: targetId,
+      paramPath,
+      keyframes: [{ time: seconds, value: sample, easing: channel.easing }],
+    },
+  };
+  const closureSpec: ClosureSpec = { rootSelectors: [channelId], followedEdges: [] };
+  return proposeAndAccept(base, [op], intent, ['user:comfy.controllerFirstKey'], closureSpec, []);
+}
+
 export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): DispatchResult {
   const { targetId, paramPath } = args;
 
   const base = useDagStore.getState().state;
+
+  // The two-node contract (Mode A): a `controller:<nodeId>` paramPath on a
+  // ComfyUIWorkflow target keys a free-floating channel whose TYPE is the declared
+  // controller kind. Routed before the legacy comfy: param road below.
+  const controllerNodeId = parseComfyControllerPath(paramPath);
+  if (controllerNodeId && base.nodes[targetId]?.type === 'ComfyUIWorkflow') {
+    return dispatchControllerFirstKey(args, base, controllerNodeId);
+  }
 
   // Inc 3 Slice D — a ComfyUIWorkflow graph param (paramPath `comfy:<nodeId>.<input>`)
   // keys a free-floating channel whose TYPE is dispatched by the manifest valueKind,
