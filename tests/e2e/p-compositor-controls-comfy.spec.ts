@@ -145,3 +145,48 @@ test('the panel folds the effect chain in as EFFECT sections (step 3)', async ({
   await page.waitForTimeout(150);
   expect(await dagNodeTypes(page)).toContain('KeyframeChannelNumber');
 });
+
+test('a keyed comfy SOURCE param renders a dopesheet row + dot in the layer twirl', async ({
+  page,
+}) => {
+  // The V81 timeline-mirror: the comfy param's authoring surface is the Controls panel
+  // (the red diamond), but a keyed comfy:/controller: channel TARGETS the ComfyUIWorkflow
+  // SOURCE node — not the Layer — so the LayerTimeline twirl never surfaced it. This wires
+  // collectComfySourceChannelRows in: keying comfy:6.text (a TEXT channel) and comfy:3.cfg
+  // (a NUMBER channel) yields two read-only twirl rows whose keyframe dots draw on the comp
+  // ruler. Falsifiable: drop the comfy-prop visualRows and the rows/dots vanish.
+  const ids = await page.evaluate(() => {
+    const nodes = (window as unknown as DagWindow).__basher_dag!.getState().state.nodes;
+    const comfy = Object.values(nodes).find((n) => n.type === 'ComfyUIWorkflow')!;
+    const layer = Object.values(nodes).find((n) => n.type === 'Layer')!;
+    return { comfyId: comfy.id, layerId: layer.id };
+  });
+  const { comfyId, layerId } = ids;
+
+  const ruler = page.getByTestId('layer-timeline-ruler');
+  const box = (await ruler.boundingBox())!;
+  await page.mouse.click(box.x + 2, box.y + box.height / 2);
+
+  // Key a NUMBER param (comfy:3.cfg) and a TEXT param (comfy:6.text).
+  await page.getByTestId(`comfy-param-input-${comfyId}-3-cfg`).fill('7');
+  await page.getByTestId(`comfy-param-input-${comfyId}-3-cfg`).press('Enter');
+  await page.getByTestId(`comfy-param-diamond-${comfyId}-3-cfg`).click();
+  await page.getByTestId(`comfy-param-input-${comfyId}-6-text`).fill('a red sphere');
+  await page.getByTestId(`comfy-param-input-${comfyId}-6-text`).press('Enter');
+  await page.getByTestId(`comfy-param-diamond-${comfyId}-6-text`).click();
+  await page.waitForTimeout(150);
+
+  // Twirl the layer open → its dopesheet rows fold in.
+  await page.getByTestId(`layer-twirl-${layerId}`).click();
+  await page.waitForTimeout(150);
+
+  // BOTH comfy source params now have a labelled outline row + a keyframe dot on the ruler.
+  await expect(page.getByTestId(`layer-comfy-prop-row-${layerId}-comfy_3_cfg`)).toHaveText(
+    'KSampler.cfg',
+  );
+  await expect(page.getByTestId(`layer-comfy-prop-row-${layerId}-comfy_6_text`)).toHaveText(
+    'CLIPTextEncode.text',
+  );
+  await expect(page.getByTestId(`layer-comfy-keyframe-${layerId}-comfy_3_cfg`)).toHaveCount(1);
+  await expect(page.getByTestId(`layer-comfy-keyframe-${layerId}-comfy_6_text`)).toHaveCount(1);
+});

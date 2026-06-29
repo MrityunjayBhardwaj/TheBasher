@@ -26,8 +26,10 @@ import {
   buildAddLayerEffectOps,
   buildReorderLayerOps,
   collectChannelKeyframes,
+  collectComfySourceChannelRows,
   collectLayerEffects,
   collectLayerRows,
+  type ComfySourceChannelRow,
   type LayerEffectRow,
   type LayerRow,
 } from './videoLayers';
@@ -133,6 +135,7 @@ type VisualRow =
   | { kind: 'layer'; row: LayerRow; layerIndex: number }
   | { kind: 'prop'; row: LayerRow; layerIndex: number; prop: LayerProp }
   | { kind: 'vec2-prop'; row: LayerRow; layerIndex: number; prop: LayerVec2Prop }
+  | { kind: 'comfy-prop'; row: LayerRow; layerIndex: number; channel: ComfySourceChannelRow }
   | { kind: 'effect'; row: LayerRow; layerIndex: number; effect: LayerEffectRow }
   | {
       kind: 'effect-prop';
@@ -454,6 +457,11 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
       for (const prop of LAYER_PROPS) visualRows.push({ kind: 'prop', row, layerIndex, prop });
       for (const prop of LAYER_VEC2_PROPS)
         visualRows.push({ kind: 'vec2-prop', row, layerIndex, prop });
+      // Keyed ComfyUIWorkflow SOURCE params (Mode A controller: + Mode B comfy:) —
+      // their authoring surface is the Controls panel; here the timeline MIRRORS their
+      // keyframe dots so the animated comfy params are visible on the ruler (V81).
+      for (const channel of collectComfySourceChannelRows(dagState, row.id))
+        visualRows.push({ kind: 'comfy-prop', row, layerIndex, channel });
       // The layer's effect stack (V58 on the Image socket) + an add-effect row. An
       // open effect expands into its keyframeable param sub-rows (2b).
       for (const effect of collectLayerEffects(dagState, row.id)) {
@@ -521,6 +529,15 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
                 />
               );
             }
+            if (v.kind === 'comfy-prop') {
+              return (
+                <OutlineComfyPropRow
+                  key={`${v.row.id}-${v.channel.paramPath}`}
+                  layerId={v.row.id}
+                  channel={v.channel}
+                />
+              );
+            }
             if (v.kind === 'effect') {
               return (
                 <OutlineEffectRow
@@ -585,6 +602,20 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
                   nodeId={v.row.id}
                   paramPath={v.prop.paramPath}
                   testid={`layer-keyframe-${v.row.id}-${v.prop.key}`}
+                  totalFrames={totalFrames}
+                  fps={fps}
+                />
+              );
+            }
+            // A keyed comfy/controller SOURCE param draws its channel keyframes on the
+            // ruler — the channel TARGETS the ComfyUIWorkflow source node, not the Layer.
+            if (v.kind === 'comfy-prop') {
+              return (
+                <TrackKeyframeRow
+                  key={`${v.row.id}-${v.channel.paramPath}`}
+                  nodeId={v.channel.sourceNodeId}
+                  paramPath={v.channel.paramPath}
+                  testid={`layer-comfy-keyframe-${v.row.id}-${comfyRowKey(v.channel.paramPath)}`}
                   totalFrames={totalFrames}
                   fps={fps}
                 />
@@ -991,6 +1022,38 @@ function OutlineEffectPropRow({ effect, prop }: { effect: LayerEffectRow; prop: 
         value={base}
         testid={`layer-effect-diamond-${effect.nodeId}-${prop.key}`}
       />
+    </div>
+  );
+}
+
+/** Sanitize a comfy/controller paramPath into a testid-safe key (the `:`/`.` in
+ *  `comfy:3.cfg` / `controller:10` → `_`). */
+function comfyRowKey(paramPath: string): string {
+  return paramPath.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+/** A keyed ComfyUIWorkflow SOURCE param row in the OUTLINE column: an indented,
+ *  READ-ONLY label (no field, no diamond) — the comfy param's authoring surface is
+ *  the Controls panel; the timeline only MIRRORS its keyframe dots (V81: one channel,
+ *  every surface). Indented like the effect-prop rows so it reads as a sub-row of the
+ *  layer's source. */
+function OutlineComfyPropRow({
+  layerId,
+  channel,
+}: {
+  layerId: NodeId;
+  channel: ComfySourceChannelRow;
+}) {
+  return (
+    <div
+      data-testid={`layer-comfy-prop-row-${layerId}-${comfyRowKey(channel.paramPath)}`}
+      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <span className="w-3" aria-hidden /> {/* twirl gutter */}
+      <span className="flex-1 truncate pl-8 text-mute" title={channel.paramPath}>
+        {channel.label}
+      </span>
     </div>
   );
 }

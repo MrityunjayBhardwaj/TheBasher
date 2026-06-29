@@ -3,7 +3,12 @@
 
 import { describe, expect, it } from 'vitest';
 import type { DagState } from '../../core/dag/state';
-import { buildReorderLayerOps, collectChannelKeyframes, collectLayerRows } from './videoLayers';
+import {
+  buildReorderLayerOps,
+  collectChannelKeyframes,
+  collectComfySourceChannelRows,
+  collectLayerRows,
+} from './videoLayers';
 
 function state(nodes: Record<string, unknown>): DagState {
   return { nodes } as unknown as DagState;
@@ -134,5 +139,76 @@ describe('collectChannelKeyframes', () => {
     const s = withChannel('l1', 'opacity', [0, 1]);
     expect(collectChannelKeyframes(s, 'l1', 'transform.rotation')).toEqual([]);
     expect(collectChannelKeyframes(s, 'l2', 'opacity')).toEqual([]);
+  });
+});
+
+describe('collectComfySourceChannelRows', () => {
+  // A comp layer whose source is a ComfyUIWorkflow carrying a starter graph with a
+  // KSampler (node 3, for Mode-B comfy:3.cfg) AND a basher_controller (node 10, for
+  // Mode-A controller:10). The keyed channels TARGET the ComfyUIWorkflow node (cf_1),
+  // never the Layer — both modes are the same enumeration (V81 unified transport).
+  const apiJson = {
+    '3': { class_type: 'KSampler', inputs: { cfg: 7, steps: 20 } },
+    '10': {
+      class_type: 'basher_controller',
+      inputs: { name: 'Denoise CFG', kind: 'float', values_json: '[1.5]', frame_count: 1 },
+    },
+  };
+  const baseNodes = {
+    l1: { id: 'l1', type: 'Layer', params: { name: 'ComfyUI' }, inputs: { source: { node: 'cf_1', socket: 'out' } } },
+    cf_1: { id: 'cf_1', type: 'ComfyUIWorkflow', params: { graph: { apiJson } }, inputs: {} },
+  };
+  const channel = (id: string, type: string, paramPath: string, times: number[]) => ({
+    id,
+    type,
+    params: { target: 'cf_1', paramPath, keyframes: times.map((time) => ({ time, value: 1 })) },
+    inputs: {},
+  });
+
+  it('surfaces a Mode-B comfy: channel with a class_type.input label', () => {
+    const s = state({
+      ...baseNodes,
+      ch_cfg: channel('ch_cfg', 'KeyframeChannelNumber', 'comfy:3.cfg', [0, 1]),
+    });
+    expect(collectComfySourceChannelRows(s, 'l1')).toEqual([
+      { paramPath: 'comfy:3.cfg', label: 'KSampler.cfg', sourceNodeId: 'cf_1' },
+    ]);
+  });
+
+  it('surfaces a Mode-A controller: channel with the declared controller name', () => {
+    const s = state({
+      ...baseNodes,
+      ch_ctrl: channel('ch_ctrl', 'KeyframeChannelNumber', 'controller:10', [2]),
+    });
+    expect(collectComfySourceChannelRows(s, 'l1')).toEqual([
+      { paramPath: 'controller:10', label: 'Denoise CFG', sourceNodeId: 'cf_1' },
+    ]);
+  });
+
+  it('surfaces a TEXT channel too (the dot row is channel-type-agnostic)', () => {
+    const s = state({
+      ...baseNodes,
+      ch_txt: channel('ch_txt', 'KeyframeChannelText', 'comfy:6.text', [0]),
+    });
+    const rows = collectComfySourceChannelRows(s, 'l1');
+    // node 6 absent from apiJson → falls back to the raw nodeId.input address.
+    expect(rows).toEqual([{ paramPath: 'comfy:6.text', label: '6.text', sourceNodeId: 'cf_1' }]);
+  });
+
+  it('ignores empty channels, native channels, and non-comfy sources', () => {
+    const s = state({
+      ...baseNodes,
+      ch_empty: channel('ch_empty', 'KeyframeChannelNumber', 'comfy:3.cfg', []), // no keyframes
+      ch_native: channel('ch_native', 'KeyframeChannelNumber', 'opacity', [0]), // not comfy:/controller:
+    });
+    expect(collectComfySourceChannelRows(s, 'l1')).toEqual([]);
+
+    // A layer whose source is a plain MediaClip → no comfy rows.
+    const sMedia = state({
+      l2: { id: 'l2', type: 'Layer', params: {}, inputs: { source: { node: 'm1', socket: 'out' } } },
+      m1: { id: 'm1', type: 'MediaClip', params: {}, inputs: {} },
+      ch: channel('ch', 'KeyframeChannelNumber', 'comfy:3.cfg', [0]),
+    });
+    expect(collectComfySourceChannelRows(sMedia, 'l2')).toEqual([]);
   });
 });

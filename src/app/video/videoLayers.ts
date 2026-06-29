@@ -12,6 +12,11 @@
 import type { DagState } from '../../core/dag/state';
 import type { NodeId, NodeRef, Op } from '../../core/dag/types';
 import { buildAddEffectOps, enumerateEffectStack, resolveEffectBase } from '../operatorStack';
+import { parseComfyParamPath, type ComfyApiJson } from '../../core/comfy/comfyGraph';
+import {
+  parseComfyControllerPath,
+  scanBasherControllers,
+} from '../../core/comfy/basherControllers';
 
 export interface LayerRow {
   readonly id: NodeId;
@@ -199,4 +204,88 @@ export function collectChannelKeyframes(
     }
   }
   return times.sort((a, b) => a - b);
+}
+
+/** A keyed ComfyUIWorkflow SOURCE param surfaced as a timeline dopesheet row.
+ *  Both Mode A (`controller:<id>`) and Mode B (`comfy:<id>.<input>`) channels target
+ *  the ComfyUIWorkflow node (not the Layer), so this is the ONE enumeration covering
+ *  both — symmetric by construction (V81 unified transport). */
+export interface ComfySourceChannelRow {
+  /** The channel paramPath — `comfy:3.cfg` (Mode B) or `controller:10` (Mode A). */
+  readonly paramPath: string;
+  /** Display label mirroring the Controls panel: `KSampler.cfg` (Mode B) or the
+   *  controller's declared name (Mode A); falls back to the raw address. */
+  readonly label: string;
+  /** The channel's TARGET — the ComfyUIWorkflow node id (the TrackKeyframeRow nodeId). */
+  readonly sourceNodeId: NodeId;
+}
+
+/**
+ * The keyed comfy/controller SOURCE channels animating `layerId`'s ComfyUIWorkflow
+ * source, as read-only dopesheet rows (their authoring surface is the Controls panel;
+ * the timeline only MIRRORS the keyframe dots, V81 thesis: one channel, every surface).
+ *
+ * Resolves the layer's BASE source (through any effect chain, like collectLayerEffects)
+ * to the ComfyUIWorkflow node, then scans the SAME (target,paramPath,keyframes) channel
+ * shape collectChannelKeyframes reads — no separate registry, no drift. Labels are
+ * derived directly from the workflow's apiJson (`class_type.input` for comfy:, the
+ * declared controller name for controller:) so this needs no full graph import. Returns
+ * [] when the source is not a ComfyUIWorkflow or no comfy/controller channel is keyed.
+ */
+export function collectComfySourceChannelRows(
+  state: DagState,
+  layerId: NodeId,
+): ComfySourceChannelRow[] {
+  const layer = state.nodes[layerId];
+  if (!layer) return [];
+  const srcId = refNodeIds(layer.inputs?.source)[0];
+  if (!srcId) return [];
+  const baseId = resolveEffectBase(state, srcId);
+  const source = state.nodes[baseId];
+  if (!source || source.type !== 'ComfyUIWorkflow') return [];
+  const apiJson = (source.params as { graph?: { apiJson?: ComfyApiJson } } | undefined)?.graph
+    ?.apiJson;
+
+  const rows: ComfySourceChannelRow[] = [];
+  for (const node of Object.values(state.nodes)) {
+    const p = node.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
+    if (p.target !== baseId) continue;
+    if (typeof p.paramPath !== 'string') continue;
+    if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue;
+    const paramPath = p.paramPath;
+    const controllerId = parseComfyControllerPath(paramPath);
+    const comfyParsed = parseComfyParamPath(paramPath);
+    if (!controllerId && !comfyParsed) continue; // a native channel that happens to target the source
+    rows.push({
+      paramPath,
+      sourceNodeId: baseId,
+      label: comfySourceChannelLabel(apiJson, controllerId, comfyParsed),
+    });
+  }
+  // Stable order so the rows don't reshuffle between renders.
+  return rows.sort((a, b) => a.paramPath.localeCompare(b.paramPath));
+}
+
+/** Mirror the Controls-panel row label for a keyed comfy/controller channel. */
+function comfySourceChannelLabel(
+  apiJson: ComfyApiJson | undefined,
+  controllerId: string | null,
+  comfyParsed: { nodeId: string; inputName: string } | null,
+): string {
+  if (controllerId) {
+    // Mode A — the controller's DECLARED name (the same label the Controls row shows).
+    if (apiJson) {
+      const decl = scanBasherControllers(apiJson).find((d) => d.nodeId === controllerId);
+      if (decl) return decl.name;
+    }
+    return `controller:${controllerId}`;
+  }
+  if (comfyParsed) {
+    // Mode B — `class_type.input` (e.g. "KSampler.cfg"), the Controls row label.
+    const classType = apiJson?.[comfyParsed.nodeId]?.class_type;
+    return classType
+      ? `${classType}.${comfyParsed.inputName}`
+      : `${comfyParsed.nodeId}.${comfyParsed.inputName}`;
+  }
+  return '';
 }
