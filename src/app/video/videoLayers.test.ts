@@ -6,6 +6,7 @@ import type { DagState } from '../../core/dag/state';
 import {
   buildReorderLayerOps,
   collectChannelKeyframes,
+  collectChannelKeyframeSamples,
   collectComfySourceChannelRows,
   collectLayerRows,
 } from './videoLayers';
@@ -142,6 +143,33 @@ describe('collectChannelKeyframes', () => {
   });
 });
 
+describe('collectChannelKeyframeSamples', () => {
+  const withChannel = (target: string, paramPath: string, times: number[]) =>
+    state({
+      ch: {
+        id: 'ch',
+        type: 'KeyframeChannelScalar',
+        params: { target, paramPath, keyframes: times.map((time) => ({ time, value: 1 })) },
+        inputs: {},
+      },
+    });
+
+  it('carries the owning channel id with each sample, ascending by time', () => {
+    const s = withChannel('l1', 'opacity', [2, 0.5, 1]);
+    expect(collectChannelKeyframeSamples(s, 'l1', 'opacity')).toEqual([
+      { channelId: 'ch', time: 0.5 },
+      { channelId: 'ch', time: 1 },
+      { channelId: 'ch', time: 2 },
+    ]);
+  });
+
+  it('returns [] when no channel targets the param', () => {
+    const s = withChannel('l1', 'opacity', [0, 1]);
+    expect(collectChannelKeyframeSamples(s, 'l1', 'transform.rotation')).toEqual([]);
+    expect(collectChannelKeyframeSamples(s, 'l2', 'opacity')).toEqual([]);
+  });
+});
+
 describe('collectComfySourceChannelRows', () => {
   // A comp layer whose source is a ComfyUIWorkflow carrying a starter graph with a
   // KSampler (node 3, for Mode-B comfy:3.cfg) AND a basher_controller (node 10, for
@@ -155,7 +183,12 @@ describe('collectComfySourceChannelRows', () => {
     },
   };
   const baseNodes = {
-    l1: { id: 'l1', type: 'Layer', params: { name: 'ComfyUI' }, inputs: { source: { node: 'cf_1', socket: 'out' } } },
+    l1: {
+      id: 'l1',
+      type: 'Layer',
+      params: { name: 'ComfyUI' },
+      inputs: { source: { node: 'cf_1', socket: 'out' } },
+    },
     cf_1: { id: 'cf_1', type: 'ComfyUIWorkflow', params: { graph: { apiJson } }, inputs: {} },
   };
   const channel = (id: string, type: string, paramPath: string, times: number[]) => ({
@@ -205,7 +238,12 @@ describe('collectComfySourceChannelRows', () => {
 
     // A layer whose source is a plain MediaClip → no comfy rows.
     const sMedia = state({
-      l2: { id: 'l2', type: 'Layer', params: {}, inputs: { source: { node: 'm1', socket: 'out' } } },
+      l2: {
+        id: 'l2',
+        type: 'Layer',
+        params: {},
+        inputs: { source: { node: 'm1', socket: 'out' } },
+      },
       m1: { id: 'm1', type: 'MediaClip', params: {}, inputs: {} },
       ch: channel('ch', 'KeyframeChannelNumber', 'comfy:3.cfg', [0]),
     });

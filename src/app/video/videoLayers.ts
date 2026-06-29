@@ -206,6 +206,41 @@ export function collectChannelKeyframes(
   return times.sort((a, b) => a - b);
 }
 
+/** One keyframe sample on the dopesheet, carrying the OWNING channel node id so the
+ *  timeline can retime (`dispatchRetimeKeyframe`) or delete (`removeKeyframes`) it —
+ *  not just `collectChannelKeyframes`' bare time. `time` is the EXACT stored float
+ *  (the D-03 retime discriminator), read verbatim so the mutator's `k.time === from`
+ *  filter matches by construction. */
+export interface ChannelKeyframeSample {
+  readonly channelId: NodeId;
+  readonly time: number;
+}
+
+/**
+ * The keyframe samples (channel id + exact time) of the free-floating [[V57]] channel
+ * animating (`target`, `paramPath`) — the editable counterpart of
+ * `collectChannelKeyframes` (which drops the channel id, fine for a read-only dot).
+ * Same node scan, no separate registry (no drift). Sorted ascending by time.
+ */
+export function collectChannelKeyframeSamples(
+  state: DagState,
+  target: NodeId,
+  paramPath: string,
+): ChannelKeyframeSample[] {
+  const samples: ChannelKeyframeSample[] = [];
+  for (const node of Object.values(state.nodes)) {
+    const p = node.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
+    if (p.target !== target || p.paramPath !== paramPath) continue;
+    if (!Array.isArray(p.keyframes)) continue;
+    for (const kf of p.keyframes) {
+      const t = (kf as { time?: unknown }).time;
+      if (typeof t === 'number' && Number.isFinite(t))
+        samples.push({ channelId: node.id, time: t });
+    }
+  }
+  return samples.sort((a, b) => a.time - b.time);
+}
+
 /** A keyed ComfyUIWorkflow SOURCE param surfaced as a timeline dopesheet row.
  *  Both Mode A (`controller:<id>`) and Mode B (`comfy:<id>.<input>`) channels target
  *  the ComfyUIWorkflow node (not the Layer), so this is the ONE enumeration covering

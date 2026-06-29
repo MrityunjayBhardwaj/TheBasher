@@ -25,14 +25,16 @@ import { useAnimatableField, useAnimatableVec2Field } from '../animate/useAnimat
 import {
   buildAddLayerEffectOps,
   buildReorderLayerOps,
-  collectChannelKeyframes,
+  collectChannelKeyframeSamples,
   collectComfySourceChannelRows,
   collectLayerEffects,
   collectLayerRows,
+  type ChannelKeyframeSample,
   type ComfySourceChannelRow,
   type LayerEffectRow,
   type LayerRow,
 } from './videoLayers';
+import { dispatchRetimeKeyframe, dispatchMutatorFromUI } from '../animate/dispatchMutator';
 import { buildRemoveEffectOps, buildToggleEffectMuteOp } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
 import {
@@ -1084,11 +1086,21 @@ function TrackSpacerRow() {
   return <div className="border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }} />;
 }
 
-/** The TRACK half of an open property row (a layer prop OR an effect param): the
- *  channel's keyframes drawn as diamonds on the comp ruler (keyframe seconds → comp
- *  frame → percent). The channel target is `(nodeId, paramPath)` — the Layer node
- *  for layer props, the effect node for effect params. Read-only; drag-to-retime is
- *  a follow-up. */
+/** The TRACK half of an open property row (a layer prop, effect param, OR a keyed
+ *  comfy/controller SOURCE param): the channel's keyframes drawn as diamonds on the
+ *  comp ruler (keyframe seconds → comp frame → percent). The channel target is
+ *  `(nodeId, paramPath)` — the Layer node for layer props, the effect node for effect
+ *  params, the ComfyUIWorkflow source node for comfy params.
+ *
+ *  The diamonds are INTERACTIVE (the affordance is wired ONCE here, so every row kind
+ *  gets it — H104): drag a diamond to RETIME (snaps to comp frames; routes through
+ *  `dispatchRetimeKeyframe`, the SAME 2-Mutator composite the 3D dopesheet uses, so
+ *  value+easing survive — D-01), Alt-click to DELETE (the ParamDiamond idiom —
+ *  `removeKeyframes` scoped to the exact stored time, D-03), plain click to scrub the
+ *  playhead to that key. All edits act on the CHANNEL (target+paramPath), so they are
+ *  surface-agnostic — a comfy key edited here is the SAME channel the Controls panel
+ *  authors (V81: one channel, every surface). The exact stored float time is the
+ *  retime/delete discriminator (read verbatim, never recomputed). */
 function TrackKeyframeRow({
   nodeId,
   paramPath,
@@ -1102,20 +1114,137 @@ function TrackKeyframeRow({
   totalFrames: number;
   fps: number;
 }) {
-  const times = useDagStore((s) => collectChannelKeyframes(s.state, nodeId, paramPath));
+  const samples = useDagStore((s) => collectChannelKeyframeSamples(s.state, nodeId, paramPath));
+  const rowRef = useRef<HTMLDivElement>(null);
+  // The in-flight retime drag: the channel + its EXACT grabbed time, the press
+  // anchor, and the row's measured box (bars are laid out in %, a pointer arrives
+  // in px). `moved` distinguishes a drag (→ retime) from a click (→ delete/scrub).
+  const dragRef = useRef<{
+    channelId: NodeId;
+    fromTime: number;
+    startClientX: number;
+    rectLeft: number;
+    rectWidth: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const [preview, setPreview] = useState<{
+    channelId: NodeId;
+    fromTime: number;
+    leftPct: number;
+  } | null>(null);
+
+  const onMove = useCallback(
+    (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (Math.abs(e.clientX - d.startClientX) > DRAG_THRESHOLD_PX) d.moved = true;
+      const toFrame = xToCompFrame(e.clientX - d.rectLeft, d.rectWidth, totalFrames);
+      setPreview({
+        channelId: d.channelId,
+        fromTime: d.fromTime,
+        leftPct: frameToPercent(toFrame, totalFrames),
+      });
+    },
+    [totalFrames],
+  );
+
+  const onUp = useCallback(
+    (e: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      const d = dragRef.current;
+      dragRef.current = null;
+      setPreview(null);
+      if (!d || !d.moved) return; // a click, not a drag → handled by onClick
+      suppressClickRef.current = true;
+      const toFrame = xToCompFrame(e.clientX - d.rectLeft, d.rectWidth, totalFrames);
+      const toTime = compFrameToSeconds(toFrame, fps);
+      if (toTime === d.fromTime) return; // dropped on the same frame — no-op
+      const res = dispatchRetimeKeyframe({ channelId: d.channelId, fromTime: d.fromTime, toTime });
+      if (!res.ok) window.alert?.(res.reason);
+    },
+    [onMove, totalFrames, fps],
+  );
+
+  // Stop listening if the row unmounts mid-drag (twirl closed, layer removed).
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [onMove, onUp]);
+
+  const onDiamondPointerDown = (e: React.PointerEvent, s: ChannelKeyframeSample) => {
+    const rect = rowRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // A fresh press clears any stale suppression: a far retime drag emits NO trailing
+    // `click`, so the suppress flag set at pointerup would otherwise linger and eat the
+    // NEXT genuine click (the Alt-click delete). The same-gesture synthetic click still
+    // fires BEFORE the next pointerdown, so it is still correctly swallowed.
+    suppressClickRef.current = false;
+    dragRef.current = {
+      channelId: s.channelId,
+      fromTime: s.time,
+      startClientX: e.clientX,
+      rectLeft: rect.left,
+      rectWidth: rect.width,
+      moved: false,
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  const onDiamondClick = (e: React.MouseEvent, s: ChannelKeyframeSample) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return; // the press was a retime drag, not a click
+    }
+    if (e.altKey) {
+      // Delete the key — the ParamDiamond idiom: removeKeyframes scoped to the EXACT
+      // stored time (D-03 discriminator). Surface-agnostic (acts on the channel).
+      const res = dispatchMutatorFromUI(
+        'mutator.timeline.removeKeyframes',
+        { channelId: s.channelId, scope: { time: s.time } },
+        `Delete key ${nodeId}.${paramPath}`,
+      );
+      if (!res.ok) window.alert?.(res.reason);
+      return;
+    }
+    // Plain click → move the playhead to this key (a cheap "go to key").
+    useTimeStore.getState().setTime(s.time);
+  };
+
   return (
-    <div className="relative border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }}>
-      {times.map((t, i) => (
-        <span
-          key={i}
-          data-testid={testid}
-          aria-hidden
-          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 select-none text-[10px] leading-none text-accent"
-          style={{ left: `${frameToPercent(t * fps, totalFrames)}%` }}
-        >
-          ◆
-        </span>
-      ))}
+    <div
+      ref={rowRef}
+      className="relative border-b border-line bg-bg"
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      {samples.map((s) => {
+        const dragging =
+          preview !== null && preview.channelId === s.channelId && preview.fromTime === s.time;
+        const leftPct = dragging ? preview.leftPct : frameToPercent(s.time * fps, totalFrames);
+        return (
+          <button
+            key={`${s.channelId}:${s.time}`}
+            type="button"
+            data-testid={testid}
+            aria-label={`Keyframe at ${round2(s.time)} seconds — drag to retime, Alt-click to delete`}
+            title="Drag to retime · Alt-click to delete · click to jump the playhead here"
+            onPointerDown={(e) => onDiamondPointerDown(e, s)}
+            onClick={(e) => onDiamondClick(e, s)}
+            className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize select-none px-1 text-[10px] leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+              dragging ? 'text-record' : 'text-accent hover:text-record'
+            }`}
+            style={{ left: `${leftPct}%` }}
+          >
+            ◆
+          </button>
+        );
+      })}
     </div>
   );
 }

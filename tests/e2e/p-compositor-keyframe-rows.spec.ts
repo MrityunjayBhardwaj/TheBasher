@@ -41,6 +41,23 @@ function layerOpacity(page: import('@playwright/test').Page, layerId: string) {
   }, layerId);
 }
 
+/** The keyframe times (ascending) of the channel targeting (layerId, paramPath). */
+function channelTimes(page: import('@playwright/test').Page, layerId: string, paramPath: string) {
+  return page.evaluate(
+    ({ id, path }) => {
+      const w = window as unknown as DagWindow;
+      const nodes = w.__basher_dag?.getState().state.nodes ?? {};
+      const ch = Object.values(nodes).find((n) => {
+        const p = n.params as { target?: unknown; paramPath?: unknown } | undefined;
+        return p?.target === id && p?.paramPath === path;
+      });
+      const kfs = (ch?.params as { keyframes?: Array<{ time: number }> } | undefined)?.keyframes;
+      return (kfs ?? []).map((k) => k.time).sort((a, b) => a - b);
+    },
+    { id: layerId, path: paramPath },
+  );
+}
+
 async function addClip(page: import('@playwright/test').Page) {
   await page.getByTestId('video-mode-add-layer').click();
   const [chooser] = await Promise.all([
@@ -92,6 +109,42 @@ test('the twirl opens opacity + rotation rows; keying opacity creates a channel 
   expect(await hasChannel(page, id, 'opacity')).toBe(true);
   await expect(diamond).toHaveAttribute('data-anim-state', 'on-key');
   await expect(page.locator(`[data-testid="layer-keyframe-${id}-opacity"]`)).toHaveCount(1);
+});
+
+test('a track diamond drags to RETIME the key (off frame 0) — surface-agnostic channel edit', async ({
+  page,
+}) => {
+  const id = await firstLayerId(page);
+  await page.getByTestId(`layer-twirl-${id}`).click();
+  await page.getByTestId(`layer-prop-diamond-${id}-opacity`).click();
+  expect(await channelTimes(page, id, 'opacity')).toEqual([0]);
+
+  // Drag the frame-0 diamond to the right → retime to a later frame.
+  const dia = page.locator(`[data-testid="layer-keyframe-${id}-opacity"]`).first();
+  const box = (await dia.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 220, box.y + box.height / 2, { steps: 10 });
+  await page.mouse.up();
+
+  const after = await channelTimes(page, id, 'opacity');
+  expect(after).toHaveLength(1);
+  expect(after[0]).toBeGreaterThan(0); // retimed off frame 0 (value+easing preserved by the composite)
+});
+
+test('Alt-clicking a track diamond DELETES the key', async ({ page }) => {
+  const id = await firstLayerId(page);
+  await page.getByTestId(`layer-twirl-${id}`).click();
+  await page.getByTestId(`layer-prop-diamond-${id}-opacity`).click();
+  await expect(page.locator(`[data-testid="layer-keyframe-${id}-opacity"]`)).toHaveCount(1);
+
+  await page
+    .locator(`[data-testid="layer-keyframe-${id}-opacity"]`)
+    .first()
+    .click({ modifiers: ['Alt'] });
+
+  await expect(page.locator(`[data-testid="layer-keyframe-${id}-opacity"]`)).toHaveCount(0);
+  expect(await channelTimes(page, id, 'opacity')).toEqual([]);
 });
 
 test('editing the opacity field writes the Layer param', async ({ page }) => {
