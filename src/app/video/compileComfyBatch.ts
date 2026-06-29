@@ -1,27 +1,29 @@
-// compileComfyBatch — the COMPILED COHERENT path (design §7.3 / §12, Inc 4). Unlike
-// the per-frame preview decode (compositeDecode.decodeComfy → N independent /prompt
-// runs, incoherent), this is a deliberate, heavy "Render coherent clip" ACTION: it
-// bakes every keyframed schedulable param over the node's [frameStart, frameEnd]
-// range into ONE batched workflow (compileBatchedWorkflow), submits it as a single
-// batch (cap.submitBatch → N frames), and stitches the frames into an MP4 — reusing
-// the SAME createMp4Sink the 3D Render Animation uses. The MP4 is written to OPFS and
-// registered as a project video MediaClip (the shipped saveRenderPassesToProject
-// on-ramp), so the coherent clip becomes a droppable video layer — the loop closes.
+// compileComfyBatch — the "Render coherent clip" ACTION (docs/COMFYUI-BASHER-NODES.md).
+// A deliberate, heavy submit: bake the keyframed params over the node's [frameStart,
+// frameEnd] range, drive the basher_controller transport, submit ONE batch
+// (cap.submitBatch → N frames), and stitch the frames into an MP4 — reusing the SAME
+// createMp4Sink the 3D Render Animation uses. The MP4 is written to OPFS and registered
+// as a project video MediaClip (the saveRenderPassesToProject on-ramp), so the coherent
+// clip becomes a droppable video layer.
 //
-// ONE baker feeds preview == compiled (the V81 thesis): both sample each param via
-// the render-identical resolveEvaluatedParam (H40). Preview bakes at one frame; this
-// bakes the array over the range.
+// ONE transport, two ways the controller arrives (the V81 unification):
+//   - Mode A (the workflow declares basher_controller nodes): bake each authored scalar
+//     controller's channel → writeBasherControllerValues; media controllers + bound
+//     LoadImage/LoadVideo inputs upload out-of-band (applyComfyImageBindings).
+//   - Mode B (a vanilla workflow): AUTO-INJECT a basher_controller for each keyframed
+//     foreign param (injectBasherControllers — slice 2), reusing the SAME OUTPUT_IS_LIST
+//     transport. No keyframes → nothing injected → the graph submits as authored.
+// Both sample each param via the render-identical resolveEvaluatedParam (H40), so the
+// dopesheet, the comfy: / controller: channel, and this batch agree.
 //
-// Coherence is delegated to the imported workflow's temporal model (AnimateDiff /
-// native video) — BasherValueSchedule only injects the per-frame array (design §3;
-// the bridge node is an arm's-length GPL extension, never vendored). On a plain
-// text2img graph the batch is N independent latents; coherence needs a temporal
-// workflow + its models (Slice 4, license-gated).
+// Coherence is delegated to the imported workflow's temporal model (AnimateDiff / native
+// video) — the controller only replays the per-frame array. On a plain text2img graph the
+// batch is N independent latents; coherence needs a temporal workflow + its models.
 //
-// REF: docs/COMFYUI-KEYFRAME-COMPILER-DESIGN.md §7.1/§7.3/§8/§12; src/core/comfy/
-//      comfyGraph.ts (compileBatchedWorkflow); src/render/renderAnimation.ts
-//      (createMp4Sink); src/app/saveRenderPassesToProject.ts (the MediaClip on-ramp);
-//      vyapti V81; hetvabhasa H122 (toast, not banner) / H125 (in-flight dedup).
+// REF: docs/COMFYUI-BASHER-NODES.md; src/core/comfy/basherControllers.ts (the controller
+//      transport + injectBasherControllers); src/render/renderAnimation.ts (createMp4Sink);
+//      src/app/saveRenderPassesToProject.ts (the MediaClip on-ramp); vyapti V81; hetvabhasa
+//      H122 (toast, not banner) / H125 (in-flight dedup) / H126 (batchTimeoutMs) / H128.
 
 import { useDagStore } from '../../core/dag/store';
 import { pickStorage } from '../../core/storage';
@@ -173,11 +175,10 @@ export function bakeBasherControllerValues(
 /** Rewrite each statically-bound image input in a compiled batched workflow to its
  *  stable upload filename (mutating `apiJson` in place) and return the uploads to read
  *  + send. A binding whose node is missing or whose input is now wired is skipped (it
- *  keeps the authored literal) — the SAME guard compilePreviewFrame applies, so the
- *  batched image handling matches the per-frame preview (the V81 preview==compiled
- *  thesis). A static bound image is constant across the batch → ONE upload, the same
- *  name on every frame; a keyframed/varying image is reference-travel, demoted by the
- *  compiler and never reaching here. */
+ *  keeps the authored literal) — the SAME guard resolveComfySource applies in the live
+ *  preview, so the batched image handling matches the comfy layer (the V81 thesis). A
+ *  bound image/video is constant across the batch → ONE upload, the same name on every
+ *  frame (image/video inputs travel out-of-band, never as an injected controller). */
 export function applyComfyImageBindings(
   apiJson: ComfyApiJson,
   imageBindingsParam: unknown,
@@ -213,9 +214,10 @@ async function frameToCanvas(
 
 /**
  * Render the selected ComfyUIWorkflow layer's keyframes as ONE coherent batched clip.
- * bake → compileBatchedWorkflow → submitBatch → MP4 → OPFS → project video MediaClip.
- * Surfaces every outcome (including compile demotions and an unreachable/stub server)
- * through the app-root toast — never the view3d-covered banner (H122), never silent.
+ * bake → controller transport (authored or auto-injected) → submitBatch → MP4 → OPFS →
+ * project video MediaClip. Surfaces every outcome (an unreachable/stub server, a missing
+ * extension) through the app-root toast — never the view3d-covered banner (H122), never
+ * silent.
  */
 export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileComfyBatchResult> {
   const notify = useNotificationStore.getState().notify;

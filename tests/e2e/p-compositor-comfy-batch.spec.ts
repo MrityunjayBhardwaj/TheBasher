@@ -65,8 +65,8 @@ test('Render coherent clip → batched submit → MP4 → project video MediaCli
     );
   }, comfyId);
 
-  // Animate a SCHEDULABLE float (KSampler.cfg, node 3) with two keys so the compiler
-  // inserts a BasherValueSchedule (the schedule path, not a constant).
+  // Animate a float (KSampler.cfg, node 3) with two keys so the render auto-injects a
+  // basher_controller for it (the varying path, not a constant passthrough).
   const inputId = `comfy-param-input-${comfyId}-3-cfg`;
   const diamondId = `comfy-param-diamond-${comfyId}-3-cfg`;
   const ruler = page.getByTestId('layer-timeline-ruler');

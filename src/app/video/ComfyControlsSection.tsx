@@ -1,29 +1,24 @@
 // ComfyControlsSection — the ComfyUIWorkflow SOURCE-section renderer for the Controls
-// panel (Inc 3 Slice D, the headline). It derives the animatable manifest from the
-// node's imported workflow (importComfyGraph — never stored, so it can't go stale
-// against the json) and renders EVERY param:
+// panel. It DISPATCHES on the two-node contract (docs/COMFYUI-BASHER-NODES.md):
 //
-//   - SCHEDULABLE → an animatable row: a value field routed through the ONE shared
-//     animatable seam (useAnimatableField — evaluated read + read-only-while-playing
-//     gate + single-write edit) + a <ParamDiamond/> ([[H104]] — a custom control MUST
-//     wire the diamond explicitly or its params are silently un-keyable). The channel
-//     TYPE is chosen by the manifest valueKind in the dispatch seam (float/int →
-//     KeyframeChannelNumber, string → KeyframeChannelText, image → KeyframeChannelImage)
-//     — NOT inferValueType (which mis-types a string prompt as a colour). The channel
-//     targets the ComfyUIWorkflow node directly at paramPath `comfy:<nodeId>.<input>`.
-//   - STRUCTURAL → a read-only row + a "preview-only" note (design §7.4 — a structural
-//     param can't be a per-frame schedule; it is shown, never silently dropped).
+//   - Mode A (the workflow declares basher_controller nodes): render the AUTHOR-declared
+//     rows only (scanBasherControllers) — scalar controllers as keyframeable rows keyed
+//     `controller:<nodeId>`, media controllers as bind pickers. The inferred manifest is
+//     hidden (the author opted into declaring their surface).
+//   - Mode B (a vanilla workflow): derive the lean manifest (importComfyGraph) and render
+//     EVERY authored input by valueKind — float/int/string → a keyframeable row (value
+//     field via useAnimatableField + a <ParamDiamond/>, [[H104]]; channel TYPE by
+//     valueKind, NOT inferValueType — float/int → Number, string → Text — the H124 trap);
+//     image/video → a media bind picker; enum/bool/structural → read-only (isStructuralParam).
+//     A keyed param mints a V57 channel at `comfy:<nodeId>.<input>`; at 🎬 Render coherent
+//     clip the auto-inject path (compileComfyBatch → injectBasherControllers) turns it into
+//     a basher_controller — the SAME transport Mode A uses. There is no per-frame scrub
+//     preview (the inference preview compiler is retired); the comfy layer is static.
 //
-// The read path is DONE (Slice C): the decode resolves each schedulable param at the
-// playhead via the render-identical resolveEvaluatedParam (H40), so an authored key
-// shows in the composite for free. The un-animated value field writes the authored
-// literal back into the stored graph json (setComfyLiteral) → the decode re-renders
-// (its cache key folds the graph + resolved values).
-//
-// REF: docs/COMFYUI-KEYFRAME-COMPILER-DESIGN.md §6.3/§6.4/§7.4; src/core/comfy/
-//      comfyGraph.ts (importComfyGraph + comfyParamPath); src/app/animate/
-//      useAnimatableField.ts + src/app/ParamDiamond.tsx (the H104 seam); vyapti
-//      V57/V81; hetvabhasa H104/H95.
+// REF: docs/COMFYUI-BASHER-NODES.md; src/core/comfy/comfyGraph.ts (importComfyGraph +
+//      comfyParamPath + isStructuralParam); src/core/comfy/basherControllers.ts (the
+//      controller rows + auto-inject); src/app/animate/useAnimatableField.ts +
+//      src/app/ParamDiamond.tsx (the H104 seam); vyapti V57/V81; hetvabhasa H104/H124.
 
 import { useMemo, useState } from 'react';
 import { useDagStore } from '../../core/dag/store';

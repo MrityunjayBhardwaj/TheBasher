@@ -121,14 +121,13 @@ test('a LoadVideo.file param is a project-video picker; picking one stores the b
     .toBe('media/orbit.mp4');
 });
 
-// A video param is a MEDIA bind handled out-of-band by applyComfyImageBindings — NOT an
-// in-graph schedule. So a Mode-B render of a workflow with a LoadVideo node must NOT
-// demote the VIDEO param ('unsupported-kind' → a spurious "preview-only" warn toast): the
-// bake skips constant media params (image AND video). The demotion depends only on the
-// param existing, so a stub-forced render exercises it deterministically — no GPU needed.
-// (A constant string prompt demoting is SEPARATE pre-existing Mode-B behavior — not
-// asserted here; this guards only the video-param fix.)
-test('Mode-B render of a LoadVideo workflow does not demote the video param', async ({ page }) => {
+// A video param is a MEDIA bind handled out-of-band by applyComfyImageBindings — never a
+// keyframeable scalar, so the Mode-B auto-inject never makes a controller (or any toast)
+// for it. A stub-forced render of a LoadVideo workflow lands a clip and names the video
+// param in no warn toast — exercised deterministically, no GPU needed.
+test('Mode-B render of a LoadVideo workflow lands a clip with no spurious toast', async ({
+  page,
+}) => {
   await page.goto('/');
   await expect(page.getByTestId('menu-file-button')).toBeVisible();
   await page.evaluate(() => {
@@ -186,7 +185,8 @@ test('Mode-B render of a LoadVideo workflow does not demote the video param', as
   const warns = await page.evaluate(
     () => (window as unknown as { __warnToasts?: string[] }).__warnToasts ?? [],
   );
-  // No demotion toast names the LoadVideo param (node 10, input `file`). Without the
-  // constant-video skip in bakeComfyBatchedTracks this would read "…preview-only…: 10.file".
-  expect(warns.find((t) => /preview-only/i.test(t) && t.includes('10.file'))).toBeUndefined();
+  // Mode B auto-injects controllers only for keyframed SCALARS; a bound video input
+  // travels out-of-band (applyComfyImageBindings), never as a track — so no spurious
+  // toast names the LoadVideo param (node 10, input `file`).
+  expect(warns.find((t) => t.includes('10.file'))).toBeUndefined();
 });

@@ -103,7 +103,7 @@ describe('StubComfyUICapability', () => {
 
   it('submitBatch frames are deterministic and distinct per batch index', async () => {
     const stub = new StubComfyUICapability();
-    const wf = { s: { class_type: 'BasherValueSchedule', inputs: { frame_count: 3 } } };
+    const wf = { s: { class_type: 'basher_controller', inputs: { frame_count: 3 } } };
     const a = await stub.submitBatch(wf, baseInputs);
     const b = await stub.submitBatch(wf, baseInputs);
     expect(a.frames).toHaveLength(3);
@@ -360,16 +360,16 @@ describe('comfyHasNodeTypes (Inc 4 — BasherSchedule presence detect, §16 Q-E)
   }
 
   it('returns true when ALL requested node types are present', async () => {
-    const fetchImpl = objectInfoFetch(['KSampler', 'BasherValueSchedule', 'CLIPTextEncode']);
+    const fetchImpl = objectInfoFetch(['KSampler', 'basher_controller', 'CLIPTextEncode']);
     expect(
-      await comfyHasNodeTypes(['BasherValueSchedule'], 'http://example.invalid', {}, fetchImpl),
+      await comfyHasNodeTypes(['basher_controller'], 'http://example.invalid', {}, fetchImpl),
     ).toBe(true);
   });
 
   it('returns false when any requested type is missing', async () => {
     const fetchImpl = objectInfoFetch(['KSampler', 'CLIPTextEncode']); // no Basher node
     expect(
-      await comfyHasNodeTypes(['BasherValueSchedule'], 'http://example.invalid', {}, fetchImpl),
+      await comfyHasNodeTypes(['basher_controller'], 'http://example.invalid', {}, fetchImpl),
     ).toBe(false);
   });
 
@@ -383,7 +383,7 @@ describe('comfyHasNodeTypes (Inc 4 — BasherSchedule presence detect, §16 Q-E)
       throw new Error('refused');
     };
     expect(
-      await comfyHasNodeTypes(['BasherValueSchedule'], 'http://example.invalid', {}, fetchImpl),
+      await comfyHasNodeTypes(['basher_controller'], 'http://example.invalid', {}, fetchImpl),
     ).toBe(false);
   });
 });
