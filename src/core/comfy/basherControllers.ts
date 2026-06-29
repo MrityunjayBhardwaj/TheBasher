@@ -146,3 +146,26 @@ export function writeBasherControllerValues(
   }
   return out;
 }
+
+/** Write a Basher-supplied `frame_count` (the batch N) onto each named controller — the
+ *  out-of-band counterpart of writeBasherControllerValues for MEDIA controllers (whose
+ *  payload is uploaded bytes, not an inline array). A kind=video controller reads this to
+ *  RESAMPLE its decoded frames to N, so a video controller and a keyframed scalar share
+ *  ONE batch length and stay index-aligned ([[H128]] — Basher's 30fps media count is the
+ *  authoritative N for BOTH sides). Deep-clones; skips non-controllers and wired inputs. */
+export function writeBasherControllerFrameCounts(
+  apiJson: ComfyApiJson,
+  countById: Readonly<Record<string, number>>,
+): ComfyApiJson {
+  const out = structuredClone(apiJson) as ComfyApiJson;
+  for (const nodeId of Object.keys(countById)) {
+    const node = out[nodeId];
+    if (!node || node.class_type !== BASHER_CONTROLLER_TYPE || !node.inputs) continue;
+    if (isComfyLink(node.inputs.frame_count)) continue;
+    (node.inputs as Record<string, ComfyInputValue>).frame_count = Math.max(
+      1,
+      Math.floor(countById[nodeId]),
+    );
+  }
+  return out;
+}

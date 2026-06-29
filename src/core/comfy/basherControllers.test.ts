@@ -11,6 +11,7 @@ import {
   isScalarControllerKind,
   parseComfyControllerPath,
   scanBasherControllers,
+  writeBasherControllerFrameCounts,
   writeBasherControllerValues,
 } from './basherControllers';
 import type { ComfyApiJson } from './comfyGraph';
@@ -197,5 +198,39 @@ describe('writeBasherControllerValues — inject baked arrays (the whole submit-
         },
       }
     `);
+  });
+});
+
+describe('writeBasherControllerFrameCounts — Basher-supplied batch N for media controllers ([[H128]])', () => {
+  const VIDEO_WF: ComfyApiJson = {
+    '14': {
+      class_type: 'basher_controller',
+      inputs: { name: 'Source Video', kind: 'video', frame_count: 0, video: 'clip.mp4' },
+    },
+  };
+
+  it('writes frame_count onto the named controller so the extension resamples to N', () => {
+    const out = writeBasherControllerFrameCounts(VIDEO_WF, { '14': 30 });
+    expect(out['14'].inputs.frame_count).toBe(30);
+    // floors + clamps to >=1; source not mutated
+    expect(writeBasherControllerFrameCounts(VIDEO_WF, { '14': 5.9 })['14'].inputs.frame_count).toBe(
+      5,
+    );
+    expect(writeBasherControllerFrameCounts(VIDEO_WF, { '14': 0 })['14'].inputs.frame_count).toBe(
+      1,
+    );
+    expect(VIDEO_WF['14'].inputs.frame_count).toBe(0);
+  });
+
+  it('skips a non-controller node and a now-wired frame_count', () => {
+    const wired: ComfyApiJson = {
+      '14': {
+        class_type: 'basher_controller',
+        inputs: { name: 'v', kind: 'video', frame_count: ['9', 0], video: 'c.mp4' },
+      },
+    };
+    const out = writeBasherControllerFrameCounts(wired, { '14': 12, '3': 7 });
+    expect(out['14'].inputs.frame_count).toEqual(['9', 0]); // wired → left alone
+    expect(out['3']).toBeUndefined();
   });
 });

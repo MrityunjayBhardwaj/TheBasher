@@ -32,12 +32,18 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useComfyRenderProgressStore } from '../stores/comfyRenderProgressStore';
 import { buildMediaClipOps, freshMediaClipId } from '../asset/importMediaClip';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
-import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
+import {
+  comfyImageBindingKey,
+  mediaClipFrameCount,
+  resolveComfyImageBindings,
+  type ComfyImageUpload,
+} from './comfyImageBinding';
 import {
   comfyControllerPath,
   hasBasherControllers,
   isScalarControllerKind,
   scanBasherControllers,
+  writeBasherControllerFrameCounts,
   writeBasherControllerValues,
   type BasherControllerDecl,
 } from '../../core/comfy/basherControllers';
@@ -260,27 +266,49 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
     // SAME machinery Mode-B LoadImage rows use), so nothing extra is needed here.
     const allDecls = scanBasherControllers(gp.apiJson);
     const scalarDecls = allDecls.filter((d) => isScalarControllerKind(d.kind));
-    // NOTE on N (the contract's "N comes from the input media"): a PURE kind=video
-    // controller drives N automatically at runtime — its OUTPUT_IS_LIST emits the
-    // container's native frame count, so the batch is exactly that many (no Basher-side
-    // N needed; observed). MIXING a video controller with a KEYFRAMED scalar is a
-    // KNOWN-LIMIT: scalars bake over the node's frame range, which need not equal the
-    // video's native count (Basher's media probe is 30fps-RESAMPLED, so srcFrames ≠ the
-    // PyAV-native count for a non-30fps source — they can't be reconciled from the probe
-    // alone). Aligning them needs the controller to resample to a Basher-supplied N — a
-    // follow-up. Until then, keyframe scalars on a video workflow only when the video is
-    // ~30fps and the node range matches its length.
+    // N COORDINATION (the contract's "N comes from the input media", [[H128]] resolved):
+    // when a kind=video controller is BOUND, the bound clip's Basher frame count
+    // (MediaClip srcFrames = round(duration*30) — Basher's authoritative 30fps media
+    // model) is the batch N. We (a) write frame_count=N onto each bound video controller
+    // so the EXTENSION resamples its PyAV-native frames to N, and (b) bake the scalars
+    // over [0, N-1] so inline scalar schedules share that SAME N. Both sides then use
+    // Basher's count — never max(scalarN, videoN). No bound video → the node frame range
+    // drives N (the previous behaviour). The earlier reverted attempt only fixed the
+    // scalar side (the video side stayed native → desync); resampling the video closes it.
+    const videoFrameCounts: Record<string, number> = {};
+    let videoN = 0;
+    for (const d of allDecls) {
+      if (d.kind !== 'video') continue;
+      const path = boundBindingPath(params.imageBindings, comfyImageBindingKey(d.nodeId, 'video'));
+      const fc = path ? mediaClipFrameCount(state, path) : 0;
+      if (fc > 0) {
+        videoFrameCounts[d.nodeId] = fc; // overwritten with videoN below
+        videoN = Math.max(videoN, fc);
+      }
+    }
+    const useVideoN = videoN > 0;
+    const bakeStart = useVideoN ? 0 : frameStart;
+    const bakeEnd = useVideoN ? videoN - 1 : frameEnd;
+    const bakeDuration = useVideoN ? videoN : frameCount;
     const valuesById = bakeBasherControllerValues(
       state,
       comfyNodeId,
       scalarDecls,
-      frameStart,
-      frameEnd,
+      bakeStart,
+      bakeEnd,
       fps,
-      frameCount,
+      bakeDuration,
     );
+    let apiA = writeBasherControllerValues(gp.apiJson, valuesById);
+    if (useVideoN) {
+      // Resample EVERY bound video controller to the SAME N (the max, so a shorter clip
+      // pads its tail rather than truncating a longer one) → one aligned batch length.
+      const counts: Record<string, number> = {};
+      for (const id of Object.keys(videoFrameCounts)) counts[id] = videoN;
+      apiA = writeBasherControllerFrameCounts(apiA, counts);
+    }
     compiled = {
-      apiJson: writeBasherControllerValues(gp.apiJson, valuesById),
+      apiJson: apiA,
       // EVERY basher_controller (scalar OR media) is authored INTO the graph, so the
       // extension must be installed — surface ALL of them via the presence check (else
       // an image-only controller workflow would skip the check and 400 opaquely).
@@ -498,4 +526,14 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
 
 function numParam(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+/** The bound OPFS path for a key in a node's `imageBindings` map, or '' if unbound. */
+function boundBindingPath(imageBindingsParam: unknown, key: string): string {
+  const map =
+    imageBindingsParam && typeof imageBindingsParam === 'object'
+      ? (imageBindingsParam as Record<string, unknown>)
+      : {};
+  const v = map[key];
+  return typeof v === 'string' ? v : '';
 }

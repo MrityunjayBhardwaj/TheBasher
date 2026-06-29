@@ -133,6 +133,25 @@ export function listProjectVideos(state: DagState): ProjectImage[] {
   return out;
 }
 
+/** The Basher frame count of the project clip at `opfsPath` — its MediaClip `srcFrames`
+ *  (= round(durationSeconds * 30): Basher's WebCodecsMediaDecode resamples every clip to a
+ *  FIXED 30fps, so this is Basher's authoritative 30fps frame count, NOT the container's
+ *  PyAV-native count — the two diverge for a non-30fps source, [[H128]]). Used to drive the
+ *  Mode-A batch N for a bound video controller (and written onto the controller so the
+ *  extension resamples its decoded frames to the SAME N). 0 when not found / unknown. */
+export function mediaClipFrameCount(state: DagState, opfsPath: string): number {
+  if (!opfsPath) return 0;
+  for (const id of Object.keys(state.nodes)) {
+    const n = state.nodes[id];
+    if (!n || n.type !== 'MediaClip') continue;
+    const p = n.params as Record<string, unknown>;
+    if (p.src !== opfsPath) continue;
+    const sf = p.srcFrames;
+    if (typeof sf === 'number' && sf > 0) return Math.floor(sf);
+  }
+  return 0;
+}
+
 /** Read a copy of the comfy node's current imageBindings map. */
 function currentBindings(comfyNodeId: NodeId): Record<string, string> {
   const node = useDagStore.getState().state.nodes[comfyNodeId];
