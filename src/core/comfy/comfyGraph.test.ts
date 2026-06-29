@@ -101,6 +101,28 @@ describe('importComfyGraph — param manifest', () => {
     expect(hint('5', 'batch_size')).toBe('structural'); // batch size = schedule length
   });
 
+  it('classifies a LoadVideo.file input as a bindable video media param', () => {
+    // The Mode-B video-in path (docs/COMFYUI-BASHER-NODES.md): a vanilla LoadVideo node
+    // gets a project-video picker, mirroring LoadImage.image. The manifest must mark it
+    // valueKind 'video' (so the Controls dispatch renders the video row) + 'schedulable'
+    // (so it's a bindable row, not a read-only structural one).
+    const withVideo: ComfyApiJson = {
+      '10': { class_type: 'LoadVideo', inputs: { file: 'clip.mp4' } },
+      '11': { class_type: 'VAEEncode', inputs: { pixels: ['10', 0], vae: ['4', 2] } },
+    };
+    const p = importComfyGraph(withVideo, META).params.find(
+      (x) => x.nodeId === '10' && x.inputName === 'file',
+    )!;
+    expect(p.valueKind).toBe('video');
+    expect(p.scheduleHint).toBe('schedulable');
+    // The ext-fallback also recognises a video container on a non-tabled node/input.
+    const untabled = importComfyGraph(
+      { '12': { class_type: 'SomeVideoNode', inputs: { src: 'a.webm' } } },
+      META,
+    ).params.find((x) => x.nodeId === '12')!;
+    expect(untabled.valueKind).toBe('video');
+  });
+
   it('returns params in a stable (nodeId, inputName) order', () => {
     const keys = graph.params.map((p) => `${p.nodeId}.${p.inputName}`);
     const sorted = [...keys].sort();

@@ -48,7 +48,7 @@ export function isComfyLink(v: ComfyInputValue): v is ComfyLink {
   return Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'number';
 }
 
-export type ComfyValueKind = 'float' | 'int' | 'string' | 'bool' | 'image' | 'enum';
+export type ComfyValueKind = 'float' | 'int' | 'string' | 'bool' | 'image' | 'video' | 'enum';
 
 /** Can this param be scheduled IN-GRAPH for the coherent batched path, or only
  *  varied across independent preview runs? (design §7.4). The compiler logs a
@@ -103,6 +103,10 @@ const PARAM_KIND_TABLE: Record<string, ComfyValueKind> = {
   'EmptyLatentImage.height': 'int',
   'EmptyLatentImage.batch_size': 'int',
   'LoadImage.image': 'image',
+  // LoadVideo (the io.ComfyNode v3 node, comfy_extras) takes a `file` input + emits
+  // VIDEO — a media bind, like LoadImage.image, so the inferred manifest gives it a
+  // project-video picker (the Mode-B video-in path, docs/COMFYUI-BASHER-NODES.md).
+  'LoadVideo.file': 'video',
   'ControlNetApply.strength': 'float',
   'ControlNetApplyAdvanced.strength': 'float',
 };
@@ -116,7 +120,10 @@ function inferValueKind(
   if (tabled) return tabled;
   if (typeof literal === 'boolean') return 'bool';
   if (typeof literal === 'number') return Number.isInteger(literal) ? 'int' : 'float';
-  // A string that names an image file is an image input; otherwise plain text.
+  // A string that names a video container is a video input; an image file an image
+  // input (a media bind in both cases); otherwise plain text. Video sniffs first so a
+  // `.mp4` isn't mis-read as plain text.
+  if (/\.(mp4|webm|mov|m4v|mkv)$/i.test(literal)) return 'video';
   if (/\.(png|jpe?g|webp|gif)$/i.test(literal)) return 'image';
   return 'string';
 }
@@ -143,12 +150,15 @@ function scheduleHintFor(
   valueKind: ComfyValueKind,
 ): ScheduleHint {
   if (STRUCTURAL_PARAMS.has(`${classType}.${inputName}`)) return 'structural';
-  // Known schedulable shapes: numeric scalars, prompt text, reference images.
+  // Known schedulable shapes: numeric scalars, prompt text, reference images, and a
+  // bound video (a media input — not an in-graph schedule, but the manifest treats it
+  // as a bindable row, never a read-only structural one).
   if (
     valueKind === 'float' ||
     valueKind === 'int' ||
     valueKind === 'string' ||
-    valueKind === 'image'
+    valueKind === 'image' ||
+    valueKind === 'video'
   )
     return 'schedulable';
   return 'unknown';

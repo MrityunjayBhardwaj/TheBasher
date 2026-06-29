@@ -142,6 +142,8 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
           <ComfyStructuralRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
         ) : p.valueKind === 'image' ? (
           <ComfyImageParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
+        ) : p.valueKind === 'video' ? (
+          <ComfyVideoParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
         ) : (
           <ComfyParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
         ),
@@ -323,6 +325,61 @@ function ComfyImageParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
         data-testid={`comfy-param-upload-${comfyNodeId}-${rowKey}`}
         title="Upload an image and bind it to this input"
         onClick={() => uploadImageAndBind(comfyNodeId, key)}
+        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        ⬆
+      </button>
+    </div>
+  );
+}
+
+/** A 'video'-valueKind comfy param (e.g. LoadVideo.file) — the GENERIC video-input
+ *  affordance, the Mode-B mirror of the kind=video controller (docs/COMFYUI-BASHER-
+ *  NODES.md): pick a project video from a dropdown, or upload a new one. The choice is
+ *  stored as an OPFS path in the node's imageBindings map keyed `<nodeId>.file`; the
+ *  compile path's applyComfyImageBindings uploads the bytes (the real container ext is
+ *  kept by comfyUploadExt) + rewrites `inputs.file` at submit — FOR FREE, the same
+ *  out-of-band media transport image bindings use. "None" keeps the authored filename.
+ *  The bound video's frame count sets the batch N (the input media drives the length). */
+function ComfyVideoParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param: ComfyParam }) {
+  const key = comfyImageBindingKey(param.nodeId, param.inputName);
+  const state = useDagStore((s) => s.state);
+  const videos = useMemo(() => listProjectVideos(state), [state]);
+  const bound = useDagStore(
+    (s) =>
+      (s.state.nodes[comfyNodeId]?.params as { imageBindings?: Record<string, string> } | undefined)
+        ?.imageBindings?.[key] ?? '',
+  );
+  const rowKey = `${param.nodeId}-${param.inputName}`;
+  return (
+    <div
+      data-testid={`comfy-param-row-${comfyNodeId}-${rowKey}`}
+      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+    >
+      <span
+        className="flex-1 truncate text-mute"
+        title={`comfy:${param.nodeId}.${param.inputName}`}
+      >
+        {paramLabel(param)}
+      </span>
+      <select
+        value={bound}
+        data-testid={`comfy-param-input-${comfyNodeId}-${rowKey}`}
+        onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
+        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <option value="">{`None · ${String(param.literal)}`}</option>
+        {videos.map((v) => (
+          <option key={v.src} value={v.src}>
+            {v.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid={`comfy-param-upload-${comfyNodeId}-${rowKey}`}
+        title="Upload a video and bind it to this input"
+        onClick={() => uploadMediaAndBind(comfyNodeId, key, 'video')}
         className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         ⬆
