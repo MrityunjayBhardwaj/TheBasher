@@ -144,6 +144,13 @@ const STRUCTURAL_PARAMS = new Set<string>([
   'EmptyLatentImage.batch_size', // the batch size IS the schedule length
 ]);
 
+/** True iff a param changes graph TOPOLOGY or batch shape (resolution / checkpoint /
+ *  sampler type) — it can't be driven as a per-frame channel, so the Controls panel
+ *  shows it read-only. A pure UI hint, keyed `classType.inputName`. */
+export function isStructuralParam(classType: string, inputName: string): boolean {
+  return STRUCTURAL_PARAMS.has(`${classType}.${inputName}`);
+}
+
 function scheduleHintFor(
   classType: string,
   inputName: string,

@@ -22,18 +22,6 @@ interface DagWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, DagNode> } } };
 }
 
-/** A cheap checksum over the composite canvas pixels. */
-function pixelChecksum(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const c = document.querySelector('[data-testid="composite-canvas"]') as HTMLCanvasElement;
-    const ctx = c.getContext('2d')!;
-    const { data } = ctx.getImageData(0, 0, c.width, c.height);
-    let h = 0;
-    for (let i = 0; i < data.length; i += 17) h = (h * 31 + data[i]) >>> 0;
-    return h;
-  });
-}
-
 function dagNodeTypes(page: import('@playwright/test').Page) {
   return page.evaluate(() =>
     Object.values((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).map(
@@ -78,9 +66,14 @@ test('the Controls panel exposes the comfy manifest (schedulable + structural)',
   await expect(page.getByTestId(`comfy-param-diamond-${comfyId}-5-width`)).toHaveCount(0);
 });
 
-test('keying the prompt mints a TEXT channel and drives the composite across a scrub', async ({
+test('keying the prompt mints a TEXT channel (dispatched by valueKind, not inferValueType)', async ({
   page,
 }) => {
+  // The load-bearing Mode-B authoring assertion (H104 + valueKind trap): keying the
+  // STRING prompt param mints a KeyframeChannelText — NOT a KeyframeChannelColor (what
+  // the native inferValueType road would wrongly pick). The channel targets comfy:6.text;
+  // at 🎬 Render coherent clip the auto-inject path turns that keyframed param into a
+  // basher_controller (no per-frame scrub — the inference preview compiler is retired).
   const comfyId = await page.evaluate(
     () =>
       Object.values((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).find(
@@ -106,23 +99,15 @@ test('keying the prompt mints a TEXT channel and drives the composite across a s
   expect(types).toContain('KeyframeChannelText');
   expect(types).not.toContain('KeyframeChannelColor');
 
-  const atStart = await pixelChecksum(page);
-
-  // Mid frame: change the prompt (held transient) + key it → a 2nd keyframe.
-  await page.mouse.click(box.x + box.width * 0.6, box.y + box.height / 2);
-  await page.getByTestId(inputId).fill('a blue pyramid in a desert');
-  await page.getByTestId(inputId).press('Enter');
-  await page.getByTestId(diamondId).click();
-  await page.waitForTimeout(200);
-  const atMid = await pixelChecksum(page);
-
-  // The prompt-at-frame changed → the resolved stub frame changed.
-  expect(atStart).not.toBe(atMid);
-
-  // Back to frame 0 → the first key still holds its value (a real two-key animation).
-  await page.mouse.click(box.x + 2, box.y + box.height / 2);
-  await page.waitForTimeout(200);
-  expect(await pixelChecksum(page)).toBe(atStart);
+  // The channel targets the comfy param path (comfy:6.text) — the address the render
+  // bake reads + auto-injects a controller for.
+  const target = await page.evaluate(() => {
+    const ch = Object.values(
+      (window as unknown as DagWindow).__basher_dag!.getState().state.nodes,
+    ).find((n) => n.type === 'KeyframeChannelText');
+    return ch?.params?.paramPath;
+  });
+  expect(target).toBe('comfy:6.text');
 });
 
 test('the panel folds the effect chain in as EFFECT sections (step 3)', async ({ page }) => {

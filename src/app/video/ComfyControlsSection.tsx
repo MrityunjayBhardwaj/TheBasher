@@ -31,6 +31,7 @@ import type { NodeId } from '../../core/dag/types';
 import {
   comfyParamPath,
   importComfyGraph,
+  isStructuralParam,
   type ComfyApiJson,
   type ComfyGraphMeta,
   type ComfyParam,
@@ -138,7 +139,13 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
   return (
     <div data-testid={`comfy-controls-${nodeId}`} className="flex flex-col">
       {params.map((p) =>
-        p.scheduleHint !== 'schedulable' ? (
+        // A topology/batch-shape param (resolution/checkpoint/sampler) or a discrete one
+        // (enum/bool) can't be a per-frame channel → read-only. image/video → a media
+        // bind picker. Everything else (float/int/string) → a keyframeable row: keying it
+        // auto-injects a basher_controller at render (no scheduleHint inference anymore).
+        isStructuralParam(p.classType, p.inputName) ||
+        p.valueKind === 'enum' ||
+        p.valueKind === 'bool' ? (
           <ComfyStructuralRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
         ) : p.valueKind === 'image' ? (
           <ComfyImageParamRow key={`${p.nodeId}.${p.inputName}`} comfyNodeId={nodeId} param={p} />
@@ -388,21 +395,20 @@ function ComfyVideoParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
   );
 }
 
-/** A structural comfy param — read-only, with a "preview-only" note (§7.4: a topology/
- *  batch-shape param can't be a per-frame schedule, but it is shown, never dropped). */
+/** A fixed comfy param — read-only. A topology/batch-shape param (resolution / checkpoint
+ *  / sampler type) or a discrete one (enum / bool) can't be driven as a per-frame channel,
+ *  so it is shown (never hidden), set in the workflow itself. */
 function ComfyStructuralRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param: ComfyParam }) {
   const key = `${param.nodeId}-${param.inputName}`;
   return (
     <div
       data-testid={`comfy-structural-row-${comfyNodeId}-${key}`}
       className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
-      title="Structural — changes graph topology / batch shape, so it can't be keyframed (preview-only)."
+      title="Fixed — a topology / batch-shape or discrete input, not keyframeable (set it in the workflow)."
     >
       <span className="flex-1 truncate text-mute">{paramLabel(param)}</span>
       <span className="truncate text-fg/60">{String(param.literal)}</span>
-      <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">
-        preview-only
-      </span>
+      <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">fixed</span>
     </div>
   );
 }
