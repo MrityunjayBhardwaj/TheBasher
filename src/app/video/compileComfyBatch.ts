@@ -47,6 +47,7 @@ import {
   writeBasherControllerFrameCounts,
   writeBasherControllerValues,
   type BasherControllerDecl,
+  type InjectableTrack,
 } from '../../core/comfy/basherControllers';
 import { scanBasherExports } from '../../core/comfy/basherExports';
 import { createMp4Sink } from '../../render/renderAnimation';
@@ -54,12 +55,11 @@ import {
   comfyParamPath,
   importComfyGraph,
   isComfyLink,
-  type BatchedTrack,
+  isStructuralParam,
   type ComfyApiJson,
   type ComfyGraph,
   type ComfyGraphMeta,
   type ComfyInputValue,
-  type ScheduleDemotion,
 } from '../../core/comfy/comfyGraph';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx, NodeId, Op } from '../../core/dag/types';
@@ -73,17 +73,16 @@ export interface CompileComfyBatchResult {
   readonly path?: string;
   /** The MediaClip node registered for the clip (on success). */
   readonly clipId?: NodeId;
-  /** Params the compiler could not schedule in-graph — surfaced, never silent (§7.4). */
-  readonly demotions: readonly ScheduleDemotion[];
   readonly reason?: string;
 }
 
-/** Bake every SCHEDULABLE param of an imported workflow to a per-frame array over
- *  [frameStart, frameEnd] — the batched generalization of resolveComfyParamsAtFrame's
- *  single-frame read. Each frame samples the render-identical resolveEvaluatedParam
- *  (a bound V57 channel sample, else the authored literal — H40), so the compiled
- *  batch matches preview + dopesheet. classType + valueKind ride along so the compiler
- *  can pick the schedule-node variant and demote what it can't schedule. */
+/** Bake every keyframeable SCALAR param of an imported workflow to a per-frame array over
+ *  [frameStart, frameEnd] — the input to injectBasherControllers (Mode B). Each frame
+ *  samples the render-identical resolveEvaluatedParam (a bound V57 channel sample, else the
+ *  authored literal — H40), so the auto-injected controllers match preview + dopesheet.
+ *  Only float/int/string non-structural params are baked: those are the keyframeable rows
+ *  (enum/bool/structural are read-only; image/video bind out-of-band via applyComfyImageBindings).
+ *  classType + valueKind ride along so the injector picks each controller's declared kind. */
 export function bakeComfyBatchedTracks(
   state: DagState,
   comfyNodeId: NodeId,
@@ -92,11 +91,15 @@ export function bakeComfyBatchedTracks(
   frameEnd: number,
   fps: number,
   durationFrames: number,
-): BatchedTrack[] {
+): InjectableTrack[] {
   const n = Math.max(1, frameEnd - frameStart + 1);
-  const tracks: BatchedTrack[] = [];
+  const tracks: InjectableTrack[] = [];
   for (const param of graph.params) {
-    if (param.scheduleHint !== 'schedulable') continue;
+    // Only keyframeable scalars become controllers. Structural (topology / batch-shape)
+    // and enum / bool are read-only; image / video bind out-of-band (applyComfyImageBindings).
+    if (isStructuralParam(param.classType, param.inputName)) continue;
+    if (param.valueKind !== 'float' && param.valueKind !== 'int' && param.valueKind !== 'string')
+      continue;
     const values: (number | string | boolean)[] = [];
     for (let i = 0; i < n; i++) {
       const frame = frameStart + i;
@@ -117,21 +120,6 @@ export function bakeComfyBatchedTracks(
           : param.literal,
       );
     }
-    // A media param (image OR video) is handled by the dedicated media-binding rewrite
-    // (a static bound asset → ONE upload, the same filename every frame —
-    // applyComfyImageBindings), not an in-graph schedule. Only surface it as a track here
-    // when it genuinely VARIES across the range — a reference-travel (KeyframeChannelImage)
-    // the compiler can't schedule yet, so it must demote honestly (§7.4) rather than be
-    // dropped. A CONSTANT image/video (the authored literal, or a static binding) needs no
-    // track: the binding rewrite sets it, and an unbound literal stays as authored. Without
-    // this skip a bound LoadVideo.file emits a spurious `unsupported-kind` demotion toast in
-    // Mode B even though the binding fully drives the batch (video rows have no diamond, so
-    // a video param is always constant here).
-    if (
-      (param.valueKind === 'image' || param.valueKind === 'video') &&
-      values.every((x) => x === values[0])
-    )
-      continue;
     tracks.push({
       nodeId: param.nodeId,
       inputName: param.inputName,
@@ -237,7 +225,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   const gp = params.graph as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
   if (!gp?.apiJson) {
     notify({ severity: 'error', message: 'No workflow to render — import or add a graph first.' });
-    return { ok: false, frameCount: 0, demotions: [], reason: 'no-graph' };
+    return { ok: false, frameCount: 0, reason: 'no-graph' };
   }
   const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
 
@@ -258,7 +246,6 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   let compiled: {
     apiJson: ComfyApiJson;
     scheduleNodeIds: readonly string[];
-    demotions: readonly ScheduleDemotion[];
   };
   if (hasBasherControllers(gp.apiJson)) {
     // Mode A — the author wired each basher_controller into its target. Bake every
@@ -315,7 +302,6 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
       // extension must be installed — surface ALL of them via the presence check (else
       // an image-only controller workflow would skip the check and 400 opaquely).
       scheduleNodeIds: allDecls.map((d) => d.nodeId),
-      demotions: [],
     };
   } else {
     // Mode B — a vanilla workflow (no authored controllers). Bake every keyframeable
@@ -339,7 +325,6 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
     compiled = {
       apiJson: injected.apiJson,
       scheduleNodeIds: injected.injectedIds,
-      demotions: [],
     };
   }
 
@@ -358,16 +343,6 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
   // presence check alongside the controllers.
   const exportDecls = scanBasherExports(gp.apiJson);
   const extensionNodeIds = [...compiled.scheduleNodeIds, ...exportDecls.map((e) => e.nodeId)];
-
-  // §7.4 — surface every demotion (a param that can't be scheduled in-graph keeps its
-  // first-frame literal). Never a silent "it all animates".
-  if (compiled.demotions.length) {
-    const names = compiled.demotions.map((d) => `${d.nodeId}.${d.inputName}`).join(', ');
-    notify({
-      severity: 'warn',
-      message: `${compiled.demotions.length} param(s) preview-only in the coherent render (kept at frame ${frameStart}): ${names}`,
-    });
-  }
 
   // Live progress surface (slice 5b): begin now, feed the /ws stream into the store,
   // and end() in the outer finally so the bar clears on EVERY exit (success or any
@@ -402,7 +377,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
             message:
               'Coherent render needs the BasherSchedule extension — install it in ComfyUI/custom_nodes and restart, or remove the animated params.',
           });
-          return { ok: false, frameCount, demotions: compiled.demotions, reason: 'bridge-missing' };
+          return { ok: false, frameCount, reason: 'bridge-missing' };
         }
       }
       // Read each bound image's OPFS bytes → upload under its stable name (the
@@ -426,11 +401,11 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'batch submit failed';
       notify({ severity: 'error', message: `Coherent render failed: ${msg}` });
-      return { ok: false, frameCount, demotions: compiled.demotions, reason: 'submit-failed' };
+      return { ok: false, frameCount, reason: 'submit-failed' };
     }
     if (frames.length === 0) {
       notify({ severity: 'error', message: 'Coherent render produced no frames.' });
-      return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-frames' };
+      return { ok: false, frameCount, reason: 'no-frames' };
     }
 
     // Plan the clips to register. With declared basher_export sinks → ONE clip per
@@ -463,7 +438,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
           severity: 'error',
           message: 'Coherent render produced no frames for the declared basher_export node(s).',
         });
-        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-frames' };
+        return { ok: false, frameCount, reason: 'no-frames' };
       }
     } else {
       plans = [{ frames, name: `${meta.name} clip`, suffix: '' }];
@@ -485,7 +460,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
           message:
             'MP4 encoding unavailable in this browser — coherent render needs WebCodecs H.264.',
         });
-        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'no-mp4' };
+        return { ok: false, frameCount, reason: 'no-mp4' };
       }
       let out;
       try {
@@ -498,7 +473,7 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
         sink.abort();
         const msg = err instanceof Error ? err.message : 'encode failed';
         notify({ severity: 'error', message: `Coherent render encode failed: ${msg}` });
-        return { ok: false, frameCount, demotions: compiled.demotions, reason: 'encode-failed' };
+        return { ok: false, frameCount, reason: 'encode-failed' };
       }
       const path = `renders/comfy_batch_${comfyNodeId}${plan.suffix}.${out.ext}`;
       await storage.write(path, new Uint8Array(await out.blob.arrayBuffer()));
@@ -530,7 +505,6 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
       frameCount: first.count,
       path: first.path,
       clipId: first.clipId,
-      demotions: compiled.demotions,
     };
   } finally {
     progress.end();
