@@ -24,12 +24,10 @@ import { pickStorage } from '../../core/storage';
 import { pickMediaDecode, type MediaProbe } from '../../core/media';
 import { hashValue } from '../../core/dag/hash';
 import {
-  comfyParamPath,
-  compilePreviewFrame,
-  importComfyGraph,
-  type BakedTrack,
+  isComfyLink,
   type ComfyApiJson,
   type ComfyGraphMeta,
+  type ComfyInputValue,
 } from '../../core/comfy/comfyGraph';
 import { getComfyCapability } from '../boot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -40,7 +38,7 @@ import type { EvalCtx, NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
-import { resolveComfyImageBindings } from './comfyImageBinding';
+import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
@@ -73,78 +71,38 @@ interface ResolvedComfy {
   /** The verbatim apiJson (folded into the cache key) — null when no graph. */
   readonly graphJson: unknown;
   readonly name?: string;
-  /** Schedulable `<nodeId>.<inputName>` → its value AT THIS FRAME (channel sample
-   *  or authored literal). Folded into the cache key so an animated param redraws. */
-  readonly values: Record<string, number | string | boolean>;
-  /** The first schedulable prompt (CLIPTextEncode.text) value — labels the stub. */
-  readonly promptText?: string;
-  /** The per-frame compiled workflow (apiJson with the resolved values substituted)
-   *  — what a real /prompt submit sends (design §7.2). null when no graph. */
+  /** The submittable workflow: the imported apiJson with bound media inputs applied.
+   *  STATIC (no per-frame param substitution — the inference preview compiler is
+   *  retired); scalar animation is observed via 🎬 Render coherent clip. null = no graph. */
   readonly compiledJson: ComfyApiJson | null;
-  /** Bound image inputs to upload before submit: each project-image OPFS `path` →
-   *  the stable ComfyUI `name` the LoadImage input was rewritten to reference. */
-  readonly imageUploads: readonly { path: string; name: string }[];
+  /** Bound media inputs to upload before submit: each project-asset OPFS `path` → the
+   *  stable ComfyUI `filename` the LoadImage/LoadVideo input was rewritten to reference. */
+  readonly imageUploads: readonly ComfyImageUpload[];
 }
 
-/** Resolve a ComfyUIWorkflow node's schedulable params at `ctx.time`: each is its
- *  bound V57 channel sample (the render-identical resolveEvaluatedParam path, H40)
- *  or the authored literal when unbound. This is the per-frame PREVIEW read (design
- *  §7.1/§7.2) — the stub renders the resolved prompt; the real submit slice feeds
- *  these into compilePreviewFrame → /prompt. STRUCTURAL params are excluded (they
- *  can't be scheduled — design §7.4). */
-function resolveComfyParamsAtFrame(
-  state: DagState,
-  comfyNodeId: NodeId,
-  graphParam: unknown,
-  imageBindingsParam: unknown,
-  ctx: EvalCtx,
-): ResolvedComfy {
+/** Build a ComfyUIWorkflow layer's STATIC composite source: the imported graph with its
+ *  bound media inputs applied (the generic image/video affordance), ready to STUB or
+ *  submit ONCE. No per-frame param substitution — the comfy layer is a static preview (a
+ *  stub, or a single live render), stable across a scrub. Keyframed scalar params are
+ *  observed via 🎬 Render coherent clip (the auto-injected-controller batch), NOT a
+ *  per-frame scrub: the legacy inference preview compiler (importComfyGraph +
+ *  compilePreviewFrame) is retired (docs/COMFYUI-BASHER-NODES.md). The media-binding
+ *  rewrite mirrors the coherent render's applyComfyImageBindings (preview == compiled). */
+function resolveComfySource(graphParam: unknown, imageBindingsParam: unknown): ResolvedComfy {
   const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
-  if (!gp?.apiJson) return { graphJson: null, values: {}, compiledJson: null, imageUploads: [] };
+  if (!gp?.apiJson) return { graphJson: null, compiledJson: null, imageUploads: [] };
   const meta: ComfyGraphMeta = gp.meta ?? { name: 'workflow', importedAt: '', fps: 30, frames: 1 };
-  const graph = importComfyGraph(gp.apiJson, meta);
-  const values: Record<string, number | string | boolean> = {};
-  const tracks: BakedTrack[] = [];
-  let promptText: string | undefined;
-  for (const param of graph.params) {
-    if (param.scheduleHint !== 'schedulable') continue;
-    const r = resolveEvaluatedParam(
-      state,
-      comfyNodeId,
-      comfyParamPath(param.nodeId, param.inputName),
-      ctx,
-    );
-    const v = r ? r.value : param.literal;
-    if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') {
-      values[`${param.nodeId}.${param.inputName}`] = v;
-      tracks.push({ nodeId: param.nodeId, inputName: param.inputName, values: [v] });
-    }
-    if (
-      promptText === undefined &&
-      param.classType === 'CLIPTextEncode' &&
-      param.inputName === 'text' &&
-      typeof v === 'string'
-    )
-      promptText = v;
-  }
-  // Static image-input bindings (the generic image-source affordance, §7.1). Each
-  // bound project image is treated as ONE more baked track whose value is a stable
-  // ComfyUI filename: the LoadImage input is rewritten to `${name}.png`, the bytes
-  // are uploaded under `name` at submit. A binding for a node/input that no longer
-  // exists is skipped by compilePreviewFrame (it keeps the authored literal). The
-  // filename folds into `values` so the cache key busts when the bound image changes.
-  // resolveComfyImageBindings is the SHARED rewrite the batched compile reuses
-  // (compileComfyBatch) — preview == compiled image handling (V81 thesis).
-  const imageUploads: { path: string; filename: string }[] = [];
+  // Apply each bound media input onto a clone (the SAME rewrite the coherent render does).
+  // A binding whose node is missing / now wired is skipped (keeps the authored literal).
+  const compiledJson = structuredClone(gp.apiJson) as ComfyApiJson;
+  const imageUploads: ComfyImageUpload[] = [];
   for (const b of resolveComfyImageBindings(imageBindingsParam)) {
-    values[`${b.nodeId}.${b.inputName}`] = b.filename;
-    tracks.push({ nodeId: b.nodeId, inputName: b.inputName, values: [b.filename] });
+    const target = compiledJson[b.nodeId];
+    if (!target || !target.inputs || isComfyLink(target.inputs[b.inputName])) continue;
+    (target.inputs as Record<string, ComfyInputValue>)[b.inputName] = b.filename;
     imageUploads.push(b.upload);
   }
-  // The single-frame compiled workflow: every schedulable param + bound image input
-  // substituted with its resolved-at-frame value (preview path, design §7.2).
-  const compiledJson = compilePreviewFrame(graph, tracks, 0);
-  return { graphJson: gp.apiJson, name: meta.name, values, promptText, compiledJson, imageUploads };
+  return { graphJson: gp.apiJson, name: meta.name, compiledJson, imageUploads };
 }
 
 /** Resolve the comp's layers (back→front) to composite inputs: authored params with
@@ -215,20 +173,19 @@ export function collectCompositeInputs(
           };
         }
       } else if (base && base.type === 'ComfyUIWorkflow') {
-        // A ComfyUIWorkflow generator layer (inc 3). Decoded as a deterministic
-        // STUB frame (CI-safe, no server) — real /prompt → /view submit is a later
-        // slice. Keyframe-any-param (V81): resolve every SCHEDULABLE graph param at
-        // THIS frame (a bound V57 channel sample, else the authored literal — the
-        // render-identical resolveEvaluatedParam path, H40), so an animated param
-        // changes the frame across a scrub. The cache key folds those resolved
-        // values + the graph json → an edited or animated workflow re-renders (the
-        // spine's bare `comfy:<nodeId>` carry-in fix). The stub draws the prompt.
+        // A ComfyUIWorkflow generator layer. Decoded as a deterministic STUB frame
+        // (CI-safe, no server), or a SINGLE live render when comfyLiveGenerate is on.
+        // STATIC: the comfy layer no longer recompiles per frame — keyframed scalar
+        // params are observed via 🎬 Render coherent clip (the auto-injected-controller
+        // batch), not a per-frame scrub (the inference preview compiler is retired). The
+        // cache key folds the graph json + bound media → an edited workflow or a changed
+        // binding re-renders, but a scrub does not. The stub draws the workflow name.
         const cp = base.params as Record<string, unknown>;
-        const resolved = resolveComfyParamsAtFrame(state, baseId, cp.graph, cp.imageBindings, ctx);
+        const resolved = resolveComfySource(cp.graph, cp.imageBindings);
         source = {
           kind: 'comfy',
-          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, vals: resolved.values, imgs: resolved.imageUploads })}`,
-          label: resolved.promptText ?? resolved.name ?? 'ComfyUI',
+          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, imgs: resolved.imageUploads })}`,
+          label: resolved.name ?? 'ComfyUI',
           comfyWorkflow: resolved.compiledJson,
           comfyImageUploads: resolved.imageUploads,
           mediaKind: 'image',
