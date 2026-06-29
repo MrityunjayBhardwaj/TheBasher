@@ -169,3 +169,95 @@ export function writeBasherControllerFrameCounts(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// auto-injection — the NEW way a Mode-B (no authored controllers) workflow
+// animates a foreign param (docs/COMFYUI-BASHER-NODES.md). Replaces the retired
+// inference compiler's BasherValueSchedule rewire: instead of WALKING + CLASSIFYING
+// a foreign graph, Basher injects a basher_controller ONLY for the param the user
+// explicitly keyframed (declared by the keyframing action, not inferred), reusing
+// the SAME OUTPUT_IS_LIST transport an author-placed controller uses. One transport,
+// two ways the controller arrives: author-placed (Mode A) or Basher-injected (Mode B).
+// ---------------------------------------------------------------------------
+
+/** A keyframed foreign param baked to one value per frame over the batch range, ready
+ *  to drive an INJECTED controller. `valueKind` picks the controller's declared kind;
+ *  only scalar kinds (float/int/string) are injected — media inputs travel out-of-band
+ *  (applyComfyImageBindings) and bool is a constant, so both are ignored here. */
+export interface InjectableTrack {
+  readonly nodeId: string;
+  readonly inputName: string;
+  readonly classType: string;
+  readonly valueKind: string;
+  readonly values: readonly (number | string | boolean)[];
+}
+
+export interface InjectedControllers {
+  /** The graph with a basher_controller injected + rewired for each varying param. */
+  readonly apiJson: ComfyApiJson;
+  /** Ids of the controllers injected — drives the extension-presence check. EMPTY when
+   *  nothing varied → the graph submits exactly as authored (the zero-touch passthrough,
+   *  needing no extension). */
+  readonly injectedIds: readonly string[];
+}
+
+/** Only scalar kinds get an injected controller. Media travels out-of-band (the image/
+ *  video binding rewrite); bool is a discrete constant, never a per-frame channel. */
+const INJECT_KINDS: ReadonlySet<string> = new Set(['float', 'int', 'string']);
+
+/** A deterministic, ComfyUI-safe id for the controller injected for one param. Stable
+ *  (not a counter) so the compiled JSON snapshots reproducibly and the node is
+ *  recognisable when the workflow opens in ComfyUI. */
+function injectedControllerId(nodeId: string, inputName: string): string {
+  return `bctl_${nodeId}_${inputName}`.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+/**
+ * Auto-inject a `basher_controller` for each VARYING keyframed foreign param — the NEW
+ * Mode-B animation path (docs/COMFYUI-BASHER-NODES.md), replacing the retired inference
+ * compiler's BasherValueSchedule rewire. For each scalar track that actually varies
+ * across the batch: create a basher_controller carrying the baked array (the SAME
+ * OUTPUT_IS_LIST transport an author-placed controller uses) and rewire the target
+ * input to read it (`inputs[name] = [ctrlId, 0]`). A CONSTANT track substitutes its
+ * literal and injects NOTHING — so a workflow with no keyframes submits exactly as
+ * authored (the passthrough; only a genuinely-animated param needs the extension
+ * installed). Media/bool tracks are ignored (media is out-of-band; bool is constant).
+ *
+ * PURE: deep-clones the graph; the source is never mutated. The whole Mode-B "compile"
+ * is now this single declared-injection — no manifest walk, no schedulable/structural
+ * classification, no demotions, no foreign-node parsing.
+ */
+export function injectBasherControllers(
+  apiJson: ComfyApiJson,
+  tracks: readonly InjectableTrack[],
+): InjectedControllers {
+  const out = structuredClone(apiJson) as ComfyApiJson;
+  const injectedIds: string[] = [];
+  for (const track of tracks) {
+    if (!INJECT_KINDS.has(track.valueKind)) continue; // media out-of-band; bool constant
+    const target = out[track.nodeId];
+    // The node is gone or this input is now wired (the graph was edited) — keep the wire.
+    if (!target || !target.inputs || isComfyLink(target.inputs[track.inputName])) continue;
+    if (track.values.length === 0) continue;
+    // A CONSTANT track needs no controller — substitute the literal and move on. This is
+    // what makes an un-keyframed param (or a whole vanilla workflow) submit as-authored.
+    if (track.values.every((v) => v === track.values[0])) {
+      (target.inputs as Record<string, ComfyInputValue>)[track.inputName] = track.values[0];
+      continue;
+    }
+    const ctrlId = injectedControllerId(track.nodeId, track.inputName);
+    out[ctrlId] = {
+      class_type: BASHER_CONTROLLER_TYPE,
+      inputs: {
+        name: `${track.classType}.${track.inputName}`,
+        kind: track.valueKind,
+        values_json: JSON.stringify(track.values),
+        frame_count: track.values.length,
+      },
+      _meta: { title: `Basher Controller: ${track.nodeId}.${track.inputName}` },
+    };
+    (target.inputs as Record<string, ComfyInputValue>)[track.inputName] = [ctrlId, 0];
+    injectedIds.push(ctrlId);
+  }
+  return { apiJson: out, injectedIds };
+}

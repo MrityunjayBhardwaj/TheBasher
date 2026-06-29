@@ -8,11 +8,13 @@ import {
   BASHER_CONTROLLER_TYPE,
   comfyControllerPath,
   hasBasherControllers,
+  injectBasherControllers,
   isScalarControllerKind,
   parseComfyControllerPath,
   scanBasherControllers,
   writeBasherControllerFrameCounts,
   writeBasherControllerValues,
+  type InjectableTrack,
 } from './basherControllers';
 import type { ComfyApiJson } from './comfyGraph';
 
@@ -232,5 +234,150 @@ describe('writeBasherControllerFrameCounts — Basher-supplied batch N for media
     const out = writeBasherControllerFrameCounts(wired, { '14': 12, '3': 7 });
     expect(out['14'].inputs.frame_count).toEqual(['9', 0]); // wired → left alone
     expect(out['3']).toBeUndefined();
+  });
+});
+
+describe('injectBasherControllers — auto-inject a controller for a keyframed Mode-B param', () => {
+  // A VANILLA workflow (NO basher_controller): a KSampler whose cfg is an authored
+  // literal. The user keyframes comfy:3.cfg; Basher bakes the curve + auto-injects.
+  const VANILLA: ComfyApiJson = {
+    '3': {
+      class_type: 'KSampler',
+      inputs: { seed: 1, steps: 20, cfg: 7, model: ['4', 0], latent_image: ['5', 0] },
+    },
+    '6': { class_type: 'CLIPTextEncode', inputs: { text: 'a cube', clip: ['4', 1] } },
+  };
+
+  it('injects a basher_controller for a VARYING scalar and rewires the input to read it', () => {
+    const tracks: InjectableTrack[] = [
+      {
+        nodeId: '3',
+        inputName: 'cfg',
+        classType: 'KSampler',
+        valueKind: 'float',
+        values: [1.5, 8, 16],
+      },
+    ];
+    const { apiJson, injectedIds } = injectBasherControllers(VANILLA, tracks);
+    expect(injectedIds).toEqual(['bctl_3_cfg']);
+    const ctrl = apiJson['bctl_3_cfg'];
+    expect(ctrl.class_type).toBe(BASHER_CONTROLLER_TYPE);
+    expect(ctrl.inputs.kind).toBe('float');
+    expect(ctrl.inputs.name).toBe('KSampler.cfg');
+    expect(ctrl.inputs.values_json).toBe('[1.5,8,16]');
+    expect(ctrl.inputs.frame_count).toBe(3);
+    // the foreign input now READS the injected controller (the proven OUTPUT_IS_LIST wire)
+    expect(apiJson['3'].inputs.cfg).toEqual(['bctl_3_cfg', 0]);
+    // source not mutated
+    expect(VANILLA['3'].inputs.cfg).toBe(7);
+  });
+
+  it('a CONSTANT track injects NOTHING — the literal is substituted (the passthrough)', () => {
+    const tracks: InjectableTrack[] = [
+      {
+        nodeId: '3',
+        inputName: 'cfg',
+        classType: 'KSampler',
+        valueKind: 'float',
+        values: [9, 9, 9],
+      },
+    ];
+    const { apiJson, injectedIds } = injectBasherControllers(VANILLA, tracks);
+    expect(injectedIds).toEqual([]); // no controller — extension not needed
+    expect(apiJson['bctl_3_cfg']).toBeUndefined();
+    expect(apiJson['3'].inputs.cfg).toBe(9); // literal substituted, not a wire
+  });
+
+  it('with NO tracks the graph submits exactly as authored (zero-touch passthrough)', () => {
+    const { apiJson, injectedIds } = injectBasherControllers(VANILLA, []);
+    expect(injectedIds).toEqual([]);
+    expect(apiJson).toEqual(VANILLA);
+  });
+
+  it('ignores media + bool kinds (out-of-band / discrete) and a now-wired input', () => {
+    const tracks: InjectableTrack[] = [
+      // media → handled by applyComfyImageBindings, never injected here
+      {
+        nodeId: '3',
+        inputName: 'cfg',
+        classType: 'KSampler',
+        valueKind: 'image',
+        values: ['a.png', 'b.png'],
+      },
+      // bool → discrete constant, no per-frame channel
+      {
+        nodeId: '3',
+        inputName: 'steps',
+        classType: 'KSampler',
+        valueKind: 'bool',
+        values: [true, false],
+      },
+      // points at a WIRED input (model) → keep the wire, never overwrite
+      {
+        nodeId: '3',
+        inputName: 'model',
+        classType: 'KSampler',
+        valueKind: 'float',
+        values: [1, 2, 3],
+      },
+      // points at a MISSING node → skipped, never created
+      { nodeId: '99', inputName: 'x', classType: 'Foo', valueKind: 'float', values: [1, 2] },
+    ];
+    const { apiJson, injectedIds } = injectBasherControllers(VANILLA, tracks);
+    expect(injectedIds).toEqual([]);
+    expect(apiJson['3'].inputs.model).toEqual(['4', 0]); // wire untouched
+    expect(apiJson['99']).toBeUndefined();
+    // cfg/steps unchanged from authored (media/bool ignored)
+    expect(apiJson['3'].inputs.cfg).toBe(7);
+    expect(apiJson['3'].inputs.steps).toBe(20);
+  });
+
+  it('mixes a varying param (injected) with a constant one (passthrough) in one graph', () => {
+    const tracks: InjectableTrack[] = [
+      {
+        nodeId: '3',
+        inputName: 'cfg',
+        classType: 'KSampler',
+        valueKind: 'float',
+        values: [2, 4, 6],
+      },
+      {
+        nodeId: '6',
+        inputName: 'text',
+        classType: 'CLIPTextEncode',
+        valueKind: 'string',
+        values: ['x', 'x'],
+      },
+    ];
+    const { apiJson, injectedIds } = injectBasherControllers(VANILLA, tracks);
+    expect(injectedIds).toEqual(['bctl_3_cfg']); // only the varying one
+    expect(apiJson['3'].inputs.cfg).toEqual(['bctl_3_cfg', 0]);
+    expect(apiJson['6'].inputs.text).toBe('x'); // constant string → literal, no controller
+  });
+
+  it('is the testable IP: an injected float ramp is a stable snapshot', () => {
+    const tracks: InjectableTrack[] = [
+      {
+        nodeId: '3',
+        inputName: 'cfg',
+        classType: 'KSampler',
+        valueKind: 'float',
+        values: [1.5, 8, 16],
+      },
+    ];
+    expect(injectBasherControllers(VANILLA, tracks).apiJson['bctl_3_cfg']).toMatchInlineSnapshot(`
+      {
+        "_meta": {
+          "title": "Basher Controller: 3.cfg",
+        },
+        "class_type": "basher_controller",
+        "inputs": {
+          "frame_count": 3,
+          "kind": "float",
+          "name": "KSampler.cfg",
+          "values_json": "[1.5,8,16]",
+        },
+      }
+    `);
   });
 });
