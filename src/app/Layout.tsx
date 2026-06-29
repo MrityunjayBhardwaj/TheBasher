@@ -111,13 +111,20 @@ export function Layout() {
   // top-anchored, bottom-clear column hugging its edge. Narrow: a full-height
   // overlay drawer hugging its edge, slid off past its own width when closed and
   // flush when open (the transform animates the slide).
+  // #237 — the outliner/inspector/toolbar/bottom-stack are 3D-editor chrome.
+  // In VIDEO space the compositor (video-slot z-45) is the whole surface; this
+  // chrome must be HIDDEN, not just covered (a covered affordance still
+  // intercepts clicks → the H122/H129 family). Gated by display:none (not
+  // unmount) so mount-once state survives the space switch, same discipline as
+  // the view3d/uv/video slots themselves.
+  const chromeHidden = isPresent || space === 'video';
   const sideIslandStyle = (side: 'left' | 'right', width: number, open: boolean): CSSProperties => {
     const base: CSSProperties = {
       position: 'absolute',
       top: ISLAND_GAP,
       width,
       [side]: ISLAND_GAP,
-      display: isPresent ? 'none' : 'flex',
+      display: chromeHidden ? 'none' : 'flex',
       // Narrow drawers overlay the bottom stack; desktop islands sit beside it.
       zIndex: isNarrow ? 40 : 20,
     };
@@ -280,8 +287,14 @@ export function Layout() {
         {/* v0.6 #4 W1 — the ONE consolidated toolbar (Spline region ②).
             Mounted at the <main> level (not inside the 3D slot) so its Space
             toggle stays reachable in UV mode, where view3d-slot is
-            display:none. Self-gates to null in present mode. */}
-        <FloatingViewportToolbar />
+            display:none. Self-gates to null in present mode. #237 — wrapped in a
+            display:none gate so it HIDES (not just covers) in VIDEO space, where
+            the compositor owns the surface and carries its own transport. The
+            wrapper is a zero-box static block (the pill is absolute, anchored to
+            <main>), so showing/hiding never shifts the toolbar's geometry. */}
+        <div style={{ display: chromeHidden ? 'none' : 'block' }}>
+          <FloatingViewportToolbar />
+        </div>
 
         {/* UX-BACKLOG #2 — the outliner (left) + inspector (right) float as
             absolute islands OVER the full-bleed viewport (Spline ③/④). They are
@@ -322,7 +335,7 @@ export function Layout() {
             scrim dims + dismisses an open drawer; per-side edge tabs reveal a
             closed drawer. The tabs sit ABOVE the scrim (z-40) so the still-closed
             side stays tappable while the other drawer is open. */}
-        {isNarrow && !isPresent ? (
+        {isNarrow && !chromeHidden ? (
           <>
             {narrowLeftDrawerOpen || narrowRightDrawerOpen ? (
               <div
@@ -377,7 +390,10 @@ export function Layout() {
             left: '50%',
             transform: 'translateX(-50%)',
             width: centerSurfaceWidth,
-            display: isPresent ? 'none' : 'flex',
+            // #237 — hidden in VIDEO too (the 3D TimelineDrawer z-20 was COVERED
+            // by video-slot z-45, so a click on the covered drawer was
+            // intercepted — H122/H129). The compositor has its own LayerTimeline.
+            display: chromeHidden ? 'none' : 'flex',
           }}
           className="z-20 flex flex-col gap-2"
         >
