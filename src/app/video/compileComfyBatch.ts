@@ -111,14 +111,21 @@ export function bakeComfyBatchedTracks(
           : param.literal,
       );
     }
-    // An image param is handled by the dedicated image-binding rewrite (a static
-    // bound image → ONE upload, the same filename every frame — applyComfyImageBindings),
-    // not an in-graph schedule. Only surface it as a track here when it genuinely
-    // VARIES across the range — a reference-travel (KeyframeChannelImage) the compiler
-    // can't schedule yet, so it must demote honestly (§7.4) rather than be dropped. A
-    // CONSTANT image (the authored literal, or a static binding) needs no track: the
-    // binding rewrite sets it, and an unbound literal stays as authored.
-    if (param.valueKind === 'image' && values.every((x) => x === values[0])) continue;
+    // A media param (image OR video) is handled by the dedicated media-binding rewrite
+    // (a static bound asset → ONE upload, the same filename every frame —
+    // applyComfyImageBindings), not an in-graph schedule. Only surface it as a track here
+    // when it genuinely VARIES across the range — a reference-travel (KeyframeChannelImage)
+    // the compiler can't schedule yet, so it must demote honestly (§7.4) rather than be
+    // dropped. A CONSTANT image/video (the authored literal, or a static binding) needs no
+    // track: the binding rewrite sets it, and an unbound literal stays as authored. Without
+    // this skip a bound LoadVideo.file emits a spurious `unsupported-kind` demotion toast in
+    // Mode B even though the binding fully drives the batch (video rows have no diamond, so
+    // a video param is always constant here).
+    if (
+      (param.valueKind === 'image' || param.valueKind === 'video') &&
+      values.every((x) => x === values[0])
+    )
+      continue;
     tracks.push({
       nodeId: param.nodeId,
       inputName: param.inputName,

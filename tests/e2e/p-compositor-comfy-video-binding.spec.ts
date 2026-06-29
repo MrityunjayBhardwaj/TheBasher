@@ -120,3 +120,73 @@ test('a LoadVideo.file param is a project-video picker; picking one stores the b
     )
     .toBe('media/orbit.mp4');
 });
+
+// A video param is a MEDIA bind handled out-of-band by applyComfyImageBindings — NOT an
+// in-graph schedule. So a Mode-B render of a workflow with a LoadVideo node must NOT
+// demote the VIDEO param ('unsupported-kind' → a spurious "preview-only" warn toast): the
+// bake skips constant media params (image AND video). The demotion depends only on the
+// param existing, so a stub-forced render exercises it deterministically — no GPU needed.
+// (A constant string prompt demoting is SEPARATE pre-existing Mode-B behavior — not
+// asserted here; this guards only the video-param fix.)
+test('Mode-B render of a LoadVideo workflow does not demote the video param', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('menu-file-button')).toBeVisible();
+  await page.evaluate(() => {
+    (window as unknown as { __basher_useStubComfy?: () => void }).__basher_useStubComfy?.();
+  });
+  await page.getByTestId('space-switch-video').click();
+  await page.getByTestId('video-mode-new-comp').click();
+  await page.getByTestId('video-mode-add-layer').click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('video-mode-add-comfy-json').click();
+  (await chooser).setFiles({
+    name: 'with-video.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(API_WORKFLOW)),
+  });
+  await expect(page.getByTestId('video-mode-layer-count')).toHaveText('1 layer', { timeout: 8000 });
+  await page.locator('[data-testid^="layer-bar-"]').first().click();
+  const comfyId = await page.evaluate(
+    () =>
+      Object.values((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).find(
+        (n) => n.type === 'ComfyUIWorkflow',
+      )!.id,
+  );
+
+  // Accumulate every warn-toast text as it appears (toasts auto-dismiss), so a transient
+  // demotion toast during the render can't slip past a single point-in-time assertion.
+  await page.evaluate(() => {
+    (window as unknown as { __warnToasts?: string[] }).__warnToasts = [];
+    const seen = (window as unknown as { __warnToasts: string[] }).__warnToasts;
+    const scan = () =>
+      document.querySelectorAll('[data-testid="toast-warn"]').forEach((el) => {
+        const t = el.textContent ?? '';
+        if (t && !seen.includes(t)) seen.push(t);
+      });
+    new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
+    scan();
+  });
+
+  await page.getByTestId(`comfy-render-clip-${comfyId}`).click();
+  // The render completes (a stub MediaClip lands) — proves the path ran to the end.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(
+          () =>
+            Object.values(
+              (window as unknown as DagWindow).__basher_dag!.getState().state.nodes,
+            ).filter((n) => n.type === 'MediaClip').length,
+          [],
+        ),
+      { timeout: 20000 },
+    )
+    .toBe(1);
+
+  const warns = await page.evaluate(
+    () => (window as unknown as { __warnToasts?: string[] }).__warnToasts ?? [],
+  );
+  // No demotion toast names the LoadVideo param (node 10, input `file`). Without the
+  // constant-video skip in bakeComfyBatchedTracks this would read "…preview-only…: 10.file".
+  expect(warns.find((t) => /preview-only/i.test(t) && t.includes('10.file'))).toBeUndefined();
+});
