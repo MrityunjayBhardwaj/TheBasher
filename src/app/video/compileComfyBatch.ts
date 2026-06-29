@@ -41,6 +41,7 @@ import {
 import {
   comfyControllerPath,
   hasBasherControllers,
+  injectBasherControllers,
   isScalarControllerKind,
   scanBasherControllers,
   writeBasherControllerFrameCounts,
@@ -50,7 +51,6 @@ import {
 import { scanBasherExports } from '../../core/comfy/basherExports';
 import { createMp4Sink } from '../../render/renderAnimation';
 import {
-  compileBatchedWorkflow,
   comfyParamPath,
   importComfyGraph,
   isComfyLink,
@@ -250,9 +250,11 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
 
   // DISPATCH (docs/COMFYUI-BASHER-NODES.md): a workflow that declares basher_controller
   // nodes opts into the CONTROLLER CONTRACT (Mode A) — Basher drives the author-declared
-  // nodes and never walks the foreign graph. Otherwise fall back to the legacy inference
-  // compiler (Mode B — the previous approach). Both yield {apiJson, scheduleNodeIds,
-  // demotions} so the submit → MP4 → MediaClip tail is shared.
+  // nodes. Otherwise (Mode B — a vanilla workflow) Basher AUTO-INJECTS a controller for
+  // each keyframed foreign param (injectBasherControllers — the SAME transport as Mode A,
+  // declared by the user's keyframing, not inferred). No keyframes → nothing injected →
+  // the graph submits as authored (the passthrough). Both modes yield {apiJson,
+  // scheduleNodeIds, demotions} so the submit → MP4 → MediaClip tail is shared.
   let compiled: {
     apiJson: ComfyApiJson;
     scheduleNodeIds: readonly string[];
@@ -316,7 +318,13 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
       demotions: [],
     };
   } else {
-    // Mode B — the legacy inference compiler (the previous approach).
+    // Mode B — a vanilla workflow (no authored controllers). Bake every keyframeable
+    // param over the range, then AUTO-INJECT a basher_controller for each one that
+    // actually VARIES (injectBasherControllers), rewiring the foreign input to read it.
+    // A constant param is substituted as a literal and injects nothing — so an
+    // un-keyframed workflow submits exactly as authored (the passthrough), needing no
+    // extension. The bake reads the SAME resolveEvaluatedParam preview + the coherent
+    // render share, so the dopesheet, the comfy: channel, and this batch agree.
     const graph = importComfyGraph(gp.apiJson, meta);
     const tracks = bakeComfyBatchedTracks(
       state,
@@ -327,7 +335,12 @@ export async function compileComfyBatch(comfyNodeId: NodeId): Promise<CompileCom
       fps,
       frameCount,
     );
-    compiled = compileBatchedWorkflow(graph, tracks, { frameCount });
+    const injected = injectBasherControllers(graph.apiJson, tracks);
+    compiled = {
+      apiJson: injected.apiJson,
+      scheduleNodeIds: injected.injectedIds,
+      demotions: [],
+    };
   }
 
   // Image inputs (the 3D-scene-as-control-rig thesis: a depth/normal pass bound to a

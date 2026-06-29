@@ -14,7 +14,7 @@ import {
   type ComfyApiJson,
   type ComfyGraphMeta,
 } from '../../core/comfy/comfyGraph';
-import { scanBasherControllers } from '../../core/comfy/basherControllers';
+import { injectBasherControllers, scanBasherControllers } from '../../core/comfy/basherControllers';
 import type { DagState } from '../../core/dag/state';
 
 const SD15: ComfyApiJson = {
@@ -145,5 +145,20 @@ describe('bakeBasherControllerValues — Mode-A range bake (the controller contr
     const decls = scanBasherControllers(CONTROLLED);
     const valuesById = bakeBasherControllerValues(EMPTY_STATE, 'comfy1', decls, 5, 9, 30, 10);
     expect(valuesById['10']).toHaveLength(5);
+  });
+});
+
+describe('Mode-B compile = bake → injectBasherControllers (the auto-inject path)', () => {
+  const graph = importComfyGraph(SD15, META);
+
+  it('a vanilla workflow with no bound channels injects NOTHING — submits as authored', () => {
+    // The integration the Mode-B compile branch runs: bake every keyframeable param
+    // (all constant here, no channels) → inject. Every track is constant → its literal
+    // is substituted (a no-op since it equals the authored value) and no controller is
+    // injected → the graph is byte-identical to the source (the zero-touch passthrough).
+    const tracks = bakeComfyBatchedTracks(EMPTY_STATE, 'comfy1', graph, 0, 3, 30, 4);
+    const injected = injectBasherControllers(graph.apiJson, tracks);
+    expect(injected.injectedIds).toEqual([]);
+    expect(injected.apiJson).toEqual(SD15);
   });
 });
