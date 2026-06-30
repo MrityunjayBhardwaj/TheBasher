@@ -159,6 +159,62 @@ describe('DagStore', () => {
     expect(useDagStore.getState().undoStack.length).toBe(0);
   });
 
+  it('an interaction coalesces N per-move dispatches into ONE undo entry (drag)', () => {
+    const store = useDagStore.getState();
+    store.dispatch({ type: 'addNode', nodeId: 'n', nodeType: 'TestNumber', params: { value: 0 } });
+    const baseUndo = useDagStore.getState().undoStack.length; // 1
+    const baseActivity = useDagStore.getState().activity.length;
+
+    // A drag: begin → 3 per-move setParam (value 0 → 1 → 2 → 3) → end.
+    store.beginInteraction();
+    store.dispatch({ type: 'setParam', nodeId: 'n', paramPath: 'value', value: 1 });
+    store.dispatch({ type: 'setParam', nodeId: 'n', paramPath: 'value', value: 2 });
+    store.dispatch({ type: 'setParam', nodeId: 'n', paramPath: 'value', value: 3 });
+    store.endInteraction('drag value');
+
+    // State reflects the FINAL value; the whole drag is exactly ONE undo entry +
+    // ONE activity line (not three).
+    expect((useDagStore.getState().state.nodes.n.params as { value: number }).value).toBe(3);
+    expect(useDagStore.getState().undoStack.length).toBe(baseUndo + 1);
+    expect(useDagStore.getState().activity.length).toBe(baseActivity + 1);
+
+    // ONE undo reverts the WHOLE drag back to the pre-drag value (0), not 3→2→1.
+    store.undo();
+    expect((useDagStore.getState().state.nodes.n.params as { value: number }).value).toBe(0);
+    expect(useDagStore.getState().undoStack.length).toBe(baseUndo);
+
+    // ONE redo restores the final value.
+    store.redo();
+    expect((useDagStore.getState().state.nodes.n.params as { value: number }).value).toBe(3);
+  });
+
+  it('an interaction buffers dispatchAtomic ops FLAT (one undo entry for the gesture)', () => {
+    const store = useDagStore.getState();
+    store.beginInteraction();
+    store.dispatchAtomic(
+      [{ type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } }],
+      'user',
+      'move a',
+    );
+    store.dispatchAtomic(
+      [{ type: 'addNode', nodeId: 'b', nodeType: 'TestNumber', params: { value: 2 } }],
+      'user',
+      'move b',
+    );
+    store.endInteraction('drag');
+    expect(useDagStore.getState().undoStack.length).toBe(1); // not 2 nested groups
+    store.undo();
+    expect(useDagStore.getState().state.nodes).toEqual({}); // both reverted in one undo
+  });
+
+  it('an interaction with no moves flushes nothing (a click is not an undo entry)', () => {
+    const store = useDagStore.getState();
+    store.beginInteraction();
+    store.endInteraction('drag with no move');
+    expect(useDagStore.getState().undoStack.length).toBe(0);
+    expect(useDagStore.getState().activity.length).toBe(0);
+  });
+
   it('rejects invalid op shape via zod (V7 spirit, P0 today)', () => {
     const store = useDagStore.getState();
     expect(() => store.dispatch({ type: 'nope', nodeId: 'x' } as unknown as Op)).toThrow();

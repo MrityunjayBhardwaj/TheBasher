@@ -531,15 +531,29 @@ function SingleGizmo() {
 
   function onDraggingChanged(dragging: boolean) {
     useGizmoStore.getState().setDragging(dragging);
-    if (dragging) return; // start: nothing to dispatch
-    if (!isCharacter || !selectedId || !groupNode) return;
-    // End of drag — emit walkTo to the gizmo's current position.
-    const g = groupNode;
-    const dagState = useDagStore.getState().state;
-    const target = maybeSnapVec3([g.position.x, 0, g.position.z]);
-    const result = buildWalkToOps(dagState, selectedId, target);
-    if (!result) return;
-    useDagStore.getState().dispatchAtomic(result.ops, 'user', result.description);
+    if (dragging) {
+      // Coalesce the whole drag into ONE undo entry — the per-move onObjectChange
+      // dispatches (translate/rotate/scale, incl. the animated-keyframe + GltfChild-
+      // override sub-paths) buffer until drag end, so Cmd+Z reverts x:1.2 → x:1 in
+      // one step, not incrementally. Character has no per-move dispatch (walkTo fires
+      // once on end), so it needs no bracket.
+      if (!isCharacter) useDagStore.getState().beginInteraction();
+      return;
+    }
+    if (isCharacter) {
+      if (!selectedId || !groupNode) return;
+      // End of drag — emit walkTo to the gizmo's current position.
+      const g = groupNode;
+      const dagState = useDagStore.getState().state;
+      const target = maybeSnapVec3([g.position.x, 0, g.position.z]);
+      const result = buildWalkToOps(dagState, selectedId, target);
+      if (!result) return;
+      useDagStore.getState().dispatchAtomic(result.ops, 'user', result.description);
+      return;
+    }
+    // End of a transform drag — flush the coalesced ops as one undo entry. A click
+    // with no move flushed nothing (endInteraction self-guards on an empty buffer).
+    useDagStore.getState().endInteraction(`gizmo ${useGizmoStore.getState().mode}`);
   }
 
   return (
@@ -566,6 +580,20 @@ function SingleGizmo() {
       ) : null}
     </>
   );
+}
+
+// Begin/end a gizmo drag transaction. The drag's per-move dispatches coalesce into
+// ONE undo entry (Cmd+Z reverts the whole drag, not each intermediate pixel — the
+// history records the committed action, not the in-betweens). Used by the Multi +
+// Camera gizmos, whose TransformControls expose raw onMouseDown/Up; SingleGizmo
+// brackets inside onDraggingChanged (it has the extra character-walk branch).
+function startGizmoDrag(): void {
+  useGizmoStore.getState().setDragging(true);
+  useDagStore.getState().beginInteraction();
+}
+function endGizmoDrag(description: string): void {
+  useGizmoStore.getState().setDragging(false);
+  useDagStore.getState().endInteraction(description);
 }
 
 // #225 — the MULTI-object gizmo. When >1 manipulable node is selected, a single
@@ -755,8 +783,8 @@ function MultiGizmo() {
           mode={mode}
           enabled={!playing}
           onObjectChange={onObjectChange}
-          onMouseDown={() => useGizmoStore.getState().setDragging(true)}
-          onMouseUp={() => useGizmoStore.getState().setDragging(false)}
+          onMouseDown={startGizmoDrag}
+          onMouseUp={() => endGizmoDrag(`multi ${useGizmoStore.getState().mode}`)}
         />
       ) : null}
     </>
@@ -961,8 +989,8 @@ function CameraGizmo() {
           space={orientation === 'local' ? 'local' : 'world'}
           enabled={!playing}
           onObjectChange={onBodyChange}
-          onMouseDown={() => useGizmoStore.getState().setDragging(true)}
-          onMouseUp={() => useGizmoStore.getState().setDragging(false)}
+          onMouseDown={startGizmoDrag}
+          onMouseUp={() => endGizmoDrag(`camera ${useGizmoStore.getState().mode}`)}
         />
       ) : null}
       {aimNode ? (
@@ -971,8 +999,8 @@ function CameraGizmo() {
           mode="translate"
           enabled={!playing}
           onObjectChange={onAimChange}
-          onMouseDown={() => useGizmoStore.getState().setDragging(true)}
-          onMouseUp={() => useGizmoStore.getState().setDragging(false)}
+          onMouseDown={startGizmoDrag}
+          onMouseUp={() => endGizmoDrag('camera aim')}
         />
       ) : null}
     </>

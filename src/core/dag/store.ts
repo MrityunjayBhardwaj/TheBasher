@@ -43,6 +43,20 @@ function isAtomic(e: UndoEntry): e is AtomicGroup {
   return (e as AtomicGroup).__atomic === true;
 }
 
+/**
+ * An open interaction (a continuous drag — gizmo, scrub) accumulating its per-move
+ * ops. While one is open, dispatch/dispatchBatch/dispatchAtomic mutate state but
+ * DEFER the undo + activity records into this buffer; endInteraction flushes the
+ * whole buffer as ONE undo entry + ONE activity line. So a drag from x:1 → x:1.2 is
+ * a single Cmd+Z (back to x:1), not N incremental steps. `source`/`description` are
+ * captured from the first buffered op (used when endInteraction is given none).
+ */
+interface InteractionBuffer {
+  entries: InverseOp[];
+  source: OpSource;
+  description: string;
+}
+
 export interface DagStore {
   state: DagState;
   undoStack: UndoEntry[];
@@ -62,6 +76,19 @@ export interface DagStore {
   dispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => InverseOp[];
   /** Replace state wholesale (project load only — bypasses op log). */
   hydrate: (state: DagState) => void;
+  /**
+   * Open a drag transaction: every dispatch until `endInteraction` mutates state
+   * but coalesces into ONE undo entry. Bracket a continuous gesture (gizmo drag,
+   * scrub) so its per-move ops undo as one action, not incrementally. Re-entrant
+   * (a second begin while one is open is a no-op).
+   */
+  beginInteraction: () => void;
+  /**
+   * Close the drag transaction opened by `beginInteraction`, flushing the buffered
+   * ops as ONE undo entry + ONE activity line (description optional — defaults to
+   * the first buffered op's). A bracket with zero moves (a click) flushes nothing.
+   */
+  endInteraction: (description?: string) => void;
   undo: () => UndoEntry | undefined;
   redo: () => UndoEntry | undefined;
   reset: () => void;
@@ -74,6 +101,12 @@ export function __setTimeNowForTests(fn: () => number): void {
   timeNow = fn;
 }
 
+// Module-scoped open interaction (a drag transaction). Not in the zustand state
+// because per-move dispatches read/append it synchronously many times per second;
+// keeping it out of the reactive state avoids needless subscriber churn. Flushed by
+// endInteraction / hydrate / reset.
+let interaction: InteractionBuffer | null = null;
+
 export const useDagStore = create<DagStore>((set, get) => ({
   state: emptyDagState(),
   undoStack: [],
@@ -85,6 +118,16 @@ export const useDagStore = create<DagStore>((set, get) => ({
     const validated = validateOp(op);
     const { next, inverse } = applyOp(get().state, validated);
     const inv: InverseOp = { forward: validated, inverse };
+    // Inside a drag transaction: mutate state, buffer the undo/activity record.
+    if (interaction) {
+      if (interaction.entries.length === 0) {
+        interaction.source = source;
+        interaction.description = description ?? '';
+      }
+      interaction.entries.push(inv);
+      set({ state: next });
+      return inv;
+    }
     const entry: ActivityEntry = {
       id: ++activityCounter,
       timestamp: timeNow(),
@@ -119,6 +162,16 @@ export const useDagStore = create<DagStore>((set, get) => ({
         description,
       });
     }
+    // Inside a drag transaction: mutate state, buffer the records (flat).
+    if (interaction) {
+      if (interaction.entries.length === 0) {
+        interaction.source = source;
+        interaction.description = description ?? '';
+      }
+      interaction.entries.push(...result);
+      set({ state: working });
+      return result;
+    }
     set((s) => ({
       state: working,
       undoStack: [...s.undoStack, ...result],
@@ -148,6 +201,17 @@ export const useDagStore = create<DagStore>((set, get) => ({
         description,
       });
     }
+    // Inside a drag transaction: append the ops FLAT to the buffer (not as a nested
+    // group) so the whole gesture stays ONE flat undo entry.
+    if (interaction) {
+      if (interaction.entries.length === 0) {
+        interaction.source = source;
+        interaction.description = description ?? '';
+      }
+      interaction.entries.push(...result);
+      set({ state: working });
+      return result;
+    }
     const group: AtomicGroup = {
       __atomic: true,
       description: description ?? '',
@@ -163,6 +227,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
   },
 
   hydrate(state) {
+    interaction = null;
     set({
       state,
       undoStack: [],
@@ -170,6 +235,33 @@ export const useDagStore = create<DagStore>((set, get) => ({
       activity: [],
       pendingDiffs: [],
     });
+  },
+
+  beginInteraction() {
+    // Re-entrant: a stray second begin keeps the open buffer (the gizmo opens one
+    // bracket per drag; do not split a drag into two undo entries).
+    if (interaction) return;
+    interaction = { entries: [], source: 'user', description: '' };
+  },
+
+  endInteraction(description) {
+    const inter = interaction;
+    interaction = null;
+    if (!inter || inter.entries.length === 0) return; // a click with no move → nothing
+    const desc = description ?? inter.description;
+    const group: AtomicGroup = { __atomic: true, description: desc, entries: inter.entries };
+    const entry: ActivityEntry = {
+      id: ++activityCounter,
+      timestamp: timeNow(),
+      source: inter.source,
+      op: inter.entries[inter.entries.length - 1].forward,
+      description: desc,
+    };
+    set((s) => ({
+      undoStack: [...s.undoStack, group],
+      redoStack: [],
+      activity: [...s.activity, entry],
+    }));
   },
 
   undo() {
@@ -225,6 +317,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
   },
 
   reset() {
+    interaction = null;
     set({
       state: emptyDagState(),
       undoStack: [],
