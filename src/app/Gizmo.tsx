@@ -995,7 +995,9 @@ function CameraGizmo() {
           body + aim were two identical translate gizmos; the marker + the smaller
           aim gizmo (AIM_GIZMO_SIZE) make them unambiguous in BOTH modes. */}
       <group ref={aimRefCb}>
-        <mesh renderOrder={999}>
+        {/* raycast disabled — the marker is pure decoration; it must not steal
+            viewport click-to-select hits (idiom: SceneFromDAG emitter card). */}
+        <mesh renderOrder={999} raycast={() => null}>
           <sphereGeometry args={[0.09, 16, 12]} />
           <meshBasicMaterial color="#ffb020" depthTest={false} transparent opacity={0.95} />
         </mesh>
