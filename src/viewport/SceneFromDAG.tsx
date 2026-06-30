@@ -279,8 +279,18 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             const lid = lightRefs[i]?.node ?? null;
             // [[V85]]/[[H132]] #241 — an animated light's helper follows the
             // evaluated value at the playhead; a static light keeps the static path.
-            return lid && directChannelTargets.has(lid) ? (
-              <LightHelperFollower key={`helper:${i}`} nodeId={lid} value={light} pickId={lid} />
+            // #243 GAP 2 — a Track-To'd AreaLight derives its aim per frame, so its
+            // helper needs the follower too (re-resolve the aim at `seconds`).
+            return lid &&
+              (directChannelTargets.has(lid) ||
+                (constraintTargets.has(lid) && light.kind === 'AreaLight')) ? (
+              <LightHelperFollower
+                key={`helper:${i}`}
+                nodeId={lid}
+                value={light}
+                pickId={lid}
+                constrained={constraintTargets.has(lid)}
+              />
             ) : (
               <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
             );
@@ -290,12 +300,16 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? rigLights.map((light, i) => {
             const lid = rigLightSources[i] ?? null;
-            return lid && directChannelTargets.has(lid) ? (
+            // #243 GAP 2 — a Track-To'd AreaLight rig light follows its aim per frame.
+            return lid &&
+              (directChannelTargets.has(lid) ||
+                (constraintTargets.has(lid) && light.kind === 'AreaLight')) ? (
               <LightHelperFollower
                 key={`rig-helper:${lid}`}
                 nodeId={lid}
                 value={light}
                 pickId={lid}
+                constrained={constraintTargets.has(lid)}
               />
             ) : (
               <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
@@ -702,16 +716,19 @@ function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active:
 // editor visual of the light, so it must follow the light's EVALUATED value at the
 // live playhead the SAME way the rendered light does (`DirectChannelsLightR` — same
 // channels + transients overlay), else the helper freezes at frame 0 while the lit
-// effect + gizmo move. Mounted only for a light with direct channels; a static
-// light keeps the static `<LightHelper>` path.
+// effect + gizmo move. Mounted for a light with direct channels OR (#243) a
+// Track-To'd AreaLight; a static light keeps the static `<LightHelper>` path.
 function LightHelperFollower({
   nodeId,
   value,
   pickId,
+  constrained,
 }: {
   nodeId: string;
   value: LightValue;
   pickId: string | null;
+  /** True iff this light is the target of an active Track-To (#243, V60). */
+  constrained: boolean;
 }) {
   const channelNodes = useStoreWithEqualityFn(
     useDagStore,
@@ -720,14 +737,32 @@ function LightHelperFollower({
   );
   const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
   const transients = useTransientEditStore((s) => s.edits);
-  const patched = usePlayheadFollow(
-    (seconds) =>
-      overlayTransients(
-        overlayChannels(value, channels, 1, seconds) ?? value,
-        nodeId,
-        transients,
-      ) ?? value,
-  );
+  // #243 ([[H132]] GAP 2) — a CONSTRAINED light DERIVES its aim from the Track-To
+  // target's world position per frame (the lit RectAreaLight follows via
+  // `useAreaLightAim` → `lookAt`). The helper reads `value.lookAt`, which carries
+  // only the AUTHORED aim (the constraint is a render-side derivation, V58), so it
+  // freezes at frame 0 while the lit effect tracks an animated target. Re-resolve the
+  // SAME aim at `seconds` here and write it into `lookAt` so the wireframe rectangle
+  // faces the current-frame target — the value-recompute analogue of the camera
+  // follower's `resolveCameraPoseAt` Track-To overlay. A stable local cache so the
+  // per-frame render-root evaluate (inside `resolveTrackToTarget`) HITS while the DAG
+  // is unchanged (the ConstrainedR / useAreaLightAim pattern).
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const patched = usePlayheadFollow((seconds) => {
+    const base =
+      overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
+      value;
+    // Only AreaLight aims via lookAt today (LightKindR) — mirror that scope so a
+    // constrained non-area light pays nothing extra.
+    if (!constrained || base.kind !== 'AreaLight') return base;
+    const aim = resolveTrackToTarget(
+      useDagStore.getState().state,
+      nodeId,
+      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      cache,
+    );
+    return aim ? { ...base, lookAt: aim } : base;
+  });
   return <LightHelper value={patched} pickId={pickId} />;
 }
 

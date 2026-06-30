@@ -21,7 +21,10 @@ interface W {
   };
   __basher_time?: { getState: () => { setTime: (seconds: number) => void } };
   __basher_frustum_pose?: Record<string, { position: [number, number, number] }>;
-  __basher_lighthelper_value?: Record<string, { position: [number, number, number] }>;
+  __basher_lighthelper_value?: Record<
+    string,
+    { position: [number, number, number]; lookAt?: [number, number, number] }
+  >;
   __basher_mesh_world_position?: (id: string) => [number, number, number] | null;
 }
 
@@ -234,4 +237,76 @@ test('#242 GAP 1 — a camera frustum follows an ANIMATED ANCESTOR Group (its ow
   expect(at0.cam).not.toBeNull();
   expect(at0.cam![0]).toBeCloseTo(3, 0);
   expect(at1.cam![0]).toBeCloseTo(13, 0);
+});
+
+test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED target", async ({
+  page,
+}) => {
+  // An AreaLight Track-To'd at an ANIMATED node (x 5 -> -5). The lit RectAreaLight
+  // re-resolves its aim per frame (useAreaLightAim), but the wireframe helper read
+  // value.lookAt — the AUTHORED aim — so it froze while the lit effect tracked the
+  // target. The fix re-resolves the SAME Track-To aim at `seconds` in the follower.
+  // FALSIFIABLE: a frozen helper keeps lookAt = authored [0,0,0]; the fix makes it
+  // track the target ([5,0,0] -> [-5,0,0]).
+  await page.evaluate(() => {
+    const dag = (window as unknown as W).__basher_dag.getState();
+    const scene = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'tt_aim',
+          nodeType: 'BoxMesh',
+          params: {
+            size: [1, 1, 1],
+            position: [5, 0, 0],
+            rotation: [0, 0, 0],
+            material: { name: 'default', base: { color: '#f80' } },
+          },
+        },
+        { type: 'connect', from: { node: 'tt_aim', socket: 'out' }, to: { node: scene, socket: 'children' } },
+        {
+          type: 'addNode',
+          nodeId: 'tt_aim_pos',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'position',
+            target: 'tt_aim',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [5, 0, 0], easing: 'linear' },
+              { time: 1, value: [-5, 0, 0], easing: 'linear' },
+            ],
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'tt_area',
+          nodeType: 'AreaLight',
+          params: { intensity: 5, position: [0, 4, 0], color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+        },
+        { type: 'connect', from: { node: 'tt_area', socket: 'out' }, to: { node: scene, socket: 'lights' } },
+        {
+          type: 'addNode',
+          nodeId: 'tt_trackto',
+          nodeType: 'TrackTo',
+          params: { target: 'tt_area', aimNode: 'tt_aim', aimPoint: [0, 0, 0], up: [0, 1, 0] },
+        },
+      ],
+      'e2e',
+      'area light track-to animated target',
+    );
+  });
+
+  await setTime(page, 0);
+  const at0 = await page.evaluate(
+    () => (window as unknown as W).__basher_lighthelper_value?.['tt_area']?.lookAt ?? null,
+  );
+  await setTime(page, 1);
+  const at1 = await page.evaluate(
+    () => (window as unknown as W).__basher_lighthelper_value?.['tt_area']?.lookAt ?? null,
+  );
+  expect(at0).not.toBeNull();
+  expect(at0![0]).toBeCloseTo(5, 0); // aim resolves to the target's frame-0 position
+  expect(at1![0]).toBeCloseTo(-5, 0); // followed the animated target, not frozen at authored 0
 });
