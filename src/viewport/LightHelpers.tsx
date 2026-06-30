@@ -42,6 +42,13 @@ export interface LightHelperProps {
 
 /** Top-level dispatcher — returns the right helper for the light kind. */
 export function LightHelper({ value, pickId }: LightHelperProps) {
+  // DEV observation seam ([[V85]]/[[H132]] #241): record the EVALUATED value this
+  // helper renders with, keyed by node id, so an e2e can assert the wireframe helper
+  // follows the playhead (not the static frame-0 read).
+  if (import.meta.env.DEV && pickId) {
+    const w = window as unknown as { __basher_lighthelper_value?: Record<string, LightValue> };
+    (w.__basher_lighthelper_value ??= {})[pickId] = value;
+  }
   switch (value.kind) {
     case 'DirectionalLight':
       return <DirectionalLightHelper value={value} pickId={pickId} />;

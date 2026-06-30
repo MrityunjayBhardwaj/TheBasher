@@ -63,8 +63,10 @@ import { CameraHelper } from './CameraHelpers';
 import {
   enumerateCameraNodeIds,
   resolveCameraFrustumPose,
+  resolveCameraPoseAt,
   selectActiveCameraNode,
 } from '../app/activeCamera';
+import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { resolveCameraDof } from '../app/cameraDof';
 import { degVec3ToRad } from './rotation';
@@ -263,19 +265,32 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           for every DAG light. Hidden in `rendered` mode so the screenshot
           / production parity stays clean. */}
       {showLightHelpers
-        ? value.scene.lights.map((light, i) => (
-            <LightHelper key={`helper:${i}`} value={light} pickId={lightRefs[i]?.node ?? null} />
-          ))
+        ? value.scene.lights.map((light, i) => {
+            const lid = lightRefs[i]?.node ?? null;
+            // [[V85]]/[[H132]] #241 — an animated light's helper follows the
+            // evaluated value at the playhead; a static light keeps the static path.
+            return lid && directChannelTargets.has(lid) ? (
+              <LightHelperFollower key={`helper:${i}`} nodeId={lid} value={light} pickId={lid} />
+            ) : (
+              <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
+            );
+          })
         : null}
       {/* #208 — wireframe helpers for the active rig's lights too. */}
       {showLightHelpers
-        ? rigLights.map((light, i) => (
-            <LightHelper
-              key={`rig-helper:${rigLightSources[i] ?? i}`}
-              value={light}
-              pickId={rigLightSources[i] ?? null}
-            />
-          ))
+        ? rigLights.map((light, i) => {
+            const lid = rigLightSources[i] ?? null;
+            return lid && directChannelTargets.has(lid) ? (
+              <LightHelperFollower
+                key={`rig-helper:${lid}`}
+                nodeId={lid}
+                value={light}
+                pickId={lid}
+              />
+            ) : (
+              <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
+            );
+          })
         : null}
       {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;
           the active camera's frustum also hides while looking through it. */}
@@ -283,6 +298,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         ? cameraNodeIds.map((id) => {
             const active = id === activeCameraId;
             if (active && lookThrough) return null;
+            // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
+            // Track-To) follows the EVALUATED pose at the live playhead, parity with
+            // meshes/lights; a static camera keeps the cheap frame-0 read.
+            if (directChannelTargets.has(id) || constraintTargets.has(id)) {
+              return <CameraFrustumFollower key={`cam:${id}`} cameraId={id} active={active} />;
+            }
             // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the
             // group-composed WORLD pose (null parent → flat local pose, unchanged).
             // Frame-0 ctx mirrors this component's static (time-decoupled) evaluate.
@@ -643,6 +664,53 @@ function DirectChannelsLightR({
     setPatched(sample(seconds));
   });
   return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
+}
+
+// [[V85]]/[[H132]] #240 — the camera-frustum FOLLOWER. The frustum is an editor
+// visual of an animatable object, so (like meshes/lights/the look-through camera)
+// it must track the EVALUATED pose at the live playhead via a per-frame overlay,
+// NOT the static frame-0 channel-blind `resolveCameraFrustumPose`. Mounted only for
+// an ANIMATED camera (direct channels or a Track-To) — a static camera keeps the
+// cheap static path, parity with how meshes mount DirectChannelsR. `usePlayheadFollow`
+// re-samples `resolveCameraPoseAt` (channels + Track-To + parent world) each frame.
+function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active: boolean }) {
+  const pose = usePlayheadFollow((seconds) =>
+    resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds),
+  );
+  return <CameraHelper pose={pose} pickId={cameraId} active={active} />;
+}
+
+// [[V85]]/[[H132]] #241 — the light-helper FOLLOWER. The wireframe helper is an
+// editor visual of the light, so it must follow the light's EVALUATED value at the
+// live playhead the SAME way the rendered light does (`DirectChannelsLightR` — same
+// channels + transients overlay), else the helper freezes at frame 0 while the lit
+// effect + gizmo move. Mounted only for a light with direct channels; a static
+// light keeps the static `<LightHelper>` path.
+function LightHelperFollower({
+  nodeId,
+  value,
+  pickId,
+}: {
+  nodeId: string;
+  value: LightValue;
+  pickId: string | null;
+}) {
+  const channelNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => directChannelNodesForTarget(s.state.nodes, nodeId),
+    shallow,
+  );
+  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const transients = useTransientEditStore((s) => s.edits);
+  const patched = usePlayheadFollow(
+    (seconds) =>
+      overlayTransients(
+        overlayChannels(value, channels, 1, seconds) ?? value,
+        nodeId,
+        transients,
+      ) ?? value,
+  );
+  return <LightHelper value={patched} pickId={pickId} />;
 }
 
 // Seam B (#212) — per-frame overlay for the SCENE ENVIRONMENT's animatable params

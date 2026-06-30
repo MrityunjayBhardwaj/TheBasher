@@ -237,6 +237,24 @@ export function resolveActiveCameraPoseAt(
   // at that frame. A direct-wired camera (or static `active`) resolves to the
   // same node every frame (byte-identical to pre-Inc-3).
   const node = selectActiveCameraNode(state, seconds);
+  if (!node) return DEFAULT_CAMERA_POSE;
+  return resolveCameraPoseAt(state, node.id, seconds, cache);
+}
+
+/** [[V85]]/[[H132]] — the EVALUATED pose of ANY camera node at clip-time `seconds`
+ *  (not only the active one): static base + keyframe channels + Track-To aim +
+ *  parent-group world. `resolveActiveCameraPoseAt` is this applied to the active
+ *  node; the camera-frustum FOLLOWER (SceneFromDAG) applies it per camera so every
+ *  frustum tracks its OWN animation — the box-parity the static, channel-blind
+ *  `resolveCameraFrustumPose` lacked. PURE — a function of (state, cameraId,
+ *  seconds), no store reads. */
+export function resolveCameraPoseAt(
+  state: DagState,
+  cameraId: string,
+  seconds: number,
+  cache?: EvaluatorCache,
+): CameraPose {
+  const node = state.nodes[cameraId] ?? null;
   const base = cameraPoseFromNode(node) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
 

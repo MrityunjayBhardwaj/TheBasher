@@ -165,6 +165,14 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   // #211 — the one shared viewport selection handler (was duplicated here).
   const onClick = selectNodeOnClick(pickId);
 
+  // DEV observation seam ([[V85]]/[[H132]] #240): record the EVALUATED pose this
+  // frustum renders with, keyed by node id, so an e2e can assert the frustum
+  // follows the playhead (not the static frame-0 read).
+  if (import.meta.env.DEV && pickId) {
+    const w = window as unknown as { __basher_frustum_pose?: Record<string, CameraPose> };
+    (w.__basher_frustum_pose ??= {})[pickId] = pose;
+  }
+
   return (
     <group
       position={pose.position as [number, number, number]}
