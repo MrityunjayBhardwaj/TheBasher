@@ -63,6 +63,7 @@ import {
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useAnimatableField } from './animate/useAnimatableField';
+import { useColorPickerInteraction } from './useColorPickerInteraction';
 import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
@@ -1119,6 +1120,9 @@ function MaterialColorRow({
 }) {
   // The shared animatable-field spine (H104); this row owns only its colour chrome.
   const { effective, readOnly, onEdit } = useAnimatableField(nodeId, paramPath, value, onSource);
+  // Coalesce a colour-picker drag (N per-tick onChange dispatches) into ONE undo
+  // entry (V84/H131) — open on the first tick, flush on blur (picker closed).
+  const picker = useColorPickerInteraction(label);
   const [draft, setDraft] = useState(effective);
   // Resync when the effective value changes outside this field (undo, slot switch,
   // scrub, animation, agent edit) — the input is otherwise locally edited.
@@ -1144,9 +1148,11 @@ function MaterialColorRow({
           data-testid={testidColor}
           className="h-5 w-7 cursor-pointer rounded border border-border bg-muted p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           onChange={(e) => {
+            picker.onPickStart();
             setDraft(e.target.value);
             commit(e.target.value);
           }}
+          onBlur={picker.onPickEnd}
         />
         <input
           type="text"

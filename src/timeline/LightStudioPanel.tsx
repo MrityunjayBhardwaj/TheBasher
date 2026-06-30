@@ -53,6 +53,7 @@ import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { panelXYToFraction, fractionToPanelXY } from './studioPanelGeometry';
 import { ParamDiamond } from '../app/ParamDiamond';
 import { useAnimatableField } from '../app/animate/useAnimatableField';
+import { useColorPickerInteraction } from '../app/useColorPickerInteraction';
 
 type Vec3 = [number, number, number];
 
@@ -525,6 +526,9 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
   const colorField = useAnimatableField(nodeId, 'color', color, (v) =>
     setParam('color', v, 'set light color'),
   );
+  // Coalesce a colour-picker drag into ONE undo entry (V84/H131) — same machinery
+  // as the puck drag; open on the first onChange tick, flush on blur.
+  const colorPicker = useColorPickerInteraction('light');
 
   const onNumberEdit = (field: { onEdit: (n: number) => void }, raw: string) => {
     const n = Number(raw);
@@ -583,7 +587,11 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
           type="color"
           value={colorField.effective}
           data-testid={`light-color-${nodeId}`}
-          onChange={(e) => colorField.onEdit(e.target.value)}
+          onChange={(e) => {
+            colorPicker.onPickStart();
+            colorField.onEdit(e.target.value);
+          }}
+          onBlur={colorPicker.onPickEnd}
           className="h-5 w-8 rounded border border-border bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         />
       </label>
