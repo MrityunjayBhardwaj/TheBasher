@@ -815,6 +815,10 @@ function MultiGizmo() {
 // writing (the #230 round-trip, applied to the camera's point-based lookAt model).
 // `parentWorld` is null for a top-level camera → the proxy world IS the local pose,
 // byte-identical to the pre-Inc-3.3 (#229) direct write.
+// #245 — the aim handle's TransformControls is rendered at HALF the body gizmo's
+// size so the two are unambiguous even when both show translate handles.
+const AIM_GIZMO_SIZE = 0.5;
+
 function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
@@ -881,6 +885,10 @@ function CameraGizmo() {
       w.__basher_camera_gizmo = () => ({
         position: bodyNode ? [bodyNode.position.x, bodyNode.position.y, bodyNode.position.z] : null,
         aim: aimNode ? [aimNode.position.x, aimNode.position.y, aimNode.position.z] : null,
+        // #245 — differentiation seams: the aim gizmo is rendered smaller than the
+        // body, and the aim group carries a visible target marker mesh.
+        aimSize: AIM_GIZMO_SIZE,
+        aimMarker: aimNode ? aimNode.children.some((c) => (c as THREE.Mesh).isMesh) : false,
       });
     }
   }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing]);
@@ -981,7 +989,17 @@ function CameraGizmo() {
   return (
     <>
       <group ref={bodyRefCb} />
-      <group ref={aimRefCb} />
+      {/* #245 — the aim handle carries a small target marker (amber sphere,
+          depth-test off so it stays visible inside/behind geometry) so it reads
+          as "the lookAt target", not a second body gizmo. In translate mode the
+          body + aim were two identical translate gizmos; the marker + the smaller
+          aim gizmo (AIM_GIZMO_SIZE) make them unambiguous in BOTH modes. */}
+      <group ref={aimRefCb}>
+        <mesh renderOrder={999}>
+          <sphereGeometry args={[0.09, 16, 12]} />
+          <meshBasicMaterial color="#ffb020" depthTest={false} transparent opacity={0.95} />
+        </mesh>
+      </group>
       {bodyNode ? (
         <TransformControls
           object={bodyNode}
@@ -997,6 +1015,7 @@ function CameraGizmo() {
         <TransformControls
           object={aimNode}
           mode="translate"
+          size={AIM_GIZMO_SIZE}
           enabled={!playing}
           onObjectChange={onAimChange}
           onMouseDown={startGizmoDrag}
