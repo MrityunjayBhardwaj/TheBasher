@@ -45,6 +45,7 @@ import {
   directChannelNodesForTarget,
   channelValuesFromNodes,
   directChannelTargetSet,
+  animatedAncestorSet,
 } from '../app/nodeChannels';
 import {
   constraintTargetSet,
@@ -204,6 +205,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // from the aim (V58) instead of the authored/animated value.
   const constraintTargets = constraintTargetSet(state.nodes);
 
+  // #242 / [[H132]] GAP 1 — the set of nodes with an ANIMATED ANCESTOR (an ancestor
+  // in `directChannelTargets`). A separately-rendered editor visual (the camera
+  // frustum) nested under an animated Group must mount its per-frame follower even
+  // when the node itself is un-keyed — its world pose changes per frame as the
+  // ancestor moves (`resolveCameraPoseAt` composes that ancestor world at live
+  // `seconds`). Meshes don't need this (the animated Group's DirectChannelsR
+  // re-renders the whole subtree). Built once (O(N)), tested O(1) per camera (B13).
+  const animatedAncestors = animatedAncestorSet(state.nodes, directChannelTargets);
+
   // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
   // object, not just the active one). They are NOT in value.scene.children —
   // only one camera is wired to scene.camera — so we read them from state.
@@ -300,8 +310,16 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             if (active && lookThrough) return null;
             // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
             // Track-To) follows the EVALUATED pose at the live playhead, parity with
-            // meshes/lights; a static camera keeps the cheap frame-0 read.
-            if (directChannelTargets.has(id) || constraintTargets.has(id)) {
+            // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1
+            // — a camera nested under an ANIMATED ANCESTOR Group is animated too (its
+            // world pose moves per frame with the ancestor), so it likewise needs the
+            // follower even when its own params/constraints are static; meshes get this
+            // for free via the Group's DirectChannelsR subtree re-render.
+            if (
+              directChannelTargets.has(id) ||
+              constraintTargets.has(id) ||
+              animatedAncestors.has(id)
+            ) {
               return <CameraFrustumFollower key={`cam:${id}`} cameraId={id} active={active} />;
             }
             // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the

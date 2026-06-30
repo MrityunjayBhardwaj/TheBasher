@@ -22,6 +22,7 @@ interface W {
   __basher_time?: { getState: () => { setTime: (seconds: number) => void } };
   __basher_frustum_pose?: Record<string, { position: [number, number, number] }>;
   __basher_lighthelper_value?: Record<string, { position: [number, number, number] }>;
+  __basher_mesh_world_position?: (id: string) => [number, number, number] | null;
 }
 
 async function addVec3Channel(
@@ -153,4 +154,84 @@ test('#241 — an animated light wireframe helper follows the playhead', async (
   expect(at0).not.toBeNull();
   expect(at0![0]).toBeCloseTo(5, 0);
   expect(at1![0]).toBeCloseTo(-9, 0); // followed the channel, not frozen at 5
+});
+
+test('#242 GAP 1 — a camera frustum follows an ANIMATED ANCESTOR Group (its own params static)', async ({
+  page,
+}) => {
+  // The camera itself is NOT keyframed. It is nested under a Group whose POSITION is
+  // keyed (x 0 -> 10). The frustum is a SEPARATE top-level visual (not in the Group's
+  // render subtree), so before the fix its mount gate (the camera's OWN channels /
+  // constraints) never fired and it fell to the static frame-0 read -> frozen at the
+  // ancestor's frame-0 world. A nested MESH follows for free (the Group's
+  // DirectChannelsR re-renders its whole subtree), so it is the control here.
+  // FALSIFIABLE: a frozen frustum stays at x=3; the fix makes it x=13 (base 3 + Δ10).
+  await page.evaluate(() => {
+    const dag = (window as unknown as W).__basher_dag.getState();
+    const scene = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'anc_box',
+          nodeType: 'BoxMesh',
+          params: {
+            size: [1, 1, 1],
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            material: { name: 'default', base: { color: '#88f' } },
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'anc_grp',
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'anc_grp_pos',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'position',
+            target: 'anc_grp',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 1, value: [10, 0, 0], easing: 'linear' },
+            ],
+          },
+        },
+        { type: 'connect', from: { node: 'anc_box', socket: 'out' }, to: { node: 'anc_grp', socket: 'children' } },
+        // groupable camera: stays wired to scene.camera AND becomes a Group child
+        { type: 'connect', from: { node: 'n_camera', socket: 'out' }, to: { node: 'anc_grp', socket: 'children' } },
+        { type: 'connect', from: { node: 'anc_grp', socket: 'out' }, to: { node: scene, socket: 'children' } },
+      ],
+      'e2e',
+      'camera under animated group',
+    );
+  });
+
+  await setTime(page, 0);
+  const read = async () =>
+    page.evaluate(() => {
+      const w = window as unknown as W;
+      return {
+        // the Group is the named top-level wrapper; its first descendant Mesh is anc_box
+        mesh: w.__basher_mesh_world_position?.('anc_grp') ?? null,
+        cam: w.__basher_frustum_pose?.['n_camera']?.position ?? null,
+      };
+    });
+  const at0 = await read();
+  await setTime(page, 1);
+  const at1 = await read();
+
+  // control: the nested mesh follows the animated ancestor (x 0 -> 10)
+  expect(at0.mesh).not.toBeNull();
+  expect(at0.mesh![0]).toBeCloseTo(0, 0);
+  expect(at1.mesh![0]).toBeCloseTo(10, 0);
+  // the gap: the camera frustum follows too (base x=3 + ancestor Δ10 = 13), not frozen at 3
+  expect(at0.cam).not.toBeNull();
+  expect(at0.cam![0]).toBeCloseTo(3, 0);
+  expect(at1.cam![0]).toBeCloseTo(13, 0);
 });

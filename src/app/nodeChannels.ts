@@ -73,6 +73,72 @@ export function directChannelTargetSet(
   return targets;
 }
 
+/**
+ * The set of node ids that have an ANIMATED ANCESTOR — an ancestor (walking UP the
+ * scene hierarchy via the `children`/`target` input sockets) that is itself in
+ * `animatedSet`. Used so a separately-rendered editor visual (the camera frustum,
+ * #242 / [[H132]] GAP 1) nested under an animated Group mounts a per-frame follower
+ * EVEN WHEN the node itself is un-keyed: its world pose changes per frame as the
+ * ancestor moves, so the static frame-0 read would freeze (the render-source split).
+ *
+ * Meshes don't need this — an animated top-level Group renders through DirectChannelsR
+ * → MeshChild → GroupR, which re-renders the whole subtree at the patched transform,
+ * so nested meshes follow for free. The frustum is a SEPARATE top-level visual, so it
+ * needs the gate widened explicitly (`resolveCameraPoseAt` already composes the
+ * ancestor world at live `seconds` via `resolveParentWorldMatrix`).
+ *
+ * `animatedSet` should be `directChannelTargetSet` — the channel-animated ancestors
+ * `resolveParentWorldMatrix` actually follows per-frame (it overlays the top-level
+ * child's channels at `ctx.seconds`). A constraint-rotation-only ancestor is NOT
+ * followed by that resolver, so it is intentionally excluded (a documented narrow
+ * limitation — a position-keyed Track-To'd ancestor is still caught via its channels).
+ *
+ * The hierarchy socket set (`children` for Group/Scene, `target` for
+ * Transform/MaterialOverride) MUST mirror `childEdges` / `resolveParentWorldMatrix`'s
+ * walk in resolveWorldTransform.ts — the source of truth for what counts as a
+ * scene-graph parent. Built in ~O(N) (one parent-map pass + a bounded walk up per
+ * node, cycle-guarded) and tested by membership, so the renderer stays O(N) (B13).
+ */
+export function animatedAncestorSet(
+  nodes: Readonly<Record<string, NodeLike & { id: string }>>,
+  animatedSet: ReadonlySet<string>,
+): Set<string> {
+  // child id -> its parent ids (multi-valued for safety, though scene hierarchy is a
+  // tree in practice). Only the `children`/`target` sockets count as parent edges.
+  const parents = new Map<string, string[]>();
+  for (const node of Object.values(nodes)) {
+    for (const socket of ['children', 'target'] as const) {
+      const b = node.inputs?.[socket];
+      const refs = Array.isArray(b) ? b : b ? [b] : [];
+      for (const r of refs) {
+        const childId = (r as { node?: string } | undefined)?.node;
+        if (typeof childId !== 'string' || !childId) continue;
+        const list = parents.get(childId);
+        if (list) list.push(node.id);
+        else parents.set(childId, [node.id]);
+      }
+    }
+  }
+  const out = new Set<string>();
+  for (const id of Object.keys(nodes)) {
+    // BFS up the ancestor chain; mark `id` if any ancestor is animated. The `seen`
+    // guard makes a malformed cyclic graph terminate instead of looping forever.
+    const seen = new Set<string>([id]);
+    const stack = [...(parents.get(id) ?? [])];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      if (animatedSet.has(cur)) {
+        out.add(id);
+        break;
+      }
+      stack.push(...(parents.get(cur) ?? []));
+    }
+  }
+  return out;
+}
+
 /** Build the function-of-time {@link KeyframeChannelValue} for each channel node,
  *  via the node's OWN `evaluate` (one sampling source, no drift). Unknown/dead
  *  node types are skipped. */

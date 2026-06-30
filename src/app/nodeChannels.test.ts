@@ -5,6 +5,7 @@ import {
   channelValuesFromNodes,
   directChannelValuesForTarget,
   directChannelTargetSet,
+  animatedAncestorSet,
 } from './nodeChannels';
 
 beforeAll(() => {
@@ -116,5 +117,72 @@ describe('directChannelTargetSet — one-pass membership for the renderer (#197)
     expect(set.has('box1')).toBe(true);
     expect(set.has('box2')).toBe(true);
     expect(set.has('box3')).toBe(false); // zero keyframes → not animated
+  });
+});
+
+describe('animatedAncestorSet — nodes under an animated ancestor (#242 / H132 GAP 1)', () => {
+  // A Group node referencing children via the `children` input socket.
+  const group = (id: string, children: string[]) => ({
+    id,
+    type: 'Group',
+    params: {},
+    inputs: { children: children.map((node) => ({ node, socket: 'out' })) },
+  });
+  // A Transform node referencing one child via the `target` socket.
+  const transform = (id: string, target: string) => ({
+    id,
+    type: 'Transform',
+    params: {},
+    inputs: { target: { node: target, socket: 'out' } },
+  });
+  const leaf = (id: string) => ({ id, type: 'BoxMesh', params: {}, inputs: {} });
+
+  it('marks a node whose parent Group is animated', () => {
+    const nodes = {
+      grp: group('grp', ['cam']),
+      cam: leaf('cam'),
+    };
+    const out = animatedAncestorSet(nodes, new Set(['grp']));
+    expect(out.has('cam')).toBe(true);
+    expect(out.has('grp')).toBe(false); // the animated node itself is not its own ancestor
+  });
+
+  it('walks MULTIPLE levels up (animated grandparent)', () => {
+    const nodes = {
+      outer: group('outer', ['inner']),
+      inner: group('inner', ['cam']),
+      cam: leaf('cam'),
+    };
+    const out = animatedAncestorSet(nodes, new Set(['outer']));
+    expect(out.has('cam')).toBe(true);
+    expect(out.has('inner')).toBe(true);
+  });
+
+  it('follows the Transform `target` socket too (mirrors childEdges)', () => {
+    const nodes = {
+      xf: transform('xf', 'cam'),
+      cam: leaf('cam'),
+    };
+    const out = animatedAncestorSet(nodes, new Set(['xf']));
+    expect(out.has('cam')).toBe(true);
+  });
+
+  it('does NOT mark a node with only static ancestors', () => {
+    const nodes = {
+      grp: group('grp', ['cam']),
+      cam: leaf('cam'),
+    };
+    const out = animatedAncestorSet(nodes, new Set()); // nothing animated
+    expect(out.has('cam')).toBe(false);
+  });
+
+  it('terminates on a malformed cyclic graph (cycle guard)', () => {
+    const nodes = {
+      a: group('a', ['b']),
+      b: group('b', ['a']),
+    };
+    // No infinite loop; neither is animated so neither is marked.
+    const out = animatedAncestorSet(nodes, new Set());
+    expect(out.size).toBe(0);
   });
 });
