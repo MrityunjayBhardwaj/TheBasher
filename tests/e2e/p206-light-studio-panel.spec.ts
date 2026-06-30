@@ -32,12 +32,18 @@ interface PanelWindow {
         outputs: { scene?: { node: string } };
         nodes: Record<string, { params?: { position?: [number, number, number] } }>;
       };
+      undoStack: unknown[];
       dispatchAtomic: (ops: Op[], source?: string, label?: string) => void;
+      undo: () => void;
     };
   };
   __basher_three: {
     getState: () => {
-      scene: { traverse: (cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void) => void } | null;
+      scene: {
+        traverse: (
+          cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void,
+        ) => void;
+      } | null;
     };
   };
 }
@@ -60,9 +66,20 @@ async function addAreaLight(
           type: 'addNode',
           nodeId: id,
           nodeType: 'AreaLight',
-          params: { intensity: 5, position: pos, color: '#ffffff', width: 2, height: 2, lookAt: aimPoint ?? [0, 0, 0] },
+          params: {
+            intensity: 5,
+            position: pos,
+            color: '#ffffff',
+            width: 2,
+            height: 2,
+            lookAt: aimPoint ?? [0, 0, 0],
+          },
         },
-        { type: 'connect', from: { node: id, socket: 'out' }, to: { node: sceneId, socket: 'lights' } },
+        {
+          type: 'connect',
+          from: { node: id, socket: 'out' },
+          to: { node: sceneId, socket: 'lights' },
+        },
       ];
       if (aimPoint) {
         ops.push({
@@ -99,7 +116,9 @@ test.beforeEach(async ({ page }) => {
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as PanelWindow;
-    return Boolean(w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene);
+    return Boolean(
+      w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene,
+    );
   });
 });
 
@@ -188,6 +207,62 @@ test('#206 — dragging a puck places the light via the resolver; the live light
   expect(nearest!).toBeLessThan(0.15);
 });
 
+test('#238 — a continuous puck drag is ONE undo entry; one undo restores the pre-drag pos (H131/V84)', async ({
+  page,
+}) => {
+  // A drag dispatches setParam on EVERY pointer-move. Without a store transaction
+  // each move would be its own undo entry (the H131 leak); the onPuckDown→onPuckUp
+  // bracket buffers them into ONE AtomicGroup so Ctrl+Z reverts the whole gesture.
+  const startPos: [number, number, number] = [3, 4, 3];
+  await addAreaLight(page, 'undo_light_e2e', startPos, [0, 0, 0]);
+  await openLightStudio(page);
+
+  const canvasBox = await page.getByTestId('light-studio-canvas').boundingBox();
+  const puck = page.getByTestId('light-studio-puck-undo_light_e2e');
+  const puckBox = await puck.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(puckBox).not.toBeNull();
+
+  const undoBefore = await page.evaluate(
+    () => (window as unknown as PanelWindow).__basher_dag.getState().undoStack.length,
+  );
+
+  // Drag across 8 intermediate moves (→ 8 onPuckMove dispatches).
+  const toX = canvasBox!.x + 0.5 * canvasBox!.width;
+  const toY = canvasBox!.y + 0.25 * canvasBox!.height;
+  await page.mouse.move(puckBox!.x + puckBox!.width / 2, puckBox!.y + puckBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(toX, toY, { steps: 8 });
+  await page.mouse.up();
+
+  // The drag actually moved the light (guards a vacuous pass — there WERE dispatches).
+  const posAfter = await page.evaluate(
+    () =>
+      (window as unknown as PanelWindow).__basher_dag.getState().state.nodes['undo_light_e2e']
+        ?.params?.position ?? null,
+  );
+  expect(posAfter).not.toBeNull();
+  expect(
+    Math.hypot(posAfter![0] - startPos[0], posAfter![1] - startPos[1], posAfter![2] - startPos[2]),
+  ).toBeGreaterThan(0.5);
+
+  // ONE undo entry for the whole 8-move gesture (not 8).
+  const undoAfter = await page.evaluate(
+    () => (window as unknown as PanelWindow).__basher_dag.getState().undoStack.length,
+  );
+  expect(undoAfter - undoBefore).toBe(1);
+
+  // A single undo restores the pre-drag position exactly.
+  await page.evaluate(() => (window as unknown as PanelWindow).__basher_dag.getState().undo());
+  const posUndone = await page.evaluate(
+    () =>
+      (window as unknown as PanelWindow).__basher_dag.getState().state.nodes['undo_light_e2e']
+        ?.params?.position ?? null,
+  );
+  expect(posUndone).not.toBeNull();
+  for (let i = 0; i < 3; i++) expect(Math.abs(posUndone![i] - startPos[i])).toBeLessThan(0.001);
+});
+
 test('#206 — “+ Light” adds a Track-To-aimed light that appears as a puck + row, selected', async ({
   page,
 }) => {
@@ -218,7 +293,9 @@ test('#206 — the tex picker turns the light into a studio light (the §1.5 pai
         __basher_three: {
           getState: () => {
             scene: {
-              traverse: (cb: (o: { type: string; material?: { map?: unknown } | null }) => void) => void;
+              traverse: (
+                cb: (o: { type: string; material?: { map?: unknown } | null }) => void,
+              ) => void;
             } | null;
           };
         };

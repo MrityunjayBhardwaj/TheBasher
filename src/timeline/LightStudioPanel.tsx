@@ -113,6 +113,10 @@ export function LightStudioPanel() {
     const { radius } = studioLightPanelXY(light.position, target);
     dragRef.current = { nodeId: light.nodeId, radius, target, pointerId: e.pointerId };
     select(light.nodeId);
+    // Open a drag transaction: every per-move setParam below mutates state for the
+    // live preview but DEFERS its undo entry into one buffer; onPuckUp flushes ONE
+    // AtomicGroup. Mirrors the gizmo drag bracket (Gizmo.tsx startGizmoDrag). [[H131]]
+    useDagStore.getState().beginInteraction();
   }
 
   function onPuckMove(e: React.PointerEvent) {
@@ -122,8 +126,8 @@ export function LightStudioPanel() {
     const panelXY = fractionToPanelXY(leftFrac, topFrac);
     const { position } = resolveStudioLightTransform(panelXY, d.radius, d.target);
     // One pure resolver → the authored position; the light re-aims via its
-    // Track-To, so panel == viewport (V37). Consecutive same-path setParams
-    // coalesce into one undo entry (the EditableCurve drag pattern).
+    // Track-To, so panel == viewport (V37). The open drag transaction (onPuckDown)
+    // buffers these per-move dispatches into ONE undo entry flushed on onPuckUp.
     useDagStore
       .getState()
       .dispatchAtomic(
@@ -139,6 +143,9 @@ export function LightStudioPanel() {
       (e.target as Element).releasePointerCapture?.(e.pointerId);
       dragRef.current = null;
     }
+    // Always close the transaction opened in onPuckDown — even a no-move click
+    // (endInteraction self-guards on an empty buffer, so a click flushes nothing).
+    useDagStore.getState().endInteraction('place studio light');
   }
 
   function onAddLight() {
