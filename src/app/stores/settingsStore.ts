@@ -110,7 +110,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   setComfyUrl(url) {
     const comfyUrl = url.trim() || DEFAULT_COMFYUI_URL;
     set({ comfyUrl });
-    writePersisted({ comfyUrl, comfyAuthHeader: get().comfyAuthHeader });
+    writePersisted({
+      comfyUrl,
+      comfyAuthHeader: get().comfyAuthHeader,
+      comfyLiveGenerate: get().comfyLiveGenerate,
+    });
   },
   setComfyAuthHeader(header) {
     const comfyAuthHeader = header.trim();
