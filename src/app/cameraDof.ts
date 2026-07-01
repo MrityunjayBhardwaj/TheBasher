@@ -71,15 +71,29 @@ export function dofEffectSettings(
 
 /** Resolve a camera node's active DoF effect settings, or null when DoF is off
  *  / the node isn't a perspective camera. Reads the lens (fov + sensorSize) to
- *  derive focal length. Pure — both the viewport and the still call THIS. */
-export function resolveCameraDof(node: Node | null | undefined): DofEffectSettings | null {
+ *  derive focal length. Pure — both the viewport and the still call THIS.
+ *
+ *  #247 — `targetFocusDistance` is |position − lookAt| resolved by the CALLER (it
+ *  has the evaluated/Track-To pose; this module stays THREE/DAG-free). When the
+ *  camera's `focusOnTarget` is set and a valid distance is supplied, the focus
+ *  plane tracks the lookAt (the reticle / bound target) instead of the authored
+ *  `focusDistance`. */
+export function resolveCameraDof(
+  node: Node | null | undefined,
+  targetFocusDistance?: number | null,
+): DofEffectSettings | null {
   if (!node || node.type !== 'PerspectiveCamera') return null;
   const params = node.params as Record<string, unknown>;
   const dof = readDofParams(params);
   if (!dof.enabled) return null;
   const fov = typeof params.fov === 'number' ? params.fov : 45;
   const sensor = typeof params.sensorSize === 'number' ? params.sensorSize : DEFAULT_SENSOR_MM;
-  return dofEffectSettings(dof.focusDistance, dof.fStop, focalLengthFromFov(fov, sensor));
+  const focusOnTarget = params.focusOnTarget === true;
+  const focusDistance =
+    focusOnTarget && typeof targetFocusDistance === 'number' && targetFocusDistance > 0
+      ? targetFocusDistance
+      : dof.focusDistance;
+  return dofEffectSettings(focusDistance, dof.fStop, focalLengthFromFov(fov, sensor));
 }
 
 function clamp(n: number, min: number, max: number): number {

@@ -222,7 +222,25 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // UX #12 — the active camera's depth-of-field, resolved through the SAME pure
   // helper the offscreen still uses (cameraDof.ts) so the live bokeh matches the
   // rendered bokeh. null when DoF is off → PostFx mounts no DepthOfField.
-  const activeDof = resolveCameraDof(activeCameraId ? state.nodes[activeCameraId] : null);
+  // #247 — when `focusOnTarget` is set, the focus plane tracks the lookAt: pass the
+  // resolved |position − lookAt| (channels + Track-To at the live playhead) so
+  // moving the reticle / binding a target moves the focus plane (re-runs on every
+  // DAG change; a pure scrub of an animated camera does not re-run — documented).
+  const activeCameraNode = activeCameraId ? state.nodes[activeCameraId] : null;
+  let targetFocusDistance: number | undefined;
+  if ((activeCameraNode?.params as { focusOnTarget?: unknown } | undefined)?.focusOnTarget) {
+    try {
+      const pose = resolveCameraPoseAt(state, activeCameraId!, useTimeStore.getState().seconds);
+      targetFocusDistance = Math.hypot(
+        pose.lookAt[0] - pose.position[0],
+        pose.lookAt[1] - pose.position[1],
+        pose.lookAt[2] - pose.position[2],
+      );
+    } catch {
+      /* fall back to the authored focusDistance */
+    }
+  }
+  const activeDof = resolveCameraDof(activeCameraNode, targetFocusDistance);
 
   return (
     <>
@@ -750,8 +768,11 @@ function LightHelperFollower({
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const patched = usePlayheadFollow((seconds) => {
     const base =
-      overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
-      value;
+      overlayTransients(
+        overlayChannels(value, channels, 1, seconds) ?? value,
+        nodeId,
+        transients,
+      ) ?? value;
     // Only AreaLight aims via lookAt today (LightKindR) — mirror that scope so a
     // constrained non-area light pays nothing extra.
     if (!constrained || base.kind !== 'AreaLight') return base;

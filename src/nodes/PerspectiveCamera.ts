@@ -18,6 +18,11 @@ export const PerspectiveCameraParams = z.object({
   dofEnabled: z.boolean().default(false),
   focusDistance: z.number().positive().default(5),
   fStop: z.number().positive().default(2.8),
+  // #247 — when true, the DoF focus plane tracks the lookAt (the reticle / bound
+  // target) instead of the authored focusDistance: the effective focus distance
+  // becomes |position − lookAt|, resolved at the same site the pose is. DEFAULTED
+  // false so pre-#247 projects parse byte-identical (authored focusDistance wins).
+  focusOnTarget: z.boolean().default(false),
   position: z.tuple([z.number(), z.number(), z.number()]),
   lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   // Camera roll (#229) — rotation in DEGREES about the view axis (local -Z, the
