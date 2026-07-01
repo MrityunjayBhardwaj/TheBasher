@@ -20,7 +20,10 @@ interface Op {
 interface GizWindow {
   __basher_dag: {
     getState: () => {
-      state: { outputs: { scene?: { node: string } }; nodes: Record<string, { params: { position?: unknown } }> };
+      state: {
+        outputs: { scene?: { node: string } };
+        nodes: Record<string, { params: { position?: unknown } }>;
+      };
       dispatchAtomic: (ops: Op[], s?: string, l?: string) => void;
     };
   };
@@ -28,7 +31,10 @@ interface GizWindow {
   __basher_three: { getState: () => { scene: ThreeSceneLike | null } };
   __basher_modified_vertex_count: (id: string) => number | null;
   __basher_gizmo?: () => { position: [number, number, number] } | null;
-  __basher_gizmo_grab?: (mode: 'translate' | 'rotate' | 'scale', target: [number, number, number]) => void;
+  __basher_gizmo_grab?: (
+    mode: 'translate' | 'rotate' | 'scale',
+    target: [number, number, number],
+  ) => void;
 }
 interface ThreeSceneLike {
   traverse: (cb: (o: ThreeObjLike) => void) => void;
@@ -70,7 +76,10 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => {
     const w = window as unknown as GizWindow;
     return Boolean(
-      w.__basher_dag && w.__basher_three && w.__basher_selection && w.__basher_dag.getState().state.outputs.scene,
+      w.__basher_dag &&
+      w.__basher_three &&
+      w.__basher_selection &&
+      w.__basher_dag.getState().state.outputs.scene,
     );
   });
 });
@@ -85,10 +94,28 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [1, 0, 0] } },
-          { type: 'addNode', nodeId: mir, nodeType: 'MirrorModifier', params: { axis: 'x', offset: 2, muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: mir, socket: 'target' } },
-          { type: 'connect', from: { node: mir, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [1, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: mir,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', offset: 2, muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: mir, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: mir, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → mirror → scene',
@@ -115,22 +142,28 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
     undefined,
     { timeout: 10_000 },
   );
-  const proxy = await page.evaluate(() => (window as unknown as GizWindow).__basher_gizmo!()!.position);
+  const proxy = await page.evaluate(
+    () => (window as unknown as GizWindow).__basher_gizmo!()!.position,
+  );
   expect(proxy.map((n) => Math.round(n))).toEqual([1, 0, 0]);
 
   // (b) A grab writes the BASE node's position (not the modifier's).
-  await page.evaluate(() => (window as unknown as GizWindow).__basher_gizmo_grab!('translate', [5, 0, 0]));
+  await page.evaluate(() =>
+    (window as unknown as GizWindow).__basher_gizmo_grab!('translate', [5, 0, 0]),
+  );
   await expect
     .poll(() =>
       page.evaluate(
-        (box) => (window as unknown as GizWindow).__basher_dag.getState().state.nodes[box].params.position,
+        (box) =>
+          (window as unknown as GizWindow).__basher_dag.getState().state.nodes[box].params.position,
         BOX,
       ),
     )
     .toEqual([5, 0, 0]);
   // The modifier's own params are untouched — the write did NOT land on it.
   const mirParams = await page.evaluate(
-    (mir) => (window as unknown as GizWindow).__basher_dag.getState().state.nodes[mir].params.position,
+    (mir) =>
+      (window as unknown as GizWindow).__basher_dag.getState().state.nodes[mir].params.position,
     MIR,
   );
   expect(mirParams).toBeUndefined();

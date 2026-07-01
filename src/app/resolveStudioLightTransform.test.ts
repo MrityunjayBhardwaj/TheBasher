@@ -3,10 +3,7 @@
 // authored light position (V37 parity), so round-trip exactness is the gate.
 
 import { describe, expect, it } from 'vitest';
-import {
-  resolveStudioLightTransform,
-  studioLightPanelXY,
-} from './resolveStudioLightTransform';
+import { resolveStudioLightTransform, studioLightPanelXY } from './resolveStudioLightTransform';
 
 type Vec3 = [number, number, number];
 const ORIGIN: Vec3 = [0, 0, 0];

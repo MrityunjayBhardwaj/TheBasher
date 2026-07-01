@@ -467,13 +467,7 @@ describe('library.import tool', () => {
     // GltfChild + Group + TransformClip + ClipSelect). #222: no separate
     // Transform — the Group is the transformable import root.
     expect(nodeTypes).toEqual(
-      expect.arrayContaining([
-        'GltfAsset',
-        'GltfChild',
-        'Group',
-        'TransformClip',
-        'ClipSelect',
-      ]),
+      expect.arrayContaining(['GltfAsset', 'GltfChild', 'Group', 'TransformClip', 'ClipSelect']),
     );
     // ClipSelect wires into the GltfAsset's transformClip socket.
     const gltfAdd = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'GltfAsset') as {

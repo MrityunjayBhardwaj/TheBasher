@@ -550,7 +550,11 @@ function EnumField({
         data-testid={`inspector-enum-${nodeId}-${paramPath}`}
         className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) =>
-          dispatch({ type: 'setParam', nodeId, paramPath, value: e.target.value }, 'user', `set ${paramPath}`)
+          dispatch(
+            { type: 'setParam', nodeId, paramPath, value: e.target.value },
+            'user',
+            `set ${paramPath}`,
+          )
         }
       >
         {options.map((o) => (
@@ -1305,7 +1309,13 @@ function ParamRow({
     const options = stringEnumOptions(nodeId, paramPath);
     if (options) {
       return (
-        <EnumField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} options={options} />
+        <EnumField
+          nodeId={nodeId}
+          paramPath={paramPath}
+          label={paramPath}
+          value={value}
+          options={options}
+        />
       );
     }
     return (
@@ -1401,16 +1411,14 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
       },
       [c.x, c.y, c.z],
     );
-    useDagStore
-      .getState()
-      .dispatchAtomic(
-        [
-          { type: 'setParam', nodeId, paramPath: 'pivot', value: next.pivot },
-          { type: 'setParam', nodeId, paramPath: 'position', value: next.position },
-        ],
-        'user',
-        'set origin to geometry',
-      );
+    useDagStore.getState().dispatchAtomic(
+      [
+        { type: 'setParam', nodeId, paramPath: 'pivot', value: next.pivot },
+        { type: 'setParam', nodeId, paramPath: 'position', value: next.position },
+      ],
+      'user',
+      'set origin to geometry',
+    );
   };
   return (
     <div className="flex items-center gap-1 px-3 py-1.5" data-testid="npanel-set-origin">

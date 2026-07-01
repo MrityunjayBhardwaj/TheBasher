@@ -18,10 +18,7 @@ import { chooseGltfEntry } from '../stores/gltfEntryChooserStore';
 /** The resolved import intent: ONE entry (auto-located when undefined, or the
  *  chosen relativePath), ALL entries each as its own model (#219), or null
  *  (dismissed → abort). */
-export type GltfEntryResolution =
-  | { entry: string | undefined }
-  | { all: readonly string[] }
-  | null;
+export type GltfEntryResolution = { entry: string | undefined } | { all: readonly string[] } | null;
 
 /**
  * Decide which glTF entry/entries to import from an ingest set:
@@ -40,7 +37,10 @@ export async function resolveGltfEntryChoice(
 
   const options = entries
     .map((e) => ({ relativePath: e.relativePath, ...summarizeGltfEntry(e.bytes) }))
-    .sort((a, b) => (b.textures ?? -1) - (a.textures ?? -1) || (b.materials ?? -1) - (a.materials ?? -1));
+    .sort(
+      (a, b) =>
+        (b.textures ?? -1) - (a.textures ?? -1) || (b.materials ?? -1) - (a.materials ?? -1),
+    );
 
   const chosen = await chooseGltfEntry(options);
   if (chosen === null) return null; // dismissed → abort

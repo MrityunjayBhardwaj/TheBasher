@@ -228,8 +228,7 @@ export function repackGlb(parsed: { json: unknown; bin: Uint8Array }): Uint8Arra
   const hasBin = parsed.bin.byteLength > 0;
   const binChunk = hasBin ? padChunkTo4(parsed.bin, 0x00) : null;
 
-  const totalLength =
-    12 + 8 + jsonChunk.byteLength + (binChunk ? 8 + binChunk.byteLength : 0);
+  const totalLength = 12 + 8 + jsonChunk.byteLength + (binChunk ? 8 + binChunk.byteLength : 0);
   const out = new Uint8Array(totalLength);
   const view = new DataView(out.buffer);
   view.setUint32(0, MAGIC, true);

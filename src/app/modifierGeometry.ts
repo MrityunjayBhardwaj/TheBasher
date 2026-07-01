@@ -123,7 +123,11 @@ export function arrayGeometryRef(source: GeometryRef, count: number, offset: Vec
  * (`MirrorModifier.evaluate`) and the read-side walk (`resolveEvaluatedMesh`) call
  * it → one deterministic key on both roads (H40, no drift).
  */
-export function mirrorGeometryRef(source: GeometryRef, axis: MirrorAxis, offset: number): GeometryRef {
+export function mirrorGeometryRef(
+  source: GeometryRef,
+  axis: MirrorAxis,
+  offset: number,
+): GeometryRef {
   return {
     key: `mirror|${source.key}|${axis}|${offset}`,
     kind: 'mirror',

@@ -519,6 +519,7 @@ Provenance: ORIGIN = #112 (P7.14 Wave B), 2026-06-01; AMENDED #127 (2026-06-01) 
 **Why ordered:** a render is a deterministic product of the PROJECT, not the transient editor view (V37). Every render — still or animation frame — goes through the SAME offscreen path so the still and every frame have identical production parity (production camera + explicit resolution + chrome-excluded + ACES/DoF). The still is one invocation; the animation is the still LOOPED over the playhead. Getting the order wrong leaks chrome, renders the wrong camera, mutates the live viewport, or crashes the context.
 
 **Sequence (the shared per-frame core — `renderSceneToImageCanvas`):**
+
 1. **clamp resolution** — `clampRenderSize(gl, w, h)` (GPU max-texture fit, aspect preserved) — an oversized target loses the context.
 2. **acquire scratch** — reuse the caller's `RenderScratch` (animation) iff res+samples match, else allocate a one-shot (still). The scratch owns the MSAA target + readback buffer + canvas + ImageData.
 3. **hide editor chrome** — record + hide every `userData.editorChrome` object + the TransformControls gizmo (V37). Restore in `finally`.
@@ -526,6 +527,7 @@ Provenance: ORIGIN = #112 (P7.14 Wave B), 2026-06-01; AMENDED #127 (2026-06-01) 
 5. **flip + draw** — `flipRowsY` (GL bottom-up → top-down) → `scratch.imageData.data.set` → `putImageData` → return `scratch.canvas`. Renderer state restored in `finally`; the one-shot scratch is disposed, a reused one is NOT.
 
 **Animation wrapper (`renderAnimationToFile` → `renderAnimation` loop):**
+
 1. **read static config ONCE** — RenderOutput resolution+postFx, production camera pose+DoF (frozen-time evaluate). frameCount = `floor(durationSeconds·FPS)+1`.
 2. **pick the sink** — MP4 (`createMp4Sink`: WebCodecs `isConfigSupported` probe → null → PNG-seq fallback + a surfaced warning, V38) or PNG-seq (fflate zip).
 3. **pause playback + create ONE scratch** — pause so the rAF Clock doesn't fight `setTime`; one scratch for the whole render (the [[H99]] guard — per-frame allocation crashes the context).
@@ -540,6 +542,7 @@ Provenance: ORIGIN = #112 (P7.14 Wave B), 2026-06-01; AMENDED #127 (2026-06-01) 
 **Why ordered:** glTF material animation splits a STRUCTURAL step (clone + assign materials — expensive, React effect) from a PER-FRAME step (overlay scalar deltas onto those live clones — cheap, `useFrame`), the SAME split as the TRS useFrame ([[K13]] sibling). Re-cloning per frame would churn GC. The per-frame overlay precedence is LOAD-BEARING: the MaterialOverride tint must be re-layered LAST so it wins for its forced channels (#198 composition), and the transient must sit above the channel so an Auto-Key-OFF held edit previews ([[V57]]). Get the order wrong → the animation clobbers the tint, the held edit doesn't preview, or the useFrame reads stale/absent write-targets.
 
 **Sequence:**
+
 1. **Override EFFECT (`[cloned, override, depNodeMap]`)** — clone each mesh material, overlay the captured base IR (`overlayDagMaterial`), apply the override tint/flatten. Record each animatable slot into `childSlotMaterials.current`: `{ mat }` (plain), `{ mat, reapplyOverride }` (non-flatten tint — #198 composition), or `null` (flatten / array-material). This MUST run before the useFrame reads the map; the bottom `useEffect([cloned, override, depNodeMap])` resets `lastMaterialApplied` so the next frame re-applies onto the fresh clones.
 2. **useFrame, per frame** (frameloop "always") — early-out if no material channels. Snapshot live `seconds` + the transient SET via `getState()` (NEVER subscribe — [[H48]]). Dirty-check on `(seconds, channels, transients)` → a PAUSED unchanged scene pays nothing.
 3. **Overlay precedence per child** — `overlayChannels({materials: base}, channels, 1, seconds)` (sampled curve) THEN `overlayTransients(…, childId, transients)` (held edit ON TOP, transient > channel) → `animated` materials.
@@ -552,6 +555,7 @@ Provenance: ORIGIN = #112 (P7.14 Wave B), 2026-06-01; AMENDED #127 (2026-06-01) 
 **Why ordered:** the composite splits a PURE planning step (decide which layers draw + which source frame each shows) from an IMPURE pixel step (decode + draw), the SAME purity discipline as the evaluator↔renderer split. The plan is the ONE place the visibility (enabled/solo/trim) + comp-frame→source-frame remap rules live, so the live viewer and the export (1e) cannot drift ([[V37]] render==viewport). The DRAW order is LOAD-BEARING: layers paint **back→top** (the comp `layers` list is back→front = the draw order; the timeline shows it reversed for front-on-top display — three orderings that must agree, [[B24]]). Get the order wrong → wrong stacking; remap inlined instead of `mediaClipFrameAt` → preview drifts from source ([[H40]]); read raw params instead of `resolveEvaluatedParam` → keyframed opacity/rotation don't animate in the viewer.
 
 **Sequence (per playhead frame / per change):**
+
 1. **Collect inputs** (`collectCompositeInputs`, impure read) — walk the comp's `layers` (back→front) from the DAG; for each Layer read authored params + OVERLAY `opacity`/`transform.rotation` via `resolveEvaluatedParam` (the renderer-identical channel path — NOT raw params, [[H40]]); resolve the source MediaClip to its OPFS `path` + metadata (null when no decodable source yet).
 2. **Plan** (`planComposite`, PURE) — drop layers with no source / hidden (the solo rule: if ANY layer solos, only solos draw; else the eyeball) / playhead outside the trimmed span (`layerBarSpan`). For survivors, remap comp frame → source-local seconds `(compFrame − startFrame + inPoint)/fps` → source frame via `mediaClipFrameAt` (the SAME map the evaluator uses; image → frame 0). Output is back→front, the draw order.
 3. **Decode** (`ensureBitmap`, impure, cached) — for each planned draw, OPFS `storage.read(path)` → `MediaDecodeCapability.decodeFrame` → ImageBitmap, cached module-wide by `path#frame` (a still decodes once; a scrub re-plans but re-uses the cache). A decode failure → `console.warn` + skip (the layer is omitted, not a crash).

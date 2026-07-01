@@ -61,7 +61,10 @@ async function ingestSpecGlossQuad(page: import('@playwright/test').Page): Promi
     const bytes = new Uint8Array(
       await fetch('/assets/specgloss-quad.gltf').then((r) => r.arrayBuffer()),
     );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'specgloss-quad.gltf', bytes }], 'specgloss');
+    await w.__basher_ingestGltfFolder(
+      [{ relativePath: 'specgloss-quad.gltf', bytes }],
+      'specgloss',
+    );
   });
 }
 
@@ -93,9 +96,9 @@ test.describe('glTF spec/gloss → metal-rough at ingest (#214)', () => {
     await ingestSpecGlossQuad(page);
 
     // side A — the diffuse spec/gloss material reduced to metal-rough.
-    await expect.poll(async () => (await capturedMaterials(page))['SGDiffuse']?.name).toBe(
-      'SGDiffuse',
-    );
+    await expect
+      .poll(async () => (await capturedMaterials(page))['SGDiffuse']?.name)
+      .toBe('SGDiffuse');
     const mats = await capturedMaterials(page);
     const diffuse = mats['SGDiffuse'];
     expect(diffuse.base.metalness).toBe(0); // specularFactor 0 → dielectric

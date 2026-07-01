@@ -29,8 +29,16 @@ function applyOps(state: DagState, ops: Op[]): DagState {
   return ops.reduce((s, op) => applyOp(s, op).next, state);
 }
 
-function addMod(state: DagState, base: string, params: Record<string, unknown> = {}): { state: DagState; id: string } {
-  const res = buildAddModifierOps(state, base, 'ArrayModifier', { count: 3, offset: [2, 0, 0], ...params });
+function addMod(
+  state: DagState,
+  base: string,
+  params: Record<string, unknown> = {},
+): { state: DagState; id: string } {
+  const res = buildAddModifierOps(state, base, 'ArrayModifier', {
+    count: 3,
+    offset: [2, 0, 0],
+    ...params,
+  });
   expect(res).not.toBeNull();
   return { state: applyOps(state, res!.ops), id: res!.modifierId };
 }

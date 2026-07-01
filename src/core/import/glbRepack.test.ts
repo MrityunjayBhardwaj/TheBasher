@@ -79,9 +79,7 @@ describe('repackGlb', () => {
 
   it('emits a JSON-only GLB (no BIN chunk) when bin is empty', () => {
     const out = repackGlb({ json: SAMPLE_JSON, bin: new Uint8Array(0) });
-    const reparsed = parseGlb(
-      out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength),
-    );
+    const reparsed = parseGlb(out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength));
     expect(reparsed.bin.byteLength).toBe(0);
     // total length == header + one chunk only.
     const enc = new TextEncoder();

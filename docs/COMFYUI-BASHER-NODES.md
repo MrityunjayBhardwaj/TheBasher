@@ -1,7 +1,7 @@
 # ComfyUI ↔ Basher — the two-node contract
 
 **Status:** AUTHORITATIVE (2026-06-28). **Supersedes** `COMFYUI-KEYFRAME-COMPILER-DESIGN.md`
-(the keyframe-any-param *compiler*), which reached across the boundary into ComfyUI's
+(the keyframe-any-param _compiler_), which reached across the boundary into ComfyUI's
 concern. That approach is **deprecated, staged for removal** once this path is observed
 working — build the new path, prove it, then cut the old (never delete shipped+tested
 code before its replacement is proven).
@@ -12,38 +12,38 @@ code before its replacement is proven).
 
 Basher hands media + values **in**, takes media **out**, and shows **one progress bar**.
 Everything between is ComfyUI's concern. Basher **never parses the foreign graph** — it
-only enumerates its own `basher_*` nodes and reads metadata from *those* nodes alone.
+only enumerates its own `basher_*` nodes and reads metadata from _those_ nodes alone.
 
 ## Why the compiler was the wrong boundary
 
 The retired design had Basher walk every input of an imported workflow, infer each
 param's `valueKind`, classify it SCHEDULABLE vs STRUCTURAL, inject `BasherValueSchedule`
-nodes, and rewire links. That is Basher modelling ComfyUI's *internals* — the wrong side
+nodes, and rewire links. That is Basher modelling ComfyUI's _internals_ — the wrong side
 of the boundary. The control surface should be **declared by the workflow author** (by
 wiring a node), not **inferred by Basher** (by guessing at foreign params).
 
 ## The contract — TWO nodes + a progress bar
 
-| Node | Direction | `kind` spans | Basher gives it |
-|---|---|---|---|
+| Node                | Direction                          | `kind` spans                                                | Basher gives it                                              |
+| ------------------- | ---------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
 | `basher_controller` | input (`*` output, wired anywhere) | float, int, string, bool, **image, video** (png-seq or mp4) | a row: scalar → keyframe channel; media → project-asset bind |
-| `basher_export` | output (sink) | image, video | collect the result → a project MediaClip |
+| `basher_export`     | output (sink)                      | image, video                                                | collect the result → a project MediaClip                     |
 
 The author opts a setting in by dropping a `basher_controller` and wiring its `*` output
 into the target input. One controller ↔ one Basher channel; fan-out (one controller into
 several inputs) is allowed. Media inputs are the **same node** with `kind=image|video` —
 the input concept is unified (see "Why one input node").
 
-**Inputs and outputs stay separate nodes.** Folding all *inputs* into one node is right —
+**Inputs and outputs stay separate nodes.** Folding all _inputs_ into one node is right —
 they share the span "a Basher-driven input, declared by wiring." An export is the opposite
-flow (a sink Basher reads *from*); collapsing in+out into one node would conflate two
+flow (a sink Basher reads _from_); collapsing in+out into one node would conflate two
 directions, which is a real domain boundary, not incidental. Two nodes, one per direction,
 is the floor.
 
 ## Why one input node (and not image/video/scalar separately)
 
-The invariant *"a Basher-driven input, declared by wiring, enumerated and bound from
-Basher"* spans **every** kind. That shared span IS the abstraction boundary. The per-kind
+The invariant _"a Basher-driven input, declared by wiring, enumerated and bound from
+Basher"_ spans **every** kind. That shared span IS the abstraction boundary. The per-kind
 widget differs (a float shows a diamond + timeline channel; an image shows an asset picker;
 a video binds a clip whose frames map to the batch) — but that divergence is inherent to
 `kind` and exists whether or not the node is split. So folding costs nothing on Basher's
@@ -71,7 +71,7 @@ submit both branch on `kind` internally — contained, small.
 2. **Basher imports** and scans ONLY for `basher_*` node `class_type`s:
    - controllers → keyframeable rows (scalar) / asset-bind rows (media) in the Controls panel
    - exports → output sinks
-   No foreign node is read.
+     No foreign node is read.
 3. **User** keyframes the scalar controllers on the timeline and binds media controllers
    to project assets.
 4. **Render:** Basher bakes each scalar channel → a length-N array, writes
@@ -80,17 +80,17 @@ submit both branch on `kind` internally — contained, small.
    project MediaClips.
 
 Batch length **N** comes from the input media (a `basher_controller` kind=video = N frames)
-or the author's batch setup. Basher only supplies length-N arrays; making the *graph*
+or the author's batch setup. Basher only supplies length-N arrays; making the _graph_
 coherent across that batch (AnimateDiff context, conditioning batching, native video
 models) is the author's job in ComfyUI.
 
 ## What this reuses / retires
 
-| | |
-|---|---|
-| **Reused** | the keyframe channels + `ParamDiamond` Controls rows (now sourced from declared controllers, not inference); the bake (`resolveEvaluatedParam`); the per-frame-array node mechanism (`OUTPUT_IS_LIST`); the image upload path (`resolveComfyImageBindings`); the `/ws` progress stream + bar; `createMp4Sink` + the MediaClip on-ramp |
-| **New** | the `basher_controller` + `basher_export` nodes (in the arm's-length MIT extension); a scan that enumerates them; Basher writing `values_json` onto a controller |
-| **Retired** (staged) | `importComfyGraph` param manifest, `valueKind` inference, schedulable/structural classification, `compileBatchedWorkflow` input-rewire + demotions, the `KeyframeChannel*`-on-foreign-param bindings |
+|                      |                                                                                                                                                                                                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reused**           | the keyframe channels + `ParamDiamond` Controls rows (now sourced from declared controllers, not inference); the bake (`resolveEvaluatedParam`); the per-frame-array node mechanism (`OUTPUT_IS_LIST`); the image upload path (`resolveComfyImageBindings`); the `/ws` progress stream + bar; `createMp4Sink` + the MediaClip on-ramp |
+| **New**              | the `basher_controller` + `basher_export` nodes (in the arm's-length MIT extension); a scan that enumerates them; Basher writing `values_json` onto a controller                                                                                                                                                                      |
+| **Retired** (staged) | `importComfyGraph` param manifest, `valueKind` inference, schedulable/structural classification, `compileBatchedWorkflow` input-rewire + demotions, the `KeyframeChannel*`-on-foreign-param bindings                                                                                                                                  |
 
 ## Migration (build → prove → cut)
 
@@ -115,7 +115,7 @@ models) is the author's job in ComfyUI.
 
 ## Open grounding items (verify live, do not infer)
 
-- **`*` (AnyType) output** connecting to a real FLOAT input *and* a real IMAGE input and
+- **`*` (AnyType) output** connecting to a real FLOAT input _and_ a real IMAGE input and
   passing ComfyUI's validation (well-trodden in the custom-node ecosystem; confirm on
   `/object_info` + an actual submit).
 - **`OUTPUT_IS_LIST` batch alignment** — a list output runs the downstream per item; a

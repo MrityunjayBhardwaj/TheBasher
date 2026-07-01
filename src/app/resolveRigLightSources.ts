@@ -67,8 +67,6 @@ export function resolveRigLightSources(state: DagState): string[] {
   const rig = state.nodes[rigId];
   const binding = rig?.inputs.lights;
   if (!binding) return [];
-  const refs: NodeRef[] = Array.isArray(binding)
-    ? (binding as NodeRef[])
-    : [binding as NodeRef];
+  const refs: NodeRef[] = Array.isArray(binding) ? (binding as NodeRef[]) : [binding as NodeRef];
   return refs.map((r) => r.node);
 }

@@ -64,7 +64,9 @@ test.beforeEach(async ({ page }) => {
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as RigWindow;
-    return Boolean(w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene);
+    return Boolean(
+      w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene,
+    );
   });
 });
 
@@ -89,19 +91,50 @@ test('#208 — a LightRig wired to the scene renders its grouped lights; a Track
             type: 'addNode',
             nodeId: 'rig_l1',
             nodeType: 'AreaLight',
-            params: { intensity: 5, position: pos, color: '#ffffff', width: 2, height: 2, lookAt: authored },
+            params: {
+              intensity: 5,
+              position: pos,
+              color: '#ffffff',
+              width: 2,
+              height: 2,
+              lookAt: authored,
+            },
           },
           {
             type: 'addNode',
             nodeId: 'rig_l2',
             nodeType: 'AreaLight',
-            params: { intensity: 3, position: [-3, 4, 3], color: '#ffffff', width: 2, height: 2, lookAt: authored },
+            params: {
+              intensity: 3,
+              position: [-3, 4, 3],
+              color: '#ffffff',
+              width: 2,
+              height: 2,
+              lookAt: authored,
+            },
           },
-          { type: 'addNode', nodeId: 'rig_node', nodeType: 'LightRig', params: { name: 'Key setup' } },
-          { type: 'connect', from: { node: 'rig_l1', socket: 'out' }, to: { node: 'rig_node', socket: 'lights' } },
-          { type: 'connect', from: { node: 'rig_l2', socket: 'out' }, to: { node: 'rig_node', socket: 'lights' } },
+          {
+            type: 'addNode',
+            nodeId: 'rig_node',
+            nodeType: 'LightRig',
+            params: { name: 'Key setup' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'rig_l1', socket: 'out' },
+            to: { node: 'rig_node', socket: 'lights' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'rig_l2', socket: 'out' },
+            to: { node: 'rig_node', socket: 'lights' },
+          },
           // The rig feeds the scene's lightRig input (the active profile).
-          { type: 'connect', from: { node: 'rig_node', socket: 'out' }, to: { node: sceneId, socket: 'lightRig' } },
+          {
+            type: 'connect',
+            from: { node: 'rig_node', socket: 'out' },
+            to: { node: sceneId, socket: 'lightRig' },
+          },
           // A Track-To aims the FIRST rig light at a fixed point distinct from its authored lookAt.
           {
             type: 'addNode',
@@ -196,7 +229,14 @@ test('#208 — a LightProfileSelect switches the live profile by name (one rig a
       type: 'addNode',
       nodeId: id,
       nodeType: 'AreaLight',
-      params: { intensity: 5, position: [x, 4, 3], color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+      params: {
+        intensity: 5,
+        position: [x, 4, 3],
+        color: '#ffffff',
+        width: 2,
+        height: 2,
+        lookAt: [0, 0, 0],
+      },
     });
     const conn = (from: string, to: string, socket: string) => ({
       type: 'connect',
@@ -229,15 +269,19 @@ test('#208 — a LightProfileSelect switches the live profile by name (one rig a
   });
 
   // "Key" is live → 2 rig lights render.
-  await page.waitForFunction((prev) => {
-    const w = window as unknown as RigWindow;
-    const scene = w.__basher_three.getState().scene;
-    let n = 0;
-    scene?.traverse((o) => {
-      if ((o as ThreeObjLike).type === 'RectAreaLight') n++;
-    });
-    return n === prev + 2;
-  }, before, { timeout: 15_000 });
+  await page.waitForFunction(
+    (prev) => {
+      const w = window as unknown as RigWindow;
+      const scene = w.__basher_three.getState().scene;
+      let n = 0;
+      scene?.traverse((o) => {
+        if ((o as ThreeObjLike).type === 'RectAreaLight') n++;
+      });
+      return n === prev + 2;
+    },
+    before,
+    { timeout: 15_000 },
+  );
 
   // Switch the live profile to "Rim" (a single param change) → 1 rig light renders.
   await page.evaluate(() => {
@@ -249,15 +293,19 @@ test('#208 — a LightProfileSelect switches the live profile by name (one rig a
       'switch to Rim',
     );
   });
-  await page.waitForFunction((prev) => {
-    const w = window as unknown as RigWindow;
-    const scene = w.__basher_three.getState().scene;
-    let n = 0;
-    scene?.traverse((o) => {
-      if ((o as ThreeObjLike).type === 'RectAreaLight') n++;
-    });
-    return n === prev + 1;
-  }, before, { timeout: 15_000 });
+  await page.waitForFunction(
+    (prev) => {
+      const w = window as unknown as RigWindow;
+      const scene = w.__basher_three.getState().scene;
+      let n = 0;
+      scene?.traverse((o) => {
+        if ((o as ThreeObjLike).type === 'RectAreaLight') n++;
+      });
+      return n === prev + 1;
+    },
+    before,
+    { timeout: 15_000 },
+  );
   expect(await countRectLights(page)).toBe(before + 1);
 });
 
@@ -274,10 +322,26 @@ test('#208 — a rig NOT wired to the scene renders nothing (falsification)', as
           type: 'addNode',
           nodeId: 'orphan_l1',
           nodeType: 'AreaLight',
-          params: { intensity: 5, position: [3, 4, 3], color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+          params: {
+            intensity: 5,
+            position: [3, 4, 3],
+            color: '#ffffff',
+            width: 2,
+            height: 2,
+            lookAt: [0, 0, 0],
+          },
         },
-        { type: 'addNode', nodeId: 'orphan_rig', nodeType: 'LightRig', params: { name: 'Unwired' } },
-        { type: 'connect', from: { node: 'orphan_l1', socket: 'out' }, to: { node: 'orphan_rig', socket: 'lights' } },
+        {
+          type: 'addNode',
+          nodeId: 'orphan_rig',
+          nodeType: 'LightRig',
+          params: { name: 'Unwired' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'orphan_l1', socket: 'out' },
+          to: { node: 'orphan_rig', socket: 'lights' },
+        },
       ],
       'e2e',
       'add unwired rig',

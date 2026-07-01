@@ -14,20 +14,21 @@ build on.
 
 ## 0. Locked decisions (from the planning fork)
 
-| # | Decision | Choice |
-|---|----------|--------|
-| Scope | Which #231 sub-problems first | **Unified-Object foundation** — groupable/parentable lights & cameras (A) + multi-camera active (B) + path to glTF-children-first-class (E). Collections (C) and the object↔data split + size-vs-scale (D) are **later milestones**. |
-| Parent socket | How lights/cameras become groupable | **One unified `SceneObject` socket** — mesh/light/camera/group all output `'SceneObject'`; `Scene.children` & `Group.children` accept it. Mirrors Blender's "everything is an Object." |
-| Active camera | Multi-camera "active" model | **`CameraSelect` node** (the ClipSelect / LightProfileSelect / LightRig pattern, V63) — active choice is a keyframeable param → camera cuts fall out for free. |
-| Collections (later) | Org grouping | **Collection node**, DAG-resident (V34). Out of scope for this milestone; recorded for the later one. |
+| #                   | Decision                            | Choice                                                                                                                                                                                                                               |
+| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Scope               | Which #231 sub-problems first       | **Unified-Object foundation** — groupable/parentable lights & cameras (A) + multi-camera active (B) + path to glTF-children-first-class (E). Collections (C) and the object↔data split + size-vs-scale (D) are **later milestones**. |
+| Parent socket       | How lights/cameras become groupable | **One unified `SceneObject` socket** — mesh/light/camera/group all output `'SceneObject'`; `Scene.children` & `Group.children` accept it. Mirrors Blender's "everything is an Object."                                               |
+| Active camera       | Multi-camera "active" model         | **`CameraSelect` node** (the ClipSelect / LightProfileSelect / LightRig pattern, V63) — active choice is a keyframeable param → camera cuts fall out for free.                                                                       |
+| Collections (later) | Org grouping                        | **Collection node**, DAG-resident (V34). Out of scope for this milestone; recorded for the later one.                                                                                                                                |
 
 ---
 
 ## 1. The two reference models (grounded)
 
 ### Blender (the baseline — grounded in the bundled manual)
-- **Everything is an Object.** An *Object* datablock owns transform + parent +
-  collection membership; the *data* it points at (mesh verts / camera lens /
+
+- **Everything is an Object.** An _Object_ datablock owns transform + parent +
+  collection membership; the _data_ it points at (mesh verts / camera lens /
   light power) is a separate datablock. Lights and cameras are ordinary Objects,
   so they **parent and group like anything else** (`scene_layout/object/editing/parent.rst`
   — "the parent object can be of any type").
@@ -41,18 +42,19 @@ build on.
   its frame (`editors/3dview/navigate/camera_view.rst`, `animation/markers.rst`).
 
 ### Basher today (grounded in source)
+
 - **Strict string-typed sockets** — `ops.ts:181` throws on
   `inputDesc.type !== outputDesc.type`. So a `'Light'`/`'Camera'` output
-  **physically cannot** connect to a `children: 'Mesh'` socket. *This is the
-  root cause of "lights/cameras can't be grouped."*
+  **physically cannot** connect to a `children: 'Mesh'` socket. _This is the
+  root cause of "lights/cameras can't be grouped."_
 - `Scene` sockets: `camera` single `'Camera'`, `lights` list `'Light'`,
   `children` list `'Mesh'`, `lightRig` single `'LightRig'` (`Scene.ts:41-49`).
 - `Group.children` list `'Mesh'` (`Group.ts:37`).
 - **Active camera = the node wired to `Scene.camera`** (`activeCamera.ts:66-77`).
-  Wiring a new camera *replaces* the old (single cardinality).
+  Wiring a new camera _replaces_ the old (single cardinality).
 - **Cameras are already enumerated globally** for selectable frustums —
   `cameraNodeIds = Object.values(state.nodes).filter(type==='*Camera')`
-  (`SceneFromDAG.tsx:200-206`, #165). Camera *bodies* are NOT in
+  (`SceneFromDAG.tsx:200-206`, #165). Camera _bodies_ are NOT in
   `value.scene.children`.
 - **Render bands** (`SceneFromDAG.tsx:230-309`): three parallel walks —
   `value.scene.lights[i]` → `LightNode` (id via `lightRefs[i].node`),
@@ -62,8 +64,8 @@ build on.
 - **`SceneObject` value union already partially exists in spirit** —
   `types.ts:10-12`: "P1 widens three unions (Camera / Light / SceneChild) so the
   existing socket types carry richer variants without the DAG type system needing
-  to grow." The values are ready; only the *socket type strings* and the
-  *consumer sockets* need to converge.
+  to grow." The values are ready; only the _socket type strings_ and the
+  _consumer sockets_ need to converge.
 
 ---
 
@@ -88,6 +90,7 @@ build on.
 ```
 
 Key properties:
+
 - **One socket type, strict equality preserved** (no loosening of `ops.ts:181` —
   the user rejected the multi-type-union option). Every scene object speaks
   `'SceneObject'`.
@@ -103,19 +106,19 @@ Key properties:
 
 ## 3. Blast radius (grounded, by concern)
 
-| Concern | File(s) | Change |
-|---|---|---|
-| Value union | `src/nodes/types.ts` (`SceneChild` :874, add `SceneObject`) | Add `SceneObject = SceneChild \| LightValue \| CameraValue`. |
-| Output socket types | every light/camera/`Group` node def | `outputs.out.type: 'Mesh'\|'Light'\|'Camera'` → `'SceneObject'`. |
-| Consumer sockets | `Scene.ts:41-49`, `Group.ts:37`, `LightRig.ts:42` | accept `'SceneObject'`. |
-| Connect validation | `src/core/dag/ops.ts:181` | UNCHANGED (strict equality still holds — types converge, rule doesn't loosen). |
-| Renderer bands | `SceneFromDAG.tsx:230-309`, `GroupR` :2635-2662, `SceneChildNode` kind switch :539/:913 | `GroupR` child walk + `SceneChildNode` gain light/camera `kind` branches; nested light/camera world via the #230 `resolveParentWorldMatrix`. |
-| World transform | `src/app/resolveWorldTransform.ts` | nested light/camera compose parent world (reuse #230 path). |
-| Active camera | `src/app/activeCamera.ts:66`, `EditorViewCamera.tsx`, `renderImageAction.ts`, `renderAnimationAction.ts` | `selectActiveCameraNode` resolves through `CameraSelect` (fallback: direct `Scene.camera`). |
-| Outliner | `src/app/sceneTreeWalk.ts`, `SceneTree.tsx`, `SceneTreeIcon.tsx` | project nested lights/cameras; reparent-drag `canReparent` (children socket now `SceneObject`); icons exist. |
-| Selection / gizmo | `selectableNodes.ts`, `Gizmo.tsx` | `getManipulable` already lights up any node with `position` — nested light/camera gizmo reuses #230. |
-| Duplicate / delete / reparent | `src/app/sceneNodeActions.ts` | `HIERARCHY_SOCKETS`/`reparentSocket` already key on `children` — work once it's `SceneObject`. |
-| Migration | `src/core/project/migrations.ts` + tests | see §4. |
+| Concern                       | File(s)                                                                                                  | Change                                                                                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Value union                   | `src/nodes/types.ts` (`SceneChild` :874, add `SceneObject`)                                              | Add `SceneObject = SceneChild \| LightValue \| CameraValue`.                                                                                 |
+| Output socket types           | every light/camera/`Group` node def                                                                      | `outputs.out.type: 'Mesh'\|'Light'\|'Camera'` → `'SceneObject'`.                                                                             |
+| Consumer sockets              | `Scene.ts:41-49`, `Group.ts:37`, `LightRig.ts:42`                                                        | accept `'SceneObject'`.                                                                                                                      |
+| Connect validation            | `src/core/dag/ops.ts:181`                                                                                | UNCHANGED (strict equality still holds — types converge, rule doesn't loosen).                                                               |
+| Renderer bands                | `SceneFromDAG.tsx:230-309`, `GroupR` :2635-2662, `SceneChildNode` kind switch :539/:913                  | `GroupR` child walk + `SceneChildNode` gain light/camera `kind` branches; nested light/camera world via the #230 `resolveParentWorldMatrix`. |
+| World transform               | `src/app/resolveWorldTransform.ts`                                                                       | nested light/camera compose parent world (reuse #230 path).                                                                                  |
+| Active camera                 | `src/app/activeCamera.ts:66`, `EditorViewCamera.tsx`, `renderImageAction.ts`, `renderAnimationAction.ts` | `selectActiveCameraNode` resolves through `CameraSelect` (fallback: direct `Scene.camera`).                                                  |
+| Outliner                      | `src/app/sceneTreeWalk.ts`, `SceneTree.tsx`, `SceneTreeIcon.tsx`                                         | project nested lights/cameras; reparent-drag `canReparent` (children socket now `SceneObject`); icons exist.                                 |
+| Selection / gizmo             | `selectableNodes.ts`, `Gizmo.tsx`                                                                        | `getManipulable` already lights up any node with `position` — nested light/camera gizmo reuses #230.                                         |
+| Duplicate / delete / reparent | `src/app/sceneNodeActions.ts`                                                                            | `HIERARCHY_SOCKETS`/`reparentSocket` already key on `children` — work once it's `SceneObject`.                                               |
+| Migration                     | `src/core/project/migrations.ts` + tests                                                                 | see §4.                                                                                                                                      |
 
 ---
 
@@ -126,8 +129,8 @@ Three project invariants govern correctness here:
 - **V44 — correspondence by stable id, never re-derived name.** When lights join
   the `children` band, their per-node addressing (DirectChannelsR / Constrained /
   click-select) must key off the **child node id** (`childRefs[i].node`), exactly
-  as meshes do today. *This is strictly more correct than the current parallel
-  `lights` band* (which already keys by `lightRefs[i].node`).
+  as meshes do today. _This is strictly more correct than the current parallel
+  `lights` band_ (which already keys by `lightRefs[i].node`).
 - **V10 / H14 — two-layer defaults, byte-identical render for saved projects.**
   Every new field defaults to identity in BOTH the zod `.default` and the
   evaluator/consumer.
@@ -139,15 +142,17 @@ Three project invariants govern correctness here:
 `connect` ops, not necessarily on hydration. If hydration does NOT re-type-check
 existing edges, then **renaming an output socket type string is zero-migration
 and byte-identical** — the edges are `{node, socket}` refs that don't carry the
-type. *This must be proven first* (a migration test loading a pre-change project
-+ asserting identical evaluated scene) before relying on it. If hydration DOES
-re-validate, Increment 1 needs a migration that is still a pure string remap.
+type. _This must be proven first_ (a migration test loading a pre-change project
+
+- asserting identical evaluated scene) before relying on it. If hydration DOES
+  re-validate, Increment 1 needs a migration that is still a pure string remap.
 
 ---
 
 ## 5. Increment sequence (each: own gate `typecheck && eslint src/ && test` + live observation + atomic commit + push + self-review + catalogue/memory update)
 
 ### Inc 1 — Socket convergence (foundational, byte-identical) ⟶ unlocks the type system
+
 - Add `SceneObject` value union (`types.ts`).
 - Retype every scene-object node's output to `'SceneObject'`; retype
   `Group.children` / `Scene.children` / `Scene.lights` / `Scene.camera` /
@@ -155,16 +160,18 @@ re-validate, Increment 1 needs a migration that is still a pure string remap.
 - **No behavior change.** Renderer still reads `value.scene.lights/.camera/.children`
   separately. Prove R1: a migration/hydration test loads a saved project →
   byte-identical evaluated scene + render. **Gate + observe before commit.**
-- *Risk:* `Scene.lights`/`Scene.camera` now loosely accept any `SceneObject`
+- _Risk:_ `Scene.lights`/`Scene.camera` now loosely accept any `SceneObject`
   (a mesh could be mis-wired into `lights`). Acceptable transitionally; the
   full fix is Inc 4 (flatten). **OPEN QUESTION Q-A** (see §7).
 
 ### Inc 2 — Groupable / parentable lights & cameras (capability A) — SPLIT 2a/2b
+
 Split into 2a (lights, DONE) and 2b (cameras, deferred to fold with Inc 3) once
 grounding revealed the camera coupling (see the note after 2a).
 
 **Inc 2a — LIGHTS ✅ SHIPPED** (`b9a77d3` capability + `7ea7bf9` authoring + `5e6c1c7`
 catalogue):
+
 - `GroupValue.children: readonly SceneObject[]`; `MeshChild` gains light kind
   cases → `LightKindR`. A nested light inherits the group's WORLD via `GroupR`'s
   `<group>` nesting (render == resolver, H40) — the world resolver needed NO
@@ -193,6 +200,7 @@ camera-pose-under-parent machinery Inc 3 touches. So do Inc 3 first (or combined
 then nested-camera pose builds on it.
 
 ### Inc 3 — Multi-camera active model (capability B) + cameras-grouping (2b)
+
 - New `CameraSelect` node (ClipSelect pattern): `cameras: list 'SceneObject'`,
   param `active` (index or name), output single `'SceneObject'` → `Scene.camera`.
 - `selectActiveCameraNode` resolves through `CameraSelect` (fallback to direct
@@ -203,12 +211,14 @@ then nested-camera pose builds on it.
   keyframe `active` → render cuts at the frame. e2e + screenshot.
 
 ### Inc 4 — (stretch / optional this milestone) Flatten Scene top-level
-- Migrate `Scene.lights` + the camera *body* into `Scene.children` so top-level
+
+- Migrate `Scene.lights` + the camera _body_ into `Scene.children` so top-level
   lights/cameras are also "in children" (the fully-flat Blender model). Deepest
   migration; **A + B already deliver the director-facing parity**, so this can be
   its own increment or deferred. Resolves Q-A's transitional looseness.
 
 ### Path to E (glTF children first-class) — follow-on milestone
+
 - Promote `GltfChild` proxies to real `SceneObject` nodes (reparentable out of
   the asset), governed by V44. Out of this milestone's core; noted for sequencing.
 
@@ -216,7 +226,7 @@ then nested-camera pose builds on it.
 
 ## 6. Risks
 
-- **R1 hydration re-validation** — gates Inc 1's zero-migration claim. *Prove first.*
+- **R1 hydration re-validation** — gates Inc 1's zero-migration claim. _Prove first._
 - **R2 nested light/camera world** — reuse #230 `resolveParentWorldMatrix`; do
   NOT invent a parallel walk (Chesterton — the resolver mirrors the renderer).
 - **R3 V44 band addressing** — lights-in-children must key by node id.

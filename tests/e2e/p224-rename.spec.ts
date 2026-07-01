@@ -23,7 +23,8 @@ interface BasherWindow {
 
 function metaName(page: import('@playwright/test').Page, id: string): Promise<string | undefined> {
   return page.evaluate(
-    (nodeId) => (window as unknown as BasherWindow).__basher_dag.getState().state.nodes[nodeId].meta?.name,
+    (nodeId) =>
+      (window as unknown as BasherWindow).__basher_dag.getState().state.nodes[nodeId].meta?.name,
     id,
   );
 }
@@ -34,7 +35,7 @@ test.beforeEach(async ({ page }) => {
     () =>
       Boolean(
         (window as unknown as BasherWindow).__basher_dag &&
-          (window as unknown as BasherWindow).__basher_selection,
+        (window as unknown as BasherWindow).__basher_selection,
       ),
     { timeout: 15000 },
   );

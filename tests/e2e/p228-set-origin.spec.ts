@@ -10,7 +10,10 @@ import { expect, test } from './_fixtures';
 interface W {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { params?: Record<string, unknown> }>; outputs: Record<string, { node: string }> };
+      state: {
+        nodes: Record<string, { params?: Record<string, unknown> }>;
+        outputs: Record<string, { node: string }>;
+      };
       dispatchAtomic: (ops: unknown[], s?: string, d?: string) => void;
     };
   };
@@ -40,11 +43,28 @@ test('Set Origin to Geometry moves a Group origin to the content centre', async 
     const sceneId = d.state.outputs.scene.node;
     d.dispatchAtomic(
       [
-        { type: 'addNode', nodeId: 'n_grp', nodeType: 'Group', params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] } },
+        {
+          type: 'addNode',
+          nodeId: 'n_grp',
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+        },
         { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [3, 0, 0] },
-        { type: 'disconnect', from: { node: 'n_box', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_box', socket: 'out' }, to: { node: 'n_grp', socket: 'children' } },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_grp', socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
       ],
       'user',
       'nest',
@@ -65,5 +85,8 @@ test('Set Origin to Geometry moves a Group origin to the content centre', async 
   // by the same amount so the content world position is unchanged
   // (newPos − newPivot == oldPos − oldPivot, the geometry-fixity invariant).
   expect(after!.position[0]).toBeCloseTo(3, 1);
-  expect(after!.position[0] - after!.pivot[0]).toBeCloseTo(before!.position[0] - before!.pivot[0], 2);
+  expect(after!.position[0] - after!.pivot[0]).toBeCloseTo(
+    before!.position[0] - before!.pivot[0],
+    2,
+  );
 });

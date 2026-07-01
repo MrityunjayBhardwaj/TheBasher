@@ -18,9 +18,9 @@ describe('rebindOrphanMaterials', () => {
     });
     const { doc: out, rebinds } = rebindOrphanMaterials(d);
     expect(rebinds).toEqual([{ materialIndex: 0, materialName: 'M_Horse', primitiveCount: 1 }]);
-    expect((out.meshes as { primitives: { material?: number }[] }[])[0].primitives[0].material).toBe(
-      0,
-    );
+    expect(
+      (out.meshes as { primitives: { material?: number }[] }[])[0].primitives[0].material,
+    ).toBe(0);
     // Pure — the input is not mutated.
     expect(
       (d.meshes as { primitives: { material?: number }[] }[])[0].primitives[0].material,
@@ -30,10 +30,7 @@ describe('rebindOrphanMaterials', () => {
   it('binds MULTIPLE unbound primitives across meshes to the one orphan', () => {
     const d = doc({
       materials: [{ name: 'Solo' }],
-      meshes: [
-        { primitives: [{}, {}] },
-        { primitives: [{}] },
-      ],
+      meshes: [{ primitives: [{}, {}] }, { primitives: [{}] }],
     });
     const { doc: out, rebinds } = rebindOrphanMaterials(d);
     expect(rebinds[0].primitiveCount).toBe(3);

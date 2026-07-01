@@ -205,10 +205,22 @@ test('#242 GAP 1 — a camera frustum follows an ANIMATED ANCESTOR Group (its ow
             ],
           },
         },
-        { type: 'connect', from: { node: 'anc_box', socket: 'out' }, to: { node: 'anc_grp', socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'anc_box', socket: 'out' },
+          to: { node: 'anc_grp', socket: 'children' },
+        },
         // groupable camera: stays wired to scene.camera AND becomes a Group child
-        { type: 'connect', from: { node: 'n_camera', socket: 'out' }, to: { node: 'anc_grp', socket: 'children' } },
-        { type: 'connect', from: { node: 'anc_grp', socket: 'out' }, to: { node: scene, socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_camera', socket: 'out' },
+          to: { node: 'anc_grp', socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'anc_grp', socket: 'out' },
+          to: { node: scene, socket: 'children' },
+        },
       ],
       'e2e',
       'camera under animated group',
@@ -264,7 +276,11 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
             material: { name: 'default', base: { color: '#f80' } },
           },
         },
-        { type: 'connect', from: { node: 'tt_aim', socket: 'out' }, to: { node: scene, socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'tt_aim', socket: 'out' },
+          to: { node: scene, socket: 'children' },
+        },
         {
           type: 'addNode',
           nodeId: 'tt_aim_pos',
@@ -283,9 +299,20 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
           type: 'addNode',
           nodeId: 'tt_area',
           nodeType: 'AreaLight',
-          params: { intensity: 5, position: [0, 4, 0], color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+          params: {
+            intensity: 5,
+            position: [0, 4, 0],
+            color: '#ffffff',
+            width: 2,
+            height: 2,
+            lookAt: [0, 0, 0],
+          },
         },
-        { type: 'connect', from: { node: 'tt_area', socket: 'out' }, to: { node: scene, socket: 'lights' } },
+        {
+          type: 'connect',
+          from: { node: 'tt_area', socket: 'out' },
+          to: { node: scene, socket: 'lights' },
+        },
         {
           type: 'addNode',
           nodeId: 'tt_trackto',

@@ -41,10 +41,9 @@ async function dragRowOnto(page: Page, srcId: string, dstId: string) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(
-    () => Boolean((window as unknown as ReparentWindow).__basher_dag),
-    { timeout: 15000 },
-  );
+  await page.waitForFunction(() => Boolean((window as unknown as ReparentWindow).__basher_dag), {
+    timeout: 15000,
+  });
 });
 
 test('drag a top-level node INTO a Group reparents it (DAG + rendered world)', async ({ page }) => {
@@ -60,17 +59,23 @@ test('drag a top-level node INTO a Group reparents it (DAG + rendered world)', a
           nodeType: 'Group',
           params: { position: [5, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
         },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
       ],
       'user',
       'add group',
     );
   });
 
-  expect(await page.evaluate(() => {
-    const w = window as unknown as ReparentWindow;
-    return w.__basher_world_transform('n_box')?.position?.[0];
-  })).toBeCloseTo(0, 3);
+  expect(
+    await page.evaluate(() => {
+      const w = window as unknown as ReparentWindow;
+      return w.__basher_world_transform('n_box')?.position?.[0];
+    }),
+  ).toBeCloseTo(0, 3);
 
   await dragRowOnto(page, 'n_box', 'n_grp');
 
@@ -97,9 +102,21 @@ test('drag a nested node onto the Scene root un-parents it back to top level', a
           nodeType: 'Group',
           params: { position: [5, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
         },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'disconnect', from: { node: 'n_box', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_box', socket: 'out' }, to: { node: 'n_grp', socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_grp', socket: 'children' },
+        },
       ],
       'user',
       'group the box',
@@ -124,10 +141,28 @@ test('a Group cannot be dropped into its own descendant (cycle guard)', async ({
     // n_outer ⊃ n_inner (both Groups).
     dag.dispatchAtomic(
       [
-        { type: 'addNode', nodeId: 'n_outer', nodeType: 'Group', params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] } },
-        { type: 'addNode', nodeId: 'n_inner', nodeType: 'Group', params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] } },
-        { type: 'connect', from: { node: 'n_outer', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_inner', socket: 'out' }, to: { node: 'n_outer', socket: 'children' } },
+        {
+          type: 'addNode',
+          nodeId: 'n_outer',
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'n_inner',
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_outer', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_inner', socket: 'out' },
+          to: { node: 'n_outer', socket: 'children' },
+        },
       ],
       'user',
       'nested groups',
@@ -149,8 +184,17 @@ test('same-parent sibling drag still REORDERS (regression)', async ({ page }) =>
     const sceneId = dag.state.outputs.scene.node;
     dag.dispatchAtomic(
       [
-        { type: 'addNode', nodeId: 'n_box_b', nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
-        { type: 'connect', from: { node: 'n_box_b', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+        {
+          type: 'addNode',
+          nodeId: 'n_box_b',
+          nodeType: 'BoxMesh',
+          params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box_b', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
       ],
       'user',
       'add second box',

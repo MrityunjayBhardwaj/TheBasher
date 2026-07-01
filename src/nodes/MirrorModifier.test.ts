@@ -41,7 +41,9 @@ function evalMod(
 ): SceneChild | undefined {
   // offset defaults to 0 (zod's default isn't applied when calling evaluate directly,
   // and 0 matches the read-side's default → the parity keys line up).
-  return MirrorModifierNode.evaluate({ offset: 0, ...params }, { target }, ctx) as SceneChild | undefined;
+  return MirrorModifierNode.evaluate({ offset: 0, ...params }, { target }, ctx) as
+    | SceneChild
+    | undefined;
 }
 
 beforeEach(() => {

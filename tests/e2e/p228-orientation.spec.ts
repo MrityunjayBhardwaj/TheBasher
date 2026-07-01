@@ -17,7 +17,8 @@ interface W {
 test('the orientation chip toggles Global↔Local and the gizmo stays mounted', async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(
-    () => Boolean((window as unknown as W).__basher_dag && (window as unknown as W).__basher_selection),
+    () =>
+      Boolean((window as unknown as W).__basher_dag && (window as unknown as W).__basher_selection),
     { timeout: 15000 },
   );
   await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select('n_box'));

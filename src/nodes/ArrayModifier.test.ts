@@ -106,7 +106,10 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
 
     // The evaluate path projects the SAME box (size [1,1,1]) with the same params.
-    const evald = evalMod({ count: 4, offset: [3, 0, 0], muted: false }, boxValue([0, 0, 0])) as ModifiedMeshValue;
+    const evald = evalMod(
+      { count: 4, offset: [3, 0, 0], muted: false },
+      boxValue([0, 0, 0]),
+    ) as ModifiedMeshValue;
     expect(resolved!.geometry.key).toBe(evald.geometry.key); // byte-identical → no drift
   });
 

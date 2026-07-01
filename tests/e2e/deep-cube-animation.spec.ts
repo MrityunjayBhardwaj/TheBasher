@@ -39,7 +39,11 @@ interface BasherWindow {
   __basher_evaluated_transform?: (
     nodeId: string,
     ctx?: { time: { frame: number; seconds: number; normalized: number } },
-  ) => { position?: [number, number, number]; rotation?: [number, number, number]; scale?: [number, number, number] } | null;
+  ) => {
+    position?: [number, number, number];
+    rotation?: [number, number, number];
+    scale?: [number, number, number];
+  } | null;
 }
 
 const ctxAt = (seconds: number) => ({
@@ -79,11 +83,11 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(
       w.__basher_dag &&
-        w.__basher_time &&
-        w.__basher_selection &&
-        w.__basher_evaluated_transform &&
-        w.__basher_mesh_world_position &&
-        w.__basher_mesh_world_scale,
+      w.__basher_time &&
+      w.__basher_selection &&
+      w.__basher_evaluated_transform &&
+      w.__basher_mesh_world_position &&
+      w.__basher_mesh_world_scale,
     );
   });
   await page.waitForFunction(
@@ -151,11 +155,11 @@ test.describe('DEEP — animating a cube end-to-end through the real UI', () => 
         },
         { s: seconds },
       );
-      const renderedPos = await page.evaluate(
-        () => (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box'),
+      const renderedPos = await page.evaluate(() =>
+        (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box'),
       );
-      const renderedScale = await page.evaluate(
-        () => (window as unknown as BasherWindow).__basher_mesh_world_scale!('n_box'),
+      const renderedScale = await page.evaluate(() =>
+        (window as unknown as BasherWindow).__basher_mesh_world_scale!('n_box'),
       );
       const resolved = await page.evaluate(
         (c) => (window as unknown as BasherWindow).__basher_evaluated_transform!('n_box', c),

@@ -74,7 +74,9 @@ test.beforeEach(async ({ page }) => {
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as ModWindow;
-    return Boolean(w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene);
+    return Boolean(
+      w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene,
+    );
   });
 });
 
@@ -90,10 +92,28 @@ test('#209 — Box → ArrayModifier → Scene renders the MERGED array; render 
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
-          { type: 'addNode', nodeId: arr, nodeType: 'ArrayModifier', params: { count, offset: [2, 0, 0], muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: arr, socket: 'target' } },
-          { type: 'connect', from: { node: arr, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [4, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: arr,
+            nodeType: 'ArrayModifier',
+            params: { count, offset: [2, 0, 0], muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: arr, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: arr, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → array → scene',
@@ -153,10 +173,28 @@ test('#209 — muting the modifier collapses the output back to the source box (
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
-          { type: 'addNode', nodeId: arr, nodeType: 'ArrayModifier', params: { count, offset: [2, 0, 0], muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: arr, socket: 'target' } },
-          { type: 'connect', from: { node: arr, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [4, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: arr,
+            nodeType: 'ArrayModifier',
+            params: { count, offset: [2, 0, 0], muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: arr, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: arr, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → array → scene',
@@ -175,11 +213,13 @@ test('#209 — muting the modifier collapses the output back to the source box (
   // Mute it → the source box passes through → 24 verts (the registry build for a box).
   await page.evaluate((arr) => {
     const w = window as unknown as ModWindow;
-    w.__basher_dag.getState().dispatchAtomic(
-      [{ type: 'setParam', nodeId: arr, paramPath: 'muted', value: true }],
-      'e2e',
-      'mute',
-    );
+    w.__basher_dag
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: arr, paramPath: 'muted', value: true }],
+        'e2e',
+        'mute',
+      );
   }, MARR);
 
   await page.waitForFunction(
@@ -208,12 +248,39 @@ test('#209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array �
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
-          { type: 'addNode', nodeId: a1, nodeType: 'ArrayModifier', params: { count: 3, offset: [2, 0, 0], muted: false } },
-          { type: 'addNode', nodeId: a2, nodeType: 'ArrayModifier', params: { count: 2, offset: [0, 3, 0], muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: a1, socket: 'target' } },
-          { type: 'connect', from: { node: a1, socket: 'out' }, to: { node: a2, socket: 'target' } },
-          { type: 'connect', from: { node: a2, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [4, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: a1,
+            nodeType: 'ArrayModifier',
+            params: { count: 3, offset: [2, 0, 0], muted: false },
+          },
+          {
+            type: 'addNode',
+            nodeId: a2,
+            nodeType: 'ArrayModifier',
+            params: { count: 2, offset: [0, 3, 0], muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: a1, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: a1, socket: 'out' },
+            to: { node: a2, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: a2, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → array → array → scene',

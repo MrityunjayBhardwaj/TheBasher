@@ -3,7 +3,7 @@
 > ⚠️ **SUPERSEDED (2026-06-28) by `COMFYUI-BASHER-NODES.md`.** This compiler had Basher
 > walk + classify + rewire a foreign workflow's internal params — the wrong side of the
 > boundary. The go-forward contract is the two-node `basher_controller` / `basher_export`
-> model: the author *declares* the control surface by wiring, Basher only enumerates its
+> model: the author _declares_ the control surface by wiring, Basher only enumerates its
 > own nodes. Inc 1–4 below SHIPPED and remain as reference / staged-for-removal; do not
 > extend this doc. See `COMFYUI-BASHER-NODES.md`.
 >
@@ -284,7 +284,7 @@ the shared keyframe diamond, or its params are silently non-animatable. The
 `useAnimatableField` spine ([[#213]]) is the reuse target.
 
 **WHERE these rows live (LOCKED — supersedes the earlier "an `inspectorSection`" note).**
-The ComfyUIWorkflow node is now homed as a compositor *layer source* ([[V83]]), not a
+The ComfyUIWorkflow node is now homed as a compositor _layer source_ ([[V83]]), not a
 free node selected in the 3D NPanel inspector. So the rows live in the compositor's
 **Controls panel** (`docs/COMPOSITOR-DESIGN.md` §7.1) — the AE "Effect Controls"
 analogue, generalized to "all inputs of the layer's producer pipeline." The comfy graph

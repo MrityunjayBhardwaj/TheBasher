@@ -37,7 +37,11 @@ describe('resolveTrackTo', () => {
     const rot = resolveTrackTo(obj, target);
     expect(rot).not.toBeNull();
     const dir = minusZ(rot!);
-    const want = new THREE.Vector3(target[0] - obj[0], target[1] - obj[1], target[2] - obj[2]).normalize();
+    const want = new THREE.Vector3(
+      target[0] - obj[0],
+      target[1] - obj[1],
+      target[2] - obj[2],
+    ).normalize();
     expect(dir.x).toBeCloseTo(want.x, 5);
     expect(dir.y).toBeCloseTo(want.y, 5);
     expect(dir.z).toBeCloseTo(want.z, 5);

@@ -14,7 +14,9 @@ import { test, expect } from './_fixtures';
 interface BasherWindow {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
+      };
     };
   };
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
@@ -23,9 +25,7 @@ interface BasherWindow {
     folderName: string,
   ) => Promise<string>;
   __basher_gizmo_grab?: (mode: string, target: [number, number, number]) => void;
-  __basher_evaluated_transform?: (
-    nodeId: string,
-  ) => { position?: [number, number, number] } | null;
+  __basher_evaluated_transform?: (nodeId: string) => { position?: [number, number, number] } | null;
 }
 
 test('imported glTF parent group is transformable + shows the gizmo', async ({ page }) => {

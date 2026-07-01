@@ -55,7 +55,11 @@ import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMate
 import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
-import { opfsSiblingPath, missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResolver';
+import {
+  opfsSiblingPath,
+  missingGltfSiblings,
+  formatMissingSiblingsError,
+} from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import {
@@ -343,7 +347,10 @@ export async function ingestGltfFolder(
     // Baked MR textures from combined specularGlossinessTexture materials are
     // NEW siblings — write them too (they ride the .basher whole-folder embed).
     for (const extra of conversion?.extraFiles ?? []) {
-      await storage.write(`${USER_IMPORTS_ROOT}/${resolvedName}/${extra.relativePath}`, extra.bytes);
+      await storage.write(
+        `${USER_IMPORTS_ROOT}/${resolvedName}/${extra.relativePath}`,
+        extra.bytes,
+      );
     }
     return `${USER_IMPORTS_ROOT}/${resolvedName}/${entry.relativePath}`;
   } catch (err) {

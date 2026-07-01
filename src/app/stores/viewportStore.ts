@@ -323,7 +323,8 @@ export function maybeSnapTransform(
     useViewportStore.getState();
   const passthrough: [number, number, number] = [value[0], value[1], value[2]];
   if (!snapEnabled) return passthrough;
-  if (mode === 'translate') return snapAffect.move && snapStep > 0 ? snapVec3(value, snapStep) : passthrough;
+  if (mode === 'translate')
+    return snapAffect.move && snapStep > 0 ? snapVec3(value, snapStep) : passthrough;
   if (mode === 'rotate')
     return snapAffect.rotate && rotateSnapStep > 0 ? snapVec3(value, rotateSnapStep) : passthrough;
   return snapAffect.scale && scaleSnapStep > 0 ? snapVec3(value, scaleSnapStep) : passthrough;

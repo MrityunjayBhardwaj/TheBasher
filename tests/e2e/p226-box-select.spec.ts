@@ -142,7 +142,10 @@ test('a real pointer drag draws the marquee and selects the enclosed objects', a
   if (!box) throw new Error('no viewport bounding box');
   const proj = await page.evaluate(() => {
     const w = window as unknown as BoxSelectWindow;
-    return { a: w.__basher_box_select_project([0, 0, 0]), b: w.__basher_box_select_project([3, 0, 0]) };
+    return {
+      a: w.__basher_box_select_project([0, 0, 0]),
+      b: w.__basher_box_select_project([3, 0, 0]),
+    };
   });
   await page.evaluate(() =>
     (window as unknown as BoxSelectWindow).__basher_selection.getState().select(null),

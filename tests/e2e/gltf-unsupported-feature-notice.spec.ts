@@ -30,7 +30,9 @@ test('an import with not-yet-editable features warns to the console, not the err
   );
   await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
-    const bytes = new Uint8Array(await fetch('/assets/sheen-quad.gltf').then((r) => r.arrayBuffer()));
+    const bytes = new Uint8Array(
+      await fetch('/assets/sheen-quad.gltf').then((r) => r.arrayBuffer()),
+    );
     await w.__basher_ingestGltfFolder([{ relativePath: 'sheen-quad.gltf', bytes }], 'sheen');
   });
 

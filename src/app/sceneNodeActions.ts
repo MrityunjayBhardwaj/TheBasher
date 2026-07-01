@@ -121,7 +121,12 @@ export function buildDuplicateNodeOps(
   // 4. addNode clones (empty inputs — edges are separate connect ops, undo-safe).
   for (const id of subtree) {
     const node = state.nodes[id];
-    ops.push({ type: 'addNode', nodeId: idMap.get(id)!, nodeType: node.type, params: structuredClone(node.params) });
+    ops.push({
+      type: 'addNode',
+      nodeId: idMap.get(id)!,
+      nodeType: node.type,
+      params: structuredClone(node.params),
+    });
   }
   // 5. Re-wire EVERY input edge of each clone: a ref into the subtree points to the
   //    matching clone; any other ref stays shared with the original.

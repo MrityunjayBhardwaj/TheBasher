@@ -198,7 +198,11 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
     coat?: PartialLobe;
     transmission?: PartialLobe;
     emission?: PartialLobe;
-    geometry?: PartialLobe & { alphaCutoff?: unknown; vertexColors?: unknown; doubleSided?: unknown };
+    geometry?: PartialLobe & {
+      alphaCutoff?: unknown;
+      vertexColors?: unknown;
+      doubleSided?: unknown;
+    };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     unsupported?: Record<string, number>;

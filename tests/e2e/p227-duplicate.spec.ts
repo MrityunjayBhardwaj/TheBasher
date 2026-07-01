@@ -9,7 +9,10 @@ import type { Page } from '@playwright/test';
 interface DupWindow {
   __basher_dag: {
     getState: () => {
-      state: { outputs: Record<string, { node: string }>; nodes: Record<string, { inputs: { children?: { node: string }[] } }> };
+      state: {
+        outputs: Record<string, { node: string }>;
+        nodes: Record<string, { inputs: { children?: { node: string }[] } }>;
+      };
       dispatchAtomic: (ops: unknown[], s?: string, l?: string) => void;
       undo: () => void;
     };
@@ -29,7 +32,9 @@ const primary = (page: Page) =>
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(() => Boolean((window as unknown as DupWindow).__basher_dag), { timeout: 15000 });
+  await page.waitForFunction(() => Boolean((window as unknown as DupWindow).__basher_dag), {
+    timeout: 15000,
+  });
 });
 
 test('context-menu Duplicate clones a leaf as a sibling and selects the copy; undo reverts in one step', async ({
@@ -58,10 +63,28 @@ test('Shift-D deep-copies a Group subtree (the copy owns CLONED children, not sh
     const sceneId = dag.state.outputs.scene.node;
     dag.dispatchAtomic(
       [
-        { type: 'addNode', nodeId: 'n_grp', nodeType: 'Group', params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] } },
-        { type: 'addNode', nodeId: 'n_child', nodeType: 'BoxMesh', params: { size: [2, 2, 2], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_child', socket: 'out' }, to: { node: 'n_grp', socket: 'children' } },
+        {
+          type: 'addNode',
+          nodeId: 'n_grp',
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'n_child',
+          nodeType: 'BoxMesh',
+          params: { size: [2, 2, 2], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_child', socket: 'out' },
+          to: { node: 'n_grp', socket: 'children' },
+        },
       ],
       'user',
       'group',

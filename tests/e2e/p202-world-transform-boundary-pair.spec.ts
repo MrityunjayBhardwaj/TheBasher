@@ -52,7 +52,12 @@ async function buildNestedAnimatedTransform(page: import('@playwright/test').Pag
       const dispatch = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
       // Give the box a non-zero local X so world = parent + local is observable
       // (not trivially equal to the parent's position).
-      dispatch({ type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [boxLocalX, 0, 0] });
+      dispatch({
+        type: 'setParam',
+        nodeId: 'n_box',
+        paramPath: 'position',
+        value: [boxLocalX, 0, 0],
+      });
       // Insert Transform between n_box and the scene.
       dispatch({
         type: 'addNode',

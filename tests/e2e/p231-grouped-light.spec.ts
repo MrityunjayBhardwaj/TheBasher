@@ -18,9 +18,7 @@ interface BasherWindow {
   __basher_dag?: {
     getState: () => { dispatch: (op: unknown) => void };
   };
-  __basher_world_transform?: (
-    nodeId: string,
-  ) => { position: number[]; scale: number[] } | null;
+  __basher_world_transform?: (nodeId: string) => { position: number[]; scale: number[] } | null;
   __basher_light_world_positions?: () => [number, number, number][];
 }
 
@@ -72,14 +70,11 @@ test.describe('#231 Inc 2a — grouped light boundary-pair', () => {
     );
 
     // Side A — wait for the render to mount the nested light at the composed world.
-    await page.waitForFunction(
-      (worldX) => {
-        const w = window as unknown as BasherWindow;
-        const positions = w.__basher_light_world_positions?.() ?? [];
-        return positions.some((p) => Math.abs(p[0] - worldX) < 1e-2 && Math.abs(p[1]) < 1e-2);
-      },
-      WORLD_X,
-    );
+    await page.waitForFunction((worldX) => {
+      const w = window as unknown as BasherWindow;
+      const positions = w.__basher_light_world_positions?.() ?? [];
+      return positions.some((p) => Math.abs(p[0] - worldX) < 1e-2 && Math.abs(p[1]) < 1e-2);
+    }, WORLD_X);
 
     const { sideA, sideB } = await page.evaluate(
       ({ lightId, worldX }) => {

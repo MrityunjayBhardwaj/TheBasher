@@ -150,11 +150,24 @@ export function buildAddProfileOps(
   if (!selId) {
     selId = newId('profsel');
     ops.push(
-      { type: 'addNode', nodeId: selId, nodeType: 'LightProfileSelect', params: { selectedProfile: name } },
-      { type: 'connect', from: { node: selId, socket: 'out' }, to: { node: sceneId, socket: 'lightRig' } },
+      {
+        type: 'addNode',
+        nodeId: selId,
+        nodeType: 'LightProfileSelect',
+        params: { selectedProfile: name },
+      },
+      {
+        type: 'connect',
+        from: { node: selId, socket: 'out' },
+        to: { node: sceneId, socket: 'lightRig' },
+      },
     );
   }
-  ops.push({ type: 'connect', from: { node: rigId, socket: 'out' }, to: { node: selId, socket: 'rigs' } });
+  ops.push({
+    type: 'connect',
+    from: { node: rigId, socket: 'out' },
+    to: { node: selId, socket: 'rigs' },
+  });
   // Activate the new profile (selectedProfile == its name). Even when the select
   // already existed, switch to the freshly added profile.
   ops.push({ type: 'setParam', nodeId: selId, paramPath: 'selectedProfile', value: name });
@@ -163,8 +176,16 @@ export function buildAddProfileOps(
   if (isFirst) {
     for (const lightId of legacyStudioLightsOnScene(state)) {
       ops.push(
-        { type: 'disconnect', from: { node: lightId, socket: 'out' }, to: { node: sceneId, socket: 'lights' } },
-        { type: 'connect', from: { node: lightId, socket: 'out' }, to: { node: rigId, socket: 'lights' } },
+        {
+          type: 'disconnect',
+          from: { node: lightId, socket: 'out' },
+          to: { node: sceneId, socket: 'lights' },
+        },
+        {
+          type: 'connect',
+          from: { node: lightId, socket: 'out' },
+          to: { node: rigId, socket: 'lights' },
+        },
       );
     }
   }
@@ -219,7 +240,11 @@ export function buildDeleteProfileOps(state: DagState, rigId: string): Op[] | nu
 
   // Detach + remove each light and its Track-To.
   for (const lightId of lightIds) {
-    ops.push({ type: 'disconnect', from: { node: lightId, socket: 'out' }, to: { node: rigId, socket: 'lights' } });
+    ops.push({
+      type: 'disconnect',
+      from: { node: lightId, socket: 'out' },
+      to: { node: rigId, socket: 'lights' },
+    });
   }
   for (const ttId of trackToIds) {
     ops.push({ type: 'removeNode', nodeId: ttId });
@@ -230,11 +255,19 @@ export function buildDeleteProfileOps(state: DagState, rigId: string): Op[] | nu
 
   // Detach the rig from the select (or directly from the scene), then remove it.
   if (selId) {
-    ops.push({ type: 'disconnect', from: { node: rigId, socket: 'out' }, to: { node: selId, socket: 'rigs' } });
+    ops.push({
+      type: 'disconnect',
+      from: { node: rigId, socket: 'out' },
+      to: { node: selId, socket: 'rigs' },
+    });
   } else {
     const sceneRef = state.outputs.scene;
     if (sceneRef) {
-      ops.push({ type: 'disconnect', from: { node: rigId, socket: 'out' }, to: { node: sceneRef.node, socket: 'lightRig' } });
+      ops.push({
+        type: 'disconnect',
+        from: { node: rigId, socket: 'out' },
+        to: { node: sceneRef.node, socket: 'lightRig' },
+      });
     }
   }
   ops.push({ type: 'removeNode', nodeId: rigId });

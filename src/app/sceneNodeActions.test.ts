@@ -35,7 +35,11 @@ describe('buildDeleteNodesOps', () => {
   it('disconnects every consumer edge before removing the node', () => {
     const ops = buildDeleteNodesOps(fakeState(), ['box']);
     expect(ops).toEqual([
-      { type: 'disconnect', from: { node: 'box', socket: 'out' }, to: { node: 'scene', socket: 'children' } },
+      {
+        type: 'disconnect',
+        from: { node: 'box', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      },
       { type: 'removeNode', nodeId: 'box' },
     ]);
   });
@@ -47,7 +51,12 @@ describe('buildDuplicateNodeOps', () => {
     expect(res?.newRootId).toBe('box_copy');
     expect(res?.ops).toEqual([
       { type: 'addNode', nodeId: 'box_copy', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
-      { type: 'connect', from: { node: 'box_copy', socket: 'out' }, to: { node: 'scene', socket: 'children' }, index: 1 },
+      {
+        type: 'connect',
+        from: { node: 'box_copy', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+        index: 1,
+      },
     ]);
   });
 
@@ -58,9 +67,19 @@ describe('buildDuplicateNodeOps', () => {
       { type: 'addNode', nodeId: 'grp_copy', nodeType: 'Group', params: { position: [5, 0, 0] } },
       { type: 'addNode', nodeId: 'inner_copy', nodeType: 'BoxMesh', params: { size: [2, 2, 2] } },
       // internal edge points at the CLONE child, not the original.
-      { type: 'connect', from: { node: 'inner_copy', socket: 'out' }, to: { node: 'grp_copy', socket: 'children' }, index: 0 },
+      {
+        type: 'connect',
+        from: { node: 'inner_copy', socket: 'out' },
+        to: { node: 'grp_copy', socket: 'children' },
+        index: 0,
+      },
       // new root wired after the original (grp was index 1 → copy at 2).
-      { type: 'connect', from: { node: 'grp_copy', socket: 'out' }, to: { node: 'scene', socket: 'children' }, index: 2 },
+      {
+        type: 'connect',
+        from: { node: 'grp_copy', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+        index: 2,
+      },
     ]);
   });
 

@@ -24,10 +24,9 @@ interface OutlinerWindow {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(
-    () => Boolean((window as unknown as OutlinerWindow).__basher_dag),
-    { timeout: 15000 },
-  );
+  await page.waitForFunction(() => Boolean((window as unknown as OutlinerWindow).__basher_dag), {
+    timeout: 15000,
+  });
   // Two extra boxes so the tree has n_box, n_box_b, n_box_c in order.
   await page.evaluate(() => {
     const w = window as unknown as OutlinerWindow;
@@ -96,5 +95,7 @@ test('Shift-click selects the inclusive range from the active row to the clicked
 test('a multi-set built in the outliner drives the multi-object inspector', async ({ page }) => {
   await row(page, 'n_box').click();
   await row(page, 'n_box_c').click({ modifiers: ['Shift'] });
-  await expect(page.locator('[data-testid="inspector-multi-count"]')).toHaveText('3 objects selected');
+  await expect(page.locator('[data-testid="inspector-multi-count"]')).toHaveText(
+    '3 objects selected',
+  );
 });

@@ -31,7 +31,14 @@ describe('resolveLightBrushPlacement', () => {
 
   it('places the light ON the rig sphere (reflect mode)', () => {
     // Hit the top of the subject; camera looking down; the light lands on the shell.
-    const out = resolveLightBrushPlacement([0, 1, 0], [0, 1, 0], [0, -1, 0], centre, radius, 'reflect');
+    const out = resolveLightBrushPlacement(
+      [0, 1, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      centre,
+      radius,
+      'reflect',
+    );
     expect(out).not.toBeNull();
     expect(dist(out!.position, centre)).toBeCloseTo(radius, 6);
   });
@@ -39,7 +46,14 @@ describe('resolveLightBrushPlacement', () => {
   it('reflect mode: a head-on view paints the light back toward the camera', () => {
     // Hit at +Z front, normal +Z, camera looking −Z → reflection is +Z → the light
     // sits on the +Z shell (so its highlight bounces straight back to the camera).
-    const out = resolveLightBrushPlacement([0, 0, 1], [0, 0, 1], [0, 0, -1], centre, radius, 'reflect');
+    const out = resolveLightBrushPlacement(
+      [0, 0, 1],
+      [0, 0, 1],
+      [0, 0, -1],
+      centre,
+      radius,
+      'reflect',
+    );
     expect(out).not.toBeNull();
     expect(out!.position[2]).toBeCloseTo(radius, 6);
     expect(out!.position[0]).toBeCloseTo(0, 6);
@@ -47,7 +61,14 @@ describe('resolveLightBrushPlacement', () => {
   });
 
   it('normal mode places along the surface normal, on the sphere', () => {
-    const out = resolveLightBrushPlacement([0, 1, 0], [0, 1, 0], [0, -1, 0], centre, radius, 'normal');
+    const out = resolveLightBrushPlacement(
+      [0, 1, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      centre,
+      radius,
+      'normal',
+    );
     expect(out).not.toBeNull();
     expect(out!.position[1]).toBeCloseTo(radius, 6); // straight up the +Y normal
     expect(dist(out!.position, centre)).toBeCloseTo(radius, 6);
@@ -55,7 +76,14 @@ describe('resolveLightBrushPlacement', () => {
 
   it('returns null when the ray misses the sphere (hit outside, pointing away)', () => {
     // Hit well outside the sphere, normal pointing further away → no intersection.
-    const out = resolveLightBrushPlacement([100, 0, 0], [1, 0, 0], [1, 0, 0], centre, radius, 'normal');
+    const out = resolveLightBrushPlacement(
+      [100, 0, 0],
+      [1, 0, 0],
+      [1, 0, 0],
+      centre,
+      radius,
+      'normal',
+    );
     expect(out).toBeNull();
   });
 });

@@ -19,7 +19,9 @@ import { test, expect } from './_fixtures';
 interface BasherWindow {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
+      };
       dispatch: (op: unknown, source?: string, description?: string) => unknown;
     };
   };
@@ -37,7 +39,9 @@ interface BasherWindow {
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
   await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
-    const bytes = new Uint8Array(await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()));
+    const bytes = new Uint8Array(
+      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
+    );
     await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'mat-transient');
   });
 }

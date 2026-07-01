@@ -89,7 +89,11 @@ describe('geometryRegistry', () => {
   });
 
   // SOP / modifier (epic #201, #209) — the recursive `array` descriptor build.
-  const arrayRef = (source: GeometryRef, count: number, offset: [number, number, number]): GeometryRef => ({
+  const arrayRef = (
+    source: GeometryRef,
+    count: number,
+    offset: [number, number, number],
+  ): GeometryRef => ({
     key: `array|${source.key}|${count}|${offset.join(',')}`,
     kind: 'array',
     descriptor: { kind: 'array', source, count, offset },

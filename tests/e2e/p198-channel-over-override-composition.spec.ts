@@ -72,7 +72,9 @@ async function ingestMetal(page: import('@playwright/test').Page): Promise<void>
 function boxChildId(page: import('@playwright/test').Page) {
   return page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find((n) => n.type === 'GltfChild');
+    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
+      (n) => n.type === 'GltfChild',
+    );
     return c?.id ?? null;
   });
 }
@@ -87,7 +89,9 @@ const boxSlot = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [])[0];
-    return m ? { color: m.color, metalness: m.metalness, hasMetalnessMap: m.hasMetalnessMap } : null;
+    return m
+      ? { color: m.color, metalness: m.metalness, hasMetalnessMap: m.hasMetalnessMap }
+      : null;
   });
 
 async function ready(page: import('@playwright/test').Page) {
@@ -129,9 +133,22 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
             from: { node: gltfId, socket: 'out' },
             to: { node: transformId, socket: 'target' },
           },
-          { type: 'addNode', nodeId: 'p198_mo', nodeType: 'MaterialOverride', params: { color: '#ff0000' } },
-          { type: 'connect', from: { node: gltfId, socket: 'out' }, to: { node: 'p198_mo', socket: 'target' } },
-          { type: 'connect', from: { node: 'p198_mo', socket: 'out' }, to: { node: transformId, socket: 'target' } },
+          {
+            type: 'addNode',
+            nodeId: 'p198_mo',
+            nodeType: 'MaterialOverride',
+            params: { color: '#ff0000' },
+          },
+          {
+            type: 'connect',
+            from: { node: gltfId, socket: 'out' },
+            to: { node: 'p198_mo', socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'p198_mo', socket: 'out' },
+            to: { node: transformId, socket: 'target' },
+          },
         ],
         'user',
         'p198 apply material override',
