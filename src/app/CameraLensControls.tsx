@@ -20,6 +20,7 @@ import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cameraLens';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import { CameraLookAtTarget } from './CameraLookAtTarget';
 import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
@@ -143,6 +144,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
 
   return (
     <div className="flex flex-col" data-testid={`inspector-camera-${nodeId}`}>
+      {/* #247 — bind the lookAt to a scene object (Track-To); the reticle follows it. */}
+      <CameraLookAtTarget nodeId={nodeId} />
       {isOrtho ? (
         <label className={ROW}>
           <span className={LABEL}>zoom</span>
