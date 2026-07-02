@@ -85,6 +85,9 @@ let comfyUIPromise: Promise<ComfyUICapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
+// #255 — idle-debounce before an autosave fires (ms after the last DAG edit).
+const AUTOSAVE_IDLE_MS = 10_000;
+
 function persistLastProjectId(id: string): void {
   if (typeof localStorage === 'undefined') return;
   try {
@@ -201,12 +204,31 @@ export function boot(): Promise<void> {
     // subscription stays quiet until the user opens a project via
     // switchProject/createNewProject — both of which reset dirty AFTER their
     // hydrate (see those funcs), absorbing the one false-positive.
+    // #255 — idle-debounced AUTOSAVE. Manual save alone loses a crash's worth of
+    // work; the beforeunload guard catches close/reload but not a crash/kill. A
+    // trailing debounce (save AUTOSAVE_IDLE_MS after the last edit settles) gives
+    // crash-safety without saving mid-drag. Best-effort: saveCurrent() no-ops with
+    // no current project, and a failed write is logged (the beforeunload guard +
+    // the explicit Cmd+S error path remain). 10s is long enough not to race the
+    // fast dirty-dot indicator specs.
+    let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleAutosave = (): void => {
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => {
+        autosaveTimer = null;
+        if (useProjectStore.getState().dirty) {
+          void saveCurrent().catch((e) => console.warn('boot: autosave failed', e));
+        }
+      }, AUTOSAVE_IDLE_MS);
+    };
+
     const installDirtyTracking = (): void => {
       let prevDagState = useDagStore.getState().state;
       useDagStore.subscribe((s) => {
         if (s.state === prevDagState) return;
         prevDagState = s.state;
         useProjectStore.getState().markDirty();
+        scheduleAutosave();
       });
     };
 
