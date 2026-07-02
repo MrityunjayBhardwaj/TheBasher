@@ -747,6 +747,16 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                       : 'text-fg-dim hover:bg-bg-1 hover:text-fg'
                 } ${isHover ? 'outline outline-1 outline-accent' : ''}`}
                 style={{ paddingLeft: `${0.5 + row.depth * 0.75}rem` }}
+                // Double-click ANYWHERE on the row renames in place (Blender
+                // parity; F2 does the same via the global shortcut). #250-adjacent
+                // fix: the handler used to sit only on the label span, so a
+                // double-click on the icon or the row padding was a dead no-op
+                // (the tell in p224). The action buttons below stopPropagation
+                // their own double-clicks so toggling one never opens rename.
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  beginRename(row.nodeId, 'outliner');
+                }}
               >
                 {hasChildTree ? (
                   <button
@@ -756,6 +766,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     aria-label={isExpanded ? 'Collapse children' : 'Expand children'}
                     aria-expanded={isExpanded}
                     className="shrink-0 text-[10px] text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onDoubleClick={(e) => e.stopPropagation()} // never open rename
                     onClick={(e) => {
                       e.stopPropagation(); // toggle only — do NOT select the row
                       if (row.nodeType === 'GltfAsset') toggleAsset(row.nodeId);
@@ -777,16 +788,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     className="grow rounded-sm border border-accent bg-bg-2 px-1 text-[13px] text-fg outline-none"
                   />
                 ) : (
-                  <span
-                    className={`grow truncate ${hidden ? 'opacity-40' : ''}`}
-                    // Double-click renames in place (F2 does the same via the
-                    // global shortcut). stopPropagation so the dbl-click doesn't
-                    // re-fire the row's single-click select underneath.
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      beginRename(row.nodeId, 'outliner');
-                    }}
-                  >
+                  <span className={`grow truncate ${hidden ? 'opacity-40' : ''}`}>
                     {row.display}
                   </span>
                 )}
@@ -809,6 +811,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     data-testid={`scene-tree-set-active-${row.nodeId}`}
                     aria-label="Set active camera"
                     title="Set active camera"
+                    onDoubleClick={(e) => e.stopPropagation()} // never open rename
                     onClick={(e) => {
                       e.stopPropagation(); // set-active only — do NOT re-select
                       setActiveCameraAction(row.nodeId);
@@ -827,6 +830,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     aria-label={hidden ? 'Show' : 'Hide'}
                     aria-pressed={hidden}
                     title={hidden ? 'Show' : 'Hide'}
+                    onDoubleClick={(e) => e.stopPropagation()} // never open rename
                     onClick={(e) => {
                       e.stopPropagation(); // toggle only — do NOT select the row
                       toggleHidden(row.nodeId, !hidden);
