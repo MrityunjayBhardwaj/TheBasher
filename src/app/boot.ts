@@ -264,6 +264,18 @@ export function boot(): Promise<void> {
     // installed (a first-run-home early return would have stranded them).
     installDirtyTracking();
 
+    // #255 — warn before leaving with UNSAVED changes. Saving is manual
+    // (Cmd+S / menu / project-switch), so a tab close / reload / navigation with
+    // a dirty DAG silently loses work since the last save. The native
+    // beforeunload prompt is the only cross-browser guard; it fires ONLY when
+    // `dirty` (an always-on handler would nag even with nothing to lose). Pure
+    // decision extracted to `beforeUnloadIfDirty` so it is unit-testable.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', (e) => {
+        beforeUnloadIfDirty(e, useProjectStore.getState().dirty);
+      });
+    }
+
     // Test affordance — expose the stores in dev only. Production builds
     // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
     // these to drive scenarios that native HTML5 D&D would make brittle.
@@ -726,6 +738,23 @@ export function __resetBootForTests(): void {
 export function __setComfyCapabilityForTests(cap: ComfyUICapability | null): void {
   cachedComfyUI = cap;
   comfyUIPromise = cap ? Promise.resolve(cap) : null;
+}
+
+/**
+ * The pure decision behind the `beforeunload` guard (#255): when the project has
+ * unsaved changes, cancel the unload (set `returnValue` — Chrome requires it) so
+ * the browser shows its native "leave site?" prompt. Returns whether it blocked,
+ * for the unit test. A no-op when clean, so the user is never nagged with nothing
+ * to lose.
+ */
+export function beforeUnloadIfDirty(
+  e: { preventDefault: () => void; returnValue: unknown },
+  dirty: boolean,
+): boolean {
+  if (!dirty) return false;
+  e.preventDefault();
+  e.returnValue = '';
+  return true;
 }
 
 export async function saveCurrent(): Promise<void> {
