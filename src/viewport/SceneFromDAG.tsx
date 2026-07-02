@@ -38,6 +38,7 @@ import { applyEditedMaps, hasMapEdits } from '../app/material/gltfMapOverlay';
 import { getStorage } from '../app/boot';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
@@ -1629,7 +1630,30 @@ function ModifiedMeshR({
     shading,
   );
   const geom = geometryRegistry.get(value.geometry);
-  if (!geom) return null; // source not sync-buildable (glTF/baked) — v1 follow-up
+  // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
+  // the modifier's source could not be built synchronously — reachable when the
+  // ultimate source is a BAKED mesh whose OPFS bytes aren't primed (ArrayModifier
+  // passes glTF/Group sources THROUGH, so those never blank here). ModifiedMeshR
+  // has no prime path, so the blank is PERSISTENT, not transient → route it to the
+  // persistent asset-error banner (keyed by the deterministic geometry key so a
+  // rebuilt/deleted modifier clears its own row) rather than rendering nothing with
+  // no reason. Surfacing only; loading baked-sourced modifier geometry is a
+  // separate v1-scope follow-up.
+  const geomKey = value.geometry.key;
+  useEffect(() => {
+    const store = useAssetErrorStore.getState();
+    const ref = `modifier:${geomKey}`;
+    if (geom) {
+      store.clear(ref);
+      return;
+    }
+    store.report(
+      ref,
+      'modifier geometry could not be built (source not sync-buildable — glTF/baked-sourced modifiers are a follow-up)',
+    );
+    return () => useAssetErrorStore.getState().clear(ref);
+  }, [geom, geomKey]);
+  if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   return (
     <mesh
       position={value.position as [number, number, number]}

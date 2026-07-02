@@ -14,9 +14,16 @@ import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
+import * as geometryRegistry from '../app/geometryRegistry';
 import { hydrateInlineMaterial } from './materialSchema';
 import { ArrayModifierNode } from './ArrayModifier';
-import type { BoxMeshValue, ModifiedMeshValue, SceneChild, TransformValue } from './types';
+import type {
+  BakedMeshValue,
+  BoxMeshValue,
+  ModifiedMeshValue,
+  SceneChild,
+  TransformValue,
+} from './types';
 
 const BOX_ID = 'n_box';
 const MOD_ID = 'n_array';
@@ -78,6 +85,35 @@ describe('ArrayModifier.evaluate', () => {
 
   it('an unwired source (undefined) stays transparent (no crash)', () => {
     expect(evalMod({ count: 3, offset: [2, 0, 0], muted: false }, undefined)).toBeUndefined();
+  });
+
+  // #258 — the null-geom precondition the renderer's V38 surfacing depends on.
+  // A BAKED source produces a real ModifiedMesh (baked passes sourceGeometryRef,
+  // unlike glTF which passes THROUGH), but its geometry is an `array` over a
+  // `baked` ref whose OPFS bytes aren't primed → geometryRegistry.get returns null.
+  // ModifiedMeshR has no prime path, so this is a PERSISTENT blank the renderer
+  // must surface (ex-silent). This locks that a baked-sourced modifier is exactly
+  // the reachable null-geom case.
+  it('a baked source → a ModifiedMesh whose geometry is null-until-primed (the #258 blank)', () => {
+    __resetRegistryForTests();
+    geometryRegistry.clear();
+    const baked: BakedMeshValue = {
+      kind: 'BakedMesh',
+      geometry: {
+        key: 'baked|deadbeef-8',
+        kind: 'baked',
+        descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 8 },
+      },
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      material: { name: 'baked', materialClass: 'standard', base: { color: '#888888' } },
+    };
+    const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, baked) as ModifiedMeshValue;
+    expect(out.kind).toBe('ModifiedMesh'); // a real modified mesh (not a passthrough)
+    expect(out.geometry.kind).toBe('array');
+    // The array wraps the unprimed baked ref → the registry cannot build it sync.
+    expect(geometryRegistry.get(out.geometry)).toBeNull();
   });
 });
 
