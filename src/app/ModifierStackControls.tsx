@@ -76,7 +76,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
       {unsupportedSource ? (
         <p
           data-testid="modifier-unsupported-source"
-          className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-1 text-amber-300"
+          className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
         >
           ⚠ Modifiers only reshape primitive meshes (Box, Sphere). This{' '}
           {baseType === 'GltfAsset' ? 'imported' : baseType} source passes through unchanged.
