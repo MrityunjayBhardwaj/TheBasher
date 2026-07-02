@@ -237,9 +237,48 @@ export function collectCompositeInputs(
   return inputs;
 }
 
+// A BOUNDED, LRU ImageBitmap cache (#253). ImageBitmaps hold decoded/GPU memory that
+// only `.close()` releases; an unbounded Map (the old caches) grew one entry per
+// decoded frame, so a long scrub or — fatally — a full video EXPORT (thousands of
+// frames) climbed until the tab was OOM-killed. LRU with a cap: the working set for
+// one composited frame (its layers) plus scrub headroom stays hot; older frames are
+// evicted and their bitmaps closed as new ones arrive. The cap must exceed the layer
+// count of any single frame (a frame's draws are all set before it's drawn, so an
+// undersized cap could close a bitmap still needed this frame) — 64 is far above any
+// realistic simultaneous-layer count while bounding export memory.
+const MAX_CACHED_BITMAPS = 64;
+
+export class BitmapLRU {
+  private map = new Map<string, ImageBitmap>();
+  constructor(private readonly max: number) {}
+  get(key: string): ImageBitmap | undefined {
+    const v = this.map.get(key);
+    if (v) {
+      this.map.delete(key); // re-insert → most-recently-used (moves to the end)
+      this.map.set(key, v);
+    }
+    return v;
+  }
+  set(key: string, bmp: ImageBitmap): void {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, bmp);
+    while (this.map.size > this.max) {
+      const oldestKey = this.map.keys().next().value as string;
+      const old = this.map.get(oldestKey);
+      this.map.delete(oldestKey);
+      old?.close?.(); // release the decoded/GPU memory promptly (not just GC)
+    }
+  }
+  /** Close every cached bitmap and empty the cache (project switch / teardown). */
+  clear(): void {
+    for (const b of this.map.values()) b.close?.();
+    this.map.clear();
+  }
+}
+
 // Decode is impure + cached module-wide. A still source (image) is content-addressed
 // by its OPFS path, so one decode per path#frame serves every redraw + scrub + export.
-const bitmapCache = new Map<string, ImageBitmap>();
+const bitmapCache = new BitmapLRU(MAX_CACHED_BITMAPS);
 const decoder = pickMediaDecode();
 let storagePromise: Promise<StorageCapability> | null = null;
 
@@ -372,7 +411,17 @@ async function decodeBitmap(
     if (bmp) bitmapCache.set(key, bmp);
     return bmp;
   } catch (err) {
+    // V38 — a decode failure must SURFACE, not silently blank the layer. Route to
+    // the app-root toast (NOT assetErrorStore — its banner mounts in the view3d
+    // slot the compositor COVERS in VIDEO mode, [[H122]], so it'd be invisible
+    // exactly here). notify() dedups on (severity, message), so we key the message
+    // to the SOURCE (label/path), not the frame index — a whole unreadable clip
+    // raises ONE toast, not one per exported frame. (#254)
     console.warn(`composite: failed to decode ${source.path}#${frameIndex}`, err);
+    const name = source.label ?? source.path;
+    useNotificationStore
+      .getState()
+      .notify({ severity: 'error', message: `Video layer failed to decode: ${name}` });
     return null;
   }
 }
@@ -380,7 +429,8 @@ async function decodeBitmap(
 // Graded frames are cached separately from the base decodes, keyed by the FULL
 // compositeBitmapKey (path#frame#effectChain) — so a re-scrub / re-export with the
 // same grade reuses the graded bitmap, and a param change (new effectsKey) misses.
-const gradedCache = new Map<string, ImageBitmap>();
+// Bounded LRU for the same OOM reason as bitmapCache (#253).
+const gradedCache = new BitmapLRU(MAX_CACHED_BITMAPS);
 
 /** Apply a layer's effect chain (base → top) to a decoded frame, returning a new
  *  graded bitmap. Local effects are pure GPU canvas filters (the [[V58]] "local
