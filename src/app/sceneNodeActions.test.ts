@@ -31,6 +31,23 @@ function fakeState(): DagState {
   } as unknown as DagState;
 }
 
+// A fake DAG with a free-floating KeyframeChannel targeting `box` via
+// params.target (V57) — an input to nothing, reached outside the edge graph.
+function animatedState(): DagState {
+  const s = fakeState();
+  (s.nodes as Record<string, unknown>).ch = {
+    id: 'ch',
+    type: 'KeyframeChannelVec3',
+    params: {
+      target: 'box',
+      paramPath: 'position',
+      keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+    },
+    inputs: {},
+  };
+  return s;
+}
+
 describe('buildDeleteNodesOps', () => {
   it('disconnects every consumer edge before removing the node', () => {
     const ops = buildDeleteNodesOps(fakeState(), ['box']);
@@ -42,6 +59,19 @@ describe('buildDeleteNodesOps', () => {
       },
       { type: 'removeNode', nodeId: 'box' },
     ]);
+  });
+
+  it('[[H136]] also removes a free-floating channel targeting the deleted node', () => {
+    const ops = buildDeleteNodesOps(animatedState(), ['box']);
+    // channel `ch` targets `box` via params.target (no edge) — must be removed too.
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'ch' });
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'box' });
+    // it has no consumer edge, so no disconnect op is emitted for it.
+    expect(
+      ops
+        .filter((o) => o.type === 'disconnect')
+        .some((o) => (o as { from: { node: string } }).from.node === 'ch'),
+    ).toBe(false);
   });
 });
 
@@ -81,6 +111,31 @@ describe('buildDuplicateNodeOps', () => {
         index: 2,
       },
     ]);
+  });
+
+  it('[[H136]] clones a free-floating channel re-targeted to the duplicate', () => {
+    const res = buildDuplicateNodeOps(animatedState(), 'box')!;
+    const chAdd = res.ops.find(
+      (o) => o.type === 'addNode' && (o as { nodeType: string }).nodeType === 'KeyframeChannelVec3',
+    ) as { nodeId: string; params: { target: string; paramPath: string } } | undefined;
+    expect(chAdd).toBeDefined();
+    // the clone points at the duplicate, not the original.
+    expect(chAdd!.params.target).toBe('box_copy');
+    expect(chAdd!.params.paramPath).toBe('position');
+    // the clone gets a fresh id.
+    expect(chAdd!.nodeId).not.toBe('ch');
+  });
+
+  it('deep-copies the cloned channel params (mutating the clone op does not touch the source)', () => {
+    const state = animatedState();
+    const res = buildDuplicateNodeOps(state, 'box')!;
+    const chAdd = res.ops.find(
+      (o) => o.type === 'addNode' && (o as { nodeType: string }).nodeType === 'KeyframeChannelVec3',
+    ) as { params: { keyframes: { value: number[] }[] } };
+    chAdd.params.keyframes[0].value[0] = 99;
+    expect(
+      (state.nodes.ch.params as { keyframes: { value: number[] }[] }).keyframes[0].value[0],
+    ).toBe(0);
   });
 
   it('returns null for a node that is not wired into the scene', () => {

@@ -6,6 +6,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
+import { channelNodesTargeting } from './nodeChannels';
 
 /**
  * Ops to delete `ids` in one atomic batch (→ one undo). `removeNode` refuses to
@@ -15,9 +16,21 @@ import type { NodeId, Op } from '../core/dag/types';
  * now shared so the context menu can't drift from it.
  */
 export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op[] {
-  const idSet = new Set(ids);
+  // [[H136]] a free-floating KeyframeChannel references its target via
+  // `params.target`, NOT an edge — the consumer walk below is blind to it. Delete
+  // the channels targeting any removed node too, else they orphan (they survive
+  // pointing at a missing id → invisible save bloat). The id-reference universe
+  // consulted alongside the edge universe (one shared `channelNodesTargeting`).
+  const idSet = new Set<NodeId>(ids);
+  const allIds = [...idSet];
+  for (const ch of channelNodesTargeting(state.nodes, idSet)) {
+    if (!idSet.has(ch.id)) {
+      idSet.add(ch.id);
+      allIds.push(ch.id);
+    }
+  }
   const ops: Op[] = [];
-  for (const nodeId of ids) {
+  for (const nodeId of allIds) {
     for (const [consumerId, consumer] of Object.entries(state.nodes)) {
       if (idSet.has(consumerId)) continue; // being deleted too — its removeNode covers it
       for (const [socketName, binding] of Object.entries(consumer.inputs)) {
@@ -154,6 +167,21 @@ export function buildDuplicateNodeOps(
     to: { node: parent.node, socket: parent.socket },
     index: parent.index + 1,
   });
+
+  // 7. [[H136]] free-floating KeyframeChannels target subtree nodes via
+  //    `params.target` (NOT an edge), so the hierarchy walk above missed them.
+  //    Clone each channel targeting a cloned node, re-pointing `target` to the
+  //    matching clone — so the duplicate animates like its source instead of
+  //    silently static. Channels are inputs to nothing, so addNode is the whole
+  //    op (no edges to wire); undo-safe by construction.
+  for (const ch of channelNodesTargeting(state.nodes, seen)) {
+    const target = (ch.params as { target?: string }).target;
+    const cloneTarget = target ? idMap.get(target) : undefined;
+    if (!cloneTarget) continue;
+    const params = structuredClone(ch.params) as { target?: string };
+    params.target = cloneTarget;
+    ops.push({ type: 'addNode', nodeId: freshId(ch.id, taken), nodeType: ch.type, params });
+  }
 
   return { ops, newRootId: idMap.get(rootId)! };
 }

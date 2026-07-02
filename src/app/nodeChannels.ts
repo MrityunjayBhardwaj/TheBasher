@@ -54,6 +54,28 @@ export function directChannelNodesForTarget<T extends NodeLike & { id: string }>
 }
 
 /**
+ * The NODE refs of every free-floating KeyframeChannel whose `params.target` is
+ * in `ids` — the id-reference universe that lives OUTSIDE the edge graph ([[H136]]).
+ * Unlike {@link directChannelNodesForTarget} this does NOT filter empty channels:
+ * a subtree op (delete/duplicate) must account for an empty-keyframe channel too
+ * (it is still orphan bloat on delete, still lost on duplicate). The "referencers
+ * of these nodes" primitive that whole-object ops mirror alongside the edge walk.
+ */
+export function channelNodesTargeting<T extends NodeLike & { id: string }>(
+  nodes: Readonly<Record<string, T>>,
+  ids: ReadonlySet<string>,
+): T[] {
+  if (ids.size === 0) return [];
+  const out: T[] = [];
+  for (const node of Object.values(nodes)) {
+    if (!node.type.startsWith('KeyframeChannel')) continue;
+    const p = node.params as { target?: unknown };
+    if (typeof p.target === 'string' && ids.has(p.target)) out.push(node);
+  }
+  return out;
+}
+
+/**
  * The set of node ids that have at least one free-floating direct channel.
  * Built in ONE pass over the nodes — the renderer computes it once per render
  * and tests membership per child, so the child map stays O(N), never O(N²)
