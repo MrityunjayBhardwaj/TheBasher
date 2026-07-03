@@ -28,7 +28,12 @@ export function AssetErrorBanner() {
         top: 0,
         left: 0,
         right: 0,
-        zIndex: 20,
+        // #261 — sit ABOVE the floating side islands (Layout side islands are
+        // zIndex 20 desktop / 40 narrow). At the old zIndex 20 the banner tied
+        // with the inspector panel and lost on DOM order, so its right-edge
+        // Dismiss button was occluded and un-clickable. An error alert must be
+        // interactable above other chrome; stay below toasts (z-[100]).
+        zIndex: 50,
         display: 'flex',
         flexDirection: 'column',
         gap: 2,
