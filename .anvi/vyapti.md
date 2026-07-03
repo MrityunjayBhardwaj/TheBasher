@@ -1233,3 +1233,13 @@ Status: **IMPLEMENTED** (the unified direct-channel road is now the ONLY animati
 **Status:** PARTIAL 2026-07-03 (#262, [[H142]]). DONE: seeder is content-idempotent (`read().byteLength > 0` skip, else re-fetch); the P1#1b e2e waits for readable bytes before dropping. NOT YET: `AssetLibrary` availability is still `storage.exists` (not size) — the momentary-mid-rewrite window remains, mitigated only by the seeder now producing non-empty files. A full fix makes availability mean exists-AND-non-empty.
 
 **Enforcement:** `src/app/asset/seedOpfs.test.ts` (re-seeds a 0-byte entry; skips one with content — no redundant fetch; falsified: exists-only skip → red). `tests/e2e/p1-acceptance.spec.ts` (P1#1b real drag-drop reads readable bytes). REF: `src/app/asset/seedOpfs.ts`, `src/app/AssetLibrary.tsx` (availability = exists — the residual gap). Cross-ref [[H142]]. Branch `ux-overhall`.
+
+### V44 — Every UI action gated on a selection/mode state must have a production USER GESTURE that sets that state; a gate without a reachable setter is a dead control
+
+**Invariant:** if a control is disabled unless some selection/mode store field is set (`disabled={activeX === null}`), there must exist a real user gesture (click/key/drag) in PRODUCTION code — not just a test seam — that sets `activeX` for the common case. The gate and the gesture are a pair: shipping one without the other yields a control that paints but can never enable. Verify reachability by driving the real gesture and reading the store, never by setting the store directly in the test.
+
+**Why it matters:** gate-without-gesture is invisible to existence checks (the button renders), to unit tests (they set the store), and to seam-driven e2e (they bypass the gesture). It only surfaces as a user staring at a live-looking button that won't enable. It arises most often when a surface is rewritten and the old element's handler isn't ported ([[H143]] — SVG→canvas dropped the row `onClick`), or when a toolbar op is added ahead of its selection affordance. The reachability check belongs in the SAME increment as the gated control.
+
+**Status:** IMPLEMENTED 2026-07-03 (#264, [[H143]]) for the dopesheet channel ops — canvas row-click now sets `activeChannelId`, arming Key/Simplify/Clear/Mute together. NOT YET generalized: no lint asserts "every `disabled={activeX===null}` has a setter gesture," so a future gated toolbar button can re-open the class.
+
+**Enforcement:** `tests/e2e/p263-channel-mute.spec.ts` drives the REAL row-click (not the seam), then asserts the toolbar arms + Mute silences the render end-to-end. REF: `src/timeline/TimelineCanvas.tsx` (onPointerDown row-select), `src/timeline/TimelineDrawer.tsx` (the gated toolbar). Cross-ref [[H143]]. Branch `ux-overhall`.
