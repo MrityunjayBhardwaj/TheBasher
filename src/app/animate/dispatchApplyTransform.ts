@@ -29,6 +29,7 @@ import { useDagStore } from '../../core/dag/store';
 import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
 import type { Op, EvalCtx } from '../../core/dag/types';
+import { requireNodeType } from '../../core/dag/registry';
 import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/types';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import * as geometryRegistry from '../geometryRegistry';
@@ -241,19 +242,30 @@ export async function dispatchApplyTransform(
     },
   ];
   for (const edge of consumerEdgesOf(state, selectedId)) {
-    // connect-before-disconnect: insert the baked node at the SAME index so
-    // sibling order is preserved, THEN remove the original edge.
+    // Rewire depends on the consumer socket's CARDINALITY (#259/H140):
+    //   - LIST socket (e.g. Scene.children): both bindings coexist, so
+    //     connect-before-disconnect inserts the baked node at the SAME index
+    //     (sibling order preserved), THEN removes the original edge.
+    //   - SINGLE socket (e.g. a modifier's `target`): the socket holds exactly
+    //     one binding, so `connect` REPLACES the original in place — a following
+    //     `disconnect original.out` would find `baked.out` bound and throw
+    //     ("bound producer is <baked>, not <original>"), rolling back the whole
+    //     atomic composite. Emit ONLY the connect; the replace is the disconnect.
+    const consumerType = state.nodes[edge.consumer].type;
+    const isList = requireNodeType(consumerType).inputs[edge.socket]?.cardinality === 'list';
     ops.push({
       type: 'connect',
       from: { node: bakedId, socket: 'out' },
       to: { node: edge.consumer, socket: edge.socket },
-      ...(edge.index !== undefined ? { index: edge.index } : {}),
+      ...(isList && edge.index !== undefined ? { index: edge.index } : {}),
     });
-    ops.push({
-      type: 'disconnect',
-      from: { node: selectedId, socket: 'out' },
-      to: { node: edge.consumer, socket: edge.socket },
-    });
+    if (isList) {
+      ops.push({
+        type: 'disconnect',
+        from: { node: selectedId, socket: 'out' },
+        to: { node: edge.consumer, socket: edge.socket },
+      });
+    }
   }
   ops.push({ type: 'removeNode', nodeId: selectedId });
 
