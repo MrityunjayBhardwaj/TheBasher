@@ -124,14 +124,16 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
       const dag = w.__basher_dag.getState();
       const nodes = dag.state.nodes;
       const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-      const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform');
-      if (!gltfId || !transformId) throw new Error('expected GltfAsset + Transform from import');
+      // V67: import root is a transformable Group (was a Transform); the asset
+      // wires into Group.children (a list socket, was Transform.target/single).
+      const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
+      if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
       dag.dispatchAtomic(
         [
           {
             type: 'disconnect',
             from: { node: gltfId, socket: 'out' },
-            to: { node: transformId, socket: 'target' },
+            to: { node: groupId, socket: 'children' },
           },
           {
             type: 'addNode',
@@ -147,7 +149,7 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
           {
             type: 'connect',
             from: { node: 'p198_mo', socket: 'out' },
-            to: { node: transformId, socket: 'target' },
+            to: { node: groupId, socket: 'children' },
           },
         ],
         'user',

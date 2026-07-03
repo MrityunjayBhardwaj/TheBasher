@@ -73,8 +73,8 @@ async function stageTexturedQuad(page: import('@playwright/test').Page) {
   );
 }
 
-/** Insert a MaterialOverride between the imported GltfAsset and its Transform
- *  wrapper (the gltfImportChain GltfAsset.out → Transform.target seam), via the
+/** Insert a MaterialOverride between the imported GltfAsset and its Group
+ *  wrapper (the gltfImportChain GltfAsset.out → Group.children seam, V67), via the
  *  op path the app uses — NOT a React-prop injection (H58). */
 async function insertOverride(
   page: import('@playwright/test').Page,
@@ -85,14 +85,16 @@ async function insertOverride(
     const dag = w.__basher_dag.getState();
     const nodes = dag.state.nodes;
     const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-    const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform');
-    if (!gltfId || !transformId) throw new Error('expected GltfAsset + Transform from import');
+    // V67: import root is a transformable Group (was a Transform); the asset
+    // wires into Group.children (a list socket, was Transform.target/single).
+    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
+    if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
     dag.dispatchAtomic(
       [
         {
           type: 'disconnect',
           from: { node: gltfId, socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
         { type: 'addNode', nodeId: 'mo62', nodeType: 'MaterialOverride', params: p },
         {
@@ -103,7 +105,7 @@ async function insertOverride(
         {
           type: 'connect',
           from: { node: 'mo62', socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
       ],
       'user',

@@ -166,10 +166,12 @@ test('P7.13 (#99) — material override tints a textured glTF without dropping i
     const dag = w.__basher_dag.getState();
     const nodes = dag.state.nodes;
     const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-    const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform');
-    if (!gltfId || !transformId) {
+    // V67: import root is a transformable Group (was a Transform); the asset
+    // wires into Group.children (a list socket, was Transform.target/single).
+    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
+    if (!gltfId || !groupId) {
       throw new Error(
-        `expected a GltfAsset + Transform from import; got ${JSON.stringify(
+        `expected a GltfAsset + Group from import; got ${JSON.stringify(
           Object.fromEntries(Object.entries(nodes).map(([id, n]) => [id, n.type])),
         )}`,
       );
@@ -179,7 +181,7 @@ test('P7.13 (#99) — material override tints a textured glTF without dropping i
         {
           type: 'disconnect',
           from: { node: gltfId, socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
         {
           type: 'addNode',
@@ -195,7 +197,7 @@ test('P7.13 (#99) — material override tints a textured glTF without dropping i
         {
           type: 'connect',
           from: { node: 'mo99', socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
       ],
       'user',
@@ -217,18 +219,18 @@ test('P7.13 (#99) — material override tints a textured glTF without dropping i
     const dag = w.__basher_dag.getState();
     const nodes = dag.state.nodes;
     const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset')!;
-    const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform')!;
+    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group')!;
     dag.dispatchAtomic(
       [
         {
           type: 'disconnect',
           from: { node: 'mo99', socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
         {
           type: 'connect',
           from: { node: gltfId, socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
       ],
       'user',
