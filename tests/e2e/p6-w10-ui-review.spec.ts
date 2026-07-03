@@ -37,14 +37,27 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible();
 });
 
-test('c-1: zoom readout starts at the default 100% framing', async ({ page }) => {
-  await expect(page.getByTestId('top-toolbar-zoom-value')).toHaveText('100%');
+test('c-1: zoom readout shows the default-framing percentage (a live value, not a dead placeholder)', async ({
+  page,
+}) => {
+  // The camera auto-frames the scene on load (#186 bounds-fit), so the readout
+  // reflects the FIT zoom — a window-size-dependent percentage, NOT a hardcoded
+  // 100%. Assert it renders a real integer percentage (the c-1 finding: the readout
+  // is wired to the store, not the v0.5 dead "100%" placeholder). The exact fit %
+  // varies by viewport (CI vs local), so match the shape, not a literal.
+  await expect(page.getByTestId('top-toolbar-zoom-value')).toHaveText(/^\d+%$/);
 });
 
 test('c-1: zoom readout reflects a camera-zoom change (observed, not inferred)', async ({
   page,
 }) => {
   const value = page.getByTestId('top-toolbar-zoom-value');
+  // Establish a deterministic baseline — the load-time readout is the window-
+  // dependent auto-fit % (#186), not 100. Drive it to 100 through the same seam
+  // the OrbitControls onChange uses, so the change assertions below are stable.
+  await page.evaluate(() => {
+    (window as unknown as BasherWindow).__basher_viewport!.getState().setCameraZoom(100);
+  });
   await expect(value).toHaveText('100%');
 
   // Drive the zoom signal exactly as the OrbitControls onChange listener
