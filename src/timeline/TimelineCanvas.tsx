@@ -1006,6 +1006,19 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       return;
     }
 
+    // Row click → activate that channel (#264). Restores the row onClick the
+    // old SVG dopesheet had before the P6 W9 canvas rewrite — the gate that
+    // arms Key / Simplify / Clear / Mute. Runs BEFORE the diamond hit-test, so
+    // clicking a keyframe activates BOTH its channel and the keyframe (the
+    // diamond branch below sets activeKeyframe). Rows fill below the ruler; the
+    // label gutter counts too. A click below the last row selects nothing.
+    if (py > RULER_H) {
+      const rowIndex = Math.floor((py - RULER_H) / ROW_HEIGHT_PX);
+      if (rowIndex >= 0 && rowIndex < rows.length) {
+        setActiveChannel(rows[rowIndex].channelId);
+      }
+    }
+
     // Hit-test every row's every keyframe with the SAME geometry +
     // gutter offset paintStaticLayer:285-293 uses (do NOT re-derive a
     // different offset). ±DIAMOND_PX hit-slop so an 8px diamond is
