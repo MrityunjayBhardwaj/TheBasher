@@ -17,7 +17,19 @@ import { ASSET_CATALOG } from './catalog';
 export async function seedAssetsIntoStorage(storage: StorageCapability): Promise<string[]> {
   const written: string[] = [];
   for (const entry of ASSET_CATALOG) {
-    if (await storage.exists(entry.path)) continue;
+    // #262 — skip only when the existing file is NON-EMPTY. A 0-byte entry
+    // means a prior seed was interrupted (e.g. OPFS cleared mid-write); an
+    // `exists`-only skip would strand that empty file forever while the Library
+    // still marks it available, so every import reads empty bytes → "not valid
+    // JSON". Treat a 0-byte (or unreadable) entry as unseeded and re-fetch.
+    if (await storage.exists(entry.path)) {
+      try {
+        const existing = await storage.read(entry.path);
+        if (existing.byteLength > 0) continue;
+      } catch {
+        /* unreadable → fall through and re-seed */
+      }
+    }
     const res = await fetch(entry.seedUrl);
     if (!res.ok) {
       // Skip missing seeds rather than crash boot — Library will simply not
