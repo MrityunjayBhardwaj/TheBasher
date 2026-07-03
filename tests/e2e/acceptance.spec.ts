@@ -29,6 +29,20 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+/** UX #12: a camera declares inspectorSections ['camera', 'transform'], so the
+ *  Transform section (which holds position) is default-collapsed (§5.8 —
+ *  non-primary sections start collapsed). Expand it idempotently before querying
+ *  the camera's position field. Collapse state persists per-node-type (§7.3), so
+ *  only click when the body isn't already shown — a blind toggle would COLLAPSE
+ *  an already-expanded section after reload. */
+async function ensureCameraTransformExpanded(page: import('@playwright/test').Page) {
+  const body = page.getByTestId('inspector-section-body-transform');
+  if (!(await body.isVisible().catch(() => false))) {
+    await page.getByTestId('inspector-section-toggle-transform').click();
+  }
+  await expect(body).toBeVisible();
+}
+
 test('#1 dev server boots in <5s and renders the boot status', async ({ page }) => {
   // Hard-fail above 5s by setting an explicit budget.
   const start = Date.now();
@@ -130,6 +144,7 @@ test('#4 save → reload restores identical state', async ({ page }) => {
     type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
     (window as unknown as Win).__basher_selection!.getState().select('n_camera');
   });
+  await ensureCameraTransformExpanded(page);
   await expect(page.getByTestId('inspector-vec-n_camera-position-x')).toBeVisible();
   // Edit a value, save, reload, confirm it persisted.
   await page.getByTestId('inspector-vec-n_camera-position-x').fill('7.5');
@@ -147,6 +162,7 @@ test('#4 save → reload restores identical state', async ({ page }) => {
     type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
     (window as unknown as Win).__basher_selection!.getState().select('n_camera');
   });
+  await ensureCameraTransformExpanded(page);
   const xVal = await page.getByTestId('inspector-vec-n_camera-position-x').inputValue();
   expect(parseFloat(xVal)).toBeCloseTo(7.5, 5);
 });
@@ -314,6 +330,7 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
     type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
     (window as unknown as Win).__basher_selection!.getState().select('n_camera');
   });
+  await ensureCameraTransformExpanded(page);
   const xField = page.getByTestId('inspector-vec-n_camera-position-x');
   await expect(xField).toHaveValue('3');
 
@@ -348,6 +365,7 @@ test('#10 controlled Inspector reflects DAG state (regression for the defaultVal
     type Win = { __basher_selection?: { getState: () => { select: (id: string) => void } } };
     (window as unknown as Win).__basher_selection!.getState().select('n_camera');
   });
+  await ensureCameraTransformExpanded(page);
   await expect(page.getByTestId('inspector-vec-n_camera-position-x')).toHaveValue('1.25');
 });
 
