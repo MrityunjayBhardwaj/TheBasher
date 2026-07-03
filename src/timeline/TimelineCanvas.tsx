@@ -132,6 +132,12 @@ const RULER_TICK_MINOR = '#2a2a34';
 const GRID_COL_MAJOR = '#2c2c44';
 const GRID_COL_MINOR = '#161620';
 const DIAMOND_OUTLINE = '#ffffff';
+// A muted channel's row is dimmed (label + diamonds) so the silenced state is
+// visible at a glance (#263). Decorative-dim, NOT a gated PALETTE token — the
+// 6-key PALETTE contrast contract must stay exactly 6 keys.
+const LABEL_MUTED = '#5a5f66';
+/** Alpha applied to a muted row's diamonds so they read as inactive (#263). */
+const MUTED_ROW_ALPHA = 0.35;
 
 /** Frame ruler band height (CSS px) — reze's 17px top ruler. */
 const RULER_H = 17;
@@ -203,6 +209,7 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
       paramPath?: string;
       target?: string;
       keyframes?: Array<{ time: number }>;
+      mute?: boolean;
     };
     // Row label. dispatchDirectFirstKey sets `name === paramPath` (a bare param
     // token like "fov" / "position"), so post-#199 — when EVERY node animates via
@@ -225,6 +232,7 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
       channelId: node.id,
       name,
       keyframes: (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time),
+      mute: params.mute === true,
     });
   }
   return rows;
@@ -301,6 +309,7 @@ export function paintStaticLayer(
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     const rowTop = rowsTop + r * ROW_HEIGHT_PX;
+    const muted = row.mute === true;
 
     // Active-channel row tint (a faint highlight on the pinned channel).
     if (activeChannelId !== null && row.channelId === activeChannelId) {
@@ -318,8 +327,8 @@ export function paintStaticLayer(
     ctx.lineTo(cssW, rowTop + ROW_HEIGHT_PX + 0.5);
     ctx.stroke();
 
-    // Channel label.
-    ctx.fillStyle = PALETTE.LABEL_TEXT;
+    // Channel label (dimmed when the channel is muted — #263).
+    ctx.fillStyle = muted ? LABEL_MUTED : PALETTE.LABEL_TEXT;
     ctx.font = '10px ui-monospace, monospace';
     ctx.textBaseline = 'middle';
     ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 7);
@@ -350,13 +359,15 @@ export function paintStaticLayer(
       ctx.closePath();
       if (selected) {
         ctx.fillStyle = PALETTE.ACTIVE_DIAMOND;
+        if (muted) ctx.globalAlpha = MUTED_ROW_ALPHA;
         ctx.fill();
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = DIAMOND_OUTLINE;
         ctx.stroke();
+        ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = PALETTE.DIAMOND;
-        ctx.globalAlpha = 0.82;
+        ctx.globalAlpha = muted ? 0.82 * MUTED_ROW_ALPHA : 0.82;
         ctx.fill();
         ctx.globalAlpha = 1;
       }

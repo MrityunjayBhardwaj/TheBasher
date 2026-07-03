@@ -204,6 +204,13 @@ function DockToolbar() {
   // (channel, keyframe) selection.
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
   const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
+  // Pressed state for the Mute toggle — re-renders when the active channel's
+  // `mute` param flips (#263). Synthetic clip rows have no DAG node → false.
+  const activeChannelMuted = useDagStore((s) =>
+    activeChannelId
+      ? (s.state.nodes[activeChannelId]?.params as { mute?: boolean } | undefined)?.mute === true
+      : false,
+  );
   const [simplifyOpen, setSimplifyOpen] = useState(false);
 
   function onKey() {
@@ -219,6 +226,20 @@ function DockToolbar() {
       useDagStore.getState().dispatchAtomic([op], 'user', 'delete keyframe');
       useTimelineSelection.getState().setActiveKeyframe(null);
     }
+  }
+
+  function onMute() {
+    if (!activeChannelId) return;
+    const node = useDagStore.getState().state.nodes[activeChannelId];
+    if (!node) return; // synthetic clip rows have no DAG node — nothing to mute
+    const current = (node.params as { mute?: boolean }).mute === true;
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: activeChannelId, paramPath: 'mute', value: !current }],
+        'user',
+        'toggle channel mute',
+      );
   }
 
   function onClear() {
@@ -271,6 +292,15 @@ function DockToolbar() {
         disabled={activeChannelId === null}
         onClick={onClear}
       />
+      <span className="mx-2 h-4 w-px bg-line" />
+      <ToolbarButton
+        id="mute"
+        label="Mute"
+        title="Silence the active channel — its keyframes stop driving the scene (they stay authored). Click again to unmute."
+        disabled={activeChannelId === null}
+        active={activeChannelMuted}
+        onClick={onMute}
+      />
       <div className="flex-1" />
       <SimplifyPopover open={simplifyOpen} onClose={() => setSimplifyOpen(false)} />
     </div>
@@ -282,12 +312,16 @@ function ToolbarButton({
   label,
   title,
   disabled,
+  active,
   onClick,
 }: {
   id: string;
   label: string;
   title: string;
   disabled: boolean;
+  /** Toggle buttons pass a boolean → renders a pressed style + `aria-pressed`.
+   *  Plain action buttons omit it → no toggle semantics. */
+  active?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -295,11 +329,17 @@ function ToolbarButton({
       type="button"
       data-testid={`timeline-toolbar-${id}`}
       data-disabled={disabled}
+      data-active={active ? true : undefined}
       title={title}
       disabled={disabled}
+      {...(active !== undefined ? { 'aria-pressed': active } : {})}
       onClick={onClick}
       className={`rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        disabled ? 'cursor-not-allowed text-mute' : 'text-fg hover:bg-line'
+        disabled
+          ? 'cursor-not-allowed text-mute'
+          : active
+            ? 'bg-line text-accent'
+            : 'text-fg hover:bg-line'
       }`}
     >
       {label}
