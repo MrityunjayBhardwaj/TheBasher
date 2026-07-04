@@ -25,7 +25,14 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelNumberValue } from './types';
-import { sampleScalarKeyframesExtended, type ChannelExtend } from './keyframeInterp';
+import {
+  sampleScalarKeyframesExtended,
+  KEYFRAME_INTERPS,
+  EASE_DIRS,
+  type ChannelExtend,
+  type Easing,
+  type EaseDir,
+} from './keyframeInterp';
 
 const HandleSchema = z
   .object({
@@ -58,7 +65,10 @@ export const KeyframeChannelNumberParams = z.object({
       z.object({
         time: z.number().nonnegative(),
         value: z.number(),
-        easing: z.enum(['linear', 'cubic']).default('linear'),
+        easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).default('linear'),
+        // #272 — easing DIRECTION for the equation interps (sine…elastic); ignored
+        // by linear/cubic/constant. Optional → defaults to 'inout' at sample time.
+        ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
         inHandle: HandleSchema,
         outHandle: HandleSchema,
       }),

@@ -243,3 +243,70 @@ describe('D1 extend / extrapolation (#269, V88 D1)', () => {
     expect(sampleVec3KeyframesExtended(pos, 9)).toEqual([2, 0, 0]);
   });
 });
+
+describe('#272 — per-keyframe interpolation modes (Blender F-Curve interps)', () => {
+  // Destination-key-governs: keys[1].easing describes how the curve ARRIVES at t=2.
+  // Segment 0→10 over t∈[0,2], so value(t) = 10 · easeFraction(easing, ease, t/2).
+  const seg = (easing: ScalarKey['easing'], ease?: ScalarKey['ease']): ScalarKey[] => [
+    { time: 0, value: 0, easing: 'linear' },
+    { time: 2, value: 10, easing, ease },
+  ];
+
+  it('constant holds the SOURCE value across the segment, snaps at the key', () => {
+    const k = seg('constant');
+    expect(sampleScalarKeyframes(k, 0)).toBe(0);
+    expect(sampleScalarKeyframes(k, 1)).toBe(0); // held, not 5
+    expect(sampleScalarKeyframes(k, 1.999)).toBe(0);
+    expect(sampleScalarKeyframes(k, 2)).toBe(10); // snap at the destination key
+  });
+
+  it('every equation is exact at both endpoints (0 and V)', () => {
+    for (const e of [
+      'sine',
+      'quad',
+      'quart',
+      'quint',
+      'expo',
+      'circ',
+      'back',
+      'bounce',
+      'elastic',
+    ] as const) {
+      for (const d of ['in', 'out', 'inout'] as const) {
+        const k = seg(e, d);
+        expect(sampleScalarKeyframes(k, 0), `${e}-${d}@0`).toBeCloseTo(0, 9);
+        expect(sampleScalarKeyframes(k, 2), `${e}-${d}@2`).toBeCloseTo(10, 9);
+      }
+    }
+  });
+
+  it('known midpoints match the Penner formulas', () => {
+    // quad-in @u=0.5 → 0.25·10 = 2.5; quad-out → 0.75·10 = 7.5.
+    expect(sampleScalarKeyframes(seg('quad', 'in'), 1)).toBeCloseTo(2.5, 9);
+    expect(sampleScalarKeyframes(seg('quad', 'out'), 1)).toBeCloseTo(7.5, 9);
+    // sine-inout @u=0.5 → 0.5·10 = 5 (symmetric).
+    expect(sampleScalarKeyframes(seg('sine', 'inout'), 1)).toBeCloseTo(5, 9);
+    // default ease is 'inout' when omitted → same as explicit inout.
+    expect(sampleScalarKeyframes(seg('sine'), 1)).toBeCloseTo(5, 9);
+    // quint-in @u=0.5 → 0.5^5·10 = 0.3125.
+    expect(sampleScalarKeyframes(seg('quint', 'in'), 1)).toBeCloseTo(0.3125, 9);
+  });
+
+  it('back/elastic overshoot past the endpoints mid-segment (the flavour)', () => {
+    // back-in dips BELOW 0 near the start (overshoot); back-out rises ABOVE 10.
+    expect(sampleScalarKeyframes(seg('back', 'in'), 0.3)).toBeLessThan(0);
+    expect(sampleScalarKeyframes(seg('back', 'out'), 1.7)).toBeGreaterThan(10);
+  });
+
+  it('equation interpolation applies the SAME eased fraction to every vec3 component', () => {
+    const pos: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [10, 20, -4], easing: 'quad', ease: 'in' },
+    ];
+    // u=0.5 → f=0.25 → [2.5, 5, -1].
+    const v = sampleVec3Keyframes(pos, 1);
+    expect(v[0]).toBeCloseTo(2.5, 9);
+    expect(v[1]).toBeCloseTo(5, 9);
+    expect(v[2]).toBeCloseTo(-1, 9);
+  });
+});

@@ -13,7 +13,13 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelVec2Value, Vec2 } from './types';
-import { sampleVec2KeyframesExtended } from './keyframeInterp';
+import {
+  sampleVec2KeyframesExtended,
+  KEYFRAME_INTERPS,
+  EASE_DIRS,
+  type Easing,
+  type EaseDir,
+} from './keyframeInterp';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -44,7 +50,8 @@ export const KeyframeChannelVec2Params = z.object({
       z.object({
         time: z.number().nonnegative(),
         value: Vec2Schema,
-        easing: z.enum(['linear', 'cubic']).default('cubic'),
+        easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).default('cubic'),
+        ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
         inHandle: HandleSchema,
         outHandle: HandleSchema,
       }),

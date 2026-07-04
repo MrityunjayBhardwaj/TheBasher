@@ -29,7 +29,65 @@
 
 import type { Vec2, Vec3 } from './types';
 
-export type Easing = 'linear' | 'cubic';
+// Per-keyframe interpolation TYPE. 'linear' and 'cubic' (=smoothstep) are the
+// LEGACY values — untouched, byte-identical to every pre-#272 animation. The rest
+// are Blender's F-Curve interpolations (#272): 'constant' (stepped hold) + the
+// Penner easing equations. The convention is DESTINATION-key-governs (as it has
+// always been for 'cubic'): a key's `easing` describes how the curve ARRIVES at it —
+// 'constant' holds the previous value then snaps, 'bounce' arrives with a bounce.
+export type Easing =
+  | 'linear'
+  | 'cubic'
+  | 'constant'
+  | 'sine'
+  | 'quad'
+  | 'quart'
+  | 'quint'
+  | 'expo'
+  | 'circ'
+  | 'back'
+  | 'bounce'
+  | 'elastic';
+
+/** The direction an easing EQUATION is applied (#272, Blender's easing type). Only
+ *  meaningful for the equation interps (sine…elastic); ignored by linear/cubic/
+ *  constant. Default 'inout' (the smoothest, matches the symmetric feel of the
+ *  legacy 'cubic'/smoothstep). */
+export type EaseDir = 'in' | 'out' | 'inout';
+
+/** The equation interps — those governed by {@link easeFraction} rather than the
+ *  legacy linear/smoothstep or the bézier-handle path. 'constant' is here too
+ *  (a degenerate "equation" = step). */
+const EQUATION_INTERPS: ReadonlySet<string> = new Set([
+  'constant',
+  'sine',
+  'quad',
+  'quart',
+  'quint',
+  'expo',
+  'circ',
+  'back',
+  'bounce',
+  'elastic',
+]);
+
+/** Authoring order for the interpolation dropdown / e2e enumeration. */
+export const KEYFRAME_INTERPS: readonly Easing[] = [
+  'constant',
+  'linear',
+  'cubic',
+  'sine',
+  'quad',
+  'quart',
+  'quint',
+  'expo',
+  'circ',
+  'back',
+  'bounce',
+  'elastic',
+];
+
+export const EASE_DIRS: readonly EaseDir[] = ['in', 'out', 'inout'];
 
 // D1 (#269, vyapti V88 D1) — per-channel EXTRAPOLATION rule for times OUTSIDE the
 // authored keyframe domain [firstKey.time, lastKey.time], applied INDEPENDENTLY on
@@ -76,6 +134,7 @@ export interface ScalarKey {
   readonly time: number;
   readonly value: number;
   readonly easing: Easing;
+  readonly ease?: EaseDir;
   readonly inHandle?: ScalarHandle;
   readonly outHandle?: ScalarHandle;
 }
@@ -83,6 +142,7 @@ export interface Vec2Key {
   readonly time: number;
   readonly value: Vec2;
   readonly easing: Easing;
+  readonly ease?: EaseDir;
   readonly inHandle?: Vec2Handle;
   readonly outHandle?: Vec2Handle;
 }
@@ -90,6 +150,7 @@ export interface Vec3Key {
   readonly time: number;
   readonly value: Vec3;
   readonly easing: Easing;
+  readonly ease?: EaseDir;
   readonly inHandle?: Vec3Handle;
   readonly outHandle?: Vec3Handle;
 }
@@ -102,6 +163,111 @@ function smoothstep(u: number): number {
 function legacy(aValue: number, bValue: number, u: number, easing: Easing): number {
   const t = easing === 'cubic' ? smoothstep(u) : u;
   return aValue + (bValue - aValue) * t;
+}
+
+// ── Easing equations (#272, Blender F-Curve interpolations) ─────────────────
+// Standard Penner easings, normalised so ease(0)=0 and ease(1)=1. Each family has
+// an 'in' shape; 'out' is the point-reflection ease_out(u)=1−in(1−u); 'inout'
+// stitches a half-scaled in then out. These are pure functions of u∈[0,1].
+
+const c1 = 1.70158; // back overshoot
+const c2 = c1 * 1.525;
+const c3 = c1 + 1;
+const c4 = (2 * Math.PI) / 3; // elastic (in/out)
+const c5 = (2 * Math.PI) / 4.5; // elastic (inout)
+
+/** bounce 'out' (the canonical piecewise); the others derive from it. */
+function bounceOut(u: number): number {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+  if (u < 1 / d1) return n1 * u * u;
+  if (u < 2 / d1) return n1 * (u -= 1.5 / d1) * u + 0.75;
+  if (u < 2.5 / d1) return n1 * (u -= 2.25 / d1) * u + 0.9375;
+  return n1 * (u -= 2.625 / d1) * u + 0.984375;
+}
+
+/** The 'in' shape for each equation family (u∈[0,1] → eased fraction). */
+function easeInShape(interp: Easing, u: number): number {
+  switch (interp) {
+    case 'sine':
+      return 1 - Math.cos((u * Math.PI) / 2);
+    case 'quad':
+      return u * u;
+    case 'quart':
+      return u * u * u * u;
+    case 'quint':
+      return u * u * u * u * u;
+    case 'expo':
+      return u === 0 ? 0 : Math.pow(2, 10 * u - 10);
+    case 'circ':
+      return 1 - Math.sqrt(1 - u * u);
+    case 'back':
+      return c3 * u * u * u - c1 * u * u;
+    case 'bounce':
+      return 1 - bounceOut(1 - u);
+    case 'elastic':
+      return u === 0 || u === 1 ? u : -Math.pow(2, 10 * u - 10) * Math.sin((u * 10 - 10.75) * c4);
+    default:
+      return u; // unreachable for equation interps
+  }
+}
+
+/** Eased fraction f∈[0,1] for a keyframe interpolation + direction. 'constant' is
+ *  a step (holds the source value until the destination key, then snaps).
+ *  in → the family's 'in' shape; out → 1−in(1−u); inout → half-in then half-out. */
+function easeFraction(interp: Easing, dir: EaseDir, u: number): number {
+  if (interp === 'constant') return u >= 1 ? 1 : 0;
+  // Special-cased 'inout' families that don't cleanly derive from the 'in' shape.
+  if (dir === 'inout') {
+    switch (interp) {
+      case 'sine':
+        return -(Math.cos(Math.PI * u) - 1) / 2;
+      case 'expo':
+        return u === 0 || u === 1
+          ? u
+          : u < 0.5
+            ? Math.pow(2, 20 * u - 10) / 2
+            : (2 - Math.pow(2, -20 * u + 10)) / 2;
+      case 'circ':
+        return u < 0.5
+          ? (1 - Math.sqrt(1 - Math.pow(2 * u, 2))) / 2
+          : (Math.sqrt(1 - Math.pow(-2 * u + 2, 2)) + 1) / 2;
+      case 'back':
+        return u < 0.5
+          ? (Math.pow(2 * u, 2) * ((c2 + 1) * 2 * u - c2)) / 2
+          : (Math.pow(2 * u - 2, 2) * ((c2 + 1) * (u * 2 - 2) + c2) + 2) / 2;
+      case 'elastic':
+        return u === 0 || u === 1
+          ? u
+          : u < 0.5
+            ? -(Math.pow(2, 20 * u - 10) * Math.sin((20 * u - 11.125) * c5)) / 2
+            : (Math.pow(2, -20 * u + 10) * Math.sin((20 * u - 11.125) * c5)) / 2 + 1;
+      case 'bounce':
+        return u < 0.5 ? (1 - bounceOut(1 - 2 * u)) / 2 : (1 + bounceOut(2 * u - 1)) / 2;
+      default:
+        // quad/quart/quint: symmetric power stitch.
+        return u < 0.5
+          ? Math.pow(2, powExp(interp) - 1) * Math.pow(u, powExp(interp))
+          : 1 - Math.pow(-2 * u + 2, powExp(interp)) / 2;
+    }
+  }
+  if (dir === 'out') return 1 - easeInShape(interp, 1 - u);
+  return easeInShape(interp, u); // 'in'
+}
+
+/** Power exponent for the polynomial families (quad=2, quart=4, quint=5). */
+function powExp(interp: Easing): number {
+  return interp === 'quad' ? 2 : interp === 'quart' ? 4 : 5;
+}
+
+/** Apply a keyframe's interpolation between two scalar endpoints (equation path). */
+function easedValue(
+  aValue: number,
+  bValue: number,
+  u: number,
+  key: { easing: Easing; ease?: EaseDir },
+): number {
+  return aValue + (bValue - aValue) * easeFraction(key.easing, key.ease ?? 'inout', u);
 }
 
 /** Evaluate a 1-D cubic Bézier at parameter s∈[0,1]. */
@@ -140,6 +306,9 @@ function segmentScalar(a: ScalarKey, b: ScalarKey, t: number): number {
   const span = b.time - a.time;
   if (span <= 0) return a.value;
   const u = (t - a.time) / span;
+  // #272 — an equation interpolation (constant / Penner) takes the equation path,
+  // ignoring bézier handles (Blender's equation interps aren't handle-driven).
+  if (EQUATION_INTERPS.has(b.easing)) return easedValue(a.value, b.value, u, b);
   // Render parity: untouched segment → legacy easing path, verbatim.
   if (!a.outHandle && !b.inHandle) return legacy(a.value, b.value, u, b.easing);
   // Bézier: explicit handle where present, auto-tangent where absent.
@@ -169,6 +338,15 @@ export function sampleScalarKeyframes(keys: readonly ScalarKey[], t: number): nu
 function segmentVec3(a: Vec3Key, b: Vec3Key, t: number): Vec3 {
   const span = b.time - a.time;
   if (span <= 0) return a.value;
+  // #272 — equation interpolation: one shared eased fraction across all components.
+  if (EQUATION_INTERPS.has(b.easing)) {
+    const f = easeFraction(b.easing, b.ease ?? 'inout', (t - a.time) / span);
+    return [
+      a.value[0] + (b.value[0] - a.value[0]) * f,
+      a.value[1] + (b.value[1] - a.value[1]) * f,
+      a.value[2] + (b.value[2] - a.value[2]) * f,
+    ];
+  }
   if (!a.outHandle && !b.inHandle) {
     const u = (t - a.time) / span;
     const f = b.easing === 'cubic' ? smoothstep(u) : u;
@@ -208,6 +386,11 @@ export function sampleVec3Keyframes(keys: readonly Vec3Key[], t: number): Vec3 {
 function segmentVec2(a: Vec2Key, b: Vec2Key, t: number): Vec2 {
   const span = b.time - a.time;
   if (span <= 0) return a.value;
+  // #272 — equation interpolation: one shared eased fraction across both components.
+  if (EQUATION_INTERPS.has(b.easing)) {
+    const f = easeFraction(b.easing, b.ease ?? 'inout', (t - a.time) / span);
+    return [a.value[0] + (b.value[0] - a.value[0]) * f, a.value[1] + (b.value[1] - a.value[1]) * f];
+  }
   if (!a.outHandle && !b.inHandle) {
     const u = (t - a.time) / span;
     const f = b.easing === 'cubic' ? smoothstep(u) : u;
