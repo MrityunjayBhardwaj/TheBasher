@@ -160,7 +160,7 @@ test('NPanel "+ noise" button + its fields drive the render', async ({ page }) =
   if (await toggle.isVisible().catch(() => false)) await toggle.click();
   const body = page.getByTestId('inspector-section-body-animate');
 
-  const add = body.getByTestId('channel-modifier-add');
+  const add = body.getByTestId('channel-modifier-add-noise');
   await expect(add).toBeVisible({ timeout: 10_000 });
   await add.click();
 

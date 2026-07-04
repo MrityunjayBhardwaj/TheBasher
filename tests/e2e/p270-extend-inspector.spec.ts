@@ -1,18 +1,18 @@
-// p270 — the D1 extend rule authored from the INSPECTOR (issue #270, follow-up to
-// #269). #269 proved setParam(extendAfter) → render. #270 adds the UI affordance:
-// a per-side "Extend / Before / After" dropdown in the channel's animate section.
+// p270 — the D1 extend / #275 Cycles-modifier UI authored from the INSPECTOR.
+// #269 proved setParam → render. #270 added the per-side "Extend / Before / After"
+// dropdown; #275 SPLIT it: the dropdown now authors only the EXTRAPOLATION (hold /
+// slope), and the cycle family (repeat / repeat-offset / repeat-mirror) is authored
+// as a Cycles F-Modifier card in the animate section (ChannelModifierControls).
 //
-// THIS spec drives the actual <select> (selectOption), not setParam, so it proves
-// the NEW path end-to-end: UI dropdown → setParam → DAG → LIVE render. A position
-// channel on n_box (keys [0,0,0]@t0 → [2,0,0]@t2, domain [0,2]) is sampled at t=4:
-//   - authoring 'cycle-offset' in the After dropdown → the rendered box TRAVELS to
-//     x=4 (two spans of +2).
-//   - FALSIFY: authoring 'hold' back → the SAME t=4 clamps to x=2.
-// Plus a structural check: the control lives in the animate section (not the raw
-// unrouted bucket) and carries the "Extend" grouping label.
+// THIS spec drives the actual UI, not setParam, proving the NEW path end-to-end:
+//   - the Extend dropdown enumerates just ['hold','slope'] and lives in the animate
+//     section (not the raw bucket);
+//   - adding a Cycles modifier (afterMode=repeat-offset) → the rendered box TRAVELS
+//     to x=4 at t=4; setting afterMode=none clamps it back to x=2 (falsify);
+//   - the Cycles COUNT (afterCycles) freezes the loop after N periods.
 //
-// REF: issue #270; #269 / vyapti V88 D1; src/app/NPanel.tsx (ChannelExtendControls
-//      + paramToSection 'animate' routing); src/app/inspectorSections.ts.
+// REF: issues #270 / #275; vyapti V88 D1/D2; src/app/NPanel.tsx (ChannelExtendControls
+//      + ChannelModifierControls + paramToSection 'animate' routing).
 
 import { test, expect } from './_fixtures';
 
@@ -91,8 +91,8 @@ test.beforeEach(async ({ page }) => {
   }, CH);
 });
 
-test.describe('#270 — extend rule authored from the inspector', () => {
-  test('the Extend dropdown lives in the animate section (not the raw bucket)', async ({
+test.describe('#270/#275 — extend + Cycles modifier authored from the inspector', () => {
+  test('the Extend dropdown enumerates just hold/slope and lives in the animate section', async ({
     page,
   }) => {
     const toggle = page.getByTestId('inspector-section-toggle-animate');
@@ -108,28 +108,28 @@ test.describe('#270 — extend rule authored from the inspector', () => {
     await expect(
       page.getByTestId('inspector-unrouted-params').getByTestId(`inspector-enum-${CH}-extendAfter`),
     ).toHaveCount(0);
-    // The dropdown enumerates CHANNEL_EXTEND_RULES in authoring order.
+    // #275 — the dropdown is now just the extrapolation property (hold/slope); the
+    // cycle family moved to the Cycles F-Modifier card below.
     const opts = await animateBody
       .getByTestId(`inspector-enum-${CH}-extendAfter`)
       .locator('option')
       .allTextContents();
-    expect(opts).toEqual(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']);
+    expect(opts).toEqual(['hold', 'slope']);
   });
 
-  test('authoring cycle-offset in the After dropdown makes the rendered box travel; hold clamps (falsify)', async ({
+  test('adding a Cycles modifier (repeat-offset) makes the box travel; afterMode=none clamps (falsify)', async ({
     page,
   }) => {
     const toggle = page.getByTestId('inspector-section-toggle-animate');
     if (await toggle.isVisible().catch(() => false)) await toggle.click();
-    const after = page
-      .getByTestId('inspector-section-body-animate')
-      .getByTestId(`inspector-enum-${CH}-extendAfter`);
-    await expect(after).toBeVisible({ timeout: 10_000 });
-    await expect(after).toHaveValue('hold');
+    const body = page.getByTestId('inspector-section-body-animate');
 
-    // UI → setParam: pick cycle-offset from the dropdown.
-    await after.selectOption('cycle-offset');
-    await expect(after).toHaveValue('cycle-offset');
+    // Add a Cycles modifier from the stack's "+ cycles" button, then set the After
+    // side to repeat-offset (travel) via its mode select.
+    await body.getByTestId('channel-modifier-add-cycles').click();
+    const afterMode = body.getByTestId('channel-modifier-0-afterMode');
+    await expect(afterMode).toBeVisible({ timeout: 10_000 });
+    await afterMode.selectOption('repeat-offset');
 
     // …and the LIVE render followed: at t=4 the box travels to x=4 (two +2 spans).
     await setTime(page, 4);
@@ -137,32 +137,30 @@ test.describe('#270 — extend rule authored from the inspector', () => {
       const p = (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box');
       return p !== null && Math.abs(p[0] - 4) < 1e-2;
     });
-    expect(await renderedX(page), 'UI cycle-offset → render travels').toBeCloseTo(4, 2);
+    expect(await renderedX(page), 'UI cycles repeat-offset → render travels').toBeCloseTo(4, 2);
 
-    // FALSIFY: author 'hold' back in the SAME dropdown → the SAME t=4 clamps to x=2.
-    await after.selectOption('hold');
-    await expect(after).toHaveValue('hold');
+    // FALSIFY: afterMode → none → the After side falls back to hold → t=4 clamps to x=2.
+    await afterMode.selectOption('none');
     await page.waitForFunction(() => {
       const p = (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box');
       return p !== null && Math.abs(p[0] - 2) < 1e-2;
     });
-    expect(await renderedX(page), 'UI hold → render clamps').toBeCloseTo(2, 2);
+    expect(await renderedX(page), 'UI afterMode none → render clamps').toBeCloseTo(2, 2);
   });
 
-  test('cycle COUNT input (#270) freezes the loop after N periods (Blender FModifierCycles.count)', async ({
+  test('the Cycles COUNT (afterCycles) freezes the loop after N periods (Blender FModifierCycles.count)', async ({
     page,
   }) => {
     const toggle = page.getByTestId('inspector-section-toggle-animate');
     if (await toggle.isVisible().catch(() => false)) await toggle.click();
     const body = page.getByTestId('inspector-section-body-animate');
-    const after = body.getByTestId(`inspector-enum-${CH}-extendAfter`);
-    await expect(after).toBeVisible({ timeout: 10_000 });
 
-    // The count input is HIDDEN while the side holds (nothing to repeat)…
-    await expect(body.getByTestId(`inspector-cycles-${CH}-cyclesAfter`)).toHaveCount(0);
-    // …and APPEARS once the side repeats.
-    await after.selectOption('cycle-offset');
-    const count = body.getByTestId(`inspector-cycles-${CH}-cyclesAfter`);
+    await body.getByTestId('channel-modifier-add-cycles').click();
+    const afterMode = body.getByTestId('channel-modifier-0-afterMode');
+    await expect(afterMode).toBeVisible({ timeout: 10_000 });
+    await afterMode.selectOption('repeat-offset');
+    // The count input appears once the side repeats.
+    const count = body.getByTestId('channel-modifier-0-afterCycles');
     await expect(count).toBeVisible();
 
     // Infinite (count 0): at t=6 the box has travelled three +2 spans → x=6.
@@ -171,10 +169,10 @@ test.describe('#270 — extend rule authored from the inspector', () => {
       const p = (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box');
       return p !== null && Math.abs(p[0] - 6) < 1e-2;
     });
-    expect(await renderedX(page), 'infinite cycle-offset → x=6 at t=6').toBeCloseTo(6, 2);
+    expect(await renderedX(page), 'infinite repeat-offset → x=6 at t=6').toBeCloseTo(6, 2);
 
-    // Author count = 1 in the inspector → the loop plays once then FREEZES at
-    // last + 1·delta = 4. The SAME t=6 now renders x=4, not x=6.
+    // Author count = 1 → the loop plays once then FREEZES at last + 1·delta = 4.
+    // The SAME t=6 now renders x=4, not x=6.
     await count.fill('1');
     await count.blur();
     await page.waitForFunction(() => {

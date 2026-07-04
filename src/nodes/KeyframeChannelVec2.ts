@@ -15,14 +15,17 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelVec2Value, Vec2 } from './types';
 import {
   sampleVec2KeyframesExtended,
+  resolveExtend,
   KEYFRAME_INTERPS,
   EASE_DIRS,
+  EXTRAPOLATE_RULES,
   KEYFRAME_HANDLE_TYPES,
+  type ChannelExtrapolate,
   type Easing,
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
-import { ChannelModifiersSchema } from './channelModifiers';
+import { ChannelModifiersSchema, migrateExtendParamsToCycles } from './channelModifiers';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -40,15 +43,17 @@ export const KeyframeChannelVec2Params = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
-  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
-   *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
-  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
-  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
-  /** #270 — repetition COUNT per side for the cycling extend rules (Blender
-   *  FModifierCycles.count). 0 = infinite; past N the side freezes. */
-  cyclesBefore: z.number().int().min(0).default(0),
-  cyclesAfter: z.number().int().min(0).default(0),
-  /** #274 (V88 D2) — per-channel F-MODIFIER STACK; default `[]` → byte-identical. */
+  /** D1 (#269) / #275 — per-side EXTRAPOLATION for times OUTSIDE the authored
+   *  keyframe domain: 'hold' (clamp, default) or 'slope' (linear). The cycling
+   *  rules moved to a Cycles F-Modifier (#275). Default 'hold' → byte-identical. */
+  extendBefore: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  extendAfter: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  /** #274 (V88 D2) / #275 — per-channel F-MODIFIER STACK (Noise, Cycles …); default
+   *  `[]` → byte-identical. */
   modifiers: ChannelModifiersSchema,
   keyframes: z
     .array(
@@ -77,13 +82,20 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { extendBefore, extendAfter, cyclesBefore, cyclesAfter, modifiers } = params;
+  const { modifiers } = params;
+  // #275 — resolve stored extrapolation + Cycles modifier into the engine's rule +
+  // counts; the sampler & planExtend are unchanged (byte-identical).
+  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+    params.extendBefore,
+    params.extendAfter,
+    modifiers,
+  );
   return (seconds: number) =>
     sampleVec2KeyframesExtended(
       sorted,
       seconds,
-      extendBefore,
-      extendAfter,
+      before,
+      after,
       cyclesBefore,
       cyclesAfter,
       modifiers,
@@ -95,7 +107,17 @@ export const KeyframeChannelVec2Node: NodeDefinition<
   KeyframeChannelVec2Value
 > = {
   type: 'KeyframeChannelVec2',
-  version: 1,
+  version: 2,
+  // #275 v1→v2: split the D1 extend enum (see KeyframeChannelNumber). Byte-identical.
+  migrations: {
+    1: (oldParams) => {
+      const { extendBefore, extendAfter, modifiers } = migrateExtendParamsToCycles(oldParams);
+      const rest = { ...(oldParams as Record<string, unknown>) };
+      delete rest.cyclesBefore;
+      delete rest.cyclesAfter;
+      return { ...rest, extendBefore, extendAfter, modifiers };
+    },
+  },
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelVec2Params,

@@ -77,8 +77,13 @@ import { RevertImportedClipConnector } from './animate/RevertImportedClipConnect
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
-import { CHANNEL_EXTEND_RULES } from '../nodes/keyframeInterp';
-import { FMODIFIER_TYPES, defaultModifier, type FChannelModifier } from '../nodes/channelModifiers';
+import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
+import {
+  FMODIFIER_TYPES,
+  defaultModifier,
+  type CycleMode,
+  type FChannelModifier,
+} from '../nodes/channelModifiers';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -577,13 +582,13 @@ const KEYFRAME_CHANNEL_TYPES: ReadonlySet<string> = new Set([
   'KeyframeChannelVec3',
 ]);
 
-/** #270 — the D1 per-side extrapolation control, grouped as one "Extend" block in
- *  the channel's animate section. Blender-grounded: a single per-side affordance
- *  (Constant/Linear/Make-Cyclic in one menu) is the right director UX. Each side is
- *  a plain setParam over the exported CHANNEL_EXTEND_RULES — discrete config, not
- *  keyframed (mirrors EnumField's dispatch shape). The two <select>s keep the
- *  `inspector-enum-<id>-extend{Before,After}` testid so the generic enum probe and
- *  the extend e2e both target them. */
+/** #270/#275 — the per-side EXTRAPOLATION control (hold/slope), grouped as one
+ *  "Extend" block in the channel's animate section. Blender-grounded: this is the
+ *  F-Curve `extrapolation` property; the cycling rules moved to a Cycles F-Modifier
+ *  (authored in ChannelModifierControls below). Each side is a plain setParam over
+ *  the exported EXTRAPOLATE_RULES — discrete config, not keyframed. The two <select>s
+ *  keep the `inspector-enum-<id>-extend{Before,After}` testid so the generic enum
+ *  probe and the extend e2e both target them. */
 function ChannelExtendControls({ nodeId }: { nodeId: string }) {
   const dispatch = useDagStore((s) => s.dispatch);
   const before = useDagStore(
@@ -592,64 +597,27 @@ function ChannelExtendControls({ nodeId }: { nodeId: string }) {
   const after = useDagStore(
     (s) => (s.state.nodes[nodeId]?.params as { extendAfter?: string } | undefined)?.extendAfter,
   );
-  const cyclesBefore = useDagStore(
-    (s) => (s.state.nodes[nodeId]?.params as { cyclesBefore?: number } | undefined)?.cyclesBefore,
-  );
-  const cyclesAfter = useDagStore(
-    (s) => (s.state.nodes[nodeId]?.params as { cyclesAfter?: number } | undefined)?.cyclesAfter,
-  );
-  // The count (#270) is only meaningful for a REPEATING rule — hold has nothing to
-  // count. Shown per side beside its rule when that side repeats (Blender shows the
-  // FModifierCycles count only when the cyclic modifier is on).
-  const repeats = (rule: string) => rule !== 'hold';
-  const row = (
-    side: string,
-    rulePath: string,
-    ruleValue: string,
-    countPath: string,
-    countValue: number,
-  ) => (
+  const row = (side: string, rulePath: string, ruleValue: string) => (
     <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{side}</span>
-      <div className="flex items-center gap-1.5">
-        {repeats(ruleValue) ? (
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={countValue}
-            title="Repeat count (0 = infinite)"
-            data-testid={`inspector-cycles-${nodeId}-${countPath}`}
-            className="w-10 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            onChange={(e) => {
-              const n = Math.max(0, Math.round(Number(e.target.value) || 0));
-              dispatch(
-                { type: 'setParam', nodeId, paramPath: countPath, value: n },
-                'user',
-                `set ${countPath}`,
-              );
-            }}
-          />
-        ) : null}
-        <select
-          value={ruleValue}
-          data-testid={`inspector-enum-${nodeId}-${rulePath}`}
-          className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          onChange={(e) =>
-            dispatch(
-              { type: 'setParam', nodeId, paramPath: rulePath, value: e.target.value },
-              'user',
-              `set ${rulePath}`,
-            )
-          }
-        >
-          {CHANNEL_EXTEND_RULES.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      </div>
+      <select
+        value={ruleValue}
+        data-testid={`inspector-enum-${nodeId}-${rulePath}`}
+        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          dispatch(
+            { type: 'setParam', nodeId, paramPath: rulePath, value: e.target.value },
+            'user',
+            `set ${rulePath}`,
+          )
+        }
+      >
+        {EXTRAPOLATE_RULES.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
     </div>
   );
   return (
@@ -657,8 +625,8 @@ function ChannelExtendControls({ nodeId }: { nodeId: string }) {
       <span className="px-3 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Extend
       </span>
-      {row('Before', 'extendBefore', before ?? 'hold', 'cyclesBefore', cyclesBefore ?? 0)}
-      {row('After', 'extendAfter', after ?? 'hold', 'cyclesAfter', cyclesAfter ?? 0)}
+      {row('Before', 'extendBefore', before ?? 'hold')}
+      {row('After', 'extendAfter', after ?? 'hold')}
     </div>
   );
 }
@@ -704,6 +672,27 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
     </label>
   );
 
+  // #275 — a Cycles modifier's per-side mode select (none/repeat/repeat-offset/
+  // repeat-mirror). 'none' = that side falls back to the channel's hold/slope extrapolation.
+  const CYCLE_MODES: readonly CycleMode[] = ['none', 'repeat', 'repeat-offset', 'repeat-mirror'];
+  const modeRow = (i: number, label: string, path: string, value: CycleMode) => (
+    <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+      <span className="font-mono text-fg/50">{label}</span>
+      <select
+        value={value}
+        data-testid={`channel-modifier-${i}-${path}`}
+        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => patch(i, { [path]: e.target.value } as Partial<FChannelModifier>)}
+      >
+        {CYCLE_MODES.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
   return (
     <div className="flex flex-col">
       <div className="flex items-center justify-between px-3 pt-1.5">
@@ -713,7 +702,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
             <button
               key={type}
               type="button"
-              data-testid="channel-modifier-add"
+              data-testid={`channel-modifier-add-${type}`}
               className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onClick={() => add(type)}
             >
@@ -777,7 +766,22 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               {numField(i, 'depth', 'depth', mod.depth, 1)}
             </>
           ) : null}
-          {numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)}
+          {mod.type === 'cycles' ? (
+            <>
+              {modeRow(i, 'Before', 'beforeMode', mod.beforeMode)}
+              {mod.beforeMode !== 'none'
+                ? numField(i, 'before ×', 'beforeCycles', mod.beforeCycles, 1)
+                : null}
+              {modeRow(i, 'After', 'afterMode', mod.afterMode)}
+              {mod.afterMode !== 'none'
+                ? numField(i, 'after ×', 'afterCycles', mod.afterCycles, 1)
+                : null}
+            </>
+          ) : null}
+          {/* Influence is a value-blend concept — meaningless for the time-remap Cycles. */}
+          {mod.type !== 'cycles'
+            ? numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)
+            : null}
         </div>
       ))}
     </div>
@@ -2428,8 +2432,6 @@ export function NPanel() {
                               ([key]) =>
                                 key !== 'extendBefore' &&
                                 key !== 'extendAfter' &&
-                                key !== 'cyclesBefore' &&
-                                key !== 'cyclesAfter' &&
                                 key !== 'modifiers',
                             )
                             .map(([key, value]) => (

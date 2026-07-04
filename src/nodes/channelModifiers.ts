@@ -58,13 +58,33 @@ export interface FModNoise extends FModifierBase {
   depth: number;
 }
 
-/** The channel-modifier union. Grows with Stepped / Limits / Generator / Cycles. */
-export type FChannelModifier = FModNoise;
+/** Per-side cycling mode for a Cycles modifier (Blender FModifierCycles before/after
+ *  mode). 'none' = no cycling that side (the channel's extrapolation applies instead). */
+export type CycleMode = 'none' | 'repeat' | 'repeat-offset' | 'repeat-mirror';
+
+/** CYCLES modifier (Blender FModifierCycles) — the repeat family that #269–#271
+ *  originally folded into the extend enum. UNLIKE Noise it is a TIME modifier: it
+ *  remaps evaluation time BEFORE the base curve is sampled, so it is consumed by
+ *  {@link resolveExtend} in keyframeInterp.ts (feeding `planExtend`), NOT by the
+ *  value-phase {@link applyChannelModifiers} — which skips it. One entry carries
+ *  BOTH sides (like Blender). Counts: 0 = infinite; past N the side freezes.
+ *  Only `muted` of the shared range fields is honoured (a muted Cycles → the
+ *  channel's hold/slope extrapolation applies). */
+export interface FModCycles extends FModifierBase {
+  type: 'cycles';
+  beforeMode: CycleMode;
+  afterMode: CycleMode;
+  beforeCycles: number;
+  afterCycles: number;
+}
+
+/** The channel-modifier union. Grows with Stepped / Limits / Generator / Envelope. */
+export type FChannelModifier = FModNoise | FModCycles;
 
 /** The modifier TYPES a channel can add (authoring order for the Add menu / e2e). */
-export const FMODIFIER_TYPES = ['noise'] as const;
+export const FMODIFIER_TYPES = ['noise', 'cycles'] as const;
 
-/** A fresh Noise modifier — a gentle additive jitter (visible but not destructive). */
+/** A fresh modifier of the given type, with director-friendly defaults. */
 export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChannelModifier {
   switch (type) {
     case 'noise':
@@ -77,6 +97,15 @@ export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChanne
         offset: 0,
         depth: 1,
         influence: 1,
+      };
+    case 'cycles':
+      // A Blender-default cyclic loop: repeat both ends, infinitely.
+      return {
+        type: 'cycles',
+        beforeMode: 'repeat',
+        afterMode: 'repeat',
+        beforeCycles: 0,
+        afterCycles: 0,
       };
   }
 }
@@ -156,8 +185,14 @@ function modifierValue(mod: FChannelModifier, t: number, value: number): number 
         case 'replace':
           return n;
       }
+      break;
     }
+    // Cycles is a TIME modifier consumed by resolveExtend (pre-sample), never here.
+    // Guarded out in applyChannelModifiers; this case keeps the switch exhaustive.
+    case 'cycles':
+      return value;
   }
+  return value;
 }
 
 /**
@@ -174,6 +209,9 @@ export function applyChannelModifiers(
   if (!modifiers || modifiers.length === 0) return base;
   let v = base;
   for (const mod of modifiers) {
+    // Cycles is a TIME modifier (resolveExtend consumes it pre-sample) — never a
+    // value op. Skip it here regardless of mute so the value phase is noise-only.
+    if (mod.type === 'cycles') continue;
     if (mod.muted) continue;
     const inf = effectiveInfluence(mod, t);
     if (inf === 0) continue;
@@ -199,6 +237,8 @@ const rangeFields = {
   blendOut: z.number().optional(),
 };
 
+const cycleModeSchema = z.enum(['none', 'repeat', 'repeat-offset', 'repeat-mirror']);
+
 export const FModifierSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('noise'),
@@ -210,7 +250,78 @@ export const FModifierSchema = z.discriminatedUnion('type', [
     depth: z.number().int().min(1).max(8).default(1),
     ...rangeFields,
   }),
+  z.object({
+    type: z.literal('cycles'),
+    beforeMode: cycleModeSchema.default('none'),
+    afterMode: cycleModeSchema.default('none'),
+    beforeCycles: z.number().int().min(0).default(0),
+    afterCycles: z.number().int().min(0).default(0),
+    ...rangeFields,
+  }),
 ]);
 
 /** The per-channel modifier array param — default `[]` → byte-identical no-op. */
 export const ChannelModifiersSchema = z.array(FModifierSchema).default([]);
+
+// ── #275 — migrate the D1 extend/cycle enum into a Cycles modifier ───────────
+// The D1 extend enum (#269–#271) collapsed hold/slope (extrapolation) AND
+// cycle/cycle-offset/mirror (the repeat family) into one per-side param + counts.
+// Blender splits these: hold/slope stay the F-Curve `extrapolation` property; the
+// repeat family is the FModifierCycles MODIFIER. This helper performs that split on
+// a raw (v1) params object so the migration is byte-identical (resolveExtend maps it
+// straight back onto the unchanged planExtend inputs). REF: issue #275, vyapti V88 D2.
+
+const REPEAT_MODE_OF: Record<string, CycleMode> = {
+  cycle: 'repeat',
+  'cycle-offset': 'repeat-offset',
+  mirror: 'repeat-mirror',
+};
+
+/** Split a v1 channel's `extend{Before,After}` (5-enum) + `cycles{Before,After}`
+ *  into the v2 shape: `extend{Before,After}` narrowed to hold/slope + a prepended
+ *  Cycles modifier for any repeating side. hold/slope carry no count (Blender's
+ *  LINEAR/CONSTANT extrapolation is unbounded) — a stray slope+count>0 (only
+ *  reachable via raw JSON, never the UI) is dropped and warned (no silent loss). */
+export function migrateExtendParamsToCycles(params: unknown): {
+  extendBefore: 'hold' | 'slope';
+  extendAfter: 'hold' | 'slope';
+  modifiers: unknown[];
+} {
+  const p = (params ?? {}) as {
+    extendBefore?: string;
+    extendAfter?: string;
+    cyclesBefore?: number;
+    cyclesAfter?: number;
+    modifiers?: unknown[];
+  };
+  const eb = p.extendBefore ?? 'hold';
+  const ea = p.extendAfter ?? 'hold';
+  const beforeMode = REPEAT_MODE_OF[eb] ?? 'none';
+  const afterMode = REPEAT_MODE_OF[ea] ?? 'none';
+  if (
+    (beforeMode === 'none' && (p.cyclesBefore ?? 0) > 0) ||
+    (afterMode === 'none' && (p.cyclesAfter ?? 0) > 0)
+  ) {
+    console.warn(
+      '[migration #275] dropping a count on a non-cycling extend side (hold/slope carry no count).',
+    );
+  }
+  const existing = Array.isArray(p.modifiers) ? p.modifiers : [];
+  const cyclesEntry =
+    beforeMode === 'none' && afterMode === 'none'
+      ? []
+      : [
+          {
+            type: 'cycles' as const,
+            beforeMode,
+            afterMode,
+            beforeCycles: beforeMode === 'none' ? 0 : (p.cyclesBefore ?? 0),
+            afterCycles: afterMode === 'none' ? 0 : (p.cyclesAfter ?? 0),
+          },
+        ];
+  return {
+    extendBefore: beforeMode === 'none' ? (eb === 'slope' ? 'slope' : 'hold') : 'hold',
+    extendAfter: afterMode === 'none' ? (ea === 'slope' ? 'slope' : 'hold') : 'hold',
+    modifiers: [...cyclesEntry, ...existing],
+  };
+}

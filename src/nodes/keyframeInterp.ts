@@ -28,7 +28,12 @@
 //      callers); vyapti V49.
 
 import type { Vec2, Vec3 } from './types';
-import { applyChannelModifiers, type FChannelModifier } from './channelModifiers';
+import {
+  applyChannelModifiers,
+  type CycleMode,
+  type FChannelModifier,
+  type FModCycles,
+} from './channelModifiers';
 
 // Per-keyframe interpolation TYPE. 'linear' and 'cubic' (=smoothstep) are the
 // LEGACY values — untouched, byte-identical to every pre-#272 animation. The rest
@@ -139,9 +144,15 @@ const COMPUTED_HANDLE_TYPES: ReadonlySet<string> = new Set(['vector', 'auto', 'a
 //                   SEAMLESS loop that keeps travelling (Houdini "cycle w/ offset").
 //   - mirror        ping-pong: reflect the range each period (seamless, no travel).
 //   - slope         linear extrapolation along the boundary segment's tangent.
+//
+// #275 — the RESOLVED internal rule fed to `planExtend`. The STORED model splits
+// this (Blender-faithful): hold/slope are the channel's per-side EXTRAPOLATION
+// property ({@link ChannelExtrapolate}); cycle/cycle-offset/mirror moved to a Cycles
+// F-Modifier (channelModifiers.ts). {@link resolveExtend} maps the stored model back
+// onto this 5-value rule so `planExtend` and every extend test stay byte-identical.
 export type ChannelExtend = 'hold' | 'cycle' | 'cycle-offset' | 'mirror' | 'slope';
 
-/** The authoring order (also the inspector-dropdown / e2e enumeration order). */
+/** The authoring order for the internal rule (also used by extend unit tests). */
 export const CHANNEL_EXTEND_RULES: readonly ChannelExtend[] = [
   'hold',
   'cycle',
@@ -149,6 +160,51 @@ export const CHANNEL_EXTEND_RULES: readonly ChannelExtend[] = [
   'mirror',
   'slope',
 ];
+
+/** #275 — the per-side EXTRAPOLATION a channel STORES: how the curve behaves past
+ *  its own ends. `hold` = clamp (Blender CONSTANT, the byte-identical default);
+ *  `slope` = linear along the boundary tangent (Blender LINEAR). The cycling rules
+ *  are no longer here — they are a Cycles F-Modifier. Basher keeps this PER-SIDE (a
+ *  deliberate superset of Blender's single-value extrapolation). */
+export type ChannelExtrapolate = 'hold' | 'slope';
+
+/** Authoring order for the extrapolation dropdown / e2e enumeration. */
+export const EXTRAPOLATE_RULES: readonly ChannelExtrapolate[] = ['hold', 'slope'];
+
+/** Maps a Cycles-modifier per-side mode onto the internal {@link ChannelExtend}
+ *  rule that `planExtend` consumes. 'none' has no entry (extrapolation applies). */
+const CYCLE_MODE_TO_RULE: Record<Exclude<CycleMode, 'none'>, ChannelExtend> = {
+  repeat: 'cycle',
+  'repeat-offset': 'cycle-offset',
+  'repeat-mirror': 'mirror',
+};
+
+/** #275 — resolve a channel's STORED extend model (per-side hold/slope extrapolation
+ *  + an optional Cycles F-Modifier in its stack) into the internal 5-value rule +
+ *  counts that {@link sampleScalarKeyframesExtended} & friends already consume. A
+ *  non-muted Cycles modifier's per-side mode (when not 'none') OVERRIDES that side's
+ *  extrapolation (Blender: Cycles is a time modifier that supersedes extrapolation).
+ *  This is the ONE place the stored model becomes the engine's resolved form, so
+ *  `planExtend` — and every byte-identity extend test — stay untouched. */
+export function resolveExtend(
+  extendBefore: ChannelExtrapolate = 'hold',
+  extendAfter: ChannelExtrapolate = 'hold',
+  modifiers?: readonly FChannelModifier[],
+): { before: ChannelExtend; after: ChannelExtend; cyclesBefore: number; cyclesAfter: number } {
+  const cyc = modifiers?.find((m): m is FModCycles => m.type === 'cycles' && !m.muted);
+  const beforeCyclic = cyc && cyc.beforeMode !== 'none';
+  const afterCyclic = cyc && cyc.afterMode !== 'none';
+  return {
+    before: beforeCyclic
+      ? CYCLE_MODE_TO_RULE[cyc.beforeMode as Exclude<CycleMode, 'none'>]
+      : extendBefore,
+    after: afterCyclic
+      ? CYCLE_MODE_TO_RULE[cyc.afterMode as Exclude<CycleMode, 'none'>]
+      : extendAfter,
+    cyclesBefore: beforeCyclic ? cyc.beforeCycles : 0,
+    cyclesAfter: afterCyclic ? cyc.afterCycles : 0,
+  };
+}
 
 /** A Bézier handle stored as an OFFSET (time, value) from its keyframe. */
 export interface ScalarHandle {

@@ -56,16 +56,33 @@ async function resolvedX(page: import('@playwright/test').Page, seconds: number)
     return t ? t.position[0] : null;
   }, ctxAt(seconds));
 }
+// #275 — the cycle family is now authored as a Cycles F-Modifier on the channel's
+// `modifiers` stack (hold = no modifier). This maps the test's rule name onto the
+// modifier's afterMode and commits the WHOLE modifiers array (the sampler chokepoint).
 async function setExtendAfter(page: import('@playwright/test').Page, rule: string) {
-  await page.evaluate((r) => {
+  const afterMode =
+    rule === 'cycle' ? 'repeat' : rule === 'cycle-offset' ? 'repeat-offset' : 'none';
+  await page.evaluate((mode) => {
+    const mods =
+      mode === 'none'
+        ? []
+        : [
+            {
+              type: 'cycles',
+              beforeMode: 'none',
+              afterMode: mode,
+              beforeCycles: 0,
+              afterCycles: 0,
+            },
+          ];
     (window as unknown as BasherWindow)
       .__basher_dag!.getState()
       .dispatchAtomic(
-        [{ type: 'setParam', nodeId: 'p269_ch', paramPath: 'extendAfter', value: r }],
+        [{ type: 'setParam', nodeId: 'p269_ch', paramPath: 'modifiers', value: mods }],
         'user',
-        'p269-set-extend',
+        'p269-set-cycles',
       );
-  }, rule);
+  }, afterMode);
 }
 
 test.beforeEach(async ({ page }) => {

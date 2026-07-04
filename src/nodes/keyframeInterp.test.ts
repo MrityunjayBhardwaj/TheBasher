@@ -9,9 +9,11 @@ import {
   sampleScalarKeyframesExtended,
   sampleVec3Keyframes,
   sampleVec3KeyframesExtended,
+  resolveExtend,
   type ScalarKey,
   type Vec3Key,
 } from './keyframeInterp';
+import type { FModCycles, FModNoise } from './channelModifiers';
 
 const smoothstep = (u: number) => u * u * (3 - 2 * u);
 
@@ -389,5 +391,78 @@ describe('#273 — per-keyframe handle types (Blender F-Curve handles)', () => {
       { time: 2, value: [10, 0, 0], easing: 'cubic', handleType: 'auto-clamped' },
     ];
     expect(sampleVec3Keyframes(pos, 1.5)[0]).toBeCloseTo(10, 6);
+  });
+});
+
+describe('#275 — resolveExtend (stored extrapolation + Cycles modifier → engine rule)', () => {
+  const cycles = (over: Partial<FModCycles>): FModCycles => ({
+    type: 'cycles',
+    beforeMode: 'none',
+    afterMode: 'none',
+    beforeCycles: 0,
+    afterCycles: 0,
+    ...over,
+  });
+
+  it('no modifier → the stored extrapolation passes through, counts 0', () => {
+    expect(resolveExtend('slope', 'hold')).toEqual({
+      before: 'slope',
+      after: 'hold',
+      cyclesBefore: 0,
+      cyclesAfter: 0,
+    });
+  });
+
+  it('a Cycles mode OVERRIDES that side, mapping to the internal rule + count', () => {
+    const mods = [cycles({ afterMode: 'repeat-offset', afterCycles: 2 })];
+    expect(resolveExtend('hold', 'hold', mods)).toEqual({
+      before: 'hold',
+      after: 'cycle-offset',
+      cyclesBefore: 0,
+      cyclesAfter: 2,
+    });
+    expect(resolveExtend('slope', 'slope', [cycles({ beforeMode: 'repeat-mirror' })])).toEqual({
+      before: 'mirror',
+      after: 'slope', // afterMode 'none' → stored 'slope' survives
+      cyclesBefore: 0,
+      cyclesAfter: 0,
+    });
+  });
+
+  it("a 'none' side falls back to the stored extrapolation (no override)", () => {
+    expect(resolveExtend('slope', 'slope', [cycles({})])).toEqual({
+      before: 'slope',
+      after: 'slope',
+      cyclesBefore: 0,
+      cyclesAfter: 0,
+    });
+  });
+
+  it('a MUTED Cycles modifier is inert → extrapolation applies (as if absent)', () => {
+    const muted = [cycles({ afterMode: 'repeat', muted: true })];
+    expect(resolveExtend('hold', 'slope', muted)).toEqual({
+      before: 'hold',
+      after: 'slope',
+      cyclesBefore: 0,
+      cyclesAfter: 0,
+    });
+  });
+
+  it('ignores non-Cycles modifiers (Noise) when resolving extend', () => {
+    const noise: FModNoise = {
+      type: 'noise',
+      blend: 'add',
+      strength: 1,
+      scale: 1,
+      phase: 0,
+      offset: 0,
+      depth: 1,
+    };
+    expect(resolveExtend('hold', 'hold', [noise])).toEqual({
+      before: 'hold',
+      after: 'hold',
+      cyclesBefore: 0,
+      cyclesAfter: 0,
+    });
   });
 });

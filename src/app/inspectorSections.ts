@@ -152,11 +152,10 @@ export function paramToSection(
       paramPath === 'targetPath' ||
       paramPath === 'extendBefore' ||
       paramPath === 'extendAfter' ||
-      paramPath === 'cyclesBefore' ||
-      paramPath === 'cyclesAfter' ||
-      // #274 (D2) — the F-Modifier stack is authored by the dedicated
-      // ChannelModifierControls in the animate section; route it out of the raw
-      // bucket (mirrors extendBefore/After).
+      // #274 (D2) / #275 — the F-Modifier stack (Noise, Cycles …) is authored by the
+      // dedicated ChannelModifierControls in the animate section; route it out of the
+      // raw bucket (mirrors extendBefore/After). The #270 cycle counts live in the
+      // Cycles modifier now, so no separate cyclesBefore/After params to route.
       paramPath === 'modifiers')
   ) {
     return 'animate';

@@ -20,10 +20,11 @@ import { useTimeStore } from '../app/stores/timeStore';
 import {
   sampleScalarKeyframesExtended,
   resolveScalarHandle,
+  resolveExtend,
   KEYFRAME_INTERPS,
   EASE_DIRS,
   KEYFRAME_HANDLE_TYPES,
-  type ChannelExtend,
+  type ChannelExtrapolate,
   type Easing,
   type EaseDir,
   type HandleType,
@@ -126,23 +127,18 @@ export function EditableCurve({
   // holds the same window. `valueZoom` is the curve-only value-axis scale.
   const view = useTimelineViewStore((s) => s.view);
   const valueZoom = useTimelineViewStore((s) => s.valueZoom);
-  // #270 — the channel's per-side extend rules + cycle counts, read reactively so
-  // the drawn curve shows the SAME extrapolation the render/gizmo sample (H40). Four
-  // primitive selectors (a fresh object each render would loop zustand).
+  // #270/#275 — the channel's per-side EXTRAPOLATION (hold/slope), read reactively so
+  // the drawn curve shows the SAME extrapolation the render/gizmo sample (H40). The
+  // cycle counts now live in the Cycles F-Modifier → resolved (with `modifiers`) below.
   const extendBefore = useDagStore(
-    (s) => (s.state.nodes[channelId]?.params as { extendBefore?: ChannelExtend })?.extendBefore,
+    (s) =>
+      (s.state.nodes[channelId]?.params as { extendBefore?: ChannelExtrapolate })?.extendBefore,
   );
   const extendAfter = useDagStore(
-    (s) => (s.state.nodes[channelId]?.params as { extendAfter?: ChannelExtend })?.extendAfter,
-  );
-  const cyclesBefore = useDagStore(
-    (s) => (s.state.nodes[channelId]?.params as { cyclesBefore?: number })?.cyclesBefore,
-  );
-  const cyclesAfter = useDagStore(
-    (s) => (s.state.nodes[channelId]?.params as { cyclesAfter?: number })?.cyclesAfter,
+    (s) => (s.state.nodes[channelId]?.params as { extendAfter?: ChannelExtrapolate })?.extendAfter,
   );
   // #274 — the channel's F-Modifier stack, read reactively so the drawn curve shows
-  // the SAME procedural modification (noise…) the render/gizmo sample (H40).
+  // the SAME procedural modification (noise…) + Cycles the render/gizmo sample (H40).
   const modifiers = useDagStore(
     (s) =>
       (s.state.nodes[channelId]?.params as { modifiers?: readonly FChannelModifier[] })?.modifiers,
@@ -296,6 +292,13 @@ export function EditableCurve({
   // across the VISIBLE window so a zoomed curve keeps full resolution.
   const polylines = useMemo(() => {
     const steps = Math.max(8, Math.round(plotX1 - plotX0) >> 1);
+    // #275 — resolve the stored extrapolation + Cycles modifier into the engine's
+    // rule + counts ONCE; the sampler & planExtend are unchanged (H40 curve==render).
+    const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+      extendBefore,
+      extendAfter,
+      modifiers,
+    );
     return axes.map((a) => {
       const sk = keys.map((k) => projectAxis(k, a, isVec)).sort((p, q) => p.time - q.time);
       const pts: string[] = [];
@@ -304,8 +307,8 @@ export function EditableCurve({
         const v = sampleScalarKeyframesExtended(
           sk,
           t,
-          extendBefore,
-          extendAfter,
+          before,
+          after,
           cyclesBefore,
           cyclesAfter,
           modifiers,
@@ -315,21 +318,7 @@ export function EditableCurve({
       return pts.join(' ');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    keys,
-    axes,
-    isVec,
-    dur,
-    activeDomain,
-    w,
-    h,
-    view,
-    extendBefore,
-    extendAfter,
-    cyclesBefore,
-    cyclesAfter,
-    modifiers,
-  ]);
+  }, [keys, axes, isVec, dur, activeDomain, w, h, view, extendBefore, extendAfter, modifiers]);
 
   // Ruler ticks across the VISIBLE window, adaptive to its span.
   const spanFrames = Math.max(endFrame - startFrame, 1);

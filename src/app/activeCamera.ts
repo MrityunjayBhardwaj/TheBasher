@@ -30,31 +30,31 @@ import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/Keyfr
 import {
   sampleScalarKeyframes,
   sampleScalarKeyframesExtended,
+  resolveExtend,
   type ChannelExtend,
+  type ChannelExtrapolate,
 } from '../nodes/keyframeInterp';
 import type { FChannelModifier } from '../nodes/channelModifiers';
 
-/** #270/#274 — pull the per-side extend rules + cycle counts + the F-Modifier stack
- *  off a channel's params so the camera-pose scalar path honours them exactly like
+/** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
+ *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
+ *  the F-Modifier stack, so the camera-pose scalar path honours them exactly like
  *  `ch.sample()` does (H40: render == read). Undefined fields fall through to the
  *  sampler's hold/0/[] defaults. */
 function channelExtendArgs(
   params: unknown,
-): [
-  ChannelExtend | undefined,
-  ChannelExtend | undefined,
-  number | undefined,
-  number | undefined,
-  readonly FChannelModifier[] | undefined,
-] {
+): [ChannelExtend, ChannelExtend, number, number, readonly FChannelModifier[] | undefined] {
   const p = params as {
-    extendBefore?: ChannelExtend;
-    extendAfter?: ChannelExtend;
-    cyclesBefore?: number;
-    cyclesAfter?: number;
+    extendBefore?: ChannelExtrapolate;
+    extendAfter?: ChannelExtrapolate;
     modifiers?: readonly FChannelModifier[];
   };
-  return [p.extendBefore, p.extendAfter, p.cyclesBefore, p.cyclesAfter, p.modifiers];
+  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+    p.extendBefore,
+    p.extendAfter,
+    p.modifiers,
+  );
+  return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
 }
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
 import { resolveTrackToTarget } from './nodeConstraints';

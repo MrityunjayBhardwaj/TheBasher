@@ -27,15 +27,21 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelNumberValue } from './types';
 import {
   sampleScalarKeyframesExtended,
+  resolveExtend,
   KEYFRAME_INTERPS,
   EASE_DIRS,
+  EXTRAPOLATE_RULES,
   KEYFRAME_HANDLE_TYPES,
-  type ChannelExtend,
+  type ChannelExtrapolate,
   type Easing,
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
-import { ChannelModifiersSchema, type FChannelModifier } from './channelModifiers';
+import {
+  ChannelModifiersSchema,
+  migrateExtendParamsToCycles,
+  type FChannelModifier,
+} from './channelModifiers';
 
 const HandleSchema = z
   .object({
@@ -54,17 +60,17 @@ export const KeyframeChannelNumberParams = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
-  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
-   *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
-  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
-  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
-  /** #270 — repetition COUNT per side for the cycling extend rules (Blender
-   *  FModifierCycles.count). 0 = infinite; past N the side freezes. Ignored by
-   *  hold. Default 0 → byte-identical to the pre-count behaviour. */
-  cyclesBefore: z.number().int().min(0).default(0),
-  cyclesAfter: z.number().int().min(0).default(0),
-  /** #274 (V88 D2) — per-channel F-MODIFIER STACK (Noise …), applied on top of the
-   *  evaluated + extended curve. Default `[]` → byte-identical to the pre-#274 sampler. */
+  /** D1 (#269) / #275 — per-side EXTRAPOLATION for times OUTSIDE the authored
+   *  keyframe domain: 'hold' (clamp, default → byte-identical to the pre-#269 clamp)
+   *  or 'slope' (linear). The cycling rules moved to a Cycles F-Modifier (#275). */
+  extendBefore: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  extendAfter: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  /** #274 (V88 D2) / #275 — per-channel F-MODIFIER STACK (Noise, Cycles …), applied
+   *  on top of the evaluated + extended curve. Default `[]` → byte-identical. */
   modifiers: ChannelModifiersSchema,
   keyframes: z
     .array(
@@ -97,12 +103,17 @@ export type KeyframeChannelNumberParams = z.infer<typeof KeyframeChannelNumberPa
 function sample(
   keyframes: KeyframeChannelNumberParams['keyframes'],
   t: number,
-  before: ChannelExtend,
-  after: ChannelExtend,
-  cyclesBefore: number,
-  cyclesAfter: number,
+  extendBefore: ChannelExtrapolate,
+  extendAfter: ChannelExtrapolate,
   modifiers: readonly FChannelModifier[],
 ): number {
+  // #275 — resolve the stored extrapolation + Cycles modifier into the engine's
+  // 5-value rule + counts; the sampler and planExtend are unchanged (byte-identical).
+  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+    extendBefore,
+    extendAfter,
+    modifiers,
+  );
   return sampleScalarKeyframesExtended(
     keyframes,
     t,
@@ -119,7 +130,19 @@ export const KeyframeChannelNumberNode: NodeDefinition<
   KeyframeChannelNumberValue
 > = {
   type: 'KeyframeChannelNumber',
-  version: 1,
+  version: 2,
+  // #275 v1→v2: split the D1 extend enum — hold/slope stay `extend{Before,After}`,
+  // the cycle family moves to a Cycles F-Modifier. Byte-identical (resolveExtend maps
+  // it straight back onto the unchanged planExtend inputs; proven in migrations.test).
+  migrations: {
+    1: (oldParams) => {
+      const { extendBefore, extendAfter, modifiers } = migrateExtendParamsToCycles(oldParams);
+      const rest = { ...(oldParams as Record<string, unknown>) };
+      delete rest.cyclesBefore;
+      delete rest.cyclesAfter;
+      return { ...rest, extendBefore, extendAfter, modifiers };
+    },
+  },
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelNumberParams,
@@ -141,15 +164,7 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       mute: params.mute,
       weight: params.weight,
       sample: (seconds: number) =>
-        sample(
-          sorted,
-          seconds,
-          params.extendBefore,
-          params.extendAfter,
-          params.cyclesBefore,
-          params.cyclesAfter,
-          params.modifiers,
-        ),
+        sample(sorted, seconds, params.extendBefore, params.extendAfter, params.modifiers),
     };
   },
 };

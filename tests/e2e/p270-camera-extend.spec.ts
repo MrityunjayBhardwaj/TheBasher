@@ -56,7 +56,16 @@ test('camera fov honours cycle-offset extend on render+read', async ({ page }) =
               { time: 0, value: 30, easing: 'linear' },
               { time: 2, value: 60, easing: 'linear' },
             ],
-            extendAfter: 'cycle-offset',
+            // #275 — cycle-offset is now a Cycles F-Modifier on the stack.
+            modifiers: [
+              {
+                type: 'cycles',
+                beforeMode: 'none',
+                afterMode: 'repeat-offset',
+                beforeCycles: 0,
+                afterCycles: 0,
+              },
+            ],
           },
         },
       ],
@@ -89,13 +98,14 @@ test('camera fov honours cycle-offset extend on render+read', async ({ page }) =
   expect(result.read, 'read fov cycled').toBeCloseTo(120, 0);
   expect(result.render!, 'render == read (H40)').toBeCloseTo(result.read!, 1);
 
-  // FALSIFY: switch to hold → t=6 clamps to the last key (60) on the render path.
+  // FALSIFY: remove the Cycles modifier → hold extrapolation → t=6 clamps to the
+  // last key (60) on the render path.
   await page.evaluate(() => {
     const w = window as unknown as W;
     w.__basher_dag
       .getState()
       .dispatchAtomic(
-        [{ type: 'setParam', nodeId: 'tmp270cam_ch', paramPath: 'extendAfter', value: 'hold' }],
+        [{ type: 'setParam', nodeId: 'tmp270cam_ch', paramPath: 'modifiers', value: [] }],
         'e2e',
         'tmp270-hold',
       );
