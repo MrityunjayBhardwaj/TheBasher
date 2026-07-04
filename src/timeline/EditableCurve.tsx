@@ -29,6 +29,7 @@ import {
   type HandleType,
   type ScalarKey,
 } from '../nodes/keyframeInterp';
+import type { FChannelModifier } from '../nodes/channelModifiers';
 import { useTimelineSelection } from './timelineSelection';
 import { useTimelineViewStore } from './timelineViewStore';
 import {
@@ -139,6 +140,12 @@ export function EditableCurve({
   );
   const cyclesAfter = useDagStore(
     (s) => (s.state.nodes[channelId]?.params as { cyclesAfter?: number })?.cyclesAfter,
+  );
+  // #274 — the channel's F-Modifier stack, read reactively so the drawn curve shows
+  // the SAME procedural modification (noise…) the render/gizmo sample (H40).
+  const modifiers = useDagStore(
+    (s) =>
+      (s.state.nodes[channelId]?.params as { modifiers?: readonly FChannelModifier[] })?.modifiers,
   );
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
@@ -301,6 +308,7 @@ export function EditableCurve({
           extendAfter,
           cyclesBefore,
           cyclesAfter,
+          modifiers,
         );
         pts.push(`${timeToX(t).toFixed(2)},${valueToY(v).toFixed(2)}`);
       }
@@ -320,6 +328,7 @@ export function EditableCurve({
     extendAfter,
     cyclesBefore,
     cyclesAfter,
+    modifiers,
   ]);
 
   // Ruler ticks across the VISIBLE window, adaptive to its span.

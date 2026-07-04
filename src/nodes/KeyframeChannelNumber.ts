@@ -35,6 +35,7 @@ import {
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
+import { ChannelModifiersSchema, type FChannelModifier } from './channelModifiers';
 
 const HandleSchema = z
   .object({
@@ -62,6 +63,9 @@ export const KeyframeChannelNumberParams = z.object({
    *  hold. Default 0 → byte-identical to the pre-count behaviour. */
   cyclesBefore: z.number().int().min(0).default(0),
   cyclesAfter: z.number().int().min(0).default(0),
+  /** #274 (V88 D2) — per-channel F-MODIFIER STACK (Noise …), applied on top of the
+   *  evaluated + extended curve. Default `[]` → byte-identical to the pre-#274 sampler. */
+  modifiers: ChannelModifiersSchema,
   keyframes: z
     .array(
       z.object({
@@ -97,8 +101,17 @@ function sample(
   after: ChannelExtend,
   cyclesBefore: number,
   cyclesAfter: number,
+  modifiers: readonly FChannelModifier[],
 ): number {
-  return sampleScalarKeyframesExtended(keyframes, t, before, after, cyclesBefore, cyclesAfter);
+  return sampleScalarKeyframesExtended(
+    keyframes,
+    t,
+    before,
+    after,
+    cyclesBefore,
+    cyclesAfter,
+    modifiers,
+  );
 }
 
 export const KeyframeChannelNumberNode: NodeDefinition<
@@ -135,6 +148,7 @@ export const KeyframeChannelNumberNode: NodeDefinition<
           params.extendAfter,
           params.cyclesBefore,
           params.cyclesAfter,
+          params.modifiers,
         ),
     };
   },

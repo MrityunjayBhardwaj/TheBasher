@@ -153,7 +153,11 @@ export function paramToSection(
       paramPath === 'extendBefore' ||
       paramPath === 'extendAfter' ||
       paramPath === 'cyclesBefore' ||
-      paramPath === 'cyclesAfter')
+      paramPath === 'cyclesAfter' ||
+      // #274 (D2) — the F-Modifier stack is authored by the dedicated
+      // ChannelModifierControls in the animate section; route it out of the raw
+      // bucket (mirrors extendBefore/After).
+      paramPath === 'modifiers')
   ) {
     return 'animate';
   }

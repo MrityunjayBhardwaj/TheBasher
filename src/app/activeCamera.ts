@@ -32,20 +32,29 @@ import {
   sampleScalarKeyframesExtended,
   type ChannelExtend,
 } from '../nodes/keyframeInterp';
+import type { FChannelModifier } from '../nodes/channelModifiers';
 
-/** #270 — pull the per-side extend rules + cycle counts off a channel's params so
- *  the camera-pose scalar path honours them exactly like `ch.sample()` does (H40:
- *  render == read). Undefined fields fall through to the sampler's hold/0 defaults. */
+/** #270/#274 — pull the per-side extend rules + cycle counts + the F-Modifier stack
+ *  off a channel's params so the camera-pose scalar path honours them exactly like
+ *  `ch.sample()` does (H40: render == read). Undefined fields fall through to the
+ *  sampler's hold/0/[] defaults. */
 function channelExtendArgs(
   params: unknown,
-): [ChannelExtend | undefined, ChannelExtend | undefined, number | undefined, number | undefined] {
+): [
+  ChannelExtend | undefined,
+  ChannelExtend | undefined,
+  number | undefined,
+  number | undefined,
+  readonly FChannelModifier[] | undefined,
+] {
   const p = params as {
     extendBefore?: ChannelExtend;
     extendAfter?: ChannelExtend;
     cyclesBefore?: number;
     cyclesAfter?: number;
+    modifiers?: readonly FChannelModifier[];
   };
-  return [p.extendBefore, p.extendAfter, p.cyclesBefore, p.cyclesAfter];
+  return [p.extendBefore, p.extendAfter, p.cyclesBefore, p.cyclesAfter, p.modifiers];
 }
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
 import { resolveTrackToTarget } from './nodeConstraints';

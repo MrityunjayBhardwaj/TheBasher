@@ -22,6 +22,7 @@ import {
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
+import { ChannelModifiersSchema } from './channelModifiers';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -47,6 +48,8 @@ export const KeyframeChannelVec2Params = z.object({
    *  FModifierCycles.count). 0 = infinite; past N the side freezes. */
   cyclesBefore: z.number().int().min(0).default(0),
   cyclesAfter: z.number().int().min(0).default(0),
+  /** #274 (V88 D2) — per-channel F-MODIFIER STACK; default `[]` → byte-identical. */
+  modifiers: ChannelModifiersSchema,
   keyframes: z
     .array(
       z.object({
@@ -74,7 +77,7 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { extendBefore, extendAfter, cyclesBefore, cyclesAfter } = params;
+  const { extendBefore, extendAfter, cyclesBefore, cyclesAfter, modifiers } = params;
   return (seconds: number) =>
     sampleVec2KeyframesExtended(
       sorted,
@@ -83,6 +86,7 @@ export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: n
       extendAfter,
       cyclesBefore,
       cyclesAfter,
+      modifiers,
     );
 }
 

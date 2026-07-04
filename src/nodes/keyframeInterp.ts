@@ -28,6 +28,7 @@
 //      callers); vyapti V49.
 
 import type { Vec2, Vec3 } from './types';
+import { applyChannelModifiers, type FChannelModifier } from './channelModifiers';
 
 // Per-keyframe interpolation TYPE. 'linear' and 'cubic' (=smoothstep) are the
 // LEGACY values — untouched, byte-identical to every pre-#272 animation. The rest
@@ -791,6 +792,21 @@ export function sampleScalarKeyframesExtended(
   after: ChannelExtend = 'hold',
   cyclesBefore = 0,
   cyclesAfter = 0,
+  modifiers?: readonly FChannelModifier[],
+): number {
+  const base = scalarExtendedBase(keys, t, before, after, cyclesBefore, cyclesAfter);
+  return modifiers && modifiers.length ? applyChannelModifiers(base, t, modifiers) : base;
+}
+
+/** The extended base sample WITHOUT modifiers — the pre-#274 body verbatim, so an
+ *  empty modifier stack is byte-identical (D1/V49 parity). */
+function scalarExtendedBase(
+  keys: readonly ScalarKey[],
+  t: number,
+  before: ChannelExtend,
+  after: ChannelExtend,
+  cyclesBefore: number,
+  cyclesAfter: number,
 ): number {
   if (keys.length === 0) return 0;
   const first = keys[0];
@@ -829,6 +845,25 @@ export function sampleVec2KeyframesExtended(
   after: ChannelExtend = 'hold',
   cyclesBefore = 0,
   cyclesAfter = 0,
+  modifiers?: readonly FChannelModifier[],
+): Vec2 {
+  const base = vec2ExtendedBase(keys, t, before, after, cyclesBefore, cyclesAfter);
+  // #274 — modifiers apply identically per-component (one modifier = one function
+  // of time, Blender-consistent) so the per-axis curve display matches render (H40).
+  if (!modifiers || modifiers.length === 0) return base;
+  return [
+    applyChannelModifiers(base[0], t, modifiers),
+    applyChannelModifiers(base[1], t, modifiers),
+  ];
+}
+
+function vec2ExtendedBase(
+  keys: readonly Vec2Key[],
+  t: number,
+  before: ChannelExtend,
+  after: ChannelExtend,
+  cyclesBefore: number,
+  cyclesAfter: number,
 ): Vec2 {
   if (keys.length === 0) return [0, 0];
   const first = keys[0];
@@ -877,6 +912,24 @@ export function sampleVec3KeyframesExtended(
   after: ChannelExtend = 'hold',
   cyclesBefore = 0,
   cyclesAfter = 0,
+  modifiers?: readonly FChannelModifier[],
+): Vec3 {
+  const base = vec3ExtendedBase(keys, t, before, after, cyclesBefore, cyclesAfter);
+  if (!modifiers || modifiers.length === 0) return base;
+  return [
+    applyChannelModifiers(base[0], t, modifiers),
+    applyChannelModifiers(base[1], t, modifiers),
+    applyChannelModifiers(base[2], t, modifiers),
+  ];
+}
+
+function vec3ExtendedBase(
+  keys: readonly Vec3Key[],
+  t: number,
+  before: ChannelExtend,
+  after: ChannelExtend,
+  cyclesBefore: number,
+  cyclesAfter: number,
 ): Vec3 {
   if (keys.length === 0) return [0, 0, 0];
   const first = keys[0];

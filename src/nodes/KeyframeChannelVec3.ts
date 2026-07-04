@@ -28,6 +28,7 @@ import {
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
+import { ChannelModifiersSchema } from './channelModifiers';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -54,6 +55,8 @@ export const KeyframeChannelVec3Params = z.object({
    *  FModifierCycles.count). 0 = infinite; past N the side freezes. */
   cyclesBefore: z.number().int().min(0).default(0),
   cyclesAfter: z.number().int().min(0).default(0),
+  /** #274 (V88 D2) — per-channel F-MODIFIER STACK; default `[]` → byte-identical. */
+  modifiers: ChannelModifiersSchema,
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
   // imported clip track is materialized into per-bone channels (bakeGltfChannel,
   // Wave D), each channel carries the bone's `childName` AND the owning asset's
@@ -94,7 +97,7 @@ export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params
  */
 export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: number) => Vec3 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { extendBefore, extendAfter, cyclesBefore, cyclesAfter } = params;
+  const { extendBefore, extendAfter, cyclesBefore, cyclesAfter, modifiers } = params;
   return (seconds: number) =>
     sampleVec3KeyframesExtended(
       sorted,
@@ -103,6 +106,7 @@ export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: n
       extendAfter,
       cyclesBefore,
       cyclesAfter,
+      modifiers,
     );
 }
 

@@ -78,6 +78,7 @@ import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
 import { CHANNEL_EXTEND_RULES } from '../nodes/keyframeInterp';
+import { FMODIFIER_TYPES, defaultModifier, type FChannelModifier } from '../nodes/channelModifiers';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -658,6 +659,127 @@ function ChannelExtendControls({ nodeId }: { nodeId: string }) {
       </span>
       {row('Before', 'extendBefore', before ?? 'hold', 'cyclesBefore', cyclesBefore ?? 0)}
       {row('After', 'extendAfter', after ?? 'hold', 'cyclesAfter', cyclesAfter ?? 0)}
+    </div>
+  );
+}
+
+/** #274 (V88 D2) — the per-channel F-MODIFIER STACK authoring UI. A list of
+ *  modifiers (Noise …) applied on top of the evaluated + extended curve, plus an
+ *  Add menu. Each modifier is a card: mute + remove, its type-specific params, and
+ *  the shared influence/range fields. Every edit is a setParam over the WHOLE
+ *  `modifiers` array (the same chokepoint the sampler reads → render==read==curve). */
+function ChannelModifierControls({ nodeId }: { nodeId: string }) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const modifiers =
+    useDagStore(
+      (s) =>
+        (s.state.nodes[nodeId]?.params as { modifiers?: FChannelModifier[] } | undefined)
+          ?.modifiers,
+    ) ?? [];
+  const commit = (next: FChannelModifier[]) =>
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'modifiers', value: next },
+      'user',
+      'edit modifiers',
+    );
+  const add = (type: (typeof FMODIFIER_TYPES)[number]) =>
+    commit([...modifiers, defaultModifier(type)]);
+  const remove = (i: number) => commit(modifiers.filter((_, j) => j !== i));
+  const patch = (i: number, p: Partial<FChannelModifier>) =>
+    commit(modifiers.map((m, j) => (j === i ? ({ ...m, ...p } as FChannelModifier) : m)));
+
+  const numField = (i: number, label: string, path: string, value: number, step = 0.1) => (
+    <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+      <span className="font-mono text-fg/50">{label}</span>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        data-testid={`channel-modifier-${i}-${path}`}
+        className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          patch(i, { [path]: Number(e.target.value) || 0 } as Partial<FChannelModifier>)
+        }
+      />
+    </label>
+  );
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center justify-between px-3 pt-1.5">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Modifiers</span>
+        <div className="flex items-center gap-1">
+          {FMODIFIER_TYPES.map((type) => (
+            <button
+              key={type}
+              type="button"
+              data-testid="channel-modifier-add"
+              className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onClick={() => add(type)}
+            >
+              + {type}
+            </button>
+          ))}
+        </div>
+      </div>
+      {modifiers.length === 0 ? (
+        <span className="px-3 py-1 text-[10px] text-fg/30">no modifiers</span>
+      ) : null}
+      {modifiers.map((mod, i) => (
+        <div
+          key={i}
+          data-testid={`channel-modifier-${i}`}
+          className="mx-2 my-1 rounded border border-line/60"
+        >
+          <div className="flex items-center justify-between px-3 py-1 text-[11px] text-fg/80">
+            <span className="font-mono uppercase tracking-wide text-fg/60">{mod.type}</span>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 font-mono text-[10px] text-fg/50">
+                <input
+                  type="checkbox"
+                  checked={Boolean(mod.muted)}
+                  data-testid={`channel-modifier-${i}-mute`}
+                  onChange={(e) => patch(i, { muted: e.target.checked })}
+                />
+                mute
+              </label>
+              <button
+                type="button"
+                data-testid={`channel-modifier-${i}-remove`}
+                className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                onClick={() => remove(i)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          {mod.type === 'noise' ? (
+            <>
+              <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+                <span className="font-mono text-fg/50">blend</span>
+                <select
+                  value={mod.blend}
+                  data-testid={`channel-modifier-${i}-blend`}
+                  className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onChange={(e) => patch(i, { blend: e.target.value as (typeof mod)['blend'] })}
+                >
+                  {(['add', 'subtract', 'multiply', 'replace'] as const).map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {numField(i, 'strength', 'strength', mod.strength)}
+              {numField(i, 'scale', 'scale', mod.scale)}
+              {numField(i, 'phase', 'phase', mod.phase)}
+              {numField(i, 'offset', 'offset', mod.offset)}
+              {numField(i, 'depth', 'depth', mod.depth, 1)}
+            </>
+          ) : null}
+          {numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)}
+        </div>
+      ))}
     </div>
   );
 }
@@ -2293,6 +2415,12 @@ export function NPanel() {
                       {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
                         <ChannelExtendControls nodeId={node.id} />
                       ) : null}
+                      {/* #274 (D2) — the F-Modifier STACK (Noise …), authored by a
+                          dedicated control below the Extend block; `modifiers` routes
+                          to animate to leave the raw bucket, filtered out below. */}
+                      {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
+                        <ChannelModifierControls nodeId={node.id} />
+                      ) : null}
                       {sectionId === 'environment' || sectionId === 'camera'
                         ? null
                         : (grouped.get(sectionId) ?? [])
@@ -2301,7 +2429,8 @@ export function NPanel() {
                                 key !== 'extendBefore' &&
                                 key !== 'extendAfter' &&
                                 key !== 'cyclesBefore' &&
-                                key !== 'cyclesAfter',
+                                key !== 'cyclesAfter' &&
+                                key !== 'modifiers',
                             )
                             .map(([key, value]) => (
                               <ParamRow
