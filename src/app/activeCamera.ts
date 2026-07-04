@@ -27,7 +27,26 @@
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
-import { sampleScalarKeyframes } from '../nodes/keyframeInterp';
+import {
+  sampleScalarKeyframes,
+  sampleScalarKeyframesExtended,
+  type ChannelExtend,
+} from '../nodes/keyframeInterp';
+
+/** #270 — pull the per-side extend rules + cycle counts off a channel's params so
+ *  the camera-pose scalar path honours them exactly like `ch.sample()` does (H40:
+ *  render == read). Undefined fields fall through to the sampler's hold/0 defaults. */
+function channelExtendArgs(
+  params: unknown,
+): [ChannelExtend | undefined, ChannelExtend | undefined, number | undefined, number | undefined] {
+  const p = params as {
+    extendBefore?: ChannelExtend;
+    extendAfter?: ChannelExtend;
+    cyclesBefore?: number;
+    cyclesAfter?: number;
+  };
+  return [p.extendBefore, p.extendAfter, p.cyclesBefore, p.cyclesAfter];
+}
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
 import { resolveTrackToTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
@@ -130,7 +149,7 @@ function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: n
     const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
       (a, b) => a.time - b.time,
     );
-    return sampleScalarKeyframes(sorted, seconds);
+    return sampleScalarKeyframesExtended(sorted, seconds, ...channelExtendArgs(ch.params));
   }
   return base;
 }
@@ -291,7 +310,7 @@ export function resolveCameraPoseAt(
       const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
         (a, b) => a.time - b.time,
       );
-      pose[path] = sampleScalarKeyframes(sorted, seconds);
+      pose[path] = sampleScalarKeyframesExtended(sorted, seconds, ...channelExtendArgs(ch.params));
     }
   }
 

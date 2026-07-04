@@ -17,7 +17,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
-import { sampleScalarKeyframes, type ScalarKey } from '../nodes/keyframeInterp';
+import {
+  sampleScalarKeyframesExtended,
+  type ChannelExtend,
+  type ScalarKey,
+} from '../nodes/keyframeInterp';
 import { useTimelineSelection } from './timelineSelection';
 import { useTimelineViewStore } from './timelineViewStore';
 import {
@@ -110,6 +114,21 @@ export function EditableCurve({
   // holds the same window. `valueZoom` is the curve-only value-axis scale.
   const view = useTimelineViewStore((s) => s.view);
   const valueZoom = useTimelineViewStore((s) => s.valueZoom);
+  // #270 — the channel's per-side extend rules + cycle counts, read reactively so
+  // the drawn curve shows the SAME extrapolation the render/gizmo sample (H40). Four
+  // primitive selectors (a fresh object each render would loop zustand).
+  const extendBefore = useDagStore(
+    (s) => (s.state.nodes[channelId]?.params as { extendBefore?: ChannelExtend })?.extendBefore,
+  );
+  const extendAfter = useDagStore(
+    (s) => (s.state.nodes[channelId]?.params as { extendAfter?: ChannelExtend })?.extendAfter,
+  );
+  const cyclesBefore = useDagStore(
+    (s) => (s.state.nodes[channelId]?.params as { cyclesBefore?: number })?.cyclesBefore,
+  );
+  const cyclesAfter = useDagStore(
+    (s) => (s.state.nodes[channelId]?.params as { cyclesAfter?: number })?.cyclesAfter,
+  );
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
   const [draft, setDraft] = useState<RawKey[] | null>(null);
@@ -264,12 +283,33 @@ export function EditableCurve({
       const pts: string[] = [];
       for (let i = 0; i <= steps; i++) {
         const t = visStartSec + (i / steps) * (visEndSec - visStartSec);
-        pts.push(`${timeToX(t).toFixed(2)},${valueToY(sampleScalarKeyframes(sk, t)).toFixed(2)}`);
+        const v = sampleScalarKeyframesExtended(
+          sk,
+          t,
+          extendBefore,
+          extendAfter,
+          cyclesBefore,
+          cyclesAfter,
+        );
+        pts.push(`${timeToX(t).toFixed(2)},${valueToY(v).toFixed(2)}`);
       }
       return pts.join(' ');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, axes, isVec, dur, activeDomain, w, h, view]);
+  }, [
+    keys,
+    axes,
+    isVec,
+    dur,
+    activeDomain,
+    w,
+    h,
+    view,
+    extendBefore,
+    extendAfter,
+    cyclesBefore,
+    cyclesAfter,
+  ]);
 
   // Ruler ticks across the VISIBLE window, adaptive to its span.
   const spanFrames = Math.max(endFrame - startFrame, 1);
