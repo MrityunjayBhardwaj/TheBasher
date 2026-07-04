@@ -19,7 +19,11 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import {
   sampleScalarKeyframesExtended,
+  KEYFRAME_INTERPS,
+  EASE_DIRS,
   type ChannelExtend,
+  type Easing,
+  type EaseDir,
   type ScalarKey,
 } from '../nodes/keyframeInterp';
 import { useTimelineSelection } from './timelineSelection';
@@ -54,7 +58,8 @@ type Handle = { time: number; value: number | readonly number[] };
 interface RawKey {
   time: number;
   value: number | readonly number[];
-  easing: 'linear' | 'cubic';
+  easing: Easing;
+  ease?: EaseDir;
   inHandle?: Handle;
   outHandle?: Handle;
 }
@@ -81,6 +86,7 @@ function projectAxis(k: RawKey, axis: number, isVec: boolean): ScalarKey {
     time: k.time,
     value: v,
     easing: k.easing,
+    ease: k.ease,
     inHandle: proj(k.inHandle),
     outHandle: proj(k.outHandle),
   };
@@ -329,6 +335,14 @@ export function EditableCurve({
       );
   }
 
+  // #272 — set the ACTIVE keyframe's interpolation type / easing direction. Commits
+  // the whole keyframes array (the same chokepoint as a drag), so render/read/curve
+  // update together through ch.sample() (H40).
+  function setActiveKeyInterp(patch: { easing?: Easing; ease?: EaseDir }) {
+    if (activeIndex < 0) return;
+    commit(keyframes.map((k, i) => (i === activeIndex ? { ...k, ...patch } : k)));
+  }
+
   // keyframes arrives pre-sorted from CurveEditor, so the array index IS the
   // time order — neighbors are index±1 (no reference findIndex needed).
   function startDrag(
@@ -473,6 +487,44 @@ export function EditableCurve({
           {isVec
             ? (keys[activeIndex].value as readonly number[]).map((v) => formatValue(v)).join(', ')
             : formatValue(keys[activeIndex].value as number)}
+        </div>
+      )}
+      {/* #272 — per-keyframe interpolation picker for the ACTIVE key (Blender's
+          graph-editor "T" menu). The ease-direction select appears only for the
+          equation interps (not linear/cubic/constant). */}
+      {activeIndex >= 0 && (
+        <div
+          data-testid="curve-interp-picker"
+          className="absolute left-1/2 top-0.5 z-10 flex -translate-x-1/2 items-center gap-1 rounded px-1 py-0.5 text-[10px]"
+          style={{ backgroundColor: 'rgba(10,10,10,0.85)' }}
+        >
+          <span className="font-mono text-fg/50">interp</span>
+          <select
+            value={keys[activeIndex].easing}
+            data-testid="curve-interp-select"
+            className="rounded border border-line bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            onChange={(e) => setActiveKeyInterp({ easing: e.target.value as Easing })}
+          >
+            {KEYFRAME_INTERPS.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          {!['linear', 'cubic', 'constant'].includes(keys[activeIndex].easing) && (
+            <select
+              value={keys[activeIndex].ease ?? 'inout'}
+              data-testid="curve-ease-select"
+              className="rounded border border-line bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onChange={(e) => setActiveKeyInterp({ ease: e.target.value as EaseDir })}
+            >
+              {EASE_DIRS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
       <svg
