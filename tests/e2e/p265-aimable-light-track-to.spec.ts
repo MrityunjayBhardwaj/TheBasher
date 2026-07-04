@@ -24,10 +24,7 @@ function norm(v: V3): V3 {
 }
 
 /** Find the aim of the light whose reported world position ≈ `pos`. */
-function aimAt(
-  aims: { position: number[]; direction: number[] }[],
-  pos: V3,
-): V3 | null {
+function aimAt(aims: { position: number[]; direction: number[] }[], pos: V3): V3 | null {
   const hit = aims.find(
     (a) =>
       Math.abs(a.position[0] - pos[0]) < 1e-2 &&
@@ -61,12 +58,23 @@ async function seed(page: import('@playwright/test').Page) {
         nodeType: 'SpotLight',
         params: { position: spotPos, target: [spotPos[0], spotPos[1], spotPos[2] - 1] },
       });
-      d({ type: 'connect', from: { node: 'n265_spot', socket: 'out' }, to: { node: 'n_scene', socket: 'lights' } });
+      d({
+        type: 'connect',
+        from: { node: 'n265_spot', socket: 'out' },
+        to: { node: 'n_scene', socket: 'lights' },
+      });
       d({
         type: 'addNode',
         nodeId: 'n265_spot_tt',
         nodeType: 'TrackTo',
-        params: { name: 'spot-tt', target: 'n265_spot', aimNode: '', aimPoint: spotAim, up: [0, 1, 0], mute: false },
+        params: {
+          name: 'spot-tt',
+          target: 'n265_spot',
+          aimNode: '',
+          aimPoint: spotAim,
+          up: [0, 1, 0],
+          mute: false,
+        },
       });
       // DirectionalLight (rotation 0 → authored aim is toward the origin). Track-To
       // aims it at [4,0,0], a DISTINCT direction from "toward origin".
@@ -76,12 +84,23 @@ async function seed(page: import('@playwright/test').Page) {
         nodeType: 'DirectionalLight',
         params: { position: sunPos, intensity: 1 },
       });
-      d({ type: 'connect', from: { node: 'n265_sun', socket: 'out' }, to: { node: 'n_scene', socket: 'lights' } });
+      d({
+        type: 'connect',
+        from: { node: 'n265_sun', socket: 'out' },
+        to: { node: 'n_scene', socket: 'lights' },
+      });
       d({
         type: 'addNode',
         nodeId: 'n265_sun_tt',
         nodeType: 'TrackTo',
-        params: { name: 'sun-tt', target: 'n265_sun', aimNode: '', aimPoint: sunAim, up: [0, 1, 0], mute: false },
+        params: {
+          name: 'sun-tt',
+          target: 'n265_sun',
+          aimNode: '',
+          aimPoint: sunAim,
+          up: [0, 1, 0],
+          mute: false,
+        },
       });
     },
     { spotPos: SPOT_POS, spotAim: SPOT_AIM, sunPos: SUN_POS, sunAim: SUN_AIM },
@@ -91,19 +110,31 @@ async function seed(page: import('@playwright/test').Page) {
 }
 
 test.describe('#265 aimable-light Track-To (H40 boundary-pair)', () => {
-  test('SpotLight + DirectionalLight aim at the Track-To target; mute reverts', async ({ page }) => {
+  test('SpotLight + DirectionalLight aim at the Track-To target; mute reverts', async ({
+    page,
+  }) => {
     await page.goto('/');
     await seed(page);
 
-    const aims = await page.evaluate(() => (window as unknown as BasherWindow).__basher_light_world_aims!());
+    const aims = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_light_world_aims!(),
+    );
 
     const spotDir = aimAt(aims, SPOT_POS);
     const sunDir = aimAt(aims, SUN_POS);
     expect(spotDir, 'spot light present').not.toBeNull();
     expect(sunDir, 'sun light present').not.toBeNull();
 
-    const wantSpot = norm([SPOT_AIM[0] - SPOT_POS[0], SPOT_AIM[1] - SPOT_POS[1], SPOT_AIM[2] - SPOT_POS[2]]);
-    const wantSun = norm([SUN_AIM[0] - SUN_POS[0], SUN_AIM[1] - SUN_POS[1], SUN_AIM[2] - SUN_POS[2]]);
+    const wantSpot = norm([
+      SPOT_AIM[0] - SPOT_POS[0],
+      SPOT_AIM[1] - SPOT_POS[1],
+      SPOT_AIM[2] - SPOT_POS[2],
+    ]);
+    const wantSun = norm([
+      SUN_AIM[0] - SUN_POS[0],
+      SUN_AIM[1] - SUN_POS[1],
+      SUN_AIM[2] - SUN_POS[2],
+    ]);
     // Rendered aim == intended aim, all three axes.
     for (let i = 0; i < 3; i++) expect(spotDir![i]).toBeCloseTo(wantSpot[i], 2);
     for (let i = 0; i < 3; i++) expect(sunDir![i]).toBeCloseTo(wantSun[i], 2);
@@ -113,10 +144,17 @@ test.describe('#265 aimable-light Track-To (H40 boundary-pair)', () => {
     // Falsify: mute the spot's Track-To → it reverts to the AUTHORED -Z aim.
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
-      w.__basher_dag!.getState().dispatch({ type: 'setParam', nodeId: 'n265_spot_tt', paramPath: 'mute', value: true });
+      w.__basher_dag!.getState().dispatch({
+        type: 'setParam',
+        nodeId: 'n265_spot_tt',
+        paramPath: 'mute',
+        value: true,
+      });
     });
     await page.waitForTimeout(300);
-    const aims2 = await page.evaluate(() => (window as unknown as BasherWindow).__basher_light_world_aims!());
+    const aims2 = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_light_world_aims!(),
+    );
     const spotDir2 = aimAt(aims2, SPOT_POS);
     expect(spotDir2, 'spot still present').not.toBeNull();
     // Authored target was pos + (0,0,-1) → direction [0,0,-1].

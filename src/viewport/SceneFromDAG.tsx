@@ -17,7 +17,16 @@
 
 import { useGLTF } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 // #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
@@ -53,6 +62,7 @@ import {
   resolveConstraintRotation,
   resolveTrackToTarget,
 } from '../app/nodeConstraints';
+import { childEdges } from '../app/resolveWorldTransform';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -121,6 +131,27 @@ function ensureRectAreaInit() {
   rectAreaInit = true;
 }
 
+// #266 (B1–B3, [[V88]] N6/N2) — the ID-KEYED OVERLAY graph, distinct from the
+// value-flow render tree (MeshChild / container renderers). An edge-less overlay
+// (a Track-To constraint or a free-floating direct channel) mounts wherever its
+// TARGET node renders — at ANY depth — resolved by FLAT-ID LOOKUP against these
+// membership sets, never by walking the render tree (which drops node-ids at
+// nesting boundaries → the pre-#266 nested no-op). SceneFromDAG builds the sets
+// once (O(N)) and provides them here MEMOIZED ON A CONTENT SIGNATURE, so adding
+// an overlay to a nested node changes the signature → every nested `RenderChild`
+// re-evaluates membership and the target mounts its overlay (B2 — the synthesized
+// dependency edge; without it the nested target never re-resolves). A non-overlay
+// edit keeps the signature stable → nested `RenderChild`s bail (H48/B13 preserved).
+interface OverlayMembership {
+  readonly directChannelTargets: ReadonlySet<string>;
+  readonly constraintTargets: ReadonlySet<string>;
+}
+const EMPTY_MEMBERSHIP: OverlayMembership = {
+  directChannelTargets: new Set(),
+  constraintTargets: new Set(),
+};
+const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSHIP);
+
 interface SceneFromDAGProps {
   /** Override the named output to render. Defaults to 'render'. */
   outputName?: string;
@@ -162,6 +193,28 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // it (you're inside it — drawing it would clutter the preview).
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
+  // #197/#204 — the edge-less OVERLAY membership sets (nodes driven by a direct
+  // channel / an active Track-To), built ONCE (O(N)) so a per-child test is O(1),
+  // never O(N²) (B13). The top-level maps read these directly; #266 (B1) also
+  // provides them via context so a NESTED child resolves overlay membership by
+  // flat-id LOOKUP at any depth.
+  const directChannelTargets = directChannelTargetSet(state.nodes);
+  const constraintTargets = constraintTargetSet(state.nodes);
+  // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
+  // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
+  // membership actually changes (an overlay added/removed anywhere), NOT on every
+  // param edit. Sorted-join over the (small) overlay-node sets; identity-stable
+  // otherwise so nested containers bail (H48). Intentional exhaustive-deps skip:
+  // the sig IS the content dependency (the sets are rebuilt each render by design).
+  const overlaySig = `${[...directChannelTargets].sort().join(',')}|${[...constraintTargets]
+    .sort()
+    .join(',')}`;
+  const overlayMembership = useMemo<OverlayMembership>(
+    () => ({ directChannelTargets, constraintTargets }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [overlaySig],
+  );
+
   const target = state.outputs[outputName];
   if (!target) return null;
 
@@ -193,18 +246,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const rigLightSources = resolveRigLightSources(state);
   const rigLights = value.scene.lightRig?.lights ?? [];
 
-  // v0.7 unification (#197) — the set of nodes driven by free-floating direct
-  // channels, built in ONE pass so the child map below is O(N), not O(N²). A
-  // child in this set (and not an AnimationLayer) overlays its channels via
-  // DirectChannelsR. Excludes layer-wired channels (the coexistence guard lives
-  // in nodeChannels.ts).
-  const directChannelTargets = directChannelTargetSet(state.nodes);
-
-  // #204 (epic #201) — the set of nodes constrained by an active Track-To, built
-  // once (O(N)) so the child map tests membership in O(1), never O(N²) (B13). A
-  // constrained child renders through ConstrainedR, which derives its rotation
-  // from the aim (V58) instead of the authored/animated value.
-  const constraintTargets = constraintTargetSet(state.nodes);
+  // (directChannelTargets / constraintTargets computed above the early return so
+  // the overlay-membership context can be a hook — see #266.)
 
   // #242 / [[H132]] GAP 1 — the set of nodes with an ANIMATED ANCESTOR (an ancestor
   // in `directChannelTargets`). A separately-rendered editor visual (the camera
@@ -244,7 +287,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const activeDof = resolveCameraDof(activeCameraNode, targetFocusDistance);
 
   return (
-    <>
+    <OverlayMembershipContext.Provider value={overlayMembership}>
       {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
           PROPERTY, not a traversed object), so it survives the renderToImage
           chrome hide-pass (V37) and lights the production render for free.
@@ -401,7 +444,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           If a project wants ambient fill, it adds an AmbientLight node. */}
       <DiffOverlay />
       <PostFx config={value.postFx} dof={activeDof} />
-    </>
+    </OverlayMembershipContext.Provider>
   );
 }
 
@@ -1227,9 +1270,14 @@ interface MeshChildProps {
   value: SceneObject;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
+  /** #266 — this value's producing DAG node id, threaded so a CONTAINER kind
+   *  (Transform/Group/MaterialOverride) can resolve its children's ids via
+   *  `childEdges` and mount their overlays at any depth. null for leaves / when
+   *  unknown (degrades to the value-flow render, byte-identical to pre-#266). */
+  nodeId?: string | null;
 }
 
-const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
@@ -1270,11 +1318,11 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
         </AssetErrorBoundary>
       );
     case 'Transform':
-      return <TransformR value={value} override={override} />;
+      return <TransformR value={value} override={override} nodeId={nodeId} />;
     case 'Group':
-      return <GroupR value={value} override={override} />;
+      return <GroupR value={value} override={override} nodeId={nodeId} />;
     case 'MaterialOverride':
-      return <MaterialOverrideR value={value} override={override} />;
+      return <MaterialOverrideR value={value} override={override} nodeId={nodeId} />;
     case 'Scatter':
       return <ScatterR value={value} override={override} />;
     case 'Character':
@@ -1389,18 +1437,78 @@ const SceneChildNode = memo(function SceneChildNode({
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
     <group name={pickId ?? undefined} onClick={onClick}>
-      {isConstrained && pickId ? (
-        // #204 — derived aim rotation (V58). ConstrainedR overlays channels too,
-        // so it takes precedence over DirectChannelsR for a constrained node.
-        <ConstrainedR value={value} pickId={pickId} />
-      ) : hasDirectChannels && pickId ? (
-        <DirectChannelsR value={value} pickId={pickId} />
-      ) : (
-        <MeshChild value={value} />
-      )}
+      <OverlayDispatch
+        value={value}
+        nodeId={pickId}
+        hasDirectChannels={hasDirectChannels}
+        isConstrained={isConstrained}
+      />
     </group>
   );
 });
+
+// #266 (B3) — the ONE overlay-vs-value-flow dispatch, shared by the TOP-LEVEL
+// child (SceneChildNode, membership from pre-built boolean props) AND every NESTED
+// child (RenderChild, membership resolved by flat-id LOOKUP from context). A
+// constrained node renders through ConstrainedR (derived aim, V58) which takes
+// precedence over DirectChannelsR; a channeled node through DirectChannelsR; an
+// un-overlaid node through the bare value-flow MeshChild. Both overlay renderers
+// take `pickId` and re-emit MeshChild(patched, nodeId) so a constrained/channeled
+// CONTAINER still recurses (the nodeId thread), keeping value-flow and overlay
+// resolution as separate concerns (B3).
+function OverlayDispatch({
+  value,
+  nodeId,
+  hasDirectChannels,
+  isConstrained,
+  override,
+}: {
+  // SceneObject (not SceneChild) — a Group child can be a light/camera too (#231);
+  // the overlay branches only apply to mesh-like values, and a camera/light routes
+  // to MeshChild (its own render path). Matches MeshChild's value type.
+  value: SceneObject;
+  nodeId: string | null;
+  hasDirectChannels: boolean;
+  isConstrained: boolean;
+  override?: MaterialValue;
+}) {
+  if (isConstrained && nodeId)
+    return <ConstrainedR value={value} pickId={nodeId} override={override} />;
+  if (hasDirectChannels && nodeId)
+    return <DirectChannelsR value={value} pickId={nodeId} override={override} />;
+  return <MeshChild value={value} nodeId={nodeId} override={override} />;
+}
+
+// #266 (B1/B2) — the NESTED overlay-resolution seam. A container renderer (GroupR /
+// TransformR / MaterialOverrideR) resolves each child's node id via `childEdges`
+// (the proven value→id map) and renders it through RenderChild, which looks up
+// overlay membership by FLAT ID against the context sets (never a render-tree walk,
+// N6) → OverlayDispatch mounts the right overlay. useContext IS the synthesized
+// dependency edge (B2): when overlay membership changes anywhere, the memoized
+// context ref flips → every mounted RenderChild re-evaluates membership and a
+// newly-overlaid nested node mounts its overlay; a non-membership edit keeps the
+// context stable → RenderChild bails (H48). A nested node with NO id (should not
+// happen — every rendered child comes from an edge) degrades to the bare MeshChild.
+function RenderChild({
+  value,
+  nodeId,
+  override,
+}: {
+  value: SceneObject;
+  nodeId: string | null;
+  override?: MaterialValue;
+}) {
+  const { directChannelTargets, constraintTargets } = useContext(OverlayMembershipContext);
+  return (
+    <OverlayDispatch
+      value={value}
+      nodeId={nodeId}
+      hasDirectChannels={nodeId != null && directChannelTargets.has(nodeId)}
+      isConstrained={nodeId != null && constraintTargets.has(nodeId)}
+      override={override}
+    />
+  );
+}
 
 // v0.7 unification (#197) — renderer for a native node animated by FREE-FLOATING
 // direct channels (no AnimationLayer wrapper); the native-mesh analogue of
@@ -1421,7 +1529,7 @@ function DirectChannelsR({
   pickId,
   override,
 }: {
-  value: SceneChild;
+  value: SceneObject;
   pickId: string;
   override?: MaterialValue;
 }) {
@@ -1436,11 +1544,13 @@ function DirectChannelsR({
   // playback). overlayChannels runs FIRST (committed curve), then the transient
   // overlays on top (the live uncommitted edit), keyed by this node's id.
   const transients = useTransientEditStore((s) => s.edits);
-  const sample = (seconds: number): SceneChild =>
+  const sample = (seconds: number): SceneObject =>
     overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
     value;
 
-  const [patched, setPatched] = useState<SceneChild>(() => sample(useTimeStore.getState().seconds));
+  const [patched, setPatched] = useState<SceneObject>(() =>
+    sample(useTimeStore.getState().seconds),
+  );
   const lastApplied = useRef<{
     seconds: number;
     channels: unknown;
@@ -1461,7 +1571,7 @@ function DirectChannelsR({
     lastApplied.current = { seconds, channels, transients, value };
     setPatched(sample(seconds));
   });
-  return <MeshChild value={patched} override={override} />;
+  return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
 // #204 (epic #201) — renderer for a node with an active Track-To constraint. The
@@ -1485,7 +1595,7 @@ function ConstrainedR({
   pickId,
   override,
 }: {
-  value: SceneChild;
+  value: SceneObject;
   pickId: string;
   override?: MaterialValue;
 }) {
@@ -1503,7 +1613,7 @@ function ConstrainedR({
   // patched value AND a stable key for the aim, so the useFrame can skip
   // setState when nothing changed (H48 — a static constrained node must not
   // re-render every frame).
-  const build = (seconds: number): { v: SceneChild; aimKey: string } => {
+  const build = (seconds: number): { v: SceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
     const base =
@@ -1515,11 +1625,11 @@ function ConstrainedR({
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
     const rec = base as unknown as Record<string, unknown>;
     const v =
-      aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneChild) : base;
+      aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneObject) : base;
     return { v, aimKey: aim ? aim.join(',') : '' };
   };
 
-  const [patched, setPatched] = useState<SceneChild>(
+  const [patched, setPatched] = useState<SceneObject>(
     () => build(useTimeStore.getState().seconds).v,
   );
   const lastApplied = useRef<{
@@ -1551,7 +1661,7 @@ function ConstrainedR({
     lastApplied.current = { seconds, channels, transients, value, aimKey };
     setPatched(v);
   });
-  return <MeshChild value={patched} override={override} />;
+  return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
 function applyOverride(
@@ -2981,20 +3091,42 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   return <primitive object={cloned} />;
 }
 
-function TransformR({ value, override }: { value: TransformValue; override?: MaterialValue }) {
+function TransformR({
+  value,
+  override,
+  nodeId,
+}: {
+  value: TransformValue;
+  override?: MaterialValue;
+  nodeId?: string | null;
+}) {
   if (!value.child) return null;
+  // #266 (B1) — resolve the wrapped child's node id via the proven value→id map so
+  // a NESTED overlay (constraint/channel) mounts by flat-id lookup (RenderChild),
+  // not a render-tree walk. null → RenderChild degrades to the bare value-flow.
+  const childId = nodeId
+    ? (childEdges(useDagStore.getState().state, nodeId, value)[0]?.id ?? null)
+    : null;
   return (
     <group
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={value.scale as [number, number, number]}
     >
-      <MeshChild value={value.child} override={override} />
+      <RenderChild value={value.child} nodeId={childId} override={override} />
     </group>
   );
 }
 
-function GroupR({ value, override }: { value: GroupValue; override?: MaterialValue }) {
+function GroupR({
+  value,
+  override,
+  nodeId,
+}: {
+  value: GroupValue;
+  override?: MaterialValue;
+  nodeId?: string | null;
+}) {
   // #222 — a Group transforms as a unit, rotating/scaling about its `pivot`
   // (the model's bbox centre for an import). Apply Translate(position)·R·S on the
   // OUTER group, and Translate(-pivot) on an INNER group so the content stays put
@@ -3006,6 +3138,11 @@ function GroupR({ value, override }: { value: GroupValue; override?: MaterialVal
   // through the schema) may carry undefined transform fields — default to identity
   // so the destructure + three props never see undefined.
   const [px, py, pz] = (value.pivot as [number, number, number] | undefined) ?? [0, 0, 0];
+  // #266 (B1) — each child's node id via the proven value→id map; index-aligned
+  // with value.children (every child comes from an inputs.children edge). Mapping
+  // over value.children (not edges) keeps ALL children rendering even if an id is
+  // absent (RenderChild then degrades to the bare value-flow — byte-identical).
+  const edges = nodeId ? childEdges(useDagStore.getState().state, nodeId, value) : [];
   return (
     <group
       position={(value.position as [number, number, number] | undefined) ?? [0, 0, 0]}
@@ -3014,7 +3151,7 @@ function GroupR({ value, override }: { value: GroupValue; override?: MaterialVal
     >
       <group position={[-px, -py, -pz]}>
         {value.children.map((c, i) => (
-          <MeshChild key={`g:${i}`} value={c} override={override} />
+          <RenderChild key={`g:${i}`} value={c} nodeId={edges[i]?.id ?? null} override={override} />
         ))}
       </group>
     </group>
@@ -3024,16 +3161,24 @@ function GroupR({ value, override }: { value: GroupValue; override?: MaterialVal
 function MaterialOverrideR({
   value,
   override,
+  nodeId,
 }: {
   value: MaterialOverrideValue;
   override?: MaterialValue;
+  nodeId?: string | null;
 }) {
   if (!value.child) return null;
   // The deepest override wins — an outer MaterialOverride passes its material
   // to children, but a nested MaterialOverride replaces it. This matches the
   // intuition: the closer override (lower in the DAG) is the more specific one.
   const next = override ?? value.material;
-  return <MeshChild value={value.child} override={next} />;
+  // #266 (B1) — resolve the wrapped child's id (MaterialOverride is a pass-through
+  // in childEdges, same as Transform) so a nested overlay under a material override
+  // still mounts.
+  const childId = nodeId
+    ? (childEdges(useDagStore.getState().state, nodeId, value)[0]?.id ?? null)
+    : null;
+  return <RenderChild value={value.child} nodeId={childId} override={next} />;
 }
 
 function ScatterR({ value, override }: { value: ScatterValue; override?: MaterialValue }) {
