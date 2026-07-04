@@ -35,6 +35,10 @@ export const KeyframeChannelVec2Params = z.object({
    *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
   extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
   extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  /** #270 — repetition COUNT per side for the cycling extend rules (Blender
+   *  FModifierCycles.count). 0 = infinite; past N the side freezes. */
+  cyclesBefore: z.number().int().min(0).default(0),
+  cyclesAfter: z.number().int().min(0).default(0),
   keyframes: z
     .array(
       z.object({
@@ -57,9 +61,16 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { extendBefore, extendAfter } = params;
+  const { extendBefore, extendAfter, cyclesBefore, cyclesAfter } = params;
   return (seconds: number) =>
-    sampleVec2KeyframesExtended(sorted, seconds, extendBefore, extendAfter);
+    sampleVec2KeyframesExtended(
+      sorted,
+      seconds,
+      extendBefore,
+      extendAfter,
+      cyclesBefore,
+      cyclesAfter,
+    );
 }
 
 export const KeyframeChannelVec2Node: NodeDefinition<

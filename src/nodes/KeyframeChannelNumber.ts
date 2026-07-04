@@ -48,6 +48,11 @@ export const KeyframeChannelNumberParams = z.object({
    *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
   extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
   extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  /** #270 — repetition COUNT per side for the cycling extend rules (Blender
+   *  FModifierCycles.count). 0 = infinite; past N the side freezes. Ignored by
+   *  hold. Default 0 → byte-identical to the pre-count behaviour. */
+  cyclesBefore: z.number().int().min(0).default(0),
+  cyclesAfter: z.number().int().min(0).default(0),
   keyframes: z
     .array(
       z.object({
@@ -73,8 +78,10 @@ function sample(
   t: number,
   before: ChannelExtend,
   after: ChannelExtend,
+  cyclesBefore: number,
+  cyclesAfter: number,
 ): number {
-  return sampleScalarKeyframesExtended(keyframes, t, before, after);
+  return sampleScalarKeyframesExtended(keyframes, t, before, after, cyclesBefore, cyclesAfter);
 }
 
 export const KeyframeChannelNumberNode: NodeDefinition<
@@ -103,7 +110,15 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       paramPath: params.paramPath,
       mute: params.mute,
       weight: params.weight,
-      sample: (seconds: number) => sample(sorted, seconds, params.extendBefore, params.extendAfter),
+      sample: (seconds: number) =>
+        sample(
+          sorted,
+          seconds,
+          params.extendBefore,
+          params.extendAfter,
+          params.cyclesBefore,
+          params.cyclesAfter,
+        ),
     };
   },
 };

@@ -148,4 +148,39 @@ test.describe('#270 — extend rule authored from the inspector', () => {
     });
     expect(await renderedX(page), 'UI hold → render clamps').toBeCloseTo(2, 2);
   });
+
+  test('cycle COUNT input (#270) freezes the loop after N periods (Blender FModifierCycles.count)', async ({
+    page,
+  }) => {
+    const toggle = page.getByTestId('inspector-section-toggle-animate');
+    if (await toggle.isVisible().catch(() => false)) await toggle.click();
+    const body = page.getByTestId('inspector-section-body-animate');
+    const after = body.getByTestId(`inspector-enum-${CH}-extendAfter`);
+    await expect(after).toBeVisible({ timeout: 10_000 });
+
+    // The count input is HIDDEN while the side holds (nothing to repeat)…
+    await expect(body.getByTestId(`inspector-cycles-${CH}-cyclesAfter`)).toHaveCount(0);
+    // …and APPEARS once the side repeats.
+    await after.selectOption('cycle-offset');
+    const count = body.getByTestId(`inspector-cycles-${CH}-cyclesAfter`);
+    await expect(count).toBeVisible();
+
+    // Infinite (count 0): at t=6 the box has travelled three +2 spans → x=6.
+    await setTime(page, 6);
+    await page.waitForFunction(() => {
+      const p = (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box');
+      return p !== null && Math.abs(p[0] - 6) < 1e-2;
+    });
+    expect(await renderedX(page), 'infinite cycle-offset → x=6 at t=6').toBeCloseTo(6, 2);
+
+    // Author count = 1 in the inspector → the loop plays once then FREEZES at
+    // last + 1·delta = 4. The SAME t=6 now renders x=4, not x=6.
+    await count.fill('1');
+    await count.blur();
+    await page.waitForFunction(() => {
+      const p = (window as unknown as BasherWindow).__basher_mesh_world_position!('n_box');
+      return p !== null && Math.abs(p[0] - 4) < 1e-2;
+    });
+    expect(await renderedX(page), 'count=1 → frozen at x=4').toBeCloseTo(4, 2);
+  });
 });

@@ -151,7 +151,9 @@ export function paramToSection(
       paramPath === 'clipId' ||
       paramPath === 'targetPath' ||
       paramPath === 'extendBefore' ||
-      paramPath === 'extendAfter')
+      paramPath === 'extendAfter' ||
+      paramPath === 'cyclesBefore' ||
+      paramPath === 'cyclesAfter')
   ) {
     return 'animate';
   }

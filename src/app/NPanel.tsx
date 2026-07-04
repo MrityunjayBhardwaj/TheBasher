@@ -591,36 +591,73 @@ function ChannelExtendControls({ nodeId }: { nodeId: string }) {
   const after = useDagStore(
     (s) => (s.state.nodes[nodeId]?.params as { extendAfter?: string } | undefined)?.extendAfter,
   );
-  const row = (side: string, paramPath: string, value: string) => (
-    <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+  const cyclesBefore = useDagStore(
+    (s) => (s.state.nodes[nodeId]?.params as { cyclesBefore?: number } | undefined)?.cyclesBefore,
+  );
+  const cyclesAfter = useDagStore(
+    (s) => (s.state.nodes[nodeId]?.params as { cyclesAfter?: number } | undefined)?.cyclesAfter,
+  );
+  // The count (#270) is only meaningful for a REPEATING rule — hold has nothing to
+  // count. Shown per side beside its rule when that side repeats (Blender shows the
+  // FModifierCycles count only when the cyclic modifier is on).
+  const repeats = (rule: string) => rule !== 'hold';
+  const row = (
+    side: string,
+    rulePath: string,
+    ruleValue: string,
+    countPath: string,
+    countValue: number,
+  ) => (
+    <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{side}</span>
-      <select
-        value={value}
-        data-testid={`inspector-enum-${nodeId}-${paramPath}`}
-        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        onChange={(e) =>
-          dispatch(
-            { type: 'setParam', nodeId, paramPath, value: e.target.value },
-            'user',
-            `set ${paramPath}`,
-          )
-        }
-      >
-        {CHANNEL_EXTEND_RULES.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    </label>
+      <div className="flex items-center gap-1.5">
+        {repeats(ruleValue) ? (
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={countValue}
+            title="Repeat count (0 = infinite)"
+            data-testid={`inspector-cycles-${nodeId}-${countPath}`}
+            className="w-10 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            onChange={(e) => {
+              const n = Math.max(0, Math.round(Number(e.target.value) || 0));
+              dispatch(
+                { type: 'setParam', nodeId, paramPath: countPath, value: n },
+                'user',
+                `set ${countPath}`,
+              );
+            }}
+          />
+        ) : null}
+        <select
+          value={ruleValue}
+          data-testid={`inspector-enum-${nodeId}-${rulePath}`}
+          className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          onChange={(e) =>
+            dispatch(
+              { type: 'setParam', nodeId, paramPath: rulePath, value: e.target.value },
+              'user',
+              `set ${rulePath}`,
+            )
+          }
+        >
+          {CHANNEL_EXTEND_RULES.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
   );
   return (
     <div className="flex flex-col">
       <span className="px-3 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Extend
       </span>
-      {row('Before', 'extendBefore', before ?? 'hold')}
-      {row('After', 'extendAfter', after ?? 'hold')}
+      {row('Before', 'extendBefore', before ?? 'hold', 'cyclesBefore', cyclesBefore ?? 0)}
+      {row('After', 'extendAfter', after ?? 'hold', 'cyclesAfter', cyclesAfter ?? 0)}
     </div>
   );
 }
@@ -2259,7 +2296,13 @@ export function NPanel() {
                       {sectionId === 'environment' || sectionId === 'camera'
                         ? null
                         : (grouped.get(sectionId) ?? [])
-                            .filter(([key]) => key !== 'extendBefore' && key !== 'extendAfter')
+                            .filter(
+                              ([key]) =>
+                                key !== 'extendBefore' &&
+                                key !== 'extendAfter' &&
+                                key !== 'cyclesBefore' &&
+                                key !== 'cyclesAfter',
+                            )
                             .map(([key, value]) => (
                               <ParamRow
                                 key={key}

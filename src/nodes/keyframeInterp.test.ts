@@ -199,6 +199,30 @@ describe('D1 extend / extrapolation (#269, V88 D1)', () => {
     expect(sampleScalarKeyframesExtended(keys, 3, 'slope', 'cycle-offset')).toBeCloseTo(15, 9);
   });
 
+  it('cycle COUNT (#270) freezes after N periods; 0 = infinite (byte-identical)', () => {
+    // count 0 (default) = infinite — unchanged from the no-count signature.
+    expect(sampleScalarKeyframesExtended(keys, 6, 'hold', 'cycle-offset', 0, 0)).toBeCloseTo(30, 9);
+    // cycle-offset, cyclesAfter=1: the 1st repeat still plays (t=3 → 15), but past
+    // 1 period it FREEZES at last + 1·delta = 20 (vs infinite's 30 at t=6).
+    expect(sampleScalarKeyframesExtended(keys, 3, 'hold', 'cycle-offset', 0, 1)).toBeCloseTo(15, 9);
+    expect(sampleScalarKeyframesExtended(keys, 6, 'hold', 'cycle-offset', 0, 1)).toBeCloseTo(20, 9);
+    // continuity: the freeze value equals the value approached at the count boundary.
+    expect(sampleScalarKeyframesExtended(keys, 4, 'hold', 'cycle-offset', 0, 1)).toBeCloseTo(20, 9);
+    // plain cycle, cyclesAfter=2: past 2 periods holds the LAST key (10), no offset.
+    expect(sampleScalarKeyframesExtended(keys, 7, 'hold', 'cycle', 0, 2)).toBeCloseTo(10, 9);
+    // before side is independent: cycle-offset, cyclesBefore=1 → t=-3 freezes at
+    // first − 1·delta = -10 (vs infinite's -15).
+    expect(sampleScalarKeyframesExtended(keys, -3, 'cycle-offset', 'hold', 1, 0)).toBeCloseTo(
+      -10,
+      9,
+    );
+    // slope, cyclesAfter=1: linear for 1 span then holds → 10 + 5·(1·span=2) = 20
+    // (vs infinite's 25 at t=5).
+    expect(sampleScalarKeyframesExtended(keys, 5, 'hold', 'slope', 0, 1)).toBeCloseTo(20, 9);
+    // mirror is continuous: cyclesAfter=1 freezes at the reflection at t=4 → 0.
+    expect(sampleScalarKeyframesExtended(keys, 10, 'hold', 'mirror', 0, 1)).toBeCloseTo(0, 9);
+  });
+
   it('degenerate domain (single key / zero span) collapses every rule to hold', () => {
     const one: ScalarKey[] = [{ time: 1, value: 7, easing: 'linear' }];
     for (const rule of ['cycle', 'cycle-offset', 'mirror', 'slope'] as const) {

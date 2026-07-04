@@ -289,17 +289,37 @@ function planExtend(
   t: number,
   before: ChannelExtend,
   after: ChannelExtend,
+  cyclesBefore = 0,
+  cyclesAfter = 0,
 ): ExtendPlan {
   if (t >= start && t <= end) return { kind: 'in' };
   const isBefore = t < start;
   const at: 'first' | 'last' = isBefore ? 'first' : 'last';
   const rule = isBefore ? before : after;
+  // Cycle COUNT (#270 item, Blender FModifierCycles.count): the number of extra
+  // repetitions this side plays before it FREEZES at the last extrapolated value.
+  // 0 = infinite (the pre-count behaviour). Counted in `span` periods, symmetric
+  // with `n` below. Meaningless for hold (no repeat).
+  const count = isBefore ? cyclesBefore : cyclesAfter;
   const span = end - start;
   if (span <= 0 || rule === 'hold') return { kind: 'hold', at };
-  if (rule === 'slope') return { kind: 'slope', at, dt: isBefore ? t - start : t - end };
+  if (rule === 'slope') {
+    // Linear extrapolate for `count` periods, then hold the slope's reached value.
+    let dt = isBefore ? t - start : t - end;
+    if (count > 0) {
+      const maxDt = count * span;
+      dt = isBefore ? Math.max(dt, -maxDt) : Math.min(dt, maxDt);
+    }
+    return { kind: 'slope', at, dt };
+  }
   if (rule === 'mirror') {
+    // Mirror is continuous at every seam, so clamping the time into the allowed
+    // window freezes it at a reflection point with no jump.
+    let tt = t;
+    if (count > 0)
+      tt = isBefore ? Math.max(t, start - count * span) : Math.min(t, end + count * span);
     const period = 2 * span;
-    let phase = (t - start) % period;
+    let phase = (tt - start) % period;
     if (phase < 0) phase += period;
     const mapped = phase <= span ? start + phase : end - (phase - span);
     return { kind: 'sample', t: mapped, offsetPeriods: 0 };
@@ -307,6 +327,16 @@ function planExtend(
   // cycle / cycle-offset: fold t back into [start,end]; offset accumulates the
   // endpoint delta once per period so the loop travels seamlessly.
   const n = Math.floor((t - start) / span); // <0 before, >0 after
+  // Past `count` extra periods, freeze at the boundary of the last allowed one.
+  // The freeze value is continuous with the in-cycle value at the transition
+  // (offset carries `count` deltas; plain cycle holds the boundary key).
+  if (count > 0) {
+    if (n > count)
+      return { kind: 'sample', t: end, offsetPeriods: rule === 'cycle-offset' ? count : 0 };
+    if (n < -count) {
+      return { kind: 'sample', t: start, offsetPeriods: rule === 'cycle-offset' ? -count : 0 };
+    }
+  }
   return {
     kind: 'sample',
     t: t - n * span,
@@ -329,11 +359,13 @@ export function sampleScalarKeyframesExtended(
   t: number,
   before: ChannelExtend = 'hold',
   after: ChannelExtend = 'hold',
+  cyclesBefore = 0,
+  cyclesAfter = 0,
 ): number {
   if (keys.length === 0) return 0;
   const first = keys[0];
   const last = keys[keys.length - 1];
-  const plan = planExtend(first.time, last.time, t, before, after);
+  const plan = planExtend(first.time, last.time, t, before, after, cyclesBefore, cyclesAfter);
   switch (plan.kind) {
     case 'in':
       return sampleScalarKeyframes(keys, t);
@@ -365,11 +397,13 @@ export function sampleVec2KeyframesExtended(
   t: number,
   before: ChannelExtend = 'hold',
   after: ChannelExtend = 'hold',
+  cyclesBefore = 0,
+  cyclesAfter = 0,
 ): Vec2 {
   if (keys.length === 0) return [0, 0];
   const first = keys[0];
   const last = keys[keys.length - 1];
-  const plan = planExtend(first.time, last.time, t, before, after);
+  const plan = planExtend(first.time, last.time, t, before, after, cyclesBefore, cyclesAfter);
   switch (plan.kind) {
     case 'in':
       return sampleVec2Keyframes(keys, t);
@@ -411,11 +445,13 @@ export function sampleVec3KeyframesExtended(
   t: number,
   before: ChannelExtend = 'hold',
   after: ChannelExtend = 'hold',
+  cyclesBefore = 0,
+  cyclesAfter = 0,
 ): Vec3 {
   if (keys.length === 0) return [0, 0, 0];
   const first = keys[0];
   const last = keys[keys.length - 1];
-  const plan = planExtend(first.time, last.time, t, before, after);
+  const plan = planExtend(first.time, last.time, t, before, after, cyclesBefore, cyclesAfter);
   switch (plan.kind) {
     case 'in':
       return sampleVec3Keyframes(keys, t);
