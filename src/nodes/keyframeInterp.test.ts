@@ -310,3 +310,84 @@ describe('#272 — per-keyframe interpolation modes (Blender F-Curve interps)', 
     expect(v[2]).toBeCloseTo(-1, 9);
   });
 });
+
+describe('#273 — per-keyframe handle types (Blender F-Curve handles)', () => {
+  // Rise-then-hold (0→10→10): the classic case that separates auto (overshoots
+  // above 10 on the hold segment) from auto-clamped (flattens at the peak → holds).
+  const riseHold = (h: 'auto' | 'auto-clamped'): ScalarKey[] => [
+    { time: 0, value: 0, easing: 'cubic', handleType: h },
+    { time: 1, value: 10, easing: 'cubic', handleType: h },
+    { time: 2, value: 10, easing: 'cubic', handleType: h },
+  ];
+
+  it('AUTO overshoots above the destination on a rise-then-hold', () => {
+    expect(sampleScalarKeyframes(riseHold('auto'), 1.5)).toBeGreaterThan(10);
+  });
+
+  it('AUTO-CLAMPED does NOT overshoot — it flattens at the local extremum', () => {
+    const v = sampleScalarKeyframes(riseHold('auto-clamped'), 1.5);
+    expect(v).toBeCloseTo(10, 6); // flat handles on both sides → constant 10
+    expect(v).toBeLessThanOrEqual(10 + 1e-6);
+  });
+
+  it('VECTOR reduces to a straight line on a straight ramp', () => {
+    const ramp: ScalarKey[] = [
+      { time: 0, value: 0, easing: 'cubic', handleType: 'vector' },
+      { time: 2, value: 10, easing: 'cubic', handleType: 'vector' },
+    ];
+    expect(sampleScalarKeyframes(ramp, 1)).toBeCloseTo(5, 6); // midpoint (bisection ~1e-9)
+    expect(sampleScalarKeyframes(ramp, 0.5)).toBeCloseTo(2.5, 6);
+  });
+
+  it('FREE with an explicit handle == the same handle with no handleType (byte-parity)', () => {
+    const withHandle = (ht?: 'free'): ScalarKey[] => [
+      { time: 0, value: 0, easing: 'linear', handleType: ht, outHandle: { time: 0.5, value: 6 } },
+      { time: 2, value: 10, easing: 'linear', handleType: ht },
+    ];
+    for (const t of [0.3, 0.7, 1.1, 1.6]) {
+      expect(sampleScalarKeyframes(withHandle('free'), t)).toBeCloseTo(
+        sampleScalarKeyframes(withHandle(undefined), t),
+        9,
+      );
+    }
+  });
+
+  it('undefined handleType leaves the fast path untouched (no drift vs smoothstep)', () => {
+    const keys: ScalarKey[] = [
+      { time: 0, value: 0, easing: 'cubic' },
+      { time: 2, value: 10, easing: 'cubic' },
+    ];
+    expect(sampleScalarKeyframes(keys, 1)).toBeCloseTo(10 * smoothstep(0.5), 12); // = 5
+    expect(sampleScalarKeyframes(keys, 0.5)).toBeCloseTo(10 * smoothstep(0.25), 12);
+  });
+
+  it('equation interpolation still ignores handle type', () => {
+    const keys: ScalarKey[] = [
+      { time: 0, value: 0, easing: 'linear', handleType: 'auto' },
+      { time: 2, value: 10, easing: 'quad', ease: 'in', handleType: 'auto' },
+    ];
+    // u=0.5 → quad-in f=0.25 → 2.5 (handle type must not perturb this).
+    expect(sampleScalarKeyframes(keys, 1)).toBeCloseTo(2.5, 9);
+  });
+
+  it('vec3 samples handle types PER COMPONENT (X overshoots, Y/Z stay flat)', () => {
+    const pos: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'cubic', handleType: 'auto' },
+      { time: 1, value: [10, 0, 0], easing: 'cubic', handleType: 'auto' },
+      { time: 2, value: [10, 0, 0], easing: 'cubic', handleType: 'auto' },
+    ];
+    const v = sampleVec3Keyframes(pos, 1.5);
+    expect(v[0]).toBeGreaterThan(10); // X overshoots (auto)
+    expect(v[1]).toBeCloseTo(0, 9); // Y flat
+    expect(v[2]).toBeCloseTo(0, 9); // Z flat
+  });
+
+  it('auto-clamped vec3 rise-then-hold does NOT overshoot on X', () => {
+    const pos: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'cubic', handleType: 'auto-clamped' },
+      { time: 1, value: [10, 0, 0], easing: 'cubic', handleType: 'auto-clamped' },
+      { time: 2, value: [10, 0, 0], easing: 'cubic', handleType: 'auto-clamped' },
+    ];
+    expect(sampleVec3Keyframes(pos, 1.5)[0]).toBeCloseTo(10, 6);
+  });
+});

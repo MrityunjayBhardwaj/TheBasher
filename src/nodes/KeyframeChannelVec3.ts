@@ -23,8 +23,10 @@ import {
   sampleVec3KeyframesExtended,
   KEYFRAME_INTERPS,
   EASE_DIRS,
+  KEYFRAME_HANDLE_TYPES,
   type Easing,
   type EaseDir,
+  type HandleType,
 } from './keyframeInterp';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
@@ -69,6 +71,10 @@ export const KeyframeChannelVec3Params = z.object({
         value: Vec3Schema,
         easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).default('cubic'),
         ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
+        // #273 — bézier HANDLE TYPE; optional, undefined = pre-#273 path (byte-identical).
+        handleType: z
+          .enum(KEYFRAME_HANDLE_TYPES as unknown as [HandleType, ...HandleType[]])
+          .optional(),
         inHandle: HandleSchema,
         outHandle: HandleSchema,
       }),

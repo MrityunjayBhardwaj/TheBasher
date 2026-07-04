@@ -19,11 +19,14 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import {
   sampleScalarKeyframesExtended,
+  resolveScalarHandle,
   KEYFRAME_INTERPS,
   EASE_DIRS,
+  KEYFRAME_HANDLE_TYPES,
   type ChannelExtend,
   type Easing,
   type EaseDir,
+  type HandleType,
   type ScalarKey,
 } from '../nodes/keyframeInterp';
 import { useTimelineSelection } from './timelineSelection';
@@ -60,6 +63,7 @@ interface RawKey {
   value: number | readonly number[];
   easing: Easing;
   ease?: EaseDir;
+  handleType?: HandleType;
   inHandle?: Handle;
   outHandle?: Handle;
 }
@@ -87,6 +91,7 @@ function projectAxis(k: RawKey, axis: number, isVec: boolean): ScalarKey {
     value: v,
     easing: k.easing,
     ease: k.ease,
+    handleType: k.handleType,
     inHandle: proj(k.inHandle),
     outHandle: proj(k.outHandle),
   };
@@ -343,6 +348,24 @@ export function EditableCurve({
     commit(keyframes.map((k, i) => (i === activeIndex ? { ...k, ...patch } : k)));
   }
 
+  // #273 — set the ACTIVE keyframe's bézier handle TYPE. `undefined` strips the
+  // field back to the byte-identical default. Same keyframes-array chokepoint as
+  // #272 so render/read/curve move together through ch.sample() (H40).
+  function setActiveKeyHandleType(ht: HandleType | undefined) {
+    if (activeIndex < 0) return;
+    commit(
+      keyframes.map((k, i) => {
+        if (i !== activeIndex) return k;
+        if (ht === undefined) {
+          const { handleType: _drop, ...rest } = k;
+          void _drop;
+          return rest;
+        }
+        return { ...k, handleType: ht };
+      }),
+    );
+  }
+
   // keyframes arrives pre-sorted from CurveEditor, so the array index IS the
   // time order — neighbors are index±1 (no reference findIndex needed).
   function startDrag(
@@ -432,12 +455,14 @@ export function EditableCurve({
       const handle: Handle = isVec
         ? { time: offT, value: setAxis(base.value as readonly number[], d.axis, offV) }
         : { time: offT, value: offV };
+      // #273 — dragging a handle makes it FREE (an auto/vector key computes its
+      // handles and would otherwise ignore the stored offset — Blender does the same).
       next = draft.map((kk, i) =>
         i !== d.index
           ? kk
           : d.kind === 'out'
-            ? { ...kk, outHandle: handle }
-            : { ...kk, inHandle: handle },
+            ? { ...kk, handleType: 'free', outHandle: handle }
+            : { ...kk, handleType: 'free', inHandle: handle },
       );
     }
     setDraft(next);
@@ -525,6 +550,27 @@ export function EditableCurve({
               ))}
             </select>
           )}
+          {/* #273 — bézier handle TYPE for the active key. 'default' strips the field
+              (byte-identical legacy). Only shapes bézier ('cubic'/handle) segments —
+              a no-op on 'constant'/equation interps, but always shown (Blender). */}
+          <span className="font-mono text-fg/50">handle</span>
+          <select
+            value={keys[activeIndex].handleType ?? 'default'}
+            data-testid="curve-handle-select"
+            className="rounded border border-line bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            onChange={(e) =>
+              setActiveKeyHandleType(
+                e.target.value === 'default' ? undefined : (e.target.value as HandleType),
+              )
+            }
+          >
+            <option value="default">default</option>
+            {KEYFRAME_HANDLE_TYPES.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
         </div>
       )}
       <svg
@@ -601,8 +647,11 @@ export function EditableCurve({
             const kx = timeToX(k.time);
             const ky = valueToY(sk.value);
             const segs: ReactElement[] = [];
-            const out = sk.outHandle ?? autoHandle(span, 'out');
-            const inn = sk.inHandle ?? autoHandle(span, 'in');
+            // #273 — display the RESOLVED handle (computed for auto/vector, stored for
+            // free), so the grab affordance matches the curve the evaluator plays (H40).
+            const skAll = keys.map((kk) => projectAxis(kk, a, isVec));
+            const out = resolveScalarHandle(skAll, activeIndex, 'out') ?? autoHandle(span, 'out');
+            const inn = resolveScalarHandle(skAll, activeIndex, 'in') ?? autoHandle(span, 'in');
             const ox = timeToX(k.time + out.time);
             const oy = valueToY(sk.value + out.value);
             const ix = timeToX(k.time + inn.time);

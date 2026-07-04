@@ -29,9 +29,11 @@ import {
   sampleScalarKeyframesExtended,
   KEYFRAME_INTERPS,
   EASE_DIRS,
+  KEYFRAME_HANDLE_TYPES,
   type ChannelExtend,
   type Easing,
   type EaseDir,
+  type HandleType,
 } from './keyframeInterp';
 
 const HandleSchema = z
@@ -69,6 +71,11 @@ export const KeyframeChannelNumberParams = z.object({
         // #272 — easing DIRECTION for the equation interps (sine…elastic); ignored
         // by linear/cubic/constant. Optional → defaults to 'inout' at sample time.
         ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
+        // #273 — bézier HANDLE TYPE (auto/auto-clamped/vector/aligned/free). Optional →
+        // undefined = the pre-#273 stored-handle/legacy path (byte-identical). Opt-in only.
+        handleType: z
+          .enum(KEYFRAME_HANDLE_TYPES as unknown as [HandleType, ...HandleType[]])
+          .optional(),
         inHandle: HandleSchema,
         outHandle: HandleSchema,
       }),

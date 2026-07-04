@@ -89,6 +89,39 @@ export const KEYFRAME_INTERPS: readonly Easing[] = [
 
 export const EASE_DIRS: readonly EaseDir[] = ['in', 'out', 'inout'];
 
+// #273 — per-keyframe bézier HANDLE TYPE (Blender F-Curve handles). Only meaningful
+// for the bézier interpolation (a 'linear'/'cubic' destination key — NOT the
+// equation interps or 'constant', which are distinct interpolation MODES that
+// ignore handles, matching Blender). OPTIONAL: undefined = the pre-#273 behaviour
+// (stored explicit handle, else the legacy linear/smoothstep) → byte-identical for
+// every existing animation. Opt-in only; the default handle feel is never flipped.
+//
+//   - free          the two handles are independent, taken from the STORED offsets
+//                   (this is what a manual handle drag produces — the pre-#273 path).
+//   - aligned       stored handles kept colinear; the colinearity is an EDIT-time
+//                   constraint, so at sample time 'aligned' == 'free'.
+//   - vector        each handle points ⅓ of the way toward its neighbour key →
+//                   straight-line-ish segments that auto-update (segment-LOCAL).
+//   - auto          smooth C1 tangent computed from BOTH neighbours (Catmull-like);
+//                   may overshoot past a key's value.
+//   - auto-clamped  auto + the overshoot clamp: flat (horizontal) at a local
+//                   extremum, else clamped to the neighbour value. Blender's DEFAULT.
+export type HandleType = 'free' | 'aligned' | 'vector' | 'auto' | 'auto-clamped';
+
+/** Authoring order for the handle-type dropdown / e2e enumeration (Blender's order,
+ *  auto-clamped first as it is the Blender default). */
+export const KEYFRAME_HANDLE_TYPES: readonly HandleType[] = [
+  'auto-clamped',
+  'auto',
+  'vector',
+  'aligned',
+  'free',
+];
+
+/** The handle types whose handles are COMPUTED from neighbours (vs. taken from the
+ *  stored offsets). free/aligned use stored handles; these three synthesize. */
+const COMPUTED_HANDLE_TYPES: ReadonlySet<string> = new Set(['vector', 'auto', 'auto-clamped']);
+
 // D1 (#269, vyapti V88 D1) — per-channel EXTRAPOLATION rule for times OUTSIDE the
 // authored keyframe domain [firstKey.time, lastKey.time], applied INDEPENDENTLY on
 // the left (before the first key) and right (after the last key) side. This is the
@@ -135,6 +168,7 @@ export interface ScalarKey {
   readonly value: number;
   readonly easing: Easing;
   readonly ease?: EaseDir;
+  readonly handleType?: HandleType;
   readonly inHandle?: ScalarHandle;
   readonly outHandle?: ScalarHandle;
 }
@@ -143,6 +177,7 @@ export interface Vec2Key {
   readonly value: Vec2;
   readonly easing: Easing;
   readonly ease?: EaseDir;
+  readonly handleType?: HandleType;
   readonly inHandle?: Vec2Handle;
   readonly outHandle?: Vec2Handle;
 }
@@ -151,6 +186,7 @@ export interface Vec3Key {
   readonly value: Vec3;
   readonly easing: Easing;
   readonly ease?: EaseDir;
+  readonly handleType?: HandleType;
   readonly inHandle?: Vec3Handle;
   readonly outHandle?: Vec3Handle;
 }
@@ -301,6 +337,142 @@ function autoValueOffset(easing: Easing, delta: number): number {
   return easing === 'cubic' ? 0 : delta / 3;
 }
 
+// ── #273 handle types — computed bézier handles (Blender F-Curve parity) ─────
+// A resolved handle is a (time, value) OFFSET from its key, or undefined when the
+// side has no handle (the segment falls back to the easing auto-tangent). Only the
+// SCALAR path computes these; vec2/vec3 handle-typed segments sample per-component
+// through the scalar path, because each axis is its own F-curve with its own auto
+// tangent (Blender). REF: fcurve.cc calchandle_fcurve_intern + correct_bezpart.
+
+interface ResolvedHandle {
+  time: number;
+  value: number;
+}
+type TimeValue = { readonly time: number; readonly value: number };
+
+/** Whether ANY key carries a handleType — the opt-in switch that routes a channel
+ *  off the byte-identical fast path onto the handle-type-aware path. */
+function anyHandleType(keys: ReadonlyArray<{ readonly handleType?: HandleType }>): boolean {
+  for (const k of keys) if (k.handleType !== undefined) return true;
+  return false;
+}
+
+/** A vector handle points ⅓ of the way toward its side's neighbour key. At a
+ *  boundary (no neighbour on that side) there is nothing to point at → undefined,
+ *  so the segment uses the easing auto-tangent (flat for 'cubic'). */
+function vectorHandleScalar(
+  k: TimeValue,
+  side: 'in' | 'out',
+  prev: TimeValue | undefined,
+  next: TimeValue | undefined,
+): ResolvedHandle | undefined {
+  const ref = side === 'out' ? next : prev;
+  if (!ref) return undefined;
+  return { time: (ref.time - k.time) / 3, value: (ref.value - k.value) / 3 };
+}
+
+/** Clamp an auto-clamped handle's ABSOLUTE value against ONE neighbour (Blender's
+ *  overshoot guard): at a local extremum (both neighbours on the same y-side) flatten
+ *  to the key value; else clamp so the handle does not pass the neighbour. Returns
+ *  the clamped VALUE OFFSET. `nb` is the neighbour on this handle's side (out→next,
+ *  in→prev); `other` is the opposite neighbour (only used for the extremum test). */
+function clampAutoOffset(offV: number, kVal: number, nb: number, other: number): number {
+  const dNb = nb - kVal;
+  const dOther = other - kVal;
+  if ((dNb <= 0 && dOther <= 0) || (dNb >= 0 && dOther >= 0)) return 0; // extremum → flat
+  let absH = kVal + offV;
+  if (dNb <= 0) {
+    if (nb > absH) absH = nb; // neighbour below → don't undershoot past it
+  } else if (nb < absH) {
+    absH = nb; // neighbour above → don't overshoot past it
+  }
+  return absH - kVal;
+}
+
+/** Blender auto tangent (calchandle_fcurve_intern): a single smooth direction
+ *  `tvec = dvec_b/len_b + dvec_a/len_a` scaled per side by len/·2.5614. Boundaries
+ *  reflect a virtual neighbour (2·k − other). auto-clamped adds {@link clampAutoOffset}. */
+function autoHandleScalar(
+  k: TimeValue,
+  side: 'in' | 'out',
+  prev: TimeValue | undefined,
+  next: TimeValue | undefined,
+  clamped: boolean,
+): ResolvedHandle {
+  const p1: TimeValue | undefined =
+    prev ?? (next ? { time: 2 * k.time - next.time, value: 2 * k.value - next.value } : undefined);
+  const p3: TimeValue | undefined =
+    next ?? (prev ? { time: 2 * k.time - prev.time, value: 2 * k.value - prev.value } : undefined);
+  if (!p1 || !p3) return { time: 0, value: 0 }; // isolated key — no tangent
+  const dax = k.time - p1.time;
+  const day = k.value - p1.value;
+  const dbx = p3.time - k.time;
+  const dby = p3.value - k.value;
+  let lenA = Math.hypot(dax, day);
+  let lenB = Math.hypot(dbx, dby);
+  if (lenA === 0) lenA = 1;
+  if (lenB === 0) lenB = 1;
+  const tvx = dbx / lenB + dax / lenA;
+  const tvy = dby / lenB + day / lenA;
+  const len = Math.hypot(tvx, tvy) * 2.5614;
+  if (len === 0) return { time: 0, value: 0 };
+  if (side === 'out') {
+    const l = lenB / len;
+    let offV = tvy * l;
+    // Clamp only when BOTH real neighbours exist (Blender's guard).
+    if (clamped && prev && next) offV = clampAutoOffset(offV, k.value, next.value, prev.value);
+    return { time: tvx * l, value: offV };
+  }
+  const l = lenA / len;
+  let offV = -tvy * l;
+  if (clamped && prev && next) offV = clampAutoOffset(offV, k.value, prev.value, next.value);
+  return { time: -tvx * l, value: offV };
+}
+
+/** Resolve ONE side's effective handle for key `i`, honouring its handleType.
+ *  undefined / free / aligned → the STORED offset (aligned's colinearity is an
+ *  edit-time constraint); vector/auto/auto-clamped → computed from neighbours.
+ *  Exported so the curve editor DISPLAYS the same handle it plays (H40). */
+export function resolveScalarHandle(
+  keys: readonly ScalarKey[],
+  i: number,
+  side: 'in' | 'out',
+): ResolvedHandle | undefined {
+  const k = keys[i];
+  const ht = k.handleType;
+  const stored = side === 'out' ? k.outHandle : k.inHandle;
+  if (ht === undefined || !COMPUTED_HANDLE_TYPES.has(ht)) return stored;
+  const prev = i > 0 ? keys[i - 1] : undefined;
+  const next = i < keys.length - 1 ? keys[i + 1] : undefined;
+  if (ht === 'vector') return vectorHandleScalar(k, side, prev, next);
+  return autoHandleScalar(k, side, prev, next, ht === 'auto-clamped');
+}
+
+/** Blender's correct_bezpart: if the two inner control points overshoot the segment
+ *  in TIME (would make the curve non-functional), shrink BOTH handles uniformly about
+ *  their endpoints so X stays monotonic for the x→s solve. `cp` is the ABSOLUTE
+ *  control tuple [h1x, h1y, h2x, h2y]; returns the corrected tuple. */
+function correctBezpart(
+  cp: [number, number, number, number],
+  p0x: number,
+  p0y: number,
+  p3x: number,
+  p3y: number,
+): [number, number, number, number] {
+  const len1 = Math.abs(p0x - cp[0]);
+  const len2 = Math.abs(p3x - cp[2]);
+  const total = len1 + len2;
+  const span = p3x - p0x;
+  if (total <= span || total === 0) return cp;
+  const fac = span / total;
+  return [
+    p0x - (p0x - cp[0]) * fac,
+    p0y - (p0y - cp[1]) * fac,
+    p3x - (p3x - cp[2]) * fac,
+    p3y - (p3y - cp[3]) * fac,
+  ];
+}
+
 /** Interpolate ONE scalar segment a→b at absolute time t. */
 function segmentScalar(a: ScalarKey, b: ScalarKey, t: number): number {
   const span = b.time - a.time;
@@ -320,6 +492,37 @@ function segmentScalar(a: ScalarKey, b: ScalarKey, t: number): number {
   return bezierAt(a.value, a.value + ohVal, b.value + ihVal, b.value, s);
 }
 
+/** Interpolate ONE scalar segment (index i→i+1) with handle TYPES resolved from
+ *  neighbours (#273). Reached only when a segment endpoint carries a handleType;
+ *  otherwise {@link segmentScalar} runs verbatim (byte-identical fast path). */
+function segmentScalarTyped(keys: readonly ScalarKey[], i: number, t: number): number {
+  const a = keys[i];
+  const b = keys[i + 1];
+  const span = b.time - a.time;
+  if (span <= 0) return a.value;
+  const u = (t - a.time) / span;
+  // An equation interpolation / 'constant' is a distinct interpolation MODE that
+  // ignores handles (Blender) — handle type is irrelevant here.
+  if (EQUATION_INTERPS.has(b.easing)) return easedValue(a.value, b.value, u, b);
+  const aOut = resolveScalarHandle(keys, i, 'out');
+  const bIn = resolveScalarHandle(keys, i + 1, 'in');
+  // Neither side has a handle → legacy linear/smoothstep (as the fast path would).
+  if (!aOut && !bIn) return legacy(a.value, b.value, u, b.easing);
+  const ohTime = aOut ? aOut.time : span / 3;
+  const ihTime = bIn ? bIn.time : -span / 3;
+  const ohVal = aOut ? aOut.value : autoValueOffset(a.easing, b.value - a.value);
+  const ihVal = bIn ? bIn.value : autoValueOffset(b.easing, b.value - a.value);
+  const cp = correctBezpart(
+    [a.time + ohTime, a.value + ohVal, b.time + ihTime, b.value + ihVal],
+    a.time,
+    a.value,
+    b.time,
+    b.value,
+  );
+  const s = solveParamForX(a.time, cp[0], cp[2], b.time, t);
+  return bezierAt(a.value, cp[1], cp[3], b.value, s);
+}
+
 /** Sample a sorted scalar keyframe list at time t (clamp ends, interpolate mid). */
 export function sampleScalarKeyframes(keys: readonly ScalarKey[], t: number): number {
   if (keys.length === 0) return 0;
@@ -327,7 +530,13 @@ export function sampleScalarKeyframes(keys: readonly ScalarKey[], t: number): nu
   const last = keys[keys.length - 1];
   if (t >= last.time) return last.value;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (t >= keys[i].time && t <= keys[i + 1].time) return segmentScalar(keys[i], keys[i + 1], t);
+    if (t >= keys[i].time && t <= keys[i + 1].time) {
+      const a = keys[i];
+      const b = keys[i + 1];
+      return a.handleType === undefined && b.handleType === undefined
+        ? segmentScalar(a, b, t)
+        : segmentScalarTyped(keys, i, t);
+    }
   }
   return last.value;
 }
@@ -369,9 +578,40 @@ function segmentVec3(a: Vec3Key, b: Vec3Key, t: number): Vec3 {
   return out;
 }
 
+/** Project a vec-N keyframe list onto ONE scalar axis, carrying handleType +
+ *  per-axis handle offsets. #273 handle-typed vec segments sample per-component
+ *  through this because each axis is its own F-curve with its own auto tangent. */
+function projectVecAxis(
+  keys: ReadonlyArray<Vec2Key | Vec3Key>,
+  axis: number,
+): readonly ScalarKey[] {
+  return keys.map((k) => ({
+    time: k.time,
+    value: (k.value as readonly number[])[axis],
+    easing: k.easing,
+    ease: k.ease,
+    handleType: k.handleType,
+    inHandle: k.inHandle
+      ? { time: k.inHandle.time, value: (k.inHandle.value as readonly number[])[axis] }
+      : undefined,
+    outHandle: k.outHandle
+      ? { time: k.outHandle.time, value: (k.outHandle.value as readonly number[])[axis] }
+      : undefined,
+  }));
+}
+
 /** Sample a sorted vec3 keyframe list at time t (clamp ends, interpolate mid). */
 export function sampleVec3Keyframes(keys: readonly Vec3Key[], t: number): Vec3 {
   if (keys.length === 0) return [0, 0, 0];
+  // #273 — a handle-typed channel samples per-component through the scalar path so
+  // render == the per-axis curve display (H40). Opt-in: absent handleType → fast path.
+  if (anyHandleType(keys)) {
+    return [
+      sampleScalarKeyframes(projectVecAxis(keys, 0), t),
+      sampleScalarKeyframes(projectVecAxis(keys, 1), t),
+      sampleScalarKeyframes(projectVecAxis(keys, 2), t),
+    ];
+  }
   if (t <= keys[0].time) return keys[0].value;
   const last = keys[keys.length - 1];
   if (t >= last.time) return last.value;
@@ -435,6 +675,13 @@ export function sampleStepKeyframes<T>(keys: readonly StepKey<T>[], t: number, f
 /** Sample a sorted vec2 keyframe list at time t (clamp ends, interpolate mid). */
 export function sampleVec2Keyframes(keys: readonly Vec2Key[], t: number): Vec2 {
   if (keys.length === 0) return [0, 0];
+  // #273 — handle-typed channel samples per-component (see sampleVec3Keyframes).
+  if (anyHandleType(keys)) {
+    return [
+      sampleScalarKeyframes(projectVecAxis(keys, 0), t),
+      sampleScalarKeyframes(projectVecAxis(keys, 1), t),
+    ];
+  }
   if (t <= keys[0].time) return keys[0].value;
   const last = keys[keys.length - 1];
   if (t >= last.time) return last.value;
