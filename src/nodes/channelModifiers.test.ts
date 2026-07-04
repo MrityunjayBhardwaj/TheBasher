@@ -7,6 +7,8 @@ import {
   fractalNoise,
   defaultModifier,
   type FModNoise,
+  type FModGenerator,
+  type FModLimits,
 } from './channelModifiers';
 import { sampleScalarKeyframesExtended, type ScalarKey } from './keyframeInterp';
 
@@ -108,5 +110,100 @@ describe('modifiers through the sampler (H40 — one band, all consumers)', () =
     ]);
     expect(noisy).not.toBe(clean);
     expect(Math.abs(noisy - clean)).toBeLessThanOrEqual(3.0001);
+  });
+});
+
+// ── #276 — value-phase modifiers: Generator (polynomial) + Limits (value clamp) ──
+
+const generator = (over: Partial<FModGenerator> = {}): FModGenerator => ({
+  type: 'generator',
+  additive: true,
+  coefficients: [0, 1],
+  ...over,
+});
+const limits = (over: Partial<FModLimits> = {}): FModLimits => ({
+  type: 'limits',
+  useMinY: false,
+  useMaxY: false,
+  minY: 0,
+  maxY: 1,
+  ...over,
+});
+
+describe('#276 Generator modifier — polynomial of time', () => {
+  it('ADDITIVE adds c0 + c1·t + c2·t² to the incoming value', () => {
+    // y = 2 + 3t + 4t²; at t=2 → 2 + 6 + 16 = 24; additive over base 10 → 34.
+    expect(applyChannelModifiers(10, 2, [generator({ coefficients: [2, 3, 4] })])).toBeCloseTo(
+      34,
+      9,
+    );
+  });
+
+  it('REPLACE (additive=false) discards the base, becomes the polynomial', () => {
+    expect(
+      applyChannelModifiers(999, 2, [generator({ additive: false, coefficients: [2, 3, 4] })]),
+    ).toBeCloseTo(24, 9);
+  });
+
+  it('an empty coefficient list contributes 0 (additive → base unchanged)', () => {
+    expect(applyChannelModifiers(7, 3, [generator({ coefficients: [] })])).toBe(7);
+  });
+
+  it('influence blends the generated value over the base', () => {
+    // additive c0=10 at influence 0.5 → base + 0.5·10.
+    expect(
+      applyChannelModifiers(0, 0, [generator({ coefficients: [10], influence: 0.5 })]),
+    ).toBeCloseTo(5, 9);
+  });
+
+  it('is pure (same t,params → same value) and defaultModifier is a unit ramp', () => {
+    const g = defaultModifier('generator') as FModGenerator;
+    expect(g).toMatchObject({ type: 'generator', additive: true, coefficients: [0, 1] });
+    expect(applyChannelModifiers(0, 3, [g])).toBe(applyChannelModifiers(0, 3, [g]));
+    expect(applyChannelModifiers(0, 3, [g])).toBeCloseTo(3, 9); // y = t
+  });
+});
+
+describe('#276 Limits modifier — value (Y) clamp', () => {
+  it('clamps ABOVE the max and BELOW the min, each independently', () => {
+    expect(applyChannelModifiers(100, 0, [limits({ useMaxY: true, maxY: 60 })])).toBe(60);
+    expect(applyChannelModifiers(-5, 0, [limits({ useMinY: true, minY: 0 })])).toBe(0);
+    // inside the band → untouched.
+    expect(applyChannelModifiers(30, 0, [limits({ useMinY: true, useMaxY: true, maxY: 60 })])).toBe(
+      30,
+    );
+  });
+
+  it('a disabled bound does nothing (byte-identical to the base)', () => {
+    expect(applyChannelModifiers(500, 0, [limits({ useMaxY: false, maxY: 1 })])).toBe(500);
+    expect(applyChannelModifiers(500, 0, [defaultModifier('limits')])).toBe(500); // both off on add
+  });
+
+  it('influence gives a SOFT clamp (blend between clamped and raw)', () => {
+    // raw 100, clamped 60, influence 0.5 → 100 + 0.5·(60−100) = 80.
+    expect(
+      applyChannelModifiers(100, 0, [limits({ useMaxY: true, maxY: 60, influence: 0.5 })]),
+    ).toBeCloseTo(80, 9);
+  });
+
+  it('composes AFTER a generator in the stack (clamp the generated ramp)', () => {
+    // additive ramp y=t over base 0 at t=100 → 100, then clamp to 60.
+    const mods = [generator({ coefficients: [0, 1] }), limits({ useMaxY: true, maxY: 60 })];
+    expect(applyChannelModifiers(0, 100, mods)).toBe(60);
+  });
+});
+
+describe('#276 through the sampler — value modifiers deviate render, empty stack byte-identical', () => {
+  const keys: ScalarKey[] = [
+    { time: 0, value: 0, easing: 'linear' },
+    { time: 2, value: 10, easing: 'linear' },
+  ];
+  it('a generator shifts the sampled value; no modifiers = the clean curve', () => {
+    const clean = sampleScalarKeyframesExtended(keys, 1, 'hold', 'hold', 0, 0);
+    const gen = sampleScalarKeyframesExtended(keys, 1, 'hold', 'hold', 0, 0, [
+      generator({ additive: true, coefficients: [5] }),
+    ]);
+    expect(gen).toBeCloseTo(clean + 5, 9);
+    expect(sampleScalarKeyframesExtended(keys, 1, 'hold', 'hold', 0, 0, [])).toBe(clean);
   });
 });

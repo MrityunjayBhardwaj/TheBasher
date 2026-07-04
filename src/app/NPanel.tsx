@@ -693,6 +693,31 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
     </label>
   );
 
+  // #276 — a labelled checkbox row (Generator additive, Limits min/max enables).
+  const boolRow = (i: number, label: string, path: string, checked: boolean) => (
+    <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+      <span className="font-mono text-fg/50">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        data-testid={`channel-modifier-${i}-${path}`}
+        onChange={(e) => patch(i, { [path]: e.target.checked } as Partial<FChannelModifier>)}
+      />
+    </label>
+  );
+
+  // #276 — Generator polynomial coefficient editor: an `order` stepper resizes the
+  // array (pad with 0 / truncate) + one input per coefficient (c0 + c1·t + …).
+  const setOrder = (i: number, coeffs: number[], order: number) => {
+    const n = Math.max(0, Math.min(Math.round(order) || 0, 8)) + 1;
+    const next = Array.from({ length: n }, (_, k) => coeffs[k] ?? 0);
+    patch(i, { coefficients: next } as Partial<FChannelModifier>);
+  };
+  const setCoef = (i: number, coeffs: number[], k: number, value: number) => {
+    const next = coeffs.map((c, j) => (j === k ? value : c));
+    patch(i, { coefficients: next } as Partial<FChannelModifier>);
+  };
+
   return (
     <div className="flex flex-col">
       <div className="flex items-center justify-between px-3 pt-1.5">
@@ -776,6 +801,48 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               {mod.afterMode !== 'none'
                 ? numField(i, 'after ×', 'afterCycles', mod.afterCycles, 1)
                 : null}
+            </>
+          ) : null}
+          {mod.type === 'generator' ? (
+            <>
+              {boolRow(i, 'additive', 'additive', mod.additive)}
+              <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+                <span className="font-mono text-fg/50">order</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={8}
+                  step={1}
+                  value={mod.coefficients.length - 1}
+                  data-testid={`channel-modifier-${i}-order`}
+                  className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onChange={(e) => setOrder(i, mod.coefficients, Number(e.target.value) || 0)}
+                />
+              </label>
+              {mod.coefficients.map((c, k) => (
+                <label
+                  key={k}
+                  className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70"
+                >
+                  <span className="font-mono text-fg/50">c{k}</span>
+                  <input
+                    type="number"
+                    step={0.1}
+                    value={c}
+                    data-testid={`channel-modifier-${i}-coef-${k}`}
+                    className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onChange={(e) => setCoef(i, mod.coefficients, k, Number(e.target.value) || 0)}
+                  />
+                </label>
+              ))}
+            </>
+          ) : null}
+          {mod.type === 'limits' ? (
+            <>
+              {boolRow(i, 'min Y', 'useMinY', mod.useMinY)}
+              {mod.useMinY ? numField(i, 'min', 'minY', mod.minY) : null}
+              {boolRow(i, 'max Y', 'useMaxY', mod.useMaxY)}
+              {mod.useMaxY ? numField(i, 'max', 'maxY', mod.maxY) : null}
             </>
           ) : null}
           {/* Influence is a value-blend concept — meaningless for the time-remap Cycles. */}

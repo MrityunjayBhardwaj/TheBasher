@@ -78,11 +78,37 @@ export interface FModCycles extends FModifierBase {
   afterCycles: number;
 }
 
-/** The channel-modifier union. Grows with Stepped / Limits / Generator / Envelope. */
-export type FChannelModifier = FModNoise | FModCycles;
+/** GENERATOR modifier (Blender FMod_Generator, Expanded Polynomial): evaluates
+ *  `y = c0 + c1·t + c2·t² + …` (t in SECONDS) and either ADDS it to the incoming
+ *  value or REPLACES it. A VALUE modifier (like Noise). `coefficients[i]` is the
+ *  factor of tⁱ, so its length is (polynomial order + 1). Factorized-polynomial mode
+ *  is DEFERRED. REF: manual `graph_editor/fcurves/modifiers` (Generator Modifier). */
+export interface FModGenerator extends FModifierBase {
+  type: 'generator';
+  /** Add the polynomial to the curve (true) or replace the curve with it (false). */
+  additive: boolean;
+  /** [c0, c1, c2, …] → c0 + c1·t + c2·t² + … (length = order + 1). */
+  coefficients: number[];
+}
+
+/** LIMITS modifier (Blender FMod_Limits) — the VALUE (Y) clamp ONLY: clamp the
+ *  incoming value to [minY, maxY], each bound independently enabled. A VALUE modifier.
+ *  Blender's Limits ALSO clamps TIME (X) + Constant-extrapolates outside the frame
+ *  range — that is a TIME-phase op, DEFERRED to the time-phase increment (Stepped +
+ *  Limits-X). REF: manual `graph_editor/fcurves/modifiers` (Limits Modifier). */
+export interface FModLimits extends FModifierBase {
+  type: 'limits';
+  useMinY: boolean;
+  useMaxY: boolean;
+  minY: number;
+  maxY: number;
+}
+
+/** The channel-modifier union. Grows with Stepped / Envelope (+ Limits-X time clamp). */
+export type FChannelModifier = FModNoise | FModCycles | FModGenerator | FModLimits;
 
 /** The modifier TYPES a channel can add (authoring order for the Add menu / e2e). */
-export const FMODIFIER_TYPES = ['noise', 'cycles'] as const;
+export const FMODIFIER_TYPES = ['noise', 'cycles', 'generator', 'limits'] as const;
 
 /** A fresh modifier of the given type, with director-friendly defaults. */
 export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChannelModifier {
@@ -107,6 +133,12 @@ export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChanne
         beforeCycles: 0,
         afterCycles: 0,
       };
+    case 'generator':
+      // A gentle additive unit-slope ramp (y = t) — visible but not destructive.
+      return { type: 'generator', additive: true, coefficients: [0, 1], influence: 1 };
+    case 'limits':
+      // Both bounds OFF on add (no destructive clamp until the director enables one).
+      return { type: 'limits', useMinY: false, useMaxY: false, minY: 0, maxY: 1, influence: 1 };
   }
 }
 
@@ -187,6 +219,22 @@ function modifierValue(mod: FChannelModifier, t: number, value: number): number 
       }
       break;
     }
+    case 'generator': {
+      // Expanded polynomial y = c0 + c1·t + c2·t² + … (Horner-free, order+1 terms).
+      let y = 0;
+      let pow = 1;
+      for (const c of mod.coefficients) {
+        y += c * pow;
+        pow *= t;
+      }
+      return mod.additive ? value + y : y;
+    }
+    case 'limits': {
+      let v = value;
+      if (mod.useMinY) v = Math.max(v, mod.minY);
+      if (mod.useMaxY) v = Math.min(v, mod.maxY);
+      return v;
+    }
     // Cycles is a TIME modifier consumed by resolveExtend (pre-sample), never here.
     // Guarded out in applyChannelModifiers; this case keeps the switch exhaustive.
     case 'cycles':
@@ -256,6 +304,20 @@ export const FModifierSchema = z.discriminatedUnion('type', [
     afterMode: cycleModeSchema.default('none'),
     beforeCycles: z.number().int().min(0).default(0),
     afterCycles: z.number().int().min(0).default(0),
+    ...rangeFields,
+  }),
+  z.object({
+    type: z.literal('generator'),
+    additive: z.boolean().default(true),
+    coefficients: z.array(z.number()).default([0, 1]),
+    ...rangeFields,
+  }),
+  z.object({
+    type: z.literal('limits'),
+    useMinY: z.boolean().default(false),
+    useMaxY: z.boolean().default(false),
+    minY: z.number().default(0),
+    maxY: z.number().default(1),
     ...rangeFields,
   }),
 ]);
