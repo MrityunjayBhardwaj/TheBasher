@@ -31,6 +31,33 @@ import type { Vec2, Vec3 } from './types';
 
 export type Easing = 'linear' | 'cubic';
 
+// D1 (#269, vyapti V88 D1) — per-channel EXTRAPOLATION rule for times OUTSIDE the
+// authored keyframe domain [firstKey.time, lastKey.time], applied INDEPENDENTLY on
+// the left (before the first key) and right (after the last key) side. This is the
+// "extend condition" from Houdini's CHOP model (GROUND_TRUTH_HOUDINI_OPERATORS.md
+// §3 D1). It is JUST part of the sample function — one place, every caller (3D
+// render, read-side gizmo/inspector, compositor) since all sample via ch.sample().
+//
+//   - hold          clamp to the boundary value — the HISTORIC behaviour, and the
+//                   DEFAULT on both sides → byte-identical to the pre-#269 clamp
+//                   for every existing animation (render parity, V49).
+//   - cycle         repeat the authored range verbatim (value teleports at the
+//                   seam unless firstValue == lastValue).
+//   - cycle-offset  repeat, accumulating (lastValue − firstValue) each period → a
+//                   SEAMLESS loop that keeps travelling (Houdini "cycle w/ offset").
+//   - mirror        ping-pong: reflect the range each period (seamless, no travel).
+//   - slope         linear extrapolation along the boundary segment's tangent.
+export type ChannelExtend = 'hold' | 'cycle' | 'cycle-offset' | 'mirror' | 'slope';
+
+/** The authoring order (also the inspector-dropdown / e2e enumeration order). */
+export const CHANNEL_EXTEND_RULES: readonly ChannelExtend[] = [
+  'hold',
+  'cycle',
+  'cycle-offset',
+  'mirror',
+  'slope',
+];
+
 /** A Bézier handle stored as an OFFSET (time, value) from its keyframe. */
 export interface ScalarHandle {
   readonly time: number;
@@ -232,4 +259,182 @@ export function sampleVec2Keyframes(keys: readonly Vec2Key[], t: number): Vec2 {
     if (t >= keys[i].time && t <= keys[i + 1].time) return segmentVec2(keys[i], keys[i + 1], t);
   }
   return last.value;
+}
+
+// ── D1 extend / extrapolation (#269, V88 D1) ────────────────────────────────
+// The extend rule is TYPE-AGNOSTIC in its TIME mapping (planExtend) and only
+// type-specific in the value arithmetic (per-component offset add / slope scale).
+// So planExtend is computed ONCE from the domain + rule, and each typed sampler
+// applies the plan. The in-range path DELEGATES to the existing `sample*Keyframes`
+// verbatim, so a hold/hold channel is byte-identical to the pre-#269 clamp.
+
+/** The plan for sampling ONE out-of-domain time (computed by {@link planExtend}
+ *  from the domain + rule alone). `offsetPeriods` is the signed period count for
+ *  cycle-offset (0 for cycle/mirror/others → no travel). `dt` on a slope plan is
+ *  the signed distance past the boundary (t − start before, t − end after). */
+type ExtendPlan =
+  | { kind: 'in' }
+  | { kind: 'hold'; at: 'first' | 'last' }
+  | { kind: 'sample'; t: number; offsetPeriods: number }
+  | { kind: 'slope'; at: 'first' | 'last'; dt: number };
+
+/** Pure, type-agnostic: map a time to an {@link ExtendPlan} given the authored
+ *  domain [start,end] and the per-side rules. A degenerate span (≤0 — a single
+ *  key or coincident endpoints) collapses every rule to hold: there is no range
+ *  to cycle/mirror/slope over. Float error can push the mapped time a hair past
+ *  the boundary; the `sample*Keyframes` clamp is the safety net. */
+function planExtend(
+  start: number,
+  end: number,
+  t: number,
+  before: ChannelExtend,
+  after: ChannelExtend,
+): ExtendPlan {
+  if (t >= start && t <= end) return { kind: 'in' };
+  const isBefore = t < start;
+  const at: 'first' | 'last' = isBefore ? 'first' : 'last';
+  const rule = isBefore ? before : after;
+  const span = end - start;
+  if (span <= 0 || rule === 'hold') return { kind: 'hold', at };
+  if (rule === 'slope') return { kind: 'slope', at, dt: isBefore ? t - start : t - end };
+  if (rule === 'mirror') {
+    const period = 2 * span;
+    let phase = (t - start) % period;
+    if (phase < 0) phase += period;
+    const mapped = phase <= span ? start + phase : end - (phase - span);
+    return { kind: 'sample', t: mapped, offsetPeriods: 0 };
+  }
+  // cycle / cycle-offset: fold t back into [start,end]; offset accumulates the
+  // endpoint delta once per period so the loop travels seamlessly.
+  const n = Math.floor((t - start) / span); // <0 before, >0 after
+  return {
+    kind: 'sample',
+    t: t - n * span,
+    offsetPeriods: rule === 'cycle-offset' ? n : 0,
+  };
+}
+
+/** Tangent (value-per-second) of the boundary segment, for slope extrapolation. */
+function boundaryTangentScalar(keys: readonly ScalarKey[], at: 'first' | 'last'): number {
+  if (keys.length < 2) return 0;
+  const a = at === 'first' ? keys[0] : keys[keys.length - 2];
+  const b = at === 'first' ? keys[1] : keys[keys.length - 1];
+  const dt = b.time - a.time;
+  return dt > 0 ? (b.value - a.value) / dt : 0;
+}
+
+/** Sample a scalar channel at time `t` with per-side extend rules (#269). */
+export function sampleScalarKeyframesExtended(
+  keys: readonly ScalarKey[],
+  t: number,
+  before: ChannelExtend = 'hold',
+  after: ChannelExtend = 'hold',
+): number {
+  if (keys.length === 0) return 0;
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  const plan = planExtend(first.time, last.time, t, before, after);
+  switch (plan.kind) {
+    case 'in':
+      return sampleScalarKeyframes(keys, t);
+    case 'hold':
+      return plan.at === 'first' ? first.value : last.value;
+    case 'sample': {
+      const v = sampleScalarKeyframes(keys, plan.t);
+      return plan.offsetPeriods === 0 ? v : v + plan.offsetPeriods * (last.value - first.value);
+    }
+    case 'slope': {
+      const bv = plan.at === 'first' ? first.value : last.value;
+      return bv + boundaryTangentScalar(keys, plan.at) * plan.dt;
+    }
+  }
+}
+
+function boundaryTangentVec2(keys: readonly Vec2Key[], at: 'first' | 'last'): Vec2 {
+  if (keys.length < 2) return [0, 0];
+  const a = at === 'first' ? keys[0] : keys[keys.length - 2];
+  const b = at === 'first' ? keys[1] : keys[keys.length - 1];
+  const dt = b.time - a.time;
+  if (dt <= 0) return [0, 0];
+  return [(b.value[0] - a.value[0]) / dt, (b.value[1] - a.value[1]) / dt];
+}
+
+/** Sample a vec2 channel at time `t` with per-side extend rules (#269). */
+export function sampleVec2KeyframesExtended(
+  keys: readonly Vec2Key[],
+  t: number,
+  before: ChannelExtend = 'hold',
+  after: ChannelExtend = 'hold',
+): Vec2 {
+  if (keys.length === 0) return [0, 0];
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  const plan = planExtend(first.time, last.time, t, before, after);
+  switch (plan.kind) {
+    case 'in':
+      return sampleVec2Keyframes(keys, t);
+    case 'hold':
+      return plan.at === 'first' ? first.value : last.value;
+    case 'sample': {
+      const v = sampleVec2Keyframes(keys, plan.t);
+      if (plan.offsetPeriods === 0) return v;
+      const k = plan.offsetPeriods;
+      return [
+        v[0] + k * (last.value[0] - first.value[0]),
+        v[1] + k * (last.value[1] - first.value[1]),
+      ];
+    }
+    case 'slope': {
+      const bv = plan.at === 'first' ? first.value : last.value;
+      const tan = boundaryTangentVec2(keys, plan.at);
+      return [bv[0] + tan[0] * plan.dt, bv[1] + tan[1] * plan.dt];
+    }
+  }
+}
+
+function boundaryTangentVec3(keys: readonly Vec3Key[], at: 'first' | 'last'): Vec3 {
+  if (keys.length < 2) return [0, 0, 0];
+  const a = at === 'first' ? keys[0] : keys[keys.length - 2];
+  const b = at === 'first' ? keys[1] : keys[keys.length - 1];
+  const dt = b.time - a.time;
+  if (dt <= 0) return [0, 0, 0];
+  return [
+    (b.value[0] - a.value[0]) / dt,
+    (b.value[1] - a.value[1]) / dt,
+    (b.value[2] - a.value[2]) / dt,
+  ];
+}
+
+/** Sample a vec3 channel at time `t` with per-side extend rules (#269). */
+export function sampleVec3KeyframesExtended(
+  keys: readonly Vec3Key[],
+  t: number,
+  before: ChannelExtend = 'hold',
+  after: ChannelExtend = 'hold',
+): Vec3 {
+  if (keys.length === 0) return [0, 0, 0];
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  const plan = planExtend(first.time, last.time, t, before, after);
+  switch (plan.kind) {
+    case 'in':
+      return sampleVec3Keyframes(keys, t);
+    case 'hold':
+      return plan.at === 'first' ? first.value : last.value;
+    case 'sample': {
+      const v = sampleVec3Keyframes(keys, plan.t);
+      if (plan.offsetPeriods === 0) return v;
+      const k = plan.offsetPeriods;
+      return [
+        v[0] + k * (last.value[0] - first.value[0]),
+        v[1] + k * (last.value[1] - first.value[1]),
+        v[2] + k * (last.value[2] - first.value[2]),
+      ];
+    }
+    case 'slope': {
+      const bv = plan.at === 'first' ? first.value : last.value;
+      const tan = boundaryTangentVec3(keys, plan.at);
+      return [bv[0] + tan[0] * plan.dt, bv[1] + tan[1] * plan.dt, bv[2] + tan[2] * plan.dt];
+    }
+  }
 }

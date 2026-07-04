@@ -6,7 +6,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   sampleScalarKeyframes,
+  sampleScalarKeyframesExtended,
   sampleVec3Keyframes,
+  sampleVec3KeyframesExtended,
   type ScalarKey,
   type Vec3Key,
 } from './keyframeInterp';
@@ -133,5 +135,87 @@ describe('sampleVec3Keyframes', () => {
     const keys: Vec3Key[] = [{ time: 2, value: [1, 2, 3], easing: 'cubic' }];
     expect(sampleVec3Keyframes(keys, 0)).toEqual([1, 2, 3]);
     expect(sampleVec3Keyframes(keys, 9)).toEqual([1, 2, 3]);
+  });
+});
+
+describe('D1 extend / extrapolation (#269, V88 D1)', () => {
+  // Linear 0@t0 → 10@t2. In-range value(t) = 5t. Domain [0,2], span 2.
+  const keys: ScalarKey[] = [
+    { time: 0, value: 0, easing: 'linear' },
+    { time: 2, value: 10, easing: 'linear' },
+  ];
+
+  it('DEFAULT (no rule) === hold === the pre-#269 clamp, byte-identical', () => {
+    // In-range unchanged; out-of-range holds the boundary value on BOTH sides —
+    // exactly what sampleScalarKeyframes did before the extend rules existed.
+    for (const t of [-3, -1, 0, 0.5, 1, 2, 4, 9]) {
+      expect(sampleScalarKeyframesExtended(keys, t)).toBeCloseTo(
+        sampleScalarKeyframes(keys, t),
+        12,
+      );
+    }
+    // explicit hold matches the default
+    expect(sampleScalarKeyframesExtended(keys, 4, 'hold', 'hold')).toBe(10);
+    expect(sampleScalarKeyframesExtended(keys, -1, 'hold', 'hold')).toBe(0);
+  });
+
+  it('cycle repeats the range verbatim (teleports at the seam)', () => {
+    // after: t=3 → maps to t=1 → 5; t=4 → maps to t=0 → 0 (the teleport).
+    expect(sampleScalarKeyframesExtended(keys, 3, 'hold', 'cycle')).toBeCloseTo(5, 9);
+    expect(sampleScalarKeyframesExtended(keys, 4, 'hold', 'cycle')).toBeCloseTo(0, 9);
+    // before: t=-1 → maps to t=1 → 5.
+    expect(sampleScalarKeyframesExtended(keys, -1, 'cycle', 'hold')).toBeCloseTo(5, 9);
+  });
+
+  it('cycle-offset travels seamlessly (accumulates the endpoint delta per period)', () => {
+    // after: t=3 → 5 + 1·(10-0) = 15; t=4 → 0 + 2·10 = 20. No teleport — the value
+    // keeps climbing (the seamless-loop headline vs plain cycle's teleport).
+    expect(sampleScalarKeyframesExtended(keys, 3, 'hold', 'cycle-offset')).toBeCloseTo(15, 9);
+    expect(sampleScalarKeyframesExtended(keys, 4, 'hold', 'cycle-offset')).toBeCloseTo(20, 9);
+    // before: t=-1 → 5 + (-1)·10 = -5 (travels the other way).
+    expect(sampleScalarKeyframesExtended(keys, -1, 'cycle-offset', 'hold')).toBeCloseTo(-5, 9);
+    // continuity at the seam: just past t=2 the value is endpoint + 5·ε ≈ 10.0005,
+    // i.e. continuous from the endpoint (10) — no jump (the seamless property).
+    expect(sampleScalarKeyframesExtended(keys, 2.0001, 'hold', 'cycle-offset')).toBeCloseTo(10, 2);
+  });
+
+  it('mirror ping-pongs (reflects the range each period, no travel)', () => {
+    // after: t=2.5 → reflect to t=1.5 → 7.5; t=3 → t=1 → 5; t=4 → t=0 → 0.
+    expect(sampleScalarKeyframesExtended(keys, 2.5, 'hold', 'mirror')).toBeCloseTo(7.5, 9);
+    expect(sampleScalarKeyframesExtended(keys, 3, 'hold', 'mirror')).toBeCloseTo(5, 9);
+    expect(sampleScalarKeyframesExtended(keys, 4, 'hold', 'mirror')).toBeCloseTo(0, 9);
+  });
+
+  it('slope extrapolates linearly along the boundary tangent', () => {
+    // tangent = (10-0)/(2-0) = 5. after: t=3 → 10 + 5·1 = 15; t=5 → 10 + 5·3 = 25.
+    expect(sampleScalarKeyframesExtended(keys, 3, 'hold', 'slope')).toBeCloseTo(15, 9);
+    expect(sampleScalarKeyframesExtended(keys, 5, 'hold', 'slope')).toBeCloseTo(25, 9);
+    // before: t=-1 → 0 + 5·(-1) = -5.
+    expect(sampleScalarKeyframesExtended(keys, -1, 'slope', 'hold')).toBeCloseTo(-5, 9);
+  });
+
+  it('the two sides are INDEPENDENT (before=slope, after=cycle-offset)', () => {
+    expect(sampleScalarKeyframesExtended(keys, -1, 'slope', 'cycle-offset')).toBeCloseTo(-5, 9);
+    expect(sampleScalarKeyframesExtended(keys, 3, 'slope', 'cycle-offset')).toBeCloseTo(15, 9);
+  });
+
+  it('degenerate domain (single key / zero span) collapses every rule to hold', () => {
+    const one: ScalarKey[] = [{ time: 1, value: 7, easing: 'linear' }];
+    for (const rule of ['cycle', 'cycle-offset', 'mirror', 'slope'] as const) {
+      expect(sampleScalarKeyframesExtended(one, -5, rule, rule)).toBe(7);
+      expect(sampleScalarKeyframesExtended(one, 99, rule, rule)).toBe(7);
+    }
+  });
+
+  it('vec3 cycle-offset travels per-component (the walk-cycle-that-moves)', () => {
+    // position [0,0,0]@0 → [2,0,0]@2. t=4 → maps to t=0 [0,0,0] + 2·[2,0,0] = [4,0,0].
+    const pos: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [2, 0, 0], easing: 'linear' },
+    ];
+    expect(sampleVec3KeyframesExtended(pos, 4, 'hold', 'cycle-offset')).toEqual([4, 0, 0]);
+    expect(sampleVec3KeyframesExtended(pos, 3, 'hold', 'cycle-offset')[0]).toBeCloseTo(3, 9);
+    // vec3 hold default matches the legacy clamp.
+    expect(sampleVec3KeyframesExtended(pos, 9)).toEqual([2, 0, 0]);
   });
 });

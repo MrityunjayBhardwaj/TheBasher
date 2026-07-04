@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelVec3Value, Vec3 } from './types';
-import { sampleVec3Keyframes } from './keyframeInterp';
+import { sampleVec3KeyframesExtended } from './keyframeInterp';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -37,6 +37,11 @@ export const KeyframeChannelVec3Params = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
+  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
+   *  keyframe domain (cycle-offset on position = a walk cycle that travels).
+   *  Default 'hold' → byte-identical to the pre-#269 clamp. */
+  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
   // imported clip track is materialized into per-bone channels (bakeGltfChannel,
   // Wave D), each channel carries the bone's `childName` AND the owning asset's
@@ -72,7 +77,9 @@ export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params
  */
 export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: number) => Vec3 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  return (seconds: number) => sampleVec3Keyframes(sorted, seconds);
+  const { extendBefore, extendAfter } = params;
+  return (seconds: number) =>
+    sampleVec3KeyframesExtended(sorted, seconds, extendBefore, extendAfter);
 }
 
 export const KeyframeChannelVec3Node: NodeDefinition<
