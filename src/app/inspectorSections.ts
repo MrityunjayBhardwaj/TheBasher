@@ -136,7 +136,12 @@ export function paramToSection(
   ) {
     return 'render';
   }
-  // Animate params — playback / weight / time / clipId.
+  // Animate params — playback / weight / time / clipId. extendBefore/extendAfter
+  // (#270, D1 per-side extrapolation) are the channel's playback ENVELOPE — what
+  // the animation does before it starts / after it ends — so they group with
+  // weight here. Routing them out of the raw-fallback bucket lets the animate
+  // section author them via the dedicated ChannelExtendControls (NPanel), mirroring
+  // how Environment/Camera params route here only to leave the raw bucket.
   if (
     declaredSections.includes('animate') &&
     (paramPath === 'weight' ||
@@ -144,7 +149,9 @@ export function paramToSection(
       paramPath === 'startFrame' ||
       paramPath === 'endFrame' ||
       paramPath === 'clipId' ||
-      paramPath === 'targetPath')
+      paramPath === 'targetPath' ||
+      paramPath === 'extendBefore' ||
+      paramPath === 'extendAfter')
   ) {
     return 'animate';
   }

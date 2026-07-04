@@ -77,6 +77,7 @@ import { RevertImportedClipConnector } from './animate/RevertImportedClipConnect
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
+import { CHANNEL_EXTEND_RULES } from '../nodes/keyframeInterp';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -564,6 +565,63 @@ function EnumField({
         ))}
       </select>
     </label>
+  );
+}
+
+/** The node types that carry per-side extend rules (#269/#270, D1). Gates the
+ *  ChannelExtendControls render + the raw-row suppression to exactly these. */
+const KEYFRAME_CHANNEL_TYPES: ReadonlySet<string> = new Set([
+  'KeyframeChannelNumber',
+  'KeyframeChannelVec2',
+  'KeyframeChannelVec3',
+]);
+
+/** #270 — the D1 per-side extrapolation control, grouped as one "Extend" block in
+ *  the channel's animate section. Blender-grounded: a single per-side affordance
+ *  (Constant/Linear/Make-Cyclic in one menu) is the right director UX. Each side is
+ *  a plain setParam over the exported CHANNEL_EXTEND_RULES — discrete config, not
+ *  keyframed (mirrors EnumField's dispatch shape). The two <select>s keep the
+ *  `inspector-enum-<id>-extend{Before,After}` testid so the generic enum probe and
+ *  the extend e2e both target them. */
+function ChannelExtendControls({ nodeId }: { nodeId: string }) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const before = useDagStore(
+    (s) => (s.state.nodes[nodeId]?.params as { extendBefore?: string } | undefined)?.extendBefore,
+  );
+  const after = useDagStore(
+    (s) => (s.state.nodes[nodeId]?.params as { extendAfter?: string } | undefined)?.extendAfter,
+  );
+  const row = (side: string, paramPath: string, value: string) => (
+    <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{side}</span>
+      <select
+        value={value}
+        data-testid={`inspector-enum-${nodeId}-${paramPath}`}
+        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          dispatch(
+            { type: 'setParam', nodeId, paramPath, value: e.target.value },
+            'user',
+            `set ${paramPath}`,
+          )
+        }
+      >
+        {CHANNEL_EXTEND_RULES.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  return (
+    <div className="flex flex-col">
+      <span className="px-3 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        Extend
+      </span>
+      {row('Before', 'extendBefore', before ?? 'hold')}
+      {row('After', 'extendAfter', after ?? 'hold')}
+    </div>
   );
 }
 
@@ -2190,17 +2248,27 @@ export function NPanel() {
                           modifier's own params (count/offset) still render as the
                           ParamRows below, so selecting a modifier shows both. */}
                       {sectionId === 'modifier' ? <ModifierStackControls nodeId={node.id} /> : null}
+                      {/* #270 — a channel's per-side extend rules render as one
+                          "Extend / Before / After" control at the top of the animate
+                          section (Blender-grounded single per-side affordance). The
+                          two params route here to leave the raw bucket; the generic
+                          rows for them are filtered below so they don't double-render. */}
+                      {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
+                        <ChannelExtendControls nodeId={node.id} />
+                      ) : null}
                       {sectionId === 'environment' || sectionId === 'camera'
                         ? null
-                        : (grouped.get(sectionId) ?? []).map(([key, value]) => (
-                            <ParamRow
-                              key={key}
-                              nodeId={node.id}
-                              paramPath={key}
-                              value={value}
-                              overrideInfo={makeOverrideInfo(key)}
-                            />
-                          ))}
+                        : (grouped.get(sectionId) ?? [])
+                            .filter(([key]) => key !== 'extendBefore' && key !== 'extendAfter')
+                            .map(([key, value]) => (
+                              <ParamRow
+                                key={key}
+                                nodeId={node.id}
+                                paramPath={key}
+                                value={value}
+                                overrideInfo={makeOverrideInfo(key)}
+                              />
+                            ))}
                       {/* Phase 151 — Apply control in the transform card for a
                           selected primitive (BoxMesh/SphereMesh). Bakes TRS →
                           BakedMesh via the same helper the Object ▸ Apply menu
