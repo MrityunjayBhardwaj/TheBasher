@@ -2,7 +2,12 @@
 // channel row is explicitly active, so it isn't empty after keying. Grounded in
 // Blender's Graph Editor / Houdini's Animation Editor (selected object's curves
 // show automatically). Read-only fallback — no store write.
-import { test, expect } from '@playwright/test';
+// Import the shared fixture (not raw @playwright/test): it seeds
+// localStorage['basher.lastProjectId']='default' so goto('/') lands on the
+// EDITOR. Without it, a true first run routes to the pre-editor HOME (v0.6 #4 W4)
+// where there is no Inspector — the spec's `getByTestId('inspector')` never
+// appears. This was deterministic test debt, not a product bug.
+import { test, expect } from './_fixtures';
 
 interface W {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, { type: string }> } } };

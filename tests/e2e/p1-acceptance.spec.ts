@@ -423,6 +423,25 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     'true',
     { timeout: 10_000 },
   );
+  // #262 — the catalog asset seeds into OPFS asynchronously at boot; the Library's
+  // `data-available` reflects file EXISTENCE only, which can be true mid-seed (a
+  // 0-byte entry). Wait until the bytes are actually READABLE before dropping, else
+  // the importer reads empty content → "parseGltfJson: not valid JSON".
+  await page.waitForFunction(
+    async () => {
+      const w = window as unknown as {
+        __basher_opfs?: { read: (p: string) => Promise<Uint8Array | null> };
+      };
+      if (!w.__basher_opfs) return false;
+      try {
+        const b = await w.__basher_opfs.read('assets/cube.gltf');
+        return !!b && b.byteLength > 0;
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 10_000 },
+  );
 
   const beforeNodeCount = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
@@ -467,34 +486,31 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     const s = w.__basher_dag!.getState();
     const nodes = s.state.nodes;
     const newNodeIds = Object.keys(nodes).filter((id) => id.startsWith('n_'));
-    // The glTF importer generates ids prefixed with `n_gltf_`, `n_tx_`,
-    // `n_grp_` (same content-addressed prefixes the static dropChain used).
-    // Only the three from this drop should match (default project ids are
-    // `n_camera`, `n_light`, `n_box`, `n_scene`, `n_render`).
+    // The glTF importer generates ids prefixed with `n_gltf_` and `n_grp_`
+    // (content-addressed). Default project ids are `n_camera`, `n_light`,
+    // `n_box`, `n_scene`, `n_render`.
     const gltf = newNodeIds.find((id) => id.startsWith('n_gltf_'));
-    const tx = newNodeIds.find((id) => id.startsWith('n_tx_'));
     const grp = newNodeIds.find((id) => id.startsWith('n_grp_'));
-    // P7.7 (#91) — the importer now ALSO materializes one GltfChild node per
-    // scene child (the addressable-child mechanism). cube.gltf has 1 scene
-    // node ('cube') → 1 GltfChild, so the drop now adds GltfAsset + GltfChild +
-    // Transform + Group = 4 nodes (was 3 pre-7.7). Count them explicitly.
+    // P7.7 (#91) materializes one GltfChild per scene child; V67/#222 made the
+    // import root ONE transformable Group (NOT a Group wrapping a separate
+    // Transform). cube.gltf has 1 scene node → the drop adds GltfAsset +
+    // GltfChild + Group = 3 nodes (there is no `n_tx_` Transform anymore).
     const gltfChildCount = Object.values(nodes).filter((n) => n.type === 'GltfChild').length;
     const assetRef = gltf ? (nodes[gltf].params as { assetRef: string }).assetRef : null;
     return {
       delta: Object.keys(nodes).length - newNodeIds.length, // pre-existing count
       nodeCount: Object.keys(nodes).length,
       sawGltf: Boolean(gltf),
-      sawTransform: Boolean(tx),
       sawGroup: Boolean(grp),
       gltfChildCount,
       assetRef,
       undoLen: s.undoStack.length,
     };
   });
-  // GltfAsset + 1 GltfChild (cube.gltf has one scene node) + Transform + Group.
-  expect(after.nodeCount).toBe(beforeNodeCount + 4);
+  // GltfAsset + 1 GltfChild (cube.gltf has one scene node) + the transformable
+  // import-root Group (V67/#222 — no separate Transform node).
+  expect(after.nodeCount).toBe(beforeNodeCount + 3);
   expect(after.sawGltf).toBe(true);
-  expect(after.sawTransform).toBe(true);
   expect(after.sawGroup).toBe(true);
   expect(after.gltfChildCount).toBe(1);
   expect(after.assetRef).toBe('assets/cube.gltf');

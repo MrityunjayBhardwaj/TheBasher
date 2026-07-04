@@ -34,14 +34,18 @@ async function waitReady(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_view_camera && w.__basher_viewport && w.__basher_time && w.__basher_dag);
+    return Boolean(
+      w.__basher_view_camera && w.__basher_viewport && w.__basher_time && w.__basher_dag,
+    );
   });
   await page.waitForTimeout(300);
 }
 
 async function dispatch(page: import('@playwright/test').Page, op: unknown) {
   await page.evaluate((o) => {
-    (window as unknown as BasherWindow).__basher_dag!.getState().dispatch(o, 'test', 'p204 camera tt');
+    (window as unknown as BasherWindow)
+      .__basher_dag!.getState()
+      .dispatch(o, 'test', 'p204 camera tt');
   }, op);
 }
 

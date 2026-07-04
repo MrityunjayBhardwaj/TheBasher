@@ -18,7 +18,9 @@ interface W {
 
 test('selecting a node hidden under a collapsed Group expands the ancestor', async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), { timeout: 15000 });
+  await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), {
+    timeout: 15000,
+  });
 
   await page.evaluate(() => {
     const dag = (window as unknown as W).__basher_dag.getState();
@@ -31,9 +33,21 @@ test('selecting a node hidden under a collapsed Group expands the ancestor', asy
           nodeType: 'Group',
           params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
         },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'disconnect', from: { node: 'n_box', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_box', socket: 'out' }, to: { node: 'n_grp', socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_grp', socket: 'children' },
+        },
       ],
       'user',
       'group the box',

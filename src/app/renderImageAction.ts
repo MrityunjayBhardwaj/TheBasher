@@ -85,9 +85,15 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
   const pose = resolveActiveCameraPoseAt(state, seconds);
   // UX #12 — depth of field, resolved through the SAME pure helper the live
   // viewport uses (cameraDof.ts) so the still's bokeh matches the screen. null
-  // when off → the fast manual render path. (Animated DoF is a future follow-up
-  // — focus/aperture read static here; framing is the #190 scope.)
-  const dof = resolveCameraDof(activeCamera);
+  // when off → the fast manual render path. (Aperture reads static here; framing
+  // is the #190 scope.) #247 — focus-on-target uses the evaluated pose distance
+  // (|position − lookAt| at this frame) so the still's focus matches the viewport.
+  const targetFocusDistance = Math.hypot(
+    pose.lookAt[0] - pose.position[0],
+    pose.lookAt[1] - pose.position[1],
+    pose.lookAt[2] - pose.position[2],
+  );
+  const dof = resolveCameraDof(activeCamera, targetFocusDistance);
   // Control passes (depth/normal) ignore DoF — they encode geometry, not a
   // photographic frame; the override path renders raw values without the bokeh.
   const blob = await renderSceneToPngBlob({

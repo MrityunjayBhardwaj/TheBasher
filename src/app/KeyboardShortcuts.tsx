@@ -221,6 +221,19 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return false;
 }
 
+// #244 — surfaces where Cmd/Ctrl+Z should edit the field's TEXT (the browser's own
+// character-level undo) rather than the DAG. Deliberately just TEXTAREA +
+// contenteditable: multi-line / rich-text composition (the AgentChat box) is where
+// char-undo genuinely matters. A single-line INPUT or SELECT does DAG undo instead
+// — that's the fix's whole point: drag a gizmo with an Inspector field focused, then
+// Ctrl+Z undoes the MOVE (an input's native undo stack is empty after a programmatic
+// value change, so carving inputs out would re-introduce the no-op).
+function isNativeUndoTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return target.tagName === 'TEXTAREA';
+}
+
 function openAddMenuAtViewportCenter(): void {
   const slot = document.querySelector('[data-testid="viewport-slot"]') as HTMLElement | null;
   if (slot) {
@@ -256,6 +269,24 @@ export function KeyboardShortcuts() {
         e.preventDefault();
         void saveCurrent();
         return;
+      }
+      // #244 — undo/redo handled BEFORE the typing-target guard so they work even
+      // while a field is focused (previously they sat below the guard → Ctrl+Z was
+      // a dead no-op the moment any input/select was focused, unlike Cmd+S). EXCEPT
+      // in a surface with native text editing, where the browser's own character-level
+      // undo should win — bail WITHOUT preventDefault so the field edits its own text.
+      {
+        const mod = e.metaKey || e.ctrlKey;
+        const isZ = e.key === 'z' || e.key === 'Z';
+        const isY = e.key === 'y' || e.key === 'Y';
+        if (mod && (isZ || isY)) {
+          if (isNativeUndoTarget(e.target)) return; // let the browser do text undo
+          e.preventDefault();
+          // Shift+Z or Y → redo; plain Z → undo.
+          if ((isZ && e.shiftKey) || isY) useDagStore.getState().redo();
+          else useDagStore.getState().undo();
+          return;
+        }
       }
       if (isTypingTarget(e.target)) return;
       const cmd = e.metaKey || e.ctrlKey;
@@ -295,23 +326,9 @@ export function KeyboardShortcuts() {
         return;
       }
 
-      // Cmd/Ctrl + Z — undo
-      if (cmd && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault();
-        useDagStore.getState().undo();
-        return;
-      }
-      // Cmd/Ctrl + Shift + Z, or Cmd/Ctrl + Y — redo
-      if (
-        (cmd && e.shiftKey && (e.key === 'z' || e.key === 'Z')) ||
-        (cmd && (e.key === 'y' || e.key === 'Y'))
-      ) {
-        e.preventDefault();
-        useDagStore.getState().redo();
-        return;
-      }
-      // (Cmd/Ctrl + S — save — is handled above the typing-target guard so it
-      // fires even while a field is focused.)
+      // (Cmd/Ctrl + Z / Shift+Z / Y — undo/redo — and Cmd/Ctrl + S — save — are
+      // handled ABOVE the typing-target guard so they fire even while a field is
+      // focused, #244. See the undo/redo block near the top of this handler.)
       // Cmd/Ctrl + A — select all (#226 Slice 3: Blender also binds this to bare
       // `A`, handled in the switch below). The universe is the full selectable
       // set — children + lights + camera (getViewportSelectableIds), matching

@@ -65,7 +65,11 @@ function buildNestedTransformState(opts: {
       from: { node: BOX_ID, socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     },
-    { type: 'connect', from: { node: BOX_ID, socket: 'out' }, to: { node: XF_ID, socket: 'target' } },
+    {
+      type: 'connect',
+      from: { node: BOX_ID, socket: 'out' },
+      to: { node: XF_ID, socket: 'target' },
+    },
     {
       type: 'connect',
       from: { node: XF_ID, socket: 'out' },
@@ -248,8 +252,16 @@ describe('resolveWorldTransform', () => {
         from: { node: BOX_ID, socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
-      { type: 'connect', from: { node: BOX_ID, socket: 'out' }, to: { node: MO_ID, socket: 'target' } },
-      { type: 'connect', from: { node: MO_ID, socket: 'out' }, to: { node: XF_ID, socket: 'target' } },
+      {
+        type: 'connect',
+        from: { node: BOX_ID, socket: 'out' },
+        to: { node: MO_ID, socket: 'target' },
+      },
+      {
+        type: 'connect',
+        from: { node: MO_ID, socket: 'out' },
+        to: { node: XF_ID, socket: 'target' },
+      },
       {
         type: 'connect',
         from: { node: XF_ID, socket: 'out' },
@@ -447,7 +459,10 @@ const LIT_ID = 'n_grouped_light';
 const LGRP_ID = 'n_light_group';
 
 /** scene.children → Group(pos) → children:[DirectionalLight(localPos)]. */
-function buildGroupedLightState(groupPos: [number, number, number], lightPos: [number, number, number]): DagState {
+function buildGroupedLightState(
+  groupPos: [number, number, number],
+  lightPos: [number, number, number],
+): DagState {
   let state = buildDefaultDagState();
   const ops: Op[] = [
     { type: 'addNode', nodeId: LGRP_ID, nodeType: 'Group', params: { position: groupPos } },
@@ -457,8 +472,16 @@ function buildGroupedLightState(groupPos: [number, number, number], lightPos: [n
       nodeType: 'DirectionalLight',
       params: { intensity: 1, position: lightPos, color: '#ffffff' },
     },
-    { type: 'connect', from: { node: LIT_ID, socket: 'out' }, to: { node: LGRP_ID, socket: 'children' } },
-    { type: 'connect', from: { node: LGRP_ID, socket: 'out' }, to: { node: 'n_scene', socket: 'children' } },
+    {
+      type: 'connect',
+      from: { node: LIT_ID, socket: 'out' },
+      to: { node: LGRP_ID, socket: 'children' },
+    },
+    {
+      type: 'connect',
+      from: { node: LGRP_ID, socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
   ];
   for (const op of ops) state = applyOp(state, op).next;
   return state;

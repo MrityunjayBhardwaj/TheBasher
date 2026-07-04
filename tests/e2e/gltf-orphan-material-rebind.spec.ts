@@ -69,7 +69,7 @@ const firstMesh = (page: import('@playwright/test').Page) =>
   });
 
 test.describe('#221 — orphan-material rebind on import', () => {
-  test('an unbound primitive is bound to the file\'s one orphaned material', async ({ page }) => {
+  test("an unbound primitive is bound to the file's one orphaned material", async ({ page }) => {
     await ingest(page, 'orphan-material-quad.gltf', 'orphan');
 
     // Side A — the captured IR material is the file's M_Orphan (NOT the three.js

@@ -20,7 +20,10 @@ interface Op {
 interface EnumWindow {
   __basher_dag: {
     getState: () => {
-      state: { outputs: { scene?: { node: string } }; nodes: Record<string, { params: { axis?: unknown } }> };
+      state: {
+        outputs: { scene?: { node: string } };
+        nodes: Record<string, { params: { axis?: unknown } }>;
+      };
       dispatchAtomic: (ops: Op[], s?: string, l?: string) => void;
     };
   };
@@ -40,7 +43,9 @@ const BOX = 'enum_box';
 const MIR = 'enum_mirror';
 
 /** The axis-aligned span of the 48-vert mirror mesh, read off the live three scene. */
-function mirrorSpan(page: import('@playwright/test').Page): Promise<{ x: number; y: number } | null> {
+function mirrorSpan(
+  page: import('@playwright/test').Page,
+): Promise<{ x: number; y: number } | null> {
   return page.evaluate(() => {
     const w = window as unknown as EnumWindow;
     const scene = w.__basher_three.getState().scene;
@@ -48,10 +53,15 @@ function mirrorSpan(page: import('@playwright/test').Page): Promise<{ x: number;
     scene?.traverse((o) => {
       const g = o.geometry?.attributes?.position;
       if (o.type !== 'Mesh' || !g || g.count !== 48) return;
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let minX = Infinity,
+        maxX = -Infinity,
+        minY = Infinity,
+        maxY = -Infinity;
       for (let i = 0; i < g.array.length; i += 3) {
-        minX = Math.min(minX, g.array[i]); maxX = Math.max(maxX, g.array[i]);
-        minY = Math.min(minY, g.array[i + 1]); maxY = Math.max(maxY, g.array[i + 1]);
+        minX = Math.min(minX, g.array[i]);
+        maxX = Math.max(maxX, g.array[i]);
+        minY = Math.min(minY, g.array[i + 1]);
+        maxY = Math.max(maxY, g.array[i + 1]);
       }
       span = { x: maxX - minX, y: maxY - minY };
     });
@@ -72,7 +82,10 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => {
     const w = window as unknown as EnumWindow;
     return Boolean(
-      w.__basher_dag && w.__basher_three && w.__basher_selection && w.__basher_dag.getState().state.outputs.scene,
+      w.__basher_dag &&
+      w.__basher_three &&
+      w.__basher_selection &&
+      w.__basher_dag.getState().state.outputs.scene,
     );
   });
 });
@@ -87,10 +100,28 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [0, 0, 0] } },
-          { type: 'addNode', nodeId: mir, nodeType: 'MirrorModifier', params: { axis: 'x', offset: 2, muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: mir, socket: 'target' } },
-          { type: 'connect', from: { node: mir, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [0, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: mir,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', offset: 2, muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: mir, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: mir, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → mirror → scene',
@@ -120,7 +151,13 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
   // Change the dropdown to 'y' — UI → setParam → DAG.
   await select.selectOption('y');
   await expect
-    .poll(() => page.evaluate((mir) => (window as unknown as EnumWindow).__basher_dag.getState().state.nodes[mir].params.axis, MIR))
+    .poll(() =>
+      page.evaluate(
+        (mir) =>
+          (window as unknown as EnumWindow).__basher_dag.getState().state.nodes[mir].params.axis,
+        MIR,
+      ),
+    )
     .toBe('y');
 
   // …and the LIVE render followed: the SAME mesh now spans ≈5 in y, ≈1 in x.

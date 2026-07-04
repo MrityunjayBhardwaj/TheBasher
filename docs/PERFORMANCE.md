@@ -7,7 +7,7 @@
 > lives in the render seam (`src/viewport`, `src/render`, `src/app/*Gizmo/helpers`) — the
 > substrate (V34) is untouched.
 >
-> **Method (deductive, not empirical):** the lever order below is a *hypothesis*. The gate
+> **Method (deductive, not empirical):** the lever order below is a _hypothesis_. The gate
 > is the existing scene-scale harness (`tests/e2e/perf-scene-scale.spec.ts`, #114) which
 > splits the per-frame budget into **CPU-eval vs React-reconciliation vs GPU/draw-call**.
 > Measure first → pull the lever the budget points at → re-measure. One observation per change.
@@ -19,16 +19,16 @@
 These are the expensive, non-obvious optimisations already shipped. Re-doing them is wasted
 effort; building on top of them is the play.
 
-| Optimisation | Where | Why it matters |
-|---|---|---|
-| **Animation hot path bypasses React** | `src/viewport/SceneFromDAG.tsx:~1301` (`useFrame`) | Time sampling + TRS writes mutate the `Object3D` **in place, outside React's commit** (K13 / B13 "Pass 2→3", PR #115). Playback pays **zero** reconciliation cost per frame. Hardest perf thing to get right — done. |
-| **Evaluator cache** | `src/core/dag/evaluator.ts` (`createEvaluatorCache`), instantiated `SceneFromDAG.tsx:115` | Re-evaluation of unchanged sub-DAGs is memoised. |
-| **Geometry registry dedup** | `src/app/geometryRegistry.ts` | Deterministic `GeometryRef.key` → one built `BufferGeometry`, shared across every node that resolves the same key. Identical geometry is built once. |
-| **DPR cap + cheap AA** | `src/viewport/Viewport.tsx:151-159` | `dpr={[1,2]}` caps retina cost; `antialias:false` + SMAA in post is cheaper than MSAA for this pipeline. |
-| **Imperative timeline canvas** | `src/timeline/TimelineCanvas.tsx` (K13) | Static-layer offscreen cache + React-bypass rAF strip-redraw; playhead scrub never re-renders React. |
-| **Existing budget instrument** | `tests/e2e/perf-scene-scale.spec.ts` (#114) | Already separates CPU-eval / React / GPU at 50→2000 meshes. Use it as the gate. |
+| Optimisation                          | Where                                                                                     | Why it matters                                                                                                                                                                                                       |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Animation hot path bypasses React** | `src/viewport/SceneFromDAG.tsx:~1301` (`useFrame`)                                        | Time sampling + TRS writes mutate the `Object3D` **in place, outside React's commit** (K13 / B13 "Pass 2→3", PR #115). Playback pays **zero** reconciliation cost per frame. Hardest perf thing to get right — done. |
+| **Evaluator cache**                   | `src/core/dag/evaluator.ts` (`createEvaluatorCache`), instantiated `SceneFromDAG.tsx:115` | Re-evaluation of unchanged sub-DAGs is memoised.                                                                                                                                                                     |
+| **Geometry registry dedup**           | `src/app/geometryRegistry.ts`                                                             | Deterministic `GeometryRef.key` → one built `BufferGeometry`, shared across every node that resolves the same key. Identical geometry is built once.                                                                 |
+| **DPR cap + cheap AA**                | `src/viewport/Viewport.tsx:151-159`                                                       | `dpr={[1,2]}` caps retina cost; `antialias:false` + SMAA in post is cheaper than MSAA for this pipeline.                                                                                                             |
+| **Imperative timeline canvas**        | `src/timeline/TimelineCanvas.tsx` (K13)                                                   | Static-layer offscreen cache + React-bypass rAF strip-redraw; playhead scrub never re-renders React.                                                                                                                 |
+| **Existing budget instrument**        | `tests/e2e/perf-scene-scale.spec.ts` (#114)                                               | Already separates CPU-eval / React / GPU at 50→2000 meshes. Use it as the gate.                                                                                                                                      |
 
-**Implication:** heavy *animation playback* is already near-optimal. The remaining wins are in
+**Implication:** heavy _animation playback_ is already near-optimal. The remaining wins are in
 **idle cost**, **object count**, and **picking** — not in the animation loop.
 
 ---
@@ -37,7 +37,7 @@ effort; building on top of them is the play.
 
 Each lever: the gap (with evidence), the fix, effort, risk, and the file surface.
 
-### Lever 1 — On-demand frameloop  ⭐ biggest "free" win (idle editor)
+### Lever 1 — On-demand frameloop ⭐ biggest "free" win (idle editor)
 
 - **Gap (observed):** `src/viewport/Viewport.tsx:149` mounts `<Canvas>` with **no `frameloop`
   prop** → R3F defaults to `"always"` → the viewport renders **60fps continuously even when the
@@ -54,7 +54,7 @@ Each lever: the gap (with evidence), the fix, effort, risk, and the file surface
   after edit X" — needs a falsifiable e2e per trigger: edit→exactly-one-frame-rendered).
 - **Win:** large perceived win (idle CPU/GPU → ~0; battery + thermals on laptops).
 
-### Lever 2 — Instancing  ⭐ biggest win for many objects
+### Lever 2 — Instancing ⭐ biggest win for many objects
 
 - **Gap (observed):** `grep InstancedMesh src` → **zero hits.** 2000 repeated cubes today = 2000
   draw calls + 2000 `Object3D`s.
@@ -67,7 +67,7 @@ Each lever: the gap (with evidence), the fix, effort, risk, and the file surface
 - **Risk:** Medium-High (interacts with B1.1/B1.2 selection-unwrap; per-instance override is new).
 - **Win:** order-of-magnitude draw-call reduction for scatter / arch-viz / repeated-asset scenes.
 
-### Lever 3 — BVH-accelerated raycasting (`three-mesh-bvh`)  — picking at scale
+### Lever 3 — BVH-accelerated raycasting (`three-mesh-bvh`) — picking at scale
 
 - **Gap (observed):** `grep computeBoundsTree|three-mesh-bvh src` → **zero.** Click-to-select is
   default three.js raycast = **O(triangles)** per ray. On a heavy mesh / dense scene, every click
@@ -102,7 +102,7 @@ Each lever: the gap (with evidence), the fix, effort, risk, and the file surface
 ### Lever 6 — WebGPU **without leaving three** (the non-Babylon backend swap)
 
 - **Context:** three.js ships `WebGPURenderer` + TSL node materials. This is the WebGPU answer
-  to "should we switch renderers" *inside* the current stack — no Babylon/Orillusion rewrite.
+  to "should we switch renderers" _inside_ the current stack — no Babylon/Orillusion rewrite.
 - **Gap:** the pipeline is `WebGLRenderer` end-to-end (`src/render/renderToImage.ts` uses
   `WebGLRenderTarget`; PostFx is `@react-three/postprocessing` = WebGL).
 - **Fix (research bet, not a port):** evaluate R3F's WebGPU path; the material IR (V32, "renderer
@@ -142,7 +142,7 @@ IF "as fast as physically possible"  → Lever 6 (WebGPU) as a milestone, after 
 
 **Recommended first cut (highest ROI, lowest risk):**
 **Lever 1 (frameloop) + Lever 3 (BVH raycast)** — both contained, both measurable, both improve
-the *felt* responsiveness immediately. Then gate Lever 2 (instancing) on the harness showing a
+the _felt_ responsiveness immediately. Then gate Lever 2 (instancing) on the harness showing a
 real draw-call knee.
 
 ---
@@ -151,14 +151,14 @@ real draw-call knee.
 
 Every lever ships with an observation that **bites red** if the optimisation regresses:
 
-| Lever | Falsifiable gate |
-|---|---|
-| 1 Frameloop | Idle scene → assert **0 frames** rendered over 1s (probe `gl.info.render.frame`); edit → assert **exactly 1** frame. Falsify by reverting to `"always"` → idle frame-count climbs. |
-| 2 Instancing | 1000 same-geo nodes → assert **draw calls ≈ 1** (not 1000) via `gl.info.render.calls`. Falsify by disabling the instanced path → calls = 1000. |
-| 3 BVH | Heavy mesh → click-pick p95 latency under budget; falsify by removing `computeBoundsTree` → latency spikes. |
-| 4 LOD | Camera far → assert reduced-tier geometry active. |
-| 5 Batch | N identical materials → assert one shared `Material` instance + reduced `calls`. |
-| 6 WebGPU | Pixel-parity render vs WebGL path on a reference scene. |
+| Lever        | Falsifiable gate                                                                                                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Frameloop  | Idle scene → assert **0 frames** rendered over 1s (probe `gl.info.render.frame`); edit → assert **exactly 1** frame. Falsify by reverting to `"always"` → idle frame-count climbs. |
+| 2 Instancing | 1000 same-geo nodes → assert **draw calls ≈ 1** (not 1000) via `gl.info.render.calls`. Falsify by disabling the instanced path → calls = 1000.                                     |
+| 3 BVH        | Heavy mesh → click-pick p95 latency under budget; falsify by removing `computeBoundsTree` → latency spikes.                                                                        |
+| 4 LOD        | Camera far → assert reduced-tier geometry active.                                                                                                                                  |
+| 5 Batch      | N identical materials → assert one shared `Material` instance + reduced `calls`.                                                                                                   |
+| 6 WebGPU     | Pixel-parity render vs WebGL path on a reference scene.                                                                                                                            |
 
 All numbers come from `tests/e2e/perf-scene-scale.spec.ts` + `window.__basher_perf` +
 `gl.info.render` — never "it feels faster." Observation over inference.

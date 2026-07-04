@@ -8,7 +8,9 @@
 import { expect, test } from './_fixtures';
 
 interface W {
-  __basher_dag: { getState: () => { state: { nodes: Record<string, { params?: { rotation?: number[] } }> } } };
+  __basher_dag: {
+    getState: () => { state: { nodes: Record<string, { params?: { rotation?: number[] } }> } };
+  };
   __basher_selection: { getState: () => { select: (id: string) => void } };
   __basher_gizmo_grab: (mode: string, target: [number, number, number]) => void;
 }
@@ -16,7 +18,8 @@ interface W {
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(
-    () => Boolean((window as unknown as W).__basher_dag && (window as unknown as W).__basher_selection),
+    () =>
+      Boolean((window as unknown as W).__basher_dag && (window as unknown as W).__basher_selection),
     { timeout: 15000 },
   );
 });
@@ -29,7 +32,9 @@ test('rotate snaps to the 5° increment only when Snap + Affect▸Rotate are on'
   await page.evaluate(() => (window as unknown as W).__basher_gizmo_grab('rotate', [0, 12, 0]));
   await page.waitForTimeout(150);
   const unsnapped = await page.evaluate(
-    () => (window as unknown as W).__basher_dag.getState().state.nodes['n_box']?.params?.rotation ?? null,
+    () =>
+      (window as unknown as W).__basher_dag.getState().state.nodes['n_box']?.params?.rotation ??
+      null,
   );
   expect(unsnapped).not.toBeNull();
   expect(unsnapped![1]).toBeCloseTo(12, 3);
@@ -43,7 +48,9 @@ test('rotate snaps to the 5° increment only when Snap + Affect▸Rotate are on'
   await page.evaluate(() => (window as unknown as W).__basher_gizmo_grab('rotate', [0, 12, 0]));
   await page.waitForTimeout(150);
   const snapped = await page.evaluate(
-    () => (window as unknown as W).__basher_dag.getState().state.nodes['n_box']?.params?.rotation ?? null,
+    () =>
+      (window as unknown as W).__basher_dag.getState().state.nodes['n_box']?.params?.rotation ??
+      null,
   );
   expect(snapped).not.toBeNull();
   expect(snapped![1]).toBeCloseTo(10, 3);

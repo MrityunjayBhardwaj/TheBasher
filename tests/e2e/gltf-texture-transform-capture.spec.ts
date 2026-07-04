@@ -18,7 +18,9 @@ interface MeshSummary {
 interface BasherWindow {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
+      };
       dispatchAtomic: (ops: unknown[], source?: string, label?: string) => void;
     };
   };
@@ -80,8 +82,8 @@ test('captures KHR_texture_transform into uvTransform; clone map matches (identi
     const child = Object.values(w.__basher_dag.getState().state.nodes).find(
       (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
     )!;
-    const mats = (child.params.materials as { uvTransform: Record<string, unknown> }[]).map((mm, i) =>
-      i === 0 ? { ...mm, uvTransform: { ...mm.uvTransform, tiling: [5, 5] } } : mm,
+    const mats = (child.params.materials as { uvTransform: Record<string, unknown> }[]).map(
+      (mm, i) => (i === 0 ? { ...mm, uvTransform: { ...mm.uvTransform, tiling: [5, 5] } } : mm),
     );
     w.__basher_dag
       .getState()

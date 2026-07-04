@@ -49,7 +49,9 @@ describe('studioProfiles (#208)', () => {
     const add = buildAddStudioLightOps(state, [0, 0, 0]); // no rig → legacy scene.lights
     state = apply(state, add!.ops);
     const sceneId = state.outputs.scene!.node;
-    const sceneLightsBefore = (state.nodes[sceneId].inputs.lights as { node: string }[]).map((r) => r.node);
+    const sceneLightsBefore = (state.nodes[sceneId].inputs.lights as { node: string }[]).map(
+      (r) => r.node,
+    );
     expect(sceneLightsBefore).toContain(add!.lightId);
 
     // First profile adopts it.
@@ -58,7 +60,9 @@ describe('studioProfiles (#208)', () => {
 
     // The light is now under the rig, NOT on scene.lights.
     expect(resolveRigLightSources(state)).toContain(add!.lightId);
-    const sceneLightsAfter = (state.nodes[sceneId].inputs.lights as { node: string }[]).map((r) => r.node);
+    const sceneLightsAfter = (state.nodes[sceneId].inputs.lights as { node: string }[]).map(
+      (r) => r.node,
+    );
     expect(sceneLightsAfter).not.toContain(add!.lightId);
   });
 
@@ -110,7 +114,9 @@ describe('studioProfiles (#208)', () => {
     // The panel would mint "Profile 2" again (length 1 + 1) → must NOT collide.
     const next = buildAddProfileOps(state, 'Profile 2', [0, 0, 0])!;
     state = apply(state, next.ops);
-    const names = enumerateProfiles(state).map((p) => p.name).sort();
+    const names = enumerateProfiles(state)
+      .map((p) => p.name)
+      .sort();
     expect(names).toEqual(['Profile 2', 'Profile 2 (2)']);
   });
 

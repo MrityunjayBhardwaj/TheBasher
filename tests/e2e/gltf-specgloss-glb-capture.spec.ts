@@ -65,7 +65,10 @@ async function ingestSpecGlossGlb(page: import('@playwright/test').Page): Promis
     const bytes = new Uint8Array(
       await fetch('/assets/specgloss-quad.glb').then((r) => r.arrayBuffer()),
     );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'specgloss-quad.glb', bytes }], 'specgloss-glb');
+    await w.__basher_ingestGltfFolder(
+      [{ relativePath: 'specgloss-quad.glb', bytes }],
+      'specgloss-glb',
+    );
   });
 }
 
@@ -95,9 +98,9 @@ test.describe('glTF spec/gloss .glb → metal-rough at ingest (#216)', () => {
     );
     await ingestSpecGlossGlb(page);
 
-    await expect.poll(async () => (await capturedMaterials(page))['SGDiffuse']?.name).toBe(
-      'SGDiffuse',
-    );
+    await expect
+      .poll(async () => (await capturedMaterials(page))['SGDiffuse']?.name)
+      .toBe('SGDiffuse');
     const diffuse = (await capturedMaterials(page))['SGDiffuse'];
     expect(diffuse.base.metalness).toBe(0); // specularFactor 0 → dielectric
     expect(diffuse.specular.roughness).toBeCloseTo(0.6, 5); // 1 - glossiness 0.4
@@ -174,8 +177,6 @@ test.describe('glTF spec/gloss .glb → metal-rough at ingest (#216)', () => {
     // side B — the rendered clone carries BOTH a base map and a metalness map (the
     // baked base-color data-URI loaded; the metal renders with its gold tint).
     await expect.poll(async () => (await meshes(page)).some((m) => m.hasMap)).toBe(true);
-    await expect
-      .poll(async () => (await meshes(page)).some((m) => m.hasMetalnessMap))
-      .toBe(true);
+    await expect.poll(async () => (await meshes(page)).some((m) => m.hasMetalnessMap)).toBe(true);
   });
 });

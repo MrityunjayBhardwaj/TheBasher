@@ -11,15 +11,15 @@
 
 Basher animates the same kind of thing — a node's params over time — through **three different mechanisms** that grew at different times:
 
-| Mechanism | Used by | Shape |
-|---|---|---|
-| **AnimationLayer** (legacy) | native `BoxMesh` / `SphereMesh` / `Transform` / `Character` | a wrapper node that re-parents the target in `scene.children`, clones it, and patches sampled channel values at `paramPath` |
-| **Baked direct channels** | glTF children (transform) | free-floating `KeyframeChannelVec3` with `target = dagId`, enumerated per-asset, overlaid by a pure resolver consumed by renderer **and** read-side |
-| **Direct camera channels** | the active camera | free-floating channels targeting `scene.camera`, overlaid by `resolveActiveCameraPoseAt`, consumed by viewport + still + animation render |
+| Mechanism                   | Used by                                                     | Shape                                                                                                                                               |
+| --------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AnimationLayer** (legacy) | native `BoxMesh` / `SphereMesh` / `Transform` / `Character` | a wrapper node that re-parents the target in `scene.children`, clones it, and patches sampled channel values at `paramPath`                         |
+| **Baked direct channels**   | glTF children (transform)                                   | free-floating `KeyframeChannelVec3` with `target = dagId`, enumerated per-asset, overlaid by a pure resolver consumed by renderer **and** read-side |
+| **Direct camera channels**  | the active camera                                           | free-floating channels targeting `scene.camera`, overlaid by `resolveActiveCameraPoseAt`, consumed by viewport + still + animation render           |
 
 The latter two are the **same evolved pattern** — direct channels + a pure resolver + "one band, two callers" (H40). The first is the lone legacy holdout. **AnimationLayer is the odd one out.**
 
-**Decision:** adopt the glTF/camera direct-channel road as *the* universal mechanism. Generalize the proven pattern (don't invent a new one); **absorb `AnimationLayer`'s patch logic into a free resolver** and retire the wrapper node. Native primitives keep producing their geometry but route their animation/override bands onto the unified road. One converged OpenPBR material editor serves native + glTF.
+**Decision:** adopt the glTF/camera direct-channel road as _the_ universal mechanism. Generalize the proven pattern (don't invent a new one); **absorb `AnimationLayer`'s patch logic into a free resolver** and retire the wrapper node. Native primitives keep producing their geometry but route their animation/override bands onto the unified road. One converged OpenPBR material editor serves native + glTF.
 
 This is multi-session and migration-bearing (V4). It must be sliced — each slice gated (`vitest`/`tsc`/`eslint`/`prettier`/`e2e`) **and** observed (real app / e2e), one atomic commit each.
 
@@ -29,15 +29,15 @@ This is multi-session and migration-bearing (V4). It must be sliced — each sli
 
 ### 1.1 The asymmetry, by band
 
-| Band | Native mesh (`BoxMesh`/`SphereMesh`) | glTF child (`GltfChild`) | Unified today? |
-|---|---|---|---|
-| Material IR | OpenPBR `material` (single object param) | OpenPBR `materials[]` (one per slot) | ✅ V53 — same IR |
-| In `evaluate()` value | ✅ `material` surfaced (`BoxMesh.ts:73`) | ❌ transform only; `materials` **not** surfaced (`GltfChild.ts:93-103`) | ❌ |
-| In `SceneChild` union | ✅ (`types.ts:753-763`) | ❌ deliberately a non-producer (`types.ts:530-533`) | ❌ (by design) |
-| Renderer reads | the evaluated value | `node.params.materials` via S3 overlay (`SceneFromDAG.tsx:1442-1445`) | ❌ |
-| **Transform animation** | AnimationLayer dotted `paramPath` (`position`) | **baked direct channels** → `resolveGltfChildTrs`, two callers (`resolveGltfChildTransform.ts:8-14`) | ❌ different mechanisms |
-| **Material animation** | ✅ AnimationLayer dotted `material.color` (`AnimationLayer.ts:122`, `dispatchMutator.ts:426`) | ❌ none — the #188 gap | ❌ |
-| Inspector | generic `ParamRow` (auto-diamond + autoKey) | custom `GltfMaterialEditor` (no diamonds — H104) | ❌ |
+| Band                    | Native mesh (`BoxMesh`/`SphereMesh`)                                                          | glTF child (`GltfChild`)                                                                             | Unified today?          |
+| ----------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
+| Material IR             | OpenPBR `material` (single object param)                                                      | OpenPBR `materials[]` (one per slot)                                                                 | ✅ V53 — same IR        |
+| In `evaluate()` value   | ✅ `material` surfaced (`BoxMesh.ts:73`)                                                      | ❌ transform only; `materials` **not** surfaced (`GltfChild.ts:93-103`)                              | ❌                      |
+| In `SceneChild` union   | ✅ (`types.ts:753-763`)                                                                       | ❌ deliberately a non-producer (`types.ts:530-533`)                                                  | ❌ (by design)          |
+| Renderer reads          | the evaluated value                                                                           | `node.params.materials` via S3 overlay (`SceneFromDAG.tsx:1442-1445`)                                | ❌                      |
+| **Transform animation** | AnimationLayer dotted `paramPath` (`position`)                                                | **baked direct channels** → `resolveGltfChildTrs`, two callers (`resolveGltfChildTransform.ts:8-14`) | ❌ different mechanisms |
+| **Material animation**  | ✅ AnimationLayer dotted `material.color` (`AnimationLayer.ts:122`, `dispatchMutator.ts:426`) | ❌ none — the #188 gap                                                                               | ❌                      |
+| Inspector               | generic `ParamRow` (auto-diamond + autoKey)                                                   | custom `GltfMaterialEditor` (no diamonds — H104)                                                     | ❌                      |
 
 ### 1.2 The three animation mechanisms (the real root)
 
@@ -61,8 +61,8 @@ Per the project's own fatality test: a single concern (animate a node's params o
 
 Two readings of "absorb the primitive onto glTF" were considered:
 
-- **Literal (REJECTED):** make a `BoxMesh` an actual `GltfChild`-backed object — three owns even the box geometry; one node type for everything. *Cost:* loses parametric geometry (re-`size` ⇒ regenerate an asset), couples primitives to the import pipeline, pays import cost for a cube. Lossy — rejected.
-- **Architectural (CHOSEN):** the glTF child is the *reference design*, not a literal container. The primitive keeps producing its geometry from params, but its **animation + override bands** move onto the glTF/camera road: direct channels + a pure resolver overlaying sampled channels onto the primitive's evaluated base, renderer + read-side both consuming it.
+- **Literal (REJECTED):** make a `BoxMesh` an actual `GltfChild`-backed object — three owns even the box geometry; one node type for everything. _Cost:_ loses parametric geometry (re-`size` ⇒ regenerate an asset), couples primitives to the import pipeline, pays import cost for a cube. Lossy — rejected.
+- **Architectural (CHOSEN):** the glTF child is the _reference design_, not a literal container. The primitive keeps producing its geometry from params, but its **animation + override bands** move onto the glTF/camera road: direct channels + a pure resolver overlaying sampled channels onto the primitive's evaluated base, renderer + read-side both consuming it.
 
 The architectural reading is the same destination as "one animation mechanism," and it names **which** mechanism wins: the proven direct-channel road. We **generalize an existing, H40-clean pattern** rather than invent a replacement for AnimationLayer.
 
@@ -100,19 +100,19 @@ The camera (`resolveActiveCameraPoseAt`) and glTF transform (`resolveGltfChildTr
 
 ### 3.2 What "absorb AnimationLayer" means, precisely
 
-`AnimationLayer.patchTarget` (`AnimationLayer.ts:132-148`) is *already* the universal overlay — clone the base, `writeAt` each channel's sampled value at its `paramPath`, with `blend()` for partial weight. To absorb it:
+`AnimationLayer.patchTarget` (`AnimationLayer.ts:132-148`) is _already_ the universal overlay — clone the base, `writeAt` each channel's sampled value at its `paramPath`, with `blend()` for partial weight. To absorb it:
 
 1. **Lift `patchTarget` into a free resolver** that takes (base value, the channels targeting this node, seconds) — no wrapper node, no `scene.children` re-parenting.
 2. **Find channels by `target` dagId**, the camera/glTF way, instead of by the layer's `animation` input socket.
-3. **Renderer + read-side both call the resolver** (they already both call `sampleTarget`; we change *where the channels come from* and *that there's no wrapper to unwrap*).
+3. **Renderer + read-side both call the resolver** (they already both call `sampleTarget`; we change _where the channels come from_ and _that there's no wrapper to unwrap_).
 4. **Retire the `AnimationLayer` node** once nothing produces or consumes it.
-5. **mute / solo / weight / boneMask** (`AnimationLayer.ts:45-51`) are the only things the wrapper carried that a bare channel does not. Options: (i) move them onto the channel (per-channel mute/weight), (ii) a lightweight optional **ChannelGroup** overlay node that is *not* in `scene.children` (a sidecar, like the camera channels), or (iii) defer solo/boneMask (single-layer use today rarely needs them — `AnimationLayer.ts:88-92` already notes cross-layer solo is unimplemented). **Recommend (i) for mute/weight, defer solo/boneMask** — confirm in Phase 0.
+5. **mute / solo / weight / boneMask** (`AnimationLayer.ts:45-51`) are the only things the wrapper carried that a bare channel does not. Options: (i) move them onto the channel (per-channel mute/weight), (ii) a lightweight optional **ChannelGroup** overlay node that is _not_ in `scene.children` (a sidecar, like the camera channels), or (iii) defer solo/boneMask (single-layer use today rarely needs them — `AnimationLayer.ts:88-92` already notes cross-layer solo is unimplemented). **Recommend (i) for mute/weight, defer solo/boneMask** — confirm in Phase 0.
 
 ### 3.3 Channel attachment for deep param paths (glTF materials)
 
 glTF transform channels scope to an asset via `nodeNameMap[childName] === target` (`bakedGltfChannels.ts:67`). Material channels are `Number`/`Color` (no `childName` today — `KeyframeChannelNumber.ts:37-55`). For materials we target the `GltfChild` dagId directly and use `paramPath = materials.<slot>.<lobe>.<field>`. The enumerator scopes by `target === childDagId` (already unique per child) — **no `childName` needed for the scalar/color channels**; the per-asset grouping is derivable from the child→asset map. Confirm the enumerator generalization in Phase 0.
 
-> **Do NOT add `setAtPath` array-indexing** (V53 enforcement note): the un-animated SOURCE write already sidesteps array paths with a whole-`materials`-array replace (S4/S5). The animation APPLY side (`writeAt`, `AnimationLayer.ts:168-179`) *already indexes array paths* (`materials.0.base.color`), so once the evaluated value surfaces `materials`, the overlay works with no `setAtPath` change. A `setAtPath` array-index extension has no consumer and was rejected (speculative generality touching V42/V43/V8/V20).
+> **Do NOT add `setAtPath` array-indexing** (V53 enforcement note): the un-animated SOURCE write already sidesteps array paths with a whole-`materials`-array replace (S4/S5). The animation APPLY side (`writeAt`, `AnimationLayer.ts:168-179`) _already indexes array paths_ (`materials.0.base.color`), so once the evaluated value surfaces `materials`, the overlay works with no `setAtPath` change. A `setAtPath` array-index extension has no consumer and was rejected (speculative generality touching V42/V43/V8/V20).
 
 ### 3.4 Converged material editor
 
@@ -140,10 +140,11 @@ Every node carries `version` and migrates older projects (V4). Retiring `Animati
 
 ## 5. Invariants — preserved & new
 
-**Preserved:** V20 (one precedence rule — the resolver is the only "where it renders" authority), V32/V34/V53 (one IR, one substrate, producer builds it), V56 (camera resolver — becomes an *instance* of the universal resolver, not a special case), H40 (two callers — every band threaded into renderer AND read-side), H48 (no per-frame time subscription — resolvers sample at the caller's snapshot), H104 (converged custom controls wire their own diamond/autoKey).
+**Preserved:** V20 (one precedence rule — the resolver is the only "where it renders" authority), V32/V34/V53 (one IR, one substrate, producer builds it), V56 (camera resolver — becomes an _instance_ of the universal resolver, not a special case), H40 (two callers — every band threaded into renderer AND read-side), H48 (no per-frame time subscription — resolvers sample at the caller's snapshot), H104 (converged custom controls wire their own diamond/autoKey).
 
 **New (to add on implementation):**
-- **V-unify (proposed):** *Every animatable node is driven by free-floating channels targeting its dagId, overlaid by one pure resolver consumed by both the renderer and the read-side. `AnimationLayer` is retired; there is no wrapper-based animation path.* — the structural invariant this refactor establishes.
+
+- **V-unify (proposed):** _Every animatable node is driven by free-floating channels targeting its dagId, overlaid by one pure resolver consumed by both the renderer and the read-side. `AnimationLayer` is retired; there is no wrapper-based animation path._ — the structural invariant this refactor establishes.
 - **H-absorb (proposed, if a regression surfaces):** the trap of leaving one caller on the old `sampleTarget`/wrapper path while the other moved to the resolver → displayed ≠ rendered (an H40 instance specific to the retirement).
 
 ---
@@ -152,15 +153,15 @@ Every node carries `version` and migrates older projects (V4). Retiring `Animati
 
 **Phase 0 — Surface map & plan lock (no code).** Map every producer/consumer/serializer/test of `AnimationLayer` (the research stopped earlier). Confirm: mute/solo/weight disposition (§3.2), the channel-by-target enumerator generalization (§3.3), the migration host (§4). File GitHub issues per slice. **Checkpoint with user.**
 
-**Phase 1 — Lift the overlay resolver.** Extract `patchTarget` into a free `resolveEvaluated(base, channels, seconds)`; unit-test it against the current `AnimationLayer.sampleTarget` for parity. No behavior change yet (AnimationLayer still calls it internally). *Observe:* existing layer animation renders identically.
+**Phase 1 — Lift the overlay resolver.** Extract `patchTarget` into a free `resolveEvaluated(base, channels, seconds)`; unit-test it against the current `AnimationLayer.sampleTarget` for parity. No behavior change yet (AnimationLayer still calls it internally). _Observe:_ existing layer animation renders identically.
 
 **Phase 2 — Native mesh onto the road.** ✅ ROAD DONE (`ux-overhall`, #197): `nodeChannels` enumerates channels by `target = mesh dagId` (layer-aware coexistence guard); `DirectChannelsR` (render) + `resolveEvaluatedTransform` (read) both overlay direct channels via `overlayChannels`. Verified by the p197 boundary-pair (rendered == resolver for a free-floating channel, no layer). **The authoring switch** (`dispatchFirstKeyComposite` native → direct first-key, mirror `dispatchCameraFirstKey`, no `addLayer`) is **deferred into Phase 5** — flipping it obsoletes the same layer-select machinery (p160/p162, `resolveEditTargetId` unwrap, #162) Phase 5 retires, so those ~10-15 e2e are rewritten once, not twice. Until then native authoring still mints layers (rendered by the untouched layer path).
 
-**Phase 3 — glTF materials (#188).** ✅ SHIPPED (`ux-overhall` `e258cea`→`2f2de8f`, 3 commits). Built on the GENERIC road (fork b, user-chosen), NOT a `resolveGltfChildMaterials` sibling: `GltfChild.evaluate()` surfaces `materials`; `overlayChannels` generalized to a generic `<T>` so it overlays the evaluated `GltfChildValue`; a NEW per-frame `useFrame` in `GltfAssetR` writes the sampled scalars onto the LIVE cloned materials via the extracted no-clone `applyOpenpbrScalars` (mirrors the TRS useFrame; re-clone-per-frame would churn GC). Still + animation render follow for free (live-scene capture + `setTime`/`waitForApply`). **Authoring folded in (user-chosen):** `dispatchCameraFirstKey` generalized to `dispatchDirectFirstKey` + a GltfChild branch; `GltfMaterialEditor` gets `ParamDiamond` + autoKey ([[H104]] 2nd occurrence). *Observed:* `p188-gltf-material-anim-boundary-pair` (metalness ramps 0→0.5→1, base.color tracks via real `__basher_gltf_meshes`) + `p188-gltf-material-authoring` (diamond → free-floating channel, zero AnimationLayer). Known-minor: channel-over-MaterialOverride + material transient preview deferred to Phase 4.
+**Phase 3 — glTF materials (#188).** ✅ SHIPPED (`ux-overhall` `e258cea`→`2f2de8f`, 3 commits). Built on the GENERIC road (fork b, user-chosen), NOT a `resolveGltfChildMaterials` sibling: `GltfChild.evaluate()` surfaces `materials`; `overlayChannels` generalized to a generic `<T>` so it overlays the evaluated `GltfChildValue`; a NEW per-frame `useFrame` in `GltfAssetR` writes the sampled scalars onto the LIVE cloned materials via the extracted no-clone `applyOpenpbrScalars` (mirrors the TRS useFrame; re-clone-per-frame would churn GC). Still + animation render follow for free (live-scene capture + `setTime`/`waitForApply`). **Authoring folded in (user-chosen):** `dispatchCameraFirstKey` generalized to `dispatchDirectFirstKey` + a GltfChild branch; `GltfMaterialEditor` gets `ParamDiamond` + autoKey ([[H104]] 2nd occurrence). _Observed:_ `p188-gltf-material-anim-boundary-pair` (metalness ramps 0→0.5→1, base.color tracks via real `__basher_gltf_meshes`) + `p188-gltf-material-authoring` (diamond → free-floating channel, zero AnimationLayer). Known-minor: channel-over-MaterialOverride + material transient preview deferred to Phase 4.
 
-**Phase 4 — Converged material editor.** One OpenPBR material-row component with `ParamDiamond` + autoKey for native + glTF; glTF keeps slot selector + S5 Maps rows. *Observe:* click the roughness diamond on a Box AND on a glTF child — both create a free-floating channel; the dopesheet shows both rows.
+**Phase 4 — Converged material editor.** One OpenPBR material-row component with `ParamDiamond` + autoKey for native + glTF; glTF keeps slot selector + S5 Maps rows. _Observe:_ click the roughness diamond on a Box AND on a glTF child — both create a free-floating channel; the dopesheet shows both rows.
 
-**Phase 5 — Retire AnimationLayer + the authoring switch + migrate.** Flip `dispatchFirstKeyComposite`'s native branch to a direct first-key (mirror `dispatchCameraFirstKey`, generalized to all valueTypes incl. color), so new native authoring creates direct channels. Remove the wrapper from producers (`dispatchMutator`/`resolveEditTarget`/`autoKeyCommit`) + the now-vestigial layer-select machinery (p160/p162, the `#162` unwrap), add the load-time migration + shim, delete the node. *Observe:* open an old `.basher` with a layer → animates identically; new edits create no layer (a free-floating channel). NB: the ~10-15 layer-authoring e2e are rewritten HERE (the reason the authoring switch was folded in from Phase 2).
+**Phase 5 — Retire AnimationLayer + the authoring switch + migrate.** Flip `dispatchFirstKeyComposite`'s native branch to a direct first-key (mirror `dispatchCameraFirstKey`, generalized to all valueTypes incl. color), so new native authoring creates direct channels. Remove the wrapper from producers (`dispatchMutator`/`resolveEditTarget`/`autoKeyCommit`) + the now-vestigial layer-select machinery (p160/p162, the `#162` unwrap), add the load-time migration + shim, delete the node. _Observe:_ open an old `.basher` with a layer → animates identically; new edits create no layer (a free-floating channel). NB: the ~10-15 layer-authoring e2e are rewritten HERE (the reason the authoring switch was folded in from Phase 2).
 
 **Phase 6 — Catalogue + memory.** Promote V-unify, re-derive dharana boundaries (B14, B-material, the retired AnimationLayer/B8 surface), update session memory.
 
@@ -170,14 +171,14 @@ Every node carries `version` and migrates older projects (V4). Retiring `Animati
 
 ## 7. Risks & mitigations
 
-| Risk | Mitigation |
-|---|---|
-| Retiring AnimationLayer breaks an old saved project | Load-time migration + read-shim one release; `migrations.test.ts` byte-identical fixture (§4) |
-| One caller left on the wrapper path → displayed ≠ rendered (H40) | Phase-1 parity unit test; per-phase side-A/side-B e2e equality (the V53/V56 pattern) |
-| mute/solo/weight semantics lost in the move | Phase 0 decides disposition before any retirement; defer solo/boneMask explicitly, don't drop silently (log it) |
+| Risk                                                                | Mitigation                                                                                                                     |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Retiring AnimationLayer breaks an old saved project                 | Load-time migration + read-shim one release; `migrations.test.ts` byte-identical fixture (§4)                                  |
+| One caller left on the wrapper path → displayed ≠ rendered (H40)    | Phase-1 parity unit test; per-phase side-A/side-B e2e equality (the V53/V56 pattern)                                           |
+| mute/solo/weight semantics lost in the move                         | Phase 0 decides disposition before any retirement; defer solo/boneMask explicitly, don't drop silently (log it)                |
 | Per-frame regression (re-enumerating channels by target each frame) | Build sampler closures once per DAG change, sample per-frame at the snapshot (the `bakedChannelSamplersForAsset` pattern, H48) |
-| Big-bang temptation | Strict slicing; AnimationLayer coexists until Phase 5; each phase gated + observed + atomic |
-| `setAtPath` array-index rabbit hole | Explicitly out of scope (§3.3) — `writeAt` already indexes arrays; no consumer for the extension |
+| Big-bang temptation                                                 | Strict slicing; AnimationLayer coexists until Phase 5; each phase gated + observed + atomic                                    |
+| `setAtPath` array-index rabbit hole                                 | Explicitly out of scope (§3.3) — `writeAt` already indexes arrays; no consumer for the extension                               |
 
 ---
 
@@ -213,12 +214,14 @@ Every node carries `version` and migrates older projects (V4). Retiring `Animati
 Mapped on `ux-overhall` tip `94579ed`. The full `AnimationLayer` surface (37 non-test refs):
 
 **Producers (create / wrap a target):**
+
 - `src/agent/mutators/builders/addLayer.ts` — the ONLY layer creator. Per target: `addNode AnimationLayer`; for every consumer of target, `disconnect(target→C)` + `connect(layer→C)`; `connect(target→layer.target)` (`addLayer.ts:88-123`). **The migration reverses exactly this.**
 - `src/agent/mutators/builders/addChannel.ts` — wires a channel into a layer's `animation` socket (`requiredNodeTypes:['AnimationLayer']`).
 - `src/app/animate/dispatchMutator.ts` — autoKey first-key composite (`:562` iterates layers); camera branch (`:484,:543`) already bypasses the layer.
 - `src/app/animate/autoKeyCommit.ts` (`:69,:197`), `src/app/animate/resolveEditTarget.ts` (`:24` — edits retarget to the wrapped node).
 
 **Consumers (read):**
+
 - `src/viewport/SceneFromDAG.tsx` — `AnimationLayerR` (`:695`), render case (`:570-575`), single-hop target-id resolve (`:579`), transient keying (`:207-264`), never-select-wrapper unwrap (`:626`).
 - `src/app/resolveEvaluatedTransform.ts` — unwraps the patched clone (`:133,:238-264`); + `resolveEvaluatedMesh.ts`, `resolveEvaluatedParam.ts`, `resolveTransformParam.ts`.
 - `src/app/Gizmo.tsx` (`:28,:132-197`), `src/timeline/TimelineCanvas.tsx` `collectChannelRows` (`:188,:216` — flattens layers + orphan channels), `src/app/timeline/LayerRowControls.tsx` (mute/solo row toggles), `src/app/NPanel.tsx` (`:449` mute/solo).

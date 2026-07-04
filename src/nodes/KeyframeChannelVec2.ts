@@ -13,7 +13,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelVec2Value, Vec2 } from './types';
-import { sampleVec2Keyframes } from './keyframeInterp';
+import { sampleVec2KeyframesExtended } from './keyframeInterp';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -31,6 +31,10 @@ export const KeyframeChannelVec2Params = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
+  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
+   *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
+  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
   keyframes: z
     .array(
       z.object({
@@ -53,7 +57,9 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  return (seconds: number) => sampleVec2Keyframes(sorted, seconds);
+  const { extendBefore, extendAfter } = params;
+  return (seconds: number) =>
+    sampleVec2KeyframesExtended(sorted, seconds, extendBefore, extendAfter);
 }
 
 export const KeyframeChannelVec2Node: NodeDefinition<

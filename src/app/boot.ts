@@ -85,6 +85,9 @@ let comfyUIPromise: Promise<ComfyUICapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
+// #255 — idle-debounce before an autosave fires (ms after the last DAG edit).
+const AUTOSAVE_IDLE_MS = 10_000;
+
 function persistLastProjectId(id: string): void {
   if (typeof localStorage === 'undefined') return;
   try {
@@ -201,12 +204,31 @@ export function boot(): Promise<void> {
     // subscription stays quiet until the user opens a project via
     // switchProject/createNewProject — both of which reset dirty AFTER their
     // hydrate (see those funcs), absorbing the one false-positive.
+    // #255 — idle-debounced AUTOSAVE. Manual save alone loses a crash's worth of
+    // work; the beforeunload guard catches close/reload but not a crash/kill. A
+    // trailing debounce (save AUTOSAVE_IDLE_MS after the last edit settles) gives
+    // crash-safety without saving mid-drag. Best-effort: saveCurrent() no-ops with
+    // no current project, and a failed write is logged (the beforeunload guard +
+    // the explicit Cmd+S error path remain). 10s is long enough not to race the
+    // fast dirty-dot indicator specs.
+    let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleAutosave = (): void => {
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => {
+        autosaveTimer = null;
+        if (useProjectStore.getState().dirty) {
+          void saveCurrent().catch((e) => console.warn('boot: autosave failed', e));
+        }
+      }, AUTOSAVE_IDLE_MS);
+    };
+
     const installDirtyTracking = (): void => {
       let prevDagState = useDagStore.getState().state;
       useDagStore.subscribe((s) => {
         if (s.state === prevDagState) return;
         prevDagState = s.state;
         useProjectStore.getState().markDirty();
+        scheduleAutosave();
       });
     };
 
@@ -263,6 +285,18 @@ export function boot(): Promise<void> {
     // block below on EVERY route, so the __basher_* test seams are always
     // installed (a first-run-home early return would have stranded them).
     installDirtyTracking();
+
+    // #255 — warn before leaving with UNSAVED changes. Saving is manual
+    // (Cmd+S / menu / project-switch), so a tab close / reload / navigation with
+    // a dirty DAG silently loses work since the last save. The native
+    // beforeunload prompt is the only cross-browser guard; it fires ONLY when
+    // `dirty` (an always-on handler would nag even with nothing to lose). Pure
+    // decision extracted to `beforeUnloadIfDirty` so it is unit-testable.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', (e) => {
+        beforeUnloadIfDirty(e, useProjectStore.getState().dirty);
+      });
+    }
 
     // Test affordance — expose the stores in dev only. Production builds
     // strip this branch (Vite tree-shakes `if (false)`). E2E tests use
@@ -726,6 +760,23 @@ export function __resetBootForTests(): void {
 export function __setComfyCapabilityForTests(cap: ComfyUICapability | null): void {
   cachedComfyUI = cap;
   comfyUIPromise = cap ? Promise.resolve(cap) : null;
+}
+
+/**
+ * The pure decision behind the `beforeunload` guard (#255): when the project has
+ * unsaved changes, cancel the unload (set `returnValue` — Chrome requires it) so
+ * the browser shows its native "leave site?" prompt. Returns whether it blocked,
+ * for the unit test. A no-op when clean, so the user is never nagged with nothing
+ * to lose.
+ */
+export function beforeUnloadIfDirty(
+  e: { preventDefault: () => void; returnValue: unknown },
+  dirty: boolean,
+): boolean {
+  if (!dirty) return false;
+  e.preventDefault();
+  e.returnValue = '';
+  return true;
 }
 
 export async function saveCurrent(): Promise<void> {

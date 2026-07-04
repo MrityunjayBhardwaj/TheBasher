@@ -72,7 +72,9 @@ async function ingestMetal(page: import('@playwright/test').Page): Promise<void>
 function boxChildId(page: import('@playwright/test').Page) {
   return page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find((n) => n.type === 'GltfChild');
+    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
+      (n) => n.type === 'GltfChild',
+    );
     return c?.id ?? null;
   });
 }
@@ -87,7 +89,9 @@ const boxSlot = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [])[0];
-    return m ? { color: m.color, metalness: m.metalness, hasMetalnessMap: m.hasMetalnessMap } : null;
+    return m
+      ? { color: m.color, metalness: m.metalness, hasMetalnessMap: m.hasMetalnessMap }
+      : null;
   });
 
 async function ready(page: import('@playwright/test').Page) {
@@ -120,18 +124,33 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
       const dag = w.__basher_dag.getState();
       const nodes = dag.state.nodes;
       const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-      const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform');
-      if (!gltfId || !transformId) throw new Error('expected GltfAsset + Transform from import');
+      // V67: import root is a transformable Group (was a Transform); the asset
+      // wires into Group.children (a list socket, was Transform.target/single).
+      const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
+      if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
       dag.dispatchAtomic(
         [
           {
             type: 'disconnect',
             from: { node: gltfId, socket: 'out' },
-            to: { node: transformId, socket: 'target' },
+            to: { node: groupId, socket: 'children' },
           },
-          { type: 'addNode', nodeId: 'p198_mo', nodeType: 'MaterialOverride', params: { color: '#ff0000' } },
-          { type: 'connect', from: { node: gltfId, socket: 'out' }, to: { node: 'p198_mo', socket: 'target' } },
-          { type: 'connect', from: { node: 'p198_mo', socket: 'out' }, to: { node: transformId, socket: 'target' } },
+          {
+            type: 'addNode',
+            nodeId: 'p198_mo',
+            nodeType: 'MaterialOverride',
+            params: { color: '#ff0000' },
+          },
+          {
+            type: 'connect',
+            from: { node: gltfId, socket: 'out' },
+            to: { node: 'p198_mo', socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'p198_mo', socket: 'out' },
+            to: { node: groupId, socket: 'children' },
+          },
         ],
         'user',
         'p198 apply material override',

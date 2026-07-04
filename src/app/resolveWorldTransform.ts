@@ -157,8 +157,13 @@ function localMatrix(value: SceneChild): THREE.Matrix4 {
  *  VALUE to its producing DAG node id via the consumer's input sockets. This is
  *  the parallel-walk seam: the value carries the evaluated TRS, the DAG node
  *  carries the ids. Kinds with no addressable child nodes (leaf meshes, Scatter,
- *  Character, GltfAsset) return []. */
-function childEdges(
+ *  Character, GltfAsset) return [].
+ *
+ *  EXPORTED (#266, B1) — the renderer reuses this SAME value→id map to resolve a
+ *  nested child's node id at any depth, so an edge-less overlay (constraint /
+ *  channel, [[V88]] N6) mounts by FLAT-ID LOOKUP instead of a render-tree walk.
+ *  Do NOT author a second walk (Chesterton — the resolver already trusts this). */
+export function childEdges(
   state: DagState,
   nodeId: string,
   value: SceneChild,

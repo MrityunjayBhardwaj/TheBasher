@@ -48,6 +48,14 @@ export interface ChannelRow {
   keyframes: ReadonlyArray<{ time: number }>;
   /** True for projected imported-clip rows — no drag/edit handlers (B2). */
   readOnly?: boolean;
+  /**
+   * True when the channel's `mute` param is set (#263 — the per-channel mute
+   * restored after the AnimationLayer retirement, V57/#199). A muted channel
+   * contributes nothing to the resolver (`overlayChannels.ts` filters it), so
+   * the dopesheet paints its row dimmed. Optional so clip rows and existing
+   * fixtures (which omit it) stay structurally identical.
+   */
+  mute?: boolean;
 }
 
 /** The three TRS components a TransformClip carries, in dopesheet row order. */

@@ -13,7 +13,9 @@ interface W {
       dispatchAtomic: (ops: unknown[], source?: string, label?: string) => void;
     };
   };
-  __basher_selection: { getState: () => { select: (id: string) => void; primaryNodeId: string | null } };
+  __basher_selection: {
+    getState: () => { select: (id: string) => void; primaryNodeId: string | null };
+  };
 }
 
 const primary = (page: import('@playwright/test').Page) =>
@@ -21,7 +23,9 @@ const primary = (page: import('@playwright/test').Page) =>
 
 test('arrow keys navigate the tree; right/left expand/collapse', async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), { timeout: 15000 });
+  await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), {
+    timeout: 15000,
+  });
 
   // Scene → Group(n_box). Default project also has n_camera, n_light as siblings.
   await page.evaluate(() => {
@@ -35,9 +39,21 @@ test('arrow keys navigate the tree; right/left expand/collapse', async ({ page }
           nodeType: 'Group',
           params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
         },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'disconnect', from: { node: 'n_box', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_box', socket: 'out' }, to: { node: 'n_grp', socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_grp', socket: 'children' },
+        },
       ],
       'user',
       'group the box',

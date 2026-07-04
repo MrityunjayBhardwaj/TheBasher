@@ -70,7 +70,12 @@ describe('nodeConstraints — enumeration', () => {
     expect(trackToForTarget(state.nodes, BOX_ID)?.aimPoint).toEqual([1, 0, 0]);
     expect(trackToForTarget(state.nodes, 'n_camera')).toBeNull();
     // Mute → inert.
-    state = applyOp(state, { type: 'setParam', nodeId: TT_ID, paramPath: 'mute', value: true }).next;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: TT_ID,
+      paramPath: 'mute',
+      value: true,
+    }).next;
     expect(trackToForTarget(state.nodes, BOX_ID)).toBeNull();
   });
 
@@ -106,7 +111,12 @@ describe('resolveConstraintRotation — point target', () => {
 
   it('returns null when muted', () => {
     let state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
-    state = applyOp(state, { type: 'setParam', nodeId: TT_ID, paramPath: 'mute', value: true }).next;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: TT_ID,
+      paramPath: 'mute',
+      value: true,
+    }).next;
     expect(resolveConstraintRotation(state, BOX_ID, ctxAt(0))).toBeNull();
   });
 });
@@ -116,7 +126,12 @@ describe('resolveConstraintRotation — node-ref target', () => {
    *  at it. Optionally animate the target's position so the aim must follow. */
   function buildNodeRefTrackTo(opts: { animateTarget?: boolean }): DagState {
     let state = buildDefaultDagState();
-    state = applyOp(state, { type: 'setParam', nodeId: BOX_ID, paramPath: 'position', value: [0, 0, 0] }).next;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: BOX_ID,
+      paramPath: 'position',
+      value: [0, 0, 0],
+    }).next;
     const ops: Op[] = [
       {
         type: 'addNode',
@@ -124,12 +139,23 @@ describe('resolveConstraintRotation — node-ref target', () => {
         nodeType: 'BoxMesh',
         params: { position: [10, 0, 0], size: [1, 1, 1] },
       },
-      { type: 'connect', from: { node: TARGET_ID, socket: 'out' }, to: { node: 'n_scene', socket: 'children' } },
+      {
+        type: 'connect',
+        from: { node: TARGET_ID, socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
       {
         type: 'addNode',
         nodeId: TT_ID,
         nodeType: 'TrackTo',
-        params: { name: 'tt', target: BOX_ID, aimNode: TARGET_ID, aimPoint: [0, 0, 0], up: [0, 1, 0], mute: false },
+        params: {
+          name: 'tt',
+          target: BOX_ID,
+          aimNode: TARGET_ID,
+          aimPoint: [0, 0, 0],
+          up: [0, 1, 0],
+          mute: false,
+        },
       },
     ];
     for (const op of ops) state = applyOp(state, op).next;
@@ -175,7 +201,14 @@ describe('resolveConstraintRotation — node-ref target', () => {
       type: 'addNode',
       nodeId: 'n_tt_rev',
       nodeType: 'TrackTo',
-      params: { name: 'ttrev', target: TARGET_ID, aimNode: BOX_ID, aimPoint: [0, 0, 0], up: [0, 1, 0], mute: false },
+      params: {
+        name: 'ttrev',
+        target: TARGET_ID,
+        aimNode: BOX_ID,
+        aimPoint: [0, 0, 0],
+        up: [0, 1, 0],
+        mute: false,
+      },
     }).next;
     // Both terminate (resolveWorldTransform is constraint-free → no re-entry).
     const a = resolveConstraintRotation(state, BOX_ID, ctxAt(0))!;

@@ -22,10 +22,7 @@ export interface GltfEntryOption {
 
 /** The user's pick from the chooser: ONE entry (by relativePath), ALL entries
  *  (each imported as its own model, #219), or null (dismissed → abort). */
-export type GltfEntryChoice =
-  | { type: 'one'; relativePath: string }
-  | { type: 'all' }
-  | null;
+export type GltfEntryChoice = { type: 'one'; relativePath: string } | { type: 'all' } | null;
 
 interface ChooserRequest {
   options: GltfEntryOption[];

@@ -20,6 +20,8 @@ import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cameraLens';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import { CameraLookAtTarget } from './CameraLookAtTarget';
+import { resolveCameraPoseAt } from './activeCamera';
 import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
@@ -61,6 +63,28 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
     return { fov: at('fov'), near: at('near'), far: at('far') };
   }, [dagState, nodeId, frame, seconds, normalized]);
 
+  // #247 — when focus-on-target is on, the focus distance is DERIVED from the
+  // evaluated pose (|position − lookAt|, channels + Track-To) — the same value the
+  // renderer feeds cameraDof — so the field shows the live tracked distance,
+  // read-only. Hoisted above the early return (rules-of-hooks); reads focusOnTarget
+  // from state so it needs no post-return destructure.
+  const targetFocusDistance = useMemo(() => {
+    const p = dagState.nodes[nodeId]?.params as { focusOnTarget?: unknown } | undefined;
+    if (p?.focusOnTarget !== true) return null;
+    try {
+      const pose = resolveCameraPoseAt(dagState, nodeId, seconds);
+      return round(
+        Math.hypot(
+          pose.lookAt[0] - pose.position[0],
+          pose.lookAt[1] - pose.position[1],
+          pose.lookAt[2] - pose.position[2],
+        ),
+      );
+    } catch {
+      return null;
+    }
+  }, [dagState, nodeId, seconds]);
+
   if (!node) return null;
   const params = (node.params ?? {}) as {
     fov?: number;
@@ -71,12 +95,16 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
     dofEnabled?: boolean;
     focusDistance?: number;
     fStop?: number;
+    focusOnTarget?: boolean;
   };
   const isOrtho = node.type === 'OrthographicCamera';
 
   const dofEnabled = params.dofEnabled ?? false;
-  const focusDistance = params.focusDistance ?? 5;
+  const focusOnTarget = params.focusOnTarget ?? false;
   const fStop = params.fStop ?? 2.8;
+  const focusDistance = focusOnTarget
+    ? (targetFocusDistance ?? params.focusDistance ?? 5)
+    : (params.focusDistance ?? 5);
 
   // Effective (evaluated) value the renderer shows, falling back to the authored
   // param when no channel/transient drives it (resolved === null). `readOnly` while
@@ -143,6 +171,8 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
 
   return (
     <div className="flex flex-col" data-testid={`inspector-camera-${nodeId}`}>
+      {/* #247 — bind the lookAt to a scene object (Track-To); the reticle follows it. */}
+      <CameraLookAtTarget nodeId={nodeId} />
       {isOrtho ? (
         <label className={ROW}>
           <span className={LABEL}>zoom</span>
@@ -225,6 +255,20 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
           </label>
           {dofEnabled ? (
             <>
+              {/* #247 — lock focus to the lookAt (reticle / bound target). The
+                  focus distance below then shows the tracked distance, read-only. */}
+              <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+                <span className={LABEL}>focus on target</span>
+                <input
+                  type="checkbox"
+                  checked={focusOnTarget}
+                  data-testid={`inspector-camera-focus-on-target-${nodeId}`}
+                  onChange={(e) =>
+                    setParam('focusOnTarget', e.target.checked, 'toggle focus on target')
+                  }
+                  className="h-3.5 w-3.5 accent-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                />
+              </label>
               <label className={ROW}>
                 <span className={LABEL}>focus distance</span>
                 <input
@@ -232,8 +276,11 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
                   step={0.1}
                   min={0}
                   value={focusDistance}
+                  readOnly={focusOnTarget}
+                  data-readonly-tracking={focusOnTarget || undefined}
                   data-testid={`inspector-camera-focus-${nodeId}`}
                   onChange={(e) => {
+                    if (focusOnTarget) return;
                     const n = Number(e.target.value);
                     if (Number.isFinite(n) && n > 0)
                       setParam('focusDistance', n, 'set focus distance');

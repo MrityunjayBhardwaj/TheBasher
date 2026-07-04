@@ -6,9 +6,34 @@ import {
   isDefaultCollapsed,
   isSectionId,
   MULTI_SELECT_SECTIONS,
+  paramToSection,
   SECTION_IDS,
   type SectionId,
 } from './inspectorSections';
+
+describe('paramToSection — camera params route to the Camera section', () => {
+  const cam: readonly SectionId[] = ['transform', 'camera'];
+  it('routes every DoF/lens param the CameraLensControls block authors', () => {
+    for (const p of [
+      'fov',
+      'sensorSize',
+      'near',
+      'far',
+      'zoom',
+      'dofEnabled',
+      'focusDistance',
+      'fStop',
+      'focusOnTarget',
+    ]) {
+      expect(paramToSection(p, cam)).toBe('camera');
+    }
+  });
+  it('#257 — focusOnTarget must NOT fall through to the unrouted bucket (duplicate toggle)', () => {
+    // A camera-less node does not claim it (no spurious routing), but a camera does.
+    expect(paramToSection('focusOnTarget', ['transform'])).not.toBe('camera');
+    expect(paramToSection('focusOnTarget', cam)).toBe('camera');
+  });
+});
 
 describe('SECTION_IDS', () => {
   it('contains the documented v0.5 sections from §5.8 plus environment (UX #9) + camera (UX #12)', () => {

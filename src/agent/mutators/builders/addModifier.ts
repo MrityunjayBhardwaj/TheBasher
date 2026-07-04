@@ -113,9 +113,17 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const used = new Set<NodeId>(Object.keys(state.nodes));
     const modifierId = spec.modifierId ?? defaultModifierId(spec.target, spec.modifierType, used);
-    const res = buildAddModifierOps(state, spec.target, spec.modifierType, specParams(spec), modifierId);
+    const res = buildAddModifierOps(
+      state,
+      spec.target,
+      spec.modifierType,
+      specParams(spec),
+      modifierId,
+    );
     if (!res) {
-      throw new Error(`addModifier.build: target "${spec.target}" not in DAG (preconditions should have caught).`);
+      throw new Error(
+        `addModifier.build: target "${spec.target}" not in DAG (preconditions should have caught).`,
+      );
     }
     return res.ops;
   },

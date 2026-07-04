@@ -76,7 +76,9 @@ test.beforeEach(async ({ page }) => {
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as ModWindow;
-    return Boolean(w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene);
+    return Boolean(
+      w.__basher_dag && w.__basher_three && w.__basher_dag.getState().state.outputs.scene,
+    );
   });
 });
 
@@ -90,12 +92,30 @@ test('#209 — Box → MirrorModifier → Scene renders the MERGED mirror; rende
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [4, 0, 0] },
+          },
           // offset 2 → the reflected half lands across x=2, separated from the source
           // (a geometry-centered primitive mirrored at the origin would just overlap).
-          { type: 'addNode', nodeId: mir, nodeType: 'MirrorModifier', params: { axis: 'x', offset: 2, muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: mir, socket: 'target' } },
-          { type: 'connect', from: { node: mir, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: mir,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', offset: 2, muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: mir, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: mir, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → mirror → scene',
@@ -150,10 +170,28 @@ test('#209 — muting the Mirror collapses the output back to the source box (fa
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
-          { type: 'addNode', nodeId: mir, nodeType: 'MirrorModifier', params: { axis: 'x', muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: mir, socket: 'target' } },
-          { type: 'connect', from: { node: mir, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [4, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: mir,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: mir, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: mir, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → mirror → scene',
@@ -171,11 +209,13 @@ test('#209 — muting the Mirror collapses the output back to the source box (fa
   // Mute it → the source box passes through → 24 verts.
   await page.evaluate((mir) => {
     const w = window as unknown as ModWindow;
-    w.__basher_dag.getState().dispatchAtomic(
-      [{ type: 'setParam', nodeId: mir, paramPath: 'muted', value: true }],
-      'e2e',
-      'mute',
-    );
+    w.__basher_dag
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: mir, paramPath: 'muted', value: true }],
+        'e2e',
+        'mute',
+      );
   }, MMIR);
 
   await page.waitForFunction(
@@ -198,12 +238,39 @@ test('#209 — a MIXED chain Box → Array(3) → Mirror composes (72 → 144 �
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          { type: 'addNode', nodeId: box, nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [4, 0, 0] } },
-          { type: 'addNode', nodeId: arr, nodeType: 'ArrayModifier', params: { count: 3, offset: [2, 0, 0], muted: false } },
-          { type: 'addNode', nodeId: mir, nodeType: 'MirrorModifier', params: { axis: 'y', muted: false } },
-          { type: 'connect', from: { node: box, socket: 'out' }, to: { node: arr, socket: 'target' } },
-          { type: 'connect', from: { node: arr, socket: 'out' }, to: { node: mir, socket: 'target' } },
-          { type: 'connect', from: { node: mir, socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+          {
+            type: 'addNode',
+            nodeId: box,
+            nodeType: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [4, 0, 0] },
+          },
+          {
+            type: 'addNode',
+            nodeId: arr,
+            nodeType: 'ArrayModifier',
+            params: { count: 3, offset: [2, 0, 0], muted: false },
+          },
+          {
+            type: 'addNode',
+            nodeId: mir,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'y', muted: false },
+          },
+          {
+            type: 'connect',
+            from: { node: box, socket: 'out' },
+            to: { node: arr, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: arr, socket: 'out' },
+            to: { node: mir, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: mir, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
         ],
         'e2e',
         'box → array → mirror → scene',

@@ -37,10 +37,16 @@ export function originToGeometry(
   const oldPivot = new THREE.Vector3(...params.pivot);
   const [rx, ry, rz] = degVec3ToRad(params.rotation);
   const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'XYZ'));
-  const rs = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, 0), quat, new THREE.Vector3(...params.scale));
+  const rs = new THREE.Matrix4().compose(
+    new THREE.Vector3(0, 0, 0),
+    quat,
+    new THREE.Vector3(...params.scale),
+  );
   // localDelta = (R·S)⁻¹ · (worldCentre − oldPosition). rs has zero translation,
   // so applyMatrix4 is the pure linear map.
-  const localDelta = new THREE.Vector3(...worldCentre).sub(oldPos).applyMatrix4(rs.clone().invert());
+  const localDelta = new THREE.Vector3(...worldCentre)
+    .sub(oldPos)
+    .applyMatrix4(rs.clone().invert());
   const newPivot = oldPivot.clone().add(localDelta);
   return {
     position: [worldCentre[0], worldCentre[1], worldCentre[2]],

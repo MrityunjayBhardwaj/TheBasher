@@ -708,7 +708,9 @@ describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
   });
 
   it('does NOT blanket-flag KHR_texture_transform (now captured into the shared uvTransform)', () => {
-    expect(detectUnsupportedGltfFeatures({ extensionsUsed: ['KHR_texture_transform'] })).toEqual([]);
+    expect(detectUnsupportedGltfFeatures({ extensionsUsed: ['KHR_texture_transform'] })).toEqual(
+      [],
+    );
   });
 
   it('flags only the PER-MAP texture-transform case (maps with differing transforms)', () => {
@@ -718,7 +720,10 @@ describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
         materials: [
           {
             pbrMetallicRoughness: {
-              baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+              baseColorTexture: {
+                index: 0,
+                extensions: { KHR_texture_transform: { scale: [2, 2] } },
+              },
             },
             normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [4, 4] } } },
           },

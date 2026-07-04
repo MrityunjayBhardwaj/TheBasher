@@ -245,7 +245,10 @@ describe('rotate mutator', () => {
 });
 
 describe('addModifier mutator (geometry OperatorStack — #209)', () => {
-  function applyOps(state: DagState, ops: ReturnType<typeof validatePlan> extends { ops: infer O } ? O : never): DagState {
+  function applyOps(
+    state: DagState,
+    ops: ReturnType<typeof validatePlan> extends { ops: infer O } ? O : never,
+  ): DagState {
     return (ops as { type: string }[]).reduce((s, op) => applyOp(s, op as never).next, state);
   }
 

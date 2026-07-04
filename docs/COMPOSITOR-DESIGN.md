@@ -248,8 +248,8 @@ peers — one timeline, not three.
 
 A layer is produced by a **pipeline**: a `source` (polymorphic on the Image socket —
 MediaClip / ComfyUIWorkflow / scene-render / nested comp) feeding through an `effect`
-chain ([[V58]] Image→Image operators). The **Controls panel** exposes the *complete
-input surface of that pipeline* for the selected layer. It is the After Effects
+chain ([[V58]] Image→Image operators). The **Controls panel** exposes the _complete
+input surface of that pipeline_ for the selected layer. It is the After Effects
 **Effect Controls** panel, generalized one step: because a Basher `source` can itself
 be a parameterized **generative process** (ComfyUI, a 3D render) — not the dumb footage
 AE assumes — the source's inputs belong in the same panel as the effects' inputs.
@@ -280,7 +280,7 @@ Shape (mirrors AE; the reference system → pre-validated boundary):
   taught `text`). `paramPath` for a comfy param = `comfy:<nodeId>.<inputName>`.
 
 **Two surfaces, one source of truth (the AE contract):** the Controls panel is the
-*full* input surface; the timeline twirl-down shows the *animated subset* as rows with
+_full_ input surface; the timeline twirl-down shows the _animated subset_ as rows with
 keyframes for timing. Both read the SAME [[V57]] channels, so they cannot drift. An
 animated comfy/effect param appears in BOTH (panel = author values/keys; timeline =
 retime), exactly as AE shows an effect in Effect Controls AND the timeline.

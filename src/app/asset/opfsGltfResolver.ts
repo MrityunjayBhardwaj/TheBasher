@@ -230,10 +230,7 @@ export function missingGltfSiblings(
  * the user must do — import the whole FOLDER. So: lead with the fix, show the
  * count, and give at most two example names.
  */
-export function formatMissingSiblingsError(
-  entryName: string,
-  missing: readonly string[],
-): string {
+export function formatMissingSiblingsError(entryName: string, missing: readonly string[]): string {
   const n = missing.length;
   const sample = missing.slice(0, 2).map((m) => m.split('/').pop() ?? m);
   const eg = n <= 2 ? sample.join(', ') : `${sample.join(', ')}, +${n - 2} more`;

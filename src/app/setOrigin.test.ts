@@ -2,13 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { originToGeometry } from './setOrigin';
 
 type Vec3 = [number, number, number];
-const ID = { position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3, scale: [1, 1, 1] as Vec3, pivot: [0, 0, 0] as Vec3 };
+const ID = {
+  position: [0, 0, 0] as Vec3,
+  rotation: [0, 0, 0] as Vec3,
+  scale: [1, 1, 1] as Vec3,
+  pivot: [0, 0, 0] as Vec3,
+};
 
 // Geometry-fixity check: content_world = position + R·S·(c − pivot). With
 // identity R/S this is position + c − pivot. The point that mattered (the
 // content) must render at the same world spot before and after.
 function contentWorld(p: { position: Vec3; pivot: Vec3 }, c: Vec3): Vec3 {
-  return [c[0] - p.pivot[0] + p.position[0], c[1] - p.pivot[1] + p.position[1], c[2] - p.pivot[2] + p.position[2]];
+  return [
+    c[0] - p.pivot[0] + p.position[0],
+    c[1] - p.pivot[1] + p.position[1],
+    c[2] - p.pivot[2] + p.position[2],
+  ];
 }
 
 describe('originToGeometry (#228 Set Origin to Geometry)', () => {

@@ -38,6 +38,16 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   const base = resolveStackBase(state, nodeId);
   const stack = enumerateModifierStack(state, base);
 
+  // #256 (V38) — a geometry modifier only rewrites a PRIMITIVE leaf mesh
+  // (`sourceGeometryRef` handles box/sphere/baked); on a glTF / Group / other
+  // source it passes THROUGH unchanged (async geometry is a documented v1
+  // follow-up). Silently doing nothing reads as "the modifier is broken" on an
+  // imported asset. Surface the limitation so the no-op is EXPECTED, not a bug.
+  const SUPPORTED_BASE_TYPES = new Set(['BoxMesh', 'SphereMesh', 'BakedMesh']);
+  const baseType = state.nodes[base]?.type;
+  const unsupportedSource =
+    stack.length > 0 && baseType != null && !SUPPORTED_BASE_TYPES.has(baseType);
+
   function onAdd(type: string) {
     const res = buildAddModifierOps(useDagStore.getState().state, base, type);
     if (res) useDagStore.getState().dispatchAtomic(res.ops, 'user', 'add modifier');
@@ -63,6 +73,15 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
 
   return (
     <div data-testid="modifier-stack" className="flex flex-col gap-1 text-xs">
+      {unsupportedSource ? (
+        <p
+          data-testid="modifier-unsupported-source"
+          className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
+        >
+          ⚠ Modifiers only reshape primitive meshes (Box, Sphere). This{' '}
+          {baseType === 'GltfAsset' ? 'imported' : baseType} source passes through unchanged.
+        </p>
+      ) : null}
       {stack.length === 0 ? (
         <p className="px-1 py-0.5 text-fg/60">No modifiers.</p>
       ) : (

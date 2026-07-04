@@ -47,7 +47,8 @@
 // REF: THESIS.md §11, §15, §40; vyapti V1, V8; krama K7.
 
 import { TransformControls } from '@react-three/drei';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useThree, useFrame, type ThreeEvent } from '@react-three/fiber';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
@@ -67,6 +68,7 @@ import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldT
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveActiveCameraPoseAt } from './activeCamera';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
+import { constraintTargetSet } from './nodeConstraints';
 
 type Vec3 = [number, number, number];
 
@@ -815,6 +817,197 @@ function MultiGizmo() {
 // writing (the #230 round-trip, applied to the camera's point-based lookAt model).
 // `parentWorld` is null for a top-level camera → the proxy world IS the local pose,
 // byte-identical to the pre-Inc-3.3 (#229) direct write.
+// #247 — the camera lookAt is a "Point of Interest" TARGET RETICLE, not a second
+// transform gizmo. The #245 twin-triad still read as "2 gizmos"; a categorically
+// different glyph (a billboarded ring + centre dot, fixed screen size) can never
+// be mistaken for the body's arrow/ring triad. Free (amber) = draggable; bound
+// (blue) = Track-To-linked to an object → read-only, follows that object.
+const RETICLE_COLOR = '#ffb020';
+const RETICLE_BOUND_COLOR = '#5b9dff';
+/** local→world scale factor so the reticle holds a ~constant on-screen size,
+ *  mirroring how TransformControls keeps its handles a fixed pixel size. */
+const RETICLE_SCREEN_SCALE = 0.05;
+
+const _v0 = new THREE.Vector3();
+const _v1 = new THREE.Vector3();
+
+/** The billboarded lookAt reticle. Owns its own screen-plane drag (window
+ *  pointer capture) so dragging works even when the pointer leaves the small
+ *  glyph. Writes the new world lookAt through `onDrag`; `onDragStart/End` bracket
+ *  the gizmo interaction (orbit-suppress + undo coalesce). */
+function CameraAimReticle({
+  bound,
+  disabled,
+  onDragStart,
+  onDrag,
+  onDragEnd,
+}: {
+  bound: boolean;
+  disabled: boolean;
+  onDragStart: () => void;
+  onDrag: (world: Vec3) => void;
+  onDragEnd: () => void;
+}) {
+  const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
+  const group = useRef<THREE.Group>(null);
+  const [hovered, setHovered] = useState(false);
+  const drag = useRef({ active: false, plane: new THREE.Plane(), rc: new THREE.Raycaster() });
+
+  // The reticle draws ON TOP (depthTest off), so its picking must ignore depth too
+  // — otherwise a lookAt sitting inside/behind geometry (the default scene: origin
+  // is behind the cube's front face) can be SEEN but not grabbed. Report a
+  // near-zero distance so the disc wins the pick within its small screen circle,
+  // matching what the user sees (the same trick TransformControls uses internally).
+  const discRaycast = useMemo(
+    () =>
+      function (this: THREE.Mesh, raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
+        const hits: THREE.Intersection[] = [];
+        THREE.Mesh.prototype.raycast.call(this, raycaster, hits);
+        if (hits.length) intersects.push({ ...hits[0], distance: 0.0001 });
+      },
+    [],
+  );
+
+  // Billboard (face the camera) + constant screen size, every frame.
+  useFrame(() => {
+    const g = group.current;
+    if (!g) return;
+    g.quaternion.copy(camera.quaternion);
+    const d = camera.position.distanceTo(g.getWorldPosition(_v0)) || 1;
+    g.scale.setScalar(d * RETICLE_SCREEN_SCALE);
+  });
+
+  // Stable window listeners that call the latest closures — so a mid-drag
+  // re-render (hover, param write) can't strand a stale handler on the window.
+  const moveRef = useRef<(e: PointerEvent) => void>(() => {});
+  const upRef = useRef<() => void>(() => {});
+  const winMove = useRef((e: PointerEvent) => moveRef.current(e)).current;
+  const winUp = useRef(() => upRef.current()).current;
+  moveRef.current = (ev: PointerEvent) => {
+    if (!drag.current.active) return;
+    const rect = gl.domElement.getBoundingClientRect();
+    const ndc = _v1.set(
+      ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+      -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+      0,
+    );
+    drag.current.rc.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera);
+    const hit = drag.current.rc.ray.intersectPlane(drag.current.plane, new THREE.Vector3());
+    if (hit) onDrag([hit.x, hit.y, hit.z]);
+  };
+  upRef.current = () => {
+    if (!drag.current.active) return;
+    drag.current.active = false;
+    window.removeEventListener('pointermove', winMove);
+    window.removeEventListener('pointerup', winUp);
+    onDragEnd();
+  };
+
+  const onDown = (e: ThreeEvent<PointerEvent>) => {
+    if (bound || disabled) return;
+    e.stopPropagation();
+    const g = group.current;
+    if (!g) return;
+    // Drag on a screen-parallel plane through the current lookAt (view normal).
+    drag.current.plane.setFromNormalAndCoplanarPoint(
+      camera.getWorldDirection(_v0),
+      g.getWorldPosition(_v1),
+    );
+    drag.current.active = true;
+    onDragStart();
+    window.addEventListener('pointermove', winMove);
+    window.addEventListener('pointerup', winUp);
+  };
+
+  useEffect(
+    () => () => {
+      window.removeEventListener('pointermove', winMove);
+      window.removeEventListener('pointerup', winUp);
+    },
+    [winMove, winUp],
+  );
+
+  const color = bound ? RETICLE_BOUND_COLOR : RETICLE_COLOR;
+  const opacity = bound ? 0.75 : hovered ? 1 : 0.85;
+  return (
+    <group ref={group}>
+      {/* Invisible hit disc — the draggable surface (raycast ON). Only grabbable
+          when free; bound reticles pass the click through (return without
+          stopPropagation) so selection still works underneath. */}
+      <mesh
+        onPointerDown={onDown}
+        onPointerOver={() => !bound && !disabled && setHovered(true)}
+        onPointerOut={() => setHovered(false)}
+        raycast={bound || disabled ? () => null : discRaycast}
+      >
+        <circleGeometry args={[1.1, 32]} />
+        <meshBasicMaterial transparent opacity={0} depthTest={false} depthWrite={false} />
+      </mesh>
+      {/* Ring — the reticle body. */}
+      <mesh renderOrder={999} raycast={() => null}>
+        <ringGeometry args={[0.72, 0.9, 48]} />
+        <meshBasicMaterial
+          color={color}
+          depthTest={false}
+          transparent
+          opacity={opacity}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {/* Centre dot — marks the exact aim point. */}
+      <mesh renderOrder={999} raycast={() => null}>
+        <circleGeometry args={[0.14, 20]} />
+        <meshBasicMaterial color={color} depthTest={false} transparent opacity={opacity} />
+      </mesh>
+    </group>
+  );
+}
+
+/** A thin connector line camera → lookAt, so the reticle reads unambiguously as
+ *  "what this camera aims at". Updated per-frame from the two proxy groups. */
+function AimConnector({
+  from,
+  to,
+  color,
+}: {
+  from: THREE.Object3D | null;
+  to: THREE.Object3D | null;
+  color: string;
+}) {
+  const line = useMemo(() => {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const mat = new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.4,
+      depthTest: false,
+    });
+    const l = new THREE.Line(geom, mat);
+    l.renderOrder = 998;
+    l.raycast = () => {};
+    return l;
+  }, [color]);
+  useEffect(
+    () => () => {
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    },
+    [line],
+  );
+  useFrame(() => {
+    if (!from || !to) return;
+    const a = from.getWorldPosition(_v0);
+    const b = to.getWorldPosition(_v1);
+    const pos = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+    pos.setXYZ(0, a.x, a.y, a.z);
+    pos.setXYZ(1, b.x, b.y, b.z);
+    pos.needsUpdate = true;
+  });
+  return <primitive object={line} />;
+}
+
 function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
@@ -828,6 +1021,15 @@ function CameraGizmo() {
   const [aimNode, setAimNode] = useState<THREE.Group | null>(null);
   const bodyRefCb = useCallback((g: THREE.Group | null) => setBodyNode(g), []);
   const aimRefCb = useCallback((g: THREE.Group | null) => setAimNode(g), []);
+
+  // #247 — is the camera's lookAt Track-To-BOUND to an object? Then the reticle
+  // follows that object (resolveCameraPoseAt already derives lookAt from it) and
+  // is read-only. Subscribe to nodes so add/remove of the constraint re-renders.
+  const nodes = useDagStore((s) => s.state.nodes);
+  const bound = useMemo(
+    () => (camId ? constraintTargetSet(nodes).has(camId) : false),
+    [nodes, camId],
+  );
 
   // Captured at seed time: the camera's evaluated position + the aim DISTANCE, so
   // a rotate keeps the lookAt the same distance from the camera (the aim orbits,
@@ -881,9 +1083,13 @@ function CameraGizmo() {
       w.__basher_camera_gizmo = () => ({
         position: bodyNode ? [bodyNode.position.x, bodyNode.position.y, bodyNode.position.z] : null,
         aim: aimNode ? [aimNode.position.x, aimNode.position.y, aimNode.position.z] : null,
+        // #247 — the aim is a target RETICLE (not a triad); `bound` = Track-To
+        // linked to an object (read-only, follows it).
+        reticle: true,
+        bound,
       });
     }
-  }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing]);
+  }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing, bound]);
 
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
   // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,
@@ -950,6 +1156,16 @@ function CameraGizmo() {
     );
   }
 
+  // #247 — the reticle drag delivers a WORLD lookAt point. Move the proxy
+  // immediately (the seed effect only re-runs on scrub/selection, not on a param
+  // write, so the reticle would otherwise lag the pointer), then author the LOCAL
+  // lookAt through the same chokepoint.
+  function onReticleDrag(world: Vec3) {
+    if (!aimNode || !camId) return;
+    aimNode.position.set(world[0], world[1], world[2]);
+    writeCameraParam('lookAt', maybeSnapVec3(toLocalPoint(world)));
+  }
+
   // *** D-06 grab observation seam — dev-guarded (mirrors SingleGizmo). Drives the
   // REAL onBodyChange/onAimChange so the boundary-pair observes the gizmo's own
   // write path. kind='rotate' takes an absolute euler (deg); 'translate'/'aim'
@@ -975,13 +1191,30 @@ function CameraGizmo() {
   }
 
   if (!camId) return null;
-  // The body gizmo shows rotate or translate; scale coerces to translate (no
-  // scale on a camera). The aim handle is always a translate gizmo.
+  // The body gizmo is the ONE transform gizmo (rotate or translate; scale coerces
+  // to translate — cameras have no scale). The lookAt is a target RETICLE (#247),
+  // never a second triad.
   const bodyMode: GizmoMode = mode === 'rotate' ? 'rotate' : 'translate';
   return (
     <>
       <group ref={bodyRefCb} />
-      <group ref={aimRefCb} />
+      {/* The aim proxy carries the billboarded lookAt reticle; its position is
+          seeded to the (Track-To-resolved) lookAt, so a bound camera's reticle
+          follows its target for free. */}
+      <group ref={aimRefCb}>
+        <CameraAimReticle
+          bound={bound}
+          disabled={playing}
+          onDragStart={startGizmoDrag}
+          onDrag={onReticleDrag}
+          onDragEnd={() => endGizmoDrag('camera aim')}
+        />
+      </group>
+      <AimConnector
+        from={bodyNode}
+        to={aimNode}
+        color={bound ? RETICLE_BOUND_COLOR : RETICLE_COLOR}
+      />
       {bodyNode ? (
         <TransformControls
           object={bodyNode}
@@ -991,16 +1224,6 @@ function CameraGizmo() {
           onObjectChange={onBodyChange}
           onMouseDown={startGizmoDrag}
           onMouseUp={() => endGizmoDrag(`camera ${useGizmoStore.getState().mode}`)}
-        />
-      ) : null}
-      {aimNode ? (
-        <TransformControls
-          object={aimNode}
-          mode="translate"
-          enabled={!playing}
-          onObjectChange={onAimChange}
-          onMouseDown={startGizmoDrag}
-          onMouseUp={() => endGizmoDrag('camera aim')}
         />
       ) : null}
     </>

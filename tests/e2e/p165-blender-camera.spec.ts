@@ -82,16 +82,17 @@ test.describe('#165 Blender-style camera', () => {
 
     // #186 — the view now boots framing the box (bounds-fit), so the camera
     // object at [3,2,3] starts BEHIND the eye. Dolly out (wheel) until its
-    // frustum is in front and on-screen, then click it. The apex is at [3,2,3];
-    // a point ~0.45u in front (toward origin) lands inside the frustum hitbox,
-    // nearer the eye than the cube, so the raycast targets the frustum.
+    // BODY is in front and on-screen, then click it. #250 — selection is via the
+    // camera's body/icon at the apex [3,2,3] (Blender parity), not the frustum
+    // cone interior: the wireframe is now a pure visual (its line-threshold hits
+    // used to hijack clicks meant for the framed subject), so aim at the apex.
     const cx0 = box.x + box.width / 2;
     const cy0 = box.y + box.height / 2;
     await page.mouse.move(cx0, cy0);
     let ndcCam: [number, number, number] | null = null;
     for (let i = 0; i < 20; i++) {
       ndcCam = await page.evaluate(() =>
-        (window as unknown as BasherWindow).__basher_project_ndc!([2.7, 1.8, 2.7]),
+        (window as unknown as BasherWindow).__basher_project_ndc!([3, 2, 3]),
       );
       if (ndcCam && ndcCam[2] < 1 && Math.abs(ndcCam[0]) < 0.9 && Math.abs(ndcCam[1]) < 0.9) break;
       await page.mouse.wheel(0, 240); // dolly out, past the camera apex

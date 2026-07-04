@@ -36,7 +36,9 @@ function sceneWithKeyProfile(): DagState {
   const l2 = buildAddStudioLightOps(state, [1, 0, 0], rigId)!;
   state = apply(state, l2.ops);
   // Texture the second light.
-  state = apply(state, [{ type: 'setParam', nodeId: l2.lightId, paramPath: 'tex', value: 'env-hdri/abc' }]);
+  state = apply(state, [
+    { type: 'setParam', nodeId: l2.lightId, paramPath: 'tex', value: 'env-hdri/abc' },
+  ]);
   return state;
 }
 

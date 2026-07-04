@@ -153,8 +153,17 @@ export function buildImportProfilesOps(
   if (!selId) {
     selId = newId('profsel');
     ops.push(
-      { type: 'addNode', nodeId: selId, nodeType: 'LightProfileSelect', params: { selectedProfile: '' } },
-      { type: 'connect', from: { node: selId, socket: 'out' }, to: { node: sceneId, socket: 'lightRig' } },
+      {
+        type: 'addNode',
+        nodeId: selId,
+        nodeType: 'LightProfileSelect',
+        params: { selectedProfile: '' },
+      },
+      {
+        type: 'connect',
+        from: { node: selId, socket: 'out' },
+        to: { node: sceneId, socket: 'lightRig' },
+      },
     );
   }
 
@@ -172,7 +181,11 @@ export function buildImportProfilesOps(
       nodeType: 'LightRig',
       params: { name, center: profile.center, radius: profile.radius },
     });
-    ops.push({ type: 'connect', from: { node: rigId, socket: 'out' }, to: { node: selId, socket: 'rigs' } });
+    ops.push({
+      type: 'connect',
+      from: { node: rigId, socket: 'out' },
+      to: { node: selId, socket: 'rigs' },
+    });
 
     for (const light of profile.lights) {
       const lightId = newId('light');
@@ -194,12 +207,23 @@ export function buildImportProfilesOps(
             ...(light.tex ? { tex: light.tex } : {}),
           },
         },
-        { type: 'connect', from: { node: lightId, socket: 'out' }, to: { node: rigId, socket: 'lights' } },
+        {
+          type: 'connect',
+          from: { node: lightId, socket: 'out' },
+          to: { node: rigId, socket: 'lights' },
+        },
         {
           type: 'addNode',
           nodeId: ttId,
           nodeType: 'TrackTo',
-          params: { name: 'aim', target: lightId, aimNode: '', aimPoint: profile.center, up: [0, 1, 0], mute: false },
+          params: {
+            name: 'aim',
+            target: lightId,
+            aimNode: '',
+            aimPoint: profile.center,
+            up: [0, 1, 0],
+            mute: false,
+          },
         },
       );
     }
@@ -207,7 +231,12 @@ export function buildImportProfilesOps(
 
   // Activate the first imported profile.
   if (activatedName !== null) {
-    ops.push({ type: 'setParam', nodeId: selId, paramPath: 'selectedProfile', value: activatedName });
+    ops.push({
+      type: 'setParam',
+      nodeId: selId,
+      paramPath: 'selectedProfile',
+      value: activatedName,
+    });
   }
 
   return { ops, activatedName };

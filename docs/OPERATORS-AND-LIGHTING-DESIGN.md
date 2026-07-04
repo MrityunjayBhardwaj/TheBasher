@@ -11,22 +11,22 @@ We want a Blender-Light-Studio-style lighting workflow (paint lights onto the
 subject, named switchable lighting profiles). Pulling that thread to its root
 landed on a foundational decision that is bigger than lighting:
 
-- **Constraints and modifiers are the same architectural pattern** — an *ordered,
-  non-destructive chain of typed operators over a base value*. They differ only
+- **Constraints and modifiers are the same architectural pattern** — an _ordered,
+  non-destructive chain of typed operators over a base value_. They differ only
   in the data type that flows (transform vs geometry). This is Houdini's
   SOP/CHOP/VOP model.
 - **The substrate already exists.** Basher is a typed dataflow DAG. The "parent"
   of SOP/CHOP/VOP is the universal node interface **`NodeDefinition<Params,
-  Value>`** + the typed socket system — every node already implements it. We do
+Value>`** + the typed socket system — every node already implements it. We do
   **not** build a new parent class.
 - **The one new shared abstraction is `OperatorStack`** — chain wiring + stack UI
-  (add/remove/reorder/mute) + serialization + agent op — *polymorphic over the
-  value type*. Instantiated twice: a **transform stack** (constraints / CHOP) and
+  (add/remove/reorder/mute) + serialization + agent op — _polymorphic over the
+  value type_. Instantiated twice: a **transform stack** (constraints / CHOP) and
   a **geometry stack** (modifiers / SOP).
 - **Shading (VOP) is already done** as a parametric IR (OpenPBR, renderer-agnostic
   → TSL/WGSL later). We deliberately choose a parametric über-shader over an
   arbitrary shader node-graph.
-- **Studio lighting is the first consumer** of the constraint stack (lights *aim*
+- **Studio lighting is the first consumer** of the constraint stack (lights _aim_
   via a Track-To-style constraint, not stored rotation) and reuses the already-
   unified mesh/material/animation roads.
 
@@ -41,13 +41,15 @@ Sequencing: make **world transform a pure evaluable value** → build
 Source studied: `github.com/nortikin/blender-light-studio` (read end-to-end).
 
 ### 1.1 What it actually is
+
 Not the commercial "HDR Light Studio" model (paint into one equirectangular HDRI
 at infinity). BLS uses **real, textured emission cards placed on a sphere around
 the subject, aimed at center** — finite distance, real position/falloff,
-individually selectable & animatable. A flat "2D panel" is only a *controller*
+individually selectable & animatable. A flat "2D panel" is only a _controller_
 for spherical placement; the output is 3D lights, not a baked image.
 
 ### 1.2 The clean data model (the `.bls` JSON — ignore the Blender object soup)
+
 ```
 Profile {
   name
@@ -63,14 +65,17 @@ Profile {
   } ]
 }
 ```
+
 A scene holds **many named profiles**; one is live at a time; profiles
 import/export as JSON and copy between scenes.
 
 ### 1.3 The signature feature — the Light Brush
-`light_brush.py:raycast`. Click the *model surface* in the viewport → raycast →
+
+`light_brush.py:raycast`. Click the _model surface_ in the viewport → raycast →
 hit point + normal → compute:
+
 - **Reflection mode:** `reflect(viewDir, normal)` — "where must a light be so its
-  *specular highlight* lands exactly where I clicked?"
+  _specular highlight_ lands exactly where I clicked?"
 - **Normal mode:** the surface normal (diffuse placement).
 
 Intersect that ray with the subject sphere (radius = light distance) → 3D light
@@ -79,14 +84,17 @@ position → convert back to the 2D controller `(atan2 → x, elevation → y)`.
 Plus modal Grab / Scale / Rotate (G/S/R).
 
 ### 1.4 The two-layer model (important reframe)
+
 BLS never touches the world HDRI. The **global environment / IBL** (Basher already
 owns this — scene environment, V47) and the **local studio lights** are two
-*separate layers*: HDRI = soft global fill, studio lights = local directional
+_separate layers_: HDRI = soft global fill, studio lights = local directional
 shaping. Studio lights are **additive** to the env, not a replacement.
 
 ### 1.5 The renderer reality (honest constraint)
-BLS works because a Cycles area light **can** be textured *and* casts shadows.
+
+BLS works because a Cycles area light **can** be textured _and_ casts shadows.
 three.js (Basher today) can't do either in one object:
+
 - `RectAreaLight` **illuminates** but **can't be textured and casts no shadows**
   (LTC approximation).
 - An **emissive textured plane** looks right + shows in reflections but **doesn't
@@ -95,10 +103,10 @@ three.js (Basher today) can't do either in one object:
 So "a textured area light that lights the subject" is **a pair** in our renderer:
 a `RectAreaLight` (illumination, driven by the texture's average color +
 intensity) **+** an emissive textured card (the visible look + reflections). The
-**WebGPU/TSL path-tracing renderer** (v0.7 epic) can make this *one* primitive
+**WebGPU/TSL path-tracing renderer** (v0.7 epic) can make this _one_ primitive
 later — see `PERFORMANCE.md` / the renderer epic. **Decision:** build the workflow
 now against the pair (the placement resolver, panel, brush, profiles are all
-renderer-agnostic); let the renderer epic upgrade the light *primitive*
+renderer-agnostic); let the renderer epic upgrade the light _primitive_
 underneath.
 
 ---
@@ -106,6 +114,7 @@ underneath.
 ## 2. The foundational substrate — typed operator chains on the DAG
 
 ### 2.1 The parent already exists — do not build a new one
+
 SOP / CHOP / VOP in Houdini are not subclasses of an "Operator" base — they are
 **nodes in one graph engine, differentiated only by the data type on their
 ports**. Basher is identical: every node type implements **one** interface,
@@ -113,25 +122,27 @@ ports**. Basher is identical: every node type implements **one** interface,
 `evaluate`). **That is the parent of SOP/CHOP/VOP.** The three categories differ
 only by wire type:
 
-| Houdini | flows | Basher socket type | = |
-|---|---|---|---|
-| **SOP** | geometry | `Mesh` / `Geometry` | **modifiers** |
+| Houdini  | flows                 | Basher socket type              | =               |
+| -------- | --------------------- | ------------------------------- | --------------- |
+| **SOP**  | geometry              | `Mesh` / `Geometry`             | **modifiers**   |
 | **CHOP** | channels / transforms | `Transform` / `KeyframeChannel` | **constraints** |
-| **VOP** | shading | the material IR | **shaders** |
+| **VOP**  | shading               | the material IR                 | **shaders**     |
 
-Building a class *above* SOP/CHOP/VOP would be ceremony over the thing that
+Building a class _above_ SOP/CHOP/VOP would be ceremony over the thing that
 already unifies them.
 
 ### 2.2 The one new abstraction worth building — `OperatorStack`
-The genuinely shared concern is the **stack**, not the operators: an *ordered,
-non-destructive chain over a base value* with add / remove / reorder /
+
+The genuinely shared concern is the **stack**, not the operators: an _ordered,
+non-destructive chain over a base value_ with add / remove / reorder /
 **mute-bypass** / stack-inspector UI / serialization / an agent op ("add a
 Subdivide" / "add a Track-To"). Identical for geometry and transform → one thin
 **value-type-polymorphic `OperatorStack`**, instantiated as:
+
 - a **transform stack** (constraints), and
 - a **geometry stack** (modifiers).
 
-This is a *wiring + UI + serialization* helper, not a god-class over operators.
+This is a _wiring + UI + serialization_ helper, not a god-class over operators.
 It is earned by two real consumers (the "build the shared thing when the second
 consumer arrives" rule), not speculative.
 
@@ -140,9 +151,10 @@ the previous operator's output). The "stack" is sugar; **reorder = re-wire**.
 Blender's clean two-stack UX on top of Houdini's one-graph engine.
 
 ### 2.3 Why one substrate, not two systems
+
 Both reduce to the same machine over different types. Blender's depsgraph (which
 orders modifiers, constraints, drivers across all objects) is itself a DAG;
-Houdini is explicitly a typed node graph. Basher already *is* that DAG — so
+Houdini is explicitly a typed node graph. Basher already _is_ that DAG — so
 modifiers and constraints are new node **categories** + the stack sugar, **not
 two new engines.**
 
@@ -153,32 +165,34 @@ two new engines.**
 Primitives and glTF already collapse onto one road on every axis — this is the
 precondition that lets the operator chains land on a single type:
 
-| Axis | Mechanism | Status |
-|---|---|---|
-| Mesh model (geometry+UVs+material+transform) | `resolveEvaluatedMesh` projects BoxMesh / SphereMesh / GltfChild into ONE `EvaluatedMesh`; no consumer branches on kind | ✅ (#150) |
-| Transform (TRS) | primitives now carry full position+rotation+**scale** (v0.6 #1 migration); both delegate to the one `resolveEvaluatedTransform` band | ✅ |
-| Material | glTF captured into the **same OpenPBR IR** as native (#178); editors converged onto shared `MaterialRows` (#198) | ✅ |
-| Animation | native + glTF + camera + agent author/render/read via free-floating direct channels (V57) | ✅ |
-| UVs | one producer; box/sphere sync, glTF async via the same `extractUVIslands` | ✅ (async caveat) |
+| Axis                                         | Mechanism                                                                                                                            | Status            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
+| Mesh model (geometry+UVs+material+transform) | `resolveEvaluatedMesh` projects BoxMesh / SphereMesh / GltfChild into ONE `EvaluatedMesh`; no consumer branches on kind              | ✅ (#150)         |
+| Transform (TRS)                              | primitives now carry full position+rotation+**scale** (v0.6 #1 migration); both delegate to the one `resolveEvaluatedTransform` band | ✅                |
+| Material                                     | glTF captured into the **same OpenPBR IR** as native (#178); editors converged onto shared `MaterialRows` (#198)                     | ✅                |
+| Animation                                    | native + glTF + camera + agent author/render/read via free-floating direct channels (V57)                                            | ✅                |
+| UVs                                          | one producer; box/sphere sync, glTF async via the same `extractUVIslands`                                                            | ✅ (async caveat) |
 
 **The one un-unified thing — and it's exactly the constraint gate:** accumulated
 **world transform is composed downstream in `SceneFromDAG`**, not as a pure
 evaluable value. Local TRS lives in the DAG; "where does this end up in the world"
-is assembled at the scene layer. A constraint needs the *target's world
-transform* as a pure value. See §4.3.
+is assembled at the scene layer. A constraint needs the _target's world
+transform_ as a pure value. See §4.3.
 
 ---
 
 ## 4. CHOP — Constraints (the transform operator stack)
 
 ### 4.1 The aim model — target, not stored rotation
+
 An object does not store a baked rotation it has to keep in sync. It carries a
-**`target`** and *derives* orientation from (position → target) via a pure
+**`target`** and _derives_ orientation from (position → target) via a pure
 resolver — exactly the camera's existing `lookAt` (`resolveActiveCameraPoseAt`,
 V56). Two flavors, one resolver:
+
 - **point** (vec3) — aim at a fixed spot (identical to the camera's `lookAt`
   today). The baseline.
-- **node reference** — aim at *another node* (e.g. the hero mesh): the resolver
+- **node reference** — aim at _another node_ (e.g. the hero mesh): the resolver
   reads that node's evaluated world position and aims there. This is "Track To a
   moving object" as a **pure read** — no parenting (which would also inherit the
   subject's rotation), no solver, and it keyframes for free.
@@ -188,6 +202,7 @@ rig**, not a parent in the scene graph — a soft pointer, animatable, with no
 structural re-parent edits.
 
 ### 4.2 The camera migration IS the proof (dogfood)
+
 The first constraint the system ships is **Track-To**, and the first thing it does
 is **absorb the camera's intrinsic `lookAt`** → the camera becomes a normal object
 with a Track-To constraint. This (a) deletes the camera's special case (the
@@ -198,22 +213,25 @@ renders through the evaluated scene). Studio lights are then the **second**
 consumer of the same Track-To, not a third special case.
 
 ### 4.3 The hard gate — world transform as a pure evaluable value
+
 A constraint reads another object's **world** transform. Today that's composed in
 `SceneFromDAG`, not in pure evaluation. The core engineering work of CHOP is to
 make accumulated world transform a **pure function of (DAG state, time)** that a
 constraint can read, so viewport and offscreen render agree (V37). It's solvable
-(the composition is already deterministic) but it is *the* foundational task —
+(the composition is already deterministic) but it is _the_ foundational task —
 build it first.
 
 ### 4.4 Evaluation order is already solved
+
 A constraint's target is modeled as a **normal DAG input edge**. The evaluator
 already does **topological-sort dependency resolution with cycle detection**
 (`src/core/dag/evaluator.ts` — "Resolve dependencies via topological sort";
 throws `cycle detected`). So ordering + cycle-breaking come **free** from tested
-machinery. This is why a constraint system is *cheaper* in Basher than in a
+machinery. This is why a constraint system is _cheaper_ in Basher than in a
 conventional engine — it fits the grain.
 
 ### 4.5 v1 constraint set (north star ≠ v1 scope)
+
 Ship the **framework + a handful**: Track To, Copy Location / Copy Transforms,
 Child Of, Limit (Location/Rotation), Follow Path. Blender's full ~25-constraint
 list (`docs.blender.org/manual/en/latest/animation/constraints`) is the **north
@@ -234,7 +252,7 @@ primitive or a glTF child). Same `OperatorStack`, geometry value type.
 - v1 set: Subdivide, Mirror, Array, maybe Solidify/Bevel. Order matters (it's the
   geometry chain). Blender Geometry Nodes is the long-horizon analog; not v1.
 
-(SOP is sequenced *after* CHOP — constraints are the lighting blocker; modifiers
+(SOP is sequenced _after_ CHOP — constraints are the lighting blocker; modifiers
 are independent value-add.)
 
 ---
@@ -245,9 +263,9 @@ are independent value-add.)
   lobes) → **done.** The OpenPBR IR is renderer-agnostic by design — three.js
   materials today, TSL/WGSL later (the IR is an explicit compile target). Evolving,
   not missing.
-- **VOP as an arbitrary procedural shader *graph*** (wire noise → ramp →
+- **VOP as an arbitrary procedural shader _graph_** (wire noise → ramp →
   displacement → surface) → **not built, and intentionally deprioritized.**
-  OpenPBR is a *fixed* model, not a node graph. For Basher's director-first /
+  OpenPBR is a _fixed_ model, not a node graph. For Basher's director-first /
   agent-native positioning, a great über-shader is the right altitude; full
   shader-graph authoring is a power-user feature most users (and the agent) don't
   want. **This is a conscious choice, not an accidental gap.**
@@ -260,6 +278,7 @@ Layered entirely on the foundation above. New parts are small; most falls out of
 existing systems.
 
 ### 7.1 `StudioLight` (the textured area light)
+
 The render realization of §1.5: a `RectAreaLight` (illumination, color/intensity
 driven by the texture's average) **+** an emissive textured card (look +
 reflections). Params mirror the `.bls` Light: `position` (spherical, on the rig),
@@ -269,24 +288,28 @@ reflections). Params mirror the `.bls` Light: `position` (spherical, on the rig)
 (V57) — keyframe a lighting setup over a shot, which BLS itself can't do.
 
 ### 7.2 The `LightRig` (the sphere + aim center)
+
 Holds the `target` (the BLS "handle" — point or node-ref, §4.1) = the sphere
 origin every light on the rig aims at, plus the radius/handle. Aiming is the
 Track-To constraint (§4) — **the rig is a constraint-stack consumer, not a bespoke
 mechanism.**
 
 ### 7.3 The 2D control panel
+
 A new 2D surface (sibling of the dopesheet/curve-editor canvases). Maps controller
 (x, y) → spherical (azimuth, elevation) around the rig target via **one pure
 function** `resolveStudioLightTransform(panelXY, radius, target) → { position,
 orientation }` (the V56/V51 "one pure resolver" shape). Render-parity-friendly.
 
 ### 7.4 The Light Brush
+
 A viewport modal tool (sibling of the gizmo tools): R3F raycaster against scene
 meshes → hit + normal → `reflect(viewDir, normal)` or `normal` → intersect with
 the rig sphere (radius) → light transform → write back to the panel coords. Pure-
 function core; the modal is just input. G/S/R aux like BLS.
 
 ### 7.5 Profiles
+
 Named, switchable lighting setups (one live at a time), JSON import/export, copy
 between scenes — mirrors the `.bls` model, and a sibling of Basher's Shot/Cut
 node concept. Each profile is a DAG subgraph (a rig + its lights). Switching =
@@ -294,6 +317,7 @@ which rig feeds the scene's lights. **Animatable** because the params are
 channels — a profile can itself be keyframed.
 
 ### 7.6 Layering with the global HDRI
+
 Studio lights are **additive** to the scene environment (V47), not a replacement
 (§1.4). HDRI = global ambient; studio lights = local shaping. They coexist.
 
@@ -323,12 +347,12 @@ Tracked under **epic #201**; one issue per slice.
 1. **World transform as a pure evaluable value** (§4.3, **#202**) — the foundational
    gate shared by constraints (and any "read where it renders" need).
 2. **`OperatorStack`** (§2.2, **#203**) — chain wiring + stack UI + mute + serialize
-   + agent op; the shared piece, value-type-polymorphic.
+   - agent op; the shared piece, value-type-polymorphic.
 3. **CHOP / constraints** (§4, **#204**) — Track-To first; **migrate the camera's
    `lookAt` onto it** (the proof). Then Copy Location/Transforms, Child Of, Limit,
    Follow Path on demand.
 4. **`StudioLight` + `LightRig`** (§7.1–7.2, **#205**) — the textured-area-light pair
-   + the rig as a Track-To consumer; params + animation fall out of existing systems.
+   - the rig as a Track-To consumer; params + animation fall out of existing systems.
 5. **2D control panel** (§7.3, **#206**) — `resolveStudioLightTransform`.
 6. **Light Brush** (§7.4, **#207**) — the raycast-to-place modal tool.
 7. **Profiles** (§7.5, **#208**) — named/switchable + JSON import/export.
@@ -353,7 +377,7 @@ Tracked under **epic #201**; one issue per slice.
   color/intensity from the HDR card (average? dominant? a small mip read).
 - **Profile storage:** DAG subgraph per profile vs a parametric list node; how
   switching links/unlinks (mirror BLS link/unlink, but DAG-native).
-- **VOP-as-graph:** confirm we are *consciously* deferring procedural shader
+- **VOP-as-graph:** confirm we are _consciously_ deferring procedural shader
   graphs (§6) — revisit only if a concrete need appears.
 
 ---

@@ -175,6 +175,20 @@ describe('collectChannelRows', () => {
     const rows = collectChannelRows({ n_skel: skel, n_baked: baked });
     expect(rows.find((r) => r.channelId === 'n_baked')?.name).toBe('bone_1 — position');
   });
+
+  it('carries the channel mute flag onto the row (#263)', () => {
+    // A channel whose `mute` param is set surfaces `mute: true` on its row so
+    // the dopesheet can dim it; an un-muted channel is explicitly `false`.
+    const muted = {
+      id: 'chm',
+      type: 'KeyframeChannelNumber',
+      inputs: {},
+      params: { name: 'x', paramPath: 'x', mute: true, keyframes: [{ time: 0 }] },
+    } as unknown as Node;
+    const rows = collectChannelRows({ chm: muted, chp: makeChannel('chp', 'y', [0]) });
+    expect(rows.find((r) => r.channelId === 'chm')?.mute).toBe(true);
+    expect(rows.find((r) => r.channelId === 'chp')?.mute).toBe(false);
+  });
 });
 
 // --- pure export: paintStaticLayer (recording stub, NOT faked pixels) -
@@ -222,6 +236,55 @@ describe('paintStaticLayer', () => {
     expect(calls).toContain('fillRect');
     // 3 diamonds → 3 fill() calls at minimum.
     expect(calls.filter((c) => c === 'fill').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('dims a muted row — its diamonds fill at a reduced alpha (#263)', () => {
+    // A capturing stub records the globalAlpha in force at each fill(). Only
+    // diamonds use fill() (bg / active-tint / ruler use fillRect), so the
+    // captured alphas are the per-diamond alphas.
+    const alphaAtFill: number[] = [];
+    let alpha = 1;
+    const ctx = {
+      clearRect() {},
+      fillRect() {},
+      beginPath() {},
+      moveTo() {},
+      lineTo() {},
+      closePath() {},
+      stroke() {},
+      fillText() {},
+      fill() {
+        alphaAtFill.push(alpha);
+      },
+      set fillStyle(_v: string) {},
+      set strokeStyle(_v: string) {},
+      set lineWidth(_v: number) {},
+      set font(_v: string) {},
+      set textBaseline(_v: string) {},
+      set globalAlpha(v: number) {
+        alpha = v;
+      },
+    } as unknown as CanvasRenderingContext2D;
+
+    const mutedRows = collectChannelRows({
+      chm: {
+        id: 'chm',
+        type: 'KeyframeChannelNumber',
+        inputs: {},
+        params: { name: 'x', paramPath: 'x', mute: true, keyframes: [{ time: 0 }] },
+      } as unknown as Node,
+    });
+    paintStaticLayer(ctx, mutedRows, { cssW: 400, cssH: 100 }, 10, null);
+    // The muted diamond fills BELOW the normal 0.82 unselected alpha.
+    expect(alphaAtFill.length).toBeGreaterThan(0);
+    expect(alphaAtFill.every((a) => a > 0 && a < 0.82)).toBe(true);
+
+    // Control: an identical UNMUTED channel never fills below 0.82.
+    alphaAtFill.length = 0;
+    alpha = 1;
+    const plainRows = collectChannelRows({ chp: makeChannel('chp', 'x', [0]) });
+    paintStaticLayer(ctx, plainRows, { cssW: 400, cssH: 100 }, 10, null);
+    expect(alphaAtFill.every((a) => a >= 0.82)).toBe(true);
   });
 
   it('culls keyframes outside [0, duration] — honest rendered count', () => {

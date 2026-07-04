@@ -31,7 +31,9 @@ interface BasherWindow {
   __basher_three?: {
     getState: () => {
       scene: {
-        traverse: (cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void) => void;
+        traverse: (
+          cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void,
+        ) => void;
       } | null;
     };
   };
@@ -76,9 +78,20 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
           type: 'addNode',
           nodeId: id,
           nodeType: 'AreaLight',
-          params: { intensity: 5, position: p, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+          params: {
+            intensity: 5,
+            position: p,
+            color: '#ffffff',
+            width: 2,
+            height: 2,
+            lookAt: [0, 0, 0],
+          },
         },
-        { type: 'connect', from: { node: id, socket: 'out' }, to: { node: sceneId, socket: 'lights' } },
+        {
+          type: 'connect',
+          from: { node: id, socket: 'out' },
+          to: { node: sceneId, socket: 'lights' },
+        },
       ],
       'e2e',
       'p210 add light',
@@ -116,15 +129,15 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
   for (let i = 0; i < 3; i++) expect(world!.position[i]).toBeCloseTo(live![i], 3);
 });
 
-test("a camera resolves world transform from its pose (was null)", async ({ page }) => {
+test('a camera resolves world transform from its pose (was null)', async ({ page }) => {
   const camPos = await page.evaluate(() => {
     const n = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_camera'];
     return (n?.params?.position ?? null) as [number, number, number] | null;
   });
   expect(camPos, 'default project has n_camera with a position').not.toBeNull();
 
-  const world = await page.evaluate(
-    () => (window as unknown as BasherWindow).__basher_world_transform!('n_camera'),
+  const world = await page.evaluate(() =>
+    (window as unknown as BasherWindow).__basher_world_transform!('n_camera'),
   );
   expect(world, 'seam resolves a camera world (no longer null)').not.toBeNull();
   for (let i = 0; i < 3; i++) expect(world!.position[i]).toBeCloseTo(camPos![i], 4);

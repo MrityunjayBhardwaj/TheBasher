@@ -185,7 +185,11 @@ export function paramToSection(
       paramPath === 'zoom' ||
       paramPath === 'dofEnabled' ||
       paramPath === 'focusDistance' ||
-      paramPath === 'fStop')
+      paramPath === 'fStop' ||
+      // #247 (fix #257): focusOnTarget is authored by CameraLensControls' DoF
+      // block; without routing it here it ALSO leaked into the raw unrouted-params
+      // bucket as a second, duplicate toggle.
+      paramPath === 'focusOnTarget')
   ) {
     return 'camera';
   }

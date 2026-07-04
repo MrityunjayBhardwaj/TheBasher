@@ -22,7 +22,10 @@ interface CtxWindow {
 const row = (page: Page, id: string) => page.locator(`[data-testid="scene-tree-row-${id}"]`);
 const menu = (page: Page) => page.locator('[data-testid="outliner-context-menu"]');
 const nodeExists = (page: Page, id: string) =>
-  page.evaluate((n) => Boolean((window as unknown as CtxWindow).__basher_dag.getState().state.nodes[n]), id);
+  page.evaluate(
+    (n) => Boolean((window as unknown as CtxWindow).__basher_dag.getState().state.nodes[n]),
+    id,
+  );
 const selection = (page: Page) =>
   page.evaluate(() => {
     const s = (window as unknown as CtxWindow).__basher_selection.getState();
@@ -36,10 +39,28 @@ async function addGroupWithChild(page: Page) {
     const sceneId = dag.state.outputs.scene.node;
     dag.dispatchAtomic(
       [
-        { type: 'addNode', nodeId: 'n_grp', nodeType: 'Group', params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] } },
-        { type: 'addNode', nodeId: 'n_child', nodeType: 'BoxMesh', params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
-        { type: 'connect', from: { node: 'n_grp', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
-        { type: 'connect', from: { node: 'n_child', socket: 'out' }, to: { node: 'n_grp', socket: 'children' } },
+        {
+          type: 'addNode',
+          nodeId: 'n_grp',
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'n_child',
+          nodeType: 'BoxMesh',
+          params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_grp', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_child', socket: 'out' },
+          to: { node: 'n_grp', socket: 'children' },
+        },
       ],
       'user',
       'group',
@@ -49,10 +70,14 @@ async function addGroupWithChild(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(() => Boolean((window as unknown as CtxWindow).__basher_dag), { timeout: 15000 });
+  await page.waitForFunction(() => Boolean((window as unknown as CtxWindow).__basher_dag), {
+    timeout: 15000,
+  });
 });
 
-test('right-click opens the menu and selects the row; Esc closes it without clearing', async ({ page }) => {
+test('right-click opens the menu and selects the row; Esc closes it without clearing', async ({
+  page,
+}) => {
   await row(page, 'n_box').click({ button: 'right' });
   await expect(menu(page)).toBeVisible();
   expect((await selection(page)).primary).toBe('n_box');

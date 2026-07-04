@@ -5,7 +5,7 @@
 // free, the testable core of "the 3D/asset world drives the generation."
 
 import { describe, expect, it } from 'vitest';
-import { collectCompositeInputs } from './compositeDecode';
+import { BitmapLRU, collectCompositeInputs } from './compositeDecode';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx } from '../../core/dag/types';
 import type { ComfyApiJson } from '../../core/comfy/comfyGraph';
@@ -89,5 +89,59 @@ describe('collectCompositeInputs — comfy image bindings', () => {
     const a = collectCompositeInputs(stateWithBinding({ '10.image': 'media/a.png' }), 'comp', CTX);
     const b = collectCompositeInputs(stateWithBinding({ '10.image': 'media/b.png' }), 'comp', CTX);
     expect(a[0].source?.path).not.toBe(b[0].source?.path);
+  });
+});
+
+// #253 — the bounded LRU that stops bitmapCache/gradedCache from growing without
+// limit (a full video export decoded thousands of frames → OOM). A fake bitmap
+// records close() so eviction is observable (real ImageBitmap.close frees GPU mem).
+function fakeBitmap(): ImageBitmap & { closed: boolean } {
+  const b = { closed: false } as ImageBitmap & { closed: boolean };
+  b.close = () => {
+    b.closed = true;
+  };
+  return b;
+}
+
+describe('BitmapLRU', () => {
+  it('evicts the oldest entry and closes its bitmap when over capacity', () => {
+    const lru = new BitmapLRU(2);
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    const c = fakeBitmap();
+    lru.set('a', a);
+    lru.set('b', b);
+    lru.set('c', c); // over cap → 'a' (oldest) evicted + closed
+    expect(a.closed).toBe(true);
+    expect(lru.get('a')).toBeUndefined();
+    expect(lru.get('b')).toBe(b);
+    expect(lru.get('c')).toBe(c);
+    expect(b.closed).toBe(false);
+  });
+
+  it('get marks an entry most-recently-used so it survives the next eviction', () => {
+    const lru = new BitmapLRU(2);
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    const c = fakeBitmap();
+    lru.set('a', a);
+    lru.set('b', b);
+    lru.get('a'); // 'a' is now MRU → 'b' becomes the eviction candidate
+    lru.set('c', c);
+    expect(b.closed).toBe(true);
+    expect(a.closed).toBe(false);
+    expect(lru.get('a')).toBe(a);
+  });
+
+  it('clear closes every cached bitmap', () => {
+    const lru = new BitmapLRU(8);
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    lru.set('a', a);
+    lru.set('b', b);
+    lru.clear();
+    expect(a.closed).toBe(true);
+    expect(b.closed).toBe(true);
+    expect(lru.get('a')).toBeUndefined();
   });
 });

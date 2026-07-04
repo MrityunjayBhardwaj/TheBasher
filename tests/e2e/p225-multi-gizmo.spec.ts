@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
     () =>
       Boolean(
         (window as unknown as BasherWindow).__basher_dag &&
-          (window as unknown as BasherWindow).__basher_selection,
+        (window as unknown as BasherWindow).__basher_selection,
       ),
     { timeout: 15000 },
   );
@@ -47,14 +47,20 @@ test.beforeEach(async ({ page }) => {
           nodeType: 'BoxMesh',
           params: { size: [1, 1, 1], position: [4, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
         },
-        { type: 'connect', from: { node: 'n_box_b', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_box_b', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
       ],
       'user',
       'add box b',
     );
   });
   await page.evaluate(() =>
-    (window as unknown as BasherWindow).__basher_selection.getState().selectMany(['n_box', 'n_box_b']),
+    (window as unknown as BasherWindow).__basher_selection
+      .getState()
+      .selectMany(['n_box', 'n_box_b']),
   );
   await page.waitForTimeout(400);
 });
@@ -62,12 +68,16 @@ test.beforeEach(async ({ page }) => {
 test('multi gizmo seeds at the median and translates every node by the same delta', async ({
   page,
 }) => {
-  const multi = await page.evaluate(() => (window as unknown as BasherWindow).__basher_gizmo_multi?.());
+  const multi = await page.evaluate(() =>
+    (window as unknown as BasherWindow).__basher_gizmo_multi?.(),
+  );
   expect(multi?.count).toBe(2);
   expect(multi?.pivot).toEqual([2, 0, 0]);
 
   // proxy [2,0,0] → [5,0,0] = delta [3,0,0]; both nodes shift by it.
-  await page.evaluate(() => (window as unknown as BasherWindow).__basher_gizmo_grab?.('translate', [5, 0, 0]));
+  await page.evaluate(() =>
+    (window as unknown as BasherWindow).__basher_gizmo_grab?.('translate', [5, 0, 0]),
+  );
   await page.waitForTimeout(150);
   const ps = await page.evaluate(() => {
     const n = (window as unknown as BasherWindow).__basher_dag.getState().state.nodes;
@@ -79,7 +89,9 @@ test('multi gizmo seeds at the median and translates every node by the same delt
 
 test('multi gizmo rotates every node about the median pivot', async ({ page }) => {
   // 90° about Y about pivot [2,0,0]: n_box [0,0,0]→[2,0,2], n_box_b [4,0,0]→[2,0,-2].
-  await page.evaluate(() => (window as unknown as BasherWindow).__basher_gizmo_grab?.('rotate', [0, 90, 0]));
+  await page.evaluate(() =>
+    (window as unknown as BasherWindow).__basher_gizmo_grab?.('rotate', [0, 90, 0]),
+  );
   await page.waitForTimeout(150);
   const res = await page.evaluate(() => {
     const n = (window as unknown as BasherWindow).__basher_dag.getState().state.nodes;

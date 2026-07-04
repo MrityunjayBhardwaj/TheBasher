@@ -44,7 +44,9 @@ async function ready(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_view_camera && w.__basher_viewport && w.__basher_dag && w.__basher_selection);
+    return Boolean(
+      w.__basher_view_camera && w.__basher_viewport && w.__basher_dag && w.__basher_selection,
+    );
   });
   await page.waitForTimeout(300);
 }
@@ -73,12 +75,16 @@ async function selectCamera(page: import('@playwright/test').Page, id: string) {
     (window as unknown as BasherWindow).__basher_selection!.getState().select(cid);
   }, id);
   // CameraGizmo mounts on selection → its grab seam appears.
-  await page.waitForFunction(() => Boolean((window as unknown as BasherWindow).__basher_camera_gizmo_grab));
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as BasherWindow).__basher_camera_gizmo_grab),
+  );
   await page.waitForTimeout(150);
 }
 
 test.describe('#229 camera aim gizmo', () => {
-  test('aim-target handle re-aims the camera (DAG lookAt + look-through agree)', async ({ page }) => {
+  test('aim-target handle re-aims the camera (DAG lookAt + look-through agree)', async ({
+    page,
+  }) => {
     await ready(page);
     const id = await camId(page);
     await selectCamera(page, id);
@@ -101,7 +107,9 @@ test.describe('#229 camera aim gizmo', () => {
     // Side B — the look-through camera aims from position toward the new lookAt.
     await page.keyboard.press('0');
     await page.waitForTimeout(200);
-    const view = await page.evaluate(() => (window as unknown as BasherWindow).__basher_view_camera!());
+    const view = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_view_camera!(),
+    );
     expect(view!.lookThrough).toBe(true);
     const want = norm([AIM[0] - pos[0], AIM[1] - pos[1], AIM[2] - pos[2]]);
     const got = norm(view!.direction);
@@ -138,7 +146,9 @@ test.describe('#229 camera aim gizmo', () => {
     // Side B — the look-through camera matches the new aim.
     await page.keyboard.press('0');
     await page.waitForTimeout(200);
-    const view = await page.evaluate(() => (window as unknown as BasherWindow).__basher_view_camera!());
+    const view = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_view_camera!(),
+    );
     const want = norm([after[0] - pos[0], after[1] - pos[1], after[2] - pos[2]]);
     const got = norm(view!.direction);
     for (let i = 0; i < 3; i++) expect(got[i]).toBeCloseTo(want[i], 2);

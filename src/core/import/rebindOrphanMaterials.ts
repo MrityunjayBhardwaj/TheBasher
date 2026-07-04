@@ -70,7 +70,9 @@ export function rebindOrphanMaterials(input: GltfDoc): { doc: GltfDoc; rebinds: 
   }
   return {
     doc,
-    rebinds: [{ materialIndex: idx, materialName: materials[idx]?.name, primitiveCount: unboundCount }],
+    rebinds: [
+      { materialIndex: idx, materialName: materials[idx]?.name, primitiveCount: unboundCount },
+    ],
   };
 }
 

@@ -124,13 +124,15 @@ test('#136 — boolean param is UI-editable: ignoreSourceMaterial checkbox flatt
     const dag = w.__basher_dag.getState();
     const nodes = dag.state.nodes;
     const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset')!;
-    const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform')!;
+    // V67: import root is a transformable Group (was a Transform); the asset
+    // wires into Group.children (a list socket, was Transform.target/single).
+    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group')!;
     dag.dispatchAtomic(
       [
         {
           type: 'disconnect',
           from: { node: gltfId, socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
         { type: 'addNode', nodeId: 'mo136', nodeType: 'MaterialOverride', params: {} },
         {
@@ -141,7 +143,7 @@ test('#136 — boolean param is UI-editable: ignoreSourceMaterial checkbox flatt
         {
           type: 'connect',
           from: { node: 'mo136', socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
       ],
       'user',

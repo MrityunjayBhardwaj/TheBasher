@@ -140,7 +140,10 @@ export function MultiSelectInspector() {
   }
 
   const names = nodes.map(nodeDisplayName);
-  const summary = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
+  const summary =
+    names.length <= 3
+      ? names.join(', ')
+      : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
 
   return (
     <div data-testid="inspector-multi" className="flex flex-col text-xs">
@@ -156,8 +159,13 @@ export function MultiSelectInspector() {
       {fields.length === 0 ? (
         <div className="p-4 text-fg-dim">No shared transform to edit.</div>
       ) : (
-        <section data-testid="inspector-multi-transform" className="flex flex-col gap-1.5 px-3 py-2">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-fg-dim">Transform</div>
+        <section
+          data-testid="inspector-multi-transform"
+          className="flex flex-col gap-1.5 px-3 py-2"
+        >
+          <div className="text-[11px] font-medium uppercase tracking-wide text-fg-dim">
+            Transform
+          </div>
           {fields.map(({ key, label }) => (
             <div key={key} className="grid grid-cols-[auto_1fr_1fr_1fr] items-center gap-1">
               <span className="w-16 font-mono text-[10px] text-fg/60">{label}</span>

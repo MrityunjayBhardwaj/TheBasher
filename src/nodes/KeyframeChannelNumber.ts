@@ -25,7 +25,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelNumberValue } from './types';
-import { sampleScalarKeyframes } from './keyframeInterp';
+import { sampleScalarKeyframesExtended, type ChannelExtend } from './keyframeInterp';
 
 const HandleSchema = z
   .object({
@@ -44,6 +44,10 @@ export const KeyframeChannelNumberParams = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
+  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
+   *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
+  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
   keyframes: z
     .array(
       z.object({
@@ -64,8 +68,13 @@ export type KeyframeChannelNumberParams = z.infer<typeof KeyframeChannelNumberPa
  * the shared `sampleScalarKeyframes` (cubic Bézier when a segment carries
  * handles, else the exact legacy linear/smoothstep — render parity, V49).
  */
-function sample(keyframes: KeyframeChannelNumberParams['keyframes'], t: number): number {
-  return sampleScalarKeyframes(keyframes, t);
+function sample(
+  keyframes: KeyframeChannelNumberParams['keyframes'],
+  t: number,
+  before: ChannelExtend,
+  after: ChannelExtend,
+): number {
+  return sampleScalarKeyframesExtended(keyframes, t, before, after);
 }
 
 export const KeyframeChannelNumberNode: NodeDefinition<
@@ -94,7 +103,7 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       paramPath: params.paramPath,
       mute: params.mute,
       weight: params.weight,
-      sample: (seconds: number) => sample(sorted, seconds),
+      sample: (seconds: number) => sample(sorted, seconds, params.extendBefore, params.extendAfter),
     };
   },
 };

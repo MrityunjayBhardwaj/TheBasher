@@ -66,4 +66,15 @@ describe('resolveCameraDof', () => {
     );
     expect(wider!.bokehScale).toBeGreaterThan(s!.bokehScale);
   });
+
+  it('#247 focus-on-target overrides focusDistance with the resolved aim distance', () => {
+    const params = { dofEnabled: true, focusDistance: 7, fStop: 2.8, fov: 45, sensorSize: 36 };
+    // focusOnTarget OFF → the override is ignored, authored focusDistance wins.
+    expect(resolveCameraDof(cam({ ...params, focusOnTarget: false }), 12)!.focusDistance).toBe(7);
+    // focusOnTarget ON → the supplied aim distance wins over the authored value.
+    expect(resolveCameraDof(cam({ ...params, focusOnTarget: true }), 12)!.focusDistance).toBe(12);
+    // ON but no valid distance supplied → falls back to the authored focusDistance.
+    expect(resolveCameraDof(cam({ ...params, focusOnTarget: true }))!.focusDistance).toBe(7);
+    expect(resolveCameraDof(cam({ ...params, focusOnTarget: true }), 0)!.focusDistance).toBe(7);
+  });
 });

@@ -15,7 +15,10 @@ interface W {
     getState: () => {
       state: {
         outputs: Record<string, { node: string }>;
-        nodes: Record<string, { inputs: { children?: { node: string }[]; lights?: { node: string }[] } }>;
+        nodes: Record<
+          string,
+          { inputs: { children?: { node: string }[]; lights?: { node: string }[] } }
+        >;
       };
       dispatch: (op: unknown) => void;
     };
@@ -51,15 +54,26 @@ async function dragRowOnto(page: Page, srcId: string, dstId: string) {
 test.describe('#231 Inc 2a.2 — light reparent in the outliner', () => {
   test('a light drags from scene.lights into a Group and back', async ({ page }) => {
     await page.goto('/');
-    await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), { timeout: 15000 });
+    await page.waitForFunction(() => Boolean((window as unknown as W).__basher_dag), {
+      timeout: 15000,
+    });
 
     // Add a Group at [5,0,0] wired to scene.children.
     await page.evaluate(
       ({ grpId }) => {
         const w = window as unknown as W;
         const dispatch = (op: unknown) => w.__basher_dag.getState().dispatch(op);
-        dispatch({ type: 'addNode', nodeId: grpId, nodeType: 'Group', params: { position: [5, 0, 0] } });
-        dispatch({ type: 'connect', from: { node: grpId, socket: 'out' }, to: { node: 'n_scene', socket: 'children' } });
+        dispatch({
+          type: 'addNode',
+          nodeId: grpId,
+          nodeType: 'Group',
+          params: { position: [5, 0, 0] },
+        });
+        dispatch({
+          type: 'connect',
+          from: { node: grpId, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        });
       },
       { grpId: GRP_ID },
     );

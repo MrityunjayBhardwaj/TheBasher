@@ -167,9 +167,11 @@ test('P6-W5#3 a real viewport click selects the object; clicking empty clears it
   await expect.poll(() => selectedIdOf(page)).toBe('n_box');
   await expect(page.getByTestId('viewport-empty-hint')).toHaveCount(0);
 
-  // REAL click on empty sky (top-center, clear of the bottom pill) →
-  // onPointerMissed → selection cleared, hints return.
-  await page.mouse.click(boxPt!.cx, boxPt!.top + 28);
+  // REAL click on empty sky → onPointerMissed → selection cleared, hints return.
+  // Upper-center, BELOW the FloatingViewportToolbar buttons (which are NOT
+  // pointer-events-none — #250 found top+28 sat over one, so the DOM click never
+  // reached the canvas) and ABOVE the starter's boxes: a genuinely empty pixel.
+  await page.mouse.click(boxPt!.cx, boxPt!.top + 140);
   await expect.poll(() => selectedIdOf(page)).toBeNull();
   await expect(page.getByTestId('viewport-empty-hint')).toBeVisible();
 });

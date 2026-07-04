@@ -36,6 +36,7 @@ describe('settingsStore', () => {
     useSettingsStore.setState({
       comfyUrl: DEFAULT_COMFYUI_URL,
       comfyAuthHeader: '',
+      comfyLiveGenerate: false,
       isOpen: false,
     });
   });
@@ -55,6 +56,13 @@ describe('settingsStore', () => {
   it('an empty URL falls back to the default (never persists a blank server)', () => {
     useSettingsStore.getState().setComfyUrl('   ');
     expect(useSettingsStore.getState().comfyUrl).toBe(DEFAULT_COMFYUI_URL);
+  });
+
+  it('setComfyUrl keeps the persisted comfyLiveGenerate (regression: URL edit reset it)', () => {
+    useSettingsStore.getState().setComfyLiveGenerate(true);
+    useSettingsStore.getState().setComfyUrl('http://my-box:9000');
+    const persisted = JSON.parse(localStorage.getItem(KEY)!);
+    expect(persisted.comfyLiveGenerate).toBe(true);
   });
 
   it('setComfyAuthHeader persists alongside the URL', () => {

@@ -46,7 +46,13 @@ interface BasherWindow {
   __basher_three?: {
     getState: () => {
       scene: {
-        traverse: (cb: (o: { type: string; intensity?: number; position: { x: number; y: number; z: number } }) => void) => void;
+        traverse: (
+          cb: (o: {
+            type: string;
+            intensity?: number;
+            position: { x: number; y: number; z: number };
+          }) => void,
+        ) => void;
       } | null;
     };
   };
@@ -126,7 +132,9 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_time && w.__basher_evaluated_param && w.__basher_three);
+    return Boolean(
+      w.__basher_dag && w.__basher_time && w.__basher_evaluated_param && w.__basher_three,
+    );
   });
 });
 
@@ -210,9 +218,7 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
     }
     console.log(
       `\n[DEEP LIGHT] intensity by time (resolver = side B, live render = side A):` +
-        rows
-          .map((r) => `\n  t=${r.t}  resolver=${r.resolved}  liveRender=${r.live}`)
-          .join('') +
+        rows.map((r) => `\n  t=${r.t}  resolver=${r.resolved}  liveRender=${r.live}`).join('') +
         `\n`,
     );
 

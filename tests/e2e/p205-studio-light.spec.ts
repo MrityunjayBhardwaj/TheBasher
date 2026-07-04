@@ -43,7 +43,9 @@ interface ThreeSceneLike {
 interface ThreeObjLike {
   type: string;
   color?: { r: number; g: number; b: number };
-  material?: { map?: { image?: { data?: ArrayLike<number>; width?: number; height?: number } } | null };
+  material?: {
+    map?: { image?: { data?: ArrayLike<number>; width?: number; height?: number } } | null;
+  };
 }
 
 /** Counts of the studio-light render parts currently in the live scene, plus the
@@ -132,9 +134,9 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as StudioWindow;
     return Boolean(
       w.__basher_dag &&
-        w.__basher_three &&
-        w.__basher_importEnvHdri &&
-        w.__basher_dag.getState().state.outputs.scene,
+      w.__basher_three &&
+      w.__basher_importEnvHdri &&
+      w.__basher_dag.getState().state.outputs.scene,
     );
   });
 });

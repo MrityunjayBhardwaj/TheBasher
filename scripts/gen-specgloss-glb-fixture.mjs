@@ -56,15 +56,11 @@ const json = {
   meshes: [
     {
       name: 'SGDiffuseQuad',
-      primitives: [
-        { attributes: { POSITION: 0, TEXCOORD_0: 1 }, indices: 2, material: 0 },
-      ],
+      primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, indices: 2, material: 0 }],
     },
     {
       name: 'SGCombinedQuad',
-      primitives: [
-        { attributes: { POSITION: 0, TEXCOORD_0: 1 }, indices: 2, material: 1 },
-      ],
+      primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, indices: 2, material: 1 }],
     },
   ],
   materials: [
@@ -99,7 +95,14 @@ const json = {
   ],
   samplers: [{ magFilter: 9728, minFilter: 9728, wrapS: 10497, wrapT: 10497 }],
   accessors: [
-    { bufferView: 0, componentType: 5126, count: 4, type: 'VEC3', min: [-0.5, -0.5, 0], max: [0.5, 0.5, 0] },
+    {
+      bufferView: 0,
+      componentType: 5126,
+      count: 4,
+      type: 'VEC3',
+      min: [-0.5, -0.5, 0],
+      max: [0.5, 0.5, 0],
+    },
     { bufferView: 1, componentType: 5126, count: 4, type: 'VEC2', min: [0, 0], max: [1, 1] },
     { bufferView: 2, componentType: 5123, count: 6, type: 'SCALAR' },
   ],
@@ -241,4 +244,6 @@ const metalJson = {
 };
 const metal = packGlb(metalJson, metalBin);
 writeFileSync(join(assets, 'specgloss-metal-quad.glb'), metal);
-console.log(`wrote specgloss-metal-quad.glb (${metal.byteLength} bytes; gold PNG ${goldPng.byteLength})`);
+console.log(
+  `wrote specgloss-metal-quad.glb (${metal.byteLength} bytes; gold PNG ${goldPng.byteLength})`,
+);

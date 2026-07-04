@@ -121,9 +121,7 @@ export interface GltfDoc {
  *  already-converted file has no spec-gloss → no-op). */
 export function hasSpecGlossMaterials(doc: GltfDoc): boolean {
   if ((doc.extensionsUsed ?? []).includes(SPEC_GLOSS_EXTENSION)) return true;
-  return (doc.materials ?? []).some(
-    (m) => m.extensions?.[SPEC_GLOSS_EXTENSION] !== undefined,
-  );
+  return (doc.materials ?? []).some((m) => m.extensions?.[SPEC_GLOSS_EXTENSION] !== undefined);
 }
 
 /** Khronos perceived-brightness luminance (the weighting the spec-gloss→
@@ -312,11 +310,7 @@ export function specGlossPixelsToMetalRoughAndBase(
   const base = new Uint8ClampedArray(n);
   let maxMetallic = 0;
   for (let i = 0; i < n; i += 4) {
-    const specRgb: [number, number, number] = [
-      spec[i] / 255,
-      spec[i + 1] / 255,
-      spec[i + 2] / 255,
-    ];
+    const specRgb: [number, number, number] = [spec[i] / 255, spec[i + 1] / 255, spec[i + 2] / 255];
     const gloss = glossFromAlpha ? spec[i + 3] / 255 : glossiness;
     const diffRgb: [number, number, number] = diffuse
       ? [diffuse[i] / 255, diffuse[i + 1] / 255, diffuse[i + 2] / 255]

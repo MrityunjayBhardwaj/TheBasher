@@ -10,7 +10,9 @@ import { test, expect } from './_fixtures';
 
 interface W {
   __basher_selection?: { getState: () => { select: (id: string) => void } };
-  __basher_dag?: { getState: () => { state: { nodes: Record<string, { params: Record<string, unknown> }> } } };
+  __basher_dag?: {
+    getState: () => { state: { nodes: Record<string, { params: Record<string, unknown> }> } };
+  };
   __basher_view_camera?: () => { fov: number } | null;
 }
 
@@ -23,7 +25,9 @@ async function openCameraInspector(page: import('@playwright/test').Page) {
     return Boolean(w.__basher_selection && w.__basher_dag && w.__basher_view_camera);
   });
   await page.waitForTimeout(300);
-  await page.evaluate(() => (window as unknown as W).__basher_selection!.getState().select('n_camera'));
+  await page.evaluate(() =>
+    (window as unknown as W).__basher_selection!.getState().select('n_camera'),
+  );
 }
 
 test.describe('#12 Blender-grade camera — lens section', () => {

@@ -30,16 +30,30 @@ interface BrushWindow {
   };
   __basher_three: {
     getState: () => {
-      scene: { traverse: (cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void) => void } | null;
+      scene: {
+        traverse: (
+          cb: (o: { type: string; position: { x: number; y: number; z: number } }) => void,
+        ) => void;
+      } | null;
       camera: {
-        position: { clone: () => { set: (x: number, y: number, z: number) => { project: (c: unknown) => { x: number; y: number } } } };
+        position: {
+          clone: () => {
+            set: (
+              x: number,
+              y: number,
+              z: number,
+            ) => { project: (c: unknown) => { x: number; y: number } };
+          };
+        };
         updateMatrixWorld: () => void;
         matrixWorld: unknown;
         matrixWorldInverse: { copy: (m: unknown) => { invert: () => void } };
       } | null;
     };
   };
-  __basher_selection: { getState: () => { select: (id: string) => void; primaryNodeId: string | null } };
+  __basher_selection: {
+    getState: () => { select: (id: string) => void; primaryNodeId: string | null };
+  };
   __basher_mesh_world_position: (id: string) => [number, number, number] | null;
 }
 
@@ -55,9 +69,30 @@ async function addRigLight(page: import('@playwright/test').Page, id: string): P
         // origin) — so the projected click lands on solid cube body, not chrome.
         { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, 4, 0] },
         { type: 'setParam', nodeId: 'n_box', paramPath: 'size', value: [3, 3, 3] },
-        { type: 'addNode', nodeId: id, nodeType: 'AreaLight', params: { intensity: 5, position: [6, 0, 0], color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] } },
-        { type: 'connect', from: { node: id, socket: 'out' }, to: { node: sceneId, socket: 'lights' } },
-        { type: 'addNode', nodeId: `${id}_tt`, nodeType: 'TrackTo', params: { target: id, aimNode: '', aimPoint: [0, 0, 0], up: [0, 1, 0], mute: false } },
+        {
+          type: 'addNode',
+          nodeId: id,
+          nodeType: 'AreaLight',
+          params: {
+            intensity: 5,
+            position: [6, 0, 0],
+            color: '#ffffff',
+            width: 2,
+            height: 2,
+            lookAt: [0, 0, 0],
+          },
+        },
+        {
+          type: 'connect',
+          from: { node: id, socket: 'out' },
+          to: { node: sceneId, socket: 'lights' },
+        },
+        {
+          type: 'addNode',
+          nodeId: `${id}_tt`,
+          nodeType: 'TrackTo',
+          params: { target: id, aimNode: '', aimPoint: [0, 0, 0], up: [0, 1, 0], mute: false },
+        },
       ],
       'e2e',
       'add rig light',
@@ -107,7 +142,12 @@ test.beforeEach(async ({ page }) => {
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BrushWindow;
-    return Boolean(w.__basher_dag && w.__basher_three && w.__basher_selection && w.__basher_dag.getState().state.outputs.scene);
+    return Boolean(
+      w.__basher_dag &&
+      w.__basher_three &&
+      w.__basher_selection &&
+      w.__basher_dag.getState().state.outputs.scene,
+    );
   });
 });
 
@@ -115,14 +155,20 @@ test('#207 — brushing the model moves the selected light onto its shell; the l
   page,
 }) => {
   await addRigLight(page, 'brush_light_e2e');
-  await page.evaluate(() => (window as unknown as BrushWindow).__basher_selection.getState().select('brush_light_e2e'));
+  await page.evaluate(() =>
+    (window as unknown as BrushWindow).__basher_selection.getState().select('brush_light_e2e'),
+  );
 
   // Open the Light Studio tab and enable the brush.
   const toggle = page.getByTestId('timeline-drawer-toggle');
-  if ((await page.getByTestId('timeline-drawer').getAttribute('data-open')) !== 'true') await toggle.click();
+  if ((await page.getByTestId('timeline-drawer').getAttribute('data-open')) !== 'true')
+    await toggle.click();
   await page.getByTestId('timeline-tab-lightStudio').click();
   await page.getByTestId('light-studio-brush-toggle').click();
-  await expect(page.getByTestId('light-studio-brush-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('light-studio-brush-toggle')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 
   const before = await lightPos(page, 'brush_light_e2e');
   expect(before).toEqual([6, 0, 0]);
@@ -157,7 +203,9 @@ test('#207 — with the brush OFF, clicking the model does NOT move the light (f
   page,
 }) => {
   await addRigLight(page, 'nobrush_light_e2e');
-  await page.evaluate(() => (window as unknown as BrushWindow).__basher_selection.getState().select('nobrush_light_e2e'));
+  await page.evaluate(() =>
+    (window as unknown as BrushWindow).__basher_selection.getState().select('nobrush_light_e2e'),
+  );
 
   // Brush stays OFF.
   const before = await lightPos(page, 'nobrush_light_e2e');

@@ -193,18 +193,20 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
   await expect(page.getByTestId('curve-track-0')).toBeVisible();
 });
 
-// P6 W9: this spec exercised the SVG Dopesheet's per-layer mute toggle
-// (`layer-mute-{id}`, rendered by LayerRowControls inside Dopesheet's
-// LayerSection). The AnimationLayer node type has since been RETIRED (V57
-// — animation is now free-floating direct channels, no layer wrapper), so
-// the layer-row mute/solo affordance has no backing model at all. Per-
-// channel mute/weight live on the channel itself; a future wave may mount
-// a per-channel mute control onto/beside TimelineCanvas. Skipped honestly
-// rather than faked. H29 hand-resolution: deferral recorded, not silent
-// false-green.
-test.skip('P3#5 mute toggle on layer row dispatches a setParam Op (V1 holds) — DEFERRED: AnimationLayer retired (V57); per-channel mute chrome not yet on the W9 TimelineCanvas surface', async () => {
-  // intentionally empty — see the block comment above for the W9
-  // rationale and the re-enable condition.
+// P6 W9: this spec exercised the SVG Dopesheet's per-LAYER mute toggle
+// (`layer-mute-{id}`). The AnimationLayer node type was RETIRED (V57 —
+// animation is now free-floating direct channels), so the layer-row
+// affordance has no backing model. The deferral's re-enable condition —
+// "a future wave mounts a per-CHANNEL mute control onto TimelineCanvas" —
+// is now RESOLVED: #263 added the dopesheet Mute toolbar toggle + #264
+// restored the row-click that arms it. Coverage moved to the real
+// end-to-end path in `p263-channel-mute.spec.ts` (author → select row →
+// Mute → the render stops following). This stub stays skipped because the
+// old layer-row assertion tests a retired model; it is superseded, not
+// pending. H29 hand-resolution: deferral recorded AND its resolution
+// recorded, never a silent false-green. See [[H143]]/[[V44]].
+test.skip('P3#5 SUPERSEDED — per-channel mute shipped (#263/#264); covered by p263-channel-mute.spec.ts, not by the retired layer-row toggle', async () => {
+  // intentionally empty — coverage lives in p263-channel-mute.spec.ts.
 });
 
 test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pending', async ({

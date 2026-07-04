@@ -48,14 +48,21 @@ test.beforeEach(async ({ page }) => {
   if (await starter.isVisible().catch(() => false)) await starter.click();
   await expect(layout).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() =>
-    Boolean((window as unknown as UiWindow).__basher_selection && (window as unknown as UiWindow).__basher_three),
+    Boolean(
+      (window as unknown as UiWindow).__basher_selection &&
+      (window as unknown as UiWindow).__basher_three,
+    ),
   );
   // Select the default box and reveal its Modifiers section (default-collapsed).
-  await page.evaluate(() => (window as unknown as UiWindow).__basher_selection.getState().select('n_box'));
+  await page.evaluate(() =>
+    (window as unknown as UiWindow).__basher_selection.getState().select('n_box'),
+  );
   await page.getByTestId('inspector-section-toggle-modifier').click();
 });
 
-test('#209 — "+ Array" adds a modifier and the viewport renders the merged array', async ({ page }) => {
+test('#209 — "+ Array" adds a modifier and the viewport renders the merged array', async ({
+  page,
+}) => {
   const stack = page.getByTestId('modifier-stack');
   await expect(stack).toBeVisible();
   await expect(stack.getByText('No modifiers.')).toBeVisible();

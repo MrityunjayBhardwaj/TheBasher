@@ -135,6 +135,72 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(refsBaked).toBe(true);
   });
 
+  it('#259/H140: rewires a SINGLE-cardinality consumer socket (a modifier target) without rolling back', async () => {
+    // The box feeds TWO consumers of different cardinality at once: Scene.children
+    // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single
+    // socket's connect-before-disconnect threw ("bound producer is <baked>, not
+    // n_box") and rolled back the whole atomic composite → Apply silently no-op'd.
+    let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_mod',
+      nodeType: 'ArrayModifier',
+      params: { count: 3, offset: [2, 0, 0], muted: false },
+    }).next;
+    // box.out → n_mod.target (single). Box stays wired to Scene.children (list) too.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: BOX_ID, socket: 'out' },
+      to: { node: 'n_mod', socket: 'target' },
+    }).next;
+    // non-identity scale so Apply actually bakes.
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: BOX_ID,
+      paramPath: 'scale',
+      value: [2, 1, 1],
+    }).next;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn, calls } = makeDispatch(stateRef);
+
+    const result = await dispatchApplyTransform(BOX_ID, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+
+    expect(result.ok).toBe(true); // no rollback (the #259 regression)
+    if (!result.ok) return;
+    expect(calls).toHaveLength(1); // still ONE atomic composite
+
+    const next = stateRef.current;
+    expect(next.nodes[BOX_ID]).toBeUndefined(); // box baked away
+    // the modifier's single `target` now points at the baked node (still a bare
+    // ref, not promoted to a list), and Scene.children too.
+    const modTarget = next.nodes['n_mod'].inputs.target;
+    expect(Array.isArray(modTarget)).toBe(false);
+    expect((modTarget as { node: string }).node).toBe(result.bakedId);
+
+    // Undo round-trip: applying each op's inverse in reverse restores the box and
+    // its single-socket binding (the applyConnect single-socket inverse path).
+    const composite = calls[0];
+    let fwd = state;
+    const inverses: Op[] = [];
+    for (const op of composite) {
+      const r = applyOp(fwd, op);
+      fwd = r.next;
+      inverses.push(r.inverse);
+    }
+    let back = fwd;
+    for (let i = inverses.length - 1; i >= 0; i--) back = applyOp(back, inverses[i]).next;
+    expect(back.nodes[BOX_ID]).toBeDefined();
+    expect((back.nodes['n_mod'].inputs.target as { node: string }).node).toBe(BOX_ID);
+  });
+
   it('awaits the OPFS write BEFORE the Op composite (reload-safe ordering)', async () => {
     const state = buildDefaultDagState();
     const storage = new MemoryStorage();

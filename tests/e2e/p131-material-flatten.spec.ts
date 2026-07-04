@@ -126,7 +126,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-/** Wire a MaterialOverride between the imported GltfAsset and its Transform. */
+/** Wire a MaterialOverride between the imported GltfAsset and its Group (V67). */
 async function applyOverride(
   page: import('@playwright/test').Page,
   params: Record<string, unknown>,
@@ -136,14 +136,16 @@ async function applyOverride(
     const dag = w.__basher_dag.getState();
     const nodes = dag.state.nodes;
     const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-    const transformId = Object.keys(nodes).find((id) => nodes[id].type === 'Transform');
-    if (!gltfId || !transformId) throw new Error('expected GltfAsset + Transform from import');
+    // V67: import root is a transformable Group (was a Transform); the asset
+    // wires into Group.children (a list socket, was Transform.target/single).
+    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
+    if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
     dag.dispatchAtomic(
       [
         {
           type: 'disconnect',
           from: { node: gltfId, socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
         { type: 'addNode', nodeId: 'mo131', nodeType: 'MaterialOverride', params: p },
         {
@@ -154,7 +156,7 @@ async function applyOverride(
         {
           type: 'connect',
           from: { node: 'mo131', socket: 'out' },
-          to: { node: transformId, socket: 'target' },
+          to: { node: groupId, socket: 'children' },
         },
       ],
       'user',

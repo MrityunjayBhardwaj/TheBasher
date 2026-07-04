@@ -50,7 +50,9 @@ describe('buildLightBrushOp', () => {
 
   it('returns null when nothing is selected', () => {
     const state = addRigLight(buildDefaultDagState(), 'n_rig', [5, 0, 0]);
-    expect(buildLightBrushOp(state, 0, null, [0, 1, 0], [0, 1, 0], [0, -1, 0], 'reflect')).toBeNull();
+    expect(
+      buildLightBrushOp(state, 0, null, [0, 1, 0], [0, 1, 0], [0, -1, 0], 'reflect'),
+    ).toBeNull();
   });
 
   it('returns null when the selection is not a rig light', () => {

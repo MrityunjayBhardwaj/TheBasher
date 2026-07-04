@@ -129,8 +129,12 @@ test('P2.6#3 space toggle swaps view3d ↔ uv; Canvas DOM node persists', async 
   );
   expect(sameId).toBe(beforeId);
 
-  // Toggle back via Tab keyboard — must not be intercepted by inputs.
+  // Toggle back via Tab keyboard — must not be intercepted by inputs. The space
+  // cycle is now view3d → uv → video → view3d (3 spaces, SPACE_CYCLE), so from the
+  // UV space two Tabs return to 3D View (passing through the video space).
   await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('video-slot')).toHaveCSS('display', 'block');
   await page.keyboard.press('Tab');
   await expect(page.getByTestId('view3d-slot')).toHaveCSS('display', 'block');
 });

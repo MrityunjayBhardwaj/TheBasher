@@ -161,9 +161,7 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(explicit.geometry.alphaCutoff).toBe(0.3);
     // OPAQUE/BLEND are NOT cutout — no alphaCutoff (stays a plain {opacity} lobe).
     expect(gltfJsonMaterialToOpenpbr({ alphaMode: 'OPAQUE' }).geometry.alphaCutoff).toBeUndefined();
-    expect(
-      gltfJsonMaterialToOpenpbr({ alphaMode: 'BLEND' }).geometry.alphaCutoff,
-    ).toBeUndefined();
+    expect(gltfJsonMaterialToOpenpbr({ alphaMode: 'BLEND' }).geometry.alphaCutoff).toBeUndefined();
     // alphaCutoff round-trips to three.js alphaTest.
     expect(openpbrToThree(def).alphaTest).toBe(0.5);
     expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).alphaTest).toBe(0); // off by default

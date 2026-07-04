@@ -43,7 +43,9 @@ async function startMultiEntryImport(page: import('@playwright/test').Page): Pro
     const doc = JSON.parse(new TextDecoder().decode(texturedBytes)) as Record<string, unknown>;
     // Derive a PLAIN variant from the same valid geometry: strip its texture.
     const plain = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
-    plain.materials = [{ name: 'Plain', pbrMetallicRoughness: { metallicFactor: 0, roughnessFactor: 1 } }];
+    plain.materials = [
+      { name: 'Plain', pbrMetallicRoughness: { metallicFactor: 0, roughnessFactor: 1 } },
+    ];
     delete plain.textures;
     delete plain.images;
     delete plain.samplers;

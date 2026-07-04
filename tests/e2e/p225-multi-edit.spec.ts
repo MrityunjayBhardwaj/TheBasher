@@ -12,7 +12,10 @@ import { expect, test } from './_fixtures';
 interface BasherWindow {
   __basher_dag: {
     getState: () => {
-      state: { outputs: Record<string, { node: string }>; nodes: Record<string, { params?: { position?: number[] } }> };
+      state: {
+        outputs: Record<string, { node: string }>;
+        nodes: Record<string, { params?: { position?: number[] } }>;
+      };
       dispatchAtomic: (ops: unknown[], source?: string, label?: string) => void;
       undo: () => void;
     };
@@ -26,7 +29,7 @@ test.beforeEach(async ({ page }) => {
     () =>
       Boolean(
         (window as unknown as BasherWindow).__basher_dag &&
-          (window as unknown as BasherWindow).__basher_selection,
+        (window as unknown as BasherWindow).__basher_selection,
       ),
     { timeout: 15000 },
   );
@@ -43,7 +46,11 @@ test.beforeEach(async ({ page }) => {
           nodeType: 'BoxMesh',
           params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
         },
-        { type: 'connect', from: { node: 'n_box_b', socket: 'out' }, to: { node: sceneId, socket: 'children' } },
+        {
+          type: 'connect',
+          from: { node: 'n_box_b', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
       ],
       'user',
       'add second box',
@@ -51,12 +58,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('N selected → shared edit sets the value on all and undo reverts the batch', async ({ page }) => {
+test('N selected → shared edit sets the value on all and undo reverts the batch', async ({
+  page,
+}) => {
   await page.evaluate(() =>
-    (window as unknown as BasherWindow).__basher_selection.getState().selectMany(['n_box', 'n_box_b']),
+    (window as unknown as BasherWindow).__basher_selection
+      .getState()
+      .selectMany(['n_box', 'n_box_b']),
   );
 
-  await expect(page.locator('[data-testid="inspector-multi-count"]')).toHaveText('2 objects selected');
+  await expect(page.locator('[data-testid="inspector-multi-count"]')).toHaveText(
+    '2 objects selected',
+  );
 
   // x differs (0 vs 3) → mixed; y/z agree (0) → concrete value.
   const x = page.locator('[aria-label="Position X (all selected)"]');

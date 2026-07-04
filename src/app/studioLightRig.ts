@@ -47,9 +47,7 @@ function isVec3(v: unknown): v is Vec3 {
  * the rig lights the panel draws as pucks; an un-aimed area light is omitted (it
  * is not on the rig). Pure — a function of the node table.
  */
-export function enumerateStudioLights(
-  nodes: Readonly<Record<string, Node>>,
-): StudioLightEntry[] {
+export function enumerateStudioLights(nodes: Readonly<Record<string, Node>>): StudioLightEntry[] {
   const out: StudioLightEntry[] = [];
   for (const [nodeId, node] of Object.entries(nodes)) {
     if (node.type !== 'AreaLight') continue;
@@ -71,11 +69,7 @@ export function enumerateStudioLights(
  * or the world origin when there are no rig lights. Pure (state + ctx); threads
  * the shared evaluator `cache` so a per-frame caller hits the render cache.
  */
-export function resolveRigTarget(
-  state: DagState,
-  ctx: EvalCtx,
-  cache?: EvaluatorCache,
-): Vec3 {
+export function resolveRigTarget(state: DagState, ctx: EvalCtx, cache?: EvaluatorCache): Vec3 {
   for (const nodeId of Object.keys(state.nodes)) {
     if (state.nodes[nodeId]?.type !== 'AreaLight') continue;
     const aim = resolveTrackToTarget(state, nodeId, ctx, cache);

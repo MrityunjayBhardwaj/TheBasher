@@ -15,20 +15,29 @@
 // A → tracks B, B → tracks A therefore resolves each off the OTHER's un-aimed
 // TRS world (well-defined), not an infinite loop.
 //
-// SCOPE (slice #204 increment 1): the aim is written as the node's LOCAL rotation,
-// which equals its WORLD rotation only for a TOP-LEVEL node (the SceneChildNode
-// wrapper is identity). A constrained node nested under a non-identity parent
-// would need parentWorld⁻¹·aimWorld — out of scope here, documented (follow-up).
+// DEPTH (#267, V45 #1): the aim is derived in WORLD space and re-expressed into the
+// node's PARENT-LOCAL frame (parentWorld⁻¹·aimWorld) so it composes to the correct
+// world orientation under a non-identity parent Group/Transform. A top-level node has
+// an identity parent → world == local (byte-identical to the pre-#267 path). The
+// nested overlay only RENDERS once the render mount lands (#266, B1–B3) — before that
+// a nested ConstrainedR never mounts, so this math is render-invisible.
 //
-// REF: epic #201, docs/OPERATORS-AND-LIGHTING-DESIGN.md §4.1; vyapti V58/V56/V37.
+// REF: epic #201, docs/OPERATORS-AND-LIGHTING-DESIGN.md §4.1; vyapti V58/V56/V37/V45.
 
+import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { resolveTrackTo } from './resolveTrackTo';
-import { resolveWorldTransform, type WorldTransform } from './resolveWorldTransform';
+import {
+  resolveWorldTransform,
+  resolveParentWorldMatrix,
+  type WorldTransform,
+} from './resolveWorldTransform';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 
 type Vec3 = [number, number, number];
+
+const DEG2RAD = Math.PI / 180;
 
 /** Minimal node shape the enumerator reads (a DagState node subset). */
 interface NodeLike {
@@ -117,7 +126,44 @@ export function resolveConstraintRotation(
   if (!tt) return null;
   const objWorld: WorldTransform | null = resolveWorldTransform(state, nodeId, ctx, cache);
   if (!objWorld) return null;
-  return resolveTrackTo(objWorld.position, aimTargetWorld(state, tt, ctx, cache), tt.up);
+  const aimWorld = resolveTrackTo(objWorld.position, aimTargetWorld(state, tt, ctx, cache), tt.up);
+  if (!aimWorld) return null;
+  // #267 (V45 #1 / I2 / C5) — the aim is derived in WORLD space, but the value we
+  // return is written as the node's LOCAL rotation param, which then composes UNDER
+  // the node's parent in the render (GroupR/TransformR `<group>`). Re-express the
+  // world aim into the node's PARENT-LOCAL frame — parentWorld⁻¹ · aimWorld — so the
+  // rendered WORLD orientation equals the aim, not aim double-rotated by the parent.
+  // resolveParentWorldMatrix returns null for a TOP-LEVEL node (identity parent) →
+  // aim stays world == local, byte-identical to the pre-#267 top-level path.
+  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
+  if (!parentWorld) return aimWorld;
+  return worldAimToParentLocal(aimWorld, parentWorld);
+}
+
+/** Re-express a WORLD aim rotation (Euler XYZ, degrees) into the parent-local frame:
+ *  localR = parentWorldR⁻¹ · aimWorldR, returned as Euler XYZ degrees. The parent's
+ *  rotation is taken from its world matrix (scale/translation dropped — a constraint
+ *  drives orientation only). 'XYZ' order + degrees match resolveTrackTo and the
+ *  renderer's `rotation={degVec3ToRad(...)}`, so the local rotation composes back to
+ *  the intended world aim (V37/H40). */
+function worldAimToParentLocal(aimWorldDeg: Vec3, parentWorld: THREE.Matrix4): Vec3 {
+  const qAim = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      aimWorldDeg[0] * DEG2RAD,
+      aimWorldDeg[1] * DEG2RAD,
+      aimWorldDeg[2] * DEG2RAD,
+      'XYZ',
+    ),
+  );
+  const qParent = new THREE.Quaternion();
+  parentWorld.decompose(new THREE.Vector3(), qParent, new THREE.Vector3());
+  const qLocal = qParent.invert().multiply(qAim);
+  const e = new THREE.Euler().setFromQuaternion(qLocal, 'XYZ');
+  return [
+    THREE.MathUtils.radToDeg(e.x),
+    THREE.MathUtils.radToDeg(e.y),
+    THREE.MathUtils.radToDeg(e.z),
+  ];
 }
 
 /**

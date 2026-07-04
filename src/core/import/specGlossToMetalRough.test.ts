@@ -157,7 +157,9 @@ describe('convertSpecGlossDocument', () => {
 
   it('is a no-op clone for a metal-rough document (no spec-gloss)', () => {
     const mr: GltfDoc = {
-      materials: [{ name: 'mr', pbrMetallicRoughness: { metallicFactor: 1, roughnessFactor: 0.5 } }],
+      materials: [
+        { name: 'mr', pbrMetallicRoughness: { metallicFactor: 1, roughnessFactor: 0.5 } },
+      ],
     };
     const { doc, combinedTextureMaterials } = convertSpecGlossDocument(mr);
     expect(doc).toEqual(mr);

@@ -27,6 +27,11 @@ const FRUSTUM_DEPTH = 0.9;
 const FRUSTUM_ASPECT = 16 / 9;
 const BODY = 0.12; // half-size of the little camera body box at the apex
 
+// A raycast that never registers a hit — for the frustum's pure-visual meshes so
+// the single compact body hitbox owns selection (#250). Stable module-level ref
+// so the visuals don't each allocate a closure per render.
+const NO_RAYCAST = () => null;
+
 const COLOR_SELECTED = '#e2e8f0'; // bright — the camera you clicked
 const COLOR_ACTIVE = '#4ea1ff'; // the scene's active camera (wired to scene.camera)
 const COLOR_INACTIVE = '#64748b'; // any other camera node
@@ -158,10 +163,6 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
     return g;
   }, [active, pose.kind, pose.fov]);
 
-  // Approx base half-extents for the invisible hitbox (perspective only; the
-  // ortho box hitbox uses the same shape, close enough for picking).
-  const halfH = Math.tan((THREE.MathUtils.degToRad(pose.fov) || 0) / 2) * FRUSTUM_DEPTH;
-
   // #211 — the one shared viewport selection handler (was duplicated here).
   const onClick = selectNodeOnClick(pickId);
 
@@ -180,26 +181,36 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
       onClick={onClick}
       userData={{ editorChrome: true }}
     >
-      <lineSegments>
+      {/* #250 — the visual meshes are PURE VISUALS: raycast disabled so the ONE
+          compact body hitbox below owns selection. Critical for the wireframe:
+          a LineSegments is picked via the raycaster's line
+          THRESHOLD, and on the default view the editor eye sits ON this camera's
+          apex→lookAt axis, so its edges registered near-zero-distance hits that
+          out-picked the framed subject (clicking the cube selected the camera)
+          AND blanketed "empty" screen so deselect never fired. */}
+      <lineSegments raycast={NO_RAYCAST}>
         <primitive object={geom} attach="geometry" />
         <lineBasicMaterial color={color} />
       </lineSegments>
       {/* #231 Inc 3.2 — solid filled triangle marking the ACTIVE camera. */}
       {activeTriGeom ? (
-        <mesh>
+        <mesh raycast={NO_RAYCAST}>
           <primitive object={activeTriGeom} attach="geometry" />
           <meshBasicMaterial color={COLOR_ACTIVE} side={THREE.DoubleSide} />
         </mesh>
       ) : null}
       {/* Small body box at the apex so the camera reads as an object. */}
-      <mesh>
+      <mesh raycast={NO_RAYCAST}>
         <boxGeometry args={[BODY * 2, BODY * 2, BODY * 2]} />
         <meshBasicMaterial color={color} wireframe />
       </mesh>
-      {/* Invisible click hitbox spanning the frustum volume — the thin lines
-          alone are nearly impossible to click (same trick as LightHelper). */}
-      <mesh position={[0, 0, -FRUSTUM_DEPTH / 2]}>
-        <boxGeometry args={[halfH * FRUSTUM_ASPECT * 2 || 0.4, halfH * 2 || 0.4, FRUSTUM_DEPTH]} />
+      {/* Invisible click hitbox — the SOLE pick surface. Sized to the camera
+          BODY at the apex (not the frustum cone, which points at the lookAt and
+          from front-on angles would shadow the framed subject). A small, precise
+          icon: clicking it selects the camera; clicking elsewhere hits the real
+          geometry or empty space. Blender picks a camera by its body/icon. */}
+      <mesh>
+        <boxGeometry args={[BODY * 3, BODY * 3, BODY * 3]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>

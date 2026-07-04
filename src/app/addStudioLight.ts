@@ -79,7 +79,14 @@ export function buildAddStudioLightOps(
       type: 'addNode',
       nodeId: ttId,
       nodeType: 'TrackTo',
-      params: { name: 'aim', target: lightId, aimNode: '', aimPoint: target, up: [0, 1, 0], mute: false },
+      params: {
+        name: 'aim',
+        target: lightId,
+        aimNode: '',
+        aimPoint: target,
+        up: [0, 1, 0],
+        mute: false,
+      },
     },
   ];
   return { ops, lightId };

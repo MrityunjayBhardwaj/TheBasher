@@ -17,7 +17,16 @@
 
 import { useGLTF } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 // #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
@@ -38,6 +47,7 @@ import { applyEditedMaps, hasMapEdits } from '../app/material/gltfMapOverlay';
 import { getStorage } from '../app/boot';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
@@ -52,6 +62,7 @@ import {
   resolveConstraintRotation,
   resolveTrackToTarget,
 } from '../app/nodeConstraints';
+import { childEdges } from '../app/resolveWorldTransform';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -120,6 +131,27 @@ function ensureRectAreaInit() {
   rectAreaInit = true;
 }
 
+// #266 (B1–B3, [[V88]] N6/N2) — the ID-KEYED OVERLAY graph, distinct from the
+// value-flow render tree (MeshChild / container renderers). An edge-less overlay
+// (a Track-To constraint or a free-floating direct channel) mounts wherever its
+// TARGET node renders — at ANY depth — resolved by FLAT-ID LOOKUP against these
+// membership sets, never by walking the render tree (which drops node-ids at
+// nesting boundaries → the pre-#266 nested no-op). SceneFromDAG builds the sets
+// once (O(N)) and provides them here MEMOIZED ON A CONTENT SIGNATURE, so adding
+// an overlay to a nested node changes the signature → every nested `RenderChild`
+// re-evaluates membership and the target mounts its overlay (B2 — the synthesized
+// dependency edge; without it the nested target never re-resolves). A non-overlay
+// edit keeps the signature stable → nested `RenderChild`s bail (H48/B13 preserved).
+interface OverlayMembership {
+  readonly directChannelTargets: ReadonlySet<string>;
+  readonly constraintTargets: ReadonlySet<string>;
+}
+const EMPTY_MEMBERSHIP: OverlayMembership = {
+  directChannelTargets: new Set(),
+  constraintTargets: new Set(),
+};
+const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSHIP);
+
 interface SceneFromDAGProps {
   /** Override the named output to render. Defaults to 'render'. */
   outputName?: string;
@@ -161,6 +193,28 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // it (you're inside it — drawing it would clutter the preview).
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
+  // #197/#204 — the edge-less OVERLAY membership sets (nodes driven by a direct
+  // channel / an active Track-To), built ONCE (O(N)) so a per-child test is O(1),
+  // never O(N²) (B13). The top-level maps read these directly; #266 (B1) also
+  // provides them via context so a NESTED child resolves overlay membership by
+  // flat-id LOOKUP at any depth.
+  const directChannelTargets = directChannelTargetSet(state.nodes);
+  const constraintTargets = constraintTargetSet(state.nodes);
+  // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
+  // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
+  // membership actually changes (an overlay added/removed anywhere), NOT on every
+  // param edit. Sorted-join over the (small) overlay-node sets; identity-stable
+  // otherwise so nested containers bail (H48). Intentional exhaustive-deps skip:
+  // the sig IS the content dependency (the sets are rebuilt each render by design).
+  const overlaySig = `${[...directChannelTargets].sort().join(',')}|${[...constraintTargets]
+    .sort()
+    .join(',')}`;
+  const overlayMembership = useMemo<OverlayMembership>(
+    () => ({ directChannelTargets, constraintTargets }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [overlaySig],
+  );
+
   const target = state.outputs[outputName];
   if (!target) return null;
 
@@ -192,18 +246,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const rigLightSources = resolveRigLightSources(state);
   const rigLights = value.scene.lightRig?.lights ?? [];
 
-  // v0.7 unification (#197) — the set of nodes driven by free-floating direct
-  // channels, built in ONE pass so the child map below is O(N), not O(N²). A
-  // child in this set (and not an AnimationLayer) overlays its channels via
-  // DirectChannelsR. Excludes layer-wired channels (the coexistence guard lives
-  // in nodeChannels.ts).
-  const directChannelTargets = directChannelTargetSet(state.nodes);
-
-  // #204 (epic #201) — the set of nodes constrained by an active Track-To, built
-  // once (O(N)) so the child map tests membership in O(1), never O(N²) (B13). A
-  // constrained child renders through ConstrainedR, which derives its rotation
-  // from the aim (V58) instead of the authored/animated value.
-  const constraintTargets = constraintTargetSet(state.nodes);
+  // (directChannelTargets / constraintTargets computed above the early return so
+  // the overlay-membership context can be a hook — see #266.)
 
   // #242 / [[H132]] GAP 1 — the set of nodes with an ANIMATED ANCESTOR (an ancestor
   // in `directChannelTargets`). A separately-rendered editor visual (the camera
@@ -222,10 +266,28 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // UX #12 — the active camera's depth-of-field, resolved through the SAME pure
   // helper the offscreen still uses (cameraDof.ts) so the live bokeh matches the
   // rendered bokeh. null when DoF is off → PostFx mounts no DepthOfField.
-  const activeDof = resolveCameraDof(activeCameraId ? state.nodes[activeCameraId] : null);
+  // #247 — when `focusOnTarget` is set, the focus plane tracks the lookAt: pass the
+  // resolved |position − lookAt| (channels + Track-To at the live playhead) so
+  // moving the reticle / binding a target moves the focus plane (re-runs on every
+  // DAG change; a pure scrub of an animated camera does not re-run — documented).
+  const activeCameraNode = activeCameraId ? state.nodes[activeCameraId] : null;
+  let targetFocusDistance: number | undefined;
+  if ((activeCameraNode?.params as { focusOnTarget?: unknown } | undefined)?.focusOnTarget) {
+    try {
+      const pose = resolveCameraPoseAt(state, activeCameraId!, useTimeStore.getState().seconds);
+      targetFocusDistance = Math.hypot(
+        pose.lookAt[0] - pose.position[0],
+        pose.lookAt[1] - pose.position[1],
+        pose.lookAt[2] - pose.position[2],
+      );
+    } catch {
+      /* fall back to the authored focusDistance */
+    }
+  }
+  const activeDof = resolveCameraDof(activeCameraNode, targetFocusDistance);
 
   return (
-    <>
+    <OverlayMembershipContext.Provider value={overlayMembership}>
       {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
           PROPERTY, not a traversed object), so it survives the renderToImage
           chrome hide-pass (V37) and lights the production render for free.
@@ -279,11 +341,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             const lid = lightRefs[i]?.node ?? null;
             // [[V85]]/[[H132]] #241 — an animated light's helper follows the
             // evaluated value at the playhead; a static light keeps the static path.
-            // #243 GAP 2 — a Track-To'd AreaLight derives its aim per frame, so its
-            // helper needs the follower too (re-resolve the aim at `seconds`).
+            // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
+            // derives its aim per frame, so its helper needs the follower too
+            // (re-resolve the aim at `seconds` into the field the helper draws).
             return lid &&
               (directChannelTargets.has(lid) ||
-                (constraintTargets.has(lid) && light.kind === 'AreaLight')) ? (
+                (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
               <LightHelperFollower
                 key={`helper:${i}`}
                 nodeId={lid}
@@ -300,10 +363,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? rigLights.map((light, i) => {
             const lid = rigLightSources[i] ?? null;
-            // #243 GAP 2 — a Track-To'd AreaLight rig light follows its aim per frame.
+            // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
             return lid &&
               (directChannelTargets.has(lid) ||
-                (constraintTargets.has(lid) && light.kind === 'AreaLight')) ? (
+                (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
               <LightHelperFollower
                 key={`rig-helper:${lid}`}
                 nodeId={lid}
@@ -381,7 +444,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           If a project wants ambient fill, it adds an AmbientLight node. */}
       <DiffOverlay />
       <PostFx config={value.postFx} dof={activeDof} />
-    </>
+    </OverlayMembershipContext.Provider>
   );
 }
 
@@ -468,6 +531,34 @@ function MeshScaleProbe() {
           o.getWorldPosition(p);
           out.push([p.x, p.y, p.z]);
         }
+      });
+      return out;
+    };
+    // #V45 (bug-audit #10 item 2) — the H40 side-A observation for an AIMABLE
+    // light's DIRECTION. A DirectionalLight/SpotLight orients by its `.target`
+    // Object3D (the shader reads `normalize(target - position)`), so its aim is not
+    // captured by the light's own quaternion. Report each such light's WORLD
+    // position + normalized aim direction so the Track-To boundary-pair e2e asserts
+    // the rendered spot/sun actually points at its target (render == intended aim).
+    // Read-only (V8 clean). Matched by position (lights render flat, no name).
+    w.__basher_light_world_aims = (): {
+      position: [number, number, number];
+      direction: [number, number, number];
+    }[] => {
+      const out: { position: [number, number, number]; direction: [number, number, number] }[] = [];
+      scene.traverse((o) => {
+        const light = o as THREE.SpotLight | THREE.DirectionalLight;
+        if (!(light as THREE.Light).isLight || !light.target) return;
+        light.updateWorldMatrix(true, false);
+        light.target.updateWorldMatrix(true, false);
+        const lp = new THREE.Vector3();
+        const tp = new THREE.Vector3();
+        light.getWorldPosition(lp);
+        light.target.getWorldPosition(tp);
+        const dir = tp.sub(lp);
+        if (dir.lengthSq() === 0) return;
+        dir.normalize();
+        out.push({ position: [lp.x, lp.y, lp.z], direction: [dir.x, dir.y, dir.z] });
       });
       return out;
     };
@@ -558,6 +649,7 @@ function MeshScaleProbe() {
       delete w.__basher_mesh_world_position;
       delete w.__basher_mesh_world_quaternion;
       delete w.__basher_light_world_positions;
+      delete w.__basher_light_world_aims;
     };
   }, [scene]);
   return null;
@@ -621,16 +713,18 @@ function LightKindR({
 }) {
   switch (value.kind) {
     case 'DirectionalLight':
-      return <DirectionalLightR value={value} />;
+      // #265 — a Track-To'd sun aims its `.target` at the resolved world point.
+      return <DirectionalLightR value={value} nodeId={nodeId} constrained={constrained} />;
     case 'AmbientLight':
       return <AmbientLightR value={value} />;
     case 'PointLight':
+      // Point lights are omnidirectional — no aim to constrain.
       return <PointLightR value={value} />;
     case 'SpotLight':
-      return <SpotLightR value={value} />;
+      // #265 — a Track-To'd spot aims its `.target` at the resolved world point.
+      return <SpotLightR value={value} nodeId={nodeId} constrained={constrained} />;
     case 'AreaLight':
-      // #205 — the studio-light / rig aim consumer (the only light that aims via
-      // lookAt today). Other light kinds ignore the constraint for now.
+      // #205 — the studio-light / rig aim consumer (aims via lookAt).
       return <AreaLightR value={value} nodeId={nodeId} constrained={constrained} />;
   }
 }
@@ -750,18 +844,24 @@ function LightHelperFollower({
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const patched = usePlayheadFollow((seconds) => {
     const base =
-      overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
-      value;
-    // Only AreaLight aims via lookAt today (LightKindR) — mirror that scope so a
-    // constrained non-area light pays nothing extra.
-    if (!constrained || base.kind !== 'AreaLight') return base;
+      overlayTransients(
+        overlayChannels(value, channels, 1, seconds) ?? value,
+        nodeId,
+        transients,
+      ) ?? value;
+    // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
+    // derives its aim from the Track-To target per frame; the wireframe helper
+    // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
+    // resolved world aim into the field THIS kind's helper draws from. A
+    // non-aimable kind (Point / Ambient) or an unconstrained light pays nothing.
+    if (!constrained || !isAimableLightKind(base.kind)) return base;
     const aim = resolveTrackToTarget(
       useDagStore.getState().state,
       nodeId,
       { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
       cache,
     );
-    return aim ? { ...base, lookAt: aim } : base;
+    return aim ? aimLightValueForHelper(base, aim) : base;
   });
   return <LightHelper value={patched} pickId={pickId} />;
 }
@@ -816,7 +916,61 @@ function scalePower(scale: readonly [number, number, number] | undefined): numbe
   return Math.abs(s[0] * s[1] * s[2]);
 }
 
-function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
+/** #265 — the light kinds a Track-To can aim (they have a direction): AreaLight
+ *  (aims via `lookAt`), SpotLight + DirectionalLight (aim via `.target`). Point +
+ *  Ambient are omnidirectional → no aim. ONE predicate shared by the render mount
+ *  gate and the helper follower so the two can't drift on which kinds obey a
+ *  constraint (the H40 render==helper contract). */
+function isAimableLightKind(kind: LightValue['kind']): boolean {
+  return kind === 'AreaLight' || kind === 'SpotLight' || kind === 'DirectionalLight';
+}
+
+/** #265 — re-express a resolved WORLD aim point into the authored-aim field THIS
+ *  light kind's wireframe helper (LightHelpers.tsx) draws from, so a constrained
+ *  light's helper follows its derived aim instead of freezing at the authored one:
+ *  AreaLight → `lookAt`; SpotLight → `target`; DirectionalLight → `rotation` (the
+ *  Euler° that rotates the sun's default −Y down-axis onto `normalize(aim −
+ *  position)`, matching `directionalDirection`). A render-side derivation only —
+ *  the DAG value is untouched (V58). */
+function aimLightValueForHelper(base: LightValue, aim: [number, number, number]): LightValue {
+  switch (base.kind) {
+    case 'AreaLight':
+      return { ...base, lookAt: aim };
+    case 'SpotLight':
+      return { ...base, target: aim };
+    case 'DirectionalLight': {
+      const dir = new THREE.Vector3(
+        aim[0] - base.position[0],
+        aim[1] - base.position[1],
+        aim[2] - base.position[2],
+      );
+      if (dir.lengthSq() === 0) return base;
+      dir.normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+      const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+      return {
+        ...base,
+        rotation: [
+          THREE.MathUtils.radToDeg(e.x),
+          THREE.MathUtils.radToDeg(e.y),
+          THREE.MathUtils.radToDeg(e.z),
+        ],
+      };
+    }
+    default:
+      return base;
+  }
+}
+
+function DirectionalLightR({
+  value,
+  nodeId,
+  constrained,
+}: {
+  value: DirectionalLightValue;
+  nodeId?: string | null;
+  constrained?: boolean;
+}) {
   const ref = useRef<THREE.DirectionalLight | null>(null);
   // When rotation is non-zero, drive the light's target so direction =
   // rotation × (0,-1,0). When rotation is identity (default), leave
@@ -829,7 +983,12 @@ function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
   const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
   const [px, py, pz] = value.position;
   const hasRotation = rx !== 0 || ry !== 0 || rz !== 0;
+  // #265 — a Track-To on this light OWNS the aim (per-frame, `.target` → world
+  // aim point). Skip the authored-target useEffect while constrained so the two
+  // don't fight; toggling the constraint off re-runs it (constrained is a dep).
+  useLightTargetAim(nodeId ?? null, constrained ?? false, ref);
   useEffect(() => {
+    if (constrained) return;
     const light = ref.current;
     if (!light) return;
     if (!hasRotation) {
@@ -844,7 +1003,7 @@ function DirectionalLightR({ value }: { value: DirectionalLightValue }) {
     const dir = new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(erx, ery, erz));
     light.target.position.set(px + dir.x, py + dir.y, pz + dir.z);
     light.target.updateMatrixWorld();
-  }, [hasRotation, rx, ry, rz, px, py, pz]);
+  }, [constrained, hasRotation, rx, ry, rz, px, py, pz]);
   // Power scales with the scale vec's volume product — bigger gizmo =
   // brighter sun. Round-trip stays clean: value.intensity stays raw,
   // multiplication is a render-side projection.
@@ -878,13 +1037,26 @@ function PointLightR({ value }: { value: PointLightValue }) {
   );
 }
 
-function SpotLightR({ value }: { value: SpotLightValue }) {
+function SpotLightR({
+  value,
+  nodeId,
+  constrained,
+}: {
+  value: SpotLightValue;
+  nodeId?: string | null;
+  constrained?: boolean;
+}) {
   const ref = useRef<THREE.SpotLight | null>(null);
+  // #265 — a Track-To on this light OWNS the aim (per-frame, `.target` → world
+  // aim point). Skip the authored-target useEffect while constrained so the two
+  // don't fight; toggling the constraint off re-runs it (constrained is a dep).
+  useLightTargetAim(nodeId ?? null, constrained ?? false, ref);
   useEffect(() => {
+    if (constrained) return;
     if (!ref.current) return;
     ref.current.target.position.set(...value.target);
     ref.current.target.updateMatrixWorld();
-  }, [value.target]);
+  }, [constrained, value.target]);
   // Power scales with scale-vec volume product.
   const intensity = value.intensity * scalePower(value.scale);
   return (
@@ -950,6 +1122,41 @@ function useAreaLightAim(
     if (!aim) return;
     const t = new THREE.Vector3(aim[0], aim[1], aim[2]);
     for (const r of refs) r.current?.lookAt(t);
+  });
+}
+
+/** #265 — drive a TARGET-aiming light (DirectionalLight / SpotLight) from an
+ *  active Track-To. The `.target`-based analogue of {@link useAreaLightAim} (which
+ *  aims via `.lookAt`): three.js orients these lights by `.target.position` (the
+ *  shader reads `normalize(target − position)`), so a constraint re-resolves the
+ *  world aim point per frame and writes it there — the EditorViewCamera pattern
+ *  (snapshot reads, live seconds, no React re-render). This is the I4/C7 consumer
+ *  widening ([[V45]] #2): a constraint must drive EVERY capable light in its native
+ *  form. Unconstrained → this no-ops (the kind's own authored-target useEffect owns
+ *  the aim), byte-identical to pre-#265; the constrained flag gates the per-frame
+ *  path so an ordinary sun/spot spends a single boolean per frame. */
+function useLightTargetAim(
+  nodeId: string | null,
+  constrained: boolean,
+  ref: React.RefObject<THREE.SpotLight | THREE.DirectionalLight | null>,
+) {
+  // A stable local cache so the per-frame render-root evaluate (inside
+  // resolveTrackToTarget → resolveWorldTransform) HITS while the DAG is unchanged.
+  const cache = useMemo(() => createEvaluatorCache(), []);
+  useFrame(() => {
+    if (!constrained || !nodeId) return;
+    const light = ref.current;
+    if (!light) return;
+    const seconds = useTimeStore.getState().seconds;
+    const aim = resolveTrackToTarget(
+      useDagStore.getState().state,
+      nodeId,
+      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      cache,
+    );
+    if (!aim) return;
+    light.target.position.set(aim[0], aim[1], aim[2]);
+    light.target.updateMatrixWorld();
   });
 }
 
@@ -1063,9 +1270,14 @@ interface MeshChildProps {
   value: SceneObject;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
+  /** #266 — this value's producing DAG node id, threaded so a CONTAINER kind
+   *  (Transform/Group/MaterialOverride) can resolve its children's ids via
+   *  `childEdges` and mount their overlays at any depth. null for leaves / when
+   *  unknown (degrades to the value-flow render, byte-identical to pre-#266). */
+  nodeId?: string | null;
 }
 
-const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
     case 'BoxMesh':
       return <BoxMeshR value={value} override={override} />;
@@ -1106,11 +1318,11 @@ const MeshChild = memo(function MeshChild({ value, override }: MeshChildProps) {
         </AssetErrorBoundary>
       );
     case 'Transform':
-      return <TransformR value={value} override={override} />;
+      return <TransformR value={value} override={override} nodeId={nodeId} />;
     case 'Group':
-      return <GroupR value={value} override={override} />;
+      return <GroupR value={value} override={override} nodeId={nodeId} />;
     case 'MaterialOverride':
-      return <MaterialOverrideR value={value} override={override} />;
+      return <MaterialOverrideR value={value} override={override} nodeId={nodeId} />;
     case 'Scatter':
       return <ScatterR value={value} override={override} />;
     case 'Character':
@@ -1225,18 +1437,78 @@ const SceneChildNode = memo(function SceneChildNode({
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
     <group name={pickId ?? undefined} onClick={onClick}>
-      {isConstrained && pickId ? (
-        // #204 — derived aim rotation (V58). ConstrainedR overlays channels too,
-        // so it takes precedence over DirectChannelsR for a constrained node.
-        <ConstrainedR value={value} pickId={pickId} />
-      ) : hasDirectChannels && pickId ? (
-        <DirectChannelsR value={value} pickId={pickId} />
-      ) : (
-        <MeshChild value={value} />
-      )}
+      <OverlayDispatch
+        value={value}
+        nodeId={pickId}
+        hasDirectChannels={hasDirectChannels}
+        isConstrained={isConstrained}
+      />
     </group>
   );
 });
+
+// #266 (B3) — the ONE overlay-vs-value-flow dispatch, shared by the TOP-LEVEL
+// child (SceneChildNode, membership from pre-built boolean props) AND every NESTED
+// child (RenderChild, membership resolved by flat-id LOOKUP from context). A
+// constrained node renders through ConstrainedR (derived aim, V58) which takes
+// precedence over DirectChannelsR; a channeled node through DirectChannelsR; an
+// un-overlaid node through the bare value-flow MeshChild. Both overlay renderers
+// take `pickId` and re-emit MeshChild(patched, nodeId) so a constrained/channeled
+// CONTAINER still recurses (the nodeId thread), keeping value-flow and overlay
+// resolution as separate concerns (B3).
+function OverlayDispatch({
+  value,
+  nodeId,
+  hasDirectChannels,
+  isConstrained,
+  override,
+}: {
+  // SceneObject (not SceneChild) — a Group child can be a light/camera too (#231);
+  // the overlay branches only apply to mesh-like values, and a camera/light routes
+  // to MeshChild (its own render path). Matches MeshChild's value type.
+  value: SceneObject;
+  nodeId: string | null;
+  hasDirectChannels: boolean;
+  isConstrained: boolean;
+  override?: MaterialValue;
+}) {
+  if (isConstrained && nodeId)
+    return <ConstrainedR value={value} pickId={nodeId} override={override} />;
+  if (hasDirectChannels && nodeId)
+    return <DirectChannelsR value={value} pickId={nodeId} override={override} />;
+  return <MeshChild value={value} nodeId={nodeId} override={override} />;
+}
+
+// #266 (B1/B2) — the NESTED overlay-resolution seam. A container renderer (GroupR /
+// TransformR / MaterialOverrideR) resolves each child's node id via `childEdges`
+// (the proven value→id map) and renders it through RenderChild, which looks up
+// overlay membership by FLAT ID against the context sets (never a render-tree walk,
+// N6) → OverlayDispatch mounts the right overlay. useContext IS the synthesized
+// dependency edge (B2): when overlay membership changes anywhere, the memoized
+// context ref flips → every mounted RenderChild re-evaluates membership and a
+// newly-overlaid nested node mounts its overlay; a non-membership edit keeps the
+// context stable → RenderChild bails (H48). A nested node with NO id (should not
+// happen — every rendered child comes from an edge) degrades to the bare MeshChild.
+function RenderChild({
+  value,
+  nodeId,
+  override,
+}: {
+  value: SceneObject;
+  nodeId: string | null;
+  override?: MaterialValue;
+}) {
+  const { directChannelTargets, constraintTargets } = useContext(OverlayMembershipContext);
+  return (
+    <OverlayDispatch
+      value={value}
+      nodeId={nodeId}
+      hasDirectChannels={nodeId != null && directChannelTargets.has(nodeId)}
+      isConstrained={nodeId != null && constraintTargets.has(nodeId)}
+      override={override}
+    />
+  );
+}
 
 // v0.7 unification (#197) — renderer for a native node animated by FREE-FLOATING
 // direct channels (no AnimationLayer wrapper); the native-mesh analogue of
@@ -1257,7 +1529,7 @@ function DirectChannelsR({
   pickId,
   override,
 }: {
-  value: SceneChild;
+  value: SceneObject;
   pickId: string;
   override?: MaterialValue;
 }) {
@@ -1272,11 +1544,13 @@ function DirectChannelsR({
   // playback). overlayChannels runs FIRST (committed curve), then the transient
   // overlays on top (the live uncommitted edit), keyed by this node's id.
   const transients = useTransientEditStore((s) => s.edits);
-  const sample = (seconds: number): SceneChild =>
+  const sample = (seconds: number): SceneObject =>
     overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
     value;
 
-  const [patched, setPatched] = useState<SceneChild>(() => sample(useTimeStore.getState().seconds));
+  const [patched, setPatched] = useState<SceneObject>(() =>
+    sample(useTimeStore.getState().seconds),
+  );
   const lastApplied = useRef<{
     seconds: number;
     channels: unknown;
@@ -1297,7 +1571,7 @@ function DirectChannelsR({
     lastApplied.current = { seconds, channels, transients, value };
     setPatched(sample(seconds));
   });
-  return <MeshChild value={patched} override={override} />;
+  return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
 // #204 (epic #201) — renderer for a node with an active Track-To constraint. The
@@ -1321,7 +1595,7 @@ function ConstrainedR({
   pickId,
   override,
 }: {
-  value: SceneChild;
+  value: SceneObject;
   pickId: string;
   override?: MaterialValue;
 }) {
@@ -1339,7 +1613,7 @@ function ConstrainedR({
   // patched value AND a stable key for the aim, so the useFrame can skip
   // setState when nothing changed (H48 — a static constrained node must not
   // re-render every frame).
-  const build = (seconds: number): { v: SceneChild; aimKey: string } => {
+  const build = (seconds: number): { v: SceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
     const base =
@@ -1351,11 +1625,11 @@ function ConstrainedR({
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
     const rec = base as unknown as Record<string, unknown>;
     const v =
-      aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneChild) : base;
+      aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneObject) : base;
     return { v, aimKey: aim ? aim.join(',') : '' };
   };
 
-  const [patched, setPatched] = useState<SceneChild>(
+  const [patched, setPatched] = useState<SceneObject>(
     () => build(useTimeStore.getState().seconds).v,
   );
   const lastApplied = useRef<{
@@ -1387,7 +1661,7 @@ function ConstrainedR({
     lastApplied.current = { seconds, channels, transients, value, aimKey };
     setPatched(v);
   });
-  return <MeshChild value={patched} override={override} />;
+  return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
 function applyOverride(
@@ -1608,7 +1882,30 @@ function ModifiedMeshR({
     shading,
   );
   const geom = geometryRegistry.get(value.geometry);
-  if (!geom) return null; // source not sync-buildable (glTF/baked) — v1 follow-up
+  // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
+  // the modifier's source could not be built synchronously — reachable when the
+  // ultimate source is a BAKED mesh whose OPFS bytes aren't primed (ArrayModifier
+  // passes glTF/Group sources THROUGH, so those never blank here). ModifiedMeshR
+  // has no prime path, so the blank is PERSISTENT, not transient → route it to the
+  // persistent asset-error banner (keyed by the deterministic geometry key so a
+  // rebuilt/deleted modifier clears its own row) rather than rendering nothing with
+  // no reason. Surfacing only; loading baked-sourced modifier geometry is a
+  // separate v1-scope follow-up.
+  const geomKey = value.geometry.key;
+  useEffect(() => {
+    const store = useAssetErrorStore.getState();
+    const ref = `modifier:${geomKey}`;
+    if (geom) {
+      store.clear(ref);
+      return;
+    }
+    store.report(
+      ref,
+      'modifier geometry could not be built (source not sync-buildable — glTF/baked-sourced modifiers are a follow-up)',
+    );
+    return () => useAssetErrorStore.getState().clear(ref);
+  }, [geom, geomKey]);
+  if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   return (
     <mesh
       position={value.position as [number, number, number]}
@@ -2794,20 +3091,42 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   return <primitive object={cloned} />;
 }
 
-function TransformR({ value, override }: { value: TransformValue; override?: MaterialValue }) {
+function TransformR({
+  value,
+  override,
+  nodeId,
+}: {
+  value: TransformValue;
+  override?: MaterialValue;
+  nodeId?: string | null;
+}) {
   if (!value.child) return null;
+  // #266 (B1) — resolve the wrapped child's node id via the proven value→id map so
+  // a NESTED overlay (constraint/channel) mounts by flat-id lookup (RenderChild),
+  // not a render-tree walk. null → RenderChild degrades to the bare value-flow.
+  const childId = nodeId
+    ? (childEdges(useDagStore.getState().state, nodeId, value)[0]?.id ?? null)
+    : null;
   return (
     <group
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={value.scale as [number, number, number]}
     >
-      <MeshChild value={value.child} override={override} />
+      <RenderChild value={value.child} nodeId={childId} override={override} />
     </group>
   );
 }
 
-function GroupR({ value, override }: { value: GroupValue; override?: MaterialValue }) {
+function GroupR({
+  value,
+  override,
+  nodeId,
+}: {
+  value: GroupValue;
+  override?: MaterialValue;
+  nodeId?: string | null;
+}) {
   // #222 — a Group transforms as a unit, rotating/scaling about its `pivot`
   // (the model's bbox centre for an import). Apply Translate(position)·R·S on the
   // OUTER group, and Translate(-pivot) on an INNER group so the content stays put
@@ -2819,6 +3138,11 @@ function GroupR({ value, override }: { value: GroupValue; override?: MaterialVal
   // through the schema) may carry undefined transform fields — default to identity
   // so the destructure + three props never see undefined.
   const [px, py, pz] = (value.pivot as [number, number, number] | undefined) ?? [0, 0, 0];
+  // #266 (B1) — each child's node id via the proven value→id map; index-aligned
+  // with value.children (every child comes from an inputs.children edge). Mapping
+  // over value.children (not edges) keeps ALL children rendering even if an id is
+  // absent (RenderChild then degrades to the bare value-flow — byte-identical).
+  const edges = nodeId ? childEdges(useDagStore.getState().state, nodeId, value) : [];
   return (
     <group
       position={(value.position as [number, number, number] | undefined) ?? [0, 0, 0]}
@@ -2827,7 +3151,7 @@ function GroupR({ value, override }: { value: GroupValue; override?: MaterialVal
     >
       <group position={[-px, -py, -pz]}>
         {value.children.map((c, i) => (
-          <MeshChild key={`g:${i}`} value={c} override={override} />
+          <RenderChild key={`g:${i}`} value={c} nodeId={edges[i]?.id ?? null} override={override} />
         ))}
       </group>
     </group>
@@ -2837,16 +3161,24 @@ function GroupR({ value, override }: { value: GroupValue; override?: MaterialVal
 function MaterialOverrideR({
   value,
   override,
+  nodeId,
 }: {
   value: MaterialOverrideValue;
   override?: MaterialValue;
+  nodeId?: string | null;
 }) {
   if (!value.child) return null;
   // The deepest override wins — an outer MaterialOverride passes its material
   // to children, but a nested MaterialOverride replaces it. This matches the
   // intuition: the closer override (lower in the DAG) is the more specific one.
   const next = override ?? value.material;
-  return <MeshChild value={value.child} override={next} />;
+  // #266 (B1) — resolve the wrapped child's id (MaterialOverride is a pass-through
+  // in childEdges, same as Transform) so a nested overlay under a material override
+  // still mounts.
+  const childId = nodeId
+    ? (childEdges(useDagStore.getState().state, nodeId, value)[0]?.id ?? null)
+    : null;
+  return <RenderChild value={value.child} nodeId={childId} override={next} />;
 }
 
 function ScatterR({ value, override }: { value: ScatterValue; override?: MaterialValue }) {

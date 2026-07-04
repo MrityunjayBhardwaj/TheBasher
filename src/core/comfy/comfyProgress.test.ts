@@ -23,10 +23,12 @@ describe('parseComfyWsMessage — text events', () => {
   });
 
   it('parses an executing event', () => {
-    expect(parseComfyWsMessage(JSON.stringify({ type: 'executing', data: { node: '8' } }))).toEqual({
-      kind: 'executing',
-      node: '8',
-    });
+    expect(parseComfyWsMessage(JSON.stringify({ type: 'executing', data: { node: '8' } }))).toEqual(
+      {
+        kind: 'executing',
+        node: '8',
+      },
+    );
     // executing with node:null (the end-of-prompt signal)
     expect(
       parseComfyWsMessage(JSON.stringify({ type: 'executing', data: { node: null } })),

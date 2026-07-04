@@ -28,7 +28,13 @@ interface RenameInputProps {
   readonly testId?: string;
 }
 
-export function RenameInput({ nodeId, priorName, placeholder, className, testId }: RenameInputProps) {
+export function RenameInput({
+  nodeId,
+  priorName,
+  placeholder,
+  className,
+  testId,
+}: RenameInputProps) {
   const dispatch = useDagStore((s) => s.dispatch);
   const cancel = useRenameStore((s) => s.cancel);
   const [value, setValue] = useState(priorName ?? '');
