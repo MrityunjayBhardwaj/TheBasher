@@ -4,11 +4,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyChannelModifiers,
+  resolveSampleTime,
   fractalNoise,
   defaultModifier,
   type FModNoise,
   type FModGenerator,
   type FModLimits,
+  type FModStepped,
 } from './channelModifiers';
 import { sampleScalarKeyframesExtended, type ScalarKey } from './keyframeInterp';
 
@@ -205,5 +207,111 @@ describe('#276 through the sampler — value modifiers deviate render, empty sta
     ]);
     expect(gen).toBeCloseTo(clean + 5, 9);
     expect(sampleScalarKeyframesExtended(keys, 1, 'hold', 'hold', 0, 0, [])).toBe(clean);
+  });
+});
+
+// ── #277 — time-phase modifiers: Stepped + Limits-X via resolveSampleTime ──
+
+const stepped = (over: Partial<FModStepped> = {}): FModStepped => ({
+  type: 'stepped',
+  step: 1,
+  offset: 0,
+  ...over,
+});
+
+describe('#277 resolveSampleTime — time phase remaps the sample time', () => {
+  it('is identity for an empty / value-only stack (bit-for-bit)', () => {
+    expect(resolveSampleTime(1.7, [])).toBe(1.7);
+    expect(resolveSampleTime(1.7, undefined)).toBe(1.7);
+    expect(resolveSampleTime(1.7, [noise({ strength: 5 })])).toBe(1.7);
+    expect(resolveSampleTime(1.7, [generator({ coefficients: [3] })])).toBe(1.7);
+  });
+
+  it('Stepped snaps t to offset + floor((t-offset)/step)·step', () => {
+    expect(resolveSampleTime(1.4, [stepped({ step: 1 })])).toBe(1);
+    expect(resolveSampleTime(1.9, [stepped({ step: 1 })])).toBe(1);
+    expect(resolveSampleTime(2.0, [stepped({ step: 1 })])).toBe(2);
+    // step 0.5 → grid at .0/.5; offset shifts the grid.
+    expect(resolveSampleTime(1.4, [stepped({ step: 0.5 })])).toBeCloseTo(1.0, 9);
+    expect(resolveSampleTime(1.7, [stepped({ step: 0.5, offset: 0.2 })])).toBeCloseTo(1.7, 9);
+    expect(resolveSampleTime(1.6, [stepped({ step: 0.5, offset: 0.2 })])).toBeCloseTo(1.2, 9);
+  });
+
+  it('Stepped with step <= 0 is an identity guard (no divide)', () => {
+    expect(resolveSampleTime(1.4, [stepped({ step: 0 })])).toBe(1.4);
+    expect(resolveSampleTime(1.4, [stepped({ step: -2 })])).toBe(1.4);
+  });
+
+  it('Stepped frame range: outside [start,end] passes through unstepped', () => {
+    const s = stepped({ step: 1, useFrameRange: true, frameStart: 2, frameEnd: 5 });
+    expect(resolveSampleTime(1.4, [s])).toBe(1.4); // before range — unstepped
+    expect(resolveSampleTime(6.4, [s])).toBe(6.4); // after range — unstepped
+    expect(resolveSampleTime(3.4, [s])).toBe(3); // inside — stepped
+  });
+
+  it('a muted time modifier is skipped (identity)', () => {
+    expect(resolveSampleTime(1.4, [stepped({ step: 1, muted: true })])).toBe(1.4);
+    expect(resolveSampleTime(9, [limits({ useMaxX: true, maxX: 3, muted: true })])).toBe(9);
+  });
+
+  it('Limits-X clamps the time below min / above max, each independent', () => {
+    expect(resolveSampleTime(9, [limits({ useMaxX: true, maxX: 3 })])).toBe(3);
+    expect(resolveSampleTime(-2, [limits({ useMinX: true, minX: 0 })])).toBe(0);
+    expect(
+      resolveSampleTime(1.5, [limits({ useMinX: true, useMaxX: true, minX: 0, maxX: 3 })]),
+    ).toBe(1.5);
+    // Both X bounds off → identity (byte-identical); default limits has X off.
+    expect(resolveSampleTime(9, [limits({ useMaxX: false, maxX: 3 })])).toBe(9);
+    expect(resolveSampleTime(9, [defaultModifier('limits')])).toBe(9);
+  });
+
+  it('composes time modifiers in array order (Stepped then Limits-X)', () => {
+    // snap 9.4 → 9, then clamp to maxX 3 → 3.
+    const mods = [stepped({ step: 1 }), limits({ useMaxX: true, maxX: 3 })];
+    expect(resolveSampleTime(9.4, mods)).toBe(3);
+  });
+});
+
+describe('#277 through the sampler — time modifiers remap render; empty byte-identical', () => {
+  const keys: ScalarKey[] = [
+    { time: 0, value: 0, easing: 'linear' },
+    { time: 4, value: 40, easing: 'linear' }, // value = 10·t on [0,4]
+  ];
+
+  it('Stepped HOLDS the curve across each step (render at 1.4 == render at 1.0)', () => {
+    const held = sampleScalarKeyframesExtended(keys, 1.4, 'hold', 'hold', 0, 0, [
+      stepped({ step: 1 }),
+    ]);
+    const at1 = sampleScalarKeyframesExtended(keys, 1.0, 'hold', 'hold', 0, 0);
+    expect(held).toBeCloseTo(at1, 9); // both 10
+    // and it actually differs from the un-stepped curve at 1.4 (which would be 14).
+    const clean = sampleScalarKeyframesExtended(keys, 1.4, 'hold', 'hold', 0, 0);
+    expect(held).not.toBeCloseTo(clean, 6);
+  });
+
+  it('Limits-X constant-extrapolates: render past maxX == render at maxX', () => {
+    const past = sampleScalarKeyframesExtended(keys, 3.5, 'hold', 'hold', 0, 0, [
+      limits({ useMaxX: true, maxX: 2 }),
+    ]);
+    const atMax = sampleScalarKeyframesExtended(keys, 2, 'hold', 'hold', 0, 0);
+    expect(past).toBeCloseTo(atMax, 9); // both 20 — held at the X limit
+  });
+
+  it('Blender-faithful: Stepped also steps a downstream Noise (value phase sees st)', () => {
+    // Noise sampled at the stepped time → its value at 1.4 equals its value at 1.0.
+    const mods = [stepped({ step: 1 }), noise({ strength: 5 })];
+    const at14 = sampleScalarKeyframesExtended(keys, 1.4, 'hold', 'hold', 0, 0, mods);
+    const at10 = sampleScalarKeyframesExtended(keys, 1.0, 'hold', 'hold', 0, 0, mods);
+    expect(at14).toBeCloseTo(at10, 9);
+  });
+
+  it('falsify: empty stack + muted stepped revert to the byte-identical base', () => {
+    const clean = sampleScalarKeyframesExtended(keys, 1.4, 'hold', 'hold', 0, 0);
+    expect(sampleScalarKeyframesExtended(keys, 1.4, 'hold', 'hold', 0, 0, [])).toBe(clean);
+    expect(
+      sampleScalarKeyframesExtended(keys, 1.4, 'hold', 'hold', 0, 0, [
+        stepped({ step: 1, muted: true }),
+      ]),
+    ).toBe(clean);
   });
 });

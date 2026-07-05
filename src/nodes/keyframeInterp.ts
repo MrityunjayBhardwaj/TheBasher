@@ -30,6 +30,7 @@
 import type { Vec2, Vec3 } from './types';
 import {
   applyChannelModifiers,
+  resolveSampleTime,
   type CycleMode,
   type FChannelModifier,
   type FModCycles,
@@ -850,8 +851,14 @@ export function sampleScalarKeyframesExtended(
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
 ): number {
-  const base = scalarExtendedBase(keys, t, before, after, cyclesBefore, cyclesAfter);
-  return modifiers && modifiers.length ? applyChannelModifiers(base, t, modifiers) : base;
+  // #277 — TIME phase: remap the sample time (Stepped / Limits-X) BEFORE reading the
+  // base curve. Identity when no time modifier is present → st === t bit-for-bit, so
+  // the base sample and the value phase are byte-identical for every existing channel.
+  const st = modifiers && modifiers.length ? resolveSampleTime(t, modifiers) : t;
+  const base = scalarExtendedBase(keys, st, before, after, cyclesBefore, cyclesAfter);
+  // Blender-faithful: value modifiers evaluate at the REMAPPED time (a Stepped above a
+  // Noise steps the noise too — devaltime feeds evaluate_value_fmodifiers).
+  return modifiers && modifiers.length ? applyChannelModifiers(base, st, modifiers) : base;
 }
 
 /** The extended base sample WITHOUT modifiers — the pre-#274 body verbatim, so an
@@ -903,13 +910,15 @@ export function sampleVec2KeyframesExtended(
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
 ): Vec2 {
-  const base = vec2ExtendedBase(keys, t, before, after, cyclesBefore, cyclesAfter);
+  // #277 — TIME phase remaps the (shared) sample time once; components sample at st.
+  const st = modifiers && modifiers.length ? resolveSampleTime(t, modifiers) : t;
+  const base = vec2ExtendedBase(keys, st, before, after, cyclesBefore, cyclesAfter);
   // #274 — modifiers apply identically per-component (one modifier = one function
   // of time, Blender-consistent) so the per-axis curve display matches render (H40).
   if (!modifiers || modifiers.length === 0) return base;
   return [
-    applyChannelModifiers(base[0], t, modifiers),
-    applyChannelModifiers(base[1], t, modifiers),
+    applyChannelModifiers(base[0], st, modifiers),
+    applyChannelModifiers(base[1], st, modifiers),
   ];
 }
 
@@ -970,12 +979,14 @@ export function sampleVec3KeyframesExtended(
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
 ): Vec3 {
-  const base = vec3ExtendedBase(keys, t, before, after, cyclesBefore, cyclesAfter);
+  // #277 — TIME phase remaps the (shared) sample time once; components sample at st.
+  const st = modifiers && modifiers.length ? resolveSampleTime(t, modifiers) : t;
+  const base = vec3ExtendedBase(keys, st, before, after, cyclesBefore, cyclesAfter);
   if (!modifiers || modifiers.length === 0) return base;
   return [
-    applyChannelModifiers(base[0], t, modifiers),
-    applyChannelModifiers(base[1], t, modifiers),
-    applyChannelModifiers(base[2], t, modifiers),
+    applyChannelModifiers(base[0], st, modifiers),
+    applyChannelModifiers(base[1], st, modifiers),
+    applyChannelModifiers(base[2], st, modifiers),
   ];
 }
 

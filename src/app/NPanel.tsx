@@ -843,10 +843,25 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               {mod.useMinY ? numField(i, 'min', 'minY', mod.minY) : null}
               {boolRow(i, 'max Y', 'useMaxY', mod.useMaxY)}
               {mod.useMaxY ? numField(i, 'max', 'maxY', mod.maxY) : null}
+              {/* #277 — the TIME (X) clamp half: constant-extrapolate outside [minX,maxX]. */}
+              {boolRow(i, 'min X', 'useMinX', Boolean(mod.useMinX))}
+              {mod.useMinX ? numField(i, 'min t', 'minX', mod.minX ?? 0) : null}
+              {boolRow(i, 'max X', 'useMaxX', Boolean(mod.useMaxX))}
+              {mod.useMaxX ? numField(i, 'max t', 'maxX', mod.maxX ?? 0) : null}
             </>
           ) : null}
-          {/* Influence is a value-blend concept — meaningless for the time-remap Cycles. */}
-          {mod.type !== 'cycles'
+          {mod.type === 'stepped' ? (
+            <>
+              {numField(i, 'step', 'step', mod.step)}
+              {numField(i, 'offset', 'offset', mod.offset)}
+              {boolRow(i, 'frame range', 'useFrameRange', Boolean(mod.useFrameRange))}
+              {mod.useFrameRange ? numField(i, 'start', 'frameStart', mod.frameStart ?? 0) : null}
+              {mod.useFrameRange ? numField(i, 'end', 'frameEnd', mod.frameEnd ?? 0) : null}
+            </>
+          ) : null}
+          {/* Influence is a value-blend concept — meaningless for the pure TIME-phase
+              modifiers (Cycles, Stepped). Limits keeps it (its Y clamp is a value op). */}
+          {mod.type !== 'cycles' && mod.type !== 'stepped'
             ? numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)
             : null}
         </div>

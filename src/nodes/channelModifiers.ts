@@ -91,24 +91,54 @@ export interface FModGenerator extends FModifierBase {
   coefficients: number[];
 }
 
-/** LIMITS modifier (Blender FMod_Limits) — the VALUE (Y) clamp ONLY: clamp the
- *  incoming value to [minY, maxY], each bound independently enabled. A VALUE modifier.
- *  Blender's Limits ALSO clamps TIME (X) + Constant-extrapolates outside the frame
- *  range — that is a TIME-phase op, DEFERRED to the time-phase increment (Stepped +
- *  Limits-X). REF: manual `graph_editor/fcurves/modifiers` (Limits Modifier). */
+/** LIMITS modifier (Blender FMod_Limits) — a BOTH-PHASE modifier (#277):
+ *  - VALUE (Y) phase, in {@link applyChannelModifiers}: clamp the incoming value to
+ *    [minY, maxY], each bound independently enabled.
+ *  - TIME (X) phase, in {@link resolveSampleTime}: clamp the sample TIME to [minX, maxX],
+ *    each bound independently enabled. Because the clamped time is fed to the base
+ *    sampler, the curve holds its boundary value outside the range — Blender's
+ *    "constant extrapolate outside frame range". REF: manual `graph_editor/fcurves/
+ *    modifiers` (Limits Modifier); Blender `fcm_limits` (time) + `fcm_limits_evaluate` (value). */
 export interface FModLimits extends FModifierBase {
   type: 'limits';
   useMinY: boolean;
   useMaxY: boolean;
   minY: number;
   maxY: number;
+  /** #277 — the TIME (X) clamp half. Optional/defaulted-off → additive (no migration). */
+  useMinX?: boolean;
+  useMaxX?: boolean;
+  minX?: number;
+  maxX?: number;
 }
 
-/** The channel-modifier union. Grows with Stepped / Envelope (+ Limits-X time clamp). */
-export type FChannelModifier = FModNoise | FModCycles | FModGenerator | FModLimits;
+/** STEPPED modifier (Blender FMod_Stepped) — a TIME modifier: snap the sample time to
+ *  a grid `offset + floor((t-offset)/step)·step` so the curve HOLDS between steps
+ *  (stop-motion / "on Ns"). Like Cycles it remaps evaluation time BEFORE the base
+ *  curve is sampled, so it is consumed by {@link resolveSampleTime}, NOT the value-phase
+ *  {@link applyChannelModifiers} (which skips it). Stepping optionally applies only
+ *  within [frameStart, frameEnd] (Blender's own start/end-frame gates, folded here into
+ *  a single `useFrameRange` toggle); outside the range the time passes through unstepped.
+ *  Times are in SECONDS. `step <= 0` → identity guard. Only `muted` of the shared range/
+ *  influence fields is honoured (time phase ignores generic influence, like Cycles).
+ *  REF: manual `graph_editor/fcurves/modifiers` (Stepped Interpolation); Blender `fcm_stepped_time`. */
+export interface FModStepped extends FModifierBase {
+  type: 'stepped';
+  /** Grid size in SECONDS — the curve holds for `step` seconds per stair. */
+  step: number;
+  /** Phase offset of the grid (shifts where each stair begins). */
+  offset: number;
+  /** Restrict stepping to [frameStart, frameEnd]; outside → unstepped passthrough. */
+  useFrameRange?: boolean;
+  frameStart?: number;
+  frameEnd?: number;
+}
+
+/** The channel-modifier union. Grows with Envelope (the last value-phase modifier). */
+export type FChannelModifier = FModNoise | FModCycles | FModGenerator | FModLimits | FModStepped;
 
 /** The modifier TYPES a channel can add (authoring order for the Add menu / e2e). */
-export const FMODIFIER_TYPES = ['noise', 'cycles', 'generator', 'limits'] as const;
+export const FMODIFIER_TYPES = ['noise', 'cycles', 'generator', 'limits', 'stepped'] as const;
 
 /** A fresh modifier of the given type, with director-friendly defaults. */
 export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChannelModifier {
@@ -137,8 +167,29 @@ export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChanne
       // A gentle additive unit-slope ramp (y = t) — visible but not destructive.
       return { type: 'generator', additive: true, coefficients: [0, 1], influence: 1 };
     case 'limits':
-      // Both bounds OFF on add (no destructive clamp until the director enables one).
-      return { type: 'limits', useMinY: false, useMaxY: false, minY: 0, maxY: 1, influence: 1 };
+      // All four bounds OFF on add (no destructive clamp until the director enables one).
+      return {
+        type: 'limits',
+        useMinY: false,
+        useMaxY: false,
+        minY: 0,
+        maxY: 1,
+        useMinX: false,
+        useMaxX: false,
+        minX: 0,
+        maxX: 1,
+        influence: 1,
+      };
+    case 'stepped':
+      // A visible 1-second stop-motion hold, unbounded (no frame range on add).
+      return {
+        type: 'stepped',
+        step: 1,
+        offset: 0,
+        useFrameRange: false,
+        frameStart: 0,
+        frameEnd: 0,
+      };
   }
 }
 
@@ -235,9 +286,11 @@ function modifierValue(mod: FChannelModifier, t: number, value: number): number 
       if (mod.useMaxY) v = Math.min(v, mod.maxY);
       return v;
     }
-    // Cycles is a TIME modifier consumed by resolveExtend (pre-sample), never here.
-    // Guarded out in applyChannelModifiers; this case keeps the switch exhaustive.
+    // Cycles + Stepped are TIME modifiers (resolveExtend / resolveSampleTime consume
+    // them pre-sample), never value ops. Guarded out in applyChannelModifiers; these
+    // cases keep the switch exhaustive.
     case 'cycles':
+    case 'stepped':
       return value;
   }
   return value;
@@ -257,9 +310,11 @@ export function applyChannelModifiers(
   if (!modifiers || modifiers.length === 0) return base;
   let v = base;
   for (const mod of modifiers) {
-    // Cycles is a TIME modifier (resolveExtend consumes it pre-sample) — never a
-    // value op. Skip it here regardless of mute so the value phase is noise-only.
-    if (mod.type === 'cycles') continue;
+    // Cycles + Stepped are TIME modifiers (resolveExtend / resolveSampleTime consume
+    // them pre-sample) — never value ops. Skip them here regardless of mute so the
+    // value phase runs only the value-phase modifiers. (Limits IS a value op here —
+    // its Y clamp — as well as a time op in resolveSampleTime; it stays in the loop.)
+    if (mod.type === 'cycles' || mod.type === 'stepped') continue;
     if (mod.muted) continue;
     const inf = effectiveInfluence(mod, t);
     if (inf === 0) continue;
@@ -267,6 +322,55 @@ export function applyChannelModifiers(
     v = v + (modified - v) * inf;
   }
   return v;
+}
+
+// ── TIME phase (#277) — remap the sample time BEFORE the base curve is read ──
+// Blender's `evaluate_time_fmodifiers`: Stepped + Limits-X transform `evaltime`.
+// Cycles is ALSO a time modifier but Basher folds it into resolveExtend/planExtend
+// (keyframeInterp.ts), so it is deliberately NOT handled here — resolveSampleTime is
+// composed ALONGSIDE Cycles, not replacing it. Pure; identity when no time modifier
+// is present, so an empty / value-only stack keeps the sampler byte-identical.
+
+/** Snap `t` to a Stepped modifier's grid. `step <= 0` → identity (no divide). When
+ *  `useFrameRange`, times outside [frameStart, frameEnd] pass through unstepped. */
+function snapStepped(mod: FModStepped, t: number): number {
+  const step = mod.step;
+  if (!(step > 0)) return t;
+  if (mod.useFrameRange) {
+    const s = mod.frameStart ?? 0;
+    const e = mod.frameEnd ?? 0;
+    if (e > s && (t < s || t > e)) return t;
+  }
+  const offset = mod.offset ?? 0;
+  return offset + Math.floor((t - offset) / step) * step;
+}
+
+/** Clamp `t` to a Limits modifier's TIME (X) window. Each bound independent; a bound
+ *  that is off leaves that side untouched (so all-off → identity, byte-identical). */
+function clampLimitsX(mod: FModLimits, t: number): number {
+  let tt = t;
+  if (mod.useMinX) tt = Math.max(tt, mod.minX ?? 0);
+  if (mod.useMaxX) tt = Math.min(tt, mod.maxX ?? 0);
+  return tt;
+}
+
+/**
+ * Resolve the effective SAMPLE TIME for a channel's F-Modifier stack (#277) — the
+ * time-phase counterpart of {@link applyChannelModifiers}. Runs the time modifiers
+ * (Stepped, Limits-X) in array order, each transforming the running time. Honours
+ * `muted`; ignores generic influence/range (Blender's time phase does too). Cycles,
+ * Noise, Generator are no-ops here. Empty / value-only stack → `t` unchanged
+ * (bit-identical), so the sampler stays byte-identical for every existing animation.
+ */
+export function resolveSampleTime(t: number, modifiers?: readonly FChannelModifier[]): number {
+  if (!modifiers || modifiers.length === 0) return t;
+  let st = t;
+  for (const mod of modifiers) {
+    if (mod.muted) continue;
+    if (mod.type === 'stepped') st = snapStepped(mod, st);
+    else if (mod.type === 'limits') st = clampLimitsX(mod, st);
+  }
+  return st;
 }
 
 // ── zod schema (shared by the 3 KeyframeChannel schemas) ────────────────────
@@ -318,6 +422,20 @@ export const FModifierSchema = z.discriminatedUnion('type', [
     useMaxY: z.boolean().default(false),
     minY: z.number().default(0),
     maxY: z.number().default(1),
+    // #277 — the TIME (X) clamp half (optional/defaulted-off → additive, no migration).
+    useMinX: z.boolean().default(false),
+    useMaxX: z.boolean().default(false),
+    minX: z.number().default(0),
+    maxX: z.number().default(1),
+    ...rangeFields,
+  }),
+  z.object({
+    type: z.literal('stepped'),
+    step: z.number().default(1),
+    offset: z.number().default(0),
+    useFrameRange: z.boolean().default(false),
+    frameStart: z.number().default(0),
+    frameEnd: z.number().default(0),
     ...rangeFields,
   }),
 ]);
