@@ -25,7 +25,11 @@ import {
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
-import { ChannelModifiersSchema, migrateExtendParamsToCycles } from './channelModifiers';
+import {
+  ChannelModifiersSchema,
+  AxisModifiersSchema,
+  migrateExtendParamsToCycles,
+} from './channelModifiers';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -55,6 +59,9 @@ export const KeyframeChannelVec2Params = z.object({
   /** #274 (V88 D2) / #275 — per-channel F-MODIFIER STACK (Noise, Cycles …); default
    *  `[]` → byte-identical. */
   modifiers: ChannelModifiersSchema,
+  /** #280 — OPTIONAL per-axis modifier override (axisModifiers[i] = the complete stack
+   *  for component i; absent → shared `modifiers`). Absent whole array → byte-identical. */
+  axisModifiers: AxisModifiersSchema,
   keyframes: z
     .array(
       z.object({
@@ -82,9 +89,10 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { modifiers } = params;
+  const { modifiers, axisModifiers } = params;
   // #275 — resolve stored extrapolation + Cycles modifier into the engine's rule +
-  // counts; the sampler & planExtend are unchanged (byte-identical).
+  // counts; the sampler & planExtend are unchanged (byte-identical). Cycles is resolved
+  // from the SHARED stack only — extrapolation stays channel-level (#280).
   const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
     params.extendBefore,
     params.extendAfter,
@@ -99,6 +107,7 @@ export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: n
       cyclesBefore,
       cyclesAfter,
       modifiers,
+      axisModifiers,
     );
 }
 

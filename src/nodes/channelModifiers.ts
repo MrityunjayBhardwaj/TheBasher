@@ -538,6 +538,16 @@ export const FModifierSchema = z.discriminatedUnion('type', [
 /** The per-channel modifier array param — default `[]` → byte-identical no-op. */
 export const ChannelModifiersSchema = z.array(FModifierSchema).default([]);
 
+/** #280 — the OPTIONAL per-axis modifier override for vec channels. Entry `i` is either
+ *  an F-Modifier stack that REPLACES the shared {@link ChannelModifiersSchema} `modifiers`
+ *  for component `i` (an EMPTY array deliberately leaves that axis un-modified), or `null`
+ *  → axis `i` falls back to the shared stack. Stored dense (length = the channel's vec
+ *  arity, `null` where not overridden) so it is JSON/zod-safe (no sparse holes). The whole
+ *  array absent → every axis shares → byte-identical to pre-#280 (the vec sampler's fast
+ *  path). Blender models each axis as an independent F-curve with its own stack; this is
+ *  the opt-in override that unlocks that (a Noise on X alone jitters only X). */
+export const AxisModifiersSchema = z.array(z.array(FModifierSchema).nullable()).optional();
+
 // ── #275 — migrate the D1 extend/cycle enum into a Cycles modifier ───────────
 // The D1 extend enum (#269–#271) collapsed hold/slope (extrapolation) AND
 // cycle/cycle-offset/mirror (the repeat family) into one per-side param + counts.

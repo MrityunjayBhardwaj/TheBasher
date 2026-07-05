@@ -21,6 +21,7 @@ import {
   sampleScalarKeyframesExtended,
   resolveScalarHandle,
   resolveExtend,
+  modifiersForAxis,
   KEYFRAME_INTERPS,
   EASE_DIRS,
   KEYFRAME_HANDLE_TYPES,
@@ -142,6 +143,16 @@ export function EditableCurve({
   const modifiers = useDagStore(
     (s) =>
       (s.state.nodes[channelId]?.params as { modifiers?: readonly FChannelModifier[] })?.modifiers,
+  );
+  // #280 — the per-axis modifier override, so a per-axis stack draws on ITS axis only
+  // (render==curve H40). Absent → every axis uses the shared `modifiers` (as before).
+  const axisModifiers = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[channelId]?.params as {
+          axisModifiers?: ReadonlyArray<readonly FChannelModifier[]>;
+        }
+      )?.axisModifiers,
   );
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
@@ -301,6 +312,9 @@ export function EditableCurve({
     );
     return axes.map((a) => {
       const sk = keys.map((k) => projectAxis(k, a, isVec)).sort((p, q) => p.time - q.time);
+      // #280 — draw each axis with ITS effective stack (per-axis override ?? shared) so
+      // the curve matches what the sampler renders for that axis (H40).
+      const axisMods = isVec ? modifiersForAxis(modifiers, axisModifiers, a) : modifiers;
       const pts: string[] = [];
       for (let i = 0; i <= steps; i++) {
         const t = visStartSec + (i / steps) * (visEndSec - visStartSec);
@@ -311,14 +325,27 @@ export function EditableCurve({
           after,
           cyclesBefore,
           cyclesAfter,
-          modifiers,
+          axisMods,
         );
         pts.push(`${timeToX(t).toFixed(2)},${valueToY(v).toFixed(2)}`);
       }
       return pts.join(' ');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, axes, isVec, dur, activeDomain, w, h, view, extendBefore, extendAfter, modifiers]);
+  }, [
+    keys,
+    axes,
+    isVec,
+    dur,
+    activeDomain,
+    w,
+    h,
+    view,
+    extendBefore,
+    extendAfter,
+    modifiers,
+    axisModifiers,
+  ]);
 
   // Ruler ticks across the VISIBLE window, adaptive to its span.
   const spanFrames = Math.max(endFrame - startFrame, 1);

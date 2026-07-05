@@ -9,11 +9,14 @@ import {
   sampleScalarKeyframesExtended,
   sampleVec3Keyframes,
   sampleVec3KeyframesExtended,
+  sampleVec2KeyframesExtended,
+  modifiersForAxis,
   resolveExtend,
   type ScalarKey,
+  type Vec2Key,
   type Vec3Key,
 } from './keyframeInterp';
-import type { FModCycles, FModNoise } from './channelModifiers';
+import type { FChannelModifier, FModCycles, FModNoise } from './channelModifiers';
 
 const smoothstep = (u: number) => u * u * (3 - 2 * u);
 
@@ -464,5 +467,94 @@ describe('#275 — resolveExtend (stored extrapolation + Cycles modifier → eng
       cyclesBefore: 0,
       cyclesAfter: 0,
     });
+  });
+});
+
+describe('#280 — per-axis (independent) vec modifier stacks', () => {
+  const gen10: FChannelModifier = { type: 'generator', additive: true, coefficients: [10] };
+  // Flat vec3 channel: every component held at 5 across [0,4]. Base at any t = [5,5,5].
+  const flat: Vec3Key[] = [
+    { time: 0, value: [5, 5, 5], easing: 'linear' },
+    { time: 4, value: [5, 5, 5], easing: 'linear' },
+  ];
+
+  it('modifiersForAxis: override (incl. empty) wins; null/undefined → shared', () => {
+    const shared: FChannelModifier[] = [gen10];
+    expect(modifiersForAxis(shared, [[gen10], null, null], 0)).toEqual([gen10]);
+    expect(modifiersForAxis(shared, [[gen10], null, null], 1)).toBe(shared); // null → shared
+    expect(modifiersForAxis(shared, [[], null, null], 0)).toEqual([]); // empty override wins
+    expect(modifiersForAxis(shared, undefined, 0)).toBe(shared);
+    expect(modifiersForAxis(shared, [null, null, null], 2)).toBe(shared);
+  });
+
+  it('an all-null axisModifiers falls back to the shared stack on every axis', () => {
+    // Shared Generator +10 → 15 on all axes; an all-null override changes nothing.
+    const shared = sampleVec3KeyframesExtended(flat, 1, 'hold', 'hold', 0, 0, [gen10]);
+    const nulled = sampleVec3KeyframesExtended(
+      flat,
+      1,
+      'hold',
+      'hold',
+      0,
+      0,
+      [gen10],
+      [null, null, null],
+    );
+    expect(shared).toEqual([15, 15, 15]);
+    expect(nulled).toEqual([15, 15, 15]);
+  });
+
+  it('a per-axis Generator on X alone moves ONLY X', () => {
+    const out = sampleVec3KeyframesExtended(flat, 1, 'hold', 'hold', 0, 0, undefined, [
+      [gen10],
+      null,
+      null,
+    ]);
+    expect(out).toEqual([15, 5, 5]);
+  });
+
+  it('an EMPTY per-axis override nulls the shared stack on that axis', () => {
+    // Shared +10 applies to Y/Z (→15); X is overridden to an empty stack (→5, un-modified).
+    const out = sampleVec3KeyframesExtended(
+      flat,
+      1,
+      'hold',
+      'hold',
+      0,
+      0,
+      [gen10],
+      [[], null, null],
+    );
+    expect(out).toEqual([5, 15, 15]);
+  });
+
+  it('a per-axis TIME modifier (Stepped) remaps only its axis’s sample time', () => {
+    // Ramp [0,0,0]→[4,4,4]. A Stepped(step=2) on X snaps X's sample time; Y/Z stay linear.
+    const ramp: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 4, value: [4, 4, 4], easing: 'linear' },
+    ];
+    const stepped: FChannelModifier = { type: 'stepped', step: 2, offset: 0 };
+    // At t=3: X's time floors to 2 → X=2; Y/Z sample linearly → 3.
+    const out = sampleVec3KeyframesExtended(ramp, 3, 'hold', 'hold', 0, 0, undefined, [
+      [stepped],
+      null,
+      null,
+    ]);
+    expect(out[0]).toBeCloseTo(2, 9);
+    expect(out[1]).toBeCloseTo(3, 9);
+    expect(out[2]).toBeCloseTo(3, 9);
+  });
+
+  it('vec2: a per-axis Generator on Y alone moves ONLY Y', () => {
+    const flat2: Vec2Key[] = [
+      { time: 0, value: [5, 5], easing: 'linear' },
+      { time: 4, value: [5, 5], easing: 'linear' },
+    ];
+    const out = sampleVec2KeyframesExtended(flat2, 1, 'hold', 'hold', 0, 0, undefined, [
+      null,
+      [gen10],
+    ]);
+    expect(out).toEqual([5, 15]);
   });
 });

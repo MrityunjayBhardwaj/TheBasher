@@ -31,7 +31,11 @@ import {
   type EaseDir,
   type HandleType,
 } from './keyframeInterp';
-import { ChannelModifiersSchema, migrateExtendParamsToCycles } from './channelModifiers';
+import {
+  ChannelModifiersSchema,
+  AxisModifiersSchema,
+  migrateExtendParamsToCycles,
+} from './channelModifiers';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -62,6 +66,10 @@ export const KeyframeChannelVec3Params = z.object({
   /** #274 (V88 D2) / #275 — per-channel F-MODIFIER STACK (Noise, Cycles …); default
    *  `[]` → byte-identical. */
   modifiers: ChannelModifiersSchema,
+  /** #280 — OPTIONAL per-axis modifier override (axisModifiers[i] = the complete stack
+   *  for component i; absent → that axis uses the shared `modifiers`). Absent whole array
+   *  → byte-identical to pre-#280. Blender: each axis is an independent F-curve. */
+  axisModifiers: AxisModifiersSchema,
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
   // imported clip track is materialized into per-bone channels (bakeGltfChannel,
   // Wave D), each channel carries the bone's `childName` AND the owning asset's
@@ -102,9 +110,10 @@ export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params
  */
 export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: number) => Vec3 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { modifiers } = params;
+  const { modifiers, axisModifiers } = params;
   // #275 — resolve stored extrapolation + Cycles modifier into the engine's rule +
-  // counts; the sampler & planExtend are unchanged (byte-identical).
+  // counts; the sampler & planExtend are unchanged (byte-identical). Cycles is
+  // resolved from the SHARED stack only — extrapolation stays channel-level (#280).
   const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
     params.extendBefore,
     params.extendAfter,
@@ -119,6 +128,7 @@ export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: n
       cyclesBefore,
       cyclesAfter,
       modifiers,
+      axisModifiers,
     );
 }
 

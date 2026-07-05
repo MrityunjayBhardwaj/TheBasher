@@ -900,6 +900,20 @@ function boundaryTangentVec2(keys: readonly Vec2Key[], at: 'first' | 'last'): Ve
   return [(b.value[0] - a.value[0]) / dt, (b.value[1] - a.value[1]) / dt];
 }
 
+/** #280 — the effective F-Modifier stack for ONE component of a vec channel: the
+ *  per-axis override `axisModifiers[axis]` when present (an EMPTY array is a real
+ *  override → that axis is deliberately un-modified), else the shared channel stack.
+ *  Absent `axisModifiers` → every axis shares (the sampler fast path). Exported so the
+ *  curve editor draws each axis with the SAME stack the sampler renders it with (H40). */
+export function modifiersForAxis(
+  shared: readonly FChannelModifier[] | undefined,
+  axisModifiers: ReadonlyArray<readonly FChannelModifier[] | null> | undefined,
+  axis: number,
+): readonly FChannelModifier[] | undefined {
+  const override = axisModifiers?.[axis];
+  return override != null ? override : shared; // null / undefined → shared stack
+}
+
 /** Sample a vec2 channel at time `t` with per-side extend rules (#269). */
 export function sampleVec2KeyframesExtended(
   keys: readonly Vec2Key[],
@@ -909,7 +923,35 @@ export function sampleVec2KeyframesExtended(
   cyclesBefore = 0,
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
+  axisModifiers?: ReadonlyArray<readonly FChannelModifier[] | null>,
 ): Vec2 {
+  // #280 — PER-AXIS independent stacks (opt-in): each component samples through the
+  // scalar path with its OWN effective stack, resolving its own time (Stepped/Limits-X)
+  // + value phase, so e.g. a Noise on X alone jitters only X (Blender: each axis is an
+  // independent F-curve). Cycles/extrapolation stay channel-level (before/after resolved
+  // upstream from the shared stack). Absent axisModifiers → the fast path, byte-identical.
+  if (axisModifiers && axisModifiers.length) {
+    return [
+      sampleScalarKeyframesExtended(
+        projectVecAxis(keys, 0),
+        t,
+        before,
+        after,
+        cyclesBefore,
+        cyclesAfter,
+        modifiersForAxis(modifiers, axisModifiers, 0),
+      ),
+      sampleScalarKeyframesExtended(
+        projectVecAxis(keys, 1),
+        t,
+        before,
+        after,
+        cyclesBefore,
+        cyclesAfter,
+        modifiersForAxis(modifiers, axisModifiers, 1),
+      ),
+    ];
+  }
   // #277 — TIME phase remaps the (shared) sample time once; components sample at st.
   const st = modifiers && modifiers.length ? resolveSampleTime(t, modifiers) : t;
   const base = vec2ExtendedBase(keys, st, before, after, cyclesBefore, cyclesAfter);
@@ -978,7 +1020,40 @@ export function sampleVec3KeyframesExtended(
   cyclesBefore = 0,
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
+  axisModifiers?: ReadonlyArray<readonly FChannelModifier[] | null>,
 ): Vec3 {
+  // #280 — PER-AXIS independent stacks (opt-in); see sampleVec2KeyframesExtended.
+  if (axisModifiers && axisModifiers.length) {
+    return [
+      sampleScalarKeyframesExtended(
+        projectVecAxis(keys, 0),
+        t,
+        before,
+        after,
+        cyclesBefore,
+        cyclesAfter,
+        modifiersForAxis(modifiers, axisModifiers, 0),
+      ),
+      sampleScalarKeyframesExtended(
+        projectVecAxis(keys, 1),
+        t,
+        before,
+        after,
+        cyclesBefore,
+        cyclesAfter,
+        modifiersForAxis(modifiers, axisModifiers, 1),
+      ),
+      sampleScalarKeyframesExtended(
+        projectVecAxis(keys, 2),
+        t,
+        before,
+        after,
+        cyclesBefore,
+        cyclesAfter,
+        modifiersForAxis(modifiers, axisModifiers, 2),
+      ),
+    ];
+  }
   // #277 — TIME phase remaps the (shared) sample time once; components sample at st.
   const st = modifiers && modifiers.length ? resolveSampleTime(t, modifiers) : t;
   const base = vec3ExtendedBase(keys, st, before, after, cyclesBefore, cyclesAfter);

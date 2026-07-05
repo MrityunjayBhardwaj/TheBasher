@@ -631,30 +631,32 @@ function ChannelExtendControls({ nodeId }: { nodeId: string }) {
   );
 }
 
-/** #274 (V88 D2) — the per-channel F-MODIFIER STACK authoring UI. A list of
- *  modifiers (Noise …) applied on top of the evaluated + extended curve, plus an
- *  Add menu. Each modifier is a card: mute + remove, its type-specific params, and
- *  the shared influence/range fields. Every edit is a setParam over the WHOLE
- *  `modifiers` array (the same chokepoint the sampler reads → render==read==curve). */
-function ChannelModifierControls({ nodeId }: { nodeId: string }) {
-  const dispatch = useDagStore((s) => s.dispatch);
-  const modifiers =
-    useDagStore(
-      (s) =>
-        (s.state.nodes[nodeId]?.params as { modifiers?: FChannelModifier[] } | undefined)
-          ?.modifiers,
-    ) ?? [];
-  const commit = (next: FChannelModifier[]) =>
-    dispatch(
-      { type: 'setParam', nodeId, paramPath: 'modifiers', value: next },
-      'user',
-      'edit modifiers',
-    );
+/** #274/#280 — a single F-MODIFIER STACK editor: an Add menu + a card per modifier
+ *  (mute, remove, type-specific params, shared influence + restricted-range fields).
+ *  Reused for BOTH the channel's shared stack AND each vec channel's per-axis override
+ *  (#280) — `prefix` scopes the testids so the two never collide (`channel-modifier-…`
+ *  for shared, `channel-axismod-<axis>-…` per axis); `excludeTypes` hides Cycles from the
+ *  per-axis menu (Cycles/extrapolation stay channel-level). Every edit is one onChange
+ *  over the WHOLE array — the chokepoint the sampler reads → render==read==curve (H40). */
+function ModifierList({
+  modifiers,
+  onChange,
+  prefix = 'channel-modifier',
+  excludeTypes,
+}: {
+  modifiers: FChannelModifier[];
+  onChange: (next: FChannelModifier[]) => void;
+  prefix?: string;
+  excludeTypes?: readonly string[];
+}) {
   const add = (type: (typeof FMODIFIER_TYPES)[number]) =>
-    commit([...modifiers, defaultModifier(type)]);
-  const remove = (i: number) => commit(modifiers.filter((_, j) => j !== i));
+    onChange([...modifiers, defaultModifier(type)]);
+  const remove = (i: number) => onChange(modifiers.filter((_, j) => j !== i));
   const patch = (i: number, p: Partial<FChannelModifier>) =>
-    commit(modifiers.map((m, j) => (j === i ? ({ ...m, ...p } as FChannelModifier) : m)));
+    onChange(modifiers.map((m, j) => (j === i ? ({ ...m, ...p } as FChannelModifier) : m)));
+  const addTypes = excludeTypes
+    ? FMODIFIER_TYPES.filter((t) => !excludeTypes.includes(t))
+    : FMODIFIER_TYPES;
 
   const numField = (i: number, label: string, path: string, value: number, step = 0.1) => (
     <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
@@ -663,7 +665,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
         type="number"
         step={step}
         value={value}
-        data-testid={`channel-modifier-${i}-${path}`}
+        data-testid={`${prefix}-${i}-${path}`}
         className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) =>
           patch(i, { [path]: Number(e.target.value) || 0 } as Partial<FChannelModifier>)
@@ -680,7 +682,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
       <span className="font-mono text-fg/50">{label}</span>
       <select
         value={value}
-        data-testid={`channel-modifier-${i}-${path}`}
+        data-testid={`${prefix}-${i}-${path}`}
         className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => patch(i, { [path]: e.target.value } as Partial<FChannelModifier>)}
       >
@@ -700,7 +702,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
       <input
         type="checkbox"
         checked={checked}
-        data-testid={`channel-modifier-${i}-${path}`}
+        data-testid={`${prefix}-${i}-${path}`}
         onChange={(e) => patch(i, { [path]: e.target.checked } as Partial<FChannelModifier>)}
       />
     </label>
@@ -735,14 +737,13 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center justify-between px-3 pt-1.5">
-        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Modifiers</span>
-        <div className="flex items-center gap-1">
-          {FMODIFIER_TYPES.map((type) => (
+      <div className="flex items-center justify-end px-3 pt-1">
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          {addTypes.map((type) => (
             <button
               key={type}
               type="button"
-              data-testid={`channel-modifier-add-${type}`}
+              data-testid={`${prefix}-add-${type}`}
               className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onClick={() => add(type)}
             >
@@ -757,7 +758,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
       {modifiers.map((mod, i) => (
         <div
           key={i}
-          data-testid={`channel-modifier-${i}`}
+          data-testid={`${prefix}-${i}`}
           className="mx-2 my-1 rounded border border-line/60"
         >
           <div className="flex items-center justify-between px-3 py-1 text-[11px] text-fg/80">
@@ -767,14 +768,14 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                 <input
                   type="checkbox"
                   checked={Boolean(mod.muted)}
-                  data-testid={`channel-modifier-${i}-mute`}
+                  data-testid={`${prefix}-${i}-mute`}
                   onChange={(e) => patch(i, { muted: e.target.checked })}
                 />
                 mute
               </label>
               <button
                 type="button"
-                data-testid={`channel-modifier-${i}-remove`}
+                data-testid={`${prefix}-${i}-remove`}
                 className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 onClick={() => remove(i)}
               >
@@ -788,7 +789,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                 <span className="font-mono text-fg/50">blend</span>
                 <select
                   value={mod.blend}
-                  data-testid={`channel-modifier-${i}-blend`}
+                  data-testid={`${prefix}-${i}-blend`}
                   className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onChange={(e) => patch(i, { blend: e.target.value as (typeof mod)['blend'] })}
                 >
@@ -829,7 +830,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                   max={8}
                   step={1}
                   value={mod.coefficients.length - 1}
-                  data-testid={`channel-modifier-${i}-order`}
+                  data-testid={`${prefix}-${i}-order`}
                   className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onChange={(e) => setOrder(i, mod.coefficients, Number(e.target.value) || 0)}
                 />
@@ -844,7 +845,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                     type="number"
                     step={0.1}
                     value={c}
-                    data-testid={`channel-modifier-${i}-coef-${k}`}
+                    data-testid={`${prefix}-${i}-coef-${k}`}
                     className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onChange={(e) => setCoef(i, mod.coefficients, k, Number(e.target.value) || 0)}
                   />
@@ -883,7 +884,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                 <span className="font-mono text-[10px] text-fg/50">points</span>
                 <button
                   type="button"
-                  data-testid={`channel-modifier-${i}-add-point`}
+                  data-testid={`${prefix}-${i}-add-point`}
                   className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onClick={() => addEnvPoint(i, mod)}
                 >
@@ -893,7 +894,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               {mod.points.map((pt, k) => (
                 <div
                   key={k}
-                  data-testid={`channel-modifier-${i}-point-${k}`}
+                  data-testid={`${prefix}-${i}-point-${k}`}
                   className="flex items-center justify-between gap-1 px-3 py-0.5 text-[10px] text-fg/70"
                 >
                   <span className="font-mono text-fg/40">#{k}</span>
@@ -904,7 +905,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                       step={0.1}
                       value={pt[f]}
                       aria-label={`point ${k} ${f}`}
-                      data-testid={`channel-modifier-${i}-point-${k}-${f}`}
+                      data-testid={`${prefix}-${i}-point-${k}-${f}`}
                       className="w-12 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                       onChange={(e) =>
                         patchEnvPoint(i, mod, k, { [f]: Number(e.target.value) || 0 })
@@ -913,7 +914,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                   ))}
                   <button
                     type="button"
-                    data-testid={`channel-modifier-${i}-point-${k}-remove`}
+                    data-testid={`${prefix}-${i}-point-${k}-remove`}
                     className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg/60 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onClick={() => removeEnvPoint(i, mod, k)}
                   >
@@ -944,6 +945,128 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
           ) : null}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** The vec arity per channel type (2 for Vec2, 3 for Vec3) — 0 = scalar/no per-axis.
+ *  Axis labels follow the X/Y/Z convention the curve editor + gizmo use. */
+const AXIS_ARITY: Record<string, number> = { KeyframeChannelVec2: 2, KeyframeChannelVec3: 3 };
+const AXIS_LABELS = ['X', 'Y', 'Z'] as const;
+
+/** Cycles/extrapolation stay channel-level (resolved upstream on the SHARED stack), so a
+ *  Cycles in a per-axis stack would be inert — exclude it from the per-axis Add menu. */
+const PER_AXIS_EXCLUDE: readonly string[] = ['cycles'];
+
+/** #274 (V88 D2) / #280 — the per-channel F-MODIFIER STACK authoring UI: the SHARED stack
+ *  (applied to every axis) plus, for vec channels, a PER-AXIS override section (#280). Each
+ *  axis is either "using shared" (an Override button seeds its own empty stack) or carries
+ *  its own {@link ModifierList} (a ↺ button reverts it to shared). Per-axis overrides are
+ *  stored dense+nullable in `axisModifiers`; when every axis is back to shared the param is
+ *  cleared to undefined → the sampler's byte-identical fast path resumes. */
+function ChannelModifierControls({ nodeId }: { nodeId: string }) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const nodeType = useDagStore((s) => s.state.nodes[nodeId]?.type) ?? '';
+  const modifiers =
+    useDagStore(
+      (s) =>
+        (s.state.nodes[nodeId]?.params as { modifiers?: FChannelModifier[] } | undefined)
+          ?.modifiers,
+    ) ?? [];
+  const axisModifiers = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[nodeId]?.params as
+          | { axisModifiers?: (FChannelModifier[] | null)[] }
+          | undefined
+      )?.axisModifiers,
+  );
+  const arity = AXIS_ARITY[nodeType] ?? 0;
+  const [axis, setAxis] = useState(0);
+
+  const commit = (path: string, value: unknown, label: string) =>
+    dispatch({ type: 'setParam', nodeId, paramPath: path, value }, 'user', label);
+
+  // #280 — write ONE axis's override (an array, or null = fall back to shared), keeping the
+  // stored array dense (arity-length, null where not overridden). When every axis is back to
+  // shared, clear the param entirely → the sampler's byte-identical fast path (no per-axis).
+  const setAxisOverride = (i: number, value: FChannelModifier[] | null) => {
+    const next = Array.from({ length: arity }, (_, k) =>
+      k === i ? value : (axisModifiers?.[k] ?? null),
+    );
+    commit('axisModifiers', next.every((a) => a == null) ? undefined : next, 'edit axis modifiers');
+  };
+
+  const activeAxis = axis < arity ? axis : 0;
+  const override = axisModifiers?.[activeAxis] ?? null;
+
+  return (
+    <div className="flex flex-col">
+      <span className="px-3 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        {arity > 0 ? 'Modifiers · all axes' : 'Modifiers'}
+      </span>
+      <ModifierList
+        modifiers={modifiers}
+        onChange={(next) => commit('modifiers', next, 'edit modifiers')}
+      />
+      {arity > 0 ? (
+        <div className="mt-1 border-t border-line/40 pt-1">
+          <div className="flex items-center justify-between px-3 pt-0.5">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">
+              Per-axis
+            </span>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: arity }, (_, a) => (
+                <button
+                  key={a}
+                  type="button"
+                  data-testid={`channel-axis-select-${a}`}
+                  aria-pressed={a === activeAxis}
+                  className={`rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                    a === activeAxis ? 'border-accent text-fg' : 'border-line text-fg/70'
+                  } ${axisModifiers?.[a] != null ? 'font-semibold' : ''}`}
+                  onClick={() => setAxis(a)}
+                >
+                  {AXIS_LABELS[a]}
+                  {axisModifiers?.[a] != null ? ' •' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+          {override == null ? (
+            <div className="flex items-center justify-between px-3 py-1 text-[10px] text-fg/50">
+              <span className="font-mono">{AXIS_LABELS[activeAxis]} uses the shared stack</span>
+              <button
+                type="button"
+                data-testid={`channel-axis-${activeAxis}-override`}
+                className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                onClick={() => setAxisOverride(activeAxis, [])}
+              >
+                override {AXIS_LABELS[activeAxis]}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-end px-3 pt-0.5">
+                <button
+                  type="button"
+                  data-testid={`channel-axis-${activeAxis}-clear`}
+                  className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onClick={() => setAxisOverride(activeAxis, null)}
+                >
+                  ↺ use shared
+                </button>
+              </div>
+              <ModifierList
+                modifiers={override}
+                onChange={(next) => setAxisOverride(activeAxis, next)}
+                prefix={`channel-axismod-${activeAxis}`}
+                excludeTypes={PER_AXIS_EXCLUDE}
+              />
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
