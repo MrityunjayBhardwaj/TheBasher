@@ -923,11 +923,25 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               ))}
             </>
           ) : null}
-          {/* Influence is a value-blend concept — meaningless for the pure TIME-phase
-              modifiers (Cycles, Stepped). Limits keeps it (its Y clamp is a value op). */}
-          {mod.type !== 'cycles' && mod.type !== 'stepped'
-            ? numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)
-            : null}
+          {/* Influence + restricted-range (#279) are value-blend concepts — meaningless
+              for the pure TIME-phase modifiers (Cycles, Stepped), which ignore both in
+              resolveSampleTime (Blender's time phase does too). Limits keeps them (its Y
+              clamp is a value op). useRange reveals the [start,end] window + blend-in/out
+              ramps that effectiveInfluence folds into the modifier's effective strength. */}
+          {mod.type !== 'cycles' && mod.type !== 'stepped' ? (
+            <>
+              {numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)}
+              {boolRow(i, 'restrict', 'useRange', Boolean(mod.useRange))}
+              {mod.useRange ? (
+                <>
+                  {numField(i, 'start', 'rangeStart', mod.rangeStart ?? 0)}
+                  {numField(i, 'end', 'rangeEnd', mod.rangeEnd ?? 0)}
+                  {numField(i, 'blend in', 'blendIn', mod.blendIn ?? 0)}
+                  {numField(i, 'blend out', 'blendOut', mod.blendOut ?? 0)}
+                </>
+              ) : null}
+            </>
+          ) : null}
         </div>
       ))}
     </div>
