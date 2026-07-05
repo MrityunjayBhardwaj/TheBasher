@@ -134,11 +134,52 @@ export interface FModStepped extends FModifierBase {
   frameEnd?: number;
 }
 
-/** The channel-modifier union. Grows with Envelope (the last value-phase modifier). */
-export type FChannelModifier = FModNoise | FModCycles | FModGenerator | FModLimits | FModStepped;
+/** One Envelope control point (Blender FCM_EnvelopeData). `min`/`max` are OFFSETS from
+ *  the modifier's `reference` to the adjusted band's lower/upper bound at `time` (matching
+ *  the UI's "offset from reference value"); interpolated linearly between points, held
+ *  outside. Times are in SECONDS. Points are kept sorted by `time` (like keyframes). */
+export interface FModEnvelopePoint {
+  time: number;
+  min: number;
+  max: number;
+}
+
+/** ENVELOPE modifier (Blender FMod_Envelope) — a VALUE modifier: reshape the curve by
+ *  mapping a fixed REFERENCE band `[reference+min, reference+max]` onto a per-time ADJUSTED
+ *  band `[reference+p.min, reference+p.max]` interpolated from keyed control points. A value
+ *  `v`'s position within the reference band is preserved within the adjusted band, so the
+ *  curve is pushed/squeezed/stretched over time. Byte-equivalent to Blender's
+ *  `fac = (v-(midval+min))/(max-min); out = bandMin + fac·(bandMax-bandMin)`. No control
+ *  points → no-op (Blender `env->data==null → return`). REF: manual `graph_editor/fcurves/
+ *  modifiers` (Envelope Modifier); Blender `fcm_envelope_evaluate`. */
+export interface FModEnvelope extends FModifierBase {
+  type: 'envelope';
+  /** The value the envelope is centered around (Blender `midval`). */
+  reference: number;
+  /** Offset from `reference` to the reference band's lower/upper bound (Blender env min/max). */
+  min: number;
+  max: number;
+  points: FModEnvelopePoint[];
+}
+
+/** The channel-modifier union. Envelope (#278) completes the value-phase set. */
+export type FChannelModifier =
+  | FModNoise
+  | FModCycles
+  | FModGenerator
+  | FModLimits
+  | FModStepped
+  | FModEnvelope;
 
 /** The modifier TYPES a channel can add (authoring order for the Add menu / e2e). */
-export const FMODIFIER_TYPES = ['noise', 'cycles', 'generator', 'limits', 'stepped'] as const;
+export const FMODIFIER_TYPES = [
+  'noise',
+  'cycles',
+  'generator',
+  'limits',
+  'stepped',
+  'envelope',
+] as const;
 
 /** A fresh modifier of the given type, with director-friendly defaults. */
 export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChannelModifier {
@@ -190,6 +231,11 @@ export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChanne
         frameStart: 0,
         frameEnd: 0,
       };
+    case 'envelope':
+      // Reference band [-1, +1] around 0; NO control points on add → a no-op until the
+      // director adds points (Blender: env->data==null → passthrough). addPoint seeds an
+      // identity point (offsets = the global band) so adding one doesn't jump the curve.
+      return { type: 'envelope', reference: 0, min: -1, max: 1, points: [], influence: 1 };
   }
 }
 
@@ -253,6 +299,34 @@ function noiseSignal(mod: FModNoise, t: number): number {
   return fractalNoise(t * mod.scale + mod.phase, mod.depth) * mod.strength + mod.offset;
 }
 
+/** The Envelope's per-time band OFFSETS at `t`: linearly interpolate the control points'
+ *  min/max, holding the first/last outside the point range (Blender `fcm_envelope_evaluate`
+ *  segment scan). `null` when there are no points → the modifier is a no-op. Points are
+ *  assumed sorted by `time` (the UI keeps them so). */
+function envelopeOffsets(
+  points: readonly FModEnvelopePoint[],
+  t: number,
+): { min: number; max: number } | null {
+  const n = points.length;
+  if (n === 0) return null;
+  const first = points[0];
+  const last = points[n - 1];
+  if (t <= first.time) return { min: first.min, max: first.max };
+  if (t >= last.time) return { min: last.min, max: last.max };
+  for (let i = 0; i < n - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (a.time <= t && b.time >= t) {
+      const diff = b.time - a.time;
+      if (diff <= 0) return { min: a.min, max: a.max };
+      const afac = (t - a.time) / diff;
+      const bfac = (b.time - t) / diff;
+      return { min: bfac * a.min + afac * b.min, max: bfac * a.max + afac * b.max };
+    }
+  }
+  return { min: last.min, max: last.max };
+}
+
 /** Combine one modifier's raw effect with the incoming value (pre-influence). */
 function modifierValue(mod: FChannelModifier, t: number, value: number): number {
   switch (mod.type) {
@@ -285,6 +359,19 @@ function modifierValue(mod: FChannelModifier, t: number, value: number): number 
       if (mod.useMinY) v = Math.max(v, mod.minY);
       if (mod.useMaxY) v = Math.min(v, mod.maxY);
       return v;
+    }
+    case 'envelope': {
+      // Map the value's position within the REFERENCE band onto the per-time ADJUSTED
+      // band. Byte-equivalent to Blender fcm_envelope_evaluate. No points → no-op.
+      const band = envelopeOffsets(mod.points, t);
+      if (!band) return value;
+      const refWidth = mod.max - mod.min;
+      if (refWidth === 0) return value; // degenerate reference band → no-op guard
+      const refLower = mod.reference + mod.min;
+      const adjLower = mod.reference + band.min;
+      const adjUpper = mod.reference + band.max;
+      const fac = (value - refLower) / refWidth;
+      return adjLower + fac * (adjUpper - adjLower);
     }
     // Cycles + Stepped are TIME modifiers (resolveExtend / resolveSampleTime consume
     // them pre-sample), never value ops. Guarded out in applyChannelModifiers; these
@@ -436,6 +523,14 @@ export const FModifierSchema = z.discriminatedUnion('type', [
     useFrameRange: z.boolean().default(false),
     frameStart: z.number().default(0),
     frameEnd: z.number().default(0),
+    ...rangeFields,
+  }),
+  z.object({
+    type: z.literal('envelope'),
+    reference: z.number().default(0),
+    min: z.number().default(-1),
+    max: z.number().default(1),
+    points: z.array(z.object({ time: z.number(), min: z.number(), max: z.number() })).default([]),
     ...rangeFields,
   }),
 ]);

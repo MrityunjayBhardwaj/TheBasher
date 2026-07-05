@@ -11,6 +11,7 @@ import {
   type FModGenerator,
   type FModLimits,
   type FModStepped,
+  type FModEnvelope,
 } from './channelModifiers';
 import { sampleScalarKeyframesExtended, type ScalarKey } from './keyframeInterp';
 
@@ -313,5 +314,104 @@ describe('#277 through the sampler — time modifiers remap render; empty byte-i
         stepped({ step: 1, muted: true }),
       ]),
     ).toBe(clean);
+  });
+});
+
+// ── #278 — Envelope modifier (value-phase reference-band remap) ──
+// Golden values derived from Blender fcm_envelope_evaluate:
+//   fac = (v - (reference+min)) / (max-min);  out = (reference+off.min) + fac·(off.max-off.min)
+// reference=0, global band [-1,1] (width 2), points {t2:(-1,1)}=identity, {t8:(0,2)}=shift +1.
+
+const envelope = (over: Partial<FModEnvelope> = {}): FModEnvelope => ({
+  type: 'envelope',
+  reference: 0,
+  min: -1,
+  max: 1,
+  points: [],
+  ...over,
+});
+
+describe('#278 Envelope modifier — reference-band remap (grounded on fcm_envelope_evaluate)', () => {
+  const twoPoint = () =>
+    envelope({
+      points: [
+        { time: 2, min: -1, max: 1 },
+        { time: 8, min: 0, max: 2 },
+      ],
+    });
+
+  it('at an identity-band point the value is unchanged (band == reference band)', () => {
+    // t=2: offsets (-1,1) → adjusted band == reference band → identity.
+    expect(applyChannelModifiers(10, 2, [twoPoint()])).toBeCloseTo(10, 9);
+  });
+
+  it('a shifted band translates the value (t=8 → +1)', () => {
+    // t=8: offsets (0,2) → band shifted up by 1, same width → out = v + 1.
+    expect(applyChannelModifiers(10, 8, [twoPoint()])).toBeCloseTo(11, 9);
+  });
+
+  it('interpolates the band linearly between points (t=5 → +0.5)', () => {
+    // t=5 (mid 2..8): offsets (-0.5, 1.5) → out = v + 0.5.
+    expect(applyChannelModifiers(10, 5, [twoPoint()])).toBeCloseTo(10.5, 9);
+  });
+
+  it('scales when the adjusted band is wider than the reference band', () => {
+    // one point, band offsets (-1,3): adjWidth 4, refWidth 2 → scale 2 about the low end.
+    // v=10: fac=(10-(-1))/2=5.5; out=(-1)+5.5·4 = 21.
+    const env = envelope({ points: [{ time: 0, min: -1, max: 3 }] });
+    expect(applyChannelModifiers(10, 0, [env])).toBeCloseTo(21, 9);
+  });
+
+  it('holds the first/last point outside the point range', () => {
+    const env = twoPoint();
+    expect(applyChannelModifiers(10, -5, [env])).toBeCloseTo(10, 9); // before first (identity band)
+    expect(applyChannelModifiers(10, 99, [env])).toBeCloseTo(11, 9); // after last (shift band)
+  });
+
+  it('no control points → no-op (Blender env->data==null → passthrough)', () => {
+    expect(applyChannelModifiers(42, 3, [envelope()])).toBe(42);
+    expect(applyChannelModifiers(42, 3, [defaultModifier('envelope')])).toBe(42);
+  });
+
+  it('a degenerate reference band (min==max) → no-op guard (no divide-by-zero)', () => {
+    const env = envelope({ min: 1, max: 1, points: [{ time: 0, min: 0, max: 2 }] });
+    expect(applyChannelModifiers(42, 0, [env])).toBe(42);
+  });
+
+  it('influence blends the remapped value over the base; mute is a no-op', () => {
+    // t=8 remaps 10→11; at influence 0.5 → 10 + 0.5·(11-10) = 10.5.
+    const env = envelope({
+      influence: 0.5,
+      points: [
+        { time: 2, min: -1, max: 1 },
+        { time: 8, min: 0, max: 2 },
+      ],
+    });
+    expect(applyChannelModifiers(10, 8, [env])).toBeCloseTo(10.5, 9);
+    expect(applyChannelModifiers(10, 8, [{ ...twoPoint(), muted: true }])).toBe(10);
+  });
+
+  it('is pure (same t,params → same value)', () => {
+    const env = twoPoint();
+    expect(applyChannelModifiers(3.3, 5, [env])).toBe(applyChannelModifiers(3.3, 5, [env]));
+  });
+});
+
+describe('#278 Envelope through the sampler — deviates render, empty stack byte-identical', () => {
+  const keys: ScalarKey[] = [
+    { time: 0, value: 10, easing: 'linear' },
+    { time: 10, value: 10, easing: 'linear' }, // flat value = 10
+  ];
+  it('an envelope shifts the sampled value; no modifiers = the clean flat curve', () => {
+    const clean = sampleScalarKeyframesExtended(keys, 8, 'hold', 'hold', 0, 0);
+    const env = envelope({
+      points: [
+        { time: 2, min: -1, max: 1 },
+        { time: 8, min: 0, max: 2 },
+      ],
+    });
+    // At t=8 the band is shifted +1 → flat 10 becomes 11.
+    expect(sampleScalarKeyframesExtended(keys, 8, 'hold', 'hold', 0, 0, [env])).toBeCloseTo(11, 6);
+    expect(sampleScalarKeyframesExtended(keys, 8, 'hold', 'hold', 0, 0, [])).toBe(clean);
   });
 });

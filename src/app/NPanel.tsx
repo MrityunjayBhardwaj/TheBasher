@@ -718,6 +718,21 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
     patch(i, { coefficients: next } as Partial<FChannelModifier>);
   };
 
+  // #278 — Envelope control-point editor. addPoint seeds an IDENTITY point (offsets =
+  // the global band) so adding one doesn't jump the curve, matching Blender's default.
+  type EnvMod = Extract<FChannelModifier, { type: 'envelope' }>;
+  type EnvPoint = EnvMod['points'][number];
+  const addEnvPoint = (i: number, mod: EnvMod) =>
+    patch(i, {
+      points: [...mod.points, { time: 0, min: mod.min, max: mod.max }],
+    } as Partial<FChannelModifier>);
+  const removeEnvPoint = (i: number, mod: EnvMod, k: number) =>
+    patch(i, { points: mod.points.filter((_, j) => j !== k) } as Partial<FChannelModifier>);
+  const patchEnvPoint = (i: number, mod: EnvMod, k: number, p: Partial<EnvPoint>) =>
+    patch(i, {
+      points: mod.points.map((pt, j) => (j === k ? { ...pt, ...p } : pt)),
+    } as Partial<FChannelModifier>);
+
   return (
     <div className="flex flex-col">
       <div className="flex items-center justify-between px-3 pt-1.5">
@@ -857,6 +872,55 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               {boolRow(i, 'frame range', 'useFrameRange', Boolean(mod.useFrameRange))}
               {mod.useFrameRange ? numField(i, 'start', 'frameStart', mod.frameStart ?? 0) : null}
               {mod.useFrameRange ? numField(i, 'end', 'frameEnd', mod.frameEnd ?? 0) : null}
+            </>
+          ) : null}
+          {mod.type === 'envelope' ? (
+            <>
+              {numField(i, 'reference', 'reference', mod.reference)}
+              {numField(i, 'min', 'min', mod.min)}
+              {numField(i, 'max', 'max', mod.max)}
+              <div className="flex items-center justify-between px-3 py-0.5">
+                <span className="font-mono text-[10px] text-fg/50">points</span>
+                <button
+                  type="button"
+                  data-testid={`channel-modifier-${i}-add-point`}
+                  className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onClick={() => addEnvPoint(i, mod)}
+                >
+                  + point
+                </button>
+              </div>
+              {mod.points.map((pt, k) => (
+                <div
+                  key={k}
+                  data-testid={`channel-modifier-${i}-point-${k}`}
+                  className="flex items-center justify-between gap-1 px-3 py-0.5 text-[10px] text-fg/70"
+                >
+                  <span className="font-mono text-fg/40">#{k}</span>
+                  {(['time', 'min', 'max'] as const).map((f) => (
+                    <input
+                      key={f}
+                      type="number"
+                      step={0.1}
+                      value={pt[f]}
+                      aria-label={`point ${k} ${f}`}
+                      data-testid={`channel-modifier-${i}-point-${k}-${f}`}
+                      className="w-12 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      onChange={(e) =>
+                        patchEnvPoint(i, mod, k, { [f]: Number(e.target.value) || 0 })
+                      }
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    data-testid={`channel-modifier-${i}-point-${k}-remove`}
+                    className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg/60 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onClick={() => removeEnvPoint(i, mod, k)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
             </>
           ) : null}
           {/* Influence is a value-blend concept — meaningless for the pure TIME-phase
