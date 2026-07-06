@@ -1791,6 +1791,55 @@ describe('mutator.timeline.keyframe', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
   });
+
+  // #281 — broadened interp vocabulary at key-creation.
+  it('authors a Penner easing + ease direction at creation', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0], easing: 'back', ease: 'out' },
+      state,
+      'eased key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<{ time: number; easing: string; ease?: string }>).find(
+      (x) => x.time === 1,
+    )!;
+    expect(k.easing).toBe('back');
+    expect(k.ease).toBe('out');
+  });
+
+  it('authors a handleType at creation', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0], easing: 'cubic', handleType: 'auto' },
+      state,
+      'handled key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<{ time: number; handleType?: string }>).find(
+      (x) => x.time === 1,
+    )!;
+    expect(k.handleType).toBe('auto');
+  });
+
+  it('byte-identical for a legacy call (no ease/handle keys added)', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0], easing: 'linear' },
+      state,
+      'legacy',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<Record<string, unknown>>).find((x) => x.time === 1)!;
+    // No `ease` / `handleType` keys when not supplied → identical to pre-#281.
+    expect(Object.keys(k).sort()).toEqual(['easing', 'time', 'value']);
+  });
 });
 
 describe('mutator.shot.create', () => {
