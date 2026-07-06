@@ -1,6 +1,6 @@
 # NLA / Action Strips — Motion-Space Layering Design
 
-> Status: **DESIGN / Phase 0 complete.** Grounded on Blender source + Houdini/Cinema 4D reference docs.
+> Status: **Phase 1 IMPLEMENTED** (the reducer foundation — `fff1f32`→`bb1e5bc` on `ux-overhall`; V88 D3 RESOLVED for the channel road). **Phases 2–5 = DESIGN.** Grounded on Blender source + Houdini/Cinema 4D reference docs. Note: the code citations below (`overlayChannels.ts:54-62`, the "6 call sites") reflect the pre-implementation source — at build the loop moved to a grouped fold and the caller set is 10 (adds `resolveWorldTransform.ts` + the compositor read seam `resolveEvaluatedParam.ts`); see `.anvi/vyapti.md` V88 + krama K21 + dharana B26 for the implemented truth.
 > Scope: the 3D **motion space** only. The 3D→video (Shot-as-compositor-clip) bridge is a **separate deferred epic** — §9.
 > Sibling doc: `docs/UNIFICATION-DESIGN.md` (the v0.7 AnimationLayer retirement that deliberately deferred this feature).
 
