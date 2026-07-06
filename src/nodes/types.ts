@@ -1066,6 +1066,76 @@ export type KeyframeChannelValue =
   | KeyframeChannelImageValue;
 
 // ---------------------------------------------------------------------------
+// NLA / Action Strips — motion-space layering (epic #283, docs/NLA-DESIGN.md §3.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * One channel of an {@link ActionValue}: a target-LESS, relative-path keyframe
+ * spec. It is exactly a `KeyframeChannel*Params` with the bound `target` removed
+ * (the Strip supplies the concrete target at placement, I-1) plus a `valueType`
+ * discriminant. The remaining fields (`keyframes`, `modifiers`, `axisModifiers`,
+ * `extend*` — and the inert `mute`/`weight`/`blendMode`/`order`, which are owned
+ * by the Strip at Action scope, kept only so a strip resolver can feed the spec
+ * to `build{Type}Sampler` unchanged, V57/DRY) mirror the channel schema so an
+ * Action never drifts from it. Concrete per-type shapes live in `Action.ts`
+ * (the zod discriminated union); this alias is the value-side view.
+ * REF: docs/NLA-DESIGN.md §3.3; vyapti V57/V88 D2.
+ */
+export type ActionChannelSpec = {
+  readonly valueType: KeyframeChannelValue['valueType'];
+  readonly paramPath: string;
+} & Record<string, unknown>;
+
+/** A reusable, target-less animation performance — a bundle of relative-path
+ *  channel specs (a "walk", authored once, placed by Strips). Immutable source
+ *  (I-1): edits live on the Strip placement, never rewrite the Action. */
+export interface ActionValue {
+  readonly kind: 'Action';
+  readonly name: string;
+  readonly channels: readonly ActionChannelSpec[];
+}
+
+/** A non-destructive PLACEMENT of an {@link ActionValue} onto the timeline,
+ *  bound to a concrete `target` (edge-less id-ref, V57). Carries retime
+ *  (start/timeScale/repeat/reverse/extrapolate — I-6), blend mode + static
+ *  influence (I-7), and a mute gate. Enumerated + folded by the resolver scan,
+ *  never wired by edge. Phase 2 = scene-node targets only (camera strips are a
+ *  documented known-limit — the camera pose scan does not fold yet). */
+export interface StripValue {
+  readonly kind: 'Strip';
+  readonly name: string;
+  /** Action node id (edge-less ref). */
+  readonly action: string;
+  /** Target node id whose params the placed Action drives (edge-less ref). */
+  readonly target: string;
+  readonly start: number;
+  readonly timeScale: number;
+  readonly repeat: number;
+  readonly reverse: boolean;
+  readonly extrapolate: StripExtrapolate;
+  readonly blendMode: ChannelBlendMode;
+  /** Static influence ∈ [0,1] (Phase 2). Time-varying ramps/crossfades = Phase 3. */
+  readonly influence: number;
+  readonly muted: boolean;
+}
+
+export const STRIP_EXTRAPOLATES = ['hold', 'nothing', 'hold-forward'] as const;
+export type StripExtrapolate = (typeof STRIP_EXTRAPOLATES)[number];
+
+/** An ordered mute/solo container of Strips (edge-less id-refs). The reducer
+ *  folds a track's strips bottom→top; tracks themselves fold in `order` rank.
+ *  `solo` on any track silences non-solo tracks (global). */
+export interface TrackValue {
+  readonly kind: 'Track';
+  readonly name: string;
+  /** Ordered Strip node ids (a strip belongs to exactly one Track — single-owner). */
+  readonly strips: readonly string[];
+  readonly order: number;
+  readonly mute: boolean;
+  readonly solo: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Operator substrate — constraints (CHOP) — epic #201 / V58
 // ---------------------------------------------------------------------------
 

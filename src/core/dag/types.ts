@@ -82,6 +82,16 @@ export type SocketTypeName =
   | 'LocomotionState'
   // P3 — Timeline = animation nodes (THESIS §42)
   | 'KeyframeChannel'
+  // NLA / Action Strips — motion-space layering (epic #283, docs/NLA-DESIGN.md).
+  // Three EDGE-LESS sidecar kinds (like KeyframeChannel/Constraint): an `Action`
+  // is a target-less relative-path channel bundle (author a "walk" once); a
+  // `Strip` binds it to a concrete target with retime/blend/influence; a `Track`
+  // is an ordered mute/solo container of strips. Outputs exist for introspection,
+  // but they are enumerated + folded by the resolver scan, never wired by edge
+  // (V57 pattern). REF: docs/NLA-DESIGN.md §3.3; vyapti V88 D2.
+  | 'Action'
+  | 'Strip'
+  | 'Track'
   // Operator substrate — CHOP/constraints (epic #201, V58). Edge-less driver
   // type (like KeyframeChannel): the output exists for introspection, but a
   // constraint is enumerated + scene-layer resolved, never wired into the graph.

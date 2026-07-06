@@ -3,6 +3,7 @@
 
 import { getNodeType, registerNodeType } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
+import { ActionNode } from './Action';
 import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
 import { ArrayModifierNode } from './ArrayModifier';
@@ -57,7 +58,9 @@ import { GltfSkeletonNode } from './GltfSkeleton';
 import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
+import { StripNode } from './Strip';
 import { TimeSourceNode } from './TimeSource';
+import { TrackNode } from './Track';
 import { TrackToNode } from './TrackTo';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
@@ -112,6 +115,13 @@ const ALL: NodeDefinition[] = [
   KeyframeChannelColorNode as unknown as NodeDefinition,
   KeyframeChannelTextNode as unknown as NodeDefinition,
   KeyframeChannelImageNode as unknown as NodeDefinition,
+  // NLA / Action Strips — motion-space layering (epic #283 Phase 2, V88 D2).
+  // Three EDGE-LESS sidecar kinds enumerated + folded by the resolver scan (the
+  // channel/constraint pattern below), never wired by edge. Registered so their
+  // addNode validates (V1). Inert in Slice A (render nothing); wired in Slices C–E.
+  ActionNode as unknown as NodeDefinition,
+  StripNode as unknown as NodeDefinition,
+  TrackNode as unknown as NodeDefinition,
   // Operator substrate — CHOP/constraints (epic #201, V58). Edge-less, enumerated
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).

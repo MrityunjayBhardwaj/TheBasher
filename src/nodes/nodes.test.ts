@@ -47,6 +47,7 @@ import type {
 } from './types';
 
 const ALL_TYPES = [
+  'Action',
   'AmbientLight',
   'AnimationClip',
   'AreaLight',
@@ -98,7 +99,9 @@ const ALL_TYPES = [
   'Skeleton',
   'SphereMesh',
   'SpotLight',
+  'Strip',
   'TimeSource',
+  'Track',
   'TrackTo',
   'Transform',
   'TransformClip',
