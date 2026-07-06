@@ -43,6 +43,7 @@ import { bakeGltfChannelMutator } from './builders/bakeGltfChannel';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
+import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
 
 export {
   rotateMutator,
@@ -65,6 +66,7 @@ export {
   addModifierMutator,
   addChannelModifierMutator,
   setChannelExtendMutator,
+  setKeyframeInterpMutator,
 };
 
 export function registerAllMutators(): void {
@@ -111,4 +113,7 @@ export function registerAllMutators(): void {
   // #281 — agent authoring op for per-side channel extrapolation (hold/slope,
   // #269/#275, V88 D1): the agent counterpart of the NPanel Extend dropdowns.
   registerMutator(setChannelExtendMutator);
+  // #281 — agent authoring op for per-keyframe interpolation / ease / handle type
+  // (#272/#273): the agent counterpart of the curve editor's interp/handle pickers.
+  registerMutator(setKeyframeInterpMutator);
 }

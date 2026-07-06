@@ -25,6 +25,7 @@ import { retargetMutator } from './builders/retarget';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
+import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -99,10 +100,10 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 20 = the prior 19 + `mutator.timeline.setChannelExtend` (#281 — per-side
-    // extrapolation). (19 was 18 + `addChannelModifier`; 18 was 17 +
-    // `mutator.geometry.addModifier`; 17 was the pre-#199 18 minus retired `addLayer`.)
-    expect(mutators).toHaveLength(20);
+    // 21 = the prior 20 + `mutator.timeline.setKeyframeInterp` (#281 — per-keyframe
+    // interp/ease/handle). (20 was 19 + `setChannelExtend`; 19 was 18 +
+    // `addChannelModifier`; 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
+    expect(mutators).toHaveLength(21);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -123,6 +124,7 @@ describe('mutator catalog', () => {
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
       'mutator.timeline.setChannelExtend',
+      'mutator.timeline.setKeyframeInterp',
       'mutator.timeline.simplifyChannel',
       'mutator.translate',
     ]);
@@ -569,6 +571,141 @@ describe('setChannelExtend mutator (per-side extrapolation — #281 / V88 D1)', 
       'quat extend',
     );
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('setKeyframeInterp mutator (per-keyframe interp/ease/handle — #281 / V88 D1)', () => {
+  function channelScene(
+    keys: Array<{ time: number; value: number; easing?: string; handleType?: string }>,
+  ): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        keyframes: keys.map((k) => ({
+          time: k.time,
+          value: k.value,
+          easing: k.easing ?? 'linear',
+          ...(k.handleType ? { handleType: k.handleType } : {}),
+        })),
+      },
+    }).next;
+    return s;
+  }
+
+  it('sets easing on ALL keys, preserving time + value', () => {
+    const state = channelScene([
+      { time: 0, value: 0 },
+      { time: 1, value: 10 },
+    ]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', scope: 'all', easing: 'back', ease: 'out' },
+      state,
+      'ease all',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const next = r.ops[0].value as Array<{
+      time: number;
+      value: number;
+      easing: string;
+      ease: string;
+    }>;
+    expect(next).toEqual([
+      { time: 0, value: 0, easing: 'back', ease: 'out' },
+      { time: 1, value: 10, easing: 'back', ease: 'out' },
+    ]);
+  });
+
+  it('sets interp on only the key AT a given time (scope {time})', () => {
+    const state = channelScene([
+      { time: 0, value: 0 },
+      { time: 1, value: 10 },
+    ]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', scope: { time: 1 }, easing: 'constant' },
+      state,
+      'step the second key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const next = r.ops[0].value as Array<{ time: number; easing: string }>;
+    expect(next.map((k) => k.easing)).toEqual(['linear', 'constant']);
+  });
+
+  it('sets handleType without touching easing', () => {
+    const state = channelScene([{ time: 0, value: 0, easing: 'cubic' }]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', handleType: 'auto' },
+      state,
+      'handle',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<{ easing: string; handleType: string }>)[0];
+    expect(k.easing).toBe('cubic'); // untouched
+    expect(k.handleType).toBe('auto');
+  });
+
+  it('rejects a spec with no interp field (defense-in-depth)', () => {
+    const state = channelScene([{ time: 0, value: 0 }]);
+    const r = validatePlan(setKeyframeInterpMutator, { channelId: 'ch' }, state, 'noop');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects scope {time} when no key is at that time', () => {
+    const state = channelScene([{ time: 0, value: 0 }]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', scope: { time: 5 }, easing: 'back' },
+      state,
+      'missing key',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an empty channel', () => {
+    const state = channelScene([]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', easing: 'back' },
+      state,
+      'empty',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a channel type without the broadened interp vocab (Quat)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'qch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+    }).next;
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'qch', easing: 'back' },
+      s,
+      'quat interp',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('is deterministic (same spec → identical ops)', () => {
+    const state = channelScene([{ time: 0, value: 0 }]);
+    const spec = { channelId: 'ch', easing: 'sine' as const, ease: 'inout' as const };
+    const a = validatePlan(setKeyframeInterpMutator, spec, state, 'x');
+    const b = validatePlan(setKeyframeInterpMutator, spec, state, 'x');
+    expect(a.ok && b.ok && JSON.stringify(a.ops) === JSON.stringify(b.ops)).toBe(true);
   });
 });
 
@@ -1370,7 +1507,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(20);
+    expect(parsed.mutators).toHaveLength(21);
   });
 });
 
@@ -2641,6 +2778,7 @@ import {
   addModifierMutator as _addModifierM,
   addChannelModifierMutator as _addChannelModifierM,
   setChannelExtendMutator as _setChannelExtendM,
+  setKeyframeInterpMutator as _setKeyframeInterpM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2923,6 +3061,14 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setChannelExtendM as MutatorDefinition<unknown>,
       build: buildSceneWithChannel,
       spec: { channelId: 'ch', before: 'slope', after: 'slope' },
+    },
+    // #281 — per-keyframe interp. Emits setParam('keyframes') — same op-shape as
+    // keyframe/simplify, distinguished by the contract discriminator (drops
+    // animation-shape, lossy:['prior-interpolation']), the #22 resolution.
+    'mutator.timeline.setKeyframeInterp': {
+      mutator: _setKeyframeInterpM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', scope: 'all', easing: 'back' },
     },
   };
 
