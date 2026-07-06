@@ -25,6 +25,8 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
+import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel';
+import { readAt } from '../nodes/overlayChannels';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 interface ChannelParams {
@@ -56,22 +58,40 @@ export function resolveEvaluatedParam(
   const transient = useTransientEditStore.getState().get(nodeId, paramPath);
   if (transient) return { value: transient.value };
 
-  // 2. Channel — find the KeyframeChannel* node (SAME scan as
-  //    paramAnimationState.ts:71-77), then EVALUATE the node and call .sample().
-  //    This is the render-identical path — it samples the channel VALUE, not raw
-  //    keyframes, so it cannot drift from the renderer (H40 form 1).
+  // 2. Channels — collect EVERY KeyframeChannel* whose (target, paramPath) match
+  //    (SAME scan as paramAnimationState.ts:71-77), each EVALUATED and sampled via
+  //    its VALUE's `.sample()` — the render-identical path (H40 form 1: never raw
+  //    keyframe math). Collecting ALL of them (not first-match) is what lets the
+  //    compositor read match the render for stacked channels (#283 Phase 1).
+  const matches: KeyframeChannelValue[] = [];
   for (const node of Object.values(state.nodes)) {
     if (!node.type.startsWith('KeyframeChannel')) continue;
     const p = (node.params ?? {}) as ChannelParams;
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
     try {
-      const channelValue = evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue;
-      return { value: channelValue.sample(ctx.time.seconds) };
+      matches.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
     } catch {
-      return null; // unevaluable channel → fall back to base
+      // unevaluable channel → skip it (a lone bad channel ⇒ base fallback below).
     }
   }
 
   // 3. No channel → base (caller reads node.params[paramPath]).
-  return null;
+  if (matches.length === 0) return null;
+
+  // Single channel — the pre-#283 first-match contract, byte-identical.
+  if (matches.length === 1) return { value: matches[0].sample(ctx.time.seconds) };
+
+  // 2+ channels on ONE param → compose with the SAME ordered, weighted fold the
+  // renderer uses (overlayChannels → foldChannelValue), so the compositor read
+  // matches the render for stacked params (V88 D3 / H40). Base = the node's own
+  // param value at this path; sort bottom→top by `order`; influence = per-channel
+  // weight (the caller weight is 1 for reads).
+  const sorted = matches.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const base = readAt((state.nodes[nodeId]?.params ?? {}) as Record<string, unknown>, paramPath);
+  const contribs: ChannelContribution[] = sorted.map((ch) => ({
+    value: ch.sample(ctx.time.seconds),
+    mode: ch.blendMode ?? 'replace',
+    influence: ch.weight ?? 1,
+  }));
+  return { value: foldChannelValue(base, contribs, sorted[0].valueType, paramPath) };
 }

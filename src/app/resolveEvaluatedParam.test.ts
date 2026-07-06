@@ -62,6 +62,27 @@ describe('resolveEvaluatedParam (C2 — generic non-transform resolver)', () => 
     expect(at1?.value).toBeCloseTo(1);
   });
 
+  it('two channels on ONE param FOLD (not first-match) — the TOP order wins (#283)', () => {
+    let state = buildState(); // CHAN_ID: 0→1 linear, blendMode replace / order 0 (defaults)
+    // A SECOND channel on the same (target, param), higher order, constant 0.25.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_chan_param_2',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        target: BOX_ID,
+        paramPath: PARAM,
+        blendMode: 'replace',
+        order: 5,
+        keyframes: [{ time: 0, value: 0.25 }],
+      },
+    } as Op).next;
+    // First-match would return CHAN_ID's 0.5 at t=0.5; the FOLD returns the TOP
+    // (order 5) channel's constant 0.25 — proving the compositor read composes all
+    // matching channels, matching the renderer (V88 D3 / H40).
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0.5))?.value).toBeCloseTo(0.25);
+  });
+
   it('transient WINS over the channel (precedence transient > channel)', () => {
     const state = buildState();
     useTransientEditStore.getState().set(BOX_ID, PARAM, 0.9);
