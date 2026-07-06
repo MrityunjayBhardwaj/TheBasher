@@ -27,6 +27,7 @@ import type { EvalCtx } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel';
 import { readAt } from '../nodes/overlayChannels';
+import { stripChannelValuesForTarget } from './layeredChannels';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 interface ChannelParams {
@@ -73,6 +74,14 @@ export function resolveEvaluatedParam(
     } catch {
       // unevaluable channel → skip it (a lone bad channel ⇒ base fallback below).
     }
+  }
+
+  // 2b. NLA strips (#283 Phase 2, E) — append the strip-derived synthetic channels
+  //     for THIS param so a placed Strip reads == renders (H40). The SAME enumerator
+  //     the render seam uses; param-scoped here. No strips → `matches` unchanged →
+  //     byte-identical. The fold below treats bare channels + strips uniformly.
+  for (const v of stripChannelValuesForTarget(state.nodes, nodeId)) {
+    if (v.paramPath === paramPath) matches.push(v);
   }
 
   // 3. No channel → base (caller reads node.params[paramPath]).
