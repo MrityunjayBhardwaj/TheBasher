@@ -22,6 +22,9 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Easing, KeyframeChannelQuatValue, Quat } from './types';
+// slerp lives in quatMath now — the ONE shared unit-quat slerp, also consumed by
+// the NLA layer-fold reducer (foldChannel.ts). No drift (H40).
+import { slerp } from './quatMath';
 
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
@@ -47,49 +50,6 @@ export type KeyframeChannelQuatParams = z.infer<typeof KeyframeChannelQuatParams
 
 function smoothstep(u: number): number {
   return u * u * (3 - 2 * u);
-}
-
-function dot(a: Quat, b: Quat): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-}
-
-function neg(q: Quat): Quat {
-  return [-q[0], -q[1], -q[2], -q[3]];
-}
-
-function normalize(q: Quat): Quat {
-  const len = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-  if (len === 0) return [0, 0, 0, 1];
-  return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
-}
-
-/** Slerp a→b at u∈[0,1]. Picks the shortest arc by negating b when dot<0. */
-function slerp(a: Quat, b: Quat, u: number): Quat {
-  let d = dot(a, b);
-  let bb: Quat = b;
-  if (d < 0) {
-    bb = neg(b);
-    d = -d;
-  }
-  // Use lerp+normalize when nearly parallel — slerp degenerates to 0/0.
-  if (d > 0.9995) {
-    return normalize([
-      a[0] + (bb[0] - a[0]) * u,
-      a[1] + (bb[1] - a[1]) * u,
-      a[2] + (bb[2] - a[2]) * u,
-      a[3] + (bb[3] - a[3]) * u,
-    ]);
-  }
-  const theta = Math.acos(d);
-  const sinTheta = Math.sin(theta);
-  const wA = Math.sin((1 - u) * theta) / sinTheta;
-  const wB = Math.sin(u * theta) / sinTheta;
-  return [
-    a[0] * wA + bb[0] * wB,
-    a[1] * wA + bb[1] * wB,
-    a[2] * wA + bb[2] * wB,
-    a[3] * wA + bb[3] * wB,
-  ];
 }
 
 function interp(a: Quat, b: Quat, u: number, easing: Easing): Quat {
