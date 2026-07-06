@@ -42,6 +42,7 @@ import { randomizeMutator } from './builders/randomize';
 import { bakeGltfChannelMutator } from './builders/bakeGltfChannel';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
+import { setChannelExtendMutator } from './builders/setChannelExtend';
 
 export {
   rotateMutator,
@@ -63,6 +64,7 @@ export {
   bakeGltfChannelMutator,
   addModifierMutator,
   addChannelModifierMutator,
+  setChannelExtendMutator,
 };
 
 export function registerAllMutators(): void {
@@ -106,4 +108,7 @@ export function registerAllMutators(): void {
   // stack (#274–#280): add a Noise/Cycles/Generator/Limits/Stepped/Envelope
   // modifier via the same defaultModifier() factory the NPanel "+ Add" uses (V88 D2).
   registerMutator(addChannelModifierMutator);
+  // #281 — agent authoring op for per-side channel extrapolation (hold/slope,
+  // #269/#275, V88 D1): the agent counterpart of the NPanel Extend dropdowns.
+  registerMutator(setChannelExtendMutator);
 }

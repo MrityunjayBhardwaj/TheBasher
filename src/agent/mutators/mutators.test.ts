@@ -24,6 +24,7 @@ import { randomizeMutator } from './builders/randomize';
 import { retargetMutator } from './builders/retarget';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
+import { setChannelExtendMutator } from './builders/setChannelExtend';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -98,10 +99,10 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 19 = the prior 18 + `mutator.timeline.addChannelModifier` (#281 — the agent
-    // authoring op for the channel F-Modifier stack #274–#280). (18 was 17 +
+    // 20 = the prior 19 + `mutator.timeline.setChannelExtend` (#281 — per-side
+    // extrapolation). (19 was 18 + `addChannelModifier`; 18 was 17 +
     // `mutator.geometry.addModifier`; 17 was the pre-#199 18 minus retired `addLayer`.)
-    expect(mutators).toHaveLength(19);
+    expect(mutators).toHaveLength(20);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -121,6 +122,7 @@ describe('mutator catalog', () => {
       'mutator.timeline.bakeGltfChannel',
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
+      'mutator.timeline.setChannelExtend',
       'mutator.timeline.simplifyChannel',
       'mutator.translate',
     ]);
@@ -488,6 +490,85 @@ describe('addChannelModifier mutator (F-Modifier stack — #281 / V88 D2)', () =
     const a = validatePlan(addChannelModifierMutator, spec, state, 'x');
     const b = validatePlan(addChannelModifierMutator, spec, state, 'x');
     expect(a.ok && b.ok && JSON.stringify(a.ops) === JSON.stringify(b.ops)).toBe(true);
+  });
+});
+
+describe('setChannelExtend mutator (per-side extrapolation — #281 / V88 D1)', () => {
+  function channelScene(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        keyframes: [{ time: 0, value: 5, easing: 'linear' }],
+      },
+    }).next;
+    return s;
+  }
+
+  it('sets both sides via setParam(extendBefore)+(extendAfter)', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ch', before: 'slope', after: 'hold' },
+      channelScene(),
+      'extend',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toEqual([
+      { type: 'setParam', nodeId: 'ch', paramPath: 'extendBefore', value: 'slope' },
+      { type: 'setParam', nodeId: 'ch', paramPath: 'extendAfter', value: 'hold' },
+    ]);
+  });
+
+  it('emits only the provided side', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ch', after: 'slope' },
+      channelScene(),
+      'after only',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toEqual([
+      { type: 'setParam', nodeId: 'ch', paramPath: 'extendAfter', value: 'slope' },
+    ]);
+  });
+
+  it('rejects a spec with neither side (gate 2)', () => {
+    const r = validatePlan(setChannelExtendMutator, { channelId: 'ch' }, channelScene(), 'none');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an unknown channel', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ghost', before: 'hold' },
+      buildSceneWithTime(),
+      'ghost',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a channel type with no extend rule (Quat)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'qch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+    }).next;
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'qch', after: 'slope' },
+      s,
+      'quat extend',
+    );
+    expect(r.ok).toBe(false);
   });
 });
 
@@ -1289,7 +1370,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(19);
+    expect(parsed.mutators).toHaveLength(20);
   });
 });
 
@@ -2559,6 +2640,7 @@ import {
   bakeGltfChannelMutator as _bakeGltfM,
   addModifierMutator as _addModifierM,
   addChannelModifierMutator as _addChannelModifierM,
+  setChannelExtendMutator as _setChannelExtendM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2834,6 +2916,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addChannelModifierM as MutatorDefinition<unknown>,
       build: buildSceneWithChannel,
       spec: { channelId: 'ch', modifierType: 'noise' },
+    },
+    // #281 — per-side extrapolation. Emits setParam('extendBefore')+('extendAfter'):
+    // a distinct op-shape from every other channel mutator.
+    'mutator.timeline.setChannelExtend': {
+      mutator: _setChannelExtendM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', before: 'slope', after: 'slope' },
     },
   };
 
