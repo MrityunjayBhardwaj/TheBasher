@@ -23,6 +23,7 @@ import { deleteNodeMutator } from './builders/deleteNode';
 import { randomizeMutator } from './builders/randomize';
 import { retargetMutator } from './builders/retarget';
 import { addModifierMutator } from './builders/addModifier';
+import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -97,10 +98,10 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 18 = the prior 17 + `mutator.geometry.addModifier` (epic #201 / #209, the
-    // geometry OperatorStack agent op). (17 was the prior 18 minus `addLayer`,
-    // retired with the AnimationLayer wrapper, v0.7 #199 / V57.)
-    expect(mutators).toHaveLength(18);
+    // 19 = the prior 18 + `mutator.timeline.addChannelModifier` (#281 — the agent
+    // authoring op for the channel F-Modifier stack #274–#280). (18 was 17 +
+    // `mutator.geometry.addModifier`; 17 was the pre-#199 18 minus retired `addLayer`.)
+    expect(mutators).toHaveLength(19);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -116,6 +117,7 @@ describe('mutator catalog', () => {
       'mutator.setMaterialColor',
       'mutator.shot.create',
       'mutator.timeline.addChannel',
+      'mutator.timeline.addChannelModifier',
       'mutator.timeline.bakeGltfChannel',
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
@@ -316,6 +318,176 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
     const stack = enumerateModifierStack(next, 'box');
     expect(stack).toHaveLength(1);
     expect(stack[0].type).toBe('MirrorModifier');
+  });
+});
+
+describe('addChannelModifier mutator (F-Modifier stack — #281 / V88 D2)', () => {
+  function applyOps(state: DagState, ops: { type: string }[]): DagState {
+    return ops.reduce((s, op) => applyOp(s, op as never).next, state);
+  }
+  function channelScene(
+    type: 'KeyframeChannelNumber' | 'KeyframeChannelVec3',
+    modifiers?: unknown[],
+  ): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: type,
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: type === 'KeyframeChannelVec3' ? 'position' : 'opacity',
+        keyframes:
+          type === 'KeyframeChannelVec3'
+            ? [{ time: 0, value: [5, 0, 0], easing: 'linear' }]
+            : [{ time: 0, value: 5, easing: 'linear' }],
+        ...(modifiers ? { modifiers } : {}),
+      },
+    }).next;
+    return s;
+  }
+
+  it('appends a defaulted noise modifier via one setParam("modifiers")', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise' },
+      state,
+      'add noise',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    expect(op.type === 'setParam' && op.paramPath).toBe('modifiers');
+    if (op.type !== 'setParam') return;
+    const mods = op.value as Array<{ type: string; strength: number }>;
+    expect(mods).toHaveLength(1);
+    // defaultModifier('noise') defaults — the single wiring authority.
+    expect(mods[0].type).toBe('noise');
+    expect(mods[0].strength).toBe(1);
+  });
+
+  it('applies overrides onto the default (author a tuned modifier in one call)', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', overrides: { strength: 3, offset: 10 } },
+      state,
+      'add tuned noise',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const m = (r.ops[0].value as Array<Record<string, number>>)[0];
+    expect(m.strength).toBe(3);
+    expect(m.offset).toBe(10);
+    expect(m.scale).toBe(1); // untouched default preserved
+  });
+
+  it('appends to an existing stack, preserving order', () => {
+    const state = channelScene('KeyframeChannelNumber', [
+      { type: 'noise', blend: 'add', strength: 1, scale: 1, phase: 0, offset: 0, depth: 1 },
+    ]);
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'generator' },
+      state,
+      'append generator',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const mods = r.ops[0].value as Array<{ type: string }>;
+    expect(mods.map((m) => m.type)).toEqual(['noise', 'generator']);
+  });
+
+  it('inserts at an explicit index', () => {
+    const state = channelScene('KeyframeChannelNumber', [
+      { type: 'generator', additive: true, coefficients: [0, 1] },
+    ]);
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', index: 0 },
+      state,
+      'prepend noise',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const mods = r.ops[0].value as Array<{ type: string }>;
+    expect(mods.map((m) => m.type)).toEqual(['noise', 'generator']);
+  });
+
+  it('rejects an out-of-range index', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', index: 5 },
+      state,
+      'bad index',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an override that violates the modifier schema', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    // depth is int 1..8; 99 is out of range → merged modifier fails FModifierSchema.
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', overrides: { depth: 99 } },
+      state,
+      'bad override',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a channel type with no modifier stack (Quat)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'qch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+    }).next;
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'qch', modifierType: 'noise' },
+      s,
+      'quat noise',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an unknown channel', () => {
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ghost', modifierType: 'noise' },
+      buildSceneWithTime(),
+      'ghost',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('works on a Vec3 channel (per-component stack)', () => {
+    const state = channelScene('KeyframeChannelVec3');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'stepped' },
+      state,
+      'vec3 stepped',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const next = applyOps(state, r.ops as { type: string }[]);
+    const mods = (next.nodes['ch'].params as { modifiers: Array<{ type: string }> }).modifiers;
+    expect(mods.map((m) => m.type)).toEqual(['stepped']);
+  });
+
+  it('is deterministic (same spec → identical ops)', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const spec = { channelId: 'ch', modifierType: 'noise' as const, overrides: { strength: 2 } };
+    const a = validatePlan(addChannelModifierMutator, spec, state, 'x');
+    const b = validatePlan(addChannelModifierMutator, spec, state, 'x');
+    expect(a.ok && b.ok && JSON.stringify(a.ops) === JSON.stringify(b.ops)).toBe(true);
   });
 });
 
@@ -1117,7 +1289,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(18);
+    expect(parsed.mutators).toHaveLength(19);
   });
 });
 
@@ -2386,6 +2558,7 @@ import {
   randomizeMutator as _randomizeM,
   bakeGltfChannelMutator as _bakeGltfM,
   addModifierMutator as _addModifierM,
+  addChannelModifierMutator as _addChannelModifierM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2654,6 +2827,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addModifierM as MutatorDefinition<unknown>,
       build: buildScene,
       spec: { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
+    },
+    // #281 — F-Modifier on the collinear `ch` channel. Emits setParam('modifiers');
+    // a distinct paramPath from keyframe/simplify's setParam('keyframes').
+    'mutator.timeline.addChannelModifier': {
+      mutator: _addChannelModifierM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', modifierType: 'noise' },
     },
   };
 

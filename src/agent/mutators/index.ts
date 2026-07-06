@@ -41,6 +41,7 @@ import { addStitchMutator } from './builders/addStitch';
 import { randomizeMutator } from './builders/randomize';
 import { bakeGltfChannelMutator } from './builders/bakeGltfChannel';
 import { addModifierMutator } from './builders/addModifier';
+import { addChannelModifierMutator } from './builders/addChannelModifier';
 
 export {
   rotateMutator,
@@ -61,6 +62,7 @@ export {
   randomizeMutator,
   bakeGltfChannelMutator,
   addModifierMutator,
+  addChannelModifierMutator,
 };
 
 export function registerAllMutators(): void {
@@ -100,4 +102,8 @@ export function registerAllMutators(): void {
   // (ArrayModifier) on top of a mesh's stack, through the same operatorStack
   // wiring the UI uses (V58, §2.2 "add a Subdivide / add a Track-To").
   registerMutator(addModifierMutator);
+  // #281 (Blender anim-parity) — agent authoring op for the channel F-Modifier
+  // stack (#274–#280): add a Noise/Cycles/Generator/Limits/Stepped/Envelope
+  // modifier via the same defaultModifier() factory the NPanel "+ Add" uses (V88 D2).
+  registerMutator(addChannelModifierMutator);
 }
