@@ -52,11 +52,15 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import {
-  directChannelNodesForTarget,
   channelValuesFromNodes,
   directChannelTargetSet,
   animatedAncestorSet,
 } from '../app/nodeChannels';
+import {
+  layeredChannelValues,
+  layeredChannelNodesForTarget,
+  stripTargetSet,
+} from '../app/layeredChannels';
 import {
   constraintTargetSet,
   resolveConstraintRotation,
@@ -108,6 +112,7 @@ import type {
   DirectionalLightValue,
   GltfAssetValue,
   GroupValue,
+  KeyframeChannelValue,
   LightValue,
   MaterialOverrideValue,
   InlineMaterialSpec,
@@ -198,7 +203,14 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // never O(N²) (B13). The top-level maps read these directly; #266 (B1) also
   // provides them via context so a NESTED child resolves overlay membership by
   // flat-id LOOKUP at any depth.
-  const directChannelTargets = directChannelTargetSet(state.nodes);
+  // #283 Phase 2 (D) — a node is "channel-driven" if a bare direct channel OR an
+  // NLA Strip targets it, so a strip-only node mounts its per-frame follower too
+  // (the layered enumeration then folds the strips). Union built once (O(N)), tested
+  // O(1) per child (B13). Empty strip set → exactly the bare set (byte-identical).
+  const directChannelTargets = new Set<string>([
+    ...directChannelTargetSet(state.nodes),
+    ...stripTargetSet(state.nodes),
+  ]);
   const constraintTargets = constraintTargetSet(state.nodes);
   // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
   // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
@@ -748,6 +760,27 @@ function LightKindR({
 // pays zero cost (the boolean prop keeps LightNode's memo bailing out). Lights are
 // few, so the per-frame setState (one light subtree) is cheap — the same trade the
 // mesh path makes for far more nodes.
+// The ONE render-side channel enumeration (#283 Phase 2 Slice D): the bare direct
+// channels AND the strip-derived synthetic channels driving `targetId`, unified into
+// the SAME `KeyframeChannelValue[]` `overlayChannels` already folds. Narrow-subscribe
+// the CONTRIBUTING NODE refs (bare channels + this target's strips + their actions +
+// all tracks — a track's solo/mute/order is a global fold input), shallow-compared so
+// this rebuilds ONLY when a contributing ref changes (H48). The values are built from
+// a lookup over exactly those refs — no store re-read, a pure function of the memo dep.
+// An empty strip set returns the bare array verbatim → byte-identical (the anchor).
+function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
+  const contribNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => layeredChannelNodesForTarget(s.state.nodes, targetId),
+    shallow,
+  );
+  return useMemo(() => {
+    const map: Record<string, (typeof contribNodes)[number]> = {};
+    for (const n of contribNodes) map[n.id] = n;
+    return layeredChannelValues(map, targetId);
+  }, [contribNodes, targetId]);
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -757,12 +790,7 @@ function DirectChannelsLightR({
   nodeId: string;
   constrained: boolean;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, nodeId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(nodeId);
   const transients = useTransientEditStore((s) => s.edits);
   const sample = (seconds: number): LightValue =>
     overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
@@ -824,12 +852,7 @@ function LightHelperFollower({
   /** True iff this light is the target of an active Track-To (#243, V60). */
   constrained: boolean;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, nodeId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(nodeId);
   const transients = useTransientEditStore((s) => s.edits);
   // #243 ([[H132]] GAP 2) — a CONSTRAINED light DERIVES its aim from the Track-To
   // target's world position per frame (the lit RectAreaLight follows via
@@ -883,12 +906,7 @@ function LightHelperFollower({
 // carries channels, so a static scene pays nothing.
 function SceneEnvChannelsR({ sceneNodeId }: { sceneNodeId: string }) {
   const scene = useThree((s) => s.scene);
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, sceneNodeId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(sceneNodeId);
   useFrame(() => {
     if (channels.length === 0) return;
     const seconds = useTimeStore.getState().seconds;
@@ -1533,12 +1551,7 @@ function DirectChannelsR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, pickId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(pickId);
   // Subscribe the transient SET so a PAUSED edit re-applies (the AnimationLayerR
   // #149 B2c mechanism; safe under H48 — `edits` is a stable empty Map ref during
   // playback). overlayChannels runs FIRST (committed curve), then the transient
@@ -1599,12 +1612,7 @@ function ConstrainedR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, pickId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(pickId);
   const transients = useTransientEditStore((s) => s.edits);
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
