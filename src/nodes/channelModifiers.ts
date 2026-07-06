@@ -275,10 +275,24 @@ export function fractalNoise(x: number, depth: number): number {
   return norm > 0 ? sum / norm : 0;
 }
 
-/** Effective 0..1 influence of a modifier at time `t`, folding in the global
- *  influence and the restricted-range blend-in/out ramps (Blender). Outside the
- *  restricted range → 0 (the modifier is inert). */
-function effectiveInfluence(mod: FChannelModifier, t: number): number {
+/** The structural shape `effectiveInfluence` needs — an FChannelModifier satisfies
+ *  it, but so does a Strip's blend-in/out placement (NLA Phase 3). Generalized +
+ *  exported (#283 Phase 2, Slice C) so the strip crossfade path reuses this ONE
+ *  ramp math instead of re-deriving it. */
+export interface InfluenceRamp {
+  readonly influence?: number;
+  readonly useRange?: boolean;
+  readonly rangeStart?: number;
+  readonly rangeEnd?: number;
+  readonly blendIn?: number;
+  readonly blendOut?: number;
+}
+
+/** Effective 0..1 influence at time `t`, folding in the global influence and the
+ *  restricted-range blend-in/out ramps (Blender). Outside the restricted range → 0
+ *  (inert). Exported for the NLA strip influence path (#283); the F-Modifier caller
+ *  passes an `FChannelModifier` (structurally an {@link InfluenceRamp}). */
+export function effectiveInfluence(mod: InfluenceRamp, t: number): number {
   let inf = mod.influence ?? 1;
   if (mod.useRange) {
     const start = mod.rangeStart ?? 0;
