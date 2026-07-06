@@ -25,6 +25,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelNumberValue } from './types';
+import { CHANNEL_BLEND_MODES } from './types';
 import {
   sampleScalarKeyframesExtended,
   resolveExtend,
@@ -60,6 +61,12 @@ export const KeyframeChannelNumberParams = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
+  /** #283 Phase 1 (NLA) — layer composition. blendMode 'replace' (legacy
+   *  last-writer lerp, default → byte-identical) | 'combine' (additive/manifold
+   *  over the per-type identity); order = bottom→top fold position (default 0 →
+   *  DAG order → byte-identical). REF: docs/NLA-DESIGN.md §3.1; vyapti V88 D2/D3. */
+  blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
+  order: z.number().default(0),
   /** D1 (#269) / #275 — per-side EXTRAPOLATION for times OUTSIDE the authored
    *  keyframe domain: 'hold' (clamp, default → byte-identical to the pre-#269 clamp)
    *  or 'slope' (linear). The cycling rules moved to a Cycles F-Modifier (#275). */
@@ -163,6 +170,8 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       paramPath: params.paramPath,
       mute: params.mute,
       weight: params.weight,
+      blendMode: params.blendMode,
+      order: params.order,
       sample: (seconds: number) =>
         sample(sorted, seconds, params.extendBefore, params.extendAfter, params.modifiers),
     };

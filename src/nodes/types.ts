@@ -964,6 +964,14 @@ export interface KeyframeColor {
 
 export type KeyframeValueType = 'number' | 'vec3' | 'quat' | 'color';
 
+/** #283 Phase 1 (NLA) — how a channel COMPOSES with other channels on the same
+ *  (target,param). Canonical here (the base module) so the fold reducer
+ *  (foldChannel.ts) and the 7 channel schemas bind to ONE list, no drift.
+ *  'replace' = the legacy last-writer lerp (default → byte-identical); 'combine'
+ *  = additive / manifold layer over the per-type identity. */
+export const CHANNEL_BLEND_MODES = ['replace', 'combine'] as const;
+export type ChannelBlendMode = (typeof CHANNEL_BLEND_MODES)[number];
+
 interface KeyframeChannelValueBase {
   readonly kind: 'KeyframeChannel';
   /** Display name for the dopesheet row. */
@@ -982,6 +990,17 @@ interface KeyframeChannelValueBase {
    */
   readonly mute: boolean;
   readonly weight: number;
+  /**
+   * #283 Phase 1 (NLA) — layer COMPOSITION over the fold reducer. `blendMode`
+   * selects how this channel composes with others on the same (target,param):
+   * 'replace' (legacy last-writer lerp) or 'combine' (additive/manifold over the
+   * per-type identity). `order` is the bottom→top fold position. Both
+   * default-identity (blendMode:'replace', order:0) → an un-migrated channel and
+   * every existing channel are byte-identical (single Replace @ order 0 == today's
+   * last-writer). REF: docs/NLA-DESIGN.md §3.1; vyapti V88 D2/D3.
+   */
+  readonly blendMode: ChannelBlendMode;
+  readonly order: number;
 }
 
 // P7.12 D-04 (function-of-time, V24/V3-amended) — mirrors the P7.10

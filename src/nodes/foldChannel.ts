@@ -26,13 +26,13 @@
 //
 // REF: docs/NLA-DESIGN.md §3.1/§3.2/§11; vyapti V88 D2/D3, I-2/I-4/I-5; V57.
 
-import type { KeyframeChannelValue, Quat, Vec2, Vec3 } from './types';
+import type { ChannelBlendMode, KeyframeChannelValue, Quat, Vec2, Vec3 } from './types';
 import { IDENTITY_QUAT, qmul, slerp } from './quatMath';
 
-/** How a contribution composes onto the lower stack. 'replace' = the legacy lerp
- *  (byte-identical to pre-NLA); 'combine' = additive / multiplicative / manifold
- *  layering over the per-type identity. */
-export type ChannelBlendMode = 'replace' | 'combine';
+// ChannelBlendMode is canonical in types.ts (the base module) so the schemas and
+// this reducer bind to ONE list. Re-exported for callers that reach it via the
+// reducer.
+export type { ChannelBlendMode };
 
 /** One layer's contribution to a single (target, param) fold, already sampled at
  *  the current time and ordered bottom→top by the caller. */
