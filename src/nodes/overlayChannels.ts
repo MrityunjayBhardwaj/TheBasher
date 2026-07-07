@@ -79,7 +79,10 @@ export function overlayChannels<T>(
       // `?? 'replace'` / `?? 1` are defensive for any channel value constructed
       // without the #283 fields (byte-identity: Replace @ order 0).
       mode: ch.blendMode ?? 'replace',
-      influence: weight * (ch.weight ?? 1),
+      // #283 Phase 3 — time-varying influence: a crossfading channel carries an
+      // `influenceAt` closure evaluated at THIS sample time; bare channels + non-
+      // crossfade strips omit it → the static `weight` path (byte-identical).
+      influence: weight * (ch.influenceAt ? ch.influenceAt(seconds) : (ch.weight ?? 1)),
     }));
     const folded = foldChannelValue(readAt(clone, path), contribs, sorted[0].valueType, path);
     writeAt(clone, path, folded);

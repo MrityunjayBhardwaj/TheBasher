@@ -28,6 +28,7 @@
 import { directChannelNodesForTarget, directChannelValuesForTarget } from './nodeChannels';
 import { getNodeType } from '../core/dag/registry';
 import { remapStripTime, type StripPlacement } from './stripRetime';
+import { effectiveInfluence, type InfluenceRamp } from '../nodes/channelModifiers';
 import type { KeyframeChannelValue } from '../nodes/types';
 import type { StripParams } from '../nodes/Strip';
 import type { TrackParams } from '../nodes/Track';
@@ -103,10 +104,30 @@ function syntheticChannelValue(
     actStart: domain.actStart,
     actLen: domain.actLen,
   };
+  // #283 Phase 3 — time-varying influence. Attach the ramp closure ONLY when the
+  // strip authors a crossfade (blendIn>0||blendOut>0); otherwise omit → static
+  // `weight` → byte-identical + Phase-2 hold-past-end preserved (R3: effectiveInfluence
+  // zeroes OUTSIDE the range, which would break a plain hold strip). The placed end =
+  // start + actLen·timeScale·repeat (RESEARCH Q-B, grounded stripRetime.ts:61-63).
+  const authorsCrossfade = strip.blendIn > 0 || strip.blendOut > 0;
+  const influenceAt = authorsCrossfade
+    ? ((): ((s: number) => number) => {
+        const ramp: InfluenceRamp = {
+          influence: clamp01(strip.influence),
+          useRange: true,
+          rangeStart: strip.start,
+          rangeEnd: strip.start + domain.actLen * strip.timeScale * strip.repeat,
+          blendIn: strip.blendIn,
+          blendOut: strip.blendOut,
+        };
+        return (s: number) => effectiveInfluence(ramp, s);
+      })()
+    : undefined;
   // Override the identity/blend fields with the strip's placement (the Strip owns
   // blend, not the Action's inert channel fields). Cast once: the runtime shape is a
   // valid KeyframeChannelValue, but TS can't narrow the discriminant through the
-  // dynamic valueType.
+  // dynamic valueType. The `...(influenceAt ? { influenceAt } : {})` spread keeps the
+  // KEY ABSENT for non-crossfade strips → the deep-equal byte-identity anchor holds.
   return {
     ...base,
     name: `${strip.name}/${ch.paramPath}`,
@@ -116,6 +137,7 @@ function syntheticChannelValue(
     weight: clamp01(strip.influence),
     blendMode: strip.blendMode,
     order,
+    ...(influenceAt ? { influenceAt } : {}),
     sample: (s: number) => base.sample(remapStripTime(s, placement) ?? domain.actStart),
   } as KeyframeChannelValue;
 }

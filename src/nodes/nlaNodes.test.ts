@@ -80,6 +80,8 @@ describe('Strip — placement of an Action (edge-less id-refs)', () => {
       extrapolate: 'hold',
       blendMode: 'replace',
       influence: 1,
+      blendIn: 0,
+      blendOut: 0,
       muted: false,
     });
   });

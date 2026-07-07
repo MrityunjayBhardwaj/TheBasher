@@ -44,6 +44,11 @@ export const StripParams = z.object({
   blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
   /** Static influence ∈ [0,1] (Phase 2). Time-varying ramps/crossfades = Phase 3. */
   influence: z.number().min(0).max(1).default(1),
+  /** Lead-in crossfade ramp (seconds). >0 → time-varying influence 0→full over
+   *  [start, start+blendIn]. Additive, defaulted 0 → no version bump (#277/#278). */
+  blendIn: z.number().min(0).default(0),
+  /** Lead-out crossfade ramp (seconds). >0 → full→0 over [end-blendOut, end]. */
+  blendOut: z.number().min(0).default(0),
   muted: z.boolean().default(false),
 });
 export type StripParams = z.infer<typeof StripParams>;
@@ -70,6 +75,8 @@ export const StripNode: NodeDefinition<StripParams, StripValue> = {
       extrapolate: params.extrapolate,
       blendMode: params.blendMode,
       influence: params.influence,
+      blendIn: params.blendIn,
+      blendOut: params.blendOut,
       muted: params.muted,
     };
   },

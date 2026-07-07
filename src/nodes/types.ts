@@ -1001,6 +1001,14 @@ interface KeyframeChannelValueBase {
    */
   readonly blendMode: ChannelBlendMode;
   readonly order: number;
+  /**
+   * #283 Phase 3 (NLA crossfade) — OPTIONAL time-varying influence. When present,
+   * the fold uses `influenceAt(sampleTime)` in place of the static `weight` (a
+   * Strip authoring blendIn/blendOut attaches an `effectiveInfluence` ramp closure).
+   * Absent for bare channels + non-crossfade strips → static `weight` path →
+   * byte-identical. REF: docs/NLA-DESIGN.md §Phase 3 (I-7); vyapti V88 I-7.
+   */
+  readonly influenceAt?: (seconds: number) => number;
 }
 
 // P7.12 D-04 (function-of-time, V24/V3-amended) — mirrors the P7.10
@@ -1116,6 +1124,10 @@ export interface StripValue {
   readonly blendMode: ChannelBlendMode;
   /** Static influence ∈ [0,1] (Phase 2). Time-varying ramps/crossfades = Phase 3. */
   readonly influence: number;
+  /** Lead-in / lead-out crossfade ramp durations (seconds), #283 Phase 3. >0 → the
+   *  strip authors a time-varying influence via an `effectiveInfluence` ramp. */
+  readonly blendIn: number;
+  readonly blendOut: number;
   readonly muted: boolean;
 }
 

@@ -88,7 +88,12 @@ export function resolveEvaluatedParam(
   if (matches.length === 0) return null;
 
   // Single channel — the pre-#283 first-match contract, byte-identical.
-  if (matches.length === 1) return { value: matches[0].sample(ctx.time.seconds) };
+  // #283 Phase 3: a crossfading match (carries `influenceAt`) MUST fall through to
+  // the fold below so read matches render (which always folds toward base at inf<1).
+  // No existing value carries `influenceAt` → every current single-match read keeps
+  // this fast path (byte-identical).
+  if (matches.length === 1 && !matches[0].influenceAt)
+    return { value: matches[0].sample(ctx.time.seconds) };
 
   // 2+ channels on ONE param → compose with the SAME ordered, weighted fold the
   // renderer uses (overlayChannels → foldChannelValue), so the compositor read
@@ -100,7 +105,8 @@ export function resolveEvaluatedParam(
   const contribs: ChannelContribution[] = sorted.map((ch) => ({
     value: ch.sample(ctx.time.seconds),
     mode: ch.blendMode ?? 'replace',
-    influence: ch.weight ?? 1,
+    // #283 Phase 3 — time-varying influence (lockstep with overlayChannels.ts).
+    influence: ch.influenceAt ? ch.influenceAt(ctx.time.seconds) : (ch.weight ?? 1),
   }));
   return { value: foldChannelValue(base, contribs, sorted[0].valueType, paramPath) };
 }
