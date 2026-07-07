@@ -720,6 +720,24 @@ const ROWS: Row[] = [
     bgStack: [],
     textSize: 'small',
   },
+  // 5C gesture states (#283 inc 5C, UI-SPEC §4.2): a drag-active strip
+  // re-fills with the `record` drag tint (the LayerTimeline drag-active
+  // precedent) and keeps the knocked-out text-bg label — unlike the
+  // whitelisted bg-record DECORATION uses, this fill carries text, so the
+  // pairing is audited explicitly. The selected track header washes
+  // accent/15 over the bg-2 header column under its text-fg name label.
+  {
+    site: 'R9 NlaLanePane strip label dragging — bg on record',
+    fg: 'bg',
+    bgStack: ['record'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane track header selected — fg on accent/15 over bg-2',
+    fg: 'fg',
+    bgStack: ['accent/15', 'bg-2'],
+    textSize: 'small',
+  },
 
   // ─── R9 TimelineCanvas (src/timeline/TimelineCanvas.tsx) ────────────
   // P6 W9: the SVG Dopesheet was replaced by an imperatively-painted
