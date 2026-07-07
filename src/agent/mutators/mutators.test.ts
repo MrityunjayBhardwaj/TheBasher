@@ -30,6 +30,7 @@ import { createActionMutator } from './builders/createAction';
 import { addStripMutator } from './builders/addStrip';
 import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
+import { setTrackStateMutator } from './builders/setTrackState';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -104,11 +105,11 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 25 = the prior 21 + `mutator.nla.{createAction,addStrip}` (#283 Phase 4 inc 4A)
-    // + `mutator.nla.{setStripTiming,setStripBlend}` (inc 4B). (21 was 20 +
-    // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 +
-    // `addChannelModifier`; 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
-    expect(mutators).toHaveLength(25);
+    // 26 = the prior 21 + the five #283 Phase 4 NLA mutators: 4A createAction+addStrip,
+    // 4B setStripTiming+setStripBlend, 4C setTrackState. (21 was 20 + `setKeyframeInterp`;
+    // 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`; 18 was 17 +
+    // `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
+    expect(mutators).toHaveLength(26);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -119,6 +120,7 @@ describe('mutator catalog', () => {
       'mutator.nla.createAction',
       'mutator.nla.setStripBlend',
       'mutator.nla.setStripTiming',
+      'mutator.nla.setTrackState',
       'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
@@ -1516,7 +1518,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(25);
+    expect(parsed.mutators).toHaveLength(26);
   });
 });
 
@@ -3036,6 +3038,58 @@ describe('mutator.nla.setStripTiming / setStripBlend (edit a placed strip)', () 
   });
 });
 
+describe('mutator.nla.setTrackState (order / mute / solo)', () => {
+  function sceneWithTrack(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_trk',
+      nodeType: 'Track',
+      params: { name: 'Base', strips: [], order: 0 },
+    }).next;
+    return s;
+  }
+
+  it('emits one setParam per provided field in deterministic order (order→mute→solo)', () => {
+    const state = sceneWithTrack();
+    const result = validatePlan(
+      setTrackStateMutator,
+      { trackId: 'nla_trk', order: 2, mute: true, solo: false },
+      state,
+      'track',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'order',
+        'mute',
+        'solo',
+      ]);
+    }
+  });
+
+  it('re-guards an all-undefined spec on the validatePlan-direct path (precondition)', () => {
+    const state = sceneWithTrack();
+    const result = validatePlan(setTrackStateMutator, { trackId: 'nla_trk' } as never, state, 'x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.gate).toBe(4);
+  });
+
+  it('rejects a non-Track target', () => {
+    const state = sceneWithTrack();
+    expect(validatePlan(setTrackStateMutator, { trackId: 'box', mute: true }, state, 'x').ok).toBe(
+      false,
+    );
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithTrack();
+    const a = validatePlan(setTrackStateMutator, { trackId: 'nla_trk', order: 1 }, state, 'o');
+    const b = validatePlan(setTrackStateMutator, { trackId: 'nla_trk', order: 1 }, state, 'o');
+    expect(a).toEqual(b);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // V14 DEEPER NON-REDUNDANCY — Op-shape probe (issue #22)
 //
@@ -3108,6 +3162,7 @@ import {
   addStripMutator as _addStripM,
   setStripTimingMutator as _setStripTimingM,
   setStripBlendMutator as _setStripBlendM,
+  setTrackStateMutator as _setTrackStateM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -3479,6 +3534,14 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setStripBlendM as MutatorDefinition<unknown>,
       build: buildSceneForNla,
       spec: { stripId: 'nla_strip', blendMode: 'combine', influence: 0.5 },
+    },
+    // #283 Phase 4 inc 4C — setTrackState emits [setParam:order, setParam:mute,
+    // setParam:solo] on nla_trk — a distinct op-shape; requiredNodeTypes:['Track'] is the
+    // honest signature discriminator vs the set-Strip family.
+    'mutator.nla.setTrackState': {
+      mutator: _setTrackStateM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { trackId: 'nla_trk', order: 1, mute: true, solo: false },
     },
   };
 

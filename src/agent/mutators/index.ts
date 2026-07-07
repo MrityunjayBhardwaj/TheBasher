@@ -48,6 +48,7 @@ import { createActionMutator } from './builders/createAction';
 import { addStripMutator } from './builders/addStrip';
 import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
+import { setTrackStateMutator } from './builders/setTrackState';
 
 export {
   rotateMutator,
@@ -75,6 +76,7 @@ export {
   addStripMutator,
   setStripTimingMutator,
   setStripBlendMutator,
+  setTrackStateMutator,
 };
 
 export function registerAllMutators(): void {
@@ -136,4 +138,7 @@ export function registerAllMutators(): void {
   // setParam mutators separated by honest lossy kinds (timing vs blend) under ['Strip'].
   registerMutator(setStripTimingMutator);
   registerMutator(setStripBlendMutator);
+  // #283 Phase 4 inc 4C — Track state: order (cross-track fold rank, I-2) / mute / solo.
+  // requiredNodeTypes:['Track'] is the honest V14 discriminator vs the set-Strip family.
+  registerMutator(setTrackStateMutator);
 }
