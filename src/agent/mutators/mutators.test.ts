@@ -26,6 +26,8 @@ import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
 import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
+import { createActionMutator } from './builders/createAction';
+import { addStripMutator } from './builders/addStrip';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -100,16 +102,19 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 21 = the prior 20 + `mutator.timeline.setKeyframeInterp` (#281 — per-keyframe
-    // interp/ease/handle). (20 was 19 + `setChannelExtend`; 19 was 18 +
-    // `addChannelModifier`; 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
-    expect(mutators).toHaveLength(21);
+    // 23 = the prior 21 + `mutator.nla.{createAction,addStrip}` (#283 Phase 4 — NLA
+    // agent mutators). (21 was 20 + `setKeyframeInterp`; 20 was 19 + `setChannelExtend`;
+    // 19 was 18 + `addChannelModifier`; 18 was 17 + `geometry.addModifier`;
+    // 17 = pre-#199 18 − `addLayer`.)
+    expect(mutators).toHaveLength(23);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.geometry.addModifier',
+      'mutator.nla.addStrip',
+      'mutator.nla.createAction',
       'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
@@ -1507,7 +1512,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(21);
+    expect(parsed.mutators).toHaveLength(23);
   });
 });
 
@@ -2761,6 +2766,191 @@ describe('mutator.timeline.removeKeyframes', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #283 Phase 4 — NLA agent mutators (createAction + addStrip)
+// ---------------------------------------------------------------------------
+
+describe('mutator.nla.createAction (author a target-less Action, V57)', () => {
+  const CHANNELS = [
+    {
+      valueType: 'vec3' as const,
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [0, 0, 0], easing: 'linear' as const },
+        { time: 2, value: [2, 1, 0], easing: 'linear' as const },
+      ],
+    },
+  ];
+
+  it('emits a single addNode(Action) with the channel bundle + deterministic id', () => {
+    const state = buildSceneWithTime();
+    const result = validatePlan(
+      createActionMutator,
+      { name: 'walk', actionId: 'nla_act', channels: CHANNELS },
+      state,
+      'author a walk Action',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(1);
+      const op = result.ops[0];
+      expect(op.type).toBe('addNode');
+      if (op.type === 'addNode') {
+        expect(op.nodeType).toBe('Action');
+        expect(op.nodeId).toBe('nla_act');
+        expect((op.params as { channels: unknown[] }).channels).toHaveLength(1);
+      }
+    }
+  });
+
+  it('auto-mints nla_action_1 when actionId is omitted', () => {
+    const state = buildSceneWithTime();
+    const result = validatePlan(
+      createActionMutator,
+      { name: 'walk', channels: CHANNELS },
+      state,
+      'author',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.ops[0].type === 'addNode') {
+      expect(result.ops[0].nodeId).toBe('nla_action_1');
+    }
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = buildSceneWithTime();
+    const a = validatePlan(createActionMutator, { channels: CHANNELS }, state, 'a');
+    const b = validatePlan(createActionMutator, { channels: CHANNELS }, state, 'a');
+    expect(a).toEqual(b);
+  });
+
+  it('re-guards empty channels on the validatePlan-direct path (precondition)', () => {
+    // The spec `.min(1)` fires only at safeParse; a validatePlan-direct caller passes
+    // an already-parsed spec → the precondition re-guard must catch empty channels.
+    const state = buildSceneWithTime();
+    const result = validatePlan(createActionMutator, { channels: [] } as never, state, 'empty');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.gate).toBe(4);
+  });
+
+  it('rejects a caller-supplied actionId that already exists', () => {
+    let state = buildSceneWithTime();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: { name: 'x', channels: [] },
+    }).next;
+    const result = validatePlan(
+      createActionMutator,
+      { actionId: 'nla_act', channels: CHANNELS },
+      state,
+      'dup',
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('mutator.nla.addStrip (place an Action into a Track)', () => {
+  /** A scene with `box` (target) + an Action `nla_act`. */
+  function sceneWithAction(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: {
+        name: 'walk',
+        channels: [
+          {
+            valueType: 'vec3',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [2, 1, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      },
+    }).next;
+    return s;
+  }
+
+  it('trackId omitted → [addNode:Strip, addNode:Track, setParam:strips=[stripId]] (auto-track)', () => {
+    const state = sceneWithAction();
+    const result = validatePlan(
+      addStripMutator,
+      { action: 'nla_act', target: 'box', stripId: 'nla_s1' },
+      state,
+      'place',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(3);
+      expect(result.ops[0].type).toBe('addNode');
+      expect(result.ops[1].type).toBe('addNode');
+      const strip = result.ops[0];
+      const track = result.ops[1];
+      const setStrips = result.ops[2];
+      if (strip.type === 'addNode') expect(strip.nodeType).toBe('Strip');
+      if (track.type === 'addNode') {
+        expect(track.nodeType).toBe('Track');
+        expect(track.nodeId).toBe('nla_track_1');
+      }
+      if (setStrips.type === 'setParam') {
+        expect(setStrips.nodeId).toBe('nla_track_1');
+        expect(setStrips.paramPath).toBe('strips');
+        expect(setStrips.value).toEqual(['nla_s1']);
+      }
+    }
+  });
+
+  it('existing trackId → [addNode:Strip, setParam:strips] appends, prior strips preserved', () => {
+    let state = sceneWithAction();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nla_trk',
+      nodeType: 'Track',
+      params: { name: 'Base', strips: ['existing_strip'], order: 0 },
+    }).next;
+    const result = validatePlan(
+      addStripMutator,
+      { action: 'nla_act', target: 'box', trackId: 'nla_trk', stripId: 'nla_s2' },
+      state,
+      'append',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(2);
+      const setStrips = result.ops[1];
+      if (setStrips.type === 'setParam') {
+        expect(setStrips.nodeId).toBe('nla_trk');
+        expect(setStrips.value).toEqual(['existing_strip', 'nla_s2']);
+      }
+    }
+  });
+
+  it('rejects a missing action, a non-Action action, and a missing target', () => {
+    const state = sceneWithAction();
+    expect(validatePlan(addStripMutator, { action: 'nope', target: 'box' }, state, 'x').ok).toBe(
+      false,
+    );
+    expect(validatePlan(addStripMutator, { action: 'box', target: 'box' }, state, 'x').ok).toBe(
+      false,
+    ); // box is a BoxMesh, not an Action
+    expect(
+      validatePlan(addStripMutator, { action: 'nla_act', target: 'nope' }, state, 'x').ok,
+    ).toBe(false);
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithAction();
+    const a = validatePlan(addStripMutator, { action: 'nla_act', target: 'box' }, state, 'p');
+    const b = validatePlan(addStripMutator, { action: 'nla_act', target: 'box' }, state, 'p');
+    expect(a).toEqual(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // V14 DEEPER NON-REDUNDANCY — Op-shape probe (issue #22)
 //
 // The contract-signature guard above ("V14: no two Mutators share the same
@@ -2828,6 +3018,8 @@ import {
   addChannelModifierMutator as _addChannelModifierM,
   setChannelExtendMutator as _setChannelExtendM,
   setKeyframeInterpMutator as _setKeyframeInterpM,
+  createActionMutator as _createActionM,
+  addStripMutator as _addStripM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2954,6 +3146,46 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         scale: [1, 1, 1],
         overridden: { position: false, rotation: false, scale: false },
       },
+    }).next;
+    return s;
+  }
+
+  // #283 Phase 4 (NLA agent mutators) — a scene carrying the Action/Strip/Track
+  // trio addStrip/createAction probe against: `box` (target, from buildSceneWithTime)
+  // + an Action `nla_act` (one vec3 position channel) + a Strip + a Track `nla_trk`
+  // that already holds the strip (so the addStrip probe can append to an EXISTING
+  // track → the deterministic [addNode:Strip, setParam:strips] op-shape, no auto-Track).
+  function buildSceneForNla(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: {
+        name: 'walk',
+        channels: [
+          {
+            valueType: 'vec3',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [2, 1, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_strip',
+      nodeType: 'Strip',
+      params: { name: 's', action: 'nla_act', target: 'box', start: 0 },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_trk',
+      nodeType: 'Track',
+      params: { name: 'Base', strips: ['nla_strip'], order: 0 },
     }).next;
     return s;
   }
@@ -3118,6 +3350,34 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setKeyframeInterpM as MutatorDefinition<unknown>,
       build: buildSceneWithChannel,
       spec: { channelId: 'ch', scope: 'all', easing: 'back' },
+    },
+    // #283 Phase 4 — createAction emits [addNode:Action] (unique nodeType);
+    // its all-8-inert contract discriminator is unique too.
+    'mutator.nla.createAction': {
+      mutator: _createActionM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: {
+        name: 'walk',
+        actionId: 'probe_act',
+        channels: [
+          {
+            valueType: 'vec3',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [2, 1, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      },
+    },
+    // #283 Phase 4 — addStrip against an EXISTING track emits
+    // [addNode:Strip, setParam:strips] — a distinct op-shape; requiredNodeTypes:['Action']
+    // is the honest contract discriminator (clears the keyframe preserves-7 collision).
+    'mutator.nla.addStrip': {
+      mutator: _addStripM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { action: 'nla_act', target: 'box', trackId: 'nla_trk', stripId: 'probe_strip' },
     },
   };
 

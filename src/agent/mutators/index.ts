@@ -44,6 +44,8 @@ import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
 import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
+import { createActionMutator } from './builders/createAction';
+import { addStripMutator } from './builders/addStrip';
 
 export {
   rotateMutator,
@@ -67,6 +69,8 @@ export {
   addChannelModifierMutator,
   setChannelExtendMutator,
   setKeyframeInterpMutator,
+  createActionMutator,
+  addStripMutator,
 };
 
 export function registerAllMutators(): void {
@@ -116,4 +120,11 @@ export function registerAllMutators(): void {
   // #281 — agent authoring op for per-keyframe interpolation / ease / handle type
   // (#272/#273): the agent counterpart of the curve editor's interp/handle pickers.
   registerMutator(setKeyframeInterpMutator);
+  // #283 Phase 4 (NLA agent mutators) — author + place the Action/Strip/Track
+  // vocabulary. createAction mints an immutable relative-path Action (addNode);
+  // addStrip binds it to a target and lands it in a Track (auto-creating the Track
+  // when trackId is omitted, appending via setParam(Track,'strips')). Track-birth
+  // folds into addStrip → no colliding standalone createTrack (V14/V88 D2).
+  registerMutator(createActionMutator);
+  registerMutator(addStripMutator);
 }
