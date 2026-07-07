@@ -23,9 +23,9 @@ import { create } from 'zustand';
 
 const STORAGE_KEY = 'basher.timelineDock.v1';
 
-export type TimelineTab = 'dopesheet' | 'curve' | 'lightStudio';
+export type TimelineTab = 'dopesheet' | 'curve' | 'nla' | 'lightStudio';
 
-const VALID_TABS: readonly TimelineTab[] = ['dopesheet', 'curve', 'lightStudio'];
+const VALID_TABS: readonly TimelineTab[] = ['dopesheet', 'curve', 'nla', 'lightStudio'];
 
 function isTimelineTab(value: unknown): value is TimelineTab {
   return typeof value === 'string' && (VALID_TABS as readonly string[]).includes(value);

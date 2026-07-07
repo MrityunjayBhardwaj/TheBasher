@@ -668,6 +668,59 @@ const ROWS: Row[] = [
     textSize: 'small',
   },
 
+  // ─── R9 NlaLanePane (src/timeline/NlaLanePane.tsx) — #283 Phase 5 ────
+  // Strip blocks bg-accent-dim (idle) / bg-accent (selected) carry a
+  // KNOCKED-OUT text-bg label in BOTH states: text-fg on accent-dim
+  // measures 2.79:1 and fails AA small-text, so the label follows the
+  // UI-SPEC §4.2 selected-knockout idiom (tailwind.config auto-invert
+  // rule) for idle too. Combine "C" badge inverts again (bg-bg chip,
+  // text-fg). Track headers + ruler sit on bg-2; the empty-state hint
+  // sits on the pane's bg. The orphan/duplicate-ghost `border-warn`
+  // outline is a STATE border — audited 3:1 by the border-token-gate
+  // via BORDER_FOCUS_STATE below (SC 1.4.11).
+  {
+    site: 'R9 NlaLanePane strip label idle — bg on accent-dim',
+    fg: 'bg',
+    bgStack: ['accent-dim'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane strip label selected — bg on accent',
+    fg: 'bg',
+    bgStack: ['accent'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane combine badge — fg on bg chip over accent-dim',
+    fg: 'fg',
+    bgStack: ['bg', 'accent-dim'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane track name — fg on bg-2 (header column)',
+    fg: 'fg',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane header toggle pressed — accent on bg-2 (bg-line inherits)',
+    fg: 'accent',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane ruler labels — fg-dim on bg-2',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane empty-state hint — fg-dim on bg',
+    fg: 'fg-dim',
+    bgStack: [],
+    textSize: 'small',
+  },
+
   // ─── R9 TimelineCanvas (src/timeline/TimelineCanvas.tsx) ────────────
   // P6 W9: the SVG Dopesheet was replaced by an imperatively-painted
   // canvas-2D surface (D-W9-2). A 2D <canvas> has NO Tailwind (fg-token,
@@ -1692,6 +1745,7 @@ const BORDER_DECORATIVE = new Set([
 const BORDER_FOCUS_STATE: Record<string, string> = {
   accent: 'accent', // :focus-visible ring + active-state border
   record: 'record', // Auto-Key armed-state border (UI-SPEC §5.8 D-UX-14)
+  warn: 'warn', // NLA orphan/duplicate-ghost strip STATE outline (#283 Phase 5, UI-SPEC §4.2)
 };
 
 function stripBorderToken(bare: string): string {

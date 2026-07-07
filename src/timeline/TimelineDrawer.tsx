@@ -37,6 +37,7 @@ import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
 import { LightStudioPanel } from './LightStudioPanel';
+import { NlaLanePane } from './NlaLanePane';
 import { SimplifyPopover } from './SimplifyPopover';
 
 const DRAWER_HEIGHT_PX = 240;
@@ -90,6 +91,14 @@ export function TimelineDrawer() {
               <CurveEditor duration={duration} />
             </div>
             <div
+              data-testid="nla-pane"
+              data-active={activeTab === 'nla'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'nla' ? 'flex' : 'none' }}
+            >
+              <NlaLanePane />
+            </div>
+            <div
               data-testid="light-studio-pane"
               data-active={activeTab === 'lightStudio'}
               className="absolute inset-0"
@@ -99,8 +108,10 @@ export function TimelineDrawer() {
             </div>
           </div>
           {/* The track-ops toolbar is keyframe-specific — only the time tabs show
-              it. The Light Studio is a spatial surface with its own affordances. */}
-          {activeTab !== 'lightStudio' ? <DockToolbar /> : null}
+              it. The Light Studio is a spatial surface with its own affordances;
+              the NLA lane view acts on strips/tracks, not timelineSelection
+              channels (#283 Phase 5 — its own affordances land in 5C/5D). */}
+          {!['lightStudio', 'nla'].includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}
       <div className="flex items-stretch">
@@ -152,6 +163,12 @@ function DockHeader({
         label="Curve Editor"
         active={activeTab === 'curve'}
         onClick={() => onSelectTab('curve')}
+      />
+      <TabButton
+        id="nla"
+        label="NLA"
+        active={activeTab === 'nla'}
+        onClick={() => onSelectTab('nla')}
       />
       <TabButton
         id="lightStudio"
