@@ -46,6 +46,8 @@ import { setChannelExtendMutator } from './builders/setChannelExtend';
 import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
 import { createActionMutator } from './builders/createAction';
 import { addStripMutator } from './builders/addStrip';
+import { setStripTimingMutator } from './builders/setStripTiming';
+import { setStripBlendMutator } from './builders/setStripBlend';
 
 export {
   rotateMutator,
@@ -71,6 +73,8 @@ export {
   setKeyframeInterpMutator,
   createActionMutator,
   addStripMutator,
+  setStripTimingMutator,
+  setStripBlendMutator,
 };
 
 export function registerAllMutators(): void {
@@ -127,4 +131,9 @@ export function registerAllMutators(): void {
   // folds into addStrip → no colliding standalone createTrack (V14/V88 D2).
   registerMutator(createActionMutator);
   registerMutator(addStripMutator);
+  // #283 Phase 4 inc 4B — edit a placed Strip: retime (start/timeScale/repeat/reverse)
+  // and blend (blendMode/influence/blendIn/blendOut, the Phase-3 crossfade seam). Two
+  // setParam mutators separated by honest lossy kinds (timing vs blend) under ['Strip'].
+  registerMutator(setStripTimingMutator);
+  registerMutator(setStripBlendMutator);
 }

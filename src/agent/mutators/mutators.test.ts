@@ -28,6 +28,8 @@ import { setChannelExtendMutator } from './builders/setChannelExtend';
 import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
 import { createActionMutator } from './builders/createAction';
 import { addStripMutator } from './builders/addStrip';
+import { setStripTimingMutator } from './builders/setStripTiming';
+import { setStripBlendMutator } from './builders/setStripBlend';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -102,11 +104,11 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 23 = the prior 21 + `mutator.nla.{createAction,addStrip}` (#283 Phase 4 — NLA
-    // agent mutators). (21 was 20 + `setKeyframeInterp`; 20 was 19 + `setChannelExtend`;
-    // 19 was 18 + `addChannelModifier`; 18 was 17 + `geometry.addModifier`;
-    // 17 = pre-#199 18 − `addLayer`.)
-    expect(mutators).toHaveLength(23);
+    // 25 = the prior 21 + `mutator.nla.{createAction,addStrip}` (#283 Phase 4 inc 4A)
+    // + `mutator.nla.{setStripTiming,setStripBlend}` (inc 4B). (21 was 20 +
+    // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 +
+    // `addChannelModifier`; 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
+    expect(mutators).toHaveLength(25);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -115,6 +117,8 @@ describe('mutator catalog', () => {
       'mutator.geometry.addModifier',
       'mutator.nla.addStrip',
       'mutator.nla.createAction',
+      'mutator.nla.setStripBlend',
+      'mutator.nla.setStripTiming',
       'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
@@ -1512,7 +1516,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(23);
+    expect(parsed.mutators).toHaveLength(25);
   });
 });
 
@@ -2950,6 +2954,88 @@ describe('mutator.nla.addStrip (place an Action into a Track)', () => {
   });
 });
 
+describe('mutator.nla.setStripTiming / setStripBlend (edit a placed strip)', () => {
+  /** A scene with `box`, an Action `nla_act`, and a Strip `nla_s` placing it. */
+  function sceneWithStrip(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: { name: 'walk', channels: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_s',
+      nodeType: 'Strip',
+      params: { name: 's', action: 'nla_act', target: 'box' },
+    }).next;
+    return s;
+  }
+
+  it('setStripTiming emits one setParam per provided field in deterministic order', () => {
+    const state = sceneWithStrip();
+    const result = validatePlan(
+      setStripTimingMutator,
+      { stripId: 'nla_s', start: 1, timeScale: 2 },
+      state,
+      'retime',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(2);
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'start',
+        'timeScale',
+      ]);
+    }
+  });
+
+  it('setStripBlend emits one setParam per provided field (blendMode→influence→blendIn→blendOut)', () => {
+    const state = sceneWithStrip();
+    const result = validatePlan(
+      setStripBlendMutator,
+      { stripId: 'nla_s', blendIn: 0.5, influence: 0.8 },
+      state,
+      'blend',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'influence',
+        'blendIn',
+      ]);
+    }
+  });
+
+  it('re-guards an all-undefined spec on the validatePlan-direct path (precondition)', () => {
+    const state = sceneWithStrip();
+    const timing = validatePlan(setStripTimingMutator, { stripId: 'nla_s' } as never, state, 'x');
+    expect(timing.ok).toBe(false);
+    if (!timing.ok) expect(timing.gate).toBe(4);
+    const blend = validatePlan(setStripBlendMutator, { stripId: 'nla_s' } as never, state, 'x');
+    expect(blend.ok).toBe(false);
+    if (!blend.ok) expect(blend.gate).toBe(4);
+  });
+
+  it('rejects a non-Strip target', () => {
+    const state = sceneWithStrip();
+    expect(validatePlan(setStripTimingMutator, { stripId: 'box', start: 1 }, state, 'x').ok).toBe(
+      false,
+    );
+    expect(
+      validatePlan(setStripBlendMutator, { stripId: 'nla_act', influence: 0.5 }, state, 'x').ok,
+    ).toBe(false);
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithStrip();
+    const a = validatePlan(setStripTimingMutator, { stripId: 'nla_s', repeat: 3 }, state, 'r');
+    const b = validatePlan(setStripTimingMutator, { stripId: 'nla_s', repeat: 3 }, state, 'r');
+    expect(a).toEqual(b);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // V14 DEEPER NON-REDUNDANCY — Op-shape probe (issue #22)
 //
@@ -3020,6 +3106,8 @@ import {
   setKeyframeInterpMutator as _setKeyframeInterpM,
   createActionMutator as _createActionM,
   addStripMutator as _addStripM,
+  setStripTimingMutator as _setStripTimingM,
+  setStripBlendMutator as _setStripBlendM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -3378,6 +3466,19 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addStripM as MutatorDefinition<unknown>,
       build: buildSceneForNla,
       spec: { action: 'nla_act', target: 'box', trackId: 'nla_trk', stripId: 'probe_strip' },
+    },
+    // #283 Phase 4 inc 4B — setStripTiming emits [setParam:start, setParam:timeScale];
+    // setStripBlend emits [setParam:blendMode, setParam:influence] — distinct op-shapes
+    // (paramPath sets), separated from each other by their honest lossy kinds too.
+    'mutator.nla.setStripTiming': {
+      mutator: _setStripTimingM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { stripId: 'nla_strip', start: 1, timeScale: 2 },
+    },
+    'mutator.nla.setStripBlend': {
+      mutator: _setStripBlendM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { stripId: 'nla_strip', blendMode: 'combine', influence: 0.5 },
     },
   };
 
