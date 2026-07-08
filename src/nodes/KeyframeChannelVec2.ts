@@ -17,6 +17,7 @@ import { CHANNEL_BLEND_MODES } from './types';
 import {
   sampleVec2KeyframesExtended,
   resolveExtend,
+  buildPerAxisExtend,
   KEYFRAME_INTERPS,
   EASE_DIRS,
   EXTRAPOLATE_RULES,
@@ -69,6 +70,23 @@ export const KeyframeChannelVec2Params = z.object({
   /** #280 — OPTIONAL per-axis modifier override (axisModifiers[i] = the complete stack
    *  for component i; absent → shared `modifiers`). Absent whole array → byte-identical. */
   axisModifiers: AxisModifiersSchema,
+  /** #289 — OPTIONAL per-axis EXTRAPOLATION override (axisExtend[i] = hold/slope for
+   *  component i; `null` → channel-level extendBefore/After). Per-axis Cycles lives in
+   *  `axisModifiers[i]`. Absent whole array → byte-identical. */
+  axisExtend: z
+    .array(
+      z
+        .object({
+          before: z.enum(
+            EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
+          ),
+          after: z.enum(
+            EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
+          ),
+        })
+        .nullable(),
+    )
+    .optional(),
   keyframes: z
     .array(
       z.object({
@@ -96,14 +114,21 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { modifiers, axisModifiers } = params;
-  // #275 — resolve stored extrapolation + Cycles modifier into the engine's rule +
-  // counts; the sampler & planExtend are unchanged (byte-identical). Cycles is resolved
-  // from the SHARED stack only — extrapolation stays channel-level (#280).
+  const { modifiers, axisModifiers, axisExtend } = params;
+  // #275 — channel-level fallback for axes with no per-axis override (byte-identical).
   const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
     params.extendBefore,
     params.extendAfter,
     modifiers,
+  );
+  // #289 — per-axis extrapolation/Cycles; undefined → sampler's channel-level fast path.
+  const perAxisExtend = buildPerAxisExtend(
+    2,
+    params.extendBefore,
+    params.extendAfter,
+    modifiers,
+    axisModifiers,
+    axisExtend,
   );
   return (seconds: number) =>
     sampleVec2KeyframesExtended(
@@ -115,6 +140,7 @@ export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: n
       cyclesAfter,
       modifiers,
       axisModifiers,
+      perAxisExtend,
     );
 }
 

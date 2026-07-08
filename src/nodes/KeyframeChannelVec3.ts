@@ -23,6 +23,7 @@ import { CHANNEL_BLEND_MODES } from './types';
 import {
   sampleVec3KeyframesExtended,
   resolveExtend,
+  buildPerAxisExtend,
   KEYFRAME_INTERPS,
   EASE_DIRS,
   EXTRAPOLATE_RULES,
@@ -77,6 +78,24 @@ export const KeyframeChannelVec3Params = z.object({
    *  for component i; absent → that axis uses the shared `modifiers`). Absent whole array
    *  → byte-identical to pre-#280. Blender: each axis is an independent F-curve. */
   axisModifiers: AxisModifiersSchema,
+  /** #289 — OPTIONAL per-axis EXTRAPOLATION override (axisExtend[i] = the hold/slope for
+   *  component i; `null` → that axis uses channel-level extendBefore/After). Per-axis Cycles
+   *  lives in `axisModifiers[i]` (an override stack). Absent whole array → byte-identical.
+   *  Blender: each axis F-curve extrapolates independently. */
+  axisExtend: z
+    .array(
+      z
+        .object({
+          before: z.enum(
+            EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
+          ),
+          after: z.enum(
+            EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
+          ),
+        })
+        .nullable(),
+    )
+    .optional(),
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
   // imported clip track is materialized into per-bone channels (bakeGltfChannel,
   // Wave D), each channel carries the bone's `childName` AND the owning asset's
@@ -117,14 +136,25 @@ export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params
  */
 export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: number) => Vec3 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { modifiers, axisModifiers } = params;
+  const { modifiers, axisModifiers, axisExtend } = params;
   // #275 — resolve stored extrapolation + Cycles modifier into the engine's rule +
-  // counts; the sampler & planExtend are unchanged (byte-identical). Cycles is
-  // resolved from the SHARED stack only — extrapolation stays channel-level (#280).
+  // counts; the sampler & planExtend are unchanged (byte-identical). This is the
+  // channel-level fallback for axes with no per-axis override.
   const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
     params.extendBefore,
     params.extendAfter,
     modifiers,
+  );
+  // #289 — per-axis extrapolation/Cycles: resolve each axis against its OWN extrapolation
+  // + effective stack; undefined (no per-axis mods AND no per-axis extend) → the sampler's
+  // channel-level fast path, byte-identical.
+  const perAxisExtend = buildPerAxisExtend(
+    3,
+    params.extendBefore,
+    params.extendAfter,
+    modifiers,
+    axisModifiers,
+    axisExtend,
   );
   return (seconds: number) =>
     sampleVec3KeyframesExtended(
@@ -136,6 +166,7 @@ export function buildVec3Sampler(params: KeyframeChannelVec3Params): (seconds: n
       cyclesAfter,
       modifiers,
       axisModifiers,
+      perAxisExtend,
     );
 }
 

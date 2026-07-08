@@ -12,9 +12,11 @@ import {
   sampleVec2KeyframesExtended,
   modifiersForAxis,
   resolveExtend,
+  buildPerAxisExtend,
   type ScalarKey,
   type Vec2Key,
   type Vec3Key,
+  type AxisExtend,
 } from './keyframeInterp';
 import type { FChannelModifier, FModCycles, FModNoise } from './channelModifiers';
 
@@ -556,5 +558,137 @@ describe('#280 — per-axis (independent) vec modifier stacks', () => {
       [gen10],
     ]);
     expect(out).toEqual([5, 15]);
+  });
+});
+
+describe('#289 — per-axis (independent) extrapolation / Cycles', () => {
+  // Ramp with distinct per-axis slopes: X rate 1, Y rate 2, Z rate 3 over [0,2].
+  const ramp: Vec3Key[] = [
+    { time: 0, value: [0, 0, 0], easing: 'linear' },
+    { time: 2, value: [2, 4, 6], easing: 'linear' },
+  ];
+  const cycRepeat: FModCycles = {
+    type: 'cycles',
+    beforeMode: 'repeat',
+    afterMode: 'repeat',
+    beforeCycles: 0,
+    afterCycles: 0,
+  };
+
+  it('buildPerAxisExtend: undefined when neither per-axis mods nor per-axis extend', () => {
+    expect(buildPerAxisExtend(3, 'hold', 'slope', undefined, undefined, undefined)).toBeUndefined();
+    expect(buildPerAxisExtend(3, 'hold', 'slope', [], undefined, undefined)).toBeUndefined();
+  });
+
+  it('buildPerAxisExtend: per-axis extrapolation override ?? channel-level, per axis', () => {
+    const axisExtend: (AxisExtend | null)[] = [{ before: 'hold', after: 'slope' }, null, null];
+    const resolved = buildPerAxisExtend(3, 'hold', 'hold', undefined, undefined, axisExtend)!;
+    expect(resolved[0]).toEqual({
+      before: 'hold',
+      after: 'slope',
+      cyclesBefore: 0,
+      cyclesAfter: 0,
+    });
+    expect(resolved[1]).toEqual({ before: 'hold', after: 'hold', cyclesBefore: 0, cyclesAfter: 0 });
+    expect(resolved[2]).toEqual({ before: 'hold', after: 'hold', cyclesBefore: 0, cyclesAfter: 0 });
+  });
+
+  it('a per-axis slope extrapolates ONLY its axis; the rest hold', () => {
+    // X after=slope, Y/Z channel-level hold. At t=3 (1s past end): X=2+1=3; Y=4, Z=6 hold.
+    const per = buildPerAxisExtend(3, 'hold', 'hold', undefined, undefined, [
+      { before: 'hold', after: 'slope' },
+      null,
+      null,
+    ]);
+    const out = sampleVec3KeyframesExtended(
+      ramp,
+      3,
+      'hold',
+      'hold',
+      0,
+      0,
+      undefined,
+      undefined,
+      per,
+    );
+    expect(out[0]).toBeCloseTo(3, 9);
+    expect(out[1]).toBeCloseTo(4, 9);
+    expect(out[2]).toBeCloseTo(6, 9);
+  });
+
+  it('a per-axis Cycles (in the axis stack) cycles ONLY its axis', () => {
+    // X gets a Cycles(repeat) in its OWN stack; Y/Z hold. At t=3: X folds [0,2]→t1 → X=1.
+    const axisMods = [[cycRepeat], null, null];
+    const per = buildPerAxisExtend(3, 'hold', 'hold', undefined, axisMods, undefined);
+    const out = sampleVec3KeyframesExtended(
+      ramp,
+      3,
+      'hold',
+      'hold',
+      0,
+      0,
+      undefined,
+      axisMods,
+      per,
+    );
+    expect(out[0]).toBeCloseTo(1, 9); // cycled
+    expect(out[1]).toBeCloseTo(4, 9); // held
+    expect(out[2]).toBeCloseTo(6, 9); // held
+  });
+
+  it('CONSISTENCY CORRECTION: an explicit per-axis override REPLACES a shared Cycles', () => {
+    // Shared Cycles(repeat) + an EMPTY override on X. #280 resolved Cycles from the shared
+    // stack (X would cycle too); #289 lets the override replace it → X holds, Y/Z cycle.
+    const shared = [cycRepeat];
+    const axisMods = [[], null, null]; // X empty override (no Cycles)
+    const per = buildPerAxisExtend(3, 'hold', 'hold', shared, axisMods, undefined);
+    const out = sampleVec3KeyframesExtended(ramp, 3, 'hold', 'hold', 0, 0, shared, axisMods, per);
+    expect(out[0]).toBeCloseTo(2, 9); // X held (override, no Cycles)
+    expect(out[1]).toBeCloseTo(2, 9); // Y cycled (shared)
+    expect(out[2]).toBeCloseTo(3, 9); // Z cycled (shared)
+  });
+
+  it('byte-fallback: per-axis mods but no per-axis extend → channel-level extrapolation', () => {
+    // Channel extendAfter='slope', an empty X override, no per-axis extend → every axis still
+    // slopes (extrapolation stays the channel-level fallback). Proves an empty modifier
+    // override does NOT silently flip extrapolation.
+    const axisMods = [[], null, null];
+    const per = buildPerAxisExtend(3, 'hold', 'slope', undefined, axisMods, undefined);
+    const out = sampleVec3KeyframesExtended(
+      ramp,
+      3,
+      'hold',
+      'slope',
+      0,
+      0,
+      undefined,
+      axisMods,
+      per,
+    );
+    expect(out).toEqual([3, 6, 9]);
+  });
+
+  it('vec2: a per-axis slope on X alone extrapolates ONLY X', () => {
+    const ramp2: Vec2Key[] = [
+      { time: 0, value: [0, 0], easing: 'linear' },
+      { time: 2, value: [2, 4], easing: 'linear' },
+    ];
+    const per = buildPerAxisExtend(2, 'hold', 'hold', undefined, undefined, [
+      { before: 'hold', after: 'slope' },
+      null,
+    ]);
+    const out = sampleVec2KeyframesExtended(
+      ramp2,
+      3,
+      'hold',
+      'hold',
+      0,
+      0,
+      undefined,
+      undefined,
+      per,
+    );
+    expect(out[0]).toBeCloseTo(3, 9); // sloped
+    expect(out[1]).toBeCloseTo(4, 9); // held
   });
 });

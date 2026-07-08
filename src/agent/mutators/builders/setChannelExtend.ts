@@ -38,6 +38,10 @@ const ExtendRule = z.enum(
   EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
 );
 
+/** Vec channel arity — the number of independent axis F-curves (#289). Scalar Number
+ *  channels have no axes, so `axis` is a precondition reject for them. */
+const AXIS_ARITY: Record<string, number> = { KeyframeChannelVec2: 2, KeyframeChannelVec3: 3 };
+
 const SetChannelExtendSpec = z
   .object({
     /** The KeyframeChannel{Number,Vec2,Vec3} whose extrapolation to set. */
@@ -46,6 +50,11 @@ const SetChannelExtendSpec = z
     before: ExtendRule.optional(),
     /** Extrapolation for times AFTER the last keyframe. Omit to leave unchanged. */
     after: ExtendRule.optional(),
+    /** #289 — target ONE axis of a vec channel (0=X, 1=Y, 2=Z) instead of the whole
+     *  channel: sets that axis's per-axis extrapolation override (Blender: each axis
+     *  F-curve extrapolates independently). Omit → the channel-level rule. Rejected on a
+     *  scalar Number channel (no axes). */
+    axis: z.number().int().min(0).optional(),
   })
   .refine((s) => s.before !== undefined || s.after !== undefined, {
     message: 'provide at least one of `before` / `after`.',
@@ -110,11 +119,51 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     if (spec.before === undefined && spec.after === undefined) {
       return { ok: false, reason: 'provide at least one of `before` / `after`.' };
     }
+    // #289 — per-axis targeting: only vec channels have axes, and the index must be in range.
+    if (spec.axis !== undefined) {
+      const arity = AXIS_ARITY[channel.type] ?? 0;
+      if (arity === 0) {
+        return {
+          ok: false,
+          reason: `channel "${spec.channelId}" is ${channel.type} (scalar); \`axis\` applies only to KeyframeChannel{Vec2,Vec3}.`,
+        };
+      }
+      if (spec.axis >= arity) {
+        return {
+          ok: false,
+          reason: `axis ${spec.axis} out of range for ${channel.type} (0..${arity - 1}).`,
+        };
+      }
+    }
     return { ok: true };
   },
-  build(spec, _closure: ClosureSet, _state: DagState): Op[] {
-    // One setParam per provided side (idempotent if unchanged). Deterministic order:
-    // before then after.
+  build(spec, _closure: ClosureSet, state: DagState): Op[] {
+    const params = state.nodes[spec.channelId]?.params as
+      | {
+          extendBefore?: ChannelExtrapolate;
+          extendAfter?: ChannelExtrapolate;
+          axisExtend?: ({ before: ChannelExtrapolate; after: ChannelExtrapolate } | null)[];
+        }
+      | undefined;
+    // #289 — per-axis path: write the whole dense `axisExtend` array (the same chokepoint
+    // the NPanel writes and the sampler reads). An omitted side falls back to the axis's
+    // current override, then the channel-level rule — so `{axis, after}` alone doesn't wipe
+    // `before`. Other axes are preserved.
+    if (spec.axis !== undefined) {
+      const arity = AXIS_ARITY[state.nodes[spec.channelId]!.type] ?? 0;
+      const chBefore = params?.extendBefore ?? 'hold';
+      const chAfter = params?.extendAfter ?? 'hold';
+      const cur = params?.axisExtend;
+      const curAxis = cur?.[spec.axis] ?? null;
+      const before = spec.before ?? curAxis?.before ?? chBefore;
+      const after = spec.after ?? curAxis?.after ?? chAfter;
+      const next = Array.from({ length: arity }, (_, k) =>
+        k === spec.axis ? { before, after } : (cur?.[k] ?? null),
+      );
+      return [{ type: 'setParam', nodeId: spec.channelId, paramPath: 'axisExtend', value: next }];
+    }
+    // Channel-level: one setParam per provided side (idempotent if unchanged). Deterministic
+    // order: before then after.
     const ops: Op[] = [];
     if (spec.before !== undefined) {
       ops.push({

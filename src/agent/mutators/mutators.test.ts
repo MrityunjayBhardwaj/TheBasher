@@ -583,6 +583,63 @@ describe('setChannelExtend mutator (per-side extrapolation — #281 / V88 D1)', 
     );
     expect(r.ok).toBe(false);
   });
+
+  // #289 — per-axis targeting on a vec channel.
+  function vec3ChannelScene(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'vch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+      },
+    }).next;
+    return s;
+  }
+
+  it('axis: writes a dense axisExtend array, target axis set, others null', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'vch', axis: 0, after: 'slope' },
+      vec3ChannelScene(),
+      'per-axis',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // before omitted → falls back to the channel-level 'hold'; other axes stay null.
+    expect(r.ops).toEqual([
+      {
+        type: 'setParam',
+        nodeId: 'vch',
+        paramPath: 'axisExtend',
+        value: [{ before: 'hold', after: 'slope' }, null, null],
+      },
+    ]);
+  });
+
+  it('axis: rejects a scalar Number channel (no axes)', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ch', axis: 0, after: 'slope' },
+      channelScene(),
+      'axis on scalar',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('axis: rejects an out-of-range index', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'vch', axis: 3, after: 'slope' },
+      vec3ChannelScene(),
+      'axis oor',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe('setKeyframeInterp mutator (per-keyframe interp/ease/handle — #281 / V88 D1)', () => {

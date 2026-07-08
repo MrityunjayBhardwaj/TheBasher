@@ -180,6 +180,23 @@ const CYCLE_MODE_TO_RULE: Record<Exclude<CycleMode, 'none'>, ChannelExtend> = {
   'repeat-mirror': 'mirror',
 };
 
+/** The engine-resolved extend for ONE F-curve (per-side rule + cycle counts) that the
+ *  `sample*KeyframesExtended` samplers consume — the output of {@link resolveExtend}.
+ *  Per-axis extrapolation (#289) resolves one of these per component. */
+export interface ResolvedExtend {
+  readonly before: ChannelExtend;
+  readonly after: ChannelExtend;
+  readonly cyclesBefore: number;
+  readonly cyclesAfter: number;
+}
+
+/** A per-axis EXTRAPOLATION override (#289): the stored hold/slope for one component,
+ *  or `null` when that axis falls back to the channel-level `extendBefore`/`extendAfter`. */
+export interface AxisExtend {
+  readonly before: ChannelExtrapolate;
+  readonly after: ChannelExtrapolate;
+}
+
 /** #275 — resolve a channel's STORED extend model (per-side hold/slope extrapolation
  *  + an optional Cycles F-Modifier in its stack) into the internal 5-value rule +
  *  counts that {@link sampleScalarKeyframesExtended} & friends already consume. A
@@ -191,7 +208,7 @@ export function resolveExtend(
   extendBefore: ChannelExtrapolate = 'hold',
   extendAfter: ChannelExtrapolate = 'hold',
   modifiers?: readonly FChannelModifier[],
-): { before: ChannelExtend; after: ChannelExtend; cyclesBefore: number; cyclesAfter: number } {
+): ResolvedExtend {
   const cyc = modifiers?.find((m): m is FModCycles => m.type === 'cycles' && !m.muted);
   const beforeCyclic = cyc && cyc.beforeMode !== 'none';
   const afterCyclic = cyc && cyc.afterMode !== 'none';
@@ -205,6 +222,34 @@ export function resolveExtend(
     cyclesBefore: beforeCyclic ? cyc.beforeCycles : 0,
     cyclesAfter: afterCyclic ? cyc.afterCycles : 0,
   };
+}
+
+/** #289 — resolve extend PER AXIS for a vec channel: each component `i` resolves its own
+ *  extrapolation (per-axis `axisExtend[i]` override ?? the channel-level extendBefore/After)
+ *  against its OWN effective modifier stack ({@link modifiersForAxis}), so a Cycles placed in
+ *  a per-axis override drives THAT axis alone (Blender: each axis is an independent F-curve
+ *  with its own extrapolation + Cycles). Returns `undefined` — the sampler's channel-level
+ *  fast path — when the channel has neither per-axis modifiers NOR per-axis extrapolation, so
+ *  a plain channel stays byte-identical. Otherwise every axis is resolved: an axis with no
+ *  override + no per-axis Cycles resolves to the SAME rule as the shared path, so the only
+ *  behavioural change vs #280 is the shared-Cycles + explicit-override combo — where an
+ *  override now REPLACES the shared stack for Cycles too (the Blender-correct semantics). */
+export function buildPerAxisExtend(
+  arity: number,
+  extendBefore: ChannelExtrapolate,
+  extendAfter: ChannelExtrapolate,
+  modifiers: readonly FChannelModifier[] | undefined,
+  axisModifiers: ReadonlyArray<readonly FChannelModifier[] | null> | undefined,
+  axisExtend: ReadonlyArray<AxisExtend | null> | undefined,
+): ReadonlyArray<ResolvedExtend> | undefined {
+  if (!axisModifiers?.length && !axisExtend?.length) return undefined;
+  return Array.from({ length: arity }, (_, i) =>
+    resolveExtend(
+      axisExtend?.[i]?.before ?? extendBefore,
+      axisExtend?.[i]?.after ?? extendAfter,
+      modifiersForAxis(modifiers, axisModifiers, i),
+    ),
+  );
 }
 
 /** A Bézier handle stored as an OFFSET (time, value) from its keyframe. */
@@ -924,30 +969,37 @@ export function sampleVec2KeyframesExtended(
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
   axisModifiers?: ReadonlyArray<readonly FChannelModifier[] | null>,
+  perAxisExtend?: ReadonlyArray<ResolvedExtend | null>,
 ): Vec2 {
   // #280 — PER-AXIS independent stacks (opt-in): each component samples through the
   // scalar path with its OWN effective stack, resolving its own time (Stepped/Limits-X)
   // + value phase, so e.g. a Noise on X alone jitters only X (Blender: each axis is an
-  // independent F-curve). Cycles/extrapolation stay channel-level (before/after resolved
-  // upstream from the shared stack). Absent axisModifiers → the fast path, byte-identical.
-  if (axisModifiers && axisModifiers.length) {
+  // independent F-curve). #289 — extrapolation/Cycles are ALSO per-axis: `perAxisExtend[i]`
+  // (resolved by `buildPerAxisExtend` from the axis's own extrapolation + effective stack)
+  // overrides the channel-level before/after/counts; absent → the shared channel rule.
+  // Absent axisModifiers AND perAxisExtend → the fast path, byte-identical.
+  if ((axisModifiers && axisModifiers.length) || (perAxisExtend && perAxisExtend.length)) {
+    const ext = (i: number): ResolvedExtend =>
+      perAxisExtend?.[i] ?? { before, after, cyclesBefore, cyclesAfter };
+    const e0 = ext(0);
+    const e1 = ext(1);
     return [
       sampleScalarKeyframesExtended(
         projectVecAxis(keys, 0),
         t,
-        before,
-        after,
-        cyclesBefore,
-        cyclesAfter,
+        e0.before,
+        e0.after,
+        e0.cyclesBefore,
+        e0.cyclesAfter,
         modifiersForAxis(modifiers, axisModifiers, 0),
       ),
       sampleScalarKeyframesExtended(
         projectVecAxis(keys, 1),
         t,
-        before,
-        after,
-        cyclesBefore,
-        cyclesAfter,
+        e1.before,
+        e1.after,
+        e1.cyclesBefore,
+        e1.cyclesAfter,
         modifiersForAxis(modifiers, axisModifiers, 1),
       ),
     ];
@@ -1021,35 +1073,42 @@ export function sampleVec3KeyframesExtended(
   cyclesAfter = 0,
   modifiers?: readonly FChannelModifier[],
   axisModifiers?: ReadonlyArray<readonly FChannelModifier[] | null>,
+  perAxisExtend?: ReadonlyArray<ResolvedExtend | null>,
 ): Vec3 {
-  // #280 — PER-AXIS independent stacks (opt-in); see sampleVec2KeyframesExtended.
-  if (axisModifiers && axisModifiers.length) {
+  // #280 — PER-AXIS independent stacks (opt-in); #289 — per-axis extrapolation/Cycles via
+  // `perAxisExtend`; see sampleVec2KeyframesExtended.
+  if ((axisModifiers && axisModifiers.length) || (perAxisExtend && perAxisExtend.length)) {
+    const ext = (i: number): ResolvedExtend =>
+      perAxisExtend?.[i] ?? { before, after, cyclesBefore, cyclesAfter };
+    const e0 = ext(0);
+    const e1 = ext(1);
+    const e2 = ext(2);
     return [
       sampleScalarKeyframesExtended(
         projectVecAxis(keys, 0),
         t,
-        before,
-        after,
-        cyclesBefore,
-        cyclesAfter,
+        e0.before,
+        e0.after,
+        e0.cyclesBefore,
+        e0.cyclesAfter,
         modifiersForAxis(modifiers, axisModifiers, 0),
       ),
       sampleScalarKeyframesExtended(
         projectVecAxis(keys, 1),
         t,
-        before,
-        after,
-        cyclesBefore,
-        cyclesAfter,
+        e1.before,
+        e1.after,
+        e1.cyclesBefore,
+        e1.cyclesAfter,
         modifiersForAxis(modifiers, axisModifiers, 1),
       ),
       sampleScalarKeyframesExtended(
         projectVecAxis(keys, 2),
         t,
-        before,
-        after,
-        cyclesBefore,
-        cyclesAfter,
+        e2.before,
+        e2.after,
+        e2.cyclesBefore,
+        e2.cyclesAfter,
         modifiersForAxis(modifiers, axisModifiers, 2),
       ),
     ];

@@ -954,9 +954,10 @@ function ModifierList({
 const AXIS_ARITY: Record<string, number> = { KeyframeChannelVec2: 2, KeyframeChannelVec3: 3 };
 const AXIS_LABELS = ['X', 'Y', 'Z'] as const;
 
-/** Cycles/extrapolation stay channel-level (resolved upstream on the SHARED stack), so a
- *  Cycles in a per-axis stack would be inert — exclude it from the per-axis Add menu. */
-const PER_AXIS_EXCLUDE: readonly string[] = ['cycles'];
+/** #289 — per-axis extrapolation/Cycles is now LIVE (resolved per-axis from each axis's own
+ *  effective stack), so a Cycles in a per-axis override drives that axis alone → nothing is
+ *  excluded from the per-axis Add menu. Kept as the seam for any future per-axis-inert type. */
+const PER_AXIS_EXCLUDE: readonly string[] = [];
 
 /** #274 (V88 D2) / #280 — the per-channel F-MODIFIER STACK authoring UI: the SHARED stack
  *  (applied to every axis) plus, for vec channels, a PER-AXIS override section (#280). Each
@@ -981,11 +982,37 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
           | undefined
       )?.axisModifiers,
   );
+  // #289 — channel-level extrapolation (the per-axis fallback) + the per-axis override.
+  const extendBefore =
+    useDagStore(
+      (s) => (s.state.nodes[nodeId]?.params as { extendBefore?: string } | undefined)?.extendBefore,
+    ) ?? 'hold';
+  const extendAfter =
+    useDagStore(
+      (s) => (s.state.nodes[nodeId]?.params as { extendAfter?: string } | undefined)?.extendAfter,
+    ) ?? 'hold';
+  const axisExtend = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[nodeId]?.params as
+          | { axisExtend?: ({ before: string; after: string } | null)[] }
+          | undefined
+      )?.axisExtend,
+  );
   const arity = AXIS_ARITY[nodeType] ?? 0;
   const [axis, setAxis] = useState(0);
 
   const commit = (path: string, value: unknown, label: string) =>
     dispatch({ type: 'setParam', nodeId, paramPath: path, value }, 'user', label);
+
+  // #289 — write ONE axis's extrapolation override (dense, null = fall back to channel-level);
+  // when every axis is back to shared, clear the param → the sampler's byte-identical fast path.
+  const setAxisExtend = (i: number, value: { before: string; after: string } | null) => {
+    const next = Array.from({ length: arity }, (_, k) =>
+      k === i ? value : (axisExtend?.[k] ?? null),
+    );
+    commit('axisExtend', next.every((a) => a == null) ? undefined : next, 'edit axis extend');
+  };
 
   // #280 — write ONE axis's override (an array, or null = fall back to shared), keeping the
   // stored array dense (arity-length, null where not overridden). When every axis is back to
@@ -1033,6 +1060,56 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               ))}
             </div>
           </div>
+          {/* #289 — per-axis EXTRAPOLATION (hold/slope) for the active axis; ↺ reverts to the
+              channel-level Extend. Per-axis Cycles is authored in the axis's ModifierList below. */}
+          {(() => {
+            const axBefore = axisExtend?.[activeAxis]?.before ?? extendBefore;
+            const axAfter = axisExtend?.[activeAxis]?.after ?? extendAfter;
+            const overridden = axisExtend?.[activeAxis] != null;
+            const sel = (side: 'before' | 'after', value: string) => (
+              <select
+                value={value}
+                data-testid={`channel-axisextend-${activeAxis}-${side}`}
+                className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                onChange={(e) =>
+                  setAxisExtend(activeAxis, {
+                    before: side === 'before' ? e.target.value : axBefore,
+                    after: side === 'after' ? e.target.value : axAfter,
+                  })
+                }
+              >
+                {EXTRAPOLATE_RULES.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            );
+            return (
+              <div className="flex items-center justify-between gap-2 px-3 py-1 text-[10px] text-fg/70">
+                <span
+                  className={`font-mono ${overridden ? 'font-semibold text-fg/80' : 'text-fg/50'}`}
+                >
+                  Extend {AXIS_LABELS[activeAxis]}
+                </span>
+                <div className="flex items-center gap-1">
+                  {sel('before', axBefore)}
+                  {sel('after', axAfter)}
+                  {overridden ? (
+                    <button
+                      type="button"
+                      data-testid={`channel-axisextend-${activeAxis}-clear`}
+                      title="use the channel Extend"
+                      className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      onClick={() => setAxisExtend(activeAxis, null)}
+                    >
+                      ↺
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })()}
           {override == null ? (
             <div className="flex items-center justify-between px-3 py-1 text-[10px] text-fg/50">
               <span className="font-mono">{AXIS_LABELS[activeAxis]} uses the shared stack</span>

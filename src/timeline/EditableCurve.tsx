@@ -25,6 +25,7 @@ import {
   KEYFRAME_INTERPS,
   EASE_DIRS,
   KEYFRAME_HANDLE_TYPES,
+  type AxisExtend,
   type ChannelExtrapolate,
   type Easing,
   type EaseDir,
@@ -153,6 +154,16 @@ export function EditableCurve({
           axisModifiers?: ReadonlyArray<readonly FChannelModifier[]>;
         }
       )?.axisModifiers,
+  );
+  // #289 — the per-axis EXTRAPOLATION override, so a per-axis hold/slope (or per-axis
+  // Cycles in axisModifiers) draws on ITS axis only (render==curve H40).
+  const axisExtend = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[channelId]?.params as {
+          axisExtend?: ReadonlyArray<AxisExtend | null>;
+        }
+      )?.axisExtend,
   );
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
@@ -303,18 +314,19 @@ export function EditableCurve({
   // across the VISIBLE window so a zoomed curve keeps full resolution.
   const polylines = useMemo(() => {
     const steps = Math.max(8, Math.round(plotX1 - plotX0) >> 1);
-    // #275 — resolve the stored extrapolation + Cycles modifier into the engine's
-    // rule + counts ONCE; the sampler & planExtend are unchanged (H40 curve==render).
-    const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
-      extendBefore,
-      extendAfter,
-      modifiers,
-    );
     return axes.map((a) => {
       const sk = keys.map((k) => projectAxis(k, a, isVec)).sort((p, q) => p.time - q.time);
       // #280 — draw each axis with ITS effective stack (per-axis override ?? shared) so
       // the curve matches what the sampler renders for that axis (H40).
       const axisMods = isVec ? modifiersForAxis(modifiers, axisModifiers, a) : modifiers;
+      // #289 — resolve extrapolation PER AXIS: the per-axis hold/slope (axisExtend[a]) ??
+      // the channel-level, against THIS axis's effective stack (so a per-axis Cycles drives
+      // only its axis) — the curve==render==read parity the sampler now produces (H40).
+      const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+        (isVec ? axisExtend?.[a]?.before : undefined) ?? extendBefore,
+        (isVec ? axisExtend?.[a]?.after : undefined) ?? extendAfter,
+        axisMods,
+      );
       const pts: string[] = [];
       for (let i = 0; i <= steps; i++) {
         const t = visStartSec + (i / steps) * (visEndSec - visStartSec);
@@ -343,6 +355,7 @@ export function EditableCurve({
     view,
     extendBefore,
     extendAfter,
+    axisExtend,
     modifiers,
     axisModifiers,
   ]);
