@@ -291,10 +291,21 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
           />
         ) : null}
         <span
-          className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
-          onPointerDown={scrub.onPointerDown}
+          // #293 — a DRIVEN scalar is read-only; disable the drag-scrub too, else
+          // dragging the label writes the (driver-overwritten) base — an invisible
+          // no-op (V38). The driver owns the value; edit the source, not the base.
+          className={
+            driven
+              ? 'select-none font-mono text-fg/40'
+              : 'cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent'
+          }
+          onPointerDown={driven ? undefined : scrub.onPointerDown}
           data-testid={`inspector-scrub-${nodeId}-${paramPath}`}
-          title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
+          title={
+            driven
+              ? 'Driven — edit the source, not the base'
+              : 'Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse.'
+          }
         >
           {label}
         </span>
