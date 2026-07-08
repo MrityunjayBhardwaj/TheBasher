@@ -406,6 +406,14 @@ export function boot(): Promise<void> {
       void import('./animate/dispatchMutator').then((m) => {
         w.__basher_dispatchMutator = m.dispatchMutatorFromUI;
       });
+      // NLA "push down" funnel (#283 Phase 5 inc 5E) — the UI composite +
+      // its {ok:false}→toast funnel, so e2e can force a rejection and observe
+      // BOTH the result and the notification surface (H70/B26) without a
+      // pointer route to a disabled button. Dev-only; no production path
+      // reads it (H65).
+      void import('../timeline/nlaCommit').then((m) => {
+        w.__basher_nlaPushDown = m.commitNlaPushDown;
+      });
       // P5 Wave C5 — install StubComfyUICapability for e2e tests so the
       // CostPreview spec doesn't depend on a running ComfyUI server. The
       // setter swaps the boot cache; subsequent getComfyCapability() calls

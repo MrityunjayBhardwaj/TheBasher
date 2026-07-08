@@ -19,7 +19,11 @@
 //      src/app/animate/dispatchMutator.ts:78-121; dharana B26; hetvabhasa
 //      H70; issue #283.
 
-import { dispatchMutatorFromUI, type DispatchResult } from '../app/animate/dispatchMutator';
+import {
+  dispatchMutatorFromUI,
+  dispatchPushDownToStrip,
+  type DispatchResult,
+} from '../app/animate/dispatchMutator';
 import { useDagStore } from '../core/dag/store';
 import { useNotificationStore } from '../app/stores/notificationStore';
 
@@ -44,6 +48,21 @@ export function commitNla(mutatorName: string, spec: unknown, intent: string): D
  * road) — normalized here to the same `{ok:false, reason}` + toast contract
  * so call sites handle exactly one shape.
  */
+/**
+ * "Push down" (inc 5E, UI-SPEC §2.7) through the SAME toast funnel: the
+ * composite (`dispatchPushDownToStrip` — createAction + addStrip + deleteNode
+ * as ONE fork-evolve dispatch = ONE undo entry) returns `{ok:false, reason}`
+ * without throwing; the reason (including the honesty-guard refusals that name
+ * the blocking channel) reaches the notification surface, never a silent no-op.
+ */
+export function commitNlaPushDown(targetId: string): DispatchResult {
+  const res = dispatchPushDownToStrip(targetId);
+  if (!res.ok) {
+    useNotificationStore.getState().notify({ severity: 'error', message: res.reason });
+  }
+  return res;
+}
+
 export function commitNlaSetParam(
   nodeId: string,
   paramPath: string,

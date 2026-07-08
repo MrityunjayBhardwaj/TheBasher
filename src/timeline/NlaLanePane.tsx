@@ -59,9 +59,11 @@ import {
   reorderDisabled,
   type NlaReorderDirection,
 } from './nlaLaneGeometry';
-import { commitNla, commitNlaSetParam } from './nlaCommit';
+import { commitNla, commitNlaPushDown, commitNlaSetParam } from './nlaCommit';
 import { NlaAddStripPopover } from './NlaAddStripPopover';
 import { NlaStripInspector } from './NlaStripInspector';
+import { useSelectionStore } from '../app/stores/selectionStore';
+import { directChannelNodesForTarget } from '../app/nodeChannels';
 import type { TimelineView } from './timelineView';
 
 // ── Strip drag record (the LayerTimeline BarDrag shape): everything the
@@ -146,6 +148,16 @@ export function NlaLanePane() {
     [nodes],
   );
   const [addStrip, setAddStrip] = useState<AddStripOpen | null>(null);
+
+  // 5E "Push down" (§2.7/§1.6): READ the global 3D selection (never written by
+  // this pane — UI-SPEC §1.5) and count its bare channels via the SAME
+  // enumerator the fold's bare seam consumes (directChannelNodesForTarget —
+  // layeredChannels.ts:224 wraps this exact predicate). ≥1 enables the button.
+  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  const bareChannelCount = useMemo(
+    () => (primaryNodeId ? directChannelNodesForTarget(nodes, primaryNodeId).length : 0),
+    [nodes, primaryNodeId],
+  );
 
   const seconds = useTimeStore((s) => s.seconds);
   const duration = useTimeStore((s) => s.durationSeconds);
@@ -460,7 +472,12 @@ export function NlaLanePane() {
         {/* ── Track rows (top = highest order — the model list is pre-reversed). */}
         <div className="min-h-0 w-full flex-1 overflow-auto">
           {lanes.rows.length === 0 ? (
-            <EmptyState hasActions={hasActions} onAddStrip={onOpenAddStrip} />
+            <EmptyState
+              hasActions={hasActions}
+              onAddStrip={onOpenAddStrip}
+              pushDownTargetId={primaryNodeId}
+              bareChannelCount={bareChannelCount}
+            />
           ) : (
             <>
               {lanes.rows.map((row, i) => (
@@ -484,14 +501,16 @@ export function NlaLanePane() {
                   onStripKeyDown={onStripKeyDown}
                 />
               ))}
-              {/* Footer add-strip (the pane-level entry point; NO "Add Track"
-                  button ever — track birth folds into addStrip, §1.6 LOCK). */}
-              <div className="flex h-6 items-center px-1.5">
+              {/* Footer add-strip + push-down (the pane-level entry points; NO
+                  "Add Track" button ever — track birth folds into addStrip,
+                  §1.6 LOCK). */}
+              <div className="flex h-6 items-center gap-1.5 px-1.5">
                 <AddStripButton
                   testid="nla-add-strip"
                   hasActions={hasActions}
                   onClick={(e) => onOpenAddStrip(e, null)}
                 />
+                <PushDownButton targetId={primaryNodeId} bareChannelCount={bareChannelCount} />
               </div>
             </>
           )}
@@ -962,9 +981,13 @@ function HeaderButton({
 function EmptyState({
   hasActions,
   onAddStrip,
+  pushDownTargetId,
+  bareChannelCount,
 }: {
   hasActions: boolean;
   onAddStrip: (e: React.MouseEvent, trackId: string | null) => void;
+  pushDownTargetId: string | null;
+  bareChannelCount: number;
 }) {
   return (
     <div
@@ -973,16 +996,58 @@ function EmptyState({
     >
       <p className="max-w-md text-center text-[11px] text-fg-dim">
         No NLA tracks yet. A strip places a reusable Action on a track — author an Action via{' '}
-        <code className="text-fg">mutator.nla.createAction</code> (agent road) or place an existing
+        <code className="text-fg">mutator.nla.createAction</code> (agent road), place an existing
         one with <code className="text-fg">mutator.nla.addStrip</code> / the button below (the track
-        is created automatically).
+        is created automatically), or push a keyframed object&apos;s channels down into a strip.
       </p>
-      <AddStripButton
-        testid="nla-add-strip"
-        hasActions={hasActions}
-        onClick={(e) => onAddStrip(e, null)}
-      />
+      <div className="flex items-center gap-1.5">
+        <AddStripButton
+          testid="nla-add-strip"
+          hasActions={hasActions}
+          onClick={(e) => onAddStrip(e, null)}
+        />
+        <PushDownButton targetId={pushDownTargetId} bareChannelCount={bareChannelCount} />
+      </div>
     </div>
+  );
+}
+
+// "Push down" (5E, §2.7): convert the SELECTED 3D object's bare keyframe
+// channels into an Action + a Strip placing it back — ONE composite dispatch =
+// ONE undo entry (dispatchPushDownToStrip via the commitNlaPushDown toast
+// funnel; refusals + {ok:false} always reach the notification surface, H70).
+// Enabled iff the selection has ≥1 bare channel (§1.6); the disabled title
+// says exactly why. Same class set as AddStripButton — no new contrast pairing.
+function PushDownButton({
+  targetId,
+  bareChannelCount,
+}: {
+  targetId: string | null;
+  bareChannelCount: number;
+}) {
+  const enabled = targetId !== null && bareChannelCount > 0;
+  const title = !targetId
+    ? 'Select an object in the viewport first'
+    : bareChannelCount === 0
+      ? 'The selected object has no bare keyframe channels to push down'
+      : `Convert ${bareChannelCount} bare channel${bareChannelCount === 1 ? '' : 's'} into an Action + strip (one undo step)`;
+  return (
+    <button
+      type="button"
+      data-testid="nla-push-down"
+      disabled={!enabled}
+      title={title}
+      aria-label="Push down the selected object's bare channels into an Action strip"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (targetId) commitNlaPushDown(targetId);
+      }}
+      className={`shrink-0 rounded border border-line px-2 py-0.5 text-[11px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        enabled ? 'text-mute hover:text-fg' : 'cursor-not-allowed text-mute opacity-40'
+      }`}
+    >
+      ↓ Push down
+    </button>
   );
 }
 

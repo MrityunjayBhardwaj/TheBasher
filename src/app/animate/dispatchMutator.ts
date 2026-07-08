@@ -39,6 +39,8 @@ import {
   scanBasherControllers,
   type BasherControllerKind,
 } from '../../core/comfy/basherControllers';
+import { directChannelNodesForTarget } from '../nodeChannels';
+import { ActionChannelSchema, type ActionChannel } from '../../nodes/Action';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -811,4 +813,233 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
     intentTag: 'user:mesh.firstKey',
     surface: 'Mesh',
   });
+}
+
+// ── "Push down" (epic #283 Phase 5, inc 5E — UI-SPEC §2.7) ──────────────────
+
+/** Bare KeyframeChannel* node type → the ActionChannelSchema discriminant
+ *  (the exact inverse of layeredChannels' `channelNodeType`). A type outside
+ *  this map has no Action-channel equivalent → refuse, never guess. */
+const ACTION_VALUE_TYPE_BY_NODE: Record<string, ActionChannel['valueType']> = {
+  KeyframeChannelNumber: 'number',
+  KeyframeChannelVec2: 'vec2',
+  KeyframeChannelVec3: 'vec3',
+  KeyframeChannelQuat: 'quat',
+  KeyframeChannelColor: 'color',
+  KeyframeChannelText: 'text',
+  KeyframeChannelImage: 'image',
+};
+
+export type PushDownChannelResult =
+  | { ok: true; channel: ActionChannel }
+  | { ok: false; reason: string };
+
+/**
+ * Map ONE bare channel node to an `ActionChannelSchema` spec (Action.ts:34-43):
+ * strip `target`, keep paramPath/keyframes (times/values/easing/handles all
+ * survive verbatim), add the `valueType` discriminant.
+ *
+ * HONESTY GUARD (H70 — refuse, never silently drop fidelity): the strip fold
+ * OVERRIDES the per-channel identity/blend fields at enumeration
+ * (`layeredChannels.ts` syntheticChannelValue sets mute:false, weight:influence,
+ * blendMode:strip.blendMode, order:orderBase) and clamps sample time to the
+ * placed span ('hold' forced, `layeredChannels.ts:96-103`) — so a channel
+ * carrying a NON-DEFAULT value in any of those fields, a non-'hold' extend
+ * mode, an F-Modifier stack, or per-axis data would render DIFFERENTLY after
+ * push-down (outside the key span, or in the fold). Each refusal names the
+ * channel so the director knows exactly what blocked the conversion.
+ * Defaults are read with `??` — the schemas differ per value type (text/image
+ * carry no extend/modifier fields), and an absent field IS its default.
+ */
+export function bareChannelToActionChannel(node: {
+  id: string;
+  type: string;
+  params?: unknown;
+}): PushDownChannelResult {
+  const valueType = ACTION_VALUE_TYPE_BY_NODE[node.type];
+  if (!valueType) {
+    return {
+      ok: false,
+      reason: `channel "${node.id}" (${node.type}) has no Action-channel equivalent — cannot push down.`,
+    };
+  }
+  const p = (node.params ?? {}) as Record<string, unknown>;
+  const refuse = (what: string): PushDownChannelResult => ({
+    ok: false,
+    reason: `channel "${node.id}" ${what} — the strip placement cannot hold it losslessly; push down refused.`,
+  });
+  if ((p.mute ?? false) !== false) return refuse('is muted (a strip folds its channels live)');
+  if ((p.weight ?? 1) !== 1)
+    return refuse(
+      `carries weight ${String(p.weight)} (the Strip's influence replaces per-channel weight)`,
+    );
+  if ((p.blendMode ?? 'replace') !== 'replace')
+    return refuse(`carries blendMode "${String(p.blendMode)}" (the Strip's blendMode replaces it)`);
+  if ((p.order ?? 0) !== 0)
+    return refuse(`carries fold order ${String(p.order)} (the strip assigns its own fold order)`);
+  if ((p.extendBefore ?? 'hold') !== 'hold' || (p.extendAfter ?? 'hold') !== 'hold')
+    return refuse(
+      `carries extrapolation "${String(p.extendBefore ?? 'hold')}"/"${String(p.extendAfter ?? 'hold')}" (a strip holds outside its placed span)`,
+    );
+  if (Array.isArray(p.modifiers) && p.modifiers.length > 0)
+    return refuse(
+      'carries an F-Modifier stack (modifiers sample raw time; a strip clamps time to its span)',
+    );
+  if (
+    Array.isArray(p.axisModifiers) &&
+    p.axisModifiers.some((a) => Array.isArray(a) && a.length > 0)
+  )
+    return refuse('carries per-axis modifiers (same span-clamp fidelity limit)');
+  if (p.childName !== undefined || p.assetRef !== undefined)
+    return refuse('is a baked glTF clip channel (the bake/revert lifecycle owns it)');
+
+  const rest = { ...p };
+  delete rest.target;
+  const parsed = ActionChannelSchema.safeParse({ ...rest, valueType });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: `channel "${node.id}" does not fit ActionChannelSchema: ${parsed.error.message}`,
+    };
+  }
+  return { ok: true, channel: parsed.data };
+}
+
+/** Next free `${base}_${n}` node id (the shotCreate.ts/createAction.ts discipline —
+ *  copied, not coupled), so the composite can hand createAction an EXPLICIT
+ *  actionId (createAction.ts:34-36) that addStrip references without a DAG
+ *  round-trip. */
+function nextFreshNodeId(prefix: string, state: DagState): string {
+  let n = 1;
+  while (state.nodes[`${prefix}_${n}`]) n++;
+  return `${prefix}_${n}`;
+}
+
+/**
+ * "Push down" composite (UI-SPEC §2.7 LOCKED mechanism; Blender's term): convert
+ * `targetId`'s bare KeyframeChannel* nodes into ONE Action + ONE Strip placing it
+ * back at the channels' min key time, and DELETE the bare channels — all as ONE
+ * atomic undo entry. The fork-evolve discipline mirrors dispatchBakeThenRetime
+ * (`:295-393`): createAction validates vs base; addStrip vs the fork (the Action
+ * only exists there); deleteNode vs the twice-evolved fork; all ops proposed in
+ * ONE diff with the UNIONED closure → one dispatchAtomic → one Cmd+Z.
+ *
+ * Why the channels MUST be deleted in the SAME entry: bare channels fold BELOW
+ * strips (`layeredChannels.ts:224-226` concatenates bare first) — leaving them
+ * would double-drive the params; deleting them in a SECOND dispatch would split
+ * undo (half-revertable — the K21 violation).
+ *
+ * Why `start = min key time`: actStart == start makes the strip's time remap the
+ * IDENTITY inside the key span, so render is byte-identical before/after (the
+ * honesty guard above refuses everything that could differ outside the span).
+ *
+ * NOT a new mutator (V14/H36): assembles the shipped createAction / addStrip /
+ * deleteNode vocabulary; registers nothing.
+ */
+export function dispatchPushDownToStrip(targetId: string): DispatchResult {
+  const base = useDagStore.getState().state;
+  const target = base.nodes[targetId];
+  if (!target) return { ok: false, reason: `target "${targetId}" not in DAG.` };
+
+  // 1 — the target's bare channels: the SAME enumerator the fold's bare seam
+  //     consumes (layeredChannels.ts:224 → directChannelValuesForTarget wraps
+  //     this exact predicate) — one predicate, no drift.
+  const bare = directChannelNodesForTarget(base.nodes, targetId);
+  if (bare.length === 0) {
+    return { ok: false, reason: `"${targetId}" has no bare keyframe channels to push down.` };
+  }
+
+  // 2 — map each to an ActionChannel spec; REFUSE (naming the channel) on any
+  //     state the placement cannot hold losslessly (H70).
+  const channels: ActionChannel[] = [];
+  let minKeyTime = Infinity;
+  for (const node of bare) {
+    const mapped = bareChannelToActionChannel(node);
+    if (!mapped.ok) return mapped;
+    channels.push(mapped.channel);
+    for (const k of mapped.channel.keyframes) {
+      if (k.time < minKeyTime) minKeyTime = k.time;
+    }
+  }
+  if (minKeyTime === Infinity) {
+    return { ok: false, reason: `"${targetId}"'s channels carry no keyframes to push down.` };
+  }
+
+  const createAction = getMutator('mutator.nla.createAction');
+  const addStrip = getMutator('mutator.nla.addStrip');
+  const deleteNode = getMutator('mutator.deleteNode');
+  if (!createAction || !addStrip || !deleteNode) {
+    return {
+      ok: false,
+      reason: 'Mutators not registered (nla.createAction / nla.addStrip / deleteNode).',
+    };
+  }
+
+  const targetName = ((target.params ?? {}) as { name?: string }).name || targetId;
+  const intent = `Push down ${targetName}'s channels to an NLA strip`;
+  // EXPLICIT actionId (createAction.ts:34-36) so addStrip can reference the
+  // Action without an intervening DAG round-trip.
+  const actionId = nextFreshNodeId('nla_action', base);
+
+  // 3 — validate createAction vs base.
+  const aParsed = createAction.spec.safeParse({
+    name: `${targetName} action`,
+    actionId,
+    channels,
+  });
+  if (!aParsed.success) {
+    return { ok: false, reason: `createAction spec invalid: ${aParsed.error.message}` };
+  }
+  const aResult = validatePlan(createAction, aParsed.data, base, intent);
+  if (!aResult.ok) return { ok: false, reason: `createAction rejected: ${aResult.reason}` };
+
+  // 4 — fork1 = base + the Action; validate addStrip vs the fork (the Action
+  //     only exists there). start = min key time (identity remap, see above).
+  let fork1: DagState;
+  try {
+    fork1 = createFork(base, aResult.ops).fork;
+  } catch (err) {
+    return { ok: false, reason: `createAction fork failed: ${(err as Error).message}` };
+  }
+  const sParsed = addStrip.spec.safeParse({
+    name: `${targetName} strip`,
+    action: actionId,
+    target: targetId,
+    start: minKeyTime,
+  });
+  if (!sParsed.success) {
+    return { ok: false, reason: `addStrip spec invalid: ${sParsed.error.message}` };
+  }
+  const sResult = validatePlan(addStrip, sParsed.data, fork1, intent);
+  if (!sResult.ok) return { ok: false, reason: `addStrip rejected: ${sResult.reason}` };
+
+  // 5 — fork2 = fork1 + the placement; validate deleteNode(all bare channel ids)
+  //     vs it. The channels MUST go in this same entry — bare channels fold
+  //     below strips (layeredChannels.ts:224-226), so leaving them double-drives.
+  let fork2: DagState;
+  try {
+    fork2 = createFork(fork1, sResult.ops).fork;
+  } catch (err) {
+    return { ok: false, reason: `addStrip fork failed: ${(err as Error).message}` };
+  }
+  const dParsed = deleteNode.spec.safeParse({ targetSelectors: bare.map((n) => n.id) });
+  if (!dParsed.success) {
+    return { ok: false, reason: `deleteNode spec invalid: ${dParsed.error.message}` };
+  }
+  const dResult = validatePlan(deleteNode, dParsed.data, fork2, intent);
+  if (!dResult.ok) return { ok: false, reason: `deleteNode rejected: ${dResult.reason}` };
+
+  // 6 — ONE propose with the UNIONED closure → ONE dispatchAtomic → ONE undo.
+  const combinedClosure = unionClosureSpecs(
+    unionClosureSpecs(aResult.closure.spec, sResult.closure.spec),
+    dResult.closure.spec,
+  );
+  return proposeAndAccept(
+    base,
+    [...aResult.ops, ...sResult.ops, ...dResult.ops],
+    intent,
+    ['user:mutator.nla.createAction', 'user:mutator.nla.addStrip', 'user:mutator.deleteNode'],
+    combinedClosure,
+    [...aResult.warnings, ...sResult.warnings, ...dResult.warnings],
+  );
 }
