@@ -26,7 +26,7 @@
 //      hetvabhasa H103/H70; dharana B26; sibling: SimplifyPopover.tsx;
 //      src/agent/mutators/builders/addStrip.ts; issue #283.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -106,15 +106,25 @@ export function NlaAddStripPopover({
   const [error, setError] = useState<string | null>(null);
 
   // Position: FIXED, opening UPWARD from the anchor (the drawer sits at the
-  // viewport bottom — H103). Measured once at open; the anchor cannot move
-  // while the dialog is up.
-  const [pos] = useState(() => {
+  // viewport bottom — H103). Re-measured on resize/scroll (#288 N8) so the
+  // dialog stays pinned to its anchor if the viewport reflows while open.
+  const measurePos = useCallback(() => {
     const r = anchor.getBoundingClientRect();
     return {
       left: Math.max(8, Math.min(r.left, window.innerWidth - POPOVER_WIDTH_PX - 8)),
       bottom: window.innerHeight - r.top + 4,
     };
-  });
+  }, [anchor]);
+  const [pos, setPos] = useState(measurePos);
+  useEffect(() => {
+    const reposition = () => setPos(measurePos());
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true); // capture: catch nested scrolls
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [measurePos]);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
 

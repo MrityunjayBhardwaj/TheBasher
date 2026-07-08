@@ -1232,6 +1232,15 @@ const WHITELIST: { pattern: RegExp; why: string }[] = [
     pattern: /\bbg-fg\b/,
     why: 'Legacy keyframe-marker token; W9 canvas surface emits no Tailwind. Non-text decoration if re-used',
   },
+  // bg-bg/NN — NLA lane blend-wedge scrim (bg-bg/35) + repeat-tick hairline
+  // (bg-bg/60), both aria-hidden decorations painted OVER the accent strip
+  // fill (#288 N7 migrated the raw rgba(14,14,17,α) hexes to the `bg` token
+  // so a palette change propagates). Non-text; the plain-`bg` row covers the
+  // opaque token, this whitelist covers only its decorative alpha variants.
+  {
+    pattern: /\bbg-bg\/\d+\b/,
+    why: 'NLA blend-wedge scrim + repeat-tick hairline; aria-hidden non-text decoration over the strip fill (#288 N7)',
+  },
   // P7 D2 Auto-Key (record) indicator decoration (src/app/Timebar.tsx):
   //   bg-record    — the 8px record DOT (no text on it; pure shape).
   //   bg-record/15 — the armed-mode header TINT; the text rendered over it

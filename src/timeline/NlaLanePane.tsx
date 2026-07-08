@@ -55,6 +55,7 @@ import {
   NLA_RULER_HEIGHT_PX,
   NLA_STRIP_HANDLE_PX,
   NLA_DRAG_THRESHOLD_PX,
+  NLA_STRIP_MIN_WIDTH_PX,
   spanToPercent,
   secondsToPercent,
   percentToSeconds,
@@ -594,7 +595,7 @@ function RulerTicks({ totalFrames, view }: { totalFrames: number; view: Timeline
         if (pct < 0 || pct > 100) return null;
         return (
           <div key={s} aria-hidden className="absolute inset-y-0" style={{ left: `${pct}%` }}>
-            <div className="h-full w-px" style={{ background: 'rgba(237,237,242,0.15)' }} />
+            <div className="h-full w-px bg-fg/15" />
             <span className="absolute left-1 top-0 select-none text-[9px] text-fg-dim">{s}s</span>
           </div>
         );
@@ -667,7 +668,7 @@ function TrackRowView({
         onClick={() => onSelectTrack(row.trackId)}
         onKeyDown={(e) => onHeaderKeyDown(e, row)}
         className={`flex shrink-0 cursor-pointer items-center gap-0.5 border-r border-line px-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-          selectedTrack ? 'bg-accent/15' : 'bg-bg-2'
+          selectedTrack ? 'bg-accent/15' : 'bg-bg-2 hover:bg-muted/30'
         }`}
         style={{ width: NLA_HEADER_WIDTH_PX, opacity: dimmed ? 0.5 : 1 }}
       >
@@ -798,6 +799,9 @@ function StripBlock({
     );
   if (strip.duplicateGhost)
     stateNotes.push('duplicate reference: another track owns this strip — this copy is inert');
+  // #288 N6: the influence value was drawn (bottom bar) but never announced.
+  // Fold it into the title + aria-label (both derive from stateNotes).
+  if (strip.influence < 1) stateNotes.push(`influence ${Math.round(strip.influence * 100)}%`);
   const title =
     `${strip.name}${strip.actionName ? ` — Action “${strip.actionName}”` : ''}` +
     (stateNotes.length > 0 ? ` (${stateNotes.join('; ')})` : '');
@@ -827,7 +831,7 @@ function StripBlock({
         onPointerDown={(e) => onPointerDown(e, strip, 'move')}
         onClick={() => onClick(strip.stripId)}
         onKeyDown={(e) => onKeyDown(e, strip)}
-        className={`absolute top-1/2 flex -translate-y-1/2 cursor-grab items-center overflow-hidden rounded px-1 active:cursor-grabbing ${
+        className={`absolute top-1/2 flex -translate-y-1/2 cursor-grab items-center overflow-hidden rounded px-1 transition-[filter] hover:brightness-110 active:cursor-grabbing ${
           dragging
             ? 'bg-record'
             : selected
@@ -841,6 +845,10 @@ function StripBlock({
         style={{
           left: `${leftPct}%`,
           width: `${widthPct}%`,
+          // #288 N5: an orphan's degenerate zero-length span → widthPct 0; a
+          // px min-width floor (presentational, not in the percent math — H95)
+          // keeps the warn state unmissable.
+          minWidth: NLA_STRIP_MIN_WIDTH_PX,
           height: NLA_ROW_HEIGHT_PX - 10,
         }}
       >
@@ -861,12 +869,13 @@ function StripBlock({
             C
           </span>
         )}
-        {/* Influence cue: thin bottom bar at influence% when < 1 (§1.4). */}
+        {/* Influence cue: bottom bar at influence% when < 1 (§1.4). 2px so it
+            reads on an 18px block (#288 N6); value announced via the label. */}
         {strip.influence < 1 && (
           <div
             aria-hidden
             data-influence={strip.influence}
-            className="absolute bottom-0 left-0 h-px bg-fg"
+            className="absolute bottom-0 left-0 h-0.5 bg-fg"
             style={{ width: `${strip.influence * 100}%` }}
           />
         )}
@@ -875,10 +884,9 @@ function StripBlock({
         {strip.blendIn > 0 && widthPct > 0 && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-0"
+            className="pointer-events-none absolute inset-y-0 left-0 bg-bg/35"
             style={{
               width: `${wedgeLocalPct(dispStart, dispStart + strip.blendIn, widthPct, totalFrames, view)}%`,
-              background: 'rgba(14,14,17,0.35)',
               clipPath: 'polygon(0 100%, 100% 100%, 100% 0)',
             }}
           />
@@ -886,10 +894,9 @@ function StripBlock({
         {strip.blendOut > 0 && widthPct > 0 && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 right-0"
+            className="pointer-events-none absolute inset-y-0 right-0 bg-bg/35"
             style={{
               width: `${wedgeLocalPct(dispEnd - strip.blendOut, dispEnd, widthPct, totalFrames, view)}%`,
-              background: 'rgba(14,14,17,0.35)',
               clipPath: 'polygon(0 0, 0 100%, 100% 100%)',
             }}
           />
@@ -922,12 +929,11 @@ function StripBlock({
           <div
             key={sec}
             aria-hidden
-            className="pointer-events-none absolute w-px"
+            className="pointer-events-none absolute w-px bg-bg/60"
             style={{
               left: `${pct}%`,
               top: 5,
               height: NLA_ROW_HEIGHT_PX - 10,
-              background: 'rgba(14,14,17,0.6)',
             }}
           />
         );

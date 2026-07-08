@@ -36,6 +36,13 @@ export const NLA_STRIP_HANDLE_PX = 8;
 export const NLA_INSPECTOR_WIDTH_PX = 220;
 /** Pointer travel (px) that turns a click into a drag (LayerTimeline.tsx:58-59). */
 export const NLA_DRAG_THRESHOLD_PX = 3;
+/** Minimum RENDERED width (CSS px) of a strip block, applied as a presentational
+ *  `min-width` floor in the component — NOT in the percent math (#288 N5). An
+ *  orphan strip has a degenerate zero-length span (end === start → widthPct 0);
+ *  without a floor it collapses to the px-1 padding + warn border and the
+ *  "contributes nothing" state is nearly invisible. Kept out of `spanToPercent`
+ *  so the geometry stays pure and the H95 placement e2e is untouched. */
+export const NLA_STRIP_MIN_WIDTH_PX = 6;
 /** Epsilon floor for `timeScale` — the schema requires strictly positive
  *  (zod .positive(), Strip.ts:34); a resize to zero width clamps here. */
 export const NLA_MIN_TIMESCALE = 1e-4;
