@@ -92,6 +92,9 @@ import { RenameInput } from './RenameInput';
 import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam } from './resolveTransformParam';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
+import { driverNodesForTarget } from './paramDrivers';
+import { ParamDriverBind } from './ParamDriverBind';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
@@ -239,7 +242,6 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
       autoKeyCommit(nodeId, paramPath, next);
     },
   });
-  const display = scrub.isDragging ? scrub.previewValue : value;
   // P7.4 D-02: read-only-while-playing applies ONLY when this field is
   // displaying an evaluated value (D-03 scope: transform-only). The helper
   // returns null for scalars (D-03 whitelist guard), so NumericField never
@@ -249,7 +251,33 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
   // future scalar transform param is added (none today), the seam covers it.
   const playing = useTimeStore((s) => s.playing);
   const evaluated = false;
-  const readOnly = playing && evaluated;
+  // #293 (Inc 2) — the PULL rail read side. If a ParamDriver overlays this
+  // (nodeId, paramPath), the field shows the DRIVEN value (resolveEvaluatedParam —
+  // the SAME value the renderer shows, so inspector == viewport, H40) and is
+  // read-only (the driver owns the value; edit the source, not the base). Undriven →
+  // byte-identical to before (no driver → resolve returns base → we keep the authored
+  // `value` path). Subscribing to dagState mirrors VectorField so a source edit
+  // refreshes the display.
+  const dagState = useDagStore((s) => s.state);
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const driven = useMemo(
+    () =>
+      driverNodesForTarget(dagState.nodes, nodeId).some(
+        (d) => (d.params as { paramPath?: unknown }).paramPath === paramPath,
+      ),
+    [dagState, nodeId, paramPath],
+  );
+  const drivenValue = useMemo(() => {
+    if (!driven) return null;
+    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
+      time: { frame, seconds, normalized },
+    });
+    return typeof r?.value === 'number' ? r.value : null;
+  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  const readOnly = driven || (playing && evaluated);
+  const display = driven ? (drivenValue ?? value) : scrub.isDragging ? scrub.previewValue : value;
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
@@ -270,6 +298,7 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
         >
           {label}
         </span>
+        <ParamDriverBind nodeId={nodeId} paramPath={paramPath} />
       </span>
       <input
         type="number"

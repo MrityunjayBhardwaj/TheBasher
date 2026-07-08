@@ -40,5 +40,7 @@ export {
   NoiseParams,
   COMPUTE_NODES,
 } from './computeNodes';
+// Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
+export { ParamDriverNode, ParamDriverParams } from './ParamDriver';
 export { mulberry32, randInt, randRange } from './random';
 export { registerAllNodes, __reseedAllNodesForTests } from './registerAll';

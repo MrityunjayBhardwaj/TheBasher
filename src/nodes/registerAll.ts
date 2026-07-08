@@ -46,6 +46,7 @@ import { MirrorModifierNode } from './MirrorModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { OrthographicCameraNode } from './OrthographicCamera';
+import { ParamDriverNode } from './ParamDriver';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PointLightNode } from './PointLight';
 import { PosedSkeletonNode } from './PosedSkeleton';
@@ -172,6 +173,11 @@ const ALL: NodeDefinition[] = [
   // over the ONE shared value-math core (valueMath.ts). A driver (Inc 2) wires one
   // onto a target param via the pull rail.
   ...COMPUTE_NODES,
+  // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
+  // Edge-less to its target ({target, paramPath}, enumerated + folded by the target's
+  // followers like a KeyframeChannel), edge-WIRED to the compute graph via `in`. Its
+  // evaluate returns a KeyframeChannelValue so it folds byte-identically to a channel.
+  ParamDriverNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

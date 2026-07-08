@@ -62,6 +62,11 @@ import {
   stripTargetSet,
 } from '../app/layeredChannels';
 import {
+  driverChannelValuesForTarget,
+  driverSubscriptionNodesForTarget,
+  driverTargetSet,
+} from '../app/paramDrivers';
+import {
   constraintTargetSet,
   resolveConstraintRotation,
   resolveTrackToTarget,
@@ -207,9 +212,14 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // NLA Strip targets it, so a strip-only node mounts its per-frame follower too
   // (the layered enumeration then folds the strips). Union built once (O(N)), tested
   // O(1) per child (B13). Empty strip set → exactly the bare set (byte-identical).
+  // #293 (Inc 2) — a node is also "channel-driven" if a bound ParamDriver overlays
+  // it (the PULL rail), so a driver-only target mounts its per-frame follower too and
+  // `useLayeredChannels` then folds the driver value alongside channels/strips. No
+  // bound driver → exactly the channels+strips set (byte-identical).
   const directChannelTargets = new Set<string>([
     ...directChannelTargetSet(state.nodes),
     ...stripTargetSet(state.nodes),
+    ...driverTargetSet(state.nodes),
   ]);
   const constraintTargets = constraintTargetSet(state.nodes);
   // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
@@ -774,11 +784,37 @@ function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
     (s) => layeredChannelNodesForTarget(s.state.nodes, targetId),
     shallow,
   );
+  // #293 (Inc 2) — the PULL rail rides the SAME render enumeration. Subscribe to the
+  // driver nodes bound to `targetId` PLUS their compute-graph input closure (shallow),
+  // so the memo below rebuilds when the driver OR any SOURCE ref changes — the render
+  // side's synthesized dependency edge (V88 N2). Empty for an undriven target → the
+  // channels+strips path is byte-identical.
+  const driverNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => driverSubscriptionNodesForTarget(s.state.nodes, targetId),
+    shallow,
+  );
+  // A STABLE evaluator cache: a driver's value is evaluated through the compute graph;
+  // the cache HITS across rebuilds while sources are unchanged and MISSES (recomputes)
+  // when a source param's cacheKey flips — the H40/H48 pattern (LightHelperFollower).
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   return useMemo(() => {
     const map: Record<string, (typeof contribNodes)[number]> = {};
     for (const n of contribNodes) map[n.id] = n;
-    return layeredChannelValues(map, targetId);
-  }, [contribNodes, targetId]);
+    const channels = layeredChannelValues(map, targetId);
+    if (driverNodes.length === 0) return channels;
+    // Evaluate the drivers off the LIVE state (read non-reactively — the memo key is
+    // `driverNodes`, which covers every ref whose change matters). Inc-2 drivers are
+    // CONSTANT over `t` (no time-varying compute leaf), so a zero ctx is exact; the
+    // per-frame `.sample(seconds)` the followers call returns that constant → H40.
+    const drivers = driverChannelValuesForTarget(
+      useDagStore.getState().state,
+      targetId,
+      { time: { frame: 0, seconds: 0, normalized: 0 } },
+      cache,
+    );
+    return drivers.length === 0 ? channels : [...channels, ...drivers];
+  }, [contribNodes, driverNodes, targetId, cache]);
 }
 
 function DirectChannelsLightR({

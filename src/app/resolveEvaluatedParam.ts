@@ -26,8 +26,9 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel';
-import { readAt } from '../nodes/overlayChannels';
 import { stripChannelValuesForTarget } from './layeredChannels';
+import { driverChannelValuesForTarget } from './paramDrivers';
+import { readBaseParam } from './readBaseParam';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 interface ChannelParams {
@@ -84,7 +85,18 @@ export function resolveEvaluatedParam(
     if (v.paramPath === paramPath) matches.push(v);
   }
 
-  // 3. No channel → base (caller reads node.params[paramPath]).
+  // 2c. Drivers (#293, Inc 2 — the PULL rail). Every ParamDriver bound to
+  //     (nodeId, paramPath), EVALUATED so its `in` input resolves through the
+  //     compute graph. A driver's evaluate returns a KeyframeChannelValue, so it
+  //     folds through the SAME `overlayChannels`/`foldChannelValue` as channels +
+  //     strips (H40 — the pull twin of the push overlay). No driver → `matches`
+  //     unchanged → byte-identical. This is the READ side; the render side
+  //     (SceneFromDAG useLayeredChannels) consumes the SAME enumerator.
+  for (const v of driverChannelValuesForTarget(state, nodeId, ctx, cache)) {
+    if (v.paramPath === paramPath) matches.push(v);
+  }
+
+  // 3. No channel/driver → base (caller reads node.params[paramPath]).
   if (matches.length === 0) return null;
 
   // Single channel — the pre-#283 first-match contract, byte-identical.
@@ -101,7 +113,10 @@ export function resolveEvaluatedParam(
   // param value at this path; sort bottom→top by `order`; influence = per-channel
   // weight (the caller weight is 1 for reads).
   const sorted = matches.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const base = readAt((state.nodes[nodeId]?.params ?? {}) as Record<string, unknown>, paramPath);
+  // Base resolves params-first-then-spare (#293 Q1: a real param wins; a spare
+  // cannot shadow it) so a Combine overlay onto a spare-param target folds onto its
+  // spare value, not `undefined`. Replace overlays ignore base (byte-identical).
+  const base = readBaseParam(state.nodes[nodeId], paramPath);
   const contribs: ChannelContribution[] = sorted.map((ch) => ({
     value: ch.sample(ctx.time.seconds),
     mode: ch.blendMode ?? 'replace',

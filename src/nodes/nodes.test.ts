@@ -93,6 +93,7 @@ const ALL_TYPES = [
   'Noise',
   'NormalPass',
   'OrthographicCamera',
+  'ParamDriver',
   'PerspectiveCamera',
   'PointLight',
   'PosedSkeleton',
