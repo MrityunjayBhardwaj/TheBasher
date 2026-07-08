@@ -23,5 +23,22 @@ export { SpotLightNode, SpotLightParams } from './SpotLight';
 export { TimeSourceNode, TimeSourceParams } from './TimeSource';
 export { TransformNode, TransformParams } from './Transform';
 export { WalkPathNode, WalkPathParams } from './WalkPath';
+// Compute-node vocabulary + the shared value-math core (epic #290, Inc 1 #292).
+export * from './valueMath';
+export {
+  MathNode,
+  MathParams,
+  ClampNode,
+  ClampParams,
+  FitNode,
+  FitParams,
+  MixNode,
+  MixParams,
+  CurveRemapNode,
+  CurveRemapParams,
+  NoiseNode,
+  NoiseParams,
+  COMPUTE_NODES,
+} from './computeNodes';
 export { mulberry32, randInt, randRange } from './random';
 export { registerAllNodes, __reseedAllNodesForTests } from './registerAll';

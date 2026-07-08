@@ -26,6 +26,13 @@
 //      keyframeInterp.ts (the caller); vyapti V88 D2, H48/H49.
 
 import { z } from 'zod';
+// The fractal value-noise lives in the shared value-math core (#292) so this
+// F-Modifier and the Noise compute node share ONE implementation. Imported for
+// local use (noiseSignal) AND re-exported so existing importers of
+// `fractalNoise` from './channelModifiers' keep working (byte-identical: MOVED,
+// not rewritten).
+import { fractalNoise } from './valueMath';
+export { fractalNoise };
 
 /** Fields common to EVERY modifier (Blender's per-F-Modifier restricted-range +
  *  influence, shared by the whole stack). Times are in SECONDS (Basher's sample
@@ -239,41 +246,8 @@ export function defaultModifier(type: (typeof FMODIFIER_TYPES)[number]): FChanne
   }
 }
 
-// ── deterministic fractal value-noise (pure — no Math.random) ───────────────
-// A sine-hash of the integer lattice, smoothstep-interpolated → C1-continuous
-// value noise in [-1,1], summed over octaves. Deterministic in `x`, so the curve
-// the editor draws is the curve that plays (H40).
-
-function hash1(n: number): number {
-  const s = Math.sin(n * 12.9898) * 43758.5453123;
-  return s - Math.floor(s); // [0,1)
-}
-
-function valueNoise1D(x: number): number {
-  const i = Math.floor(x);
-  const f = x - i;
-  const u = f * f * (3 - 2 * f); // smoothstep → C1
-  const a = hash1(i);
-  const b = hash1(i + 1);
-  return (a + (b - a) * u) * 2 - 1; // [-1,1)
-}
-
-/** Fractal (fBm) value-noise: `depth` octaves, halving amplitude, doubling freq,
- *  normalised back to ≈[-1,1]. `depth` clamped to [1,8]. */
-export function fractalNoise(x: number, depth: number): number {
-  const oct = Math.max(1, Math.min(Math.floor(depth) || 1, 8));
-  let sum = 0;
-  let amp = 1;
-  let freq = 1;
-  let norm = 0;
-  for (let o = 0; o < oct; o++) {
-    sum += amp * valueNoise1D(x * freq);
-    norm += amp;
-    amp *= 0.5;
-    freq *= 2;
-  }
-  return norm > 0 ? sum / norm : 0;
-}
+// (fractalNoise moved to ./valueMath and imported + re-exported at the top of this
+// file — #292, Epic 1 Inc 1.)
 
 /** The structural shape `effectiveInfluence` needs — an FChannelModifier satisfies
  *  it, but so does a Strip's blend-in/out placement (NLA Phase 3). Generalized +

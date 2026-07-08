@@ -21,6 +21,7 @@ import { ClipSelectNode } from './ClipSelect';
 import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
+import { COMPUTE_NODES } from './computeNodes';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
@@ -166,6 +167,11 @@ const ALL: NodeDefinition[] = [
   PromptNode as unknown as NodeDefinition,
   ComfyUIWorkflowNode as unknown as NodeDefinition,
   VideoStitchNode as unknown as NodeDefinition,
+  // Compute-node vocabulary — stateless scalar operators for procedural relations
+  // (epic #290, Inc 1 #292). Math (op-enum) + Fit/Clamp/CurveRemap/Mix/Noise, all
+  // over the ONE shared value-math core (valueMath.ts). A driver (Inc 2) wires one
+  // onto a target param via the pull rail.
+  ...COMPUTE_NODES,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,
