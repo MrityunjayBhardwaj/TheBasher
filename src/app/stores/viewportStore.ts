@@ -185,6 +185,14 @@ export interface ViewportStore {
   toggleCameraProjection(): void;
 }
 
+/** The DEFAULT free editor-view clip range applied to EVERY project that has no
+ *  explicit saved override (#192 default flipped from AUTO bounds-fit → a fixed
+ *  0.01–500 range, per user request "camera clip default for all projects"). A
+ *  project's own saved override (View ▸ Clipping) still wins; this is only the
+ *  fallback the per-load hydration + store init use instead of `null` (AUTO).
+ *  Declared before `create()` so the store-init reference is not in the TDZ. */
+export const DEFAULT_VIEWPORT_CLIP: { near: number; far: number } = { near: 0.01, far: 500 };
+
 export const useViewportStore = create<ViewportStore>((set, get) => ({
   pivot: 'median',
   snapStep: 0.25,
@@ -214,10 +222,10 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   cameraZoom: 100,
   // Default null — AUTO clip planes (bounds-fit, #186/#191). Hydrated from
   // localStorage per project on load (viewportClipPersistence).
-  viewportClipOverride: null,
+  viewportClipOverride: DEFAULT_VIEWPORT_CLIP,
   // Seeded with three's historical defaults; EditorViewCamera overwrites it
   // each frame with the live effective planes.
-  viewportClipReadout: { near: 0.01, far: 1000 },
+  viewportClipReadout: DEFAULT_VIEWPORT_CLIP,
   // Created once here; the object reference is stable for the store lifetime.
   // `.current` is mutated only by timeStore's frame chokepoint — never
   // reassign this object. See D-W9-1, D-W9-9.
