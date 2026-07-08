@@ -242,7 +242,7 @@ describe('activeCamera — cameraPoseFromNode', () => {
       lookAt: [0, 0, 0],
       fov: 45,
       near: 0.01,
-      far: 1000,
+      far: 500,
       roll: 0,
     });
   });
@@ -397,7 +397,7 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(pose.fov).toBe(50);
     // near/far untouched → base.
     expect(pose.near).toBe(0.01);
-    expect(pose.far).toBe(1000);
+    expect(pose.far).toBe(500);
   });
 
   it('ignores channels that target a different node', () => {

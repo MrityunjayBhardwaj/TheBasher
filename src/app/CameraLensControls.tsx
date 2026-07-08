@@ -116,7 +116,7 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
   const far =
     typeof evaluatedScalar.far?.value === 'number'
       ? evaluatedScalar.far.value
-      : (params.far ?? 1000);
+      : (params.far ?? 500);
   const nearReadOnly = playing && evaluatedScalar.near !== null;
   const farReadOnly = playing && evaluatedScalar.far !== null;
 

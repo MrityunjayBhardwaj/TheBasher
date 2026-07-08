@@ -35,7 +35,7 @@ function scaffold(): Op[] {
       type: 'addNode',
       nodeId: 'n_camera',
       nodeType: 'PerspectiveCamera',
-      params: { fov: 45, near: 0.01, far: 1000, position: [4, 2.5, 4], lookAt: [0, 0.4, 0] },
+      params: { fov: 45, near: 0.01, far: 500, position: [4, 2.5, 4], lookAt: [0, 0.4, 0] },
     },
     {
       type: 'addNode',
