@@ -333,8 +333,23 @@ export function NlaLanePane() {
     useNlaSelectionStore.getState().selectTrack(trackId);
   }, []);
 
+  // #285: every key the pane HANDLES must also stopPropagation — the global
+  // KeyboardShortcuts listener is a bubble-phase window listener that never
+  // checks defaultPrevented, so an un-stopped M/S/Esc double-fires the app
+  // shortcut (projection toggle / scale tool / clear 3D selection). Same
+  // shield class the add-strip popover applies to Tab.
   const onPaneKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') useNlaSelectionStore.getState().clear();
+    if (e.key !== 'Escape') return;
+    // Esc inside an inspector/popover field belongs to the field (draft
+    // cancel), and the global ladder already skips typing targets — pass.
+    const t = e.target as HTMLElement | null;
+    const tag = t?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const sel = useNlaSelectionStore.getState();
+    if (sel.selectedStripId === null && sel.selectedTrackId === null) return; // nothing to clear — let the global Esc ladder run
+    e.preventDefault();
+    e.stopPropagation(); // must not ALSO clear the 3D selection
+    sel.clear();
   }, []);
 
   // ── Keyboard parity for the strip gestures (§2.8): ←/→ nudge start by one
@@ -343,11 +358,13 @@ export function NlaLanePane() {
   const onStripKeyDown = useCallback((e: React.KeyboardEvent, strip: NlaStripBlock) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
+      e.stopPropagation(); // #285: Space is the global play/pause road
       useNlaSelectionStore.getState().selectStrip(strip.stripId);
       return;
     }
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
+      e.stopPropagation();
       const frames = e.shiftKey ? 10 : 1;
       const delta = (frames / FRAMES_PER_SECOND) * (e.key === 'ArrowRight' ? 1 : -1);
       commitNla(
@@ -359,6 +376,7 @@ export function NlaLanePane() {
     }
     if (e.key === 'm' || e.key === 'M') {
       e.preventDefault();
+      e.stopPropagation(); // #285: M is the global projection toggle
       commitNlaSetParam(strip.stripId, 'muted', !strip.stripMuted, 'toggle strip mute');
     }
   }, []);
@@ -408,21 +426,25 @@ export function NlaLanePane() {
     (e: React.KeyboardEvent, row: NlaTrackRow) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
+        e.stopPropagation(); // #285: Space is the global play/pause road
         onSelectTrack(row.trackId);
         return;
       }
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
+        e.stopPropagation(); // #285: M is the global projection toggle
         onToggleTrackMute(row);
         return;
       }
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault();
+        e.stopPropagation(); // #285: S is the global scale-tool shortcut
         onToggleTrackSolo(row);
         return;
       }
       if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         e.preventDefault();
+        e.stopPropagation();
         onReorderTrack(row.trackId, e.key === 'ArrowUp' ? 'up' : 'down');
       }
     },

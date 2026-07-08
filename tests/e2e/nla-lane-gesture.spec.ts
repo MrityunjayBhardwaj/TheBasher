@@ -419,3 +419,76 @@ test('NLA 5C#5 — keyboard parity: ←/→ nudge start by 1 frame (Shift = 10) 
 
   expect(errors).toEqual([]);
 });
+
+// #285 — the pane's handled keys must NOT double-fire the global shortcuts:
+// M is the app-wide projection toggle, S the Blender scale alias, Esc the
+// clear-3D-selection ladder. The pane stopPropagation-shields every key it
+// handles (the same class of shield the add-strip popover applies to Tab).
+test('NLA 5C#6 — pane keys are shielded: M keeps the projection, S keeps the tool, Esc keeps the 3D selection (#285)', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  await openNlaTab(page);
+  await seedWalkStrip(page);
+
+  type StoreSeams = {
+    __basher_viewport?: { getState: () => { cameraProjection: string } };
+    __basher_editor?: { getState: () => { activeTool: string } };
+    __basher_selection?: {
+      getState: () => { primaryNodeId: string | null; select: (id: string) => void };
+    };
+  };
+  const seams = () =>
+    page.evaluate(() => {
+      const w = window as unknown as StoreSeams;
+      return {
+        projection: w.__basher_viewport!.getState().cameraProjection,
+        tool: w.__basher_editor!.getState().activeTool,
+        selected3d: w.__basher_selection!.getState().primaryNodeId,
+      };
+    });
+
+  // Give the Esc case something global to lose: select the box in 3D.
+  await page.evaluate(() => {
+    (window as unknown as StoreSeams).__basher_selection!.getState().select('n_box');
+  });
+  const before = await seams();
+  expect(before.selected3d).toBe('n_box');
+
+  // M on a focused strip mutes the strip WITHOUT flipping the projection.
+  const strip = page.getByTestId('nla-strip-nla_s1');
+  await strip.focus();
+  await page.keyboard.press('m');
+  await expect(strip).toHaveAttribute('data-muted', 'true');
+  await page.keyboard.press('m'); // restore
+  await expect(strip).toHaveAttribute('data-muted', 'false');
+
+  // S (and M) on a focused track header solo/mute the track WITHOUT
+  // switching the transform tool or the projection.
+  const header = page.getByTestId('nla-track-header-nla_track_1');
+  await header.focus();
+  await page.keyboard.press('s');
+  await expect(page.getByTestId('nla-track-solo-nla_track_1')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.keyboard.press('s'); // restore
+  await page.keyboard.press('m');
+  await page.keyboard.press('m'); // restore
+
+  // Esc with an NLA selection clears ONLY the NLA selection.
+  await strip.focus();
+  await page.keyboard.press('Enter');
+  await expect(strip).toHaveAttribute('data-selected', 'true');
+  await page.keyboard.press('Escape');
+  await expect(strip).toHaveAttribute('data-selected', 'false');
+
+  const after = await seams();
+  expect(after.projection).toBe(before.projection); // M never reached the global toggle
+  expect(after.tool).toBe(before.tool); // S never reached the scale alias
+  expect(after.selected3d).toBe('n_box'); // Esc never reached the 3D clear
+
+  expect(errors).toEqual([]);
+});
