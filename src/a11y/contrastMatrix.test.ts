@@ -655,10 +655,11 @@ const ROWS: Row[] = [
   },
 
   // ─── R9 TimelineDrawer (src/timeline/TimelineDrawer.tsx) ─────────────
-  // L96 toggle bg-bg-2 text-fg; L123/L218 tab strip bg-bg-2; L168/L169
-  // tab active = bg-bg text-fg, inactive = text-mute hover→fg on bg-2;
-  // L279/L280 dock control buttons; "text-mute" is undefined token →
-  // see WHITELIST below — treated as inherited text color from container.
+  // L96 toggle bg-bg-2 text-fg; L123/L218 tab strip bg-bg-2; tab active =
+  // bg-muted text-accent, inactive = text-fg-dim hover→fg on bg-2; dock
+  // control buttons. (#284: the former phantom text-mute/bg-line tokens now
+  // resolve to real text-fg-dim / bg-muted — covered by the fg-dim-on-bg-2
+  // and accent-on-muted rows.)
   { site: 'R9 TimelineDrawer toggle — fg on bg-2', fg: 'fg', bgStack: ['bg-2'], textSize: 'small' },
   { site: 'R9 TimelineDrawer tab active — fg on bg', fg: 'fg', bgStack: ['bg'], textSize: 'small' },
   {
@@ -715,9 +716,9 @@ const ROWS: Row[] = [
     textSize: 'small',
   },
   {
-    site: 'R9 NlaLanePane header toggle pressed — accent on bg-2 (bg-line inherits)',
+    site: 'R9 NlaLanePane header toggle pressed — accent on bg-muted fill over bg-2 (#284)',
     fg: 'accent',
-    bgStack: ['bg-2'],
+    bgStack: ['muted', 'bg-2'],
     textSize: 'small',
   },
   {
@@ -756,9 +757,9 @@ const ROWS: Row[] = [
   // bg wells carrying text-fg; the inline {ok:false} reason reuses the
   // audited error-on-bg-2 pair (the AssetLibrary Delete precedent); the
   // commit button is the filled-accent knockout (bg on accent). The
-  // pane-level / per-track [+ Strip] buttons use the sibling text-mute
-  // idiom (WHITELIST — the phantom-token anomaly, filed as a separate
-  // chrome issue).
+  // pane-level / per-track [+ Strip] buttons use text-fg-dim hover→fg
+  // (#284: migrated from the former phantom text-mute; fg-dim is covered
+  // by the fg-dim-on-bg / fg-dim-on-bg-2 rows).
   {
     site: 'R9 NlaAddStripPopover field label — fg-dim on bg-2 (portal card)',
     fg: 'fg-dim',
@@ -1047,8 +1048,8 @@ const ROWS: Row[] = [
 
   // ─── LayerRowControls (src/app/timeline/LayerRowControls.tsx) ───────
   // L37 mute toggle active = bg-warn text-bg (loud); L47 solo toggle
-  // active = bg-accent text-bg. text-mute on inactive is undefined and
-  // whitelisted (inherits ambient).
+  // active = bg-accent text-bg. Inactive toggles use text-fg-dim
+  // (#284: was the phantom text-mute), covered by the fg-dim rows.
   {
     site: 'LayerRowControls mute active — bg on warn',
     fg: 'bg',
@@ -1179,22 +1180,14 @@ const ROWS: Row[] = [
 // promote it back into ROWS.
 
 const WHITELIST: { pattern: RegExp; why: string }[] = [
-  // text-mute / bg-line / border-line / text-line — undefined tokens that
-  // resolve to inherited color. Flagged for cleanup in C2 (likely add to
-  // tailwind.config.ts as aliases for fg-dim / border / bg-2 respectively,
-  // OR rewrite the call sites). The visible contrast in production is
-  // whatever the parent container's text-fg setting yields, so the
-  // matrix-relevant pair is already covered by the parent surface row.
-  {
-    pattern: /\btext-mute\b/,
-    why: 'undefined token; inherits container fg (cleanup: alias to fg-dim in C2)',
-  },
-  { pattern: /\btext-line\b/, why: 'undefined token; inherits container fg (cleanup in C2)' },
-  { pattern: /\bbg-line\b/, why: 'undefined token; resolves to nothing (cleanup in C2)' },
-  {
-    pattern: /\bborder-line\b/,
-    why: 'undefined token; resolves to default border (cleanup in C2)',
-  },
+  // NOTE: the phantom-token family (text-mute / text-line / bg-line /
+  // border-line) was RETIRED in #284 — every call site migrated to real
+  // palette tokens (border-line → border-border; text-mute → text-fg-dim;
+  // bg-line → bg-border for 1px dividers, bg-muted for recessed fills;
+  // text-line was unused). The classes emitted no CSS (inherited color /
+  // no fill), so this was a visible correction, not a no-op. Their
+  // WHITELIST entries are gone; the coverage gate now audits the real
+  // tokens directly (each is covered by a ROW or a decorative classifier).
   // Tailwind-default red/yellow/black used as raw-state colors in boot
   // error and Comfy status — third-party palette, audited as-published
   // by Tailwind. Not part of the design-token system.
@@ -1456,8 +1449,8 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
   // 'ui'), same classification the Tailwind 'ui' rows use.
   //
   // ROW_LINE is DELIBERATELY EXCLUDED from the gate, not threshold-
-  // lowered. It is the canvas twin of the SVG Dopesheet's `border-line`
-  // / `bg-border` 1px row-separator — BOTH are already WHITELIST entries
+  // lowered. It is the canvas twin of the SVG Dopesheet's `border-border`
+  // / `bg-border` 1px row-separator — bg-border is a WHITELIST entry
   // in this same file ("undefined token; resolves to default border" /
   // "dividers are intentionally subtle; v0.5 keeps subtle dividers").
   // WCAG 1.4.11 does not require 3:1 for purely decorative boundaries,
@@ -1478,7 +1471,7 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
       { name: 'ACTIVE_DIAMOND', fg: PALETTE.ACTIVE_DIAMOND, required: aaThreshold('ui') },
       { name: 'PLAYHEAD', fg: PALETTE.PLAYHEAD, required: aaThreshold('ui') },
       // ROW_LINE excluded — decorative subtle divider, parity with the
-      // whitelisted border-line/bg-border posture (see comment above).
+      // whitelisted bg-border posture (see comment above).
     ];
     const failures = checks
       .map((c) => ({ ...c, ratio: contrastRatio(c.fg, bg) }))
@@ -1569,11 +1562,11 @@ describe('contrast matrix — every (fg, bg-stack) pair in chrome', () => {
   // the realistic envelope; we check against every opaque TOKEN surface
   // and require the minimum to clear 3:1, which is strictly conservative.
   //
-  // Decorative/layout hairline borders (border-border, border-line, the
+  // Decorative/layout hairline borders (border-border, the
   // border-fg/N dim dividers) are SC 1.4.11-EXEMPT (purely decorative
   // boundary; row/panel structure is conveyed by labels + position +
-  // background, not the hairline) — the same posture the bg-border /
-  // border-line WHITELIST entries already document. Width/style-only
+  // background, not the hairline) — the same posture the bg-border
+  // WHITELIST entry already documents. Width/style-only
   // utilities carry no color. Auditing 1px layout grid-line separators
   // is OUT OF SCOPE per #54.
   it('border-token-gate: every focus/state border token clears SC 1.4.11 3:1 vs adjacent chrome bg', () => {
@@ -1702,8 +1695,8 @@ function walkTsx(dir: string, out: string[] = []): string[] {
 }
 
 // Match Tailwind COLOR class fragments inside className strings:
-//   text-fg, text-fg-dim, text-fg/80, text-accent-dim, text-mute, text-red-400
-//   bg-bg, bg-bg-1, bg-bg-2/80, bg-accent/15, bg-warn, bg-line
+//   text-fg, text-fg-dim, text-fg/80, text-accent-dim, text-fg-mute, text-red-400
+//   bg-bg, bg-bg-1, bg-bg-2/80, bg-accent/15, bg-warn, bg-muted
 // The lookahead `\b` after the optional /N ensures we don't gobble
 // adjacent classes. We do NOT match size/alignment classes (text-xs,
 // text-base, text-left, text-right, text-center) — those are filtered
@@ -1765,7 +1758,7 @@ const TYPO_LAYOUT_CLASSES = new Set([
 //   - some ROW's bgStack contains a layer whose token spec matches
 //     its bg-token
 // Whitelist patterns are checked AGAINST the raw class fragment (so
-// `hover:text-mute` is whitelisted because `text-mute` matches).
+// `hover:text-fg-dim` matches text-fg-dim after stripping the variant).
 function classCovered(cls: string, rowTokensFg: Set<string>, rowTokensBg: Set<string>): boolean {
   // Strip variant prefix for token matching.
   const bare = cls.replace(
@@ -1820,15 +1813,15 @@ const BORDER_STRUCTURAL_RE =
 // boundaries (row structure / panel identity is conveyed by other means:
 // labels, position, background). These are intentionally subtle in v0.5
 // (border #262626 vs bg #0a0a0a = 1.45:1) — the SAME posture the
-// bg-border / border-line WHITELIST entries already document. Auditing
-// 1px layout grid-line separators is OUT OF SCOPE per #54.
+// bg-border decorative-hairline entry documents. Auditing 1px layout
+// grid-line separators is OUT OF SCOPE per #54.
 const BORDER_DECORATIVE = new Set([
   'border-border',
   'border-border-strong',
   'border-border/40',
+  'border-border/60', // NPanel section dividers (#284: migrated from border-line/60)
   'border-fg/30',
   'border-fg/40',
-  'border-line', // undefined token; WHITELIST documents it inherits
 ]);
 
 // Focus / state border tokens — these ARE affordances. SC 1.4.11

@@ -203,7 +203,7 @@ export function NlaAddStripPopover({
   }
 
   const fieldCls =
-    'w-full rounded border border-line bg-bg px-1.5 py-0.5 text-fg ' +
+    'w-full rounded border border-border bg-bg px-1.5 py-0.5 text-fg ' +
     'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
   const labelCls = 'mb-0.5 mt-1.5 block text-fg-dim';
 
@@ -215,7 +215,7 @@ export function NlaAddStripPopover({
       aria-modal="true"
       aria-label="Add strip"
       onKeyDown={onTrapKeyDown}
-      className="fixed z-50 rounded border border-line bg-bg-2 p-3 text-[11px] text-fg shadow-lg"
+      className="fixed z-50 rounded border border-border bg-bg-2 p-3 text-[11px] text-fg shadow-lg"
       style={{ left: pos.left, bottom: pos.bottom, width: POPOVER_WIDTH_PX }}
     >
       <div className="font-semibold">Add strip</div>
@@ -302,7 +302,7 @@ export function NlaAddStripPopover({
           type="button"
           data-testid="nla-add-strip-cancel"
           onClick={onClose}
-          className="rounded border border-line px-2 py-1 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="rounded border border-border px-2 py-1 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           Cancel
         </button>

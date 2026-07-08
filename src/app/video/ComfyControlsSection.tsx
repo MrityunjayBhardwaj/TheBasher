@@ -125,7 +125,10 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
 
   if (params.length === 0) {
     return (
-      <p className="px-3 py-2 text-[11px] text-mute" data-testid={`comfy-controls-empty-${nodeId}`}>
+      <p
+        className="px-3 py-2 text-[11px] text-fg-dim"
+        data-testid={`comfy-controls-empty-${nodeId}`}
+      >
         No workflow imported.
       </p>
     );
@@ -204,7 +207,7 @@ function RenderCoherentClipButton({ comfyNodeId }: { comfyNodeId: NodeId }) {
           setBusy(false);
         }
       }}
-      className="m-2 rounded border border-line bg-bg-2 px-2 py-1 text-[11px] text-fg hover:border-accent disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="m-2 rounded border border-border bg-bg-2 px-2 py-1 text-[11px] text-fg hover:border-accent disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       {busy ? 'Rendering…' : '🎬 Render coherent clip'}
     </button>
@@ -246,10 +249,10 @@ function ComfyParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param: Com
   return (
     <div
       data-testid={`comfy-param-row-${comfyNodeId}-${key}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span
-        className="flex-1 truncate text-mute"
+        className="flex-1 truncate text-fg-dim"
         title={`comfy:${param.nodeId}.${param.inputName}`}
       >
         {paramLabel(param)}
@@ -268,7 +271,7 @@ function ComfyParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param: Com
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className={`${isNumber ? 'w-16 text-right' : 'w-32'} rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+        className={`${isNumber ? 'w-16 text-right' : 'w-32'} rounded border border-border bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
       />
       <ParamDiamond
         nodeId={comfyNodeId}
@@ -301,10 +304,10 @@ function ComfyImageParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
   return (
     <div
       data-testid={`comfy-param-row-${comfyNodeId}-${rowKey}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span
-        className="flex-1 truncate text-mute"
+        className="flex-1 truncate text-fg-dim"
         title={`comfy:${param.nodeId}.${param.inputName}`}
       >
         {paramLabel(param)}
@@ -313,7 +316,7 @@ function ComfyImageParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
         value={bound}
         data-testid={`comfy-param-input-${comfyNodeId}-${rowKey}`}
         onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
-        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-28 truncate rounded border border-border bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <option value="">{`None · ${String(param.literal)}`}</option>
         {images.map((img) => (
@@ -327,7 +330,7 @@ function ComfyImageParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
         data-testid={`comfy-param-upload-${comfyNodeId}-${rowKey}`}
         title="Upload an image and bind it to this input"
         onClick={() => uploadImageAndBind(comfyNodeId, key)}
-        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         ⬆
       </button>
@@ -356,10 +359,10 @@ function ComfyVideoParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
   return (
     <div
       data-testid={`comfy-param-row-${comfyNodeId}-${rowKey}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span
-        className="flex-1 truncate text-mute"
+        className="flex-1 truncate text-fg-dim"
         title={`comfy:${param.nodeId}.${param.inputName}`}
       >
         {paramLabel(param)}
@@ -368,7 +371,7 @@ function ComfyVideoParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
         value={bound}
         data-testid={`comfy-param-input-${comfyNodeId}-${rowKey}`}
         onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
-        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-28 truncate rounded border border-border bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <option value="">{`None · ${String(param.literal)}`}</option>
         {videos.map((v) => (
@@ -382,7 +385,7 @@ function ComfyVideoParamRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
         data-testid={`comfy-param-upload-${comfyNodeId}-${rowKey}`}
         title="Upload a video and bind it to this input"
         onClick={() => uploadMediaAndBind(comfyNodeId, key, 'video')}
-        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         ⬆
       </button>
@@ -398,10 +401,10 @@ function ComfyStructuralRow({ comfyNodeId, param }: { comfyNodeId: NodeId; param
   return (
     <div
       data-testid={`comfy-structural-row-${comfyNodeId}-${key}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
       title="Fixed — a topology / batch-shape or discrete input, not keyframeable (set it in the workflow)."
     >
-      <span className="flex-1 truncate text-mute">{paramLabel(param)}</span>
+      <span className="flex-1 truncate text-fg-dim">{paramLabel(param)}</span>
       <span className="truncate text-fg/60">{String(param.literal)}</span>
       <span className="select-none text-[9px] uppercase tracking-wide text-fg/30">fixed</span>
     </div>
@@ -448,7 +451,7 @@ function ComfyControllerScalarRow({
   return (
     <div
       data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (${decl.kind})`}>
         {decl.name}
@@ -467,7 +470,7 @@ function ComfyControllerScalarRow({
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className={`${isNumber ? 'w-16 text-right' : 'w-32'} rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+        className={`${isNumber ? 'w-16 text-right' : 'w-32'} rounded border border-border bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
       />
       <ParamDiamond
         nodeId={comfyNodeId}
@@ -492,7 +495,7 @@ function ComfyControllerBoolRow({
   return (
     <div
       data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (bool)`}>
         {decl.name}
@@ -531,7 +534,7 @@ function ComfyMediaControllerRow({
   return (
     <div
       data-testid={`comfy-controller-row-media-${decl.nodeId}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
       title={`controller:${decl.nodeId} (${decl.kind}) — binding is a later slice`}
     >
       <span className="flex-1 truncate text-fg">{decl.name}</span>
@@ -564,7 +567,7 @@ function ComfyVideoControllerRow({
   return (
     <div
       data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (video)`}>
         {decl.name}
@@ -573,7 +576,7 @@ function ComfyVideoControllerRow({
         value={bound}
         data-testid={`comfy-controller-input-${comfyNodeId}-${decl.nodeId}`}
         onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
-        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-28 truncate rounded border border-border bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <option value="">None</option>
         {videos.map((v) => (
@@ -587,7 +590,7 @@ function ComfyVideoControllerRow({
         data-testid={`comfy-controller-upload-${comfyNodeId}-${decl.nodeId}`}
         title="Upload a video and bind it to this controller"
         onClick={() => uploadMediaAndBind(comfyNodeId, key, 'video')}
-        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         ⬆
       </button>
@@ -617,7 +620,7 @@ function ComfyImageControllerRow({
   return (
     <div
       data-testid={`comfy-controller-row-${comfyNodeId}-${decl.nodeId}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
       <span className="flex-1 truncate text-fg" title={`controller:${decl.nodeId} (image)`}>
         {decl.name}
@@ -626,7 +629,7 @@ function ComfyImageControllerRow({
         value={bound}
         data-testid={`comfy-controller-input-${comfyNodeId}-${decl.nodeId}`}
         onChange={(e) => setComfyImageBinding(comfyNodeId, key, e.target.value || null)}
-        className="w-28 truncate rounded border border-line bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-28 truncate rounded border border-border bg-bg-2 px-1 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         <option value="">None</option>
         {images.map((img) => (
@@ -640,7 +643,7 @@ function ComfyImageControllerRow({
         data-testid={`comfy-controller-upload-${comfyNodeId}-${decl.nodeId}`}
         title="Upload an image and bind it to this controller"
         onClick={() => uploadImageAndBind(comfyNodeId, key)}
-        className="rounded border border-line bg-bg-2 px-1 text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         ⬆
       </button>

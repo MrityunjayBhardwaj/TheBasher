@@ -486,11 +486,11 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     >
       {/* Outline column (left): layer names + toggles. */}
       <div
-        className="flex shrink-0 flex-col border-r border-line bg-bg"
+        className="flex shrink-0 flex-col border-r border-border bg-bg"
         style={{ width: OUTLINE_WIDTH_PX }}
       >
         <div
-          className="flex items-center border-b border-line px-2 text-[10px] uppercase tracking-wide text-mute"
+          className="flex items-center border-b border-border px-2 text-[10px] uppercase tracking-wide text-fg-dim"
           style={{ height: RULER_HEIGHT_PX }}
         >
           Layers
@@ -578,7 +578,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
         <div
           data-testid="layer-timeline-ruler"
           onPointerDown={onRulerPointerDown}
-          className="relative cursor-ew-resize border-b border-line"
+          className="relative cursor-ew-resize border-b border-border"
           style={{ height: RULER_HEIGHT_PX }}
         >
           {Array.from({ length: RULER_TICKS + 1 }, (_, i) => {
@@ -586,7 +586,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
             return (
               <span
                 key={i}
-                className="absolute top-1/2 -translate-y-1/2 px-1 text-[10px] text-mute"
+                className="absolute top-1/2 -translate-y-1/2 px-1 text-[10px] text-fg-dim"
                 style={{ left: `${frameToPercent(tickFrame, totalFrames)}%` }}
               >
                 {tickFrame}
@@ -694,7 +694,7 @@ function OutlineRow({
       data-dragging={dragging}
       onClick={onSelect}
       onPointerDown={onPointerDownDrag}
-      className={`flex items-center gap-1 border-b border-line px-1.5 text-[11px] ${
+      className={`flex items-center gap-1 border-b border-border px-1.5 text-[11px] ${
         row.locked ? '' : 'cursor-grab active:cursor-grabbing'
       } ${dragging ? 'opacity-50' : ''} ${selected ? 'bg-accent/15' : 'hover:bg-muted/30'}`}
       style={{ height: ROW_HEIGHT_PX }}
@@ -710,7 +710,7 @@ function OutlineRow({
           e.stopPropagation();
           onToggleTwirl();
         }}
-        className="w-3 select-none text-center text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-3 select-none text-center text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         {open ? '▾' : '▸'}
       </button>
@@ -808,11 +808,11 @@ function OutlinePropRow({
   return (
     <div
       data-testid={`layer-prop-row-${layerId}-${prop.key}`}
-      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      className="flex items-center gap-1 border-b border-border pl-1 pr-1.5 text-[11px]"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <span className="w-3" aria-hidden /> {/* twirl gutter */}
-      <span className="flex-1 truncate pl-4 text-mute" title={prop.label}>
+      <span className="flex-1 truncate pl-4 text-fg-dim" title={prop.label}>
         {prop.label}
       </span>
       <input
@@ -830,7 +830,7 @@ function OutlinePropRow({
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className="w-14 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-14 rounded border border-border bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       />
       <ParamDiamond
         nodeId={layerId}
@@ -892,17 +892,17 @@ function OutlineVec2PropRow({
           (e.target as HTMLInputElement).blur();
         }
       }}
-      className="w-10 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="w-10 rounded border border-border bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     />
   );
   return (
     <div
       data-testid={`layer-prop-row-${layerId}-${prop.key}`}
-      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      className="flex items-center gap-1 border-b border-border pl-1 pr-1.5 text-[11px]"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <span className="w-3" aria-hidden /> {/* twirl gutter */}
-      <span className="flex-1 truncate pl-4 text-mute" title={prop.label}>
+      <span className="flex-1 truncate pl-4 text-fg-dim" title={prop.label}>
         {prop.label}
       </span>
       {axisField(0, 'X')}
@@ -934,7 +934,7 @@ function OutlineEffectRow({
     <div
       data-testid={`layer-effect-row-${effect.nodeId}`}
       data-muted={effect.muted}
-      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      className="flex items-center gap-1 border-b border-border pl-1 pr-1.5 text-[11px]"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <button
@@ -944,7 +944,7 @@ function OutlineEffectRow({
         aria-label={open ? 'Collapse effect params' : 'Expand effect params'}
         aria-expanded={open}
         onClick={onToggleTwirl}
-        className="w-3 select-none text-center text-mute hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-3 select-none text-center text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         {open ? '▾' : '▸'}
       </button>
@@ -955,7 +955,7 @@ function OutlineEffectRow({
         glyph={effect.muted ? '⊘' : '◉'}
         onToggle={() => toggleEffectMute(effect.nodeId)}
       />
-      <span className="flex-1 truncate pl-1 text-mute" title={effect.type}>
+      <span className="flex-1 truncate pl-1 text-fg-dim" title={effect.type}>
         {effect.type}
       </span>
       <button
@@ -994,11 +994,11 @@ function OutlineEffectPropRow({ effect, prop }: { effect: LayerEffectRow; prop: 
   return (
     <div
       data-testid={`layer-effect-prop-row-${effect.nodeId}-${prop.key}`}
-      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      className="flex items-center gap-1 border-b border-border pl-1 pr-1.5 text-[11px]"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <span className="w-3" aria-hidden /> {/* twirl gutter */}
-      <span className="flex-1 truncate pl-8 text-mute" title={prop.label}>
+      <span className="flex-1 truncate pl-8 text-fg-dim" title={prop.label}>
         {prop.label}
       </span>
       <input
@@ -1016,7 +1016,7 @@ function OutlineEffectPropRow({ effect, prop }: { effect: LayerEffectRow; prop: 
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className="w-14 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-14 rounded border border-border bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       />
       <ParamDiamond
         nodeId={effect.nodeId}
@@ -1049,11 +1049,11 @@ function OutlineComfyPropRow({
   return (
     <div
       data-testid={`layer-comfy-prop-row-${layerId}-${comfyRowKey(channel.paramPath)}`}
-      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5 text-[11px]"
+      className="flex items-center gap-1 border-b border-border pl-1 pr-1.5 text-[11px]"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <span className="w-3" aria-hidden /> {/* twirl gutter */}
-      <span className="flex-1 truncate pl-8 text-mute" title={channel.paramPath}>
+      <span className="flex-1 truncate pl-8 text-fg-dim" title={channel.paramPath}>
         {channel.label}
       </span>
     </div>
@@ -1064,7 +1064,7 @@ function OutlineComfyPropRow({
 function OutlineAddEffectRow({ layerId }: { layerId: NodeId }) {
   return (
     <div
-      className="flex items-center gap-1 border-b border-line pl-1 pr-1.5"
+      className="flex items-center gap-1 border-b border-border pl-1 pr-1.5"
       style={{ height: ROW_HEIGHT_PX }}
     >
       <span className="w-3" aria-hidden /> {/* twirl gutter */}
@@ -1083,7 +1083,7 @@ function OutlineAddEffectRow({ layerId }: { layerId: NodeId }) {
 /** An empty TRACK-column row, keeping the two columns row-aligned for outline rows
  *  that have no track content yet (effect rows; effect keyframes land in 2b). */
 function TrackSpacerRow() {
-  return <div className="border-b border-line bg-bg" style={{ height: ROW_HEIGHT_PX }} />;
+  return <div className="border-b border-border bg-bg" style={{ height: ROW_HEIGHT_PX }} />;
 }
 
 /** The TRACK half of an open property row (a layer prop, effect param, OR a keyed
@@ -1220,7 +1220,7 @@ function TrackKeyframeRow({
   return (
     <div
       ref={rowRef}
-      className="relative border-b border-line bg-bg"
+      className="relative border-b border-border bg-bg"
       style={{ height: ROW_HEIGHT_PX }}
     >
       {samples.map((s) => {
@@ -1268,7 +1268,7 @@ function TrackRow({
   const draggable = !row.locked;
   return (
     <div
-      className="relative border-b border-line"
+      className="relative border-b border-border"
       style={{ height: ROW_HEIGHT_PX, opacity: row.enabled ? 1 : 0.4 }}
     >
       <div

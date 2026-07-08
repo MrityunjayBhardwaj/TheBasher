@@ -555,7 +555,7 @@ function EnumField({
       <select
         value={value}
         data-testid={`inspector-enum-${nodeId}-${paramPath}`}
-        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) =>
           dispatch(
             { type: 'setParam', nodeId, paramPath, value: e.target.value },
@@ -603,7 +603,7 @@ function ChannelExtendControls({ nodeId }: { nodeId: string }) {
       <select
         value={ruleValue}
         data-testid={`inspector-enum-${nodeId}-${rulePath}`}
-        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) =>
           dispatch(
             { type: 'setParam', nodeId, paramPath: rulePath, value: e.target.value },
@@ -666,7 +666,7 @@ function ModifierList({
         step={step}
         value={value}
         data-testid={`${prefix}-${i}-${path}`}
-        className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) =>
           patch(i, { [path]: Number(e.target.value) || 0 } as Partial<FChannelModifier>)
         }
@@ -683,7 +683,7 @@ function ModifierList({
       <select
         value={value}
         data-testid={`${prefix}-${i}-${path}`}
-        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => patch(i, { [path]: e.target.value } as Partial<FChannelModifier>)}
       >
         {CYCLE_MODES.map((o) => (
@@ -744,7 +744,7 @@ function ModifierList({
               key={type}
               type="button"
               data-testid={`${prefix}-add-${type}`}
-              className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onClick={() => add(type)}
             >
               + {type}
@@ -759,7 +759,7 @@ function ModifierList({
         <div
           key={i}
           data-testid={`${prefix}-${i}`}
-          className="mx-2 my-1 rounded border border-line/60"
+          className="mx-2 my-1 rounded border border-border/60"
         >
           <div className="flex items-center justify-between px-3 py-1 text-[11px] text-fg/80">
             <span className="font-mono uppercase tracking-wide text-fg/60">{mod.type}</span>
@@ -776,7 +776,7 @@ function ModifierList({
               <button
                 type="button"
                 data-testid={`${prefix}-${i}-remove`}
-                className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 onClick={() => remove(i)}
               >
                 ✕
@@ -790,7 +790,7 @@ function ModifierList({
                 <select
                   value={mod.blend}
                   data-testid={`${prefix}-${i}-blend`}
-                  className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onChange={(e) => patch(i, { blend: e.target.value as (typeof mod)['blend'] })}
                 >
                   {(['add', 'subtract', 'multiply', 'replace'] as const).map((o) => (
@@ -831,7 +831,7 @@ function ModifierList({
                   step={1}
                   value={mod.coefficients.length - 1}
                   data-testid={`${prefix}-${i}-order`}
-                  className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onChange={(e) => setOrder(i, mod.coefficients, Number(e.target.value) || 0)}
                 />
               </label>
@@ -846,7 +846,7 @@ function ModifierList({
                     step={0.1}
                     value={c}
                     data-testid={`${prefix}-${i}-coef-${k}`}
-                    className="w-16 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onChange={(e) => setCoef(i, mod.coefficients, k, Number(e.target.value) || 0)}
                   />
                 </label>
@@ -885,7 +885,7 @@ function ModifierList({
                 <button
                   type="button"
                   data-testid={`${prefix}-${i}-add-point`}
-                  className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onClick={() => addEnvPoint(i, mod)}
                 >
                   + point
@@ -906,7 +906,7 @@ function ModifierList({
                       value={pt[f]}
                       aria-label={`point ${k} ${f}`}
                       data-testid={`${prefix}-${i}-point-${k}-${f}`}
-                      className="w-12 rounded border border-line bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      className="w-12 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                       onChange={(e) =>
                         patchEnvPoint(i, mod, k, { [f]: Number(e.target.value) || 0 })
                       }
@@ -915,7 +915,7 @@ function ModifierList({
                   <button
                     type="button"
                     data-testid={`${prefix}-${i}-point-${k}-remove`}
-                    className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg/60 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg/60 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     onClick={() => removeEnvPoint(i, mod, k)}
                   >
                     ✕
@@ -1010,7 +1010,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
         onChange={(next) => commit('modifiers', next, 'edit modifiers')}
       />
       {arity > 0 ? (
-        <div className="mt-1 border-t border-line/40 pt-1">
+        <div className="mt-1 border-t border-border/40 pt-1">
           <div className="flex items-center justify-between px-3 pt-0.5">
             <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">
               Per-axis
@@ -1023,7 +1023,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                   data-testid={`channel-axis-select-${a}`}
                   aria-pressed={a === activeAxis}
                   className={`rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-                    a === activeAxis ? 'border-accent text-fg' : 'border-line text-fg/70'
+                    a === activeAxis ? 'border-accent text-fg' : 'border-border text-fg/70'
                   } ${axisModifiers?.[a] != null ? 'font-semibold' : ''}`}
                   onClick={() => setAxis(a)}
                 >
@@ -1039,7 +1039,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
               <button
                 type="button"
                 data-testid={`channel-axis-${activeAxis}-override`}
-                className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 onClick={() => setAxisOverride(activeAxis, [])}
               >
                 override {AXIS_LABELS[activeAxis]}
@@ -1051,7 +1051,7 @@ function ChannelModifierControls({ nodeId }: { nodeId: string }) {
                 <button
                   type="button"
                   data-testid={`channel-axis-${activeAxis}-clear`}
-                  className="rounded border border-line bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   onClick={() => setAxisOverride(activeAxis, null)}
                 >
                   ↺ use shared

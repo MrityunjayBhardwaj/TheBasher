@@ -98,10 +98,10 @@ export function SimplifyPopover({ open, onClose }: { open: boolean; onClose: () 
       data-testid="simplify-popover"
       role="dialog"
       aria-label="Simplify channel — tolerance"
-      className="absolute bottom-full right-0 z-50 mb-1 w-64 rounded border border-line bg-bg-2 p-3 text-xs text-fg shadow-lg"
+      className="absolute bottom-full right-0 z-50 mb-1 w-64 rounded border border-border bg-bg-2 p-3 text-xs text-fg shadow-lg"
     >
       <div className="mb-2 font-semibold">Simplify channel</div>
-      <label className="mb-2 block text-mute" htmlFor="simplify-popover-input">
+      <label className="mb-2 block text-fg-dim" htmlFor="simplify-popover-input">
         Tolerance ε ({MIN_TOLERANCE}–{MAX_TOLERANCE})
       </label>
       <input
@@ -120,7 +120,7 @@ export function SimplifyPopover({ open, onClose }: { open: boolean; onClose: () 
             apply();
           }
         }}
-        className="w-full rounded border border-line bg-bg px-2 py-1 text-fg"
+        className="w-full rounded border border-border bg-bg px-2 py-1 text-fg"
       />
       {error !== null && (
         <div data-testid="simplify-popover-error" className="mt-2 text-warn">
@@ -132,7 +132,7 @@ export function SimplifyPopover({ open, onClose }: { open: boolean; onClose: () 
           type="button"
           data-testid="simplify-popover-cancel"
           onClick={onClose}
-          className="rounded border border-line px-2 py-1 text-mute hover:bg-line"
+          className="rounded border border-border px-2 py-1 text-fg-dim hover:bg-muted"
         >
           Cancel
         </button>

@@ -486,14 +486,14 @@ export function NlaLanePane() {
         {/* ── Ruler row: header spacer + the scrubbable time ruler. */}
         <div className="flex w-full shrink-0" style={{ height: NLA_RULER_HEIGHT_PX }}>
           <div
-            className="shrink-0 border-b border-r border-line bg-bg-2"
+            className="shrink-0 border-b border-r border-border bg-bg-2"
             style={{ width: NLA_HEADER_WIDTH_PX }}
           />
           <div
             ref={rulerRef}
             data-testid="nla-ruler"
             onPointerDown={onRulerPointerDown}
-            className="relative min-w-0 flex-1 cursor-ew-resize border-b border-line bg-bg-2"
+            className="relative min-w-0 flex-1 cursor-ew-resize border-b border-border bg-bg-2"
           >
             <RulerTicks totalFrames={totalFrames} view={view} />
           </div>
@@ -648,7 +648,7 @@ function TrackRowView({
       data-testid={`nla-track-row-${row.trackId}`}
       data-muted={row.muted}
       data-soloed-out={row.soloedOut}
-      className="flex w-full border-b border-line"
+      className="flex w-full border-b border-border"
       style={{ height: NLA_ROW_HEIGHT_PX }}
     >
       {/* Header cell: click selects the track; M/S/▲▼ commit through the one
@@ -667,7 +667,7 @@ function TrackRowView({
         aria-label={`Track ${row.name} — M mutes, S solos, Alt+ArrowUp/Down reorders`}
         onClick={() => onSelectTrack(row.trackId)}
         onKeyDown={(e) => onHeaderKeyDown(e, row)}
-        className={`flex shrink-0 cursor-pointer items-center gap-0.5 border-r border-line px-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        className={`flex shrink-0 cursor-pointer items-center gap-0.5 border-r border-border px-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
           selectedTrack ? 'bg-accent/15' : 'bg-bg-2 hover:bg-muted/30'
         }`}
         style={{ width: NLA_HEADER_WIDTH_PX, opacity: dimmed ? 0.5 : 1 }}
@@ -985,7 +985,7 @@ function HeaderToggle({
         onToggle();
       }}
       className={`shrink-0 rounded px-1 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        pressed ? 'bg-line text-accent' : 'text-mute hover:text-fg'
+        pressed ? 'bg-muted text-accent' : 'text-fg-dim hover:text-fg'
       }`}
     >
       {label}
@@ -1019,7 +1019,7 @@ function HeaderButton({
         onClick();
       }}
       className={`shrink-0 rounded px-1 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        disabled ? 'cursor-not-allowed text-mute opacity-40' : 'text-mute hover:text-fg'
+        disabled ? 'cursor-not-allowed text-fg-dim opacity-40' : 'text-fg-dim hover:text-fg'
       }`}
     >
       {label}
@@ -1095,8 +1095,8 @@ function PushDownButton({
         e.stopPropagation();
         if (targetId) commitNlaPushDown(targetId);
       }}
-      className={`shrink-0 rounded border border-line px-2 py-0.5 text-[11px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        enabled ? 'text-mute hover:text-fg' : 'cursor-not-allowed text-mute opacity-40'
+      className={`shrink-0 rounded border border-border px-2 py-0.5 text-[11px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        enabled ? 'text-fg-dim hover:text-fg' : 'cursor-not-allowed text-fg-dim opacity-40'
       }`}
     >
       ↓ Push down
@@ -1139,8 +1139,8 @@ function AddStripButton({
         onClick(e);
       }}
       className={`shrink-0 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        compact ? 'px-1 text-[10px]' : 'border border-line px-2 py-0.5 text-[11px]'
-      } ${hasActions ? 'text-mute hover:text-fg' : 'cursor-not-allowed text-mute opacity-40'}`}
+        compact ? 'px-1 text-[10px]' : 'border border-border px-2 py-0.5 text-[11px]'
+      } ${hasActions ? 'text-fg-dim hover:text-fg' : 'cursor-not-allowed text-fg-dim opacity-40'}`}
     >
       {compact ? '＋' : '＋ Strip…'}
     </button>

@@ -522,7 +522,7 @@ export function EditableCurve({
       className="relative h-full w-full bg-bg"
       style={{ touchAction: 'none' }}
     >
-      <div className="pointer-events-none absolute left-12 top-1 z-10 text-[10px] text-mute">
+      <div className="pointer-events-none absolute left-12 top-1 z-10 text-[10px] text-fg-dim">
         {channelType.replace('KeyframeChannel', '')} — {paramPath || '(no path)'}
       </div>
       {activeIndex >= 0 && (
@@ -552,7 +552,7 @@ export function EditableCurve({
           <select
             value={keys[activeIndex].easing}
             data-testid="curve-interp-select"
-            className="rounded border border-line bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             onChange={(e) => setActiveKeyInterp({ easing: e.target.value as Easing })}
           >
             {KEYFRAME_INTERPS.map((o) => (
@@ -565,7 +565,7 @@ export function EditableCurve({
             <select
               value={keys[activeIndex].ease ?? 'inout'}
               data-testid="curve-ease-select"
-              className="rounded border border-line bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onChange={(e) => setActiveKeyInterp({ ease: e.target.value as EaseDir })}
             >
               {EASE_DIRS.map((o) => (
@@ -582,7 +582,7 @@ export function EditableCurve({
           <select
             value={keys[activeIndex].handleType ?? 'default'}
             data-testid="curve-handle-select"
-            className="rounded border border-line bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             onChange={(e) =>
               setActiveKeyHandleType(
                 e.target.value === 'default' ? undefined : (e.target.value as HandleType),

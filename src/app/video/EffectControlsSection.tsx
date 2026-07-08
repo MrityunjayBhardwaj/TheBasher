@@ -50,7 +50,9 @@ export function EffectControlsSection({ nodeId }: { nodeId: NodeId }) {
   const params = nodeType ? (EFFECT_PARAMS[nodeType] ?? []) : [];
   if (params.length === 0) {
     return (
-      <p className="px-3 py-2 text-[11px] text-mute">No controls for {nodeType ?? 'effect'} yet.</p>
+      <p className="px-3 py-2 text-[11px] text-fg-dim">
+        No controls for {nodeType ?? 'effect'} yet.
+      </p>
     );
   }
   return (
@@ -95,9 +97,9 @@ function EffectParamRow({ effectId, param }: { effectId: NodeId; param: EffectPa
   return (
     <div
       data-testid={`controls-effect-row-${effectId}-${param.key}`}
-      className="flex items-center gap-1 border-b border-line px-2 py-1 text-[11px]"
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
     >
-      <span className="flex-1 truncate text-mute" title={param.label}>
+      <span className="flex-1 truncate text-fg-dim" title={param.label}>
         {param.label}
       </span>
       <input
@@ -115,7 +117,7 @@ function EffectParamRow({ effectId, param }: { effectId: NodeId; param: EffectPa
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className="w-16 rounded border border-line bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-16 rounded border border-border bg-bg-2 px-1 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       />
       <ParamDiamond
         nodeId={effectId}

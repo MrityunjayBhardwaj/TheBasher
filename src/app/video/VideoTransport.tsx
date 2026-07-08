@@ -28,7 +28,7 @@ export function VideoTransport({ comp }: { comp: CompositionParams }) {
     <div
       data-testid="video-transport"
       data-playing={playing}
-      className="flex items-center gap-2 border-b border-line bg-bg px-3 py-1 text-xs"
+      className="flex items-center gap-2 border-b border-border bg-bg px-3 py-1 text-xs"
     >
       <button
         type="button"
@@ -36,7 +36,7 @@ export function VideoTransport({ comp }: { comp: CompositionParams }) {
         aria-label="Jump to start"
         title="Jump to start"
         onClick={() => useTimeStore.getState().setTime(0)}
-        className="rounded border border-line px-1.5 py-0.5 leading-none text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border px-1.5 py-0.5 leading-none text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         ⏮
       </button>
@@ -47,11 +47,11 @@ export function VideoTransport({ comp }: { comp: CompositionParams }) {
         aria-pressed={playing}
         title={playing ? 'Pause (Space)' : 'Play (Space)'}
         onClick={() => useTimeStore.getState().toggle()}
-        className="rounded border border-line px-2 py-0.5 leading-none text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border px-2 py-0.5 leading-none text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         {playing ? '⏸' : '▶'}
       </button>
-      <span data-testid="video-transport-readout" className="font-mono tabular-nums text-mute">
+      <span data-testid="video-transport-readout" className="font-mono tabular-nums text-fg-dim">
         {compFrame} / {totalFrames} · {seconds.toFixed(2)}s
       </span>
     </div>

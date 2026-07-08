@@ -227,12 +227,12 @@ export function LightStudioPanel() {
 
       <div className="flex min-h-0 flex-1">
         {/* Left rail — add + light list + the selected light's params / tex. */}
-        <div className="flex w-48 shrink-0 flex-col border-r border-line text-xs">
+        <div className="flex w-48 shrink-0 flex-col border-r border-border text-xs">
           <button
             type="button"
             data-testid="light-studio-add"
             onClick={onAddLight}
-            className="m-2 rounded border border-line bg-bg-2 px-2 py-1 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="m-2 rounded border border-border bg-bg-2 px-2 py-1 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             + Light
           </button>
@@ -247,8 +247,8 @@ export function LightStudioPanel() {
                 onClick={() => select(light.nodeId)}
                 className={`flex w-full items-center gap-1.5 px-3 py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
                   light.nodeId === primaryNodeId
-                    ? 'bg-line text-fg'
-                    : 'text-mute hover:bg-line/40 hover:text-fg'
+                    ? 'bg-muted text-fg'
+                    : 'text-fg-dim hover:bg-muted/40 hover:text-fg'
                 }`}
               >
                 <span
@@ -267,18 +267,18 @@ export function LightStudioPanel() {
           <div
             ref={canvasRef}
             data-testid="light-studio-canvas"
-            className="absolute inset-3 rounded border border-line"
+            className="absolute inset-3 rounded border border-border"
           >
             {/* equator (v = 0.5) */}
-            <div className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-line" />
+            <div className="pointer-events-none absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-border" />
             {/* centre meridian (u = 0.5 → +Z, the camera-facing front) */}
-            <div className="pointer-events-none absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-line" />
+            <div className="pointer-events-none absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-border" />
 
             {/* axis hints */}
-            <span className="pointer-events-none absolute left-1 top-1 text-[9px] text-mute">
+            <span className="pointer-events-none absolute left-1 top-1 text-[9px] text-fg-dim">
               +Y (up)
             </span>
-            <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-mute">
+            <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-fg-dim">
               front (+Z) · azimuth →
             </span>
 
@@ -306,7 +306,7 @@ export function LightStudioPanel() {
                     touchAction: 'none',
                   }}
                   className={`absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent active:cursor-grabbing ${
-                    selected ? 'border-accent bg-accent' : 'border-line bg-fg hover:border-accent'
+                    selected ? 'border-accent bg-accent' : 'border-border bg-fg hover:border-accent'
                   }`}
                 />
               );
@@ -316,7 +316,7 @@ export function LightStudioPanel() {
           {lights.length === 0 ? (
             <div
               data-testid="light-studio-empty"
-              className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-mute"
+              className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 text-center text-xs text-fg-dim"
             >
               No rig lights yet — add a key light with “+ Light”, then drag it into place.
             </div>
@@ -351,7 +351,7 @@ function ProfilesBar({
   return (
     <div
       data-testid="light-studio-profiles-bar"
-      className="flex items-center gap-2 border-b border-line px-2 py-1.5 text-[11px]"
+      className="flex items-center gap-2 border-b border-border px-2 py-1.5 text-[11px]"
     >
       <span className="font-mono text-fg/50">Profiles</span>
       {profiles.length > 0 ? (
@@ -374,7 +374,7 @@ function ProfilesBar({
         type="button"
         data-testid="light-studio-profile-add"
         onClick={onAdd}
-        className="rounded border border-line bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         + Profile
       </button>
@@ -391,7 +391,7 @@ function ProfilesBar({
 
       {/* Import/Export — the portable .bls-style JSON (V63). Export writes ALL
           profiles; import rebuilds them (de-duping names). */}
-      <span className="mx-1 h-4 w-px bg-line" aria-hidden />
+      <span className="mx-1 h-4 w-px bg-border" aria-hidden />
       {profiles.length > 0 ? (
         <button
           type="button"
@@ -446,7 +446,7 @@ function LightBrushControls({ hasSelectedLight }: { hasSelectedLight: boolean })
         className={`rounded border px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
           active
             ? 'border-accent bg-accent/15 text-accent'
-            : 'border-line bg-bg-2 text-fg hover:border-accent hover:text-accent'
+            : 'border-border bg-bg-2 text-fg hover:border-accent hover:text-accent'
         }`}
       >
         {active ? '✎ Brushing…' : '✎ Brush'}
@@ -471,7 +471,7 @@ function LightBrushControls({ hasSelectedLight }: { hasSelectedLight: boolean })
               </button>
             ))}
           </span>
-          <span data-testid="light-studio-brush-hint" className="text-[10px] text-mute">
+          <span data-testid="light-studio-brush-hint" className="text-[10px] text-fg-dim">
             {hasSelectedLight
               ? 'Click the model to place the selected light.'
               : 'Select a light, then click the model.'}
@@ -549,7 +549,7 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
   return (
     <div
       data-testid={`light-studio-controls-${nodeId}`}
-      className="flex flex-col gap-1 border-t border-line p-2 text-[11px] text-fg/80"
+      className="flex flex-col gap-1 border-t border-border p-2 text-[11px] text-fg/80"
     >
       <label className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1">

@@ -68,7 +68,7 @@ export function NlaStripInspector() {
       data-testid="nla-strip-inspector"
       role="region"
       aria-label={`Strip inspector — ${strip.name}`}
-      className="shrink-0 overflow-y-auto border-l border-line bg-bg-2 px-2 py-1.5 text-[11px] text-fg"
+      className="shrink-0 overflow-y-auto border-l border-border bg-bg-2 px-2 py-1.5 text-[11px] text-fg"
       style={{ width: NLA_INSPECTOR_WIDTH_PX }}
     >
       <div className="mb-1 truncate font-semibold" title={strip.name}>
@@ -113,7 +113,7 @@ export function NlaStripInspector() {
         }
       />
 
-      <div className="flex items-center justify-between gap-1 border-b border-line py-1">
+      <div className="flex items-center justify-between gap-1 border-b border-border py-1">
         <label className="shrink-0 text-fg-dim" htmlFor="nla-strip-field-blendMode">
           Blend
         </label>
@@ -128,7 +128,7 @@ export function NlaStripInspector() {
               'Edit strip blend mode',
             )
           }
-          className="w-24 rounded border border-line bg-bg px-1 py-0.5 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="w-24 rounded border border-border bg-bg px-1 py-0.5 text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           <option value="replace">replace</option>
           <option value="combine">combine</option>
@@ -176,7 +176,7 @@ export function NlaStripInspector() {
 
 function ReadOnlyRow({ param, label, value }: { param: string; label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-1 border-b border-line py-1">
+    <div className="flex items-center justify-between gap-1 border-b border-border py-1">
       <span className="shrink-0 text-fg-dim">{label}</span>
       <span
         data-testid={`nla-strip-field-${param}`}
@@ -212,7 +212,7 @@ function NumRow({
     setDraft(null);
   };
   return (
-    <div className="flex items-center justify-between gap-1 border-b border-line py-1">
+    <div className="flex items-center justify-between gap-1 border-b border-border py-1">
       <label className="shrink-0 text-fg-dim" htmlFor={`nla-strip-field-${param}`}>
         {label}
       </label>
@@ -231,7 +231,7 @@ function NumRow({
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className="w-20 rounded border border-line bg-bg px-1 py-0.5 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-20 rounded border border-border bg-bg px-1 py-0.5 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       />
     </div>
   );
@@ -249,7 +249,7 @@ function CheckRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-1 border-b border-line py-1">
+    <div className="flex items-center justify-between gap-1 border-b border-border py-1">
       <label className="shrink-0 text-fg-dim" htmlFor={`nla-strip-field-${param}`}>
         {label}
       </label>
@@ -276,7 +276,7 @@ function InfluenceRow({ value, commit }: { value: number; commit: (n: number) =>
     setDraft(null);
   };
   return (
-    <div className="flex items-center justify-between gap-1 border-b border-line py-1">
+    <div className="flex items-center justify-between gap-1 border-b border-border py-1">
       <label className="shrink-0 text-fg-dim" htmlFor="nla-strip-field-influence">
         Influence
       </label>
@@ -310,7 +310,7 @@ function InfluenceRow({ value, commit }: { value: number; commit: (n: number) =>
             (e.target as HTMLInputElement).blur();
           }
         }}
-        className="w-14 rounded border border-line bg-bg px-1 py-0.5 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="w-14 rounded border border-border bg-bg px-1 py-0.5 text-right text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       />
     </div>
   );
