@@ -677,7 +677,13 @@ const ROWS: Row[] = [
   // text-fg). Track headers + ruler sit on bg-2; the empty-state hint
   // sits on the pane's bg. The orphan/duplicate-ghost `border-warn`
   // outline is a STATE border — audited 3:1 by the border-token-gate
-  // via BORDER_FOCUS_STATE below (SC 1.4.11).
+  // via BORDER_FOCUS_STATE below (SC 1.4.11). DEGRADED strips (#286 —
+  // muted / track-muted / soloed-out) dim the FILL to accent-dim/40 and
+  // flip the label to LIGHT ink (text-fg): the previous whole-block 0.4
+  // group opacity composited the dark knockout label toward the page bg
+  // (≈3:1, below AA) — a compositing failure the matrix couldn't see
+  // (it audits full-opacity pairs only). Light ink on the dimmed fill is
+  // the audited pairing below.
   {
     site: 'R9 NlaLanePane strip label idle — bg on accent-dim',
     fg: 'bg',
@@ -688,6 +694,12 @@ const ROWS: Row[] = [
     site: 'R9 NlaLanePane strip label selected — bg on accent',
     fg: 'bg',
     bgStack: ['accent'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaLanePane strip label degraded — fg on accent-dim/40 over bg (muted/soloed-out dim fill, #286)',
+    fg: 'fg',
+    bgStack: ['accent-dim/40', 'bg'],
     textSize: 'small',
   },
   {

@@ -27,10 +27,17 @@
 // (no junk undo entries). NO "Add Track" button ever — track birth folds into
 // addStrip (LOCKED, UI-SPEC §1.6).
 //
-// Strip labels are KNOCKED OUT (text-bg on the accent fills) in idle,
+// Strip labels are KNOCKED OUT (text-bg on the BRIGHT accent fills) in idle,
 // selected AND dragging states: text-fg on accent-dim measures 2.79:1 and
-// fails WCAG AA, so all states follow the §4.2 selected-knockout idiom
-// (ROWS in contrastMatrix.test.ts audit every pairing).
+// fails WCAG AA, so those states follow the §4.2 selected-knockout idiom
+// (ROWS in contrastMatrix.test.ts audit every pairing). DEGRADED strips
+// (muted / track-muted / soloed-out) are the exception (#286): dimming the
+// whole block via group opacity would drag the dark knockout label toward
+// the near-black page (≈3:1, below AA) — the [[H40]]-adjacent compositing
+// trap the matrix can't see (it audits full-opacity pairs only). So a
+// degraded strip dims its FILL only (bg-accent-dim/40) and flips the label
+// to LIGHT ink (text-fg on the dimmed fill ≈ 8.5:1 — an audited ROW); the
+// block itself stays full-opacity so nothing composites the text.
 //
 // REF: .planning/phases/nla-5-lane-ui/UI-SPEC.md §1/§2/§3.2/§4/§6.2;
 //      .planning/phases/nla-5-lane-ui/PLAN.md inc 5B/5C; sibling precedent
@@ -644,9 +651,15 @@ function TrackRowView({
       style={{ height: NLA_ROW_HEIGHT_PX }}
     >
       {/* Header cell: click selects the track; M/S/▲▼ commit through the one
-          road; keyboard parity M/S/Alt+↑↓ (§2.3/§2.4/§2.8). */}
+          road; keyboard parity M/S/Alt+↑↓ (§2.3/§2.4/§2.8). role="group" NOT
+          "button" (#287): the cell CONTAINS the M/S/▲/▼/＋ buttons, and a
+          button role makes its descendants presentational (AT flattens the
+          nested toggles) — an ARIA authoring violation. A group is a labelled
+          container whose children stay first-class; tabIndex keeps the cell
+          focusable for the M/S/Alt-arrow keyboard parity (sibling OutlineRow
+          is a plain div — it has no header-level shortcuts to host). */}
       <div
-        role="button"
+        role="group"
         tabIndex={0}
         data-testid={`nla-track-header-${row.trackId}`}
         data-selected={selectedTrack}
@@ -708,12 +721,10 @@ function TrackRowView({
         />
       </div>
       {/* Lane: strips + blend wedges + repeat ticks, all percent-positioned.
-          Track-muted / soloed-out dims the WHOLE lane (blocks stay visible). */}
-      <div
-        data-testid={`nla-lane-${row.trackId}`}
-        className="relative min-w-0 flex-1"
-        style={{ opacity: dimmed ? 0.4 : 1 }}
-      >
+          Track-muted / soloed-out dimming is per-STRIP now (#286 — dimming
+          the lane group composited the strips' knockout labels below AA); the
+          lane wrapper itself stays full-opacity. */}
+      <div data-testid={`nla-lane-${row.trackId}`} className="relative min-w-0 flex-1">
         {row.strips.map((s, i) => (
           <StripBlock
             key={`${s.stripId}:${i}`}
@@ -769,6 +780,14 @@ function StripBlock({
   const degraded =
     strip.stripMuted || strip.trackMuted || strip.soloedOut || strip.orphan || strip.duplicateGhost;
 
+  // #286: the states that FADE the strip (mute/solo). Their fill dims to
+  // accent-dim/40 and the label flips to LIGHT ink (text-fg) so it stays
+  // ≥AA over the dark-blue dimmed fill. Bright fills (selected/dragging)
+  // keep the dark knockout label. Orphan/ghost are NOT dimmed (bright fill
+  // + warn border) so they keep the knockout too.
+  const dimmed = strip.stripMuted || strip.trackMuted || strip.soloedOut;
+  const labelInk = dimmed && !selected && !dragging ? 'text-fg' : 'text-bg';
+
   const stateNotes: string[] = [];
   if (strip.stripMuted) stateNotes.push('muted');
   if (strip.trackMuted) stateNotes.push('track muted');
@@ -809,7 +828,13 @@ function StripBlock({
         onClick={() => onClick(strip.stripId)}
         onKeyDown={(e) => onKeyDown(e, strip)}
         className={`absolute top-1/2 flex -translate-y-1/2 cursor-grab items-center overflow-hidden rounded px-1 active:cursor-grabbing ${
-          dragging ? 'bg-record' : selected ? 'bg-accent' : 'bg-accent-dim'
+          dragging
+            ? 'bg-record'
+            : selected
+              ? 'bg-accent'
+              : dimmed
+                ? 'bg-accent-dim/40'
+                : 'bg-accent-dim'
         } ${
           strip.orphan || strip.duplicateGhost ? 'border border-warn' : ''
         } focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
@@ -817,16 +842,16 @@ function StripBlock({
           left: `${leftPct}%`,
           width: `${widthPct}%`,
           height: NLA_ROW_HEIGHT_PX - 10,
-          opacity: strip.stripMuted ? 0.4 : 1,
         }}
       >
-        {/* Glyphs, not color-only: ⊘ mute, ! orphan/ghost, C combine badge. */}
+        {/* Glyphs, not color-only: ⊘ mute, ! orphan/ghost, C combine badge.
+            Ink follows the label (light on a dimmed fill, knockout on bright). */}
         {(strip.stripMuted || strip.orphan || strip.duplicateGhost) && (
-          <span aria-hidden className="mr-0.5 shrink-0 text-[9px] text-bg">
+          <span aria-hidden className={`mr-0.5 shrink-0 text-[9px] ${labelInk}`}>
             {strip.stripMuted ? '⊘' : '!'}
           </span>
         )}
-        <span className="min-w-0 flex-1 truncate text-[10px] text-bg">{strip.name}</span>
+        <span className={`min-w-0 flex-1 truncate text-[10px] ${labelInk}`}>{strip.name}</span>
         {strip.blendMode === 'combine' && (
           <span
             aria-hidden
