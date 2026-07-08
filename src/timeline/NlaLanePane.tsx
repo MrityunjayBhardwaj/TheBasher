@@ -60,6 +60,8 @@ import {
   type NlaReorderDirection,
 } from './nlaLaneGeometry';
 import { commitNla, commitNlaSetParam } from './nlaCommit';
+import { NlaAddStripPopover } from './NlaAddStripPopover';
+import { NlaStripInspector } from './NlaStripInspector';
 import type { TimelineView } from './timelineView';
 
 // ── Strip drag record (the LayerTimeline BarDrag shape): everything the
@@ -125,11 +127,25 @@ function dragPreviewSpan(d: StripDrag, dSec: number): StripPreviewSpan {
   return { stripId: d.stripId, start, end: d.orig.end };
 }
 
+/** The add-strip popover's open state: which button anchored it + which
+ *  track it pre-selects (null = "New track"). */
+interface AddStripOpen {
+  anchor: HTMLElement;
+  trackId: string | null;
+}
+
 export function NlaLanePane() {
   // H48: select the STABLE nodes ref (unchanged between unrelated commits);
   // derive rows in useMemo — never return a fresh array from the selector.
   const nodes = useDagStore((s) => s.state.nodes);
   const lanes = useMemo(() => buildNlaLanes(nodes), [nodes]);
+  // ≥1 Action gates every add-strip entry point (§2.6 — the popover's Action
+  // select would be empty otherwise; the disabled title names the agent road).
+  const hasActions = useMemo(
+    () => Object.values(nodes).some((n) => (n as { type?: string }).type === 'Action'),
+    [nodes],
+  );
+  const [addStrip, setAddStrip] = useState<AddStripOpen | null>(null);
 
   const seconds = useTimeStore((s) => s.seconds);
   const duration = useTimeStore((s) => s.durationSeconds);
@@ -405,67 +421,108 @@ export function NlaLanePane() {
   // playhead scrolls off-window).
   const playheadPct = secondsToPercent(seconds, FRAMES_PER_SECOND, totalFrames, view);
 
+  // ── Add-strip entry points (§2.6): a [+ Strip] per track header + one
+  //    pane-level button (footer / empty state). All gated on ≥1 Action; the
+  //    disabled title names the agent road (mutator.nla.createAction).
+  const onOpenAddStrip = useCallback((e: React.MouseEvent, trackId: string | null) => {
+    e.stopPropagation();
+    setAddStrip({ anchor: e.currentTarget as HTMLElement, trackId });
+  }, []);
+  const onCloseAddStrip = useCallback(() => setAddStrip(null), []);
+
   return (
     <div
       role="region"
       aria-label="NLA tracks"
       onKeyDown={onPaneKeyDown}
-      className="relative flex h-full w-full flex-col bg-bg text-fg"
+      className="flex h-full w-full bg-bg text-fg"
     >
-      {/* ── Ruler row: header spacer + the scrubbable time ruler. */}
-      <div className="flex w-full shrink-0" style={{ height: NLA_RULER_HEIGHT_PX }}>
-        <div
-          className="shrink-0 border-b border-r border-line bg-bg-2"
-          style={{ width: NLA_HEADER_WIDTH_PX }}
-        />
-        <div
-          ref={rulerRef}
-          data-testid="nla-ruler"
-          onPointerDown={onRulerPointerDown}
-          className="relative min-w-0 flex-1 cursor-ew-resize border-b border-line bg-bg-2"
-        >
-          <RulerTicks totalFrames={totalFrames} view={view} />
+      {/* ── Left column: ruler + rows + playhead. The strip inspector (5D) is
+          a SIBLING right column, so the playhead calc stays relative to this
+          wrapper, not the whole pane. */}
+      <div className="relative flex h-full min-w-0 flex-1 flex-col">
+        {/* ── Ruler row: header spacer + the scrubbable time ruler. */}
+        <div className="flex w-full shrink-0" style={{ height: NLA_RULER_HEIGHT_PX }}>
+          <div
+            className="shrink-0 border-b border-r border-line bg-bg-2"
+            style={{ width: NLA_HEADER_WIDTH_PX }}
+          />
+          <div
+            ref={rulerRef}
+            data-testid="nla-ruler"
+            onPointerDown={onRulerPointerDown}
+            className="relative min-w-0 flex-1 cursor-ew-resize border-b border-line bg-bg-2"
+          >
+            <RulerTicks totalFrames={totalFrames} view={view} />
+          </div>
         </div>
-      </div>
 
-      {/* ── Track rows (top = highest order — the model list is pre-reversed). */}
-      <div className="min-h-0 w-full flex-1 overflow-auto">
-        {lanes.rows.length === 0 ? (
-          <EmptyState />
-        ) : (
-          lanes.rows.map((row, i) => (
-            <TrackRowView
-              key={row.trackId}
-              row={row}
-              selectedStripId={selectedStripId}
-              selectedTrack={selectedTrackId === row.trackId}
-              reorderUpDisabled={reorderDisabled('up', i, lanes.rows.length)}
-              reorderDownDisabled={reorderDisabled('down', i, lanes.rows.length)}
-              preview={preview}
-              onSelectTrack={onSelectTrack}
-              onHeaderKeyDown={onHeaderKeyDown}
-              onToggleMute={onToggleTrackMute}
-              onToggleSolo={onToggleTrackSolo}
-              onReorder={onReorderTrack}
-              onStripPointerDown={onStripPointerDown}
-              onStripClick={onStripClick}
-              onStripKeyDown={onStripKeyDown}
-            />
-          ))
+        {/* ── Track rows (top = highest order — the model list is pre-reversed). */}
+        <div className="min-h-0 w-full flex-1 overflow-auto">
+          {lanes.rows.length === 0 ? (
+            <EmptyState hasActions={hasActions} onAddStrip={onOpenAddStrip} />
+          ) : (
+            <>
+              {lanes.rows.map((row, i) => (
+                <TrackRowView
+                  key={row.trackId}
+                  row={row}
+                  hasActions={hasActions}
+                  selectedStripId={selectedStripId}
+                  selectedTrack={selectedTrackId === row.trackId}
+                  reorderUpDisabled={reorderDisabled('up', i, lanes.rows.length)}
+                  reorderDownDisabled={reorderDisabled('down', i, lanes.rows.length)}
+                  preview={preview}
+                  onSelectTrack={onSelectTrack}
+                  onHeaderKeyDown={onHeaderKeyDown}
+                  onToggleMute={onToggleTrackMute}
+                  onToggleSolo={onToggleTrackSolo}
+                  onReorder={onReorderTrack}
+                  onOpenAddStrip={onOpenAddStrip}
+                  onStripPointerDown={onStripPointerDown}
+                  onStripClick={onStripClick}
+                  onStripKeyDown={onStripKeyDown}
+                />
+              ))}
+              {/* Footer add-strip (the pane-level entry point; NO "Add Track"
+                  button ever — track birth folds into addStrip, §1.6 LOCK). */}
+              <div className="flex h-6 items-center px-1.5">
+                <AddStripButton
+                  testid="nla-add-strip"
+                  hasActions={hasActions}
+                  onClick={(e) => onOpenAddStrip(e, null)}
+                />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Playhead line over the lane column (transport read-back). */}
+        {playheadPct >= 0 && playheadPct <= 100 && (
+          <div
+            data-testid="nla-playhead"
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 z-10 w-px bg-accent"
+            style={{
+              left: `calc(${NLA_HEADER_WIDTH_PX}px + (100% - ${NLA_HEADER_WIDTH_PX}px) * ${
+                playheadPct / 100
+              })`,
+            }}
+          />
         )}
       </div>
 
-      {/* ── Playhead line over the lane column (transport read-back). */}
-      {playheadPct >= 0 && playheadPct <= 100 && (
-        <div
-          data-testid="nla-playhead"
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 z-10 w-px bg-accent"
-          style={{
-            left: `calc(${NLA_HEADER_WIDTH_PX}px + (100% - ${NLA_HEADER_WIDTH_PX}px) * ${
-              playheadPct / 100
-            })`,
-          }}
+      {/* ── Strip inspector (5D): in-dock right column, shows when a strip is
+          selected (stale ids degrade to hidden inside the component). */}
+      <NlaStripInspector />
+
+      {/* ── Add-strip popover (5D): portals to document.body — the 240px
+          drawer + overflow-auto rows would clip an in-pane overlay (H103). */}
+      {addStrip && (
+        <NlaAddStripPopover
+          anchor={addStrip.anchor}
+          defaultTrackId={addStrip.trackId}
+          onClose={onCloseAddStrip}
         />
       )}
     </div>
@@ -500,6 +557,7 @@ function RulerTicks({ totalFrames, view }: { totalFrames: number; view: Timeline
 
 function TrackRowView({
   row,
+  hasActions,
   selectedStripId,
   selectedTrack,
   reorderUpDisabled,
@@ -510,11 +568,13 @@ function TrackRowView({
   onToggleMute,
   onToggleSolo,
   onReorder,
+  onOpenAddStrip,
   onStripPointerDown,
   onStripClick,
   onStripKeyDown,
 }: {
   row: NlaTrackRow;
+  hasActions: boolean;
   selectedStripId: string | null;
   selectedTrack: boolean;
   reorderUpDisabled: boolean;
@@ -525,6 +585,7 @@ function TrackRowView({
   onToggleMute: (row: NlaTrackRow) => void;
   onToggleSolo: (row: NlaTrackRow) => void;
   onReorder: (trackId: string, direction: NlaReorderDirection) => void;
+  onOpenAddStrip: (e: React.MouseEvent, trackId: string | null) => void;
   onStripPointerDown: (e: React.PointerEvent, strip: NlaStripBlock, zone: StripDragZone) => void;
   onStripClick: (stripId: string) => void;
   onStripKeyDown: (e: React.KeyboardEvent, strip: NlaStripBlock) => void;
@@ -596,6 +657,13 @@ function TrackRowView({
           title="Move track down (Alt+ArrowDown)"
           disabled={reorderDownDisabled}
           onClick={() => onReorder(row.trackId, 'down')}
+        />
+        <AddStripButton
+          testid={`nla-track-add-strip-${row.trackId}`}
+          hasActions={hasActions}
+          compact
+          trackName={row.name}
+          onClick={(e) => onOpenAddStrip(e, row.trackId)}
         />
       </div>
       {/* Lane: strips + blend wedges + repeat ticks, all percent-positioned.
@@ -887,18 +955,76 @@ function HeaderButton({
   );
 }
 
-// Empty state (§1.6): names the agent road. The [Add strip…]/[Push down]
-// director affordances arrive in 5D/5E; there is NO "Add Track" button ever —
+// Empty state (§1.6): names the agent road AND carries the director's
+// [Add strip…] entry point (5D — enabled when ≥1 Action exists; the disabled
+// title names mutator.nla.createAction). There is NO "Add Track" button ever —
 // track birth folds into addStrip by design (LOCKED).
-function EmptyState() {
+function EmptyState({
+  hasActions,
+  onAddStrip,
+}: {
+  hasActions: boolean;
+  onAddStrip: (e: React.MouseEvent, trackId: string | null) => void;
+}) {
   return (
-    <div data-testid="nla-empty-state" className="flex h-full items-center justify-center px-6">
+    <div
+      data-testid="nla-empty-state"
+      className="flex h-full flex-col items-center justify-center gap-2 px-6"
+    >
       <p className="max-w-md text-center text-[11px] text-fg-dim">
-        No NLA tracks yet. A strip places a reusable Action on a track — ask the agent to author one
-        via <code className="text-fg">mutator.nla.createAction</code> and place it with{' '}
-        <code className="text-fg">mutator.nla.addStrip</code> (the track is created automatically).
-        Director authoring (Add strip…) arrives with the strip inspector.
+        No NLA tracks yet. A strip places a reusable Action on a track — author an Action via{' '}
+        <code className="text-fg">mutator.nla.createAction</code> (agent road) or place an existing
+        one with <code className="text-fg">mutator.nla.addStrip</code> / the button below (the track
+        is created automatically).
       </p>
+      <AddStripButton
+        testid="nla-add-strip"
+        hasActions={hasActions}
+        onClick={(e) => onAddStrip(e, null)}
+      />
     </div>
+  );
+}
+
+// The add-strip entry point (§2.6): opens the popover anchored to itself.
+// Disabled (with a title naming the agent road) when NO Action exists — the
+// popover's Action select would be empty. `compact` = the per-track-header
+// "+" variant; the full label lives on the pane-level button. stopPropagation:
+// the header button must not ALSO select the track.
+function AddStripButton({
+  testid,
+  hasActions,
+  compact,
+  trackName,
+  onClick,
+}: {
+  testid: string;
+  hasActions: boolean;
+  compact?: boolean;
+  trackName?: string;
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  const title = hasActions
+    ? trackName
+      ? `Add strip to track “${trackName}”…`
+      : 'Add strip… (place an Action on a track)'
+    : 'No Actions yet — author one via mutator.nla.createAction first';
+  return (
+    <button
+      type="button"
+      data-testid={testid}
+      disabled={!hasActions}
+      title={title}
+      aria-label={trackName ? `Add strip to track ${trackName}` : 'Add strip'}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
+      className={`shrink-0 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        compact ? 'px-1 text-[10px]' : 'border border-line px-2 py-0.5 text-[11px]'
+      } ${hasActions ? 'text-mute hover:text-fg' : 'cursor-not-allowed text-mute opacity-40'}`}
+    >
+      {compact ? '＋' : '＋ Strip…'}
+    </button>
   );
 }

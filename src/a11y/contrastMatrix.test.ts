@@ -738,6 +738,63 @@ const ROWS: Row[] = [
     bgStack: ['accent/15', 'bg-2'],
     textSize: 'small',
   },
+  // 5D authoring surfaces (#283 inc 5D, UI-SPEC §2.6/§1.5): the add-strip
+  // popover (portaled to body, a bg-2 card) and the in-dock strip inspector
+  // (bg-2 right column). Field labels fg-dim; inputs/selects are recessed
+  // bg wells carrying text-fg; the inline {ok:false} reason reuses the
+  // audited error-on-bg-2 pair (the AssetLibrary Delete precedent); the
+  // commit button is the filled-accent knockout (bg on accent). The
+  // pane-level / per-track [+ Strip] buttons use the sibling text-mute
+  // idiom (WHITELIST — the phantom-token anomaly, filed as a separate
+  // chrome issue).
+  {
+    site: 'R9 NlaAddStripPopover field label — fg-dim on bg-2 (portal card)',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaAddStripPopover field text — fg on bg well over bg-2',
+    fg: 'fg',
+    bgStack: ['bg', 'bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaAddStripPopover inline reason — error on bg-2',
+    fg: 'error',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaAddStripPopover commit — bg on accent (filled button)',
+    fg: 'bg',
+    bgStack: ['accent'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaAddStripPopover cancel — fg-dim on bg-2',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaStripInspector heading/value — fg on bg-2 (right column)',
+    fg: 'fg',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaStripInspector field label — fg-dim on bg-2',
+    fg: 'fg-dim',
+    bgStack: ['bg-2'],
+    textSize: 'small',
+  },
+  {
+    site: 'R9 NlaStripInspector field text — fg on bg well over bg-2',
+    fg: 'fg',
+    bgStack: ['bg', 'bg-2'],
+    textSize: 'small',
+  },
 
   // ─── R9 TimelineCanvas (src/timeline/TimelineCanvas.tsx) ────────────
   // P6 W9: the SVG Dopesheet was replaced by an imperatively-painted
