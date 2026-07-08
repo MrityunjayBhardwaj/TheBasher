@@ -186,11 +186,28 @@ export interface NodeDefinition<P = unknown, O = unknown> {
 // In-memory Node (a record in the DAG)
 // ---------------------------------------------------------------------------
 
+// #291 (Epic 1 Inc 0) — a spare parameter is an ad-hoc, node-authored param that
+// lives OUTSIDE the node's fixed per-type `paramSchema` (the Houdini "spare parms"
+// model). Keeping it in a separate collection is deliberate: the fixed schema stays
+// STRICT (an undeclared real-param key is still stripped/rejected — typos surface),
+// while spare params are validated by this ONE shared schema. The `type` tag drives
+// promotion UI (Inc 3) and viewport-handle mapping (Inc 4); `value` is loosely typed
+// here and refined per handle/driver at the consumer.
+export const SpareParamSchema = z.object({
+  type: z.enum(['float', 'int', 'bool', 'string', 'vec2', 'vec3']),
+  value: z.unknown(),
+});
+export type SpareParam = z.infer<typeof SpareParamSchema>;
+
 export const NodeSchema = z.object({
   id: NodeIdSchema,
   type: NodeTypeIdSchema,
   version: z.number().int().nonnegative(),
   params: z.unknown(),
+  // #291 — optional spare-param collection keyed by name. ABSENT when a node has
+  // no spare params (the overwhelming default) so existing projects serialize
+  // byte-identical — no migration needed (mirrors `meta.hidden`, #227 S4).
+  spare: z.record(z.string(), SpareParamSchema).optional(),
   inputs: z.record(SocketIdSchema, InputBindingSchema),
   meta: z
     .object({
@@ -271,6 +288,24 @@ export const OpSetHiddenSchema = z.object({
   hidden: z.boolean(),
 });
 
+// #291 (Epic 1 Inc 0) — spare-param mutation. A dedicated op pair (not `setParam`)
+// because spare params are validated by SpareParamSchema, NOT the node's fixed
+// per-type paramSchema (which would strip them, the H28 mechanism). `setSpareParam`
+// sets the WHOLE {type,value} under `key`; its inverse is either a `setSpareParam`
+// back to the prior value (key existed) or a `removeSpareParam` (key was new).
+export const OpSetSpareParamSchema = z.object({
+  type: z.literal('setSpareParam'),
+  nodeId: NodeIdSchema,
+  key: z.string().min(1),
+  param: SpareParamSchema,
+});
+
+export const OpRemoveSpareParamSchema = z.object({
+  type: z.literal('removeSpareParam'),
+  nodeId: NodeIdSchema,
+  key: z.string().min(1),
+});
+
 export const OpSchema = z.discriminatedUnion('type', [
   OpAddNodeSchema,
   OpRemoveNodeSchema,
@@ -279,6 +314,8 @@ export const OpSchema = z.discriminatedUnion('type', [
   OpSetParamSchema,
   OpSetMetaSchema,
   OpSetHiddenSchema,
+  OpSetSpareParamSchema,
+  OpRemoveSpareParamSchema,
 ]);
 export type Op = z.infer<typeof OpSchema>;
 

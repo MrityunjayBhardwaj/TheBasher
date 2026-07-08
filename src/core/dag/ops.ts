@@ -16,7 +16,7 @@ import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
 import type { InputBinding, Node, NodeRef, Op } from './types';
-import { OpSchema } from './types';
+import { OpSchema, SpareParamSchema } from './types';
 
 export class OpError extends Error {
   constructor(
@@ -103,6 +103,10 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
       return applySetMeta(state, op);
     case 'setHidden':
       return applySetHidden(state, op);
+    case 'setSpareParam':
+      return applySetSpareParam(state, op);
+    case 'removeSpareParam':
+      return applyRemoveSpareParam(state, op);
   }
 }
 
@@ -290,6 +294,53 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
     paramPath: op.paramPath,
     value: prior,
   };
+  return { next, inverse };
+}
+
+// #291 (Epic 1 Inc 0) — spare params live in `node.spare`, validated by the ONE
+// shared SpareParamSchema (NOT the node's fixed per-type paramSchema, which would
+// strip them — the H28 mechanism). setParam stays strict and untouched.
+function applySetSpareParam(
+  state: DagState,
+  op: Extract<Op, { type: 'setSpareParam' }>,
+): ApplyResult {
+  const node = getNode(state, op.nodeId);
+  const parsed = SpareParamSchema.safeParse(op.param);
+  if (!parsed.success) {
+    throw new OpError(
+      `setSpareParam: invalid spare param "${op.key}" on ${node.id}: ${parsed.error.message}`,
+      op,
+    );
+  }
+  const prior = node.spare?.[op.key];
+  const nextNode: Node = { ...node, spare: { ...(node.spare ?? {}), [op.key]: parsed.data } };
+  const next: DagState = { ...state, nodes: { ...state.nodes, [node.id]: nextNode } };
+  // Inverse: restore the prior value if the key existed, else remove the new key.
+  const inverse: Op = prior
+    ? { type: 'setSpareParam', nodeId: op.nodeId, key: op.key, param: prior }
+    : { type: 'removeSpareParam', nodeId: op.nodeId, key: op.key };
+  return { next, inverse };
+}
+
+function applyRemoveSpareParam(
+  state: DagState,
+  op: Extract<Op, { type: 'removeSpareParam' }>,
+): ApplyResult {
+  const node = getNode(state, op.nodeId);
+  const prior = node.spare?.[op.key];
+  if (!prior) {
+    throw new OpError(`removeSpareParam: no spare param "${op.key}" on ${node.id}`, op);
+  }
+  const nextSpare = { ...(node.spare ?? {}) };
+  delete nextSpare[op.key];
+  // Normalize an emptied collection back to `undefined` so a node whose last spare
+  // param was removed serializes byte-identical to one that never had any.
+  const nextNode: Node = {
+    ...node,
+    spare: Object.keys(nextSpare).length > 0 ? nextSpare : undefined,
+  };
+  const next: DagState = { ...state, nodes: { ...state.nodes, [node.id]: nextNode } };
+  const inverse: Op = { type: 'setSpareParam', nodeId: op.nodeId, key: op.key, param: prior };
   return { next, inverse };
 }
 
