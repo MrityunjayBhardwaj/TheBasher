@@ -80,6 +80,7 @@ const ALL_TYPES = [
   'KeyframeChannelText',
   'KeyframeChannelVec2',
   'KeyframeChannelVec3',
+  'Lag',
   'Layer',
   'LightProfileSelect',
   'LightRig',

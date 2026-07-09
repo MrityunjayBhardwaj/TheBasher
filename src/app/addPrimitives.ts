@@ -40,7 +40,10 @@ export type PrimitiveKind =
   | 'Clamp'
   | 'Mix'
   | 'CurveRemap'
-  | 'Noise';
+  | 'Noise'
+  // Stateful op — Lag (Epic 2 #297). Same floating-number-node shape as the compute
+  // vocabulary; its output trails its input over time (the seam replays it).
+  | 'Lag';
 
 export interface AddResult {
   ops: Op[];
@@ -127,7 +130,8 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'Clamp' ||
     kind === 'Mix' ||
     kind === 'CurveRemap' ||
-    kind === 'Noise'
+    kind === 'Noise' ||
+    kind === 'Lag'
   );
 }
 
@@ -198,6 +202,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Curve Remap node';
     case 'Noise':
       return 'Noise node';
+    case 'Lag':
+      return 'Lag node';
   }
 }
 
@@ -265,6 +271,7 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Mix':
     case 'CurveRemap':
     case 'Noise':
+    case 'Lag':
       return {};
   }
 }

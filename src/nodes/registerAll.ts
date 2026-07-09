@@ -22,6 +22,7 @@ import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
+import { LagNode } from './Lag';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
@@ -176,6 +177,11 @@ const ALL: NodeDefinition[] = [
   // over the ONE shared value-math core (valueMath.ts). A driver (Inc 2) wires one
   // onto a target param via the pull rail.
   ...COMPUTE_NODES,
+  // Stateful op — Lag (epic #290 Epic 2, #297). Unlike the stateless compute nodes,
+  // its output at frame N depends on its output at N−1 (a first-order recurrence).
+  // Declares `stateful: true`; the real value is produced by the replay seam
+  // (src/app/statefulOps.ts), not its passthrough evaluate.
+  LagNode as unknown as NodeDefinition,
   // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
   // Edge-less to its target ({target, paramPath}, enumerated + folded by the target's
   // followers like a KeyframeChannel), edge-WIRED to the compute graph via `in`. Its

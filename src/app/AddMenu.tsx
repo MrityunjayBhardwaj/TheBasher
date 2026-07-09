@@ -74,6 +74,8 @@ const GROUPS: MenuGroup[] = [
       { kind: 'Mix', label: 'Mix' },
       { kind: 'CurveRemap', label: 'Curve Remap' },
       { kind: 'Noise', label: 'Noise' },
+      // Stateful — output trails its input over time (Epic 2, #297).
+      { kind: 'Lag', label: 'Lag' },
     ],
   },
 ];

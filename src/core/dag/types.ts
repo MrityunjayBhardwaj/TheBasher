@@ -150,6 +150,20 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   type: NodeTypeId;
   version: number;
   pure: boolean;
+  /**
+   * Epic 2 — the stateful eval-contract. A `stateful` node's output at frame N
+   * depends on its output at frame N−1 (a first/second-order recurrence, e.g.
+   * Lag/Spring), so its point-in-time `evaluate` CANNOT produce the real value —
+   * that requires an interval. The true value is produced by the replay seam
+   * (`src/app/statefulOps.ts`), which threads the previous output forward from a
+   * known seed over the frame interval [seedFrame, N] and folds a channel value
+   * whose `sample(t)` re-integrates deterministically (so a scrub replays the same
+   * interval and lands the same value — H40 by contract, not by purity). The
+   * node's own `evaluate` is a passthrough of its input (the degenerate value used
+   * only if it is ever read point-in-time). Absent/false = the ordinary
+   * point-in-time contract. Marker only; the machinery lives in the seam.
+   */
+  stateful?: boolean;
   cost: NodeCost;
   /**
    * Output type widened to `unknown` for the input shape so zod schemas with
