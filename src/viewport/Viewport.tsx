@@ -16,6 +16,7 @@ import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
+import { ViewportHandles } from '../app/ViewportHandles';
 import { ProjectionToggle } from '../app/ProjectionToggle';
 import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
@@ -267,6 +268,10 @@ export function Viewport() {
           <GpuProbe />
           <GroundClick />
           <Gizmo />
+          {/* #295 (Inc 4) — viewport handles for promoted spare params: a grabbable
+              in-scene view over node.spare (the dock is the UI view). editorChrome
+              inside the component so an image render excludes it (V37). */}
+          <ViewportHandles />
           {/* #226 — box-select: the in-Canvas projection + commit half. The DOM
               marquee + pointer capture is BoxSelectOverlay, below the Canvas. */}
           <BoxSelect />
