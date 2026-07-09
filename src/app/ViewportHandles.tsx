@@ -135,6 +135,35 @@ function asNumber(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+/** The grabbable sphere marker. It draws on top (depthTest off) AND wins the pick on
+ *  top — a distance-≈0 raycast — so a handle drawn over/behind scene geometry is
+ *  grabbable exactly where it is seen (R3F picks by ray distance, not depth, so without
+ *  this an occluded-but-visible marker is dead; the CameraAimReticle discRaycast lesson,
+ *  Gizmo.tsx:862). Shared by all three shapes. */
+function Marker({
+  pos,
+  onPointerDown,
+}: {
+  pos: THREE.Vector3;
+  onPointerDown: (e: ThreeEvent<PointerEvent>) => void;
+}) {
+  const topRaycast = useMemo(
+    () =>
+      function (this: THREE.Mesh, raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
+        const hits: THREE.Intersection[] = [];
+        THREE.Mesh.prototype.raycast.call(this, raycaster, hits);
+        if (hits.length) intersects.push({ ...hits[0], distance: 0.0001 });
+      },
+    [],
+  );
+  return (
+    <mesh position={pos} onPointerDown={onPointerDown} raycast={topRaycast} renderOrder={999}>
+      <sphereGeometry args={[MARKER_R, 16, 16]} />
+      <meshBasicMaterial color={HANDLE_COLOR} depthTest={false} transparent opacity={0.9} />
+    </mesh>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Point handle — a positionable sphere at anchor + value (vec2/vec3). Drags on a
 // screen-parallel plane through its current position (the reticle idiom).
@@ -174,10 +203,7 @@ function PointHandle({ spec, anchor }: { spec: HandleSpec; anchor: THREE.Vector3
   return (
     <group>
       <Segment from={anchor} to={pos} color={TRACK_COLOR} />
-      <mesh position={pos} onPointerDown={onDown} renderOrder={999}>
-        <sphereGeometry args={[MARKER_R, 16, 16]} />
-        <meshBasicMaterial color={HANDLE_COLOR} depthTest={false} transparent opacity={0.9} />
-      </mesh>
+      <Marker pos={pos} onPointerDown={onDown} />
     </group>
   );
 }
@@ -219,10 +245,7 @@ function SliderHandle({ spec, anchor }: { spec: HandleSpec; anchor: THREE.Vector
   return (
     <group>
       <Segment from={anchor} to={end} color={TRACK_COLOR} />
-      <mesh position={pos} onPointerDown={onDown} renderOrder={999}>
-        <sphereGeometry args={[MARKER_R, 16, 16]} />
-        <meshBasicMaterial color={HANDLE_COLOR} depthTest={false} transparent opacity={0.9} />
-      </mesh>
+      <Marker pos={pos} onPointerDown={onDown} />
     </group>
   );
 }
@@ -274,10 +297,7 @@ function DialHandle({ spec, anchor }: { spec: HandleSpec; anchor: THREE.Vector3 
     <group>
       <Ring anchor={anchor} u={u} v={v} radius={DIAL_R} color={TRACK_COLOR} />
       <Segment from={anchor} to={pos} color={TRACK_COLOR} />
-      <mesh position={pos} onPointerDown={onDown} renderOrder={999}>
-        <sphereGeometry args={[MARKER_R, 16, 16]} />
-        <meshBasicMaterial color={HANDLE_COLOR} depthTest={false} transparent opacity={0.9} />
-      </mesh>
+      <Marker pos={pos} onPointerDown={onDown} />
     </group>
   );
 }
