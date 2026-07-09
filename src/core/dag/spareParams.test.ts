@@ -144,7 +144,12 @@ describe('#291 spare params — serialize round-trip', () => {
       handle: { kind: 'dial', axis: 'y', min: 0, max: 90 },
     };
     let s = addTestNumber(emptyDagState(), 'n1', 7);
-    const set = applyOp(s, { type: 'setSpareParam', nodeId: 'n1', key: 'angle', param: withHandle });
+    const set = applyOp(s, {
+      type: 'setSpareParam',
+      nodeId: 'n1',
+      key: 'angle',
+      param: withHandle,
+    });
     s = set.next;
     expect(s.nodes.n1.spare).toEqual({ angle: withHandle });
     // Survives save/load (generic NodeSchema carries the whole spare record).
