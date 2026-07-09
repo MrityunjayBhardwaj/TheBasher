@@ -200,10 +200,32 @@ export interface NodeDefinition<P = unknown, O = unknown> {
 // is undo-safe with the existing inverse — no new op type. The dock is a pure V34 view:
 // it scans `node.spare` for `promoted === true` and edits the value back through
 // `setSpareParam`; there is NO second store of promoted refs to keep in sync.
+// #295 (Inc 4) — `handle` OVERRIDES/REFINES the viewport handle for a promoted spare
+// (decision D-4). Blender-grounded: a viewport gizmo is a pure VIEW that writes the
+// SAME datum (`Gizmo.matrix_basis` is a world 4×4; a Geometry-Nodes gizmo "modifies
+// the value in the socket") — so the handle is a second view over node.spare, never a
+// second store (V34). The shape DEFAULTS from `type` (vec2/vec3 → point, float/int →
+// slider); `handle` only overrides when the user wants a different shape (e.g. a float
+// as a `dial`) or slider range/axis. Optional so ABSENT = the type default → byte-
+// identical serialize for Inc-0..3 projects, no migration (mirrors `promoted`). Set
+// through the SAME `setSpareParam` op (whole {type,value,promoted,handle} re-set),
+// undo-safe with the existing inverse.
+export const SpareHandleSchema = z.object({
+  kind: z.enum(['point', 'slider', 'dial']),
+  // Slider TRACK axis / dial plane NORMAL in the anchor's world frame. Absent → a
+  // per-kind default ('x' for slider, 'y' for dial). Ignored by `point` (free 3D).
+  axis: z.enum(['x', 'y', 'z']).optional(),
+  // Slider range [min,max] the track maps over; absent → [0,1]. Ignored by point/dial
+  // (point is an absolute offset, dial is degrees).
+  min: z.number().optional(),
+  max: z.number().optional(),
+});
+export type SpareHandle = z.infer<typeof SpareHandleSchema>;
 export const SpareParamSchema = z.object({
   type: z.enum(['float', 'int', 'bool', 'string', 'vec2', 'vec3']),
   value: z.unknown(),
   promoted: z.boolean().optional(),
+  handle: SpareHandleSchema.optional(),
 });
 export type SpareParam = z.infer<typeof SpareParamSchema>;
 

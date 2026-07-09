@@ -132,6 +132,30 @@ describe('#291 spare params — serialize round-trip', () => {
     const after = await loadProject(storage, 'p2');
     expect(JSON.stringify(after.state)).toBe(JSON.stringify(before.state));
   });
+
+  // #295 (Inc 4) — the `handle` refinement rides the SAME setSpareParam op + the
+  // generic NodeSchema serialize path, exactly like `promoted` (Inc 3). Pin that a
+  // fully-specified handle survives the round-trip and its inverse is exact.
+  it('a spare handle override round-trips and undoes exactly', async () => {
+    const withHandle: SpareParam = {
+      type: 'float',
+      value: 30,
+      promoted: true,
+      handle: { kind: 'dial', axis: 'y', min: 0, max: 90 },
+    };
+    let s = addTestNumber(emptyDagState(), 'n1', 7);
+    const set = applyOp(s, { type: 'setSpareParam', nodeId: 'n1', key: 'angle', param: withHandle });
+    s = set.next;
+    expect(s.nodes.n1.spare).toEqual({ angle: withHandle });
+    // Survives save/load (generic NodeSchema carries the whole spare record).
+    const project = composeProject({ id: 'p3', name: 'h', state: s, createdAt: 1, updatedAt: 1 });
+    const storage = new MemoryStorage();
+    await saveProject(storage, project);
+    const loaded = await loadProject(storage, 'p3');
+    expect(loaded.state.nodes.n1.spare).toEqual({ angle: withHandle });
+    // Inverse removes the new key (exact undo).
+    expect(set.inverse).toEqual({ type: 'removeSpareParam', nodeId: 'n1', key: 'angle' });
+  });
 });
 
 describe('#291 driver-aware cycle guard (G6)', () => {
