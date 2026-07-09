@@ -72,6 +72,7 @@ import {
   resolveTrackToTarget,
 } from '../app/nodeConstraints';
 import { childEdges } from '../app/resolveWorldTransform';
+import { NullGlyphR } from './NullGlyph';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -1373,6 +1374,11 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
       );
     case 'Transform':
       return <TransformR value={value} override={override} nodeId={nodeId} />;
+    case 'Null':
+      // #296 — a controller Empty: no geometry, just a selectable axis glyph
+      // (editorChrome, render-excluded). Selection comes from the enclosing
+      // SceneChildNode band, so the glyph carries no onClick.
+      return <NullGlyphR value={value} />;
     case 'Group':
       return <GroupR value={value} override={override} nodeId={nodeId} />;
     case 'MaterialOverride':

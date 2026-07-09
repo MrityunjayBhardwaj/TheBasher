@@ -78,6 +78,21 @@ describe('buildAddPrimitiveOps', () => {
     expect(b.ops.filter((o) => o.type === 'connect')).toHaveLength(0);
   });
 
+  it('Null: standalone controller — auto-wires to scene.children with its TRS', () => {
+    const r = buildAddPrimitiveOps(seedSceneState(), 'Null', [2, 0, 0])!;
+    if (r.ops[0].type !== 'addNode') throw new Error();
+    expect(r.ops[0].nodeType).toBe('Null');
+    expect((r.ops[0].params as { position: number[]; scale: number[] }).position).toEqual([
+      2, 0, 0,
+    ]);
+    expect((r.ops[0].params as { scale: number[] }).scale).toEqual([1, 1, 1]);
+    expect(r.ops[1]).toMatchObject({
+      type: 'connect',
+      to: { node: 'n_scene', socket: 'children' },
+    });
+    expect(r.newNodeId).toMatch(/^null/);
+  });
+
   it('every result carries a unique newNodeId + a human description', () => {
     const a = buildAddPrimitiveOps(seedSceneState(), 'Cube', [0, 0, 0])!;
     const b = buildAddPrimitiveOps(seedSceneState(), 'Cube', [0, 0, 0])!;

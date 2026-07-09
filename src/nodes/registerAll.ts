@@ -66,6 +66,7 @@ import { TrackNode } from './Track';
 import { TrackToNode } from './TrackTo';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
+import { NullNode } from './Null';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 
@@ -94,6 +95,8 @@ const ALL: NodeDefinition[] = [
   // Registered in the Meshes block so its addNode validates at Apply time (V1).
   BakedMeshNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
+  // #296 — a Null controller: a transformable, geometry-less scene object (Empty).
+  NullNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,
   ScatterNode as unknown as NodeDefinition,

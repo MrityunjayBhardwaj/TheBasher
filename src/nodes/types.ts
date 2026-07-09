@@ -683,6 +683,20 @@ export interface TransformValue {
   readonly child: SceneChild | null;
 }
 
+// #296 (Epic 1, transform-channel controllers) — a Null is a physical, transformable
+// SCENE OBJECT with NO geometry (Blender's Empty / Houdini's Null): a first-class
+// controller you grab with the gizmo, that shows in the Outliner, and whose transform
+// channels (tx…sz) a driver can read. It carries only a TRS — the renderer draws a
+// selectable axis glyph (editor chrome), never render geometry. A dedicated `kind`
+// (not a childless Transform) so the exhaustive scene-child switches flag every site
+// that must handle it, and so it renders as a leaf object, not an empty container.
+export interface NullValue {
+  readonly kind: 'Null';
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+}
+
 export interface GroupValue {
   readonly kind: 'Group';
   // #222 — a Group is transformable as a unit (Blender's parent/Empty). `pivot`
@@ -895,6 +909,7 @@ export type SceneChild =
   | ModifiedMeshValue
   | GltfAssetValue
   | TransformValue
+  | NullValue
   | GroupValue
   | MaterialOverrideValue
   | ScatterValue
