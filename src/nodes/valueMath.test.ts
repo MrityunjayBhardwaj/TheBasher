@@ -4,7 +4,7 @@
 // unchanged after the noise core moved here.
 
 import { describe, expect, it } from 'vitest';
-import { applyMathOp, clamp, curveRemap, fit, fractalNoise, lerp } from './valueMath';
+import { applyMathOp, clamp, curveRemap, fit, fractalNoise, lagStep, lerp } from './valueMath';
 
 describe('clamp', () => {
   it('passes values inside the range and bounds the rest', () => {
@@ -76,6 +76,32 @@ describe('applyMathOp', () => {
   });
   it('divide-by-zero is safe (→ 0, not Infinity/NaN)', () => {
     expect(applyMathOp('div', 5, 0)).toBe(0);
+  });
+});
+
+describe('lagStep (stateful first-order step)', () => {
+  it('factor 1 snaps to the input (no lag)', () => {
+    expect(lagStep(0, 10, 1)).toBe(10);
+  });
+  it('factor 0 holds the previous value (infinite lag)', () => {
+    expect(lagStep(3, 10, 0)).toBe(3);
+  });
+  it('closes a fraction of the gap each step', () => {
+    expect(lagStep(0, 10, 0.5)).toBe(5);
+    expect(lagStep(5, 10, 0.5)).toBe(7.5);
+  });
+  it('clamps factor into [0,1] so it never overshoots or diverges', () => {
+    expect(lagStep(0, 10, 2)).toBe(10); // >1 clamps to 1 → snaps, no overshoot
+    expect(lagStep(3, 10, -1)).toBe(3); // <0 clamps to 0 → holds
+  });
+  it('is a pure function of (prev, input, factor) — same args, same result', () => {
+    expect(lagStep(2, 9, 0.3)).toBe(lagStep(2, 9, 0.3));
+  });
+  it('converges toward a held input over repeated steps (settling)', () => {
+    let v = 0;
+    for (let i = 0; i < 50; i++) v = lagStep(v, 10, 0.3);
+    expect(v).toBeGreaterThan(9.99);
+    expect(v).toBeLessThanOrEqual(10);
   });
 });
 
