@@ -95,6 +95,7 @@ import { resolveTransformParam } from './resolveTransformParam';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { driverNodesForTarget } from './paramDrivers';
 import { ParamDriverBind } from './ParamDriverBind';
+import { SpareParamControls } from './SpareParamControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
@@ -2875,6 +2876,11 @@ export function NPanel() {
               );
             })()
           )}
+          {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
+              edit / remove controller knobs + promote them to the Controllers dock.
+              A footer control (not a per-node-type section) since spare params are
+              universal. */}
+          <SpareParamControls nodeId={node.id} />
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
           ) : null}

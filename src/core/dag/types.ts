@@ -193,9 +193,17 @@ export interface NodeDefinition<P = unknown, O = unknown> {
 // while spare params are validated by this ONE shared schema. The `type` tag drives
 // promotion UI (Inc 3) and viewport-handle mapping (Inc 4); `value` is loosely typed
 // here and refined per handle/driver at the consumer.
+// #294 (Inc 3) — `promoted` surfaces this spare param in the scene-wide Controllers
+// dock (decision D-3). Optional so ABSENT = not promoted (the default) → bare/Inc-0
+// projects serialize byte-identical, no migration. Toggled through the SAME
+// `setSpareParam` op (the whole {type,value,promoted} is re-set), so promote/unpromote
+// is undo-safe with the existing inverse — no new op type. The dock is a pure V34 view:
+// it scans `node.spare` for `promoted === true` and edits the value back through
+// `setSpareParam`; there is NO second store of promoted refs to keep in sync.
 export const SpareParamSchema = z.object({
   type: z.enum(['float', 'int', 'bool', 'string', 'vec2', 'vec3']),
   value: z.unknown(),
+  promoted: z.boolean().optional(),
 });
 export type SpareParam = z.infer<typeof SpareParamSchema>;
 
