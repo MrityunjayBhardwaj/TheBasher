@@ -37,6 +37,8 @@ import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
 import { LightStudioPanel } from './LightStudioPanel';
+import { NlaLanePane } from './NlaLanePane';
+import { ControllersDockPane } from './ControllersDockPane';
 import { SimplifyPopover } from './SimplifyPopover';
 
 const DRAWER_HEIGHT_PX = 240;
@@ -63,7 +65,7 @@ export function TimelineDrawer() {
     >
       {open && (
         <div
-          className="flex w-full flex-col border-t border-line"
+          className="flex w-full flex-col border-t border-border"
           style={{ height: DRAWER_HEIGHT_PX }}
         >
           <DockHeader
@@ -90,6 +92,14 @@ export function TimelineDrawer() {
               <CurveEditor duration={duration} />
             </div>
             <div
+              data-testid="nla-pane"
+              data-active={activeTab === 'nla'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'nla' ? 'flex' : 'none' }}
+            >
+              <NlaLanePane />
+            </div>
+            <div
               data-testid="light-studio-pane"
               data-active={activeTab === 'lightStudio'}
               className="absolute inset-0"
@@ -97,10 +107,20 @@ export function TimelineDrawer() {
             >
               <LightStudioPanel />
             </div>
+            <div
+              data-testid="controllers-pane"
+              data-active={activeTab === 'controllers'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'controllers' ? 'flex' : 'none' }}
+            >
+              <ControllersDockPane />
+            </div>
           </div>
           {/* The track-ops toolbar is keyframe-specific — only the time tabs show
-              it. The Light Studio is a spatial surface with its own affordances. */}
-          {activeTab !== 'lightStudio' ? <DockToolbar /> : null}
+              it. The Light Studio is a spatial surface with its own affordances;
+              the NLA lane view acts on strips/tracks, not timelineSelection
+              channels (#283 Phase 5 — its own affordances land in 5C/5D). */}
+          {!['lightStudio', 'nla', 'controllers'].includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}
       <div className="flex items-stretch">
@@ -109,7 +129,7 @@ export function TimelineDrawer() {
           data-testid="timeline-drawer-toggle"
           aria-label={open ? 'Collapse timeline drawer' : 'Expand timeline drawer'}
           aria-expanded={open}
-          className="flex w-8 items-center justify-center border-r border-line bg-bg-2 text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className="flex w-8 items-center justify-center border-r border-border bg-bg-2 text-fg hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           onClick={toggle}
         >
           {open ? '▾' : '▴'}
@@ -138,7 +158,7 @@ function DockHeader({
       data-testid="timeline-tab-strip"
       role="tablist"
       aria-label="Timeline tabs"
-      className="flex items-stretch border-b border-line bg-bg-2 text-xs"
+      className="flex items-stretch border-b border-border bg-bg-2 text-xs"
       style={{ height: HEADER_HEIGHT_PX }}
     >
       <TabButton
@@ -154,13 +174,25 @@ function DockHeader({
         onClick={() => onSelectTab('curve')}
       />
       <TabButton
+        id="nla"
+        label="NLA"
+        active={activeTab === 'nla'}
+        onClick={() => onSelectTab('nla')}
+      />
+      <TabButton
         id="lightStudio"
         label="Light Studio"
         active={activeTab === 'lightStudio'}
         onClick={() => onSelectTab('lightStudio')}
       />
+      <TabButton
+        id="controllers"
+        label="Controllers"
+        active={activeTab === 'controllers'}
+        onClick={() => onSelectTab('controllers')}
+      />
       <div className="flex-1" />
-      <div className="flex items-center gap-3 px-3 text-mute">
+      <div className="flex items-center gap-3 px-3 text-fg-dim">
         <span data-testid="timeline-dock-frame-readout">
           {frame} / {totalFrames}
         </span>
@@ -189,8 +221,8 @@ function TabButton({
       data-testid={`timeline-tab-${id}`}
       data-active={active}
       onClick={onClick}
-      className={`flex items-center border-r border-line px-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        active ? 'bg-bg text-fg' : 'text-mute hover:bg-line/40 hover:text-fg'
+      className={`flex items-center border-r border-border px-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        active ? 'bg-bg text-fg' : 'text-fg-dim hover:bg-muted/40 hover:text-fg'
       }`}
     >
       {label}
@@ -260,7 +292,7 @@ function DockToolbar() {
   return (
     <div
       data-testid="timeline-dock-toolbar"
-      className="relative flex items-center gap-1 border-t border-line bg-bg-2 px-2 text-xs"
+      className="relative flex items-center gap-1 border-t border-border bg-bg-2 px-2 text-xs"
       style={{ height: TOOLBAR_HEIGHT_PX }}
     >
       <ToolbarButton
@@ -277,7 +309,7 @@ function DockToolbar() {
         disabled={activeKeyframeId === null}
         onClick={onDelete}
       />
-      <span className="mx-2 h-4 w-px bg-line" />
+      <span className="mx-2 h-4 w-px bg-border" />
       <ToolbarButton
         id="simplify"
         label="Simplify…"
@@ -292,7 +324,7 @@ function DockToolbar() {
         disabled={activeChannelId === null}
         onClick={onClear}
       />
-      <span className="mx-2 h-4 w-px bg-line" />
+      <span className="mx-2 h-4 w-px bg-border" />
       <ToolbarButton
         id="mute"
         label="Mute"
@@ -336,10 +368,10 @@ function ToolbarButton({
       onClick={onClick}
       className={`rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
         disabled
-          ? 'cursor-not-allowed text-mute'
+          ? 'cursor-not-allowed text-fg-dim'
           : active
-            ? 'bg-line text-accent'
-            : 'text-fg hover:bg-line'
+            ? 'bg-muted text-accent'
+            : 'text-fg hover:bg-muted'
       }`}
     >
       {label}

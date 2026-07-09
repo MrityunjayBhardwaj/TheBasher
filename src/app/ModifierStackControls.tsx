@@ -69,7 +69,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   }
 
   const btn =
-    'rounded border border-line px-1.5 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:border-line disabled:hover:text-fg';
+    'rounded border border-border px-1.5 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg';
 
   return (
     <div data-testid="modifier-stack" className="flex flex-col gap-1 text-xs">
@@ -92,7 +92,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
               key={m.nodeId}
               data-testid={`modifier-row-${m.nodeId}`}
               className={`flex items-center gap-1 rounded border px-1 py-0.5 ${
-                active ? 'border-accent bg-bg-2' : 'border-line'
+                active ? 'border-accent bg-bg-2' : 'border-border'
               }`}
             >
               <button
@@ -153,7 +153,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
             type="button"
             data-testid={`modifier-add-${a.type}`}
             onClick={() => onAdd(a.type)}
-            className="rounded border border-line bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="rounded border border-border bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             + {a.label}
           </button>

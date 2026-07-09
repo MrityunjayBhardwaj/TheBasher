@@ -113,7 +113,7 @@ const SECTION_RENDERERS: Record<string, SectionRenderer> = {
 
 function NoControlsBody({ nodeType }: { nodeType: string }) {
   return (
-    <p className="px-3 py-2 text-[11px] text-mute" data-testid="controls-section-empty">
+    <p className="px-3 py-2 text-[11px] text-fg-dim" data-testid="controls-section-empty">
       No controls for {nodeType} yet.
     </p>
   );
@@ -136,10 +136,10 @@ export function ControlsPanel() {
   return (
     <div
       data-testid="controls-panel"
-      className="flex h-full w-72 shrink-0 flex-col border-l border-line bg-bg text-fg"
+      className="flex h-full w-72 shrink-0 flex-col border-l border-border bg-bg text-fg"
     >
       <div
-        className="flex items-center border-b border-line px-3 text-[10px] uppercase tracking-wide text-mute"
+        className="flex items-center border-b border-border px-3 text-[10px] uppercase tracking-wide text-fg-dim"
         style={{ height: 28 }}
       >
         Controls
@@ -150,21 +150,21 @@ export function ControlsPanel() {
       {layerName === null ? (
         <div
           data-testid="controls-panel-empty"
-          className="flex flex-1 items-center justify-center px-4 text-center text-[11px] text-mute"
+          className="flex flex-1 items-center justify-center px-4 text-center text-[11px] text-fg-dim"
         >
           Select a layer to edit its controls.
         </div>
       ) : (
         <div className="flex flex-1 flex-col overflow-auto">
           <div
-            className="truncate border-b border-line px-3 py-1.5 text-[12px] text-fg"
+            className="truncate border-b border-border px-3 py-1.5 text-[12px] text-fg"
             data-testid="controls-panel-layer-name"
             title={layerName}
           >
             {layerName}
           </div>
           {sections.length === 0 ? (
-            <p className="px-3 py-2 text-[11px] text-mute">This layer has no source yet.</p>
+            <p className="px-3 py-2 text-[11px] text-fg-dim">This layer has no source yet.</p>
           ) : (
             sections.map((section) => (
               <ProducerSectionView key={section.nodeId} section={section} />
@@ -185,7 +185,7 @@ function ProducerSectionView({ section }: { section: ProducerSection }) {
     <div
       data-testid={`controls-section-${section.nodeId}`}
       data-role={section.role}
-      className="border-b border-line"
+      className="border-b border-border"
     >
       <button
         type="button"
@@ -194,8 +194,8 @@ function ProducerSectionView({ section }: { section: ProducerSection }) {
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
-        <span className="w-3 select-none text-center text-mute">{open ? '▾' : '▸'}</span>
-        <span className="rounded bg-bg-2 px-1 text-[9px] uppercase tracking-wide text-mute">
+        <span className="w-3 select-none text-center text-fg-dim">{open ? '▾' : '▸'}</span>
+        <span className="rounded bg-bg-2 px-1 text-[9px] uppercase tracking-wide text-fg-dim">
           {section.role}
         </span>
         <span className="flex-1 truncate text-fg" title={section.label}>

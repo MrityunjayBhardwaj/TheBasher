@@ -27,7 +27,35 @@
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
-import { sampleScalarKeyframes } from '../nodes/keyframeInterp';
+import {
+  sampleScalarKeyframes,
+  sampleScalarKeyframesExtended,
+  resolveExtend,
+  type ChannelExtend,
+  type ChannelExtrapolate,
+} from '../nodes/keyframeInterp';
+import type { FChannelModifier } from '../nodes/channelModifiers';
+
+/** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
+ *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
+ *  the F-Modifier stack, so the camera-pose scalar path honours them exactly like
+ *  `ch.sample()` does (H40: render == read). Undefined fields fall through to the
+ *  sampler's hold/0/[] defaults. */
+function channelExtendArgs(
+  params: unknown,
+): [ChannelExtend, ChannelExtend, number, number, readonly FChannelModifier[] | undefined] {
+  const p = params as {
+    extendBefore?: ChannelExtrapolate;
+    extendAfter?: ChannelExtrapolate;
+    modifiers?: readonly FChannelModifier[];
+  };
+  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+    p.extendBefore,
+    p.extendAfter,
+    p.modifiers,
+  );
+  return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
+}
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
 import { resolveTrackToTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
@@ -130,7 +158,7 @@ function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: n
     const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
       (a, b) => a.time - b.time,
     );
-    return sampleScalarKeyframes(sorted, seconds);
+    return sampleScalarKeyframesExtended(sorted, seconds, ...channelExtendArgs(ch.params));
   }
   return base;
 }
@@ -291,7 +319,7 @@ export function resolveCameraPoseAt(
       const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
         (a, b) => a.time - b.time,
       );
-      pose[path] = sampleScalarKeyframes(sorted, seconds);
+      pose[path] = sampleScalarKeyframesExtended(sorted, seconds, ...channelExtendArgs(ch.params));
     }
   }
 

@@ -13,7 +13,25 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelVec2Value, Vec2 } from './types';
-import { sampleVec2KeyframesExtended } from './keyframeInterp';
+import { CHANNEL_BLEND_MODES } from './types';
+import {
+  sampleVec2KeyframesExtended,
+  resolveExtend,
+  buildPerAxisExtend,
+  KEYFRAME_INTERPS,
+  EASE_DIRS,
+  EXTRAPOLATE_RULES,
+  KEYFRAME_HANDLE_TYPES,
+  type ChannelExtrapolate,
+  type Easing,
+  type EaseDir,
+  type HandleType,
+} from './keyframeInterp';
+import {
+  ChannelModifiersSchema,
+  AxisModifiersSchema,
+  migrateExtendParamsToCycles,
+} from './channelModifiers';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -31,16 +49,55 @@ export const KeyframeChannelVec2Params = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
-  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
-   *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
-  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
-  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  /** #283 Phase 1 (NLA) — layer composition. blendMode 'replace' (legacy
+   *  last-writer lerp, default → byte-identical) | 'combine' (additive/manifold
+   *  over the per-type identity); order = bottom→top fold position (default 0 →
+   *  DAG order → byte-identical). REF: docs/NLA-DESIGN.md §3.1; vyapti V88 D2/D3. */
+  blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
+  order: z.number().default(0),
+  /** D1 (#269) / #275 — per-side EXTRAPOLATION for times OUTSIDE the authored
+   *  keyframe domain: 'hold' (clamp, default) or 'slope' (linear). The cycling
+   *  rules moved to a Cycles F-Modifier (#275). Default 'hold' → byte-identical. */
+  extendBefore: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  extendAfter: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  /** #274 (V88 D2) / #275 — per-channel F-MODIFIER STACK (Noise, Cycles …); default
+   *  `[]` → byte-identical. */
+  modifiers: ChannelModifiersSchema,
+  /** #280 — OPTIONAL per-axis modifier override (axisModifiers[i] = the complete stack
+   *  for component i; absent → shared `modifiers`). Absent whole array → byte-identical. */
+  axisModifiers: AxisModifiersSchema,
+  /** #289 — OPTIONAL per-axis EXTRAPOLATION override (axisExtend[i] = hold/slope for
+   *  component i; `null` → channel-level extendBefore/After). Per-axis Cycles lives in
+   *  `axisModifiers[i]`. Absent whole array → byte-identical. */
+  axisExtend: z
+    .array(
+      z
+        .object({
+          before: z.enum(
+            EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
+          ),
+          after: z.enum(
+            EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]],
+          ),
+        })
+        .nullable(),
+    )
+    .optional(),
   keyframes: z
     .array(
       z.object({
         time: z.number().nonnegative(),
         value: Vec2Schema,
-        easing: z.enum(['linear', 'cubic']).default('cubic'),
+        easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).default('cubic'),
+        ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
+        // #273 — bézier HANDLE TYPE; optional, undefined = pre-#273 path (byte-identical).
+        handleType: z
+          .enum(KEYFRAME_HANDLE_TYPES as unknown as [HandleType, ...HandleType[]])
+          .optional(),
         inHandle: HandleSchema,
         outHandle: HandleSchema,
       }),
@@ -57,9 +114,34 @@ export type KeyframeChannelVec2Params = z.infer<typeof KeyframeChannelVec2Params
  */
 export function buildVec2Sampler(params: KeyframeChannelVec2Params): (seconds: number) => Vec2 {
   const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
-  const { extendBefore, extendAfter } = params;
+  const { modifiers, axisModifiers, axisExtend } = params;
+  // #275 — channel-level fallback for axes with no per-axis override (byte-identical).
+  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+    params.extendBefore,
+    params.extendAfter,
+    modifiers,
+  );
+  // #289 — per-axis extrapolation/Cycles; undefined → sampler's channel-level fast path.
+  const perAxisExtend = buildPerAxisExtend(
+    2,
+    params.extendBefore,
+    params.extendAfter,
+    modifiers,
+    axisModifiers,
+    axisExtend,
+  );
   return (seconds: number) =>
-    sampleVec2KeyframesExtended(sorted, seconds, extendBefore, extendAfter);
+    sampleVec2KeyframesExtended(
+      sorted,
+      seconds,
+      before,
+      after,
+      cyclesBefore,
+      cyclesAfter,
+      modifiers,
+      axisModifiers,
+      perAxisExtend,
+    );
 }
 
 export const KeyframeChannelVec2Node: NodeDefinition<
@@ -67,7 +149,17 @@ export const KeyframeChannelVec2Node: NodeDefinition<
   KeyframeChannelVec2Value
 > = {
   type: 'KeyframeChannelVec2',
-  version: 1,
+  version: 2,
+  // #275 v1→v2: split the D1 extend enum (see KeyframeChannelNumber). Byte-identical.
+  migrations: {
+    1: (oldParams) => {
+      const { extendBefore, extendAfter, modifiers } = migrateExtendParamsToCycles(oldParams);
+      const rest = { ...(oldParams as Record<string, unknown>) };
+      delete rest.cyclesBefore;
+      delete rest.cyclesAfter;
+      return { ...rest, extendBefore, extendAfter, modifiers };
+    },
+  },
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelVec2Params,
@@ -84,6 +176,8 @@ export const KeyframeChannelVec2Node: NodeDefinition<
       paramPath: params.paramPath,
       mute: params.mute,
       weight: params.weight,
+      blendMode: params.blendMode,
+      order: params.order,
       sample: buildVec2Sampler(params),
     };
   },

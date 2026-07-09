@@ -21,6 +21,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Easing, KeyframeChannelColorValue } from './types';
+import { CHANNEL_BLEND_MODES } from './types';
 
 export const KeyframeChannelColorParams = z.object({
   name: z.string().default('channel'),
@@ -30,6 +31,12 @@ export const KeyframeChannelColorParams = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
+  /** #283 Phase 1 (NLA) — layer composition. blendMode 'replace' (legacy
+   *  last-writer lerp, default → byte-identical) | 'combine' (additive/manifold
+   *  over the per-type identity); order = bottom→top fold position (default 0 →
+   *  DAG order → byte-identical). REF: docs/NLA-DESIGN.md §3.1; vyapti V88 D2/D3. */
+  blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
+  order: z.number().default(0),
   keyframes: z
     .array(
       z.object({
@@ -166,6 +173,8 @@ export const KeyframeChannelColorNode: NodeDefinition<
       paramPath: params.paramPath,
       mute: params.mute,
       weight: params.weight,
+      blendMode: params.blendMode,
+      order: params.order,
       sample: (seconds: number) => sample(sorted, seconds),
     };
   },

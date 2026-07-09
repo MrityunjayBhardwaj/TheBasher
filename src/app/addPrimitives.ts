@@ -28,7 +28,16 @@ export type PrimitiveKind =
   | 'OrthographicCamera'
   // Empties
   | 'Group'
-  | 'Transform';
+  | 'Transform'
+  // Compute — scalar driver sources (Epic 1 Inc 1 vocabulary). Float floating
+  // nodes: they feed ParamDrivers via the pull rail, never the render tree, so
+  // they are added unwired (like empties). #294 Inc 3.
+  | 'Math'
+  | 'Fit'
+  | 'Clamp'
+  | 'Mix'
+  | 'CurveRemap'
+  | 'Noise';
 
 export interface AddResult {
   ops: Op[];
@@ -103,7 +112,19 @@ function prefixFor(kind: PrimitiveKind): string {
   if (isMesh(kind)) return 'mesh';
   if (isLight(kind)) return 'light';
   if (isCamera(kind)) return 'cam';
+  if (isCompute(kind)) return 'num';
   return 'empty';
+}
+
+function isCompute(kind: PrimitiveKind): boolean {
+  return (
+    kind === 'Math' ||
+    kind === 'Fit' ||
+    kind === 'Clamp' ||
+    kind === 'Mix' ||
+    kind === 'CurveRemap' ||
+    kind === 'Noise'
+  );
 }
 
 function nodeTypeFor(kind: PrimitiveKind): string {
@@ -159,6 +180,18 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'group';
     case 'Transform':
       return 'transform';
+    case 'Math':
+      return 'Math node';
+    case 'Fit':
+      return 'Fit node';
+    case 'Clamp':
+      return 'Clamp node';
+    case 'Mix':
+      return 'Mix node';
+    case 'CurveRemap':
+      return 'Curve Remap node';
+    case 'Noise':
+      return 'Noise node';
   }
 }
 
@@ -216,5 +249,14 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
       return {};
     case 'Transform':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // Compute nodes have full zod defaults on every param (computeNodes.ts) and no
+    // position — an empty object lets the addNode parse fill the defaults.
+    case 'Math':
+    case 'Fit':
+    case 'Clamp':
+    case 'Mix':
+    case 'CurveRemap':
+    case 'Noise':
+      return {};
   }
 }

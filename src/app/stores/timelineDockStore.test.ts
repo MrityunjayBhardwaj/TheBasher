@@ -61,6 +61,14 @@ describe('timelineDockStore', () => {
     expect(mod.useTimelineDockStore.getState().activeTab).toBe('curve');
   });
 
+  it("persistence round-trip for the 'nla' tab (#283 Phase 5) — survives re-init", async () => {
+    useTimelineDockStore.getState().setActiveTab('nla');
+    expect(useTimelineDockStore.getState().activeTab).toBe('nla');
+    vi.resetModules();
+    const mod = await import('./timelineDockStore');
+    expect(mod.useTimelineDockStore.getState().activeTab).toBe('nla');
+  });
+
   it('K11 step 4 — malformed activeTab value coerces back to default', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'unknown' }));
     vi.resetModules();

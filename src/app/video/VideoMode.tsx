@@ -74,7 +74,7 @@ function EmptyState() {
     >
       <div className="flex flex-col gap-1">
         <p className="text-sm text-fg">No composition yet</p>
-        <p className="text-xs text-mute">
+        <p className="text-xs text-fg-dim">
           Create a composition to start editing video. (File ▸ New Composition)
         </p>
       </div>
@@ -82,7 +82,7 @@ function EmptyState() {
         type="button"
         data-testid="video-mode-new-comp"
         onClick={() => createNewComposition()}
-        className="rounded bg-bg-2 px-3 py-1.5 text-xs text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded bg-bg-2 px-3 py-1.5 text-xs text-fg hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         New Composition
       </button>
@@ -133,15 +133,15 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
             live layer count, and the Add Layer affordance (the layer Add path). */}
         <div
           data-testid="video-mode-timeline"
-          className="flex flex-col border-t border-line bg-bg"
+          className="flex flex-col border-t border-border bg-bg"
           style={{ height: 300 }}
         >
           <VideoTransport comp={comp.params} />
-          <div className="flex items-center gap-3 border-b border-line px-3 py-1.5 text-xs">
+          <div className="flex items-center gap-3 border-b border-border px-3 py-1.5 text-xs">
             <span className="text-fg" data-testid="video-mode-comp-name">
               {name}
             </span>
-            <span className="text-mute" data-testid="video-mode-layer-count">
+            <span className="text-fg-dim" data-testid="video-mode-layer-count">
               {layerCount} {layerCount === 1 ? 'layer' : 'layers'}
             </span>
             <div className="flex-1" />
@@ -166,7 +166,7 @@ function AddLayerMenu({ compId }: { compId: NodeId }) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="rounded bg-bg-2 px-2 py-0.5 text-[11px] text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded bg-bg-2 px-2 py-0.5 text-[11px] text-fg hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
         + Add Layer ▾
       </button>
@@ -252,7 +252,7 @@ function ExportMenu() {
         aria-expanded={open}
         disabled={rendering}
         onClick={() => setOpen((v) => !v)}
-        className="rounded bg-bg-2 px-2 py-0.5 text-[11px] text-fg hover:bg-line focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:text-fg/40"
+        className="rounded bg-bg-2 px-2 py-0.5 text-[11px] text-fg hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:text-fg/40"
       >
         Export ▾
       </button>

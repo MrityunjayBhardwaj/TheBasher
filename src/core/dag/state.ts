@@ -48,6 +48,13 @@ export function* edges(
  * Cycle check: would adding edge `producer.node → consumer.node` form a cycle?
  * Returns true if a path already exists `consumer → ... → producer`.
  *
+ * The walk follows dependency edges upward from `producer`. By default those are
+ * the wired `node.inputs` edges. #291 (Epic 1, G6): a driver/overlay dependency is
+ * NOT a wired input edge — it is expressed via params (a driven target depends on
+ * its source). Pass `paramDeps` (a `consumerId → [producerId, …]` adjacency of
+ * those extra dependencies) so a driver cannot close a loop that the input-only
+ * walk would miss. Omitting it preserves the exact pre-#291 behavior.
+ *
  * REF: THESIS.md §10 (cycle detection by visited-set + depth limit).
  */
 export function wouldCreateCycle(
@@ -55,6 +62,7 @@ export function wouldCreateCycle(
   producer: NodeId,
   consumer: NodeId,
   depthLimit = 32,
+  paramDeps?: Record<NodeId, NodeId[]>,
 ): boolean {
   if (producer === consumer) return true;
   const stack: Array<{ id: NodeId; depth: number }> = [{ id: producer, depth: 0 }];
@@ -66,12 +74,19 @@ export function wouldCreateCycle(
     visited.add(id);
     if (depth >= depthLimit) continue;
     const node = state.nodes[id];
-    if (!node) continue;
-    for (const binding of Object.values(node.inputs)) {
-      const refs = Array.isArray(binding) ? binding : [binding];
-      for (const ref of refs) {
-        if (!visited.has(ref.node)) stack.push({ id: ref.node, depth: depth + 1 });
+    // A node absent from `state.nodes` can still carry param dependencies below,
+    // so we don't `continue` on a missing node — only skip its input edges.
+    if (node) {
+      for (const binding of Object.values(node.inputs)) {
+        const refs = Array.isArray(binding) ? binding : [binding];
+        for (const ref of refs) {
+          if (!visited.has(ref.node)) stack.push({ id: ref.node, depth: depth + 1 });
+        }
       }
+    }
+    // #291 — also traverse driver/overlay dependencies for this node.
+    for (const dep of paramDeps?.[id] ?? []) {
+      if (!visited.has(dep)) stack.push({ id: dep, depth: depth + 1 });
     }
   }
   return false;

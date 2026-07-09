@@ -148,6 +148,50 @@ describe('overlayChannels — the lifted channel-overlay primitive (#196)', () =
   });
 });
 
+describe('multi-channel fold (#283 Phase 1 — the NLA reducer wiring)', () => {
+  const box = () => ({ kind: 'BoxMesh', position: [0, 0, 0] }) as unknown as SceneChild;
+
+  it('two Replace channels on one param → the TOP (higher order) wins, order-stable', () => {
+    const lo = { ...vec3Ch('position', [1, 0, 0]), blendMode: 'replace' as const, order: 0 };
+    const hi = { ...vec3Ch('position', [9, 0, 0]), blendMode: 'replace' as const, order: 1 };
+    expect((overlayChannels(box(), [lo, hi], 1, 0) as Record<string, unknown>).position).toEqual([
+      9, 0, 0,
+    ]);
+    // array-order INVARIANT: the `order` field decides, not scan order (V88 D3).
+    expect((overlayChannels(box(), [hi, lo], 1, 0) as Record<string, unknown>).position).toEqual([
+      9, 0, 0,
+    ]);
+  });
+
+  it('two Combine channels on one param → ADDITIVE sum over the base (not last-wins)', () => {
+    const a = { ...vec3Ch('position', [1, 0, 0]), blendMode: 'combine' as const, order: 0 };
+    const b = { ...vec3Ch('position', [0, 2, 0]), blendMode: 'combine' as const, order: 1 };
+    expect((overlayChannels(box(), [a, b], 1, 0) as Record<string, unknown>).position).toEqual([
+      1, 2, 0,
+    ]);
+    // additive combine is order-invariant too (commutative)
+    expect((overlayChannels(box(), [b, a], 1, 0) as Record<string, unknown>).position).toEqual([
+      1, 2, 0,
+    ]);
+  });
+
+  it('a bare channel (no blendMode/order) folds byte-identically to today (Replace @ order 0)', () => {
+    const out = overlayChannels(box(), [vec3Ch('position', [3, 4, 5])], 1, 0) as Record<
+      string,
+      unknown
+    >;
+    expect(out.position).toEqual([3, 4, 5]);
+  });
+
+  it('scale param Combine MULTIPLIES (identity 1, detected by paramPath)', () => {
+    const base = () => ({ kind: 'BoxMesh', scale: [2, 2, 2] }) as unknown as SceneChild;
+    const s = { ...vec3Ch('scale', [3, 1, 1]), blendMode: 'combine' as const, order: 0 };
+    expect((overlayChannels(base(), [s], 1, 0) as Record<string, unknown>).scale).toEqual([
+      6, 2, 2,
+    ]);
+  });
+});
+
 describe('writeAt — the one shared path-writer (H40, re-exported from AnimationLayer)', () => {
   it('no-ops when an intermediate object is missing (path must pre-exist)', () => {
     const obj: Record<string, unknown> = { a: {} };

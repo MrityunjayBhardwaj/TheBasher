@@ -77,6 +77,13 @@ import { RevertImportedClipConnector } from './animate/RevertImportedClipConnect
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
+import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
+import {
+  FMODIFIER_TYPES,
+  defaultModifier,
+  type CycleMode,
+  type FChannelModifier,
+} from '../nodes/channelModifiers';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -85,6 +92,10 @@ import { RenameInput } from './RenameInput';
 import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam } from './resolveTransformParam';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
+import { driverNodesForTarget } from './paramDrivers';
+import { ParamDriverBind } from './ParamDriverBind';
+import { SpareParamControls } from './SpareParamControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
@@ -232,7 +243,6 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
       autoKeyCommit(nodeId, paramPath, next);
     },
   });
-  const display = scrub.isDragging ? scrub.previewValue : value;
   // P7.4 D-02: read-only-while-playing applies ONLY when this field is
   // displaying an evaluated value (D-03 scope: transform-only). The helper
   // returns null for scalars (D-03 whitelist guard), so NumericField never
@@ -242,7 +252,33 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
   // future scalar transform param is added (none today), the seam covers it.
   const playing = useTimeStore((s) => s.playing);
   const evaluated = false;
-  const readOnly = playing && evaluated;
+  // #293 (Inc 2) — the PULL rail read side. If a ParamDriver overlays this
+  // (nodeId, paramPath), the field shows the DRIVEN value (resolveEvaluatedParam —
+  // the SAME value the renderer shows, so inspector == viewport, H40) and is
+  // read-only (the driver owns the value; edit the source, not the base). Undriven →
+  // byte-identical to before (no driver → resolve returns base → we keep the authored
+  // `value` path). Subscribing to dagState mirrors VectorField so a source edit
+  // refreshes the display.
+  const dagState = useDagStore((s) => s.state);
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const driven = useMemo(
+    () =>
+      driverNodesForTarget(dagState.nodes, nodeId).some(
+        (d) => (d.params as { paramPath?: unknown }).paramPath === paramPath,
+      ),
+    [dagState, nodeId, paramPath],
+  );
+  const drivenValue = useMemo(() => {
+    if (!driven) return null;
+    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
+      time: { frame, seconds, normalized },
+    });
+    return typeof r?.value === 'number' ? r.value : null;
+  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  const readOnly = driven || (playing && evaluated);
+  const display = driven ? (drivenValue ?? value) : scrub.isDragging ? scrub.previewValue : value;
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
@@ -256,13 +292,25 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
           />
         ) : null}
         <span
-          className="cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent"
-          onPointerDown={scrub.onPointerDown}
+          // #293 — a DRIVEN scalar is read-only; disable the drag-scrub too, else
+          // dragging the label writes the (driver-overwritten) base — an invisible
+          // no-op (V38). The driver owns the value; edit the source, not the base.
+          className={
+            driven
+              ? 'select-none font-mono text-fg/40'
+              : 'cursor-ew-resize select-none font-mono text-fg/60 hover:text-accent'
+          }
+          onPointerDown={driven ? undefined : scrub.onPointerDown}
           data-testid={`inspector-scrub-${nodeId}-${paramPath}`}
-          title="Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse."
+          title={
+            driven
+              ? 'Driven — edit the source, not the base'
+              : 'Drag horizontally to scrub. Shift = fine, Cmd/Ctrl = coarse.'
+          }
         >
           {label}
         </span>
+        <ParamDriverBind nodeId={nodeId} paramPath={paramPath} />
       </span>
       <input
         type="number"
@@ -548,7 +596,7 @@ function EnumField({
       <select
         value={value}
         data-testid={`inspector-enum-${nodeId}-${paramPath}`}
-        className="rounded border border-line bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) =>
           dispatch(
             { type: 'setParam', nodeId, paramPath, value: e.target.value },
@@ -564,6 +612,580 @@ function EnumField({
         ))}
       </select>
     </label>
+  );
+}
+
+/** The node types that carry per-side extend rules (#269/#270, D1). Gates the
+ *  ChannelExtendControls render + the raw-row suppression to exactly these. */
+const KEYFRAME_CHANNEL_TYPES: ReadonlySet<string> = new Set([
+  'KeyframeChannelNumber',
+  'KeyframeChannelVec2',
+  'KeyframeChannelVec3',
+]);
+
+/** #270/#275 — the per-side EXTRAPOLATION control (hold/slope), grouped as one
+ *  "Extend" block in the channel's animate section. Blender-grounded: this is the
+ *  F-Curve `extrapolation` property; the cycling rules moved to a Cycles F-Modifier
+ *  (authored in ChannelModifierControls below). Each side is a plain setParam over
+ *  the exported EXTRAPOLATE_RULES — discrete config, not keyframed. The two <select>s
+ *  keep the `inspector-enum-<id>-extend{Before,After}` testid so the generic enum
+ *  probe and the extend e2e both target them. */
+function ChannelExtendControls({ nodeId }: { nodeId: string }) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const before = useDagStore(
+    (s) => (s.state.nodes[nodeId]?.params as { extendBefore?: string } | undefined)?.extendBefore,
+  );
+  const after = useDagStore(
+    (s) => (s.state.nodes[nodeId]?.params as { extendAfter?: string } | undefined)?.extendAfter,
+  );
+  const row = (side: string, rulePath: string, ruleValue: string) => (
+    <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{side}</span>
+      <select
+        value={ruleValue}
+        data-testid={`inspector-enum-${nodeId}-${rulePath}`}
+        className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          dispatch(
+            { type: 'setParam', nodeId, paramPath: rulePath, value: e.target.value },
+            'user',
+            `set ${rulePath}`,
+          )
+        }
+      >
+        {EXTRAPOLATE_RULES.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+  return (
+    <div className="flex flex-col">
+      <span className="px-3 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        Extend
+      </span>
+      {row('Before', 'extendBefore', before ?? 'hold')}
+      {row('After', 'extendAfter', after ?? 'hold')}
+    </div>
+  );
+}
+
+/** #274/#280 — a single F-MODIFIER STACK editor: an Add menu + a card per modifier
+ *  (mute, remove, type-specific params, shared influence + restricted-range fields).
+ *  Reused for BOTH the channel's shared stack AND each vec channel's per-axis override
+ *  (#280) — `prefix` scopes the testids so the two never collide (`channel-modifier-…`
+ *  for shared, `channel-axismod-<axis>-…` per axis); `excludeTypes` hides Cycles from the
+ *  per-axis menu (Cycles/extrapolation stay channel-level). Every edit is one onChange
+ *  over the WHOLE array — the chokepoint the sampler reads → render==read==curve (H40). */
+function ModifierList({
+  modifiers,
+  onChange,
+  prefix = 'channel-modifier',
+  excludeTypes,
+}: {
+  modifiers: FChannelModifier[];
+  onChange: (next: FChannelModifier[]) => void;
+  prefix?: string;
+  excludeTypes?: readonly string[];
+}) {
+  const add = (type: (typeof FMODIFIER_TYPES)[number]) =>
+    onChange([...modifiers, defaultModifier(type)]);
+  const remove = (i: number) => onChange(modifiers.filter((_, j) => j !== i));
+  const patch = (i: number, p: Partial<FChannelModifier>) =>
+    onChange(modifiers.map((m, j) => (j === i ? ({ ...m, ...p } as FChannelModifier) : m)));
+  const addTypes = excludeTypes
+    ? FMODIFIER_TYPES.filter((t) => !excludeTypes.includes(t))
+    : FMODIFIER_TYPES;
+
+  const numField = (i: number, label: string, path: string, value: number, step = 0.1) => (
+    <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+      <span className="font-mono text-fg/50">{label}</span>
+      <input
+        type="number"
+        step={step}
+        value={value}
+        data-testid={`${prefix}-${i}-${path}`}
+        className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) =>
+          patch(i, { [path]: Number(e.target.value) || 0 } as Partial<FChannelModifier>)
+        }
+      />
+    </label>
+  );
+
+  // #275 — a Cycles modifier's per-side mode select (none/repeat/repeat-offset/
+  // repeat-mirror). 'none' = that side falls back to the channel's hold/slope extrapolation.
+  const CYCLE_MODES: readonly CycleMode[] = ['none', 'repeat', 'repeat-offset', 'repeat-mirror'];
+  const modeRow = (i: number, label: string, path: string, value: CycleMode) => (
+    <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+      <span className="font-mono text-fg/50">{label}</span>
+      <select
+        value={value}
+        data-testid={`${prefix}-${i}-${path}`}
+        className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => patch(i, { [path]: e.target.value } as Partial<FChannelModifier>)}
+      >
+        {CYCLE_MODES.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  // #276 — a labelled checkbox row (Generator additive, Limits min/max enables).
+  const boolRow = (i: number, label: string, path: string, checked: boolean) => (
+    <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+      <span className="font-mono text-fg/50">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        data-testid={`${prefix}-${i}-${path}`}
+        onChange={(e) => patch(i, { [path]: e.target.checked } as Partial<FChannelModifier>)}
+      />
+    </label>
+  );
+
+  // #276 — Generator polynomial coefficient editor: an `order` stepper resizes the
+  // array (pad with 0 / truncate) + one input per coefficient (c0 + c1·t + …).
+  const setOrder = (i: number, coeffs: number[], order: number) => {
+    const n = Math.max(0, Math.min(Math.round(order) || 0, 8)) + 1;
+    const next = Array.from({ length: n }, (_, k) => coeffs[k] ?? 0);
+    patch(i, { coefficients: next } as Partial<FChannelModifier>);
+  };
+  const setCoef = (i: number, coeffs: number[], k: number, value: number) => {
+    const next = coeffs.map((c, j) => (j === k ? value : c));
+    patch(i, { coefficients: next } as Partial<FChannelModifier>);
+  };
+
+  // #278 — Envelope control-point editor. addPoint seeds an IDENTITY point (offsets =
+  // the global band) so adding one doesn't jump the curve, matching Blender's default.
+  type EnvMod = Extract<FChannelModifier, { type: 'envelope' }>;
+  type EnvPoint = EnvMod['points'][number];
+  const addEnvPoint = (i: number, mod: EnvMod) =>
+    patch(i, {
+      points: [...mod.points, { time: 0, min: mod.min, max: mod.max }],
+    } as Partial<FChannelModifier>);
+  const removeEnvPoint = (i: number, mod: EnvMod, k: number) =>
+    patch(i, { points: mod.points.filter((_, j) => j !== k) } as Partial<FChannelModifier>);
+  const patchEnvPoint = (i: number, mod: EnvMod, k: number, p: Partial<EnvPoint>) =>
+    patch(i, {
+      points: mod.points.map((pt, j) => (j === k ? { ...pt, ...p } : pt)),
+    } as Partial<FChannelModifier>);
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center justify-end px-3 pt-1">
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          {addTypes.map((type) => (
+            <button
+              key={type}
+              type="button"
+              data-testid={`${prefix}-add-${type}`}
+              className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onClick={() => add(type)}
+            >
+              + {type}
+            </button>
+          ))}
+        </div>
+      </div>
+      {modifiers.length === 0 ? (
+        <span className="px-3 py-1 text-[10px] text-fg/30">no modifiers</span>
+      ) : null}
+      {modifiers.map((mod, i) => (
+        <div
+          key={i}
+          data-testid={`${prefix}-${i}`}
+          className="mx-2 my-1 rounded border border-border/60"
+        >
+          <div className="flex items-center justify-between px-3 py-1 text-[11px] text-fg/80">
+            <span className="font-mono uppercase tracking-wide text-fg/60">{mod.type}</span>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 font-mono text-[10px] text-fg/50">
+                <input
+                  type="checkbox"
+                  checked={Boolean(mod.muted)}
+                  data-testid={`${prefix}-${i}-mute`}
+                  onChange={(e) => patch(i, { muted: e.target.checked })}
+                />
+                mute
+              </label>
+              <button
+                type="button"
+                data-testid={`${prefix}-${i}-remove`}
+                className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                onClick={() => remove(i)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          {mod.type === 'noise' ? (
+            <>
+              <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+                <span className="font-mono text-fg/50">blend</span>
+                <select
+                  value={mod.blend}
+                  data-testid={`${prefix}-${i}-blend`}
+                  className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onChange={(e) => patch(i, { blend: e.target.value as (typeof mod)['blend'] })}
+                >
+                  {(['add', 'subtract', 'multiply', 'replace'] as const).map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {numField(i, 'strength', 'strength', mod.strength)}
+              {numField(i, 'scale', 'scale', mod.scale)}
+              {numField(i, 'phase', 'phase', mod.phase)}
+              {numField(i, 'offset', 'offset', mod.offset)}
+              {numField(i, 'depth', 'depth', mod.depth, 1)}
+            </>
+          ) : null}
+          {mod.type === 'cycles' ? (
+            <>
+              {modeRow(i, 'Before', 'beforeMode', mod.beforeMode)}
+              {mod.beforeMode !== 'none'
+                ? numField(i, 'before ×', 'beforeCycles', mod.beforeCycles, 1)
+                : null}
+              {modeRow(i, 'After', 'afterMode', mod.afterMode)}
+              {mod.afterMode !== 'none'
+                ? numField(i, 'after ×', 'afterCycles', mod.afterCycles, 1)
+                : null}
+            </>
+          ) : null}
+          {mod.type === 'generator' ? (
+            <>
+              {boolRow(i, 'additive', 'additive', mod.additive)}
+              <label className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70">
+                <span className="font-mono text-fg/50">order</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={8}
+                  step={1}
+                  value={mod.coefficients.length - 1}
+                  data-testid={`${prefix}-${i}-order`}
+                  className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onChange={(e) => setOrder(i, mod.coefficients, Number(e.target.value) || 0)}
+                />
+              </label>
+              {mod.coefficients.map((c, k) => (
+                <label
+                  key={k}
+                  className="flex items-center justify-between gap-2 px-3 py-0.5 text-[10px] text-fg/70"
+                >
+                  <span className="font-mono text-fg/50">c{k}</span>
+                  <input
+                    type="number"
+                    step={0.1}
+                    value={c}
+                    data-testid={`${prefix}-${i}-coef-${k}`}
+                    className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onChange={(e) => setCoef(i, mod.coefficients, k, Number(e.target.value) || 0)}
+                  />
+                </label>
+              ))}
+            </>
+          ) : null}
+          {mod.type === 'limits' ? (
+            <>
+              {boolRow(i, 'min Y', 'useMinY', mod.useMinY)}
+              {mod.useMinY ? numField(i, 'min', 'minY', mod.minY) : null}
+              {boolRow(i, 'max Y', 'useMaxY', mod.useMaxY)}
+              {mod.useMaxY ? numField(i, 'max', 'maxY', mod.maxY) : null}
+              {/* #277 — the TIME (X) clamp half: constant-extrapolate outside [minX,maxX]. */}
+              {boolRow(i, 'min X', 'useMinX', Boolean(mod.useMinX))}
+              {mod.useMinX ? numField(i, 'min t', 'minX', mod.minX ?? 0) : null}
+              {boolRow(i, 'max X', 'useMaxX', Boolean(mod.useMaxX))}
+              {mod.useMaxX ? numField(i, 'max t', 'maxX', mod.maxX ?? 0) : null}
+            </>
+          ) : null}
+          {mod.type === 'stepped' ? (
+            <>
+              {numField(i, 'step', 'step', mod.step)}
+              {numField(i, 'offset', 'offset', mod.offset)}
+              {boolRow(i, 'frame range', 'useFrameRange', Boolean(mod.useFrameRange))}
+              {mod.useFrameRange ? numField(i, 'start', 'frameStart', mod.frameStart ?? 0) : null}
+              {mod.useFrameRange ? numField(i, 'end', 'frameEnd', mod.frameEnd ?? 0) : null}
+            </>
+          ) : null}
+          {mod.type === 'envelope' ? (
+            <>
+              {numField(i, 'reference', 'reference', mod.reference)}
+              {numField(i, 'min', 'min', mod.min)}
+              {numField(i, 'max', 'max', mod.max)}
+              <div className="flex items-center justify-between px-3 py-0.5">
+                <span className="font-mono text-[10px] text-fg/50">points</span>
+                <button
+                  type="button"
+                  data-testid={`${prefix}-${i}-add-point`}
+                  className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onClick={() => addEnvPoint(i, mod)}
+                >
+                  + point
+                </button>
+              </div>
+              {mod.points.map((pt, k) => (
+                <div
+                  key={k}
+                  data-testid={`${prefix}-${i}-point-${k}`}
+                  className="flex items-center justify-between gap-1 px-3 py-0.5 text-[10px] text-fg/70"
+                >
+                  <span className="font-mono text-fg/40">#{k}</span>
+                  {(['time', 'min', 'max'] as const).map((f) => (
+                    <input
+                      key={f}
+                      type="number"
+                      step={0.1}
+                      value={pt[f]}
+                      aria-label={`point ${k} ${f}`}
+                      data-testid={`${prefix}-${i}-point-${k}-${f}`}
+                      className="w-12 rounded border border-border bg-bg-2 px-1 py-0.5 text-right font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      onChange={(e) =>
+                        patchEnvPoint(i, mod, k, { [f]: Number(e.target.value) || 0 })
+                      }
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    data-testid={`${prefix}-${i}-point-${k}-remove`}
+                    className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg/60 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onClick={() => removeEnvPoint(i, mod, k)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </>
+          ) : null}
+          {/* Influence + restricted-range (#279) are value-blend concepts — meaningless
+              for the pure TIME-phase modifiers (Cycles, Stepped), which ignore both in
+              resolveSampleTime (Blender's time phase does too). Limits keeps them (its Y
+              clamp is a value op). useRange reveals the [start,end] window + blend-in/out
+              ramps that effectiveInfluence folds into the modifier's effective strength. */}
+          {mod.type !== 'cycles' && mod.type !== 'stepped' ? (
+            <>
+              {numField(i, 'influence', 'influence', mod.influence ?? 1, 0.05)}
+              {boolRow(i, 'restrict', 'useRange', Boolean(mod.useRange))}
+              {mod.useRange ? (
+                <>
+                  {numField(i, 'start', 'rangeStart', mod.rangeStart ?? 0)}
+                  {numField(i, 'end', 'rangeEnd', mod.rangeEnd ?? 0)}
+                  {numField(i, 'blend in', 'blendIn', mod.blendIn ?? 0)}
+                  {numField(i, 'blend out', 'blendOut', mod.blendOut ?? 0)}
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The vec arity per channel type (2 for Vec2, 3 for Vec3) — 0 = scalar/no per-axis.
+ *  Axis labels follow the X/Y/Z convention the curve editor + gizmo use. */
+const AXIS_ARITY: Record<string, number> = { KeyframeChannelVec2: 2, KeyframeChannelVec3: 3 };
+const AXIS_LABELS = ['X', 'Y', 'Z'] as const;
+
+/** #289 — per-axis extrapolation/Cycles is now LIVE (resolved per-axis from each axis's own
+ *  effective stack), so a Cycles in a per-axis override drives that axis alone → nothing is
+ *  excluded from the per-axis Add menu. Kept as the seam for any future per-axis-inert type. */
+const PER_AXIS_EXCLUDE: readonly string[] = [];
+
+/** #274 (V88 D2) / #280 — the per-channel F-MODIFIER STACK authoring UI: the SHARED stack
+ *  (applied to every axis) plus, for vec channels, a PER-AXIS override section (#280). Each
+ *  axis is either "using shared" (an Override button seeds its own empty stack) or carries
+ *  its own {@link ModifierList} (a ↺ button reverts it to shared). Per-axis overrides are
+ *  stored dense+nullable in `axisModifiers`; when every axis is back to shared the param is
+ *  cleared to undefined → the sampler's byte-identical fast path resumes. */
+function ChannelModifierControls({ nodeId }: { nodeId: string }) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const nodeType = useDagStore((s) => s.state.nodes[nodeId]?.type) ?? '';
+  const modifiers =
+    useDagStore(
+      (s) =>
+        (s.state.nodes[nodeId]?.params as { modifiers?: FChannelModifier[] } | undefined)
+          ?.modifiers,
+    ) ?? [];
+  const axisModifiers = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[nodeId]?.params as
+          | { axisModifiers?: (FChannelModifier[] | null)[] }
+          | undefined
+      )?.axisModifiers,
+  );
+  // #289 — channel-level extrapolation (the per-axis fallback) + the per-axis override.
+  const extendBefore =
+    useDagStore(
+      (s) => (s.state.nodes[nodeId]?.params as { extendBefore?: string } | undefined)?.extendBefore,
+    ) ?? 'hold';
+  const extendAfter =
+    useDagStore(
+      (s) => (s.state.nodes[nodeId]?.params as { extendAfter?: string } | undefined)?.extendAfter,
+    ) ?? 'hold';
+  const axisExtend = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[nodeId]?.params as
+          | { axisExtend?: ({ before: string; after: string } | null)[] }
+          | undefined
+      )?.axisExtend,
+  );
+  const arity = AXIS_ARITY[nodeType] ?? 0;
+  const [axis, setAxis] = useState(0);
+
+  const commit = (path: string, value: unknown, label: string) =>
+    dispatch({ type: 'setParam', nodeId, paramPath: path, value }, 'user', label);
+
+  // #289 — write ONE axis's extrapolation override (dense, null = fall back to channel-level);
+  // when every axis is back to shared, clear the param → the sampler's byte-identical fast path.
+  const setAxisExtend = (i: number, value: { before: string; after: string } | null) => {
+    const next = Array.from({ length: arity }, (_, k) =>
+      k === i ? value : (axisExtend?.[k] ?? null),
+    );
+    commit('axisExtend', next.every((a) => a == null) ? undefined : next, 'edit axis extend');
+  };
+
+  // #280 — write ONE axis's override (an array, or null = fall back to shared), keeping the
+  // stored array dense (arity-length, null where not overridden). When every axis is back to
+  // shared, clear the param entirely → the sampler's byte-identical fast path (no per-axis).
+  const setAxisOverride = (i: number, value: FChannelModifier[] | null) => {
+    const next = Array.from({ length: arity }, (_, k) =>
+      k === i ? value : (axisModifiers?.[k] ?? null),
+    );
+    commit('axisModifiers', next.every((a) => a == null) ? undefined : next, 'edit axis modifiers');
+  };
+
+  const activeAxis = axis < arity ? axis : 0;
+  const override = axisModifiers?.[activeAxis] ?? null;
+
+  return (
+    <div className="flex flex-col">
+      <span className="px-3 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        {arity > 0 ? 'Modifiers · all axes' : 'Modifiers'}
+      </span>
+      <ModifierList
+        modifiers={modifiers}
+        onChange={(next) => commit('modifiers', next, 'edit modifiers')}
+      />
+      {arity > 0 ? (
+        <div className="mt-1 border-t border-border/40 pt-1">
+          <div className="flex items-center justify-between px-3 pt-0.5">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">
+              Per-axis
+            </span>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: arity }, (_, a) => (
+                <button
+                  key={a}
+                  type="button"
+                  data-testid={`channel-axis-select-${a}`}
+                  aria-pressed={a === activeAxis}
+                  className={`rounded border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                    a === activeAxis ? 'border-accent text-fg' : 'border-border text-fg/70'
+                  } ${axisModifiers?.[a] != null ? 'font-semibold' : ''}`}
+                  onClick={() => setAxis(a)}
+                >
+                  {AXIS_LABELS[a]}
+                  {axisModifiers?.[a] != null ? ' •' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* #289 — per-axis EXTRAPOLATION (hold/slope) for the active axis; ↺ reverts to the
+              channel-level Extend. Per-axis Cycles is authored in the axis's ModifierList below. */}
+          {(() => {
+            const axBefore = axisExtend?.[activeAxis]?.before ?? extendBefore;
+            const axAfter = axisExtend?.[activeAxis]?.after ?? extendAfter;
+            const overridden = axisExtend?.[activeAxis] != null;
+            const sel = (side: 'before' | 'after', value: string) => (
+              <select
+                value={value}
+                data-testid={`channel-axisextend-${activeAxis}-${side}`}
+                className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                onChange={(e) =>
+                  setAxisExtend(activeAxis, {
+                    before: side === 'before' ? e.target.value : axBefore,
+                    after: side === 'after' ? e.target.value : axAfter,
+                  })
+                }
+              >
+                {EXTRAPOLATE_RULES.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            );
+            return (
+              <div className="flex items-center justify-between gap-2 px-3 py-1 text-[10px] text-fg/70">
+                <span
+                  className={`font-mono ${overridden ? 'font-semibold text-fg/80' : 'text-fg/50'}`}
+                >
+                  Extend {AXIS_LABELS[activeAxis]}
+                </span>
+                <div className="flex items-center gap-1">
+                  {sel('before', axBefore)}
+                  {sel('after', axAfter)}
+                  {overridden ? (
+                    <button
+                      type="button"
+                      data-testid={`channel-axisextend-${activeAxis}-clear`}
+                      title="use the channel Extend"
+                      className="rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      onClick={() => setAxisExtend(activeAxis, null)}
+                    >
+                      ↺
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })()}
+          {override == null ? (
+            <div className="flex items-center justify-between px-3 py-1 text-[10px] text-fg/50">
+              <span className="font-mono">{AXIS_LABELS[activeAxis]} uses the shared stack</span>
+              <button
+                type="button"
+                data-testid={`channel-axis-${activeAxis}-override`}
+                className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                onClick={() => setAxisOverride(activeAxis, [])}
+              >
+                override {AXIS_LABELS[activeAxis]}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-end px-3 pt-0.5">
+                <button
+                  type="button"
+                  data-testid={`channel-axis-${activeAxis}-clear`}
+                  className="rounded border border-border bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  onClick={() => setAxisOverride(activeAxis, null)}
+                >
+                  ↺ use shared
+                </button>
+              </div>
+              <ModifierList
+                modifiers={override}
+                onChange={(next) => setAxisOverride(activeAxis, next)}
+                prefix={`channel-axismod-${activeAxis}`}
+                excludeTypes={PER_AXIS_EXCLUDE}
+              />
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2190,17 +2812,38 @@ export function NPanel() {
                           modifier's own params (count/offset) still render as the
                           ParamRows below, so selecting a modifier shows both. */}
                       {sectionId === 'modifier' ? <ModifierStackControls nodeId={node.id} /> : null}
+                      {/* #270 — a channel's per-side extend rules render as one
+                          "Extend / Before / After" control at the top of the animate
+                          section (Blender-grounded single per-side affordance). The
+                          two params route here to leave the raw bucket; the generic
+                          rows for them are filtered below so they don't double-render. */}
+                      {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
+                        <ChannelExtendControls nodeId={node.id} />
+                      ) : null}
+                      {/* #274 (D2) — the F-Modifier STACK (Noise …), authored by a
+                          dedicated control below the Extend block; `modifiers` routes
+                          to animate to leave the raw bucket, filtered out below. */}
+                      {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
+                        <ChannelModifierControls nodeId={node.id} />
+                      ) : null}
                       {sectionId === 'environment' || sectionId === 'camera'
                         ? null
-                        : (grouped.get(sectionId) ?? []).map(([key, value]) => (
-                            <ParamRow
-                              key={key}
-                              nodeId={node.id}
-                              paramPath={key}
-                              value={value}
-                              overrideInfo={makeOverrideInfo(key)}
-                            />
-                          ))}
+                        : (grouped.get(sectionId) ?? [])
+                            .filter(
+                              ([key]) =>
+                                key !== 'extendBefore' &&
+                                key !== 'extendAfter' &&
+                                key !== 'modifiers',
+                            )
+                            .map(([key, value]) => (
+                              <ParamRow
+                                key={key}
+                                nodeId={node.id}
+                                paramPath={key}
+                                value={value}
+                                overrideInfo={makeOverrideInfo(key)}
+                              />
+                            ))}
                       {/* Phase 151 — Apply control in the transform card for a
                           selected primitive (BoxMesh/SphereMesh). Bakes TRS →
                           BakedMesh via the same helper the Object ▸ Apply menu
@@ -2233,6 +2876,11 @@ export function NPanel() {
               );
             })()
           )}
+          {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
+              edit / remove controller knobs + promote them to the Controllers dock.
+              A footer control (not a per-node-type section) since spare params are
+              universal. */}
+          <SpareParamControls nodeId={node.id} />
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
           ) : null}

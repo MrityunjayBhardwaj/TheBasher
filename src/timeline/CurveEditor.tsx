@@ -54,7 +54,7 @@ export function CurveEditor({ duration }: { duration: number }) {
     return (
       <div
         data-testid="curve-editor"
-        className="flex h-full items-center justify-center px-4 text-center text-xs text-mute"
+        className="flex h-full items-center justify-center px-4 text-center text-xs text-fg-dim"
       >
         No animated channels yet — keyframe a property (◇ in the inspector) to see its curve.
       </div>
@@ -82,12 +82,12 @@ export function CurveEditor({ duration }: { duration: number }) {
     const clipRange = computeRange(clipSamples);
     return (
       <div data-testid="curve-editor" className="relative h-full w-full bg-bg">
-        <div className="absolute left-2 top-1 text-[10px] text-mute">
+        <div className="absolute left-2 top-1 text-[10px] text-fg-dim">
           {clipRow.childName} — {clipRow.component}
         </div>
         <div
           data-testid="curve-readonly-label"
-          className="absolute right-2 top-1 text-[10px] text-mute italic"
+          className="absolute right-2 top-1 text-[10px] text-fg-dim italic"
         >
           (imported — edit to make editable)
         </div>
@@ -140,7 +140,7 @@ export function CurveEditor({ duration }: { duration: number }) {
     return (
       <div
         data-testid="curve-editor"
-        className="flex h-full items-center justify-center text-xs text-mute"
+        className="flex h-full items-center justify-center text-xs text-fg-dim"
       >
         Channel not found (it may have been deleted).
       </div>
@@ -173,7 +173,7 @@ export function CurveEditor({ duration }: { duration: number }) {
   return (
     <div
       data-testid="curve-editor"
-      className="flex h-full flex-col items-center justify-center gap-1 text-xs text-mute"
+      className="flex h-full flex-col items-center justify-center gap-1 text-xs text-fg-dim"
     >
       <span>
         {node.type.replace('KeyframeChannel', '')} — {params.paramPath ?? '(no path)'}

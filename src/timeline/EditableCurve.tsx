@@ -17,7 +17,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
-import { sampleScalarKeyframes, type ScalarKey } from '../nodes/keyframeInterp';
+import {
+  sampleScalarKeyframesExtended,
+  resolveScalarHandle,
+  resolveExtend,
+  modifiersForAxis,
+  KEYFRAME_INTERPS,
+  EASE_DIRS,
+  KEYFRAME_HANDLE_TYPES,
+  type AxisExtend,
+  type ChannelExtrapolate,
+  type Easing,
+  type EaseDir,
+  type HandleType,
+  type ScalarKey,
+} from '../nodes/keyframeInterp';
+import type { FChannelModifier } from '../nodes/channelModifiers';
 import { useTimelineSelection } from './timelineSelection';
 import { useTimelineViewStore } from './timelineViewStore';
 import {
@@ -50,7 +65,9 @@ type Handle = { time: number; value: number | readonly number[] };
 interface RawKey {
   time: number;
   value: number | readonly number[];
-  easing: 'linear' | 'cubic';
+  easing: Easing;
+  ease?: EaseDir;
+  handleType?: HandleType;
   inHandle?: Handle;
   outHandle?: Handle;
 }
@@ -77,6 +94,8 @@ function projectAxis(k: RawKey, axis: number, isVec: boolean): ScalarKey {
     time: k.time,
     value: v,
     easing: k.easing,
+    ease: k.ease,
+    handleType: k.handleType,
     inHandle: proj(k.inHandle),
     outHandle: proj(k.outHandle),
   };
@@ -110,6 +129,42 @@ export function EditableCurve({
   // holds the same window. `valueZoom` is the curve-only value-axis scale.
   const view = useTimelineViewStore((s) => s.view);
   const valueZoom = useTimelineViewStore((s) => s.valueZoom);
+  // #270/#275 — the channel's per-side EXTRAPOLATION (hold/slope), read reactively so
+  // the drawn curve shows the SAME extrapolation the render/gizmo sample (H40). The
+  // cycle counts now live in the Cycles F-Modifier → resolved (with `modifiers`) below.
+  const extendBefore = useDagStore(
+    (s) =>
+      (s.state.nodes[channelId]?.params as { extendBefore?: ChannelExtrapolate })?.extendBefore,
+  );
+  const extendAfter = useDagStore(
+    (s) => (s.state.nodes[channelId]?.params as { extendAfter?: ChannelExtrapolate })?.extendAfter,
+  );
+  // #274 — the channel's F-Modifier stack, read reactively so the drawn curve shows
+  // the SAME procedural modification (noise…) + Cycles the render/gizmo sample (H40).
+  const modifiers = useDagStore(
+    (s) =>
+      (s.state.nodes[channelId]?.params as { modifiers?: readonly FChannelModifier[] })?.modifiers,
+  );
+  // #280 — the per-axis modifier override, so a per-axis stack draws on ITS axis only
+  // (render==curve H40). Absent → every axis uses the shared `modifiers` (as before).
+  const axisModifiers = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[channelId]?.params as {
+          axisModifiers?: ReadonlyArray<readonly FChannelModifier[]>;
+        }
+      )?.axisModifiers,
+  );
+  // #289 — the per-axis EXTRAPOLATION override, so a per-axis hold/slope (or per-axis
+  // Cycles in axisModifiers) draws on ITS axis only (render==curve H40).
+  const axisExtend = useDagStore(
+    (s) =>
+      (
+        s.state.nodes[channelId]?.params as {
+          axisExtend?: ReadonlyArray<AxisExtend | null>;
+        }
+      )?.axisExtend,
+  );
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
   const [draft, setDraft] = useState<RawKey[] | null>(null);
@@ -261,15 +316,49 @@ export function EditableCurve({
     const steps = Math.max(8, Math.round(plotX1 - plotX0) >> 1);
     return axes.map((a) => {
       const sk = keys.map((k) => projectAxis(k, a, isVec)).sort((p, q) => p.time - q.time);
+      // #280 — draw each axis with ITS effective stack (per-axis override ?? shared) so
+      // the curve matches what the sampler renders for that axis (H40).
+      const axisMods = isVec ? modifiersForAxis(modifiers, axisModifiers, a) : modifiers;
+      // #289 — resolve extrapolation PER AXIS: the per-axis hold/slope (axisExtend[a]) ??
+      // the channel-level, against THIS axis's effective stack (so a per-axis Cycles drives
+      // only its axis) — the curve==render==read parity the sampler now produces (H40).
+      const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+        (isVec ? axisExtend?.[a]?.before : undefined) ?? extendBefore,
+        (isVec ? axisExtend?.[a]?.after : undefined) ?? extendAfter,
+        axisMods,
+      );
       const pts: string[] = [];
       for (let i = 0; i <= steps; i++) {
         const t = visStartSec + (i / steps) * (visEndSec - visStartSec);
-        pts.push(`${timeToX(t).toFixed(2)},${valueToY(sampleScalarKeyframes(sk, t)).toFixed(2)}`);
+        const v = sampleScalarKeyframesExtended(
+          sk,
+          t,
+          before,
+          after,
+          cyclesBefore,
+          cyclesAfter,
+          axisMods,
+        );
+        pts.push(`${timeToX(t).toFixed(2)},${valueToY(v).toFixed(2)}`);
       }
       return pts.join(' ');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, axes, isVec, dur, activeDomain, w, h, view]);
+  }, [
+    keys,
+    axes,
+    isVec,
+    dur,
+    activeDomain,
+    w,
+    h,
+    view,
+    extendBefore,
+    extendAfter,
+    axisExtend,
+    modifiers,
+    axisModifiers,
+  ]);
 
   // Ruler ticks across the VISIBLE window, adaptive to its span.
   const spanFrames = Math.max(endFrame - startFrame, 1);
@@ -287,6 +376,32 @@ export function EditableCurve({
         'user',
         'edit curve',
       );
+  }
+
+  // #272 — set the ACTIVE keyframe's interpolation type / easing direction. Commits
+  // the whole keyframes array (the same chokepoint as a drag), so render/read/curve
+  // update together through ch.sample() (H40).
+  function setActiveKeyInterp(patch: { easing?: Easing; ease?: EaseDir }) {
+    if (activeIndex < 0) return;
+    commit(keyframes.map((k, i) => (i === activeIndex ? { ...k, ...patch } : k)));
+  }
+
+  // #273 — set the ACTIVE keyframe's bézier handle TYPE. `undefined` strips the
+  // field back to the byte-identical default. Same keyframes-array chokepoint as
+  // #272 so render/read/curve move together through ch.sample() (H40).
+  function setActiveKeyHandleType(ht: HandleType | undefined) {
+    if (activeIndex < 0) return;
+    commit(
+      keyframes.map((k, i) => {
+        if (i !== activeIndex) return k;
+        if (ht === undefined) {
+          const { handleType: _drop, ...rest } = k;
+          void _drop;
+          return rest;
+        }
+        return { ...k, handleType: ht };
+      }),
+    );
   }
 
   // keyframes arrives pre-sorted from CurveEditor, so the array index IS the
@@ -378,12 +493,14 @@ export function EditableCurve({
       const handle: Handle = isVec
         ? { time: offT, value: setAxis(base.value as readonly number[], d.axis, offV) }
         : { time: offT, value: offV };
+      // #273 — dragging a handle makes it FREE (an auto/vector key computes its
+      // handles and would otherwise ignore the stored offset — Blender does the same).
       next = draft.map((kk, i) =>
         i !== d.index
           ? kk
           : d.kind === 'out'
-            ? { ...kk, outHandle: handle }
-            : { ...kk, inHandle: handle },
+            ? { ...kk, handleType: 'free', outHandle: handle }
+            : { ...kk, handleType: 'free', inHandle: handle },
       );
     }
     setDraft(next);
@@ -418,7 +535,7 @@ export function EditableCurve({
       className="relative h-full w-full bg-bg"
       style={{ touchAction: 'none' }}
     >
-      <div className="pointer-events-none absolute left-12 top-1 z-10 text-[10px] text-mute">
+      <div className="pointer-events-none absolute left-12 top-1 z-10 text-[10px] text-fg-dim">
         {channelType.replace('KeyframeChannel', '')} — {paramPath || '(no path)'}
       </div>
       {activeIndex >= 0 && (
@@ -433,6 +550,65 @@ export function EditableCurve({
           {isVec
             ? (keys[activeIndex].value as readonly number[]).map((v) => formatValue(v)).join(', ')
             : formatValue(keys[activeIndex].value as number)}
+        </div>
+      )}
+      {/* #272 — per-keyframe interpolation picker for the ACTIVE key (Blender's
+          graph-editor "T" menu). The ease-direction select appears only for the
+          equation interps (not linear/cubic/constant). */}
+      {activeIndex >= 0 && (
+        <div
+          data-testid="curve-interp-picker"
+          className="absolute left-1/2 top-0.5 z-10 flex -translate-x-1/2 items-center gap-1 rounded px-1 py-0.5 text-[10px]"
+          style={{ backgroundColor: 'rgba(10,10,10,0.85)' }}
+        >
+          <span className="font-mono text-fg/50">interp</span>
+          <select
+            value={keys[activeIndex].easing}
+            data-testid="curve-interp-select"
+            className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            onChange={(e) => setActiveKeyInterp({ easing: e.target.value as Easing })}
+          >
+            {KEYFRAME_INTERPS.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          {!['linear', 'cubic', 'constant'].includes(keys[activeIndex].easing) && (
+            <select
+              value={keys[activeIndex].ease ?? 'inout'}
+              data-testid="curve-ease-select"
+              className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onChange={(e) => setActiveKeyInterp({ ease: e.target.value as EaseDir })}
+            >
+              {EASE_DIRS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          )}
+          {/* #273 — bézier handle TYPE for the active key. 'default' strips the field
+              (byte-identical legacy). Only shapes bézier ('cubic'/handle) segments —
+              a no-op on 'constant'/equation interps, but always shown (Blender). */}
+          <span className="font-mono text-fg/50">handle</span>
+          <select
+            value={keys[activeIndex].handleType ?? 'default'}
+            data-testid="curve-handle-select"
+            className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            onChange={(e) =>
+              setActiveKeyHandleType(
+                e.target.value === 'default' ? undefined : (e.target.value as HandleType),
+              )
+            }
+          >
+            <option value="default">default</option>
+            {KEYFRAME_HANDLE_TYPES.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
         </div>
       )}
       <svg
@@ -509,8 +685,11 @@ export function EditableCurve({
             const kx = timeToX(k.time);
             const ky = valueToY(sk.value);
             const segs: ReactElement[] = [];
-            const out = sk.outHandle ?? autoHandle(span, 'out');
-            const inn = sk.inHandle ?? autoHandle(span, 'in');
+            // #273 — display the RESOLVED handle (computed for auto/vector, stored for
+            // free), so the grab affordance matches the curve the evaluator plays (H40).
+            const skAll = keys.map((kk) => projectAxis(kk, a, isVec));
+            const out = resolveScalarHandle(skAll, activeIndex, 'out') ?? autoHandle(span, 'out');
+            const inn = resolveScalarHandle(skAll, activeIndex, 'in') ?? autoHandle(span, 'in');
             const ox = timeToX(k.time + out.time);
             const oy = valueToY(sk.value + out.value);
             const ix = timeToX(k.time + inn.time);

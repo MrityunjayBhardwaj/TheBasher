@@ -59,6 +59,20 @@ const GROUPS: MenuGroup[] = [
       { kind: 'Transform', label: 'Transform' },
     ],
   },
+  {
+    // #294 (Inc 3) — the compute-node vocabulary (Inc 1) as clickable sources. These
+    // feed ParamDrivers via the pull rail; without a menu entry the driver bind picker
+    // is empty on a fresh scene.
+    label: 'Compute',
+    items: [
+      { kind: 'Math', label: 'Math' },
+      { kind: 'Fit', label: 'Fit' },
+      { kind: 'Clamp', label: 'Clamp' },
+      { kind: 'Mix', label: 'Mix' },
+      { kind: 'CurveRemap', label: 'Curve Remap' },
+      { kind: 'Noise', label: 'Noise' },
+    ],
+  },
 ];
 
 function spawnPosition(): [number, number, number] {

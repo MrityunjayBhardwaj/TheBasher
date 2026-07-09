@@ -223,6 +223,11 @@ export function opTargetNodeId(op: import('../../core/dag/types').Op): NodeId | 
       // #227 S4 — visibility toggle mutates an existing node's meta, same as
       // setMeta/setParam → closure-checked on the target node.
       return op.nodeId;
+    case 'setSpareParam':
+    case 'removeSpareParam':
+      // #291 — spare-param mutation targets an existing node's `spare` collection,
+      // closure-checked exactly like setParam/setMeta.
+      return op.nodeId;
     case 'connect':
     case 'disconnect':
       return op.to.node;

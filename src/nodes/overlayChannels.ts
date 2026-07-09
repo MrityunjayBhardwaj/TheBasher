@@ -19,6 +19,7 @@
 // REF: docs/UNIFICATION-DESIGN.md §3.1/§3.2; vyapti V20/V24; hetvabhasa H40/H48.
 
 import type { KeyframeChannelValue } from './types';
+import { foldChannelValue, type ChannelContribution } from './foldChannel';
 
 /**
  * Overlay each channel's (paramPath, sampled value @ seconds) onto a deep-cloned
@@ -26,8 +27,12 @@ import type { KeyframeChannelValue } from './types';
  * - Returns `base` unchanged when there are no channels (avoids the clone cost).
  * - `paramPath` supports dot notation for nested fields (e.g. 'material.color',
  *   'materials.0.base.color' — `writeAt` indexes array segments too).
- * - `weight` blends each scalar / vector toward the base's static value.
- *   String / quat values pass through at weight≥0.5; <0.5 falls back to base.
+ * - Multiple channels on ONE paramPath compose by an ordered, weighted fold
+ *   (foldChannel.ts, #283): `order` sets bottom→top position, `blendMode` picks
+ *   Replace (lerp — quat slerps) or Combine (additive / manifold over the per-type
+ *   identity). `weight` (caller × per-channel) is the fold influence. Colour / text
+ *   / image snap at weight≥0.5. A single Replace channel is byte-identical to the
+ *   pre-#283 single-slot overwrite.
  *
  * Channels are function-of-time (V24), so the per-channel value comes from
  * `ch.sample(seconds)`.
@@ -51,14 +56,36 @@ export function overlayChannels<T>(
   const active = channels.filter((ch) => !ch.mute && ch.paramPath);
   if (active.length === 0) return base;
   const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
+  // #283 Phase 1 (NLA) — the multi-writer fold. Group channels by paramPath so
+  // ALL contributions to one (target,param) compose by an ORDERED, WEIGHTED,
+  // explicit-blend-mode fold (foldChannelValue), not a scan-order-dependent
+  // single-slot overwrite (fixes V88 D3). Byte-identical to the pre-NLA loop for
+  // existing animations: a single Replace channel @ order 0 folds to the same
+  // value the old `blend` produced, and the sequential acc reproduces the old
+  // running-clone read for stacked Replace channels (proven by
+  // overlayChannels.test.ts).
+  const byPath = new Map<string, KeyframeChannelValue[]>();
   for (const ch of active) {
-    const original = readAt(clone, ch.paramPath);
-    // Effective weight = caller weight × per-channel weight (both identity by
-    // default → byte-identical to pre-#199). `?? 1` is defensive for any
-    // channel value constructed without the field.
-    const w = weight * (ch.weight ?? 1);
-    const blended = blend(original, ch.sample(seconds), ch.valueType, w);
-    writeAt(clone, ch.paramPath, blended);
+    const arr = byPath.get(ch.paramPath);
+    if (arr) arr.push(ch);
+    else byPath.set(ch.paramPath, [ch]);
+  }
+  for (const [path, chs] of byPath) {
+    // Stable-sort by authored order (default 0 → preserves DAG/insertion order →
+    // byte-identical). Array.sort is stable (ES2019+).
+    const sorted = chs.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const contribs: ChannelContribution[] = sorted.map((ch) => ({
+      value: ch.sample(seconds),
+      // `?? 'replace'` / `?? 1` are defensive for any channel value constructed
+      // without the #283 fields (byte-identity: Replace @ order 0).
+      mode: ch.blendMode ?? 'replace',
+      // #283 Phase 3 — time-varying influence: a crossfading channel carries an
+      // `influenceAt` closure evaluated at THIS sample time; bare channels + non-
+      // crossfade strips omit it → the static `weight` path (byte-identical).
+      influence: weight * (ch.influenceAt ? ch.influenceAt(seconds) : (ch.weight ?? 1)),
+    }));
+    const folded = foldChannelValue(readAt(clone, path), contribs, sorted[0].valueType, path);
+    writeAt(clone, path, folded);
   }
   return clone as unknown as T;
 }
@@ -92,47 +119,4 @@ export function writeAt(obj: Record<string, unknown>, path: string, value: unkno
     cur = nxt as Record<string, unknown>;
   }
   cur[last] = value;
-}
-
-function blend(
-  original: unknown,
-  channelValue: unknown,
-  valueType: KeyframeChannelValue['valueType'],
-  weight: number,
-): unknown {
-  const w = Math.max(0, Math.min(1, weight));
-  if (w >= 1) return channelValue;
-  if (w <= 0) return original ?? channelValue;
-  if (valueType === 'number' && typeof original === 'number' && typeof channelValue === 'number') {
-    return original + (channelValue - original) * w;
-  }
-  if (
-    valueType === 'vec2' &&
-    Array.isArray(original) &&
-    original.length === 2 &&
-    Array.isArray(channelValue) &&
-    channelValue.length === 2
-  ) {
-    return [
-      (original[0] as number) + ((channelValue[0] as number) - (original[0] as number)) * w,
-      (original[1] as number) + ((channelValue[1] as number) - (original[1] as number)) * w,
-    ];
-  }
-  if (
-    valueType === 'vec3' &&
-    Array.isArray(original) &&
-    original.length === 3 &&
-    Array.isArray(channelValue) &&
-    channelValue.length === 3
-  ) {
-    return [
-      (original[0] as number) + ((channelValue[0] as number) - (original[0] as number)) * w,
-      (original[1] as number) + ((channelValue[1] as number) - (original[1] as number)) * w,
-      (original[2] as number) + ((channelValue[2] as number) - (original[2] as number)) * w,
-    ];
-  }
-  // quat / color / unknown: snap at the half-weight mark. Smooth blending for
-  // these types needs slerp / HSL-lerp; defer until weight<1 is a real authoring
-  // need.
-  return w >= 0.5 ? channelValue : (original ?? channelValue);
 }

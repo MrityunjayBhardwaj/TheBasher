@@ -21,11 +21,11 @@ export function ComfyRenderProgress() {
   return (
     <div
       data-testid="comfy-render-progress"
-      className="m-2 flex flex-col gap-1 rounded border border-line bg-bg-2 p-2 text-[11px] text-fg"
+      className="m-2 flex flex-col gap-1 rounded border border-border bg-bg-2 p-2 text-[11px] text-fg"
     >
       <div className="flex items-center justify-between">
-        <span className="truncate text-mute">Rendering · {label}</span>
-        <span className="tabular-nums text-mute" data-testid="comfy-render-progress-pct">
+        <span className="truncate text-fg-dim">Rendering · {label}</span>
+        <span className="tabular-nums text-fg-dim" data-testid="comfy-render-progress-pct">
           {max > 0 ? `${pct}%` : '…'}
         </span>
       </div>
@@ -45,7 +45,7 @@ export function ComfyRenderProgress() {
           src={previewUrl}
           alt="live preview"
           data-testid="comfy-render-progress-preview"
-          className="mt-1 w-full rounded border border-line object-contain"
+          className="mt-1 w-full rounded border border-border object-contain"
         />
       )}
     </div>

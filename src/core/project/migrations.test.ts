@@ -22,6 +22,12 @@ import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
 import type { InlineMaterialSpec } from '../../nodes/types';
+import {
+  KeyframeChannelNumberNode,
+  type KeyframeChannelNumberParams,
+} from '../../nodes/KeyframeChannelNumber';
+import { sampleScalarKeyframesExtended, type ChannelExtend } from '../../nodes/keyframeInterp';
+import type { FModNoise } from '../../nodes/channelModifiers';
 import { migrateNodes, migrateProjectFormat } from './migrations';
 import { buildDefaultDagState } from './default';
 import { ProjectSchema, type Project } from './schema';
@@ -351,5 +357,151 @@ describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_pos_channel).toEqual(once.state.nodes.n_pos_channel);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(false);
+  });
+});
+
+// ── #275 — extend/cycle enum → Cycles F-Modifier (byte-identical sample gate) ─
+// A v1 KeyframeChannelNumber carries the OLD 5-enum `extend{Before,After}` +
+// `cycles{Before,After}`. The v1→v2 migration splits it: hold/slope stay the
+// extrapolation property, cycle/cycle-offset/mirror move to a Cycles F-Modifier.
+// THE gate: the migrated node's ACTUAL sample() (through the real evaluate →
+// resolveExtend → the UNCHANGED sampler) must equal the pre-migration value at
+// every out-of-domain time — with the unchanged `sampleScalarKeyframesExtended`
+// (old 5-enum + counts) as the oracle. REF: issue #275; vyapti V88 D2.
+
+const CH_KEYS = [
+  { time: 0, value: 0, easing: 'linear' as const },
+  { time: 2, value: 10, easing: 'linear' as const },
+];
+
+/** A serialized pre-#275 (v1) KeyframeChannelNumber with the given legacy extend. */
+function buildV1NumberChannelJson(v1Params: Record<string, unknown>) {
+  return {
+    formatVersion: 1,
+    id: 'p275-migration',
+    name: 'pre-cycles-modifier channel',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: { KeyframeChannelNumber: 1 },
+    state: {
+      nodes: {
+        n_ch: {
+          id: 'n_ch',
+          type: 'KeyframeChannelNumber',
+          version: 1,
+          params: { name: 'fov', target: 'x', paramPath: 'fov', keyframes: CH_KEYS, ...v1Params },
+          inputs: {},
+        },
+      },
+      outputs: {},
+    },
+  };
+}
+
+/** The migrated node's REAL evaluated sampler (evaluate → resolveExtend → sampler). */
+function migratedSampler(migrated: Project): (t: number) => number {
+  const params = migrated.state.nodes.n_ch.params as KeyframeChannelNumberParams;
+  return KeyframeChannelNumberNode.evaluate(params).sample;
+}
+
+const OUT_OF_DOMAIN = [1, 2.0001, 3, 4, 5, 6, 7, -1, -3];
+
+describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byte-identical)', () => {
+  it.each([
+    ['cycle', 'repeat'],
+    ['cycle-offset', 'repeat-offset'],
+    ['mirror', 'repeat-mirror'],
+  ])('extendAfter=%s migrates to a Cycles modifier (afterMode=%s) — same sample', (rule, mode) => {
+    const migrated = loadFromBytes(buildV1NumberChannelJson({ extendAfter: rule, cyclesAfter: 0 }));
+    const node = migrated.state.nodes.n_ch;
+    expect(node.version).toBe(2);
+    const p = node.params as Record<string, unknown>;
+    // Old params gone; extrapolation reset to hold; a Cycles modifier appeared.
+    expect(p.extendAfter).toBe('hold');
+    expect(p.cyclesAfter).toBeUndefined();
+    expect(p.cyclesBefore).toBeUndefined();
+    const mods = p.modifiers as Array<Record<string, unknown>>;
+    expect(mods).toHaveLength(1);
+    expect(mods[0]).toMatchObject({ type: 'cycles', afterMode: mode, beforeMode: 'none' });
+    // Byte-identical sample: migrated evaluate == the pre-migration engine value.
+    const sample = migratedSampler(migrated);
+    for (const t of OUT_OF_DOMAIN) {
+      const oracle = sampleScalarKeyframesExtended(CH_KEYS, t, 'hold', rule as ChannelExtend, 0, 0);
+      expect(sample(t), `${rule} @ t=${t}`).toBeCloseTo(oracle, 9);
+    }
+  });
+
+  it('carries the cycle COUNT onto the Cycles modifier (afterCycles) — same freeze', () => {
+    const migrated = loadFromBytes(
+      buildV1NumberChannelJson({ extendAfter: 'cycle-offset', cyclesAfter: 1 }),
+    );
+    const mods = migrated.state.nodes.n_ch.params.modifiers as Array<Record<string, unknown>>;
+    expect(mods[0]).toMatchObject({ afterMode: 'repeat-offset', afterCycles: 1 });
+    const sample = migratedSampler(migrated);
+    for (const t of OUT_OF_DOMAIN) {
+      const oracle = sampleScalarKeyframesExtended(CH_KEYS, t, 'hold', 'cycle-offset', 0, 1);
+      expect(sample(t), `count freeze @ t=${t}`).toBeCloseTo(oracle, 9);
+    }
+  });
+
+  it('hold/slope stay the extrapolation property — NO Cycles modifier', () => {
+    for (const rule of ['hold', 'slope'] as const) {
+      const migrated = loadFromBytes(buildV1NumberChannelJson({ extendAfter: rule }));
+      const p = migrated.state.nodes.n_ch.params as Record<string, unknown>;
+      expect(p.extendAfter).toBe(rule);
+      expect(p.modifiers).toEqual([]);
+      const sample = migratedSampler(migrated);
+      for (const t of OUT_OF_DOMAIN) {
+        const oracle = sampleScalarKeyframesExtended(CH_KEYS, t, 'hold', rule, 0, 0);
+        expect(sample(t), `${rule} @ t=${t}`).toBeCloseTo(oracle, 9);
+      }
+    }
+  });
+
+  it('independent per-side rules migrate together (before=slope, after=cycle)', () => {
+    const migrated = loadFromBytes(
+      buildV1NumberChannelJson({ extendBefore: 'slope', extendAfter: 'cycle' }),
+    );
+    const p = migrated.state.nodes.n_ch.params as Record<string, unknown>;
+    expect(p.extendBefore).toBe('slope'); // extrapolation kept
+    const mods = p.modifiers as Array<Record<string, unknown>>;
+    expect(mods[0]).toMatchObject({ type: 'cycles', beforeMode: 'none', afterMode: 'repeat' });
+    const sample = migratedSampler(migrated);
+    for (const t of OUT_OF_DOMAIN) {
+      const oracle = sampleScalarKeyframesExtended(CH_KEYS, t, 'slope', 'cycle', 0, 0);
+      expect(sample(t), `mixed @ t=${t}`).toBeCloseTo(oracle, 9);
+    }
+  });
+
+  it('PREPENDS the Cycles modifier, preserving any existing Noise modifier', () => {
+    const noise: FModNoise = {
+      type: 'noise',
+      blend: 'add',
+      strength: 3,
+      scale: 1,
+      phase: 0,
+      offset: 0,
+      depth: 1,
+    };
+    const migrated = loadFromBytes(
+      buildV1NumberChannelJson({ extendAfter: 'cycle', modifiers: [noise] }),
+    );
+    const mods = migrated.state.nodes.n_ch.params.modifiers as Array<Record<string, unknown>>;
+    expect(mods).toHaveLength(2);
+    expect(mods[0].type).toBe('cycles'); // time modifier first
+    expect(mods[1]).toMatchObject({ type: 'noise', strength: 3 });
+    // Byte-identical to the pre-migration channel (cycle after + the same noise).
+    const sample = migratedSampler(migrated);
+    for (const t of OUT_OF_DOMAIN) {
+      const oracle = sampleScalarKeyframesExtended(CH_KEYS, t, 'hold', 'cycle', 0, 0, [noise]);
+      expect(sample(t), `cycle+noise @ t=${t}`).toBeCloseTo(oracle, 9);
+    }
+  });
+
+  it('is idempotent — re-loading a migrated channel is a stable no-op', () => {
+    const once = loadFromBytes(buildV1NumberChannelJson({ extendAfter: 'mirror', cyclesAfter: 2 }));
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_ch).toEqual(once.state.nodes.n_ch);
+    expect(twice.state.nodes.n_ch.version).toBe(2);
   });
 });

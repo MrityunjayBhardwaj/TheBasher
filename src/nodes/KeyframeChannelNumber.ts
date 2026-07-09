@@ -25,7 +25,24 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelNumberValue } from './types';
-import { sampleScalarKeyframesExtended, type ChannelExtend } from './keyframeInterp';
+import { CHANNEL_BLEND_MODES } from './types';
+import {
+  sampleScalarKeyframesExtended,
+  resolveExtend,
+  KEYFRAME_INTERPS,
+  EASE_DIRS,
+  EXTRAPOLATE_RULES,
+  KEYFRAME_HANDLE_TYPES,
+  type ChannelExtrapolate,
+  type Easing,
+  type EaseDir,
+  type HandleType,
+} from './keyframeInterp';
+import {
+  ChannelModifiersSchema,
+  migrateExtendParamsToCycles,
+  type FChannelModifier,
+} from './channelModifiers';
 
 const HandleSchema = z
   .object({
@@ -44,16 +61,38 @@ export const KeyframeChannelNumberParams = z.object({
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
-  /** D1 (#269) — per-side extrapolation rule for times OUTSIDE the authored
-   *  keyframe domain. Default 'hold' → byte-identical to the pre-#269 clamp. */
-  extendBefore: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
-  extendAfter: z.enum(['hold', 'cycle', 'cycle-offset', 'mirror', 'slope']).default('hold'),
+  /** #283 Phase 1 (NLA) — layer composition. blendMode 'replace' (legacy
+   *  last-writer lerp, default → byte-identical) | 'combine' (additive/manifold
+   *  over the per-type identity); order = bottom→top fold position (default 0 →
+   *  DAG order → byte-identical). REF: docs/NLA-DESIGN.md §3.1; vyapti V88 D2/D3. */
+  blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
+  order: z.number().default(0),
+  /** D1 (#269) / #275 — per-side EXTRAPOLATION for times OUTSIDE the authored
+   *  keyframe domain: 'hold' (clamp, default → byte-identical to the pre-#269 clamp)
+   *  or 'slope' (linear). The cycling rules moved to a Cycles F-Modifier (#275). */
+  extendBefore: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  extendAfter: z
+    .enum(EXTRAPOLATE_RULES as unknown as [ChannelExtrapolate, ...ChannelExtrapolate[]])
+    .default('hold'),
+  /** #274 (V88 D2) / #275 — per-channel F-MODIFIER STACK (Noise, Cycles …), applied
+   *  on top of the evaluated + extended curve. Default `[]` → byte-identical. */
+  modifiers: ChannelModifiersSchema,
   keyframes: z
     .array(
       z.object({
         time: z.number().nonnegative(),
         value: z.number(),
-        easing: z.enum(['linear', 'cubic']).default('linear'),
+        easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).default('linear'),
+        // #272 — easing DIRECTION for the equation interps (sine…elastic); ignored
+        // by linear/cubic/constant. Optional → defaults to 'inout' at sample time.
+        ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
+        // #273 — bézier HANDLE TYPE (auto/auto-clamped/vector/aligned/free). Optional →
+        // undefined = the pre-#273 stored-handle/legacy path (byte-identical). Opt-in only.
+        handleType: z
+          .enum(KEYFRAME_HANDLE_TYPES as unknown as [HandleType, ...HandleType[]])
+          .optional(),
         inHandle: HandleSchema,
         outHandle: HandleSchema,
       }),
@@ -71,10 +110,26 @@ export type KeyframeChannelNumberParams = z.infer<typeof KeyframeChannelNumberPa
 function sample(
   keyframes: KeyframeChannelNumberParams['keyframes'],
   t: number,
-  before: ChannelExtend,
-  after: ChannelExtend,
+  extendBefore: ChannelExtrapolate,
+  extendAfter: ChannelExtrapolate,
+  modifiers: readonly FChannelModifier[],
 ): number {
-  return sampleScalarKeyframesExtended(keyframes, t, before, after);
+  // #275 — resolve the stored extrapolation + Cycles modifier into the engine's
+  // 5-value rule + counts; the sampler and planExtend are unchanged (byte-identical).
+  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
+    extendBefore,
+    extendAfter,
+    modifiers,
+  );
+  return sampleScalarKeyframesExtended(
+    keyframes,
+    t,
+    before,
+    after,
+    cyclesBefore,
+    cyclesAfter,
+    modifiers,
+  );
 }
 
 export const KeyframeChannelNumberNode: NodeDefinition<
@@ -82,7 +137,19 @@ export const KeyframeChannelNumberNode: NodeDefinition<
   KeyframeChannelNumberValue
 > = {
   type: 'KeyframeChannelNumber',
-  version: 1,
+  version: 2,
+  // #275 v1→v2: split the D1 extend enum — hold/slope stay `extend{Before,After}`,
+  // the cycle family moves to a Cycles F-Modifier. Byte-identical (resolveExtend maps
+  // it straight back onto the unchanged planExtend inputs; proven in migrations.test).
+  migrations: {
+    1: (oldParams) => {
+      const { extendBefore, extendAfter, modifiers } = migrateExtendParamsToCycles(oldParams);
+      const rest = { ...(oldParams as Record<string, unknown>) };
+      delete rest.cyclesBefore;
+      delete rest.cyclesAfter;
+      return { ...rest, extendBefore, extendAfter, modifiers };
+    },
+  },
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelNumberParams,
@@ -103,7 +170,10 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       paramPath: params.paramPath,
       mute: params.mute,
       weight: params.weight,
-      sample: (seconds: number) => sample(sorted, seconds, params.extendBefore, params.extendAfter),
+      blendMode: params.blendMode,
+      order: params.order,
+      sample: (seconds: number) =>
+        sample(sorted, seconds, params.extendBefore, params.extendAfter, params.modifiers),
     };
   },
 };

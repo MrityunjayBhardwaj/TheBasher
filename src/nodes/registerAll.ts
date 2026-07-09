@@ -3,6 +3,7 @@
 
 import { getNodeType, registerNodeType } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
+import { ActionNode } from './Action';
 import { AmbientLightNode } from './AmbientLight';
 import { AnimationClipNode } from './AnimationClip';
 import { ArrayModifierNode } from './ArrayModifier';
@@ -20,6 +21,7 @@ import { ClipSelectNode } from './ClipSelect';
 import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
+import { COMPUTE_NODES } from './computeNodes';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
@@ -44,6 +46,7 @@ import { MirrorModifierNode } from './MirrorModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { OrthographicCameraNode } from './OrthographicCamera';
+import { ParamDriverNode } from './ParamDriver';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PointLightNode } from './PointLight';
 import { PosedSkeletonNode } from './PosedSkeleton';
@@ -57,7 +60,9 @@ import { GltfSkeletonNode } from './GltfSkeleton';
 import { SkeletonNode } from './Skeleton';
 import { SpotLightNode } from './SpotLight';
 import { SphereMeshNode } from './SphereMesh';
+import { StripNode } from './Strip';
 import { TimeSourceNode } from './TimeSource';
+import { TrackNode } from './Track';
 import { TrackToNode } from './TrackTo';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
@@ -112,6 +117,13 @@ const ALL: NodeDefinition[] = [
   KeyframeChannelColorNode as unknown as NodeDefinition,
   KeyframeChannelTextNode as unknown as NodeDefinition,
   KeyframeChannelImageNode as unknown as NodeDefinition,
+  // NLA / Action Strips — motion-space layering (epic #283 Phase 2, V88 D2).
+  // Three EDGE-LESS sidecar kinds enumerated + folded by the resolver scan (the
+  // channel/constraint pattern below), never wired by edge. Registered so their
+  // addNode validates (V1). Inert in Slice A (render nothing); wired in Slices C–E.
+  ActionNode as unknown as NodeDefinition,
+  StripNode as unknown as NodeDefinition,
+  TrackNode as unknown as NodeDefinition,
   // Operator substrate — CHOP/constraints (epic #201, V58). Edge-less, enumerated
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).
@@ -156,6 +168,16 @@ const ALL: NodeDefinition[] = [
   PromptNode as unknown as NodeDefinition,
   ComfyUIWorkflowNode as unknown as NodeDefinition,
   VideoStitchNode as unknown as NodeDefinition,
+  // Compute-node vocabulary — stateless scalar operators for procedural relations
+  // (epic #290, Inc 1 #292). Math (op-enum) + Fit/Clamp/CurveRemap/Mix/Noise, all
+  // over the ONE shared value-math core (valueMath.ts). A driver (Inc 2) wires one
+  // onto a target param via the pull rail.
+  ...COMPUTE_NODES,
+  // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
+  // Edge-less to its target ({target, paramPath}, enumerated + folded by the target's
+  // followers like a KeyframeChannel), edge-WIRED to the compute graph via `in`. Its
+  // evaluate returns a KeyframeChannelValue so it folds byte-identically to a channel.
+  ParamDriverNode as unknown as NodeDefinition,
   // Aggregators
   SceneNode as unknown as NodeDefinition,
   RenderOutputNode as unknown as NodeDefinition,

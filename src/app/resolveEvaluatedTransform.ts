@@ -51,7 +51,7 @@ import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolve
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { directChannelValuesForTarget } from './nodeChannels';
+import { layeredChannelValues } from './layeredChannels';
 import { resolveConstraintRotation } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 
@@ -227,7 +227,11 @@ export function resolveEvaluatedTransform(
   // viewport renders the animated one (the #68/#77 displayed≠rendered class).
   // Empty → identity.
   if (child) {
-    const directChannels = directChannelValuesForTarget(state.nodes, selectedId);
+    // #283 Phase 2 (E) — the SAME layered enumeration the render side uses
+    // (SceneFromDAG's useLayeredChannels): bare direct channels AND strip-derived
+    // channels, folded by the SAME overlayChannels. So a placed Strip's transform is
+    // read == rendered (H40). Empty strip set → exactly the bare values (byte-identical).
+    const directChannels = layeredChannelValues(state.nodes, selectedId);
     if (directChannels.length > 0) {
       child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
     }

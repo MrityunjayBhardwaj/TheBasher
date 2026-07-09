@@ -17,7 +17,10 @@ import {
   dispatchMutatorFromUI,
   dispatchFirstKeyComposite,
   dispatchRetimeKeyframe,
+  dispatchPushDownToStrip,
+  bareChannelToActionChannel,
 } from './dispatchMutator';
+import { layeredChannelValues } from '../layeredChannels';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -469,6 +472,255 @@ describe('A2 — dispatchFirstKeyComposite (native → free-floating direct chan
         const ref = b as { node?: string; socket?: string } | undefined;
         expect(ref?.node).not.toBe('box_position_channel');
       }
+    }
+  });
+});
+
+describe('5E — dispatchPushDownToStrip (bare channels → Action + Strip, ONE undo entry)', () => {
+  /** Seed `box` with a bare vec3 ramp channel (keys 0→[0,0,0] .. 2→[2,1,0]). */
+  function seedBareRamp(
+    channelId = 'box_position_channel',
+    extra?: Record<string, unknown>,
+  ): DagState {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: channelId,
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'position',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 2, value: [2, 1, 0], easing: 'linear' },
+        ],
+        ...(extra ?? {}),
+      },
+    }).next;
+    return s;
+  }
+
+  /** The FOLD's view of `paramPath` on `targetId`, sampled at `times` — via the
+   *  real `layeredChannelValues` seam (READ-only import; the same array both
+   *  fold consumers eat). One contribution expected before AND after push-down
+   *  (bare channel before, strip-synthetic after). */
+  function foldSamples(targetId: string, paramPath: string, times: readonly number[]) {
+    const values = layeredChannelValues(useDagStore.getState().state.nodes, targetId).filter(
+      (v) => v.paramPath === paramPath,
+    );
+    expect(values).toHaveLength(1);
+    return times.map((t) => values[0].sample(t));
+  }
+
+  const TIMES = [-1, 0, 1, 2, 5] as const; // inside + both hold sides
+
+  it('happy path: Action+Strip+Track minted, channels GONE, fold byte-identical, ONE undo restores everything', () => {
+    useDagStore.getState().hydrate(seedBareRamp());
+    const beforeJson = JSON.stringify(useDagStore.getState().state);
+    const before = foldSamples('box', 'position', TIMES);
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
+
+    const res = dispatchPushDownToStrip('box');
+    expect(res).toEqual({ ok: true });
+
+    const nodes = useDagStore.getState().state.nodes;
+    // The vocabulary nodes exist; the bare channel is GONE (no double-drive —
+    // bare channels fold below strips, layeredChannels.ts:224-226).
+    expect(nodes['box_position_channel']).toBeUndefined();
+    const action = nodes['nla_action_1'];
+    expect(action?.type).toBe('Action');
+    const channels = (
+      action.params as { channels: Array<{ valueType: string; paramPath: string }> }
+    ).channels;
+    expect(channels).toHaveLength(1);
+    expect(channels[0]).toMatchObject({ valueType: 'vec3', paramPath: 'position' });
+    const strip = nodes['nla_strip_1'];
+    expect(strip?.type).toBe('Strip');
+    expect(strip.params).toMatchObject({ action: 'nla_action_1', target: 'box', start: 0 });
+    const track = nodes['nla_track_1'];
+    expect(track?.type).toBe('Track');
+    expect((track.params as { strips: string[] }).strips).toEqual(['nla_strip_1']);
+
+    // OBSERVE the fold: the strip-synthetic contribution samples byte-identical
+    // to the bare channel at every probe time (inside the span AND both holds).
+    expect(foldSamples('box', 'position', TIMES)).toEqual(before);
+
+    // ONE atomic undo entry covers create+place+delete; undo restores ALL.
+    const stack = useDagStore.getState().undoStack;
+    expect(stack).toHaveLength(1);
+    expect((stack[0] as { __atomic?: true }).__atomic).toBe(true);
+    useDagStore.getState().undo();
+    expect(JSON.stringify(useDagStore.getState().state)).toBe(beforeJson);
+    expect(useDagStore.getState().state.nodes['box_position_channel']).toBeDefined();
+    expect(useDagStore.getState().state.nodes['nla_action_1']).toBeUndefined();
+    expect(useDagStore.getState().state.nodes['nla_strip_1']).toBeUndefined();
+    expect(useDagStore.getState().state.nodes['nla_track_1']).toBeUndefined();
+  });
+
+  it('strip start = the channels’ MIN key time (identity remap inside the span)', () => {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'box_position_channel',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'position',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0.5, value: [0, 0, 0], easing: 'linear' },
+          { time: 2, value: [3, 0, 0], easing: 'linear' },
+        ],
+      },
+    }).next;
+    useDagStore.getState().hydrate(s);
+    const before = foldSamples('box', 'position', TIMES);
+
+    expect(dispatchPushDownToStrip('box')).toEqual({ ok: true });
+    expect(
+      (useDagStore.getState().state.nodes['nla_strip_1'].params as { start: number }).start,
+    ).toBe(0.5);
+    expect(foldSamples('box', 'position', TIMES)).toEqual(before);
+  });
+
+  it('no bare channels → {ok:false}, DAG byte-unchanged', () => {
+    useDagStore.getState().hydrate(buildScene());
+    const before = JSON.stringify(useDagStore.getState().state);
+    const res = dispatchPushDownToStrip('box');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toContain('no bare keyframe channels');
+    expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it('unknown target → {ok:false} without mutation', () => {
+    useDagStore.getState().hydrate(buildScene());
+    const res = dispatchPushDownToStrip('nope');
+    expect(res.ok).toBe(false);
+  });
+
+  it('HONESTY GUARD: a channel with non-default weight is REFUSED by name; DAG byte-unchanged', () => {
+    useDagStore.getState().hydrate(seedBareRamp('box_position_channel', { weight: 0.5 }));
+    const before = JSON.stringify(useDagStore.getState().state);
+    const res = dispatchPushDownToStrip('box');
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toContain('box_position_channel');
+      expect(res.reason).toContain('weight');
+    }
+    expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
+  });
+});
+
+describe('5E — bareChannelToActionChannel (the pure mapper + refusal guard)', () => {
+  const baseParams = {
+    name: 'position',
+    target: 'box',
+    paramPath: 'position',
+    mute: false,
+    weight: 1,
+    blendMode: 'replace',
+    order: 0,
+    extendBefore: 'hold',
+    extendAfter: 'hold',
+    modifiers: [],
+    keyframes: [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [2, 1, 0], easing: 'linear' },
+    ],
+  };
+  const node = (params: Record<string, unknown>, type = 'KeyframeChannelVec3') => ({
+    id: 'ch1',
+    type,
+    params,
+  });
+
+  it('maps a default vec3 channel: target STRIPPED, valueType added, keyframes verbatim', () => {
+    const res = bareChannelToActionChannel(node({ ...baseParams }));
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.channel.valueType).toBe('vec3');
+      expect(res.channel.paramPath).toBe('position');
+      expect('target' in res.channel).toBe(false);
+      expect(res.channel.keyframes).toMatchObject([
+        { time: 0, value: [0, 0, 0], easing: 'linear' },
+        { time: 2, value: [2, 1, 0], easing: 'linear' },
+      ]);
+    }
+  });
+
+  it('absent optional fields read as their defaults (text/image schemas differ)', () => {
+    // A minimal params object (only what a Text channel carries) must not be
+    // refused for "missing" extend/modifier fields.
+    const res = bareChannelToActionChannel(
+      node(
+        {
+          name: 'prompt',
+          target: 'box',
+          paramPath: 'prompt',
+          keyframes: [{ time: 0, value: 'hello', easing: 'linear' }],
+        },
+        'KeyframeChannelText',
+      ),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it.each([
+    [
+      'unknown node type',
+      { ...baseParams },
+      'KeyframeChannelFuture',
+      'no Action-channel equivalent',
+    ],
+    ['mute', { ...baseParams, mute: true }, 'KeyframeChannelVec3', 'muted'],
+    ['weight', { ...baseParams, weight: 0.5 }, 'KeyframeChannelVec3', 'weight'],
+    ['blendMode', { ...baseParams, blendMode: 'combine' }, 'KeyframeChannelVec3', 'blendMode'],
+    ['order', { ...baseParams, order: 3 }, 'KeyframeChannelVec3', 'fold order'],
+    [
+      'extendBefore',
+      { ...baseParams, extendBefore: 'slope' },
+      'KeyframeChannelVec3',
+      'extrapolation',
+    ],
+    [
+      'extendAfter',
+      { ...baseParams, extendAfter: 'slope' },
+      'KeyframeChannelVec3',
+      'extrapolation',
+    ],
+    [
+      'modifiers',
+      { ...baseParams, modifiers: [{ type: 'noise', enabled: true }] },
+      'KeyframeChannelVec3',
+      'F-Modifier',
+    ],
+    [
+      'axisModifiers',
+      { ...baseParams, axisModifiers: [null, [{ type: 'noise', enabled: true }], null] },
+      'KeyframeChannelVec3',
+      'per-axis',
+    ],
+    [
+      'baked glTF (childName)',
+      { ...baseParams, childName: 'Hips' },
+      'KeyframeChannelVec3',
+      'baked glTF',
+    ],
+    [
+      'baked glTF (assetRef)',
+      { ...baseParams, assetRef: 'a1' },
+      'KeyframeChannelVec3',
+      'baked glTF',
+    ],
+  ])('REFUSES %s, naming the channel', (_label, params, type, reasonPart) => {
+    const res = bareChannelToActionChannel(node(params as Record<string, unknown>, type));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toContain('ch1');
+      expect(res.reason).toContain(reasonPart);
     }
   });
 });

@@ -102,8 +102,8 @@ import { nodeDisplayName } from '../app/sceneTreeWalk';
  *   - DIAMOND        ← `bg-fg`        (inactive keyframe)
  *   - ACTIVE_DIAMOND ← `bg-accent`    (selected keyframe / channel ring)
  *   - PLAYHEAD       ← `bg-accent`    (the C4 playhead line)
- *   - ROW_LINE       ← `border-line`  (channel row separators + grid)
- *   - LABEL_TEXT     ← `text-mute`    (channel name labels)
+ *   - ROW_LINE       ← `border-border`  (channel row separators + grid)
+ *   - LABEL_TEXT     ← `text-fg-dim`    (channel name labels)
  *   - CANVAS_BG      ← `bg-bg`        (the surface background)
  */
 export const PALETTE = {

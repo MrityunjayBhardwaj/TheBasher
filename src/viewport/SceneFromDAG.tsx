@@ -52,11 +52,20 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import {
-  directChannelNodesForTarget,
   channelValuesFromNodes,
   directChannelTargetSet,
   animatedAncestorSet,
 } from '../app/nodeChannels';
+import {
+  layeredChannelValues,
+  layeredChannelNodesForTarget,
+  stripTargetSet,
+} from '../app/layeredChannels';
+import {
+  driverChannelValuesForTarget,
+  driverSubscriptionNodesForTarget,
+  driverTargetSet,
+} from '../app/paramDrivers';
 import {
   constraintTargetSet,
   resolveConstraintRotation,
@@ -108,6 +117,7 @@ import type {
   DirectionalLightValue,
   GltfAssetValue,
   GroupValue,
+  KeyframeChannelValue,
   LightValue,
   MaterialOverrideValue,
   InlineMaterialSpec,
@@ -198,7 +208,19 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // never O(N²) (B13). The top-level maps read these directly; #266 (B1) also
   // provides them via context so a NESTED child resolves overlay membership by
   // flat-id LOOKUP at any depth.
-  const directChannelTargets = directChannelTargetSet(state.nodes);
+  // #283 Phase 2 (D) — a node is "channel-driven" if a bare direct channel OR an
+  // NLA Strip targets it, so a strip-only node mounts its per-frame follower too
+  // (the layered enumeration then folds the strips). Union built once (O(N)), tested
+  // O(1) per child (B13). Empty strip set → exactly the bare set (byte-identical).
+  // #293 (Inc 2) — a node is also "channel-driven" if a bound ParamDriver overlays
+  // it (the PULL rail), so a driver-only target mounts its per-frame follower too and
+  // `useLayeredChannels` then folds the driver value alongside channels/strips. No
+  // bound driver → exactly the channels+strips set (byte-identical).
+  const directChannelTargets = new Set<string>([
+    ...directChannelTargetSet(state.nodes),
+    ...stripTargetSet(state.nodes),
+    ...driverTargetSet(state.nodes),
+  ]);
   const constraintTargets = constraintTargetSet(state.nodes);
   // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
   // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
@@ -748,6 +770,53 @@ function LightKindR({
 // pays zero cost (the boolean prop keeps LightNode's memo bailing out). Lights are
 // few, so the per-frame setState (one light subtree) is cheap — the same trade the
 // mesh path makes for far more nodes.
+// The ONE render-side channel enumeration (#283 Phase 2 Slice D): the bare direct
+// channels AND the strip-derived synthetic channels driving `targetId`, unified into
+// the SAME `KeyframeChannelValue[]` `overlayChannels` already folds. Narrow-subscribe
+// the CONTRIBUTING NODE refs (bare channels + this target's strips + their actions +
+// all tracks — a track's solo/mute/order is a global fold input), shallow-compared so
+// this rebuilds ONLY when a contributing ref changes (H48). The values are built from
+// a lookup over exactly those refs — no store re-read, a pure function of the memo dep.
+// An empty strip set returns the bare array verbatim → byte-identical (the anchor).
+function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
+  const contribNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => layeredChannelNodesForTarget(s.state.nodes, targetId),
+    shallow,
+  );
+  // #293 (Inc 2) — the PULL rail rides the SAME render enumeration. Subscribe to the
+  // driver nodes bound to `targetId` PLUS their compute-graph input closure (shallow),
+  // so the memo below rebuilds when the driver OR any SOURCE ref changes — the render
+  // side's synthesized dependency edge (V88 N2). Empty for an undriven target → the
+  // channels+strips path is byte-identical.
+  const driverNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => driverSubscriptionNodesForTarget(s.state.nodes, targetId),
+    shallow,
+  );
+  // A STABLE evaluator cache: a driver's value is evaluated through the compute graph;
+  // the cache HITS across rebuilds while sources are unchanged and MISSES (recomputes)
+  // when a source param's cacheKey flips — the H40/H48 pattern (LightHelperFollower).
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  return useMemo(() => {
+    const map: Record<string, (typeof contribNodes)[number]> = {};
+    for (const n of contribNodes) map[n.id] = n;
+    const channels = layeredChannelValues(map, targetId);
+    if (driverNodes.length === 0) return channels;
+    // Evaluate the drivers off the LIVE state (read non-reactively — the memo key is
+    // `driverNodes`, which covers every ref whose change matters). Inc-2 drivers are
+    // CONSTANT over `t` (no time-varying compute leaf), so a zero ctx is exact; the
+    // per-frame `.sample(seconds)` the followers call returns that constant → H40.
+    const drivers = driverChannelValuesForTarget(
+      useDagStore.getState().state,
+      targetId,
+      { time: { frame: 0, seconds: 0, normalized: 0 } },
+      cache,
+    );
+    return drivers.length === 0 ? channels : [...channels, ...drivers];
+  }, [contribNodes, driverNodes, targetId, cache]);
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -757,12 +826,7 @@ function DirectChannelsLightR({
   nodeId: string;
   constrained: boolean;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, nodeId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(nodeId);
   const transients = useTransientEditStore((s) => s.edits);
   const sample = (seconds: number): LightValue =>
     overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
@@ -824,12 +888,7 @@ function LightHelperFollower({
   /** True iff this light is the target of an active Track-To (#243, V60). */
   constrained: boolean;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, nodeId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(nodeId);
   const transients = useTransientEditStore((s) => s.edits);
   // #243 ([[H132]] GAP 2) — a CONSTRAINED light DERIVES its aim from the Track-To
   // target's world position per frame (the lit RectAreaLight follows via
@@ -883,12 +942,7 @@ function LightHelperFollower({
 // carries channels, so a static scene pays nothing.
 function SceneEnvChannelsR({ sceneNodeId }: { sceneNodeId: string }) {
   const scene = useThree((s) => s.scene);
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, sceneNodeId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(sceneNodeId);
   useFrame(() => {
     if (channels.length === 0) return;
     const seconds = useTimeStore.getState().seconds;
@@ -1533,12 +1587,7 @@ function DirectChannelsR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, pickId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(pickId);
   // Subscribe the transient SET so a PAUSED edit re-applies (the AnimationLayerR
   // #149 B2c mechanism; safe under H48 — `edits` is a stable empty Map ref during
   // playback). overlayChannels runs FIRST (committed curve), then the transient
@@ -1599,12 +1648,7 @@ function ConstrainedR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channelNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => directChannelNodesForTarget(s.state.nodes, pickId),
-    shallow,
-  );
-  const channels = useMemo(() => channelValuesFromNodes(channelNodes), [channelNodes]);
+  const channels = useLayeredChannels(pickId);
   const transients = useTransientEditStore((s) => s.edits);
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 

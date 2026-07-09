@@ -42,7 +42,7 @@ import { useDagStore } from '../core/dag/store';
 import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
-import { useViewportStore } from '../app/stores/viewportStore';
+import { useViewportStore, DEFAULT_VIEWPORT_CLIP } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
@@ -381,11 +381,15 @@ export function EditorViewCamera() {
   }, [freeNearEff, freeFarEff]);
 
   // Hydrate the per-project clip override into the store when the project
-  // changes (#192). loadViewportClip returns null (AUTO) when none/invalid.
-  // setViewportClipOverride is pure — no re-save here (persistence is owned by
-  // the View-menu handler), so hydration can't echo back into localStorage.
+  // changes (#192). A project with NO saved override falls back to the fixed
+  // DEFAULT_VIEWPORT_CLIP (0.01–500) for ALL projects — NOT AUTO bounds-fit — per
+  // the user's "camera clip default for all projects". A project's own saved
+  // override still wins. setViewportClipOverride is pure — no re-save here
+  // (persistence is owned by the View-menu handler), so hydration can't echo back.
   useEffect(() => {
-    useViewportStore.getState().setViewportClipOverride(loadViewportClip(projectId));
+    useViewportStore
+      .getState()
+      .setViewportClipOverride(loadViewportClip(projectId) ?? DEFAULT_VIEWPORT_CLIP);
   }, [projectId]);
 
   // DEV-only observation seam for the #165 e2e: read the live view camera so

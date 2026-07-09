@@ -23,6 +23,14 @@ import { deleteNodeMutator } from './builders/deleteNode';
 import { randomizeMutator } from './builders/randomize';
 import { retargetMutator } from './builders/retarget';
 import { addModifierMutator } from './builders/addModifier';
+import { addChannelModifierMutator } from './builders/addChannelModifier';
+import { setChannelExtendMutator } from './builders/setChannelExtend';
+import { setKeyframeInterpMutator } from './builders/setKeyframeInterp';
+import { createActionMutator } from './builders/createAction';
+import { addStripMutator } from './builders/addStrip';
+import { setStripTimingMutator } from './builders/setStripTiming';
+import { setStripBlendMutator } from './builders/setStripBlend';
+import { setTrackStateMutator } from './builders/setTrackState';
 import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
@@ -97,16 +105,22 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 18 = the prior 17 + `mutator.geometry.addModifier` (epic #201 / #209, the
-    // geometry OperatorStack agent op). (17 was the prior 18 minus `addLayer`,
-    // retired with the AnimationLayer wrapper, v0.7 #199 / V57.)
-    expect(mutators).toHaveLength(18);
+    // 26 = the prior 21 + the five #283 Phase 4 NLA mutators: 4A createAction+addStrip,
+    // 4B setStripTiming+setStripBlend, 4C setTrackState. (21 was 20 + `setKeyframeInterp`;
+    // 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`; 18 was 17 +
+    // `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
+    expect(mutators).toHaveLength(26);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.geometry.addModifier',
+      'mutator.nla.addStrip',
+      'mutator.nla.createAction',
+      'mutator.nla.setStripBlend',
+      'mutator.nla.setStripTiming',
+      'mutator.nla.setTrackState',
       'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
@@ -116,9 +130,12 @@ describe('mutator catalog', () => {
       'mutator.setMaterialColor',
       'mutator.shot.create',
       'mutator.timeline.addChannel',
+      'mutator.timeline.addChannelModifier',
       'mutator.timeline.bakeGltfChannel',
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
+      'mutator.timeline.setChannelExtend',
+      'mutator.timeline.setKeyframeInterp',
       'mutator.timeline.simplifyChannel',
       'mutator.translate',
     ]);
@@ -316,6 +333,447 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
     const stack = enumerateModifierStack(next, 'box');
     expect(stack).toHaveLength(1);
     expect(stack[0].type).toBe('MirrorModifier');
+  });
+});
+
+describe('addChannelModifier mutator (F-Modifier stack — #281 / V88 D2)', () => {
+  function applyOps(state: DagState, ops: { type: string }[]): DagState {
+    return ops.reduce((s, op) => applyOp(s, op as never).next, state);
+  }
+  function channelScene(
+    type: 'KeyframeChannelNumber' | 'KeyframeChannelVec3',
+    modifiers?: unknown[],
+  ): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: type,
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: type === 'KeyframeChannelVec3' ? 'position' : 'opacity',
+        keyframes:
+          type === 'KeyframeChannelVec3'
+            ? [{ time: 0, value: [5, 0, 0], easing: 'linear' }]
+            : [{ time: 0, value: 5, easing: 'linear' }],
+        ...(modifiers ? { modifiers } : {}),
+      },
+    }).next;
+    return s;
+  }
+
+  it('appends a defaulted noise modifier via one setParam("modifiers")', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise' },
+      state,
+      'add noise',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toHaveLength(1);
+    const op = r.ops[0];
+    expect(op.type === 'setParam' && op.paramPath).toBe('modifiers');
+    if (op.type !== 'setParam') return;
+    const mods = op.value as Array<{ type: string; strength: number }>;
+    expect(mods).toHaveLength(1);
+    // defaultModifier('noise') defaults — the single wiring authority.
+    expect(mods[0].type).toBe('noise');
+    expect(mods[0].strength).toBe(1);
+  });
+
+  it('applies overrides onto the default (author a tuned modifier in one call)', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', overrides: { strength: 3, offset: 10 } },
+      state,
+      'add tuned noise',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const m = (r.ops[0].value as Array<Record<string, number>>)[0];
+    expect(m.strength).toBe(3);
+    expect(m.offset).toBe(10);
+    expect(m.scale).toBe(1); // untouched default preserved
+  });
+
+  it('appends to an existing stack, preserving order', () => {
+    const state = channelScene('KeyframeChannelNumber', [
+      { type: 'noise', blend: 'add', strength: 1, scale: 1, phase: 0, offset: 0, depth: 1 },
+    ]);
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'generator' },
+      state,
+      'append generator',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const mods = r.ops[0].value as Array<{ type: string }>;
+    expect(mods.map((m) => m.type)).toEqual(['noise', 'generator']);
+  });
+
+  it('inserts at an explicit index', () => {
+    const state = channelScene('KeyframeChannelNumber', [
+      { type: 'generator', additive: true, coefficients: [0, 1] },
+    ]);
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', index: 0 },
+      state,
+      'prepend noise',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const mods = r.ops[0].value as Array<{ type: string }>;
+    expect(mods.map((m) => m.type)).toEqual(['noise', 'generator']);
+  });
+
+  it('rejects an out-of-range index', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', index: 5 },
+      state,
+      'bad index',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an override that violates the modifier schema', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    // depth is int 1..8; 99 is out of range → merged modifier fails FModifierSchema.
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'noise', overrides: { depth: 99 } },
+      state,
+      'bad override',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a channel type with no modifier stack (Quat)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'qch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+    }).next;
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'qch', modifierType: 'noise' },
+      s,
+      'quat noise',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an unknown channel', () => {
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ghost', modifierType: 'noise' },
+      buildSceneWithTime(),
+      'ghost',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('works on a Vec3 channel (per-component stack)', () => {
+    const state = channelScene('KeyframeChannelVec3');
+    const r = validatePlan(
+      addChannelModifierMutator,
+      { channelId: 'ch', modifierType: 'stepped' },
+      state,
+      'vec3 stepped',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const next = applyOps(state, r.ops as { type: string }[]);
+    const mods = (next.nodes['ch'].params as { modifiers: Array<{ type: string }> }).modifiers;
+    expect(mods.map((m) => m.type)).toEqual(['stepped']);
+  });
+
+  it('is deterministic (same spec → identical ops)', () => {
+    const state = channelScene('KeyframeChannelNumber');
+    const spec = { channelId: 'ch', modifierType: 'noise' as const, overrides: { strength: 2 } };
+    const a = validatePlan(addChannelModifierMutator, spec, state, 'x');
+    const b = validatePlan(addChannelModifierMutator, spec, state, 'x');
+    expect(a.ok && b.ok && JSON.stringify(a.ops) === JSON.stringify(b.ops)).toBe(true);
+  });
+});
+
+describe('setChannelExtend mutator (per-side extrapolation — #281 / V88 D1)', () => {
+  function channelScene(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        keyframes: [{ time: 0, value: 5, easing: 'linear' }],
+      },
+    }).next;
+    return s;
+  }
+
+  it('sets both sides via setParam(extendBefore)+(extendAfter)', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ch', before: 'slope', after: 'hold' },
+      channelScene(),
+      'extend',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toEqual([
+      { type: 'setParam', nodeId: 'ch', paramPath: 'extendBefore', value: 'slope' },
+      { type: 'setParam', nodeId: 'ch', paramPath: 'extendAfter', value: 'hold' },
+    ]);
+  });
+
+  it('emits only the provided side', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ch', after: 'slope' },
+      channelScene(),
+      'after only',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ops).toEqual([
+      { type: 'setParam', nodeId: 'ch', paramPath: 'extendAfter', value: 'slope' },
+    ]);
+  });
+
+  it('rejects a spec with neither side (gate 2)', () => {
+    const r = validatePlan(setChannelExtendMutator, { channelId: 'ch' }, channelScene(), 'none');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an unknown channel', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ghost', before: 'hold' },
+      buildSceneWithTime(),
+      'ghost',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a channel type with no extend rule (Quat)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'qch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+    }).next;
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'qch', after: 'slope' },
+      s,
+      'quat extend',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // #289 — per-axis targeting on a vec channel.
+  function vec3ChannelScene(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'vch',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'box',
+        paramPath: 'position',
+        keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+      },
+    }).next;
+    return s;
+  }
+
+  it('axis: writes a dense axisExtend array, target axis set, others null', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'vch', axis: 0, after: 'slope' },
+      vec3ChannelScene(),
+      'per-axis',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // before omitted → falls back to the channel-level 'hold'; other axes stay null.
+    expect(r.ops).toEqual([
+      {
+        type: 'setParam',
+        nodeId: 'vch',
+        paramPath: 'axisExtend',
+        value: [{ before: 'hold', after: 'slope' }, null, null],
+      },
+    ]);
+  });
+
+  it('axis: rejects a scalar Number channel (no axes)', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'ch', axis: 0, after: 'slope' },
+      channelScene(),
+      'axis on scalar',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('axis: rejects an out-of-range index', () => {
+    const r = validatePlan(
+      setChannelExtendMutator,
+      { channelId: 'vch', axis: 3, after: 'slope' },
+      vec3ChannelScene(),
+      'axis oor',
+    );
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('setKeyframeInterp mutator (per-keyframe interp/ease/handle — #281 / V88 D1)', () => {
+  function channelScene(
+    keys: Array<{ time: number; value: number; easing?: string; handleType?: string }>,
+  ): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'val',
+        target: 'box',
+        paramPath: 'opacity',
+        keyframes: keys.map((k) => ({
+          time: k.time,
+          value: k.value,
+          easing: k.easing ?? 'linear',
+          ...(k.handleType ? { handleType: k.handleType } : {}),
+        })),
+      },
+    }).next;
+    return s;
+  }
+
+  it('sets easing on ALL keys, preserving time + value', () => {
+    const state = channelScene([
+      { time: 0, value: 0 },
+      { time: 1, value: 10 },
+    ]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', scope: 'all', easing: 'back', ease: 'out' },
+      state,
+      'ease all',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const next = r.ops[0].value as Array<{
+      time: number;
+      value: number;
+      easing: string;
+      ease: string;
+    }>;
+    expect(next).toEqual([
+      { time: 0, value: 0, easing: 'back', ease: 'out' },
+      { time: 1, value: 10, easing: 'back', ease: 'out' },
+    ]);
+  });
+
+  it('sets interp on only the key AT a given time (scope {time})', () => {
+    const state = channelScene([
+      { time: 0, value: 0 },
+      { time: 1, value: 10 },
+    ]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', scope: { time: 1 }, easing: 'constant' },
+      state,
+      'step the second key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const next = r.ops[0].value as Array<{ time: number; easing: string }>;
+    expect(next.map((k) => k.easing)).toEqual(['linear', 'constant']);
+  });
+
+  it('sets handleType without touching easing', () => {
+    const state = channelScene([{ time: 0, value: 0, easing: 'cubic' }]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', handleType: 'auto' },
+      state,
+      'handle',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<{ easing: string; handleType: string }>)[0];
+    expect(k.easing).toBe('cubic'); // untouched
+    expect(k.handleType).toBe('auto');
+  });
+
+  it('rejects a spec with no interp field (defense-in-depth)', () => {
+    const state = channelScene([{ time: 0, value: 0 }]);
+    const r = validatePlan(setKeyframeInterpMutator, { channelId: 'ch' }, state, 'noop');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects scope {time} when no key is at that time', () => {
+    const state = channelScene([{ time: 0, value: 0 }]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', scope: { time: 5 }, easing: 'back' },
+      state,
+      'missing key',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an empty channel', () => {
+    const state = channelScene([]);
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'ch', easing: 'back' },
+      state,
+      'empty',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a channel type without the broadened interp vocab (Quat)', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'qch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+    }).next;
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'qch', easing: 'back' },
+      s,
+      'quat interp',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('is deterministic (same spec → identical ops)', () => {
+    const state = channelScene([{ time: 0, value: 0 }]);
+    const spec = { channelId: 'ch', easing: 'sine' as const, ease: 'inout' as const };
+    const a = validatePlan(setKeyframeInterpMutator, spec, state, 'x');
+    const b = validatePlan(setKeyframeInterpMutator, spec, state, 'x');
+    expect(a.ok && b.ok && JSON.stringify(a.ops) === JSON.stringify(b.ops)).toBe(true);
   });
 });
 
@@ -1117,7 +1575,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(18);
+    expect(parsed.mutators).toHaveLength(26);
   });
 });
 
@@ -1400,6 +1858,55 @@ describe('mutator.timeline.keyframe', () => {
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  // #281 — broadened interp vocabulary at key-creation.
+  it('authors a Penner easing + ease direction at creation', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0], easing: 'back', ease: 'out' },
+      state,
+      'eased key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<{ time: number; easing: string; ease?: string }>).find(
+      (x) => x.time === 1,
+    )!;
+    expect(k.easing).toBe('back');
+    expect(k.ease).toBe('out');
+  });
+
+  it('authors a handleType at creation', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0], easing: 'cubic', handleType: 'auto' },
+      state,
+      'handled key',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<{ time: number; handleType?: string }>).find(
+      (x) => x.time === 1,
+    )!;
+    expect(k.handleType).toBe('auto');
+  });
+
+  it('byte-identical for a legacy call (no ease/handle keys added)', () => {
+    const state = stateWithChannel();
+    const r = validatePlan(
+      keyframeMutator,
+      { channelId: 'ch', time: 1, value: [10, 0, 0], easing: 'linear' },
+      state,
+      'legacy',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const k = (r.ops[0].value as Array<Record<string, unknown>>).find((x) => x.time === 1)!;
+    // No `ease` / `handleType` keys when not supplied → identical to pre-#281.
+    expect(Object.keys(k).sort()).toEqual(['easing', 'time', 'value']);
   });
 });
 
@@ -2322,6 +2829,325 @@ describe('mutator.timeline.removeKeyframes', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #283 Phase 4 — NLA agent mutators (createAction + addStrip)
+// ---------------------------------------------------------------------------
+
+describe('mutator.nla.createAction (author a target-less Action, V57)', () => {
+  const CHANNELS = [
+    {
+      valueType: 'vec3' as const,
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [0, 0, 0], easing: 'linear' as const },
+        { time: 2, value: [2, 1, 0], easing: 'linear' as const },
+      ],
+    },
+  ];
+
+  it('emits a single addNode(Action) with the channel bundle + deterministic id', () => {
+    const state = buildSceneWithTime();
+    const result = validatePlan(
+      createActionMutator,
+      { name: 'walk', actionId: 'nla_act', channels: CHANNELS },
+      state,
+      'author a walk Action',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(1);
+      const op = result.ops[0];
+      expect(op.type).toBe('addNode');
+      if (op.type === 'addNode') {
+        expect(op.nodeType).toBe('Action');
+        expect(op.nodeId).toBe('nla_act');
+        expect((op.params as { channels: unknown[] }).channels).toHaveLength(1);
+      }
+    }
+  });
+
+  it('auto-mints nla_action_1 when actionId is omitted', () => {
+    const state = buildSceneWithTime();
+    const result = validatePlan(
+      createActionMutator,
+      { name: 'walk', channels: CHANNELS },
+      state,
+      'author',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.ops[0].type === 'addNode') {
+      expect(result.ops[0].nodeId).toBe('nla_action_1');
+    }
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = buildSceneWithTime();
+    const a = validatePlan(createActionMutator, { channels: CHANNELS }, state, 'a');
+    const b = validatePlan(createActionMutator, { channels: CHANNELS }, state, 'a');
+    expect(a).toEqual(b);
+  });
+
+  it('re-guards empty channels on the validatePlan-direct path (precondition)', () => {
+    // The spec `.min(1)` fires only at safeParse; a validatePlan-direct caller passes
+    // an already-parsed spec → the precondition re-guard must catch empty channels.
+    const state = buildSceneWithTime();
+    const result = validatePlan(createActionMutator, { channels: [] } as never, state, 'empty');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.gate).toBe(4);
+  });
+
+  it('rejects a caller-supplied actionId that already exists', () => {
+    let state = buildSceneWithTime();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: { name: 'x', channels: [] },
+    }).next;
+    const result = validatePlan(
+      createActionMutator,
+      { actionId: 'nla_act', channels: CHANNELS },
+      state,
+      'dup',
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('mutator.nla.addStrip (place an Action into a Track)', () => {
+  /** A scene with `box` (target) + an Action `nla_act`. */
+  function sceneWithAction(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: {
+        name: 'walk',
+        channels: [
+          {
+            valueType: 'vec3',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [2, 1, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      },
+    }).next;
+    return s;
+  }
+
+  it('trackId omitted → [addNode:Strip, addNode:Track, setParam:strips=[stripId]] (auto-track)', () => {
+    const state = sceneWithAction();
+    const result = validatePlan(
+      addStripMutator,
+      { action: 'nla_act', target: 'box', stripId: 'nla_s1' },
+      state,
+      'place',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(3);
+      expect(result.ops[0].type).toBe('addNode');
+      expect(result.ops[1].type).toBe('addNode');
+      const strip = result.ops[0];
+      const track = result.ops[1];
+      const setStrips = result.ops[2];
+      if (strip.type === 'addNode') expect(strip.nodeType).toBe('Strip');
+      if (track.type === 'addNode') {
+        expect(track.nodeType).toBe('Track');
+        expect(track.nodeId).toBe('nla_track_1');
+      }
+      if (setStrips.type === 'setParam') {
+        expect(setStrips.nodeId).toBe('nla_track_1');
+        expect(setStrips.paramPath).toBe('strips');
+        expect(setStrips.value).toEqual(['nla_s1']);
+      }
+    }
+  });
+
+  it('existing trackId → [addNode:Strip, setParam:strips] appends, prior strips preserved', () => {
+    let state = sceneWithAction();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'nla_trk',
+      nodeType: 'Track',
+      params: { name: 'Base', strips: ['existing_strip'], order: 0 },
+    }).next;
+    const result = validatePlan(
+      addStripMutator,
+      { action: 'nla_act', target: 'box', trackId: 'nla_trk', stripId: 'nla_s2' },
+      state,
+      'append',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(2);
+      const setStrips = result.ops[1];
+      if (setStrips.type === 'setParam') {
+        expect(setStrips.nodeId).toBe('nla_trk');
+        expect(setStrips.value).toEqual(['existing_strip', 'nla_s2']);
+      }
+    }
+  });
+
+  it('rejects a missing action, a non-Action action, and a missing target', () => {
+    const state = sceneWithAction();
+    expect(validatePlan(addStripMutator, { action: 'nope', target: 'box' }, state, 'x').ok).toBe(
+      false,
+    );
+    expect(validatePlan(addStripMutator, { action: 'box', target: 'box' }, state, 'x').ok).toBe(
+      false,
+    ); // box is a BoxMesh, not an Action
+    expect(
+      validatePlan(addStripMutator, { action: 'nla_act', target: 'nope' }, state, 'x').ok,
+    ).toBe(false);
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithAction();
+    const a = validatePlan(addStripMutator, { action: 'nla_act', target: 'box' }, state, 'p');
+    const b = validatePlan(addStripMutator, { action: 'nla_act', target: 'box' }, state, 'p');
+    expect(a).toEqual(b);
+  });
+});
+
+describe('mutator.nla.setStripTiming / setStripBlend (edit a placed strip)', () => {
+  /** A scene with `box`, an Action `nla_act`, and a Strip `nla_s` placing it. */
+  function sceneWithStrip(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: { name: 'walk', channels: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_s',
+      nodeType: 'Strip',
+      params: { name: 's', action: 'nla_act', target: 'box' },
+    }).next;
+    return s;
+  }
+
+  it('setStripTiming emits one setParam per provided field in deterministic order', () => {
+    const state = sceneWithStrip();
+    const result = validatePlan(
+      setStripTimingMutator,
+      { stripId: 'nla_s', start: 1, timeScale: 2 },
+      state,
+      'retime',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops).toHaveLength(2);
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'start',
+        'timeScale',
+      ]);
+    }
+  });
+
+  it('setStripBlend emits one setParam per provided field (blendMode→influence→blendIn→blendOut)', () => {
+    const state = sceneWithStrip();
+    const result = validatePlan(
+      setStripBlendMutator,
+      { stripId: 'nla_s', blendIn: 0.5, influence: 0.8 },
+      state,
+      'blend',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'influence',
+        'blendIn',
+      ]);
+    }
+  });
+
+  it('re-guards an all-undefined spec on the validatePlan-direct path (precondition)', () => {
+    const state = sceneWithStrip();
+    const timing = validatePlan(setStripTimingMutator, { stripId: 'nla_s' } as never, state, 'x');
+    expect(timing.ok).toBe(false);
+    if (!timing.ok) expect(timing.gate).toBe(4);
+    const blend = validatePlan(setStripBlendMutator, { stripId: 'nla_s' } as never, state, 'x');
+    expect(blend.ok).toBe(false);
+    if (!blend.ok) expect(blend.gate).toBe(4);
+  });
+
+  it('rejects a non-Strip target', () => {
+    const state = sceneWithStrip();
+    expect(validatePlan(setStripTimingMutator, { stripId: 'box', start: 1 }, state, 'x').ok).toBe(
+      false,
+    );
+    expect(
+      validatePlan(setStripBlendMutator, { stripId: 'nla_act', influence: 0.5 }, state, 'x').ok,
+    ).toBe(false);
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithStrip();
+    const a = validatePlan(setStripTimingMutator, { stripId: 'nla_s', repeat: 3 }, state, 'r');
+    const b = validatePlan(setStripTimingMutator, { stripId: 'nla_s', repeat: 3 }, state, 'r');
+    expect(a).toEqual(b);
+  });
+});
+
+describe('mutator.nla.setTrackState (order / mute / solo)', () => {
+  function sceneWithTrack(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_trk',
+      nodeType: 'Track',
+      params: { name: 'Base', strips: [], order: 0 },
+    }).next;
+    return s;
+  }
+
+  it('emits one setParam per provided field in deterministic order (order→mute→solo)', () => {
+    const state = sceneWithTrack();
+    const result = validatePlan(
+      setTrackStateMutator,
+      { trackId: 'nla_trk', order: 2, mute: true, solo: false },
+      state,
+      'track',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'order',
+        'mute',
+        'solo',
+      ]);
+    }
+  });
+
+  it('re-guards an all-undefined spec on the validatePlan-direct path (precondition)', () => {
+    const state = sceneWithTrack();
+    const result = validatePlan(setTrackStateMutator, { trackId: 'nla_trk' } as never, state, 'x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.gate).toBe(4);
+  });
+
+  it('rejects a non-Track target', () => {
+    const state = sceneWithTrack();
+    expect(validatePlan(setTrackStateMutator, { trackId: 'box', mute: true }, state, 'x').ok).toBe(
+      false,
+    );
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithTrack();
+    const a = validatePlan(setTrackStateMutator, { trackId: 'nla_trk', order: 1 }, state, 'o');
+    const b = validatePlan(setTrackStateMutator, { trackId: 'nla_trk', order: 1 }, state, 'o');
+    expect(a).toEqual(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // V14 DEEPER NON-REDUNDANCY — Op-shape probe (issue #22)
 //
 // The contract-signature guard above ("V14: no two Mutators share the same
@@ -2386,6 +3212,14 @@ import {
   randomizeMutator as _randomizeM,
   bakeGltfChannelMutator as _bakeGltfM,
   addModifierMutator as _addModifierM,
+  addChannelModifierMutator as _addChannelModifierM,
+  setChannelExtendMutator as _setChannelExtendM,
+  setKeyframeInterpMutator as _setKeyframeInterpM,
+  createActionMutator as _createActionM,
+  addStripMutator as _addStripM,
+  setStripTimingMutator as _setStripTimingM,
+  setStripBlendMutator as _setStripBlendM,
+  setTrackStateMutator as _setTrackStateM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -2512,6 +3346,46 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         scale: [1, 1, 1],
         overridden: { position: false, rotation: false, scale: false },
       },
+    }).next;
+    return s;
+  }
+
+  // #283 Phase 4 (NLA agent mutators) — a scene carrying the Action/Strip/Track
+  // trio addStrip/createAction probe against: `box` (target, from buildSceneWithTime)
+  // + an Action `nla_act` (one vec3 position channel) + a Strip + a Track `nla_trk`
+  // that already holds the strip (so the addStrip probe can append to an EXISTING
+  // track → the deterministic [addNode:Strip, setParam:strips] op-shape, no auto-Track).
+  function buildSceneForNla(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_act',
+      nodeType: 'Action',
+      params: {
+        name: 'walk',
+        channels: [
+          {
+            valueType: 'vec3',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [2, 1, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_strip',
+      nodeType: 'Strip',
+      params: { name: 's', action: 'nla_act', target: 'box', start: 0 },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'nla_trk',
+      nodeType: 'Track',
+      params: { name: 'Base', strips: ['nla_strip'], order: 0 },
     }).next;
     return s;
   }
@@ -2654,6 +3528,77 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addModifierM as MutatorDefinition<unknown>,
       build: buildScene,
       spec: { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
+    },
+    // #281 — F-Modifier on the collinear `ch` channel. Emits setParam('modifiers');
+    // a distinct paramPath from keyframe/simplify's setParam('keyframes').
+    'mutator.timeline.addChannelModifier': {
+      mutator: _addChannelModifierM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', modifierType: 'noise' },
+    },
+    // #281 — per-side extrapolation. Emits setParam('extendBefore')+('extendAfter'):
+    // a distinct op-shape from every other channel mutator.
+    'mutator.timeline.setChannelExtend': {
+      mutator: _setChannelExtendM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', before: 'slope', after: 'slope' },
+    },
+    // #281 — per-keyframe interp. Emits setParam('keyframes') — same op-shape as
+    // keyframe/simplify, distinguished by the contract discriminator (drops
+    // animation-shape, lossy:['prior-interpolation']), the #22 resolution.
+    'mutator.timeline.setKeyframeInterp': {
+      mutator: _setKeyframeInterpM as MutatorDefinition<unknown>,
+      build: buildSceneWithChannel,
+      spec: { channelId: 'ch', scope: 'all', easing: 'back' },
+    },
+    // #283 Phase 4 — createAction emits [addNode:Action] (unique nodeType);
+    // its all-8-inert contract discriminator is unique too.
+    'mutator.nla.createAction': {
+      mutator: _createActionM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: {
+        name: 'walk',
+        actionId: 'probe_act',
+        channels: [
+          {
+            valueType: 'vec3',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [2, 1, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      },
+    },
+    // #283 Phase 4 — addStrip against an EXISTING track emits
+    // [addNode:Strip, setParam:strips] — a distinct op-shape; requiredNodeTypes:['Action']
+    // is the honest contract discriminator (clears the keyframe preserves-7 collision).
+    'mutator.nla.addStrip': {
+      mutator: _addStripM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { action: 'nla_act', target: 'box', trackId: 'nla_trk', stripId: 'probe_strip' },
+    },
+    // #283 Phase 4 inc 4B — setStripTiming emits [setParam:start, setParam:timeScale];
+    // setStripBlend emits [setParam:blendMode, setParam:influence] — distinct op-shapes
+    // (paramPath sets), separated from each other by their honest lossy kinds too.
+    'mutator.nla.setStripTiming': {
+      mutator: _setStripTimingM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { stripId: 'nla_strip', start: 1, timeScale: 2 },
+    },
+    'mutator.nla.setStripBlend': {
+      mutator: _setStripBlendM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { stripId: 'nla_strip', blendMode: 'combine', influence: 0.5 },
+    },
+    // #283 Phase 4 inc 4C — setTrackState emits [setParam:order, setParam:mute,
+    // setParam:solo] on nla_trk — a distinct op-shape; requiredNodeTypes:['Track'] is the
+    // honest signature discriminator vs the set-Strip family.
+    'mutator.nla.setTrackState': {
+      mutator: _setTrackStateM as MutatorDefinition<unknown>,
+      build: buildSceneForNla,
+      spec: { trackId: 'nla_trk', order: 1, mute: true, solo: false },
     },
   };
 
