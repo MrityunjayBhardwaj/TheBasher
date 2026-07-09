@@ -24,7 +24,8 @@ import { useMemo, useState } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useDagStore } from '../core/dag/store';
 import { useNotificationStore } from './stores/notificationStore';
-import type { SpareParam } from '../core/dag/types';
+import type { SpareHandle, SpareParam } from '../core/dag/types';
+import { resolveHandleKind, type HandleAxis, type HandleKind } from './controllerHandles';
 
 const SPARE_TYPES = ['float', 'int', 'bool', 'string', 'vec2', 'vec3'] as const;
 type SpareType = (typeof SPARE_TYPES)[number];
@@ -144,42 +145,132 @@ function SpareParamRow({
   onRemove: () => void;
 }) {
   const promoted = param.promoted === true;
+  // A promoted SCALAR spare gets a viewport handle (Inc 4). Only scalars have a shape
+  // CHOICE (slider vs dial) + range/axis worth authoring — a vec is always a point, a
+  // bool/string has no handle — so the refinement sub-row shows for promoted scalars.
+  const showHandleControls = promoted && (param.type === 'float' || param.type === 'int');
+  return (
+    <div className="flex flex-col">
+      <div
+        data-testid={`spare-row-${name}`}
+        className="flex items-center gap-1.5 px-3 py-1 text-[11px]"
+      >
+        <button
+          type="button"
+          onClick={() => onChange({ ...param, promoted: !promoted })}
+          aria-label={
+            promoted ? `Remove ${name} from Controllers dock` : `Show ${name} in Controllers dock`
+          }
+          aria-pressed={promoted}
+          title={promoted ? 'Promoted to Controllers dock' : 'Promote to Controllers dock'}
+          data-testid={`spare-promote-${name}`}
+          className={`select-none leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+            promoted ? 'text-accent' : 'text-fg/30 hover:text-fg/60'
+          }`}
+        >
+          {promoted ? '★' : '☆'}
+        </button>
+        <span className="w-20 shrink-0 truncate font-mono text-fg/70" title={name}>
+          {name}
+        </span>
+        <div className="flex-1">
+          <SpareValueField param={param} onChange={onChange} testId={`spare-value-${name}`} />
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove spare param ${name}`}
+          title="Remove"
+          data-testid={`spare-remove-${name}`}
+          className="select-none px-0.5 leading-none text-fg/30 hover:text-record focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ✕
+        </button>
+      </div>
+      {showHandleControls ? (
+        <SpareHandleControls name={name} param={param} onChange={onChange} />
+      ) : null}
+    </div>
+  );
+}
+
+const HANDLE_AXES: readonly HandleAxis[] = ['x', 'y', 'z'];
+const inputCls =
+  'rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+
+/** Handle refinement for a promoted SCALAR spare (Inc 4, D-4): override the shape
+ *  (slider ↔ dial), the world axis, and — for a slider — the [min,max] range the track
+ *  maps over. Writes the whole `handle` object back through the same setSpareParam op
+ *  (a pure view over node.spare); ABSENT fields fall to the type default (slider on x,
+ *  range [0,1]). */
+function SpareHandleControls({
+  name,
+  param,
+  onChange,
+}: {
+  name: string;
+  param: SpareParam;
+  onChange: (next: SpareParam) => void;
+}) {
+  // resolveHandleKind is non-null for a scalar (the caller gates on float/int).
+  const kind = (resolveHandleKind(param) ?? 'slider') as HandleKind;
+  const axis = param.handle?.axis ?? (kind === 'dial' ? 'y' : 'x');
+  const min = typeof param.handle?.min === 'number' ? param.handle.min : 0;
+  const max = typeof param.handle?.max === 'number' ? param.handle.max : 1;
+  // Merge a patch onto the current handle, always preserving a concrete `kind`.
+  const patch = (over: Partial<SpareHandle>) =>
+    onChange({ ...param, handle: { kind, axis, ...param.handle, ...over } });
+
   return (
     <div
-      data-testid={`spare-row-${name}`}
-      className="flex items-center gap-1.5 px-3 py-1 text-[11px]"
+      data-testid={`spare-handle-${name}`}
+      className="flex items-center gap-1.5 px-3 pb-1 pl-8 text-[10px] text-fg/50"
     >
-      <button
-        type="button"
-        onClick={() => onChange({ ...param, promoted: !promoted })}
-        aria-label={
-          promoted ? `Remove ${name} from Controllers dock` : `Show ${name} in Controllers dock`
-        }
-        aria-pressed={promoted}
-        title={promoted ? 'Promoted to Controllers dock' : 'Promote to Controllers dock'}
-        data-testid={`spare-promote-${name}`}
-        className={`select-none leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-          promoted ? 'text-accent' : 'text-fg/30 hover:text-fg/60'
-        }`}
+      <span className="text-fg/40">handle</span>
+      <select
+        value={kind}
+        aria-label={`${name} handle shape`}
+        data-testid={`spare-handle-kind-${name}`}
+        onChange={(e) => patch({ kind: e.target.value as HandleKind })}
+        className={inputCls}
       >
-        {promoted ? '★' : '☆'}
-      </button>
-      <span className="w-20 shrink-0 truncate font-mono text-fg/70" title={name}>
-        {name}
-      </span>
-      <div className="flex-1">
-        <SpareValueField param={param} onChange={onChange} testId={`spare-value-${name}`} />
-      </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove spare param ${name}`}
-        title="Remove"
-        data-testid={`spare-remove-${name}`}
-        className="select-none px-0.5 leading-none text-fg/30 hover:text-record focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        <option value="slider">slider</option>
+        <option value="dial">dial</option>
+      </select>
+      <select
+        value={axis}
+        aria-label={`${name} handle axis`}
+        data-testid={`spare-handle-axis-${name}`}
+        onChange={(e) => patch({ axis: e.target.value as HandleAxis })}
+        className={inputCls}
       >
-        ✕
-      </button>
+        {HANDLE_AXES.map((a) => (
+          <option key={a} value={a}>
+            {a}
+          </option>
+        ))}
+      </select>
+      {kind === 'slider' ? (
+        <>
+          <input
+            type="number"
+            value={min}
+            aria-label={`${name} slider min`}
+            data-testid={`spare-handle-min-${name}`}
+            onChange={(e) => patch({ min: e.target.value === '' ? 0 : Number(e.target.value) })}
+            className={`w-12 ${inputCls}`}
+          />
+          <span className="text-fg/40">–</span>
+          <input
+            type="number"
+            value={max}
+            aria-label={`${name} slider max`}
+            data-testid={`spare-handle-max-${name}`}
+            onChange={(e) => patch({ max: e.target.value === '' ? 1 : Number(e.target.value) })}
+            className={`w-12 ${inputCls}`}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
