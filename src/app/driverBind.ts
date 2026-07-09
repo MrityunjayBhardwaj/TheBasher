@@ -20,13 +20,29 @@ import type { NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { driverNodesForTarget, driverParamDeps } from './paramDrivers';
 
+/**
+ * A pickable driver source — the two roads of the pull rail (#294):
+ *  - `output` — a wired compute-graph Number output (the Inc-2 road): the driver's
+ *    `in` is connected to it.
+ *  - `spare`  — a promoted numeric spare param on another node (the `ch()` road): the
+ *    driver stores the ref in `sourceSpare` and reads it in the resolver seam, no wire.
+ */
+export type DriverSource =
+  | { kind: 'output'; id: string; label: string; ref: NodeRef }
+  | { kind: 'spare'; id: string; label: string; node: string; key: string };
+
+/** The source node id backing a DriverSource (for the cycle guard). */
+function sourceNodeId(source: DriverSource): string {
+  return source.kind === 'output' ? source.ref.node : source.node;
+}
+
 export interface DriverBindRequest {
   /** The node whose param is being driven. */
   targetId: string;
   /** The param path on the target (dotted; e.g. 'intensity', 'material.opacity'). */
   paramPath: string;
-  /** The compute-graph output feeding the driver's `in` (a Number socket). */
-  source: NodeRef;
+  /** The source feeding the driver — a wired Number output OR a promoted spare param. */
+  source: DriverSource;
   /** A fresh, unused node id for the driver (caller-generated → deterministic tests). */
   driverId: string;
 }
@@ -41,12 +57,35 @@ export type DriverBindResult = { ok: true; ops: Op[] } | { ok: false; reason: st
 export function buildBindDriverOps(state: DagState, req: DriverBindRequest): DriverBindResult {
   const { targetId, paramPath, source, driverId } = req;
   if (!targetId || !paramPath) return { ok: false, reason: 'missing target or param' };
-  if (!source.node) return { ok: false, reason: 'no source selected' };
+  const srcNode = sourceNodeId(source);
+  if (!srcNode) return { ok: false, reason: 'no source selected' };
   // G6 — the driven target will depend on `source` through the driver. Reject if
-  // `source` already (transitively, via wired edges + existing driver overlays) depends
-  // on `target`, which would close the loop target ← driver ← source → … → target.
-  if (wouldCreateCycle(state, source.node, targetId, 32, driverParamDeps(state.nodes))) {
+  // `source` already (transitively, via wired edges + existing driver overlays, incl.
+  // the spare road via driverParamDeps) depends on `target`, which would close the loop
+  // target ← driver ← source → … → target.
+  if (wouldCreateCycle(state, srcNode, targetId, 32, driverParamDeps(state.nodes))) {
     return { ok: false, reason: 'binding would create a driver cycle' };
+  }
+  if (source.kind === 'spare') {
+    // The `ch()` road — one edge-less node carrying the spare ref; no `connect`. Its
+    // value is resolved in the paramDrivers seam (readBaseParam), not through `in`.
+    return {
+      ok: true,
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: driverId,
+          nodeType: 'ParamDriver',
+          params: {
+            target: targetId,
+            paramPath,
+            blendMode: 'replace',
+            order: 0,
+            sourceSpare: { node: source.node, key: source.key },
+          },
+        },
+      ],
+    };
   }
   const ops: Op[] = [
     {
@@ -57,7 +96,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
     },
     {
       type: 'connect',
-      from: source,
+      from: source.ref,
       to: { node: driverId, socket: 'in' },
     },
   ];
@@ -72,27 +111,44 @@ export function buildUnbindDriverOps(state: DagState, targetId: string, paramPat
     .map((d) => ({ type: 'removeNode', nodeId: d.id }));
 }
 
-export interface DriverSourceOption {
-  ref: NodeRef;
-  label: string;
-}
+/** Numeric spare-param types that can drive a scalar target (the `ch()` road). */
+const NUMERIC_SPARE_TYPES = new Set(['float', 'int']);
 
 /**
- * The pickable driver SOURCES: every node exposing a `Number` output socket, EXCEPT
- * the target itself (a param cannot be driven by its own node's output — the trivial
- * self-cycle) and existing ParamDrivers (introspection-only output). Labelled by
- * `meta.name ?? id` for the source picker. Sorted for a stable menu.
+ * The pickable driver SOURCES — the two roads of the pull rail (#294):
+ *  - every node exposing a `Number` output socket (the wired compute road), and
+ *  - every promoted-or-not numeric spare param on another node (the `ch()` road).
+ * Both EXCLUDE the target node itself (a param cannot be driven by its own node — the
+ * trivial self-cycle) and existing ParamDrivers (introspection-only output). Labelled
+ * by `meta.name ?? id` and sorted for a stable menu.
  */
-export function driverSourceOptions(state: DagState, targetId: string): DriverSourceOption[] {
-  const out: DriverSourceOption[] = [];
+export function driverSourceOptions(state: DagState, targetId: string): DriverSource[] {
+  const out: DriverSource[] = [];
   for (const node of Object.values(state.nodes)) {
     if (node.id === targetId || node.type === 'ParamDriver') continue;
+    const label = node.meta?.name?.trim() || node.id;
     const def = getNodeType(node.type);
-    if (!def) continue;
-    for (const [socket, desc] of Object.entries(def.outputs)) {
-      if (desc.type !== 'Number') continue;
-      const label = node.meta?.name?.trim() || node.id;
-      out.push({ ref: { node: node.id, socket }, label: `${label} (${node.type})` });
+    if (def) {
+      for (const [socket, desc] of Object.entries(def.outputs)) {
+        if (desc.type !== 'Number') continue;
+        out.push({
+          kind: 'output',
+          id: `out:${node.id}:${socket}`,
+          label: `${label} (${node.type})`,
+          ref: { node: node.id, socket },
+        });
+      }
+    }
+    // Spare road — a numeric spare param is a first-class source (a Controller knob).
+    for (const [key, param] of Object.entries(node.spare ?? {})) {
+      if (!NUMERIC_SPARE_TYPES.has(param.type)) continue;
+      out.push({
+        kind: 'spare',
+        id: `spare:${node.id}:${key}`,
+        label: `${label} · ${key}`,
+        node: node.id,
+        key,
+      });
     }
   }
   out.sort((a, b) => a.label.localeCompare(b.label));

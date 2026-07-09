@@ -42,8 +42,38 @@ export const ParamDriverParams = z.object({
   blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
   /** Bottom→top fold position among all overlays on the band (V88 D2). Default 0. */
   order: z.number().default(0),
+  /** #294 (Inc 3) — the SECOND source road: instead of a wired compute output on
+   *  `in`, the driver's value pulls directly from a promoted spare param on another
+   *  node (the Houdini `ch("../ctrl/knob")` pull — GT §1, "the driver binding itself,
+   *  not a node"). ABSENT = the wired `in` road (Inc 2). Present = the spare road: the
+   *  value is resolved in the enumeration seam via readBaseParam (the evaluator cannot
+   *  see another node's spare), NOT through `in`. Optional so Inc-2 drivers serialize
+   *  byte-identical. */
+  sourceSpare: z.object({ node: z.string(), key: z.string() }).optional(),
 });
 export type ParamDriverParams = z.infer<typeof ParamDriverParams>;
+
+/** Build the KeyframeChannelValue a ParamDriver overlays onto its target from a single
+ *  resolved scalar. ONE builder shared by both source roads: `evaluate` feeds it the
+ *  wired-`in` value; the spare road (paramDrivers.ts) feeds it the readBaseParam value
+ *  — so a spare-sourced and a compute-sourced driver fold byte-identically. */
+export function makeParamDriverChannelValue(
+  params: ParamDriverParams,
+  value: number,
+): KeyframeChannelNumberValue {
+  return {
+    kind: 'KeyframeChannel',
+    name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
+    target: params.target,
+    paramPath: params.paramPath,
+    mute: false,
+    weight: 1,
+    blendMode: params.blendMode,
+    order: params.order,
+    valueType: 'number',
+    sample: () => value,
+  };
+}
 
 export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelNumberValue> = {
   type: 'ParamDriver',
@@ -58,19 +88,10 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelN
   evaluate: (params, inputs): KeyframeChannelNumberValue => {
     // The evaluator resolves `in` by walking the compute graph (the real wired edge);
     // an unbound driver reads 0 (parity with the compute nodes' unconnected-input
-    // default). Constant over `t` in Inc 2 (no time-varying compute leaf) → H40.
+    // default). Constant over `t` in Inc 2 (no time-varying compute leaf) → H40. A
+    // spare-sourced driver (params.sourceSpare) reads 0 HERE — its real value is
+    // resolved in the paramDrivers seam (evaluate cannot see another node's spare).
     const value = (inputs.in as number | undefined) ?? 0;
-    return {
-      kind: 'KeyframeChannel',
-      name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
-      target: params.target,
-      paramPath: params.paramPath,
-      mute: false,
-      weight: 1,
-      blendMode: params.blendMode,
-      order: params.order,
-      valueType: 'number',
-      sample: () => value,
-    };
+    return makeParamDriverChannelValue(params, value);
   },
 };

@@ -17,7 +17,12 @@ import { useMemo, useState } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useDagStore } from '../core/dag/store';
 import { useNotificationStore } from './stores/notificationStore';
-import { buildBindDriverOps, buildUnbindDriverOps, driverSourceOptions } from './driverBind';
+import {
+  buildBindDriverOps,
+  buildUnbindDriverOps,
+  driverSourceOptions,
+  type DriverSource,
+} from './driverBind';
 import { driverNodesForTarget } from './paramDrivers';
 
 /** A fresh driver node id. Local (like every other inspector add-node action). */
@@ -40,9 +45,16 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
   );
   const [picking, setPicking] = useState(false);
 
-  // The source label for the bound chip: the node feeding driver.in (meta.name ?? id).
+  // The source label for the bound chip. The `ch()` road (params.sourceSpare) names a
+  // promoted spare on another node; the wired road names the node feeding driver.in.
   const sourceLabel = useMemo(() => {
     if (!boundDriver) return '';
+    const spare = (boundDriver.params as { sourceSpare?: { node?: string; key?: string } })
+      .sourceSpare;
+    if (spare?.node && spare.key) {
+      const src = useDagStore.getState().state.nodes[spare.node];
+      return `${src?.meta?.name?.trim() || spare.node} · ${spare.key}`;
+    }
     const inBinding = boundDriver.inputs?.in as { node?: string } | undefined;
     const srcId = inBinding?.node;
     if (!srcId) return 'unwired';
@@ -50,12 +62,12 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
     return src?.meta?.name?.trim() || srcId;
   }, [boundDriver]);
 
-  const bind = (sourceRef: { node: string; socket: string }) => {
+  const bind = (source: DriverSource) => {
     const state = useDagStore.getState().state;
     const result = buildBindDriverOps(state, {
       targetId: nodeId,
       paramPath,
-      source: sourceRef,
+      source,
       driverId: newDriverId(),
     });
     if (!result.ok) {
@@ -110,8 +122,8 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
         data-testid={`inspector-driver-pick-${nodeId}-${paramPath}`}
         className="max-w-[120px] rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => {
-          const opt = options.find((o) => o.ref.node === e.target.value);
-          if (opt) bind(opt.ref);
+          const opt = options.find((o) => o.id === e.target.value);
+          if (opt) bind(opt);
         }}
         onBlur={() => setPicking(false)}
       >
@@ -119,7 +131,7 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
           {options.length ? 'source…' : 'no sources'}
         </option>
         {options.map((o) => (
-          <option key={`${o.ref.node}:${o.ref.socket}`} value={o.ref.node}>
+          <option key={o.id} value={o.id}>
             {o.label}
           </option>
         ))}

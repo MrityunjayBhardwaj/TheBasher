@@ -159,7 +159,7 @@ function SpareParamRow({
         title={promoted ? 'Promoted to Controllers dock' : 'Promote to Controllers dock'}
         data-testid={`spare-promote-${name}`}
         className={`select-none leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-          promoted ? 'text-accent' : 'text-fg/25 hover:text-fg/60'
+          promoted ? 'text-accent' : 'text-fg/30 hover:text-fg/60'
         }`}
       >
         {promoted ? '★' : '☆'}

@@ -19,8 +19,10 @@
 
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import type { EvalCtx, NodeId } from '../core/dag/types';
+import type { EvalCtx, NodeId, Node } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
+import { makeParamDriverChannelValue, type ParamDriverParams } from '../nodes/ParamDriver';
+import { readBaseParam } from './readBaseParam';
 
 interface NodeLike {
   readonly id: string;
@@ -32,6 +34,17 @@ interface NodeLike {
 interface DriverParams {
   target?: unknown;
   paramPath?: unknown;
+  sourceSpare?: { node?: unknown; key?: unknown };
+}
+
+/** The spare-param source ref of a driver, if it pulls from a promoted spare (the
+ *  `ch()` road) rather than a wired `in` edge. Null for an Inc-2 wired driver. */
+function spareSourceOf(node: NodeLike): { node: string; key: string } | null {
+  const s = ((node.params ?? {}) as DriverParams).sourceSpare;
+  if (s && typeof s.node === 'string' && typeof s.key === 'string' && s.node && s.key) {
+    return { node: s.node, key: s.key };
+  }
+  return null;
 }
 
 /** True for a ParamDriver node that is actually BOUND (has a target + paramPath). An
@@ -86,6 +99,17 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
     seen.add(d.id);
     out.push(d);
     stack.push(d.id);
+    // #294 — a spare-sourced driver has NO wired `in` edge, so the input-edge walk
+    // below cannot reach its source node. Add it explicitly so a dock/inspector edit
+    // to the promoted spare rebuilds the render memo (H48 — the synthesized dep edge
+    // for the spare road).
+    const spare = spareSourceOf(d);
+    if (spare && !seen.has(spare.node)) {
+      seen.add(spare.node);
+      const src = nodes[spare.node];
+      if (src) out.push(src);
+      // Not pushed on `stack`: the spare value is a leaf, no further input closure.
+    }
   }
   // Walk UP the wired input edges (bounded by `seen`), collecting the compute closure.
   while (stack.length) {
@@ -138,6 +162,12 @@ export function driverParamDeps(
     if (!isBoundDriver(node)) continue;
     const target = ((node.params ?? {}) as DriverParams).target as string;
     (deps[target] ??= []).push(node.id);
+    // #294 — the spare road has no wired `in` edge for the cycle guard's input walk to
+    // follow, so add the driver→sourceNode dependency here. Now target ← driver ←
+    // sourceNode is visible: binding a target whose driver reads a spare on a node that
+    // (transitively) already reads the target is rejected as a cycle.
+    const spare = spareSourceOf(node);
+    if (spare) (deps[node.id] ??= []).push(spare.node);
   }
   return deps;
 }
@@ -157,7 +187,18 @@ export function driverChannelValuesForTarget(
   const out: KeyframeChannelValue[] = [];
   for (const node of driverNodesForTarget(state.nodes, targetId)) {
     try {
-      out.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
+      const spare = spareSourceOf(node);
+      if (spare) {
+        // The `ch()` road — the value is a promoted spare on another node, invisible to
+        // the pure evaluator. Read it here (the resolver seam has state) and build the
+        // channel value through the SAME builder the wired road uses. A non-numeric /
+        // missing spare reads 0 (parity with the wired unconnected-input default).
+        const raw = readBaseParam(state.nodes[spare.node] as Node | undefined, spare.key);
+        const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+        out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, value));
+      } else {
+        out.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
+      }
     } catch {
       // Unevaluable driver (e.g. an input cycle the guard didn't stop) → skip it.
     }
