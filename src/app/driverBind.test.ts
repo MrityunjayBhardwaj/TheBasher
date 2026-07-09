@@ -12,6 +12,7 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import {
   buildBindDriverOps,
+  buildSetDriverRemapOps,
   buildUnbindDriverOps,
   driverSourceOptions,
   type DriverSource,
@@ -42,6 +43,7 @@ const addSpare = (nodeId: string, key: string, value: number): Op => ({
 
 const BOX_ID = 'n_box';
 const PARAM = 'material.metalness';
+const DEFAULT_REMAP = { inMin: 0, inMax: 1, outMin: 0, outMax: 1 };
 
 function withNodes(...ops: Op[]): DagState {
   let state = buildDefaultDagState();
@@ -160,6 +162,170 @@ describe('driverBind', () => {
     const state = withNodes(addSpare(BOX_ID, 'throttle', 5));
     const opts = driverSourceOptions(state, BOX_ID);
     expect(opts.some((o) => o.kind === 'spare' && o.node === BOX_ID)).toBe(false);
+  });
+
+  it('driverSourceOptions exposes a Null controller as nine transform-channel sources', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    const xf = driverSourceOptions(state, BOX_ID).filter(
+      (o) => o.kind === 'transform' && o.node === 'ctl',
+    );
+    expect(xf).toHaveLength(9);
+    expect(xf.map((o) => (o.kind === 'transform' ? o.channel : '')).sort()).toEqual([
+      'rx',
+      'ry',
+      'rz',
+      'sx',
+      'sy',
+      'sz',
+      'tx',
+      'ty',
+      'tz',
+    ]);
+  });
+
+  it('binds via a transform channel: edge-less driver carrying sourceTransform + remap, NO connect', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    const source: DriverSource = {
+      kind: 'transform',
+      id: 'xf:ctl:tx',
+      label: 'ctl · tx',
+      node: 'ctl',
+      channel: 'tx',
+      remap: { inMin: 0, inMax: 2, outMin: 0, outMax: 10 },
+    };
+    const res = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: PARAM,
+      source,
+      driverId: 'drv1',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.ops).toHaveLength(1);
+    expect(res.ops[0]).toMatchObject({
+      type: 'addNode',
+      nodeType: 'ParamDriver',
+      params: {
+        target: BOX_ID,
+        paramPath: PARAM,
+        sourceTransform: {
+          node: 'ctl',
+          channel: 'tx',
+          remap: { inMin: 0, inMax: 2, outMin: 0, outMax: 10 },
+        },
+      },
+    });
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(true);
+  });
+
+  it('buildSetDriverRemapOps sets a range on a transform driver (one setParam, undo-safe)', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    let state = withNodes(addNull);
+    const bind = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: PARAM,
+      source: { kind: 'transform', id: 'xf:ctl:tx', label: 'ctl · tx', node: 'ctl', channel: 'tx' },
+      driverId: 'drv1',
+    });
+    expect(bind.ok).toBe(true);
+    if (!bind.ok) return;
+    for (const op of bind.ops) state = applyOp(state, op).next;
+    // No remap yet → the raw channel road.
+    expect(
+      (state.nodes.drv1.params as { sourceTransform?: { remap?: unknown } }).sourceTransform?.remap,
+    ).toBeUndefined();
+
+    const ops = buildSetDriverRemapOps(state, 'drv1', {
+      inMin: 0,
+      inMax: 2,
+      outMin: 0,
+      outMax: 10,
+    });
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({
+      type: 'setParam',
+      nodeId: 'drv1',
+      paramPath: 'sourceTransform',
+    });
+    const applied = applyOp(state, ops[0]);
+    expect(
+      (
+        applied.next.nodes.drv1.params as {
+          sourceTransform: { node: string; channel: string; remap: unknown };
+        }
+      ).sourceTransform,
+    ).toEqual({ node: 'ctl', channel: 'tx', remap: { inMin: 0, inMax: 2, outMin: 0, outMax: 10 } });
+    // Inverse restores the prior (remap-absent) shape.
+    let undone = applied.next;
+    undone = applyOp(undone, applied.inverse).next;
+    expect(
+      (undone.nodes.drv1.params as { sourceTransform?: { remap?: unknown } }).sourceTransform
+        ?.remap,
+    ).toBeUndefined();
+  });
+
+  it('buildSetDriverRemapOps clears a range (remap null → raw channel)', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    let state = withNodes(addNull);
+    const bind = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: PARAM,
+      source: {
+        kind: 'transform',
+        id: 'xf:ctl:tx',
+        label: 'ctl · tx',
+        node: 'ctl',
+        channel: 'tx',
+        remap: { inMin: 0, inMax: 2, outMin: 0, outMax: 10 },
+      },
+      driverId: 'drv1',
+    });
+    if (!bind.ok) throw new Error('bind failed');
+    for (const op of bind.ops) state = applyOp(state, op).next;
+    const ops = buildSetDriverRemapOps(state, 'drv1', null);
+    expect(ops).toHaveLength(1);
+    const applied = applyOp(state, ops[0]);
+    expect(applied.next.nodes.drv1.params).toMatchObject({
+      sourceTransform: { node: 'ctl', channel: 'tx' },
+    });
+    expect(
+      (applied.next.nodes.drv1.params as { sourceTransform: { remap?: unknown } }).sourceTransform
+        .remap,
+    ).toBeUndefined();
+  });
+
+  it('buildSetDriverRemapOps is empty for a non-transform (wired) driver or a missing node', () => {
+    const state = withNodes(addClamp('c1'), addDriver('drv1', BOX_ID, PARAM), {
+      type: 'connect',
+      from: { node: 'c1', socket: 'out' },
+      to: { node: 'drv1', socket: 'in' },
+    } as Op);
+    expect(buildSetDriverRemapOps(state, 'drv1', DEFAULT_REMAP)).toHaveLength(0);
+    expect(buildSetDriverRemapOps(state, 'nope', DEFAULT_REMAP)).toHaveLength(0);
   });
 
   it('binds via a spare source: one edge-less driver carrying sourceSpare, NO connect', () => {

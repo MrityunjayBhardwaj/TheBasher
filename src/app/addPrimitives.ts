@@ -29,6 +29,9 @@ export type PrimitiveKind =
   // Empties
   | 'Group'
   | 'Transform'
+  // #296 — a Null controller: a standalone transformable scene object (no child),
+  // so unlike Group/Transform it wires straight into scene.children.
+  | 'Null'
   // Compute — scalar driver sources (Epic 1 Inc 1 vocabulary). Float floating
   // nodes: they feed ParamDrivers via the pull rail, never the render tree, so
   // they are added unwired (like empties). #294 Inc 3.
@@ -87,7 +90,7 @@ export function buildAddPrimitiveOps(
   // Wire into the scene where applicable. Meshes go under .children,
   // lights under .lights. Cameras + empties stay floating (the user
   // wires them deliberately).
-  if (isMesh(kind)) {
+  if (isMesh(kind) || kind === 'Null') {
     ops.push({
       type: 'connect',
       from: { node: id, socket: 'out' },
@@ -113,6 +116,7 @@ function prefixFor(kind: PrimitiveKind): string {
   if (isLight(kind)) return 'light';
   if (isCamera(kind)) return 'cam';
   if (isCompute(kind)) return 'num';
+  if (kind === 'Null') return 'null';
   return 'empty';
 }
 
@@ -180,6 +184,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'group';
     case 'Transform':
       return 'transform';
+    case 'Null':
+      return 'null (controller)';
     case 'Math':
       return 'Math node';
     case 'Fit':
@@ -248,6 +254,8 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Group':
       return {};
     case 'Transform':
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    case 'Null':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     // Compute nodes have full zod defaults on every param (computeNodes.ts) and no
     // position — an empty object lets the addNode parse fill the defaults.

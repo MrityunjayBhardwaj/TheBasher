@@ -92,6 +92,7 @@ const ALL_TYPES = [
   'Navmesh',
   'Noise',
   'NormalPass',
+  'Null',
   'OrthographicCamera',
   'ParamDriver',
   'PerspectiveCamera',

@@ -19,11 +19,28 @@ import { useDagStore } from '../core/dag/store';
 import { useNotificationStore } from './stores/notificationStore';
 import {
   buildBindDriverOps,
+  buildSetDriverRemapOps,
   buildUnbindDriverOps,
   driverSourceOptions,
+  type DriverRemap,
   type DriverSource,
 } from './driverBind';
 import { driverNodesForTarget } from './paramDrivers';
+
+/** The transform-channel source of a bound driver (#296), if any. A transform driver
+ *  reads a controller channel + optionally maps it through a range (the range UI). */
+function transformOf(
+  driver: { params?: unknown } | null,
+): { node: string; channel: string; remap?: DriverRemap } | null {
+  const xf = (
+    driver?.params as { sourceTransform?: { node?: string; channel?: string; remap?: DriverRemap } }
+  )?.sourceTransform;
+  if (xf?.node && xf.channel) return { node: xf.node, channel: xf.channel, remap: xf.remap };
+  return null;
+}
+
+/** Identity range shown when authoring a fresh transform-channel range (raw → raw). */
+const DEFAULT_REMAP: DriverRemap = { inMin: 0, inMax: 1, outMin: 0, outMax: 1 };
 
 /** A fresh driver node id. Local (like every other inspector add-node action). */
 function newDriverId(): string {
@@ -44,11 +61,25 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
     Object.is,
   );
   const [picking, setPicking] = useState(false);
+  // #296 S3 — the range-authoring draft while editing a transform driver's range; null
+  // when the range editor is closed. Seeded from the driver's current remap (or the
+  // identity default) when opened.
+  const [rangeDraft, setRangeDraft] = useState<DriverRemap | null>(null);
 
-  // The source label for the bound chip. The `ch()` road (params.sourceSpare) names a
-  // promoted spare on another node; the wired road names the node feeding driver.in.
+  // The transform-channel source of the bound driver, if it reads a controller channel.
+  const transform = transformOf(boundDriver);
+
+  // The source label for the bound chip. The transform road (#296) names a controller
+  // channel; the `ch()` road (params.sourceSpare) names a promoted spare on another
+  // node; the wired road names the node feeding driver.in.
   const sourceLabel = useMemo(() => {
     if (!boundDriver) return '';
+    const xf = (boundDriver.params as { sourceTransform?: { node?: string; channel?: string } })
+      .sourceTransform;
+    if (xf?.node && xf.channel) {
+      const src = useDagStore.getState().state.nodes[xf.node];
+      return `${src?.meta?.name?.trim() || xf.node} · ${xf.channel}`;
+    }
     const spare = (boundDriver.params as { sourceSpare?: { node?: string; key?: string } })
       .sourceSpare;
     if (spare?.node && spare.key) {
@@ -87,6 +118,82 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
     dispatchAtomic(ops, 'user', `unbind ${paramPath}`);
   };
 
+  // #296 S3 — commit (or clear, when `remap` is null) the transform driver's range.
+  const saveRange = (remap: DriverRemap | null) => {
+    if (!boundDriver) return;
+    const ops = buildSetDriverRemapOps(useDagStore.getState().state, boundDriver.id, remap);
+    if (ops.length) dispatchAtomic(ops, 'user', `range ${paramPath}`);
+    setRangeDraft(null);
+  };
+
+  // #296 S3 — the range editor for a transform driver: map "the transform to a range"
+  // (in min/max → out min/max), written as one setParam on `sourceTransform`. Transient
+  // (only while `rangeDraft` is set) so the compact inspector row isn't permanently
+  // widened; reachable from the bound chip's ↔ button and pre-filled from the current
+  // remap. "raw" clears the range (reads the channel value directly).
+  if (boundDriver && transform && rangeDraft) {
+    const upd = (k: keyof DriverRemap, v: string) => {
+      const n = parseFloat(v);
+      setRangeDraft({ ...rangeDraft, [k]: Number.isFinite(n) ? n : 0 });
+    };
+    const num = (k: keyof DriverRemap, aria: string) => (
+      <input
+        type="number"
+        step="0.1"
+        value={rangeDraft[k]}
+        aria-label={aria}
+        data-testid={`inspector-driver-range-${k}-${nodeId}-${paramPath}`}
+        className="w-12 rounded border border-border bg-muted px-1 py-0.5 text-right font-mono text-[10px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => upd(k, e.target.value)}
+      />
+    );
+    return (
+      <span
+        className="inline-flex flex-wrap items-center gap-1 text-[10px] text-fg/60"
+        data-testid={`inspector-driver-range-${nodeId}-${paramPath}`}
+      >
+        <span className="font-mono text-accent">{transform.channel}</span>
+        <span>in</span>
+        {num('inMin', `${paramPath} range in min`)}
+        {num('inMax', `${paramPath} range in max`)}
+        <span aria-hidden>→</span>
+        <span>out</span>
+        {num('outMin', `${paramPath} range out min`)}
+        {num('outMax', `${paramPath} range out max`)}
+        <button
+          type="button"
+          onClick={() => saveRange(rangeDraft)}
+          aria-label={`Apply range for ${paramPath}`}
+          title="Apply range"
+          data-testid={`inspector-driver-range-apply-${nodeId}-${paramPath}`}
+          className="select-none px-0.5 leading-none text-fg/50 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ✓
+        </button>
+        <button
+          type="button"
+          onClick={() => saveRange(null)}
+          aria-label={`Clear range for ${paramPath}`}
+          title="Raw — read the channel directly (no range)"
+          data-testid={`inspector-driver-range-raw-${nodeId}-${paramPath}`}
+          className="select-none px-0.5 font-mono leading-none text-fg/40 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          raw
+        </button>
+        <button
+          type="button"
+          onClick={() => setRangeDraft(null)}
+          aria-label={`Cancel range edit for ${paramPath}`}
+          title="Cancel"
+          data-testid={`inspector-driver-range-cancel-${nodeId}-${paramPath}`}
+          className="select-none px-0.5 leading-none text-fg/40 hover:text-record focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ✕
+        </button>
+      </span>
+    );
+  }
+
   if (boundDriver) {
     return (
       <span
@@ -98,6 +205,18 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
           ⛓
         </span>
         <span className="max-w-[80px] truncate font-mono">{sourceLabel}</span>
+        {transform && (
+          <button
+            type="button"
+            onClick={() => setRangeDraft(transform.remap ?? DEFAULT_REMAP)}
+            aria-label={`Edit range for ${paramPath}`}
+            title="Map the transform to a range"
+            data-testid={`inspector-driver-range-open-${nodeId}-${paramPath}`}
+            className="select-none px-0.5 leading-none text-fg/40 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            ↔
+          </button>
+        )}
         <button
           type="button"
           onClick={unbind}

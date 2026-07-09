@@ -57,6 +57,9 @@ const GROUPS: MenuGroup[] = [
     items: [
       { kind: 'Group', label: 'Group' },
       { kind: 'Transform', label: 'Transform' },
+      // #296 — a Null controller: a transformable scene object you grab with the
+      // gizmo; a driver reads its transform channels to drive other params.
+      { kind: 'Null', label: 'Null (Controller)' },
     ],
   },
   {

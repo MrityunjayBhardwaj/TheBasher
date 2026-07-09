@@ -200,6 +200,11 @@ export interface NodeDefinition<P = unknown, O = unknown> {
 // is undo-safe with the existing inverse — no new op type. The dock is a pure V34 view:
 // it scans `node.spare` for `promoted === true` and edits the value back through
 // `setSpareParam`; there is NO second store of promoted refs to keep in sync.
+// #296 (S4) — the bespoke viewport-handle geometry (the Inc-4 `handle` field) is
+// RETIRED in favour of the physical Null controller: a controller is a real scene
+// object grabbed with the normal gizmo, and a param is driven from its transform
+// channel (Blender's "Transform Channel" driver / Houdini `ch("../null/tx")`, V93).
+// One controller idiom, not two. The spare dock + inspector spare authoring stay.
 export const SpareParamSchema = z.object({
   type: z.enum(['float', 'int', 'bool', 'string', 'vec2', 'vec3']),
   value: z.unknown(),
