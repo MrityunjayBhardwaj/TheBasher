@@ -24,6 +24,7 @@ import type { KeyframeChannelValue } from '../nodes/types';
 import { makeParamDriverChannelValue, type ParamDriverParams } from '../nodes/ParamDriver';
 import { readBaseParam } from './readBaseParam';
 import { transformSourceOf, readTransformChannelAt } from './transformChannelSource';
+import { statefulSourceOf, makeStatefulDriverChannelValue } from './statefulOps';
 
 interface NodeLike {
   readonly id: string;
@@ -125,7 +126,17 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
   // Walk UP the wired input edges (bounded by `seen`), collecting the compute closure.
   while (stack.length) {
     const node = nodes[stack.pop()!];
-    if (!node?.inputs) continue;
+    if (!node) continue;
+    // #297 — a node in the closure (e.g. a Lag) may read a controller through a
+    // transform-source PARAM REF (not a wired edge), which the input walk below can't
+    // reach. Subscribe that controller so a gizmo drag on it rebuilds the render memo.
+    const xf = transformSourceOf(node);
+    if (xf && !seen.has(xf.node)) {
+      seen.add(xf.node);
+      const src = nodes[xf.node];
+      if (src) out.push(src);
+    }
+    if (!node.inputs) continue;
     for (const binding of Object.values(node.inputs)) {
       const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
       for (const ref of refs) {
@@ -183,6 +194,15 @@ export function driverParamDeps(
     // (transitively) already reads the target is rejected as a cycle (G6).
     const transform = transformSourceOf(node);
     if (transform) (deps[node.id] ??= []).push(transform.node);
+    // #297 — the stateful road: driver → (wired) Lag → (param-ref) controller. The
+    // driver→Lag edge is a real wired edge the guard's input walk sees; the
+    // Lag→controller hop is a transform param-ref it can't. Add it so a bind whose
+    // Lag reads a controller that (transitively) reads the target is rejected (G6).
+    const inRef = node.inputs?.in;
+    const inSrcId = (Array.isArray(inRef) ? inRef[0] : inRef) as { node?: string } | undefined;
+    const lag = inSrcId?.node ? nodes[inSrcId.node] : undefined;
+    const lagXf = lag ? transformSourceOf(lag) : null;
+    if (lag && lagXf) (deps[lag.id] ??= []).push(lagXf.node);
   }
   return deps;
 }
@@ -223,7 +243,24 @@ export function driverChannelValuesForTarget(
         const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
         out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, value));
       } else {
-        out.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
+        // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be
+        // folded as a point-in-time constant: its value depends on the past. Hand off
+        // to the replay seam, which returns a channel value whose `sample(seconds)`
+        // re-integrates the recurrence from the seed. Both H40 roads call that same
+        // `sample`, so render == read under scrub.
+        const stateful = statefulSourceOf(node, state);
+        if (stateful) {
+          out.push(
+            makeStatefulDriverChannelValue(
+              state,
+              node.params as ParamDriverParams,
+              stateful,
+              cache,
+            ),
+          );
+        } else {
+          out.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
+        }
       }
     } catch {
       // Unevaluable driver (e.g. an input cycle the guard didn't stop) → skip it.

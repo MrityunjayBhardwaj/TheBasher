@@ -25,6 +25,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import { TransformSourceSchema } from './ParamDriver';
 
 export const LagParams = z.object({
   /** Fraction of the gap to the input closed per frame, ∈ [0,1]: 1 = no lag
@@ -33,6 +34,13 @@ export const LagParams = z.object({
   /** The frame the recurrence is seeded from (out[seedFrame] = in[seedFrame]).
    *  The interval [seedFrame, currentFrame] is what the seam re-integrates. */
   seedFrame: z.number().int().default(0),
+  /** The input the lag trails: one TRANSFORM CHANNEL of a controller (an animated
+   *  Null) — the same "Transform Channel" road the driver uses (#296), reused so the
+   *  replay reads a genuinely time-varying scalar (a wired compute `in` is
+   *  time-invariant). ABSENT = fall back to the wired `in` (converges to a constant).
+   *  The replay seam (statefulOps.ts) samples this per frame; optional so a bare Lag
+   *  serializes byte-identical. */
+  sourceTransform: TransformSourceSchema.optional(),
 });
 export type LagParams = z.infer<typeof LagParams>;
 
