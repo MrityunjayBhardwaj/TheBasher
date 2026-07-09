@@ -19,6 +19,7 @@ import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { driverNodesForTarget, driverParamDeps } from './paramDrivers';
+import { TRANSFORM_CHANNELS, type TransformChannel } from '../nodes/ParamDriver';
 
 /**
  * A pickable driver source — the two roads of the pull rail (#294):
@@ -29,7 +30,18 @@ import { driverNodesForTarget, driverParamDeps } from './paramDrivers';
  */
 export type DriverSource =
   | { kind: 'output'; id: string; label: string; ref: NodeRef }
-  | { kind: 'spare'; id: string; label: string; node: string; key: string };
+  | { kind: 'spare'; id: string; label: string; node: string; key: string }
+  // #296 — a transform CHANNEL of a controller (a Null): the primary controller road
+  // (Blender's Transform Channel driver / Houdini `ch("../null/tx")`). Optional `remap`
+  // maps the channel through a range (the "map a transform to a range" model).
+  | {
+      kind: 'transform';
+      id: string;
+      label: string;
+      node: string;
+      channel: TransformChannel;
+      remap?: { inMin: number; inMax: number; outMin: number; outMax: number };
+    };
 
 /** The source node id backing a DriverSource (for the cycle guard). */
 function sourceNodeId(source: DriverSource): string {
@@ -82,6 +94,31 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
             blendMode: 'replace',
             order: 0,
             sourceSpare: { node: source.node, key: source.key },
+          },
+        },
+      ],
+    };
+  }
+  if (source.kind === 'transform') {
+    // #296 — the Transform Channel road: one edge-less node carrying the
+    // {node, channel, remap?}; resolved in the seam via resolveEvaluatedTransform.
+    return {
+      ok: true,
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: driverId,
+          nodeType: 'ParamDriver',
+          params: {
+            target: targetId,
+            paramPath,
+            blendMode: 'replace',
+            order: 0,
+            sourceTransform: {
+              node: source.node,
+              channel: source.channel,
+              ...(source.remap ? { remap: source.remap } : {}),
+            },
           },
         },
       ],
@@ -149,6 +186,20 @@ export function driverSourceOptions(state: DagState, targetId: string): DriverSo
         node: node.id,
         key,
       });
+    }
+    // #296 — transform-channel road: a Null is THE controller, so expose its nine
+    // transform channels as driver sources (the primary controller idiom). Scoped to
+    // Null in v1 (any transformable object is a follow-up) to keep the picker clean.
+    if (node.type === 'Null') {
+      for (const channel of TRANSFORM_CHANNELS) {
+        out.push({
+          kind: 'transform',
+          id: `xf:${node.id}:${channel}`,
+          label: `${label} · ${channel}`,
+          node: node.id,
+          channel,
+        });
+      }
     }
   }
   out.sort((a, b) => a.label.localeCompare(b.label));

@@ -29,6 +29,11 @@ import type { NodeDefinition } from '../core/dag/types';
 import { CHANNEL_BLEND_MODES } from './types';
 import type { KeyframeChannelNumberValue } from './types';
 
+/** #296 — the nine readable transform channels of a controller node (Blender's
+ *  Transform Channel driver types): t=translate, r=rotate(°), s=scale, per axis. */
+export const TRANSFORM_CHANNELS = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const;
+export type TransformChannel = (typeof TRANSFORM_CHANNELS)[number];
+
 export const ParamDriverParams = z.object({
   /** Target node id whose param this driver overlays (resolved at enumeration
    *  time, not at evaluator time — the KeyframeChannel* contract). '' = unbound. */
@@ -50,6 +55,27 @@ export const ParamDriverParams = z.object({
    *  see another node's spare), NOT through `in`. Optional so Inc-2 drivers serialize
    *  byte-identical. */
   sourceSpare: z.object({ node: z.string(), key: z.string() }).optional(),
+  /** #296 — the THIRD source road, the PRIMARY controller idiom (Blender's "Transform
+   *  Channel" driver variable / Houdini `ch("../null/tx")`): the driver reads one
+   *  TRANSFORM CHANNEL (tx…sz) of a controller node (a Null), optionally remapped
+   *  through a range (`fit`, the "map a transform to a range" model). Resolved in the
+   *  enumeration seam via `resolveEvaluatedTransform` (the EVALUATED local transform, so
+   *  an animated / auto-keyed controller drives correctly), NOT through `in`. Optional
+   *  so wired/spare drivers serialize byte-identical. */
+  sourceTransform: z
+    .object({
+      node: z.string(),
+      channel: z.enum(TRANSFORM_CHANNELS),
+      remap: z
+        .object({
+          inMin: z.number(),
+          inMax: z.number(),
+          outMin: z.number(),
+          outMax: z.number(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 export type ParamDriverParams = z.infer<typeof ParamDriverParams>;
 

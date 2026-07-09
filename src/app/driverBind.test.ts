@@ -162,6 +162,74 @@ describe('driverBind', () => {
     expect(opts.some((o) => o.kind === 'spare' && o.node === BOX_ID)).toBe(false);
   });
 
+  it('driverSourceOptions exposes a Null controller as nine transform-channel sources', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    const xf = driverSourceOptions(state, BOX_ID).filter(
+      (o) => o.kind === 'transform' && o.node === 'ctl',
+    );
+    expect(xf).toHaveLength(9);
+    expect(xf.map((o) => (o.kind === 'transform' ? o.channel : '')).sort()).toEqual([
+      'rx',
+      'ry',
+      'rz',
+      'sx',
+      'sy',
+      'sz',
+      'tx',
+      'ty',
+      'tz',
+    ]);
+  });
+
+  it('binds via a transform channel: edge-less driver carrying sourceTransform + remap, NO connect', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    const source: DriverSource = {
+      kind: 'transform',
+      id: 'xf:ctl:tx',
+      label: 'ctl · tx',
+      node: 'ctl',
+      channel: 'tx',
+      remap: { inMin: 0, inMax: 2, outMin: 0, outMax: 10 },
+    };
+    const res = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: PARAM,
+      source,
+      driverId: 'drv1',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.ops).toHaveLength(1);
+    expect(res.ops[0]).toMatchObject({
+      type: 'addNode',
+      nodeType: 'ParamDriver',
+      params: {
+        target: BOX_ID,
+        paramPath: PARAM,
+        sourceTransform: {
+          node: 'ctl',
+          channel: 'tx',
+          remap: { inMin: 0, inMax: 2, outMin: 0, outMax: 10 },
+        },
+      },
+    });
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(true);
+  });
+
   it('binds via a spare source: one edge-less driver carrying sourceSpare, NO connect', () => {
     const state = withNodes(addClamp('c1'), addSpare('c1', 'throttle', 5));
     const res = buildBindDriverOps(state, {
