@@ -21,14 +21,9 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId, Node } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
-import {
-  makeParamDriverChannelValue,
-  type ParamDriverParams,
-  type TransformChannel,
-} from '../nodes/ParamDriver';
+import { makeParamDriverChannelValue, type ParamDriverParams } from '../nodes/ParamDriver';
 import { readBaseParam } from './readBaseParam';
-import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { fit } from '../nodes/valueMath';
+import { transformSourceOf, readTransformChannelAt } from './transformChannelSource';
 
 interface NodeLike {
   readonly id: string;
@@ -37,17 +32,11 @@ interface NodeLike {
   readonly inputs?: Readonly<Record<string, unknown>>;
 }
 
-interface TransformRemap {
-  inMin?: unknown;
-  inMax?: unknown;
-  outMin?: unknown;
-  outMax?: unknown;
-}
 interface DriverParams {
   target?: unknown;
   paramPath?: unknown;
   sourceSpare?: { node?: unknown; key?: unknown };
-  sourceTransform?: { node?: unknown; channel?: unknown; remap?: TransformRemap };
+  // `sourceTransform` is parsed by the shared `transformSourceOf`, not here.
 }
 
 /** The spare-param source ref of a driver, if it pulls from a promoted spare (the
@@ -58,47 +47,6 @@ function spareSourceOf(node: NodeLike): { node: string; key: string } | null {
     return { node: s.node, key: s.key };
   }
   return null;
-}
-
-const TRANSFORM_CHANNEL_SET = new Set(['tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz']);
-
-/** The transform-channel source ref of a driver, if it reads a controller's transform
- *  channel (#296 — the Blender "Transform Channel" road). Null otherwise. */
-function transformSourceOf(node: NodeLike): {
-  node: string;
-  channel: TransformChannel;
-  remap?: { inMin: number; inMax: number; outMin: number; outMax: number };
-} | null {
-  const s = ((node.params ?? {}) as DriverParams).sourceTransform;
-  if (!s || typeof s.node !== 'string' || !s.node) return null;
-  if (typeof s.channel !== 'string' || !TRANSFORM_CHANNEL_SET.has(s.channel)) return null;
-  const r = s.remap;
-  const remap =
-    r &&
-    typeof r.inMin === 'number' &&
-    typeof r.inMax === 'number' &&
-    typeof r.outMin === 'number' &&
-    typeof r.outMax === 'number'
-      ? { inMin: r.inMin, inMax: r.inMax, outMin: r.outMin, outMax: r.outMax }
-      : undefined;
-  return { node: s.node, channel: s.channel as TransformChannel, remap };
-}
-
-/** Read one transform channel (tx…sz) from an evaluated transform. Translation reads
- *  position, rotation reads the degrees vector, scale reads the scale vector (defaults
- *  0/0/1 when a value carries no rotation/scale). */
-function readTransformChannel(
-  xf: {
-    position: readonly number[];
-    rotation: readonly number[] | null;
-    scale: readonly number[] | null;
-  },
-  channel: TransformChannel,
-): number {
-  const axis = channel[1] === 'x' ? 0 : channel[1] === 'y' ? 1 : 2;
-  if (channel[0] === 't') return xf.position[axis] ?? 0;
-  if (channel[0] === 'r') return (xf.rotation ?? [0, 0, 0])[axis] ?? 0;
-  return (xf.scale ?? [1, 1, 1])[axis] ?? 1;
 }
 
 /** True for a ParamDriver node that is actually BOUND (has a target + paramPath). An
@@ -257,14 +205,11 @@ export function driverChannelValuesForTarget(
       const transform = transformSourceOf(node);
       if (transform) {
         // #296 — the Transform Channel road: read the EVALUATED transform of the
-        // controller (a Null) via the SHARED resolver (so an animated / auto-keyed
+        // controller (a Null) via the SHARED reader (so an animated / auto-keyed
         // controller drives correctly), pick the channel, optionally remap through the
-        // range (fit), and build through the SAME builder → folds byte-identically to
-        // the wired/spare roads. A null resolve (controller not rendered) reads 0.
-        const xf = resolveEvaluatedTransform(state, transform.node, ctx, cache);
-        const raw = xf ? readTransformChannel(xf, transform.channel) : 0;
-        const r = transform.remap;
-        const value = r ? fit(raw, r.inMin, r.inMax, r.outMin, r.outMax) : raw;
+        // range, and build through the SAME builder → folds byte-identically to the
+        // wired/spare roads. A null resolve (controller not rendered) reads 0.
+        const value = readTransformChannelAt(state, transform, ctx, cache);
         out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, value));
         continue;
       }

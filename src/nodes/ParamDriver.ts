@@ -87,6 +87,21 @@ export function makeParamDriverChannelValue(
   params: ParamDriverParams,
   value: number,
 ): KeyframeChannelNumberValue {
+  // A stateless driver folds a CONSTANT over `t` — the value is captured at build
+  // time and `sample` ignores `seconds`.
+  return makeParamDriverChannelValueFn(params, () => value);
+}
+
+/** The general builder: the folded value is a FUNCTION of the playhead `seconds`,
+ *  not a constant. The stateless roads pass `() => value` (via
+ *  {@link makeParamDriverChannelValue}); the STATEFUL road (statefulOps.ts) passes a
+ *  `sample` that RE-INTEGRATES the recurrence from a seed up to `frame(seconds)` — so
+ *  the same channel-value shape carries a memoryless OR a memoryful relation, and the
+ *  fold seam / both H40 roads consume it identically (they all just call `sample`). */
+export function makeParamDriverChannelValueFn(
+  params: ParamDriverParams,
+  sample: (seconds: number) => number,
+): KeyframeChannelNumberValue {
   return {
     kind: 'KeyframeChannel',
     name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
@@ -97,7 +112,7 @@ export function makeParamDriverChannelValue(
     blendMode: params.blendMode,
     order: params.order,
     valueType: 'number',
-    sample: () => value,
+    sample,
   };
 }
 
