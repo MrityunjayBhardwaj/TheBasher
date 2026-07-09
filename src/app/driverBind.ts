@@ -148,6 +148,49 @@ export function buildUnbindDriverOps(state: DagState, targetId: string, paramPat
     .map((d) => ({ type: 'removeNode', nodeId: d.id }));
 }
 
+/** A transform-channel range map (#296 S3): the "map the transform to a range" model. */
+export interface DriverRemap {
+  inMin: number;
+  inMax: number;
+  outMin: number;
+  outMax: number;
+}
+
+/**
+ * The forward Op that sets (or clears) the range on a transform-channel driver (#296
+ * S3, the range UI). A transform driver reads a controller's channel and — with a
+ * `remap` — maps it through the range via `fit` in the seam. This rewrites the WHOLE
+ * `sourceTransform` object (node + channel preserved) with the new `remap`, or without
+ * it when `remap` is null (back to the RAW channel value). `setParam` computes the
+ * inverse from the prior value → undo-safe, byte-identical for the raw case.
+ *
+ * Empty when the driver is missing or is NOT a transform driver (a wired/spare driver
+ * has no channel range to author — never a silent write to the wrong shape).
+ */
+export function buildSetDriverRemapOps(
+  state: DagState,
+  driverId: string,
+  remap: DriverRemap | null,
+): Op[] {
+  const node = state.nodes[driverId];
+  if (!node) return [];
+  const src = (
+    node.params as {
+      sourceTransform?: { node?: unknown; channel?: unknown };
+    }
+  ).sourceTransform;
+  if (!src || typeof src.node !== 'string' || !src.node) return [];
+  if (
+    typeof src.channel !== 'string' ||
+    !TRANSFORM_CHANNELS.includes(src.channel as TransformChannel)
+  )
+    return [];
+  const value = remap
+    ? { node: src.node, channel: src.channel, remap }
+    : { node: src.node, channel: src.channel };
+  return [{ type: 'setParam', nodeId: driverId, paramPath: 'sourceTransform', value }];
+}
+
 /** Numeric spare-param types that can drive a scalar target (the `ch()` road). */
 const NUMERIC_SPARE_TYPES = new Set(['float', 'int']);
 
