@@ -38,6 +38,7 @@ import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
 import { LightStudioPanel } from './LightStudioPanel';
 import { NlaLanePane } from './NlaLanePane';
+import { ControllersDockPane } from './ControllersDockPane';
 import { SimplifyPopover } from './SimplifyPopover';
 
 const DRAWER_HEIGHT_PX = 240;
@@ -106,12 +107,20 @@ export function TimelineDrawer() {
             >
               <LightStudioPanel />
             </div>
+            <div
+              data-testid="controllers-pane"
+              data-active={activeTab === 'controllers'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'controllers' ? 'flex' : 'none' }}
+            >
+              <ControllersDockPane />
+            </div>
           </div>
           {/* The track-ops toolbar is keyframe-specific — only the time tabs show
               it. The Light Studio is a spatial surface with its own affordances;
               the NLA lane view acts on strips/tracks, not timelineSelection
               channels (#283 Phase 5 — its own affordances land in 5C/5D). */}
-          {!['lightStudio', 'nla'].includes(activeTab) ? <DockToolbar /> : null}
+          {!['lightStudio', 'nla', 'controllers'].includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}
       <div className="flex items-stretch">
@@ -175,6 +184,12 @@ function DockHeader({
         label="Light Studio"
         active={activeTab === 'lightStudio'}
         onClick={() => onSelectTab('lightStudio')}
+      />
+      <TabButton
+        id="controllers"
+        label="Controllers"
+        active={activeTab === 'controllers'}
+        onClick={() => onSelectTab('controllers')}
       />
       <div className="flex-1" />
       <div className="flex items-center gap-3 px-3 text-fg-dim">

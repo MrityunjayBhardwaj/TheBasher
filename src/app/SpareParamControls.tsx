@@ -185,8 +185,10 @@ function SpareParamRow({
 }
 
 /** The per-type value editor. Scalars (float/int/bool/string) get a single control;
- *  vec2/vec3 get a compact number tuple. Value edits preserve `type` + `promoted`. */
-function SpareValueField({
+ *  vec2/vec3 get a compact number tuple. Value edits preserve `type` + `promoted`.
+ *  Exported so the Controllers dock edits a promoted spare through the SAME widget +
+ *  the SAME onChange→setSpareParam path (V34 — two views over one source). */
+export function SpareValueField({
   param,
   onChange,
   testId,
