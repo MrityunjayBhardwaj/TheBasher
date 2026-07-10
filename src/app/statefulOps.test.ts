@@ -13,6 +13,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import {
+  cachedIntegrate,
   integrate,
   integrateLag,
   makeStatefulDriverChannelValue,
@@ -447,5 +448,76 @@ describe('the Solver meta-op — a sub-network cooked every frame', () => {
     const deps = driverParamDeps(state.nodes);
     expect(deps[BOX_ID]).toContain(DRV_ID);
     expect(deps[SOLVER_ID]).toContain(NULL_ID); // the Solver → controller hop (G6)
+  });
+});
+
+describe('cachedIntegrate — the O(1) history cache (transparent + sound-by-epoch)', () => {
+  // A distinct DagState identity per test is the epoch; only the object reference matters
+  // to the cache, so a bare cast object is a faithful key.
+  const epoch = () => ({}) as unknown as DagState;
+  const ramp = (f: number) => f;
+  const accum = (prev: number, f: number) => prev + f; // an order-sensitive recurrence
+
+  it('returns EXACTLY the uncached integrate for every frame, regardless of sample order', () => {
+    const st = epoch();
+    // Sample a scrambled order (jump forward, back, mid) — each must equal the oracle.
+    for (const f of [30, 5, 30, 12, 1, 30, 0, 25]) {
+      expect(cachedIntegrate(st, 'n', 0, f, ramp, accum)).toBe(integrate(0, f, ramp, accum));
+    }
+  });
+
+  it('a cached frame is a LOOKUP, not a recompute (the step is not re-invoked)', () => {
+    const st = epoch();
+    let stepCalls = 0;
+    const counting = (prev: number, f: number) => {
+      stepCalls++;
+      return prev + f;
+    };
+    cachedIntegrate(st, 'n', 0, 100, ramp, counting); // builds frames 1..100
+    expect(stepCalls).toBe(100);
+    stepCalls = 0;
+    cachedIntegrate(st, 'n', 0, 50, ramp, counting); // backward → pure lookup
+    cachedIntegrate(st, 'n', 0, 100, ramp, counting); // already built → pure lookup
+    expect(stepCalls).toBe(0);
+  });
+
+  it('extends forward incrementally (only the NEW frames cost a step)', () => {
+    const st = epoch();
+    let stepCalls = 0;
+    const counting = (prev: number, f: number) => {
+      stepCalls++;
+      return prev + f;
+    };
+    cachedIntegrate(st, 'n', 0, 10, ramp, counting);
+    expect(stepCalls).toBe(10);
+    cachedIntegrate(st, 'n', 0, 15, ramp, counting); // only frames 11..15 are new
+    expect(stepCalls).toBe(15);
+  });
+
+  it('a NEW epoch (state identity) drops the block — a changed recurrence is reflected', () => {
+    const st1 = epoch();
+    expect(cachedIntegrate(st1, 'n', 0, 3, ramp, accum)).toBe(integrate(0, 3, ramp, accum));
+    // Same nodeId, a DIFFERENT state object (an edit), a DIFFERENT step → new value, no stale.
+    const st2 = epoch();
+    const doubleAccum = (prev: number, f: number) => prev + 2 * f;
+    expect(cachedIntegrate(st2, 'n', 0, 3, ramp, doubleAccum)).toBe(
+      integrate(0, 3, ramp, doubleAccum),
+    );
+  });
+
+  it('frames before the seed bypass the cache (no recurrence there)', () => {
+    const st = epoch();
+    // seed=5, target=2 (before seed) → seedAt(2), matching the uncached integrate.
+    expect(cachedIntegrate(st, 'n', 5, 2, ramp, accum)).toBe(integrate(5, 2, ramp, accum));
+    expect(cachedIntegrate(st, 'n', 5, 2, ramp, accum)).toBe(2); // seedAt(2) = ramp(2)
+  });
+
+  it('two nodes in one epoch keep independent blocks', () => {
+    const st = epoch();
+    const a = cachedIntegrate(st, 'a', 0, 8, ramp, accum);
+    const b = cachedIntegrate(st, 'b', 0, 8, ramp, (prev, f) => prev + 2 * f);
+    expect(a).toBe(integrate(0, 8, ramp, accum));
+    expect(b).toBe(integrate(0, 8, ramp, (prev, f) => prev + 2 * f));
+    expect(a).not.toBe(b);
   });
 });

@@ -183,6 +183,67 @@ export function integrate<T>(
   return out;
 }
 
+// ── O(1) history cache (the perf follow-up flagged in the header) ──────────────
+//
+// `integrate` re-walks [seed..target] on EVERY sample, so a full scrub/playback of a
+// Solver is O(frames² × subgraph). The cache stores the integrated state per frame so a
+// sample continues from the last computed frame (forward scrub → O(1) amortized) or reads
+// a stored frame directly (backward scrub → O(1) lookup). Both roads return the SAME value
+// `integrate` would (the block is built by the SAME `seedAt`/`step`, forward, in order), so
+// determinism under scrub (H40) is preserved — the cache is transparent.
+//
+// COARSE-EPOCH invalidation, keyed by the DagState IDENTITY: an immutable op replaces the
+// whole state object on every dispatch, but the reference is STABLE across pure
+// scrub/playback (the time store is separate). So a `WeakMap<DagState>` keeps ONE entry a
+// static graph reuses for every sample (full O(1) benefit), and ANY edit yields a new state
+// → a fresh (empty) cache while the old blocks GC — a block can NEVER be stale (sound by
+// construction, no dependency hashing). Storage is the full history [seed..max] so a
+// backward scrub is an O(1) lookup, which H40 leans on.
+
+interface HistoryBlock<T> {
+  readonly seedFrame: number;
+  /** states[i] = the integrated state at frame `seedFrame + i` (built forward, in order). */
+  readonly states: T[];
+}
+
+const historyCache = new WeakMap<DagState, Map<string, HistoryBlock<unknown>>>();
+
+/**
+ * Cached {@link integrate}: same result, but the per-frame states are memoized per
+ * (DagState identity, nodeId) so repeated samples across a scrub are O(1) amortized instead
+ * of O(frames) each. Frames before the seed (no recurrence) and the runaway-clamp regime
+ * (beyond {@link MAX_REPLAY_FRAMES}, a moving start no real timeline reaches) bypass the
+ * cache and defer to the uncached path.
+ */
+export function cachedIntegrate<T>(
+  state: DagState,
+  nodeId: string,
+  seedFrame: number,
+  targetFrame: number,
+  seedAt: (frame: number) => T,
+  step: (prev: T, frame: number) => T,
+): T {
+  if (targetFrame <= seedFrame) return seedAt(targetFrame); // before the seed: no recurrence
+  if (targetFrame - seedFrame > MAX_REPLAY_FRAMES) {
+    return integrate(seedFrame, targetFrame, seedAt, step); // clamp regime → uncached, bounded
+  }
+  let perNode = historyCache.get(state);
+  if (!perNode) {
+    perNode = new Map();
+    historyCache.set(state, perNode);
+  }
+  let block = perNode.get(nodeId) as HistoryBlock<T> | undefined;
+  if (!block || block.seedFrame !== seedFrame) {
+    block = { seedFrame, states: [seedAt(seedFrame)] };
+    perNode.set(nodeId, block as HistoryBlock<unknown>);
+  }
+  // Extend forward to targetFrame if this epoch hasn't reached it yet (amortized O(1)/frame).
+  for (let f = block.seedFrame + block.states.length; f <= targetFrame; f++) {
+    block.states.push(step(block.states[block.states.length - 1], f));
+  }
+  return block.states[targetFrame - block.seedFrame];
+}
+
 /** Replay a Lag node's recurrence up to `frame(targetSeconds)`: bind the impure
  *  per-frame source read to {@link integrateLag}. */
 function replayLag(
@@ -195,11 +256,10 @@ function replayLag(
   const factor = typeof params.factor === 'number' ? params.factor : 0.2;
   const seedFrame = typeof params.seedFrame === 'number' ? Math.round(params.seedFrame) : 0;
   const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
-  return integrateLag(
-    (frame) => statefulInputAt(state, node, ctxAtFrame(frame), cache),
-    seedFrame,
-    targetFrame,
-    factor,
+  const inputAt = (frame: number) => statefulInputAt(state, node, ctxAtFrame(frame), cache);
+  // The Lag preset of the cached integrator (its pure oracle is `integrateLag`).
+  return cachedIntegrate(state, node.id, seedFrame, targetFrame, inputAt, (prev, f) =>
+    lagStep(prev, inputAt(f), factor),
   );
 }
 
@@ -289,7 +349,7 @@ function replaySolver(
   if (!bodyId || !state.nodes[bodyId]) return inputAt(targetFrame);
   const leaves = collectSolverLeaves(state, bodyId);
 
-  return integrate(seedFrame, targetFrame, inputAt, (prev, frame) =>
+  return cachedIntegrate(state, node.id, seedFrame, targetFrame, inputAt, (prev, frame) =>
     cookSolverStep(state, bodyId, leaves, prev, inputAt(frame), frame),
   );
 }
@@ -412,8 +472,13 @@ function replaySolverVec(
     s[0] = inputAt(frame); // slot 0 (position) starts on the target; other slots = origin
     return s;
   };
-  const result = integrate<Vec3[]>(seedFrame, targetFrame, seedState, (prev, frame) =>
-    cookSolverVecStep(state, bodyRefs, leaves, prev, inputAt(frame), frame),
+  const result = cachedIntegrate<Vec3[]>(
+    state,
+    node.id,
+    seedFrame,
+    targetFrame,
+    seedState,
+    (prev, frame) => cookSolverVecStep(state, bodyRefs, leaves, prev, inputAt(frame), frame),
   );
   return result[0] ?? ORIGIN;
 }
