@@ -78,9 +78,10 @@ const GROUPS: MenuGroup[] = [
       { kind: 'MakeVec3', label: 'Make Vec3' },
       { kind: 'VecBreak3', label: 'Break Vec3' },
       { kind: 'Vec3Math', label: 'Vec3 Math' },
-      // Geometry query — sample the ground point under a query node's world XZ (its
-      // terrain + query are picked in the inspector; wire `out` into a position driver).
-      { kind: 'SampleGeometry', label: 'Sample Geometry' },
+      // NOTE — SampleGeometry (the Ray op) is a registered, seam-wired, agent-authorable
+      // substrate node, but it is deliberately NOT surfaced here yet: a raw geometry op
+      // belongs on a node-graph / VEX-VOP authoring surface (which Basher doesn't have),
+      // not in the director's Add menu. Re-expose when that surface exists.
       // Stateful — output trails its input over time (Epic 2, #297).
       { kind: 'Lag', label: 'Lag' },
     ],

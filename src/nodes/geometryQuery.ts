@@ -47,14 +47,23 @@ export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3> = {
   cost: 'cheap',
   paramSchema: SampleGeometryParams,
   inputs: {},
-  outputs: { out: { type: 'Vector3', cardinality: 'single' } },
+  // Two output faces (Houdini Ray SOP parity: hit position + hit normal):
+  //   `out`    — the world ground POINT under the query (drives a position).
+  //   `normal` — the surface NORMAL there (drives orientation — tilt to the slope).
+  // A multi-output node (like VecBreak3): a consumer wires the socket it wants; the seam
+  // resolves whichever socket the driver reads. (A scalar height is not a 3rd socket — it
+  // is just `VecBreak3(out).y`, composable, the way Houdini reads position.y.)
+  outputs: {
+    out: { type: 'Vector3', cardinality: 'single' },
+    normal: { type: 'Vector3', cardinality: 'single' },
+  },
   // The two inputs are authored through the general node-ref picker in the inspector
   // (not a bespoke preset) — terrain filtered to meshes, the query to transformables.
   refParams: {
     sourceGeometry: { label: 'terrain', kind: 'mesh' },
     at: { label: 'query', kind: 'transformable' },
   },
-  // The seam (geometrySampleSource.ts) supplies the real ground point; a bare evaluate
-  // has no `state` to read world geometry, so it returns the origin (see header).
-  evaluate: () => [0, 0, 0],
+  // The seam (geometrySampleSource.ts) supplies the real point/normal; a bare evaluate
+  // has no `state` to read world geometry, so it returns benign defaults (origin + up).
+  evaluate: () => ({ out: [0, 0, 0], normal: [0, 1, 0] }),
 };

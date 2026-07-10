@@ -115,9 +115,34 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
     }).next;
 
     const src = geometrySampleSourceOf(state.nodes['geo_drv'], state);
-    expect(src?.id).toBe('geo_sample');
-    expect(geometrySampleRefOf(src!)).toEqual({ geometry: 'geo_terrain', at: 'geo_null' });
+    expect(src?.node.id).toBe('geo_sample');
+    expect(src?.socket).toBe('out'); // wired to the point output
+    expect(geometrySampleRefOf(src!.node)).toEqual({ geometry: 'geo_terrain', at: 'geo_null' });
     // A driver with nothing on inVec is not a geometry-sample source.
     expect(geometrySampleSourceOf(state.nodes['n_box'], state)).toBeNull();
+  });
+
+  it('carries the wired output socket (out=point vs normal)', () => {
+    let state = buildTerrainState([0, 5, 0]);
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'geo_drv',
+      nodeType: 'ParamDriver',
+      params: { target: 'n_box', paramPath: 'rotation', blendMode: 'replace', order: 0 },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'geo_sample', socket: 'normal' },
+      to: { node: 'geo_drv', socket: 'inVec' },
+    }).next;
+    expect(geometrySampleSourceOf(state.nodes['geo_drv'], state)?.socket).toBe('normal');
+  });
+
+  it('exposes the flat-terrain normal as up (the socket a tilt driver reads)', () => {
+    const { sample } = readTerrainSampleAt(buildTerrainState([2, 10, 2]), REF, ctxAt(0));
+    expect(sample).not.toBeNull();
+    expect(sample!.normal[0]).toBeCloseTo(0, 3);
+    expect(sample!.normal[1]).toBeCloseTo(1, 3);
+    expect(sample!.normal[2]).toBeCloseTo(0, 3);
   });
 });

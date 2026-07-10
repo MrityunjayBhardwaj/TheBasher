@@ -319,14 +319,20 @@ export function driverChannelValuesForTarget(
         const stateful = geoSample ? null : statefulSourceOf(node, state);
         if (geoSample) {
           // #300 follow-up — a SampleGeometry wired to `inVec` reads GEOMETRY (the ground
-          // point under a query controller's world XZ). Like the stateful road it can't be
-          // a pure evaluate — it needs the terrain's world triangles (state) — so the seam
-          // computes it and folds the point as a vec3 channel, byte-identical to the wired
-          // inVec / Point-controller roads (H40).
-          const ref = geometrySampleRefOf(geoSample);
-          const value: [number, number, number] = ref
-            ? readTerrainSampleAt(state, ref, ctx, cache).point
-            : [0, 0, 0];
+          // point OR the surface normal under a query controller's world XZ). Like the
+          // stateful road it can't be a pure evaluate — it needs the terrain's world
+          // triangles (state) — so the seam computes it and folds the chosen output (by the
+          // wired socket) as a vec3 channel, byte-identical to the wired inVec / Point-
+          // controller roads (H40).
+          const ref = geometrySampleRefOf(geoSample.node);
+          const s = ref ? readTerrainSampleAt(state, ref, ctx, cache) : null;
+          const value: [number, number, number] = !s
+            ? geoSample.socket === 'normal'
+              ? [0, 1, 0]
+              : [0, 0, 0]
+            : geoSample.socket === 'normal'
+              ? (s.sample?.normal ?? [0, 1, 0]) // miss → up (no tilt)
+              : s.point;
           out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
         } else if (stateful) {
           // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be

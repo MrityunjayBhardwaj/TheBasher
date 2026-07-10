@@ -39,12 +39,14 @@ interface NodeLike {
   readonly inputs?: Readonly<Record<string, unknown>>;
 }
 
-/** The single {node, socket} ref wired to a node's `socket`, or null. */
-function singleInputRef(node: NodeLike, socket: string): { node: string } | null {
+/** The single {node, socket} ref wired to a node's `socket`, or null. Carries the SOURCE
+ *  socket so a consumer knows WHICH SampleGeometry output ('out' point / 'normal') it reads. */
+function singleInputRef(node: NodeLike, socket: string): { node: string; socket: string } | null {
   const b = node.inputs?.[socket];
   if (!b) return null;
-  const ref = (Array.isArray(b) ? b[0] : b) as { node?: unknown } | undefined;
-  return ref && typeof ref.node === 'string' && ref.node ? { node: ref.node } : null;
+  const ref = (Array.isArray(b) ? b[0] : b) as { node?: unknown; socket?: unknown } | undefined;
+  if (!ref || typeof ref.node !== 'string' || !ref.node) return null;
+  return { node: ref.node, socket: typeof ref.socket === 'string' ? ref.socket : 'out' };
 }
 
 export interface GeometrySampleRef {
@@ -68,14 +70,18 @@ export function geometrySampleRefOf(node: NodeLike): GeometrySampleRef | null {
   return { geometry, at };
 }
 
-/** The SampleGeometry node wired to a driver's `inVec`, or null. Mirrors
+/** The SampleGeometry node wired to a driver's `inVec` + the output socket the driver
+ *  reads ('out' = ground point, 'normal' = surface normal), or null. Mirrors
  *  `statefulSourceOf`: the driver names its source through a real wired edge, so the
  *  cycle guard + subscription input-walk already see the driver→SampleGeometry hop. */
-export function geometrySampleSourceOf(driverNode: NodeLike, state: DagState): Node | null {
-  const srcId = singleInputRef(driverNode, 'inVec')?.node;
-  if (!srcId) return null;
-  const src = state.nodes[srcId];
-  return src && src.type === 'SampleGeometry' ? (src as Node) : null;
+export function geometrySampleSourceOf(
+  driverNode: NodeLike,
+  state: DagState,
+): { node: Node; socket: string } | null {
+  const ref = singleInputRef(driverNode, 'inVec');
+  if (!ref) return null;
+  const src = state.nodes[ref.node];
+  return src && src.type === 'SampleGeometry' ? { node: src as Node, socket: ref.socket } : null;
 }
 
 /**
