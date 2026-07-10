@@ -34,6 +34,22 @@ import type { KeyframeChannelNumberValue } from './types';
 export const TRANSFORM_CHANNELS = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const;
 export type TransformChannel = (typeof TRANSFORM_CHANNELS)[number];
 
+/** The "Transform Channel" source shape (#296): one transform channel of a controller
+ *  node, optionally remapped through a range. Shared by the ParamDriver's transform
+ *  road AND the stateful Lag node (#297), so both parse identically. */
+export const TransformSourceSchema = z.object({
+  node: z.string(),
+  channel: z.enum(TRANSFORM_CHANNELS),
+  remap: z
+    .object({
+      inMin: z.number(),
+      inMax: z.number(),
+      outMin: z.number(),
+      outMax: z.number(),
+    })
+    .optional(),
+});
+
 export const ParamDriverParams = z.object({
   /** Target node id whose param this driver overlays (resolved at enumeration
    *  time, not at evaluator time — the KeyframeChannel* contract). '' = unbound. */
@@ -62,20 +78,7 @@ export const ParamDriverParams = z.object({
    *  enumeration seam via `resolveEvaluatedTransform` (the EVALUATED local transform, so
    *  an animated / auto-keyed controller drives correctly), NOT through `in`. Optional
    *  so wired/spare drivers serialize byte-identical. */
-  sourceTransform: z
-    .object({
-      node: z.string(),
-      channel: z.enum(TRANSFORM_CHANNELS),
-      remap: z
-        .object({
-          inMin: z.number(),
-          inMax: z.number(),
-          outMin: z.number(),
-          outMax: z.number(),
-        })
-        .optional(),
-    })
-    .optional(),
+  sourceTransform: TransformSourceSchema.optional(),
 });
 export type ParamDriverParams = z.infer<typeof ParamDriverParams>;
 
@@ -87,6 +90,21 @@ export function makeParamDriverChannelValue(
   params: ParamDriverParams,
   value: number,
 ): KeyframeChannelNumberValue {
+  // A stateless driver folds a CONSTANT over `t` — the value is captured at build
+  // time and `sample` ignores `seconds`.
+  return makeParamDriverChannelValueFn(params, () => value);
+}
+
+/** The general builder: the folded value is a FUNCTION of the playhead `seconds`,
+ *  not a constant. The stateless roads pass `() => value` (via
+ *  {@link makeParamDriverChannelValue}); the STATEFUL road (statefulOps.ts) passes a
+ *  `sample` that RE-INTEGRATES the recurrence from a seed up to `frame(seconds)` — so
+ *  the same channel-value shape carries a memoryless OR a memoryful relation, and the
+ *  fold seam / both H40 roads consume it identically (they all just call `sample`). */
+export function makeParamDriverChannelValueFn(
+  params: ParamDriverParams,
+  sample: (seconds: number) => number,
+): KeyframeChannelNumberValue {
   return {
     kind: 'KeyframeChannel',
     name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
@@ -97,7 +115,7 @@ export function makeParamDriverChannelValue(
     blendMode: params.blendMode,
     order: params.order,
     valueType: 'number',
-    sample: () => value,
+    sample,
   };
 }
 

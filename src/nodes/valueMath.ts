@@ -129,3 +129,22 @@ export function applyMathOp(op: MathOp, a: number, b: number): number {
       return b === 0 ? 0 : a / b;
   }
 }
+
+// ── stateful step math (Epic 2) ──────────────────────────────────────────────
+// These are the PER-FRAME recurrence steps for the stateful ops (Lag/Spring). They
+// are pure functions of (previous state, current input) → next state — the memory
+// lives OUTSIDE, in the seam's replay loop (src/app/statefulOps.ts), which threads
+// the previous output forward frame by frame from a known seed. Purity here + the
+// fixed seed + the fixed frame interval = determinism by contract (a scrub replays
+// the same interval and lands the same value), NOT purity of the containing node.
+// REF: Houdini Lag/Spring CHOP (output(t) = g(input(t), output(t−Δ))); GT
+//      GROUND_TRUTH_HOUDINI_DRIVERS_CONTROLLERS.md §5/§5a.
+
+/** One Lag step (first-order low-pass). `factor` ∈ [0,1] is the fraction of the gap
+ *  to the target closed this frame: 1 = no lag (snaps to input), →0 = heavy lag
+ *  (barely moves). `factor` is clamped to [0,1] so the recurrence never overshoots
+ *  or diverges. `out = prev + (input − prev)·factor`. */
+export function lagStep(prev: number, input: number, factor: number): number {
+  const k = clamp(factor, 0, 1);
+  return prev + (input - prev) * k;
+}

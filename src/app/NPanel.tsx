@@ -96,6 +96,8 @@ import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { driverNodesForTarget } from './paramDrivers';
 import { ParamDriverBind } from './ParamDriverBind';
 import { SpareParamControls } from './SpareParamControls';
+import { LagSourceControls } from './LagSourceControls';
+import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
@@ -2881,6 +2883,14 @@ export function NPanel() {
               A footer control (not a per-node-type section) since spare params are
               universal. */}
           <SpareParamControls nodeId={node.id} />
+          {/* #297 (Epic 2) — a Lag node's input: which controller channel it trails +
+              the range. A footer control (like SpareParamControls); renders only for a
+              Lag. `factor`/`seedFrame` show as ordinary rows above. */}
+          <LagSourceControls nodeId={node.id} />
+          {/* Epic 2 — a Solver meta-op: pick the sub-network output it cooks each frame
+              (`body`) + the live controller channel it reads. Renders only for a Solver;
+              `seedFrame` shows as an ordinary row above. */}
+          <SolverControls nodeId={node.id} />
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
           ) : null}

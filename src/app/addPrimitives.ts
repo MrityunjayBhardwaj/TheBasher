@@ -40,7 +40,16 @@ export type PrimitiveKind =
   | 'Clamp'
   | 'Mix'
   | 'CurveRemap'
-  | 'Noise';
+  | 'Noise'
+  // Stateful op — Lag (Epic 2 #297). Same floating-number-node shape as the compute
+  // vocabulary; its output trails its input over time (the seam replays it).
+  | 'Lag'
+  // Solver meta-op + its sub-network leaves (Epic 2). Floating number nodes like the
+  // compute vocabulary; the Solver owns a sub-network cooked every frame (Houdini
+  // Solver SOP), PrevFrame/SolverInput are its feedback + live-input leaves.
+  | 'Solver'
+  | 'PrevFrame'
+  | 'SolverInput';
 
 export interface AddResult {
   ops: Op[];
@@ -116,6 +125,7 @@ function prefixFor(kind: PrimitiveKind): string {
   if (isLight(kind)) return 'light';
   if (isCamera(kind)) return 'cam';
   if (isCompute(kind)) return 'num';
+  if (isSolverKind(kind)) return 'solver';
   if (kind === 'Null') return 'null';
   return 'empty';
 }
@@ -127,8 +137,15 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'Clamp' ||
     kind === 'Mix' ||
     kind === 'CurveRemap' ||
-    kind === 'Noise'
+    kind === 'Noise' ||
+    kind === 'Lag'
   );
+}
+
+/** The Solver meta-op family — floating number nodes added unwired (like compute), but
+ *  distinct from the stateless compute vocabulary. */
+function isSolverKind(kind: PrimitiveKind): boolean {
+  return kind === 'Solver' || kind === 'PrevFrame' || kind === 'SolverInput';
 }
 
 function nodeTypeFor(kind: PrimitiveKind): string {
@@ -198,6 +215,14 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Curve Remap node';
     case 'Noise':
       return 'Noise node';
+    case 'Lag':
+      return 'Lag node';
+    case 'Solver':
+      return 'Solver node';
+    case 'PrevFrame':
+      return 'Prev Frame node';
+    case 'SolverInput':
+      return 'Solver Input node';
   }
 }
 
@@ -265,6 +290,11 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Mix':
     case 'CurveRemap':
     case 'Noise':
+    case 'Lag':
+    case 'Solver':
+    case 'PrevFrame':
+    case 'SolverInput':
+      // Solver meta-op + its leaves have full zod defaults (Solver.ts) and no position.
       return {};
   }
 }

@@ -89,6 +89,15 @@ export interface EvaluateOptions {
   ctx?: EvalCtx;
   /** Output socket. Defaults to first declared output. */
   socket?: string;
+  /** Per-node value injection: for every id present, the evaluator returns the mapped
+   *  value INSTEAD of running that node's `evaluate` (its inputs are not walked). The
+   *  Solver replay seam (statefulOps.ts) uses this to feed the previous-frame output
+   *  into Prev_Frame leaves and the live input into SolverInput leaves each frame — the
+   *  temporal-feedback mechanism the pure evaluator (one frame, no previous output)
+   *  can't express. The injected value is folded into downstream input-hashes (so a
+   *  changed injection invalidates correctly); the seam cooks with no shared cache, so
+   *  there is no cross-frame poisoning. */
+  overrides?: ReadonlyMap<NodeId, unknown>;
 }
 
 const DEFAULT_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -106,6 +115,7 @@ export function evaluate(
 ): EvalResult {
   const cache = options.cache;
   const ctx = options.ctx ?? DEFAULT_CTX;
+  const overrides = options.overrides;
   // Per-evaluation memo so a single sub-graph isn't re-walked twice when
   // multiple downstream consumers share an upstream.
   const memo = new Map<NodeId, EvalResult>();
@@ -120,6 +130,15 @@ export function evaluate(
     }
     const memoed = memo.get(id);
     if (memoed) return memoed;
+    // Injected leaf (Solver replay seam): return the fed value directly, skipping the
+    // node's own evaluate + input walk. Its hash reflects the value, so downstream
+    // input-hashes differ when the injection changes (per-frame correctness).
+    if (overrides && overrides.has(id)) {
+      const value = overrides.get(id);
+      const injected: EvalResult = { value, hash: hashValue(value) };
+      memo.set(id, injected);
+      return injected;
+    }
     const node = state.nodes[id];
     if (!node) throw new Error(`Evaluator: node not found: ${id}`);
     const def = requireNodeType(node.type);
