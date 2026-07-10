@@ -5,8 +5,10 @@
 // buildDefaultDagState + applyOp scaffold. The live boundary-pair (render == read) is
 // observed in a throwaway e2e; this suite guards the resolution in CI.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { applyOp } from '../core/dag';
+import { registerGltfClone, __clearGltfCloneRegistryForTests } from './asset/gltfCloneRegistry';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
@@ -161,5 +163,84 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
     expect(sample!.normal[0]).toBeCloseTo(0, 3);
     expect(sample!.normal[1]).toBeCloseTo(1, 3);
     expect(sample!.normal[2]).toBeCloseTo(0, 3);
+  });
+});
+
+/** A glTF terrain is a loaded three.js clone (registered by the renderer), NOT a registry
+ *  geometry — the seam reads its world triangles from `getGltfClone`. Register a synthetic
+ *  clone (a flat box top at y=2.5) to exercise the gltf branch without a real asset load. */
+describe('readTerrainSampleAt — glTF terrain (loaded clone)', () => {
+  afterEach(() => __clearGltfCloneRegistryForTests());
+
+  function buildGltfTerrainState(nullPos: [number, number, number]): DagState {
+    let state = buildDefaultDagState();
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: 'geo_terrain',
+        nodeType: 'GltfAsset',
+        params: { assetRef: 'asset_terrain' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'geo_null',
+        nodeType: 'Null',
+        params: { position: nullPos, rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'geo_null', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'geo_sample',
+        nodeType: 'SampleGeometry',
+        params: { sourceGeometry: { node: 'geo_terrain' }, at: { node: 'geo_null' } },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    return state;
+  }
+
+  /** Register a flat box terrain (size 20×1×20 at y=2 → top face y=2.5) as the clone. */
+  function registerFlatTerrainClone(): void {
+    const group = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(20, 1, 20));
+    box.position.set(0, 2, 0);
+    group.add(box);
+    group.updateMatrixWorld(true);
+    registerGltfClone('asset_terrain', group);
+  }
+
+  it('snaps to a loaded glTF terrain top under the query XZ (registry returns null)', () => {
+    registerFlatTerrainClone();
+    const state = buildGltfTerrainState([4, 10, -3]);
+    const ref = geometrySampleRefOf(state.nodes['geo_sample'])!;
+    const { point, sample } = readTerrainSampleAt(state, ref, ctxAt(0));
+    expect(sample).not.toBeNull();
+    expect(point[0]).toBeCloseTo(4, 3);
+    expect(point[1]).toBeCloseTo(2.5, 3); // gltf terrain top: 2 (mesh pos) + 0.5 (half height)
+    expect(point[2]).toBeCloseTo(-3, 3);
+    expect(sample!.normal[1]).toBeCloseTo(1, 3);
+  });
+
+  it('nearest method on a loaded glTF terrain returns a surface point', () => {
+    registerFlatTerrainClone();
+    const state = buildGltfTerrainState([15, 3, 0]); // outside the footprint (x=15 > 10)
+    const ref = { ...geometrySampleRefOf(state.nodes['geo_sample'])!, method: 'nearest' as const };
+    const { point, sample } = readTerrainSampleAt(state, ref, ctxAt(0));
+    expect(sample).not.toBeNull();
+    expect(point[0]).toBeCloseTo(10, 3); // clamped to the +x face
+    expect(point[1]).toBeCloseTo(2.5, 3);
+    expect(point[2]).toBeCloseTo(0, 3);
+  });
+
+  it('falls back to the query position when the glTF asset is not loaded (no clone)', () => {
+    const state = buildGltfTerrainState([4, 10, -3]); // NO registerGltfClone
+    const ref = geometrySampleRefOf(state.nodes['geo_sample'])!;
+    const { point, sample } = readTerrainSampleAt(state, ref, ctxAt(0));
+    expect(sample).toBeNull(); // async asset not mounted → no geometry to sample
+    expect(point).toEqual([4, 10, -3]); // the Null's own world position, not [0,0,0]
   });
 });
