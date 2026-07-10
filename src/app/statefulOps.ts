@@ -17,10 +17,11 @@
 // exactly as the stateless driver roads already are. Determinism by a fixed
 // seed+interval, NOT by node purity (the Lag node is `pure:false`).
 //
-// Cost: `sample(seconds)` is O(N − seed) — it re-integrates each call. Fine for a
-// handful of driven params over a typical timeline; the replay is bounded (below) so
-// a malformed seed can't run away. A cached O(1) history block (invalidate-on-
-// backward-scrub) is the later optimization, behind this same `sample` interface.
+// Cost: a raw `sample(seconds)` is O(N − seed) — it re-integrates each call. That is
+// O(1)-cached below (`cachedIntegrate`): the per-frame states are memoized behind this
+// SAME `sample` interface, keyed by the DAG state identity (fresh per edit, stable across
+// scrub), so a static graph scrubs/plays in O(1) amortized. The replay is bounded (below)
+// so a malformed seed can't run away even on the uncached (clamp-regime) path.
 //
 // v1 SCOPE: a single stateful node (Lag) directly feeding a ParamDriver's `in`, whose
 // own input is a controller's transform channel (the animated Null — the only
