@@ -84,6 +84,14 @@ export const ParamDriverParams = z.object({
    *  an animated / auto-keyed controller drives correctly), NOT through `in`. Optional
    *  so wired/spare drivers serialize byte-identical. */
   sourceTransform: TransformSourceSchema.optional(),
+  /** #300 F2b — the VEC controller road (the "Point controller"): the driver reads a
+   *  controller node's WHOLE evaluated POSITION [x,y,z] as a Vector3 and folds it onto
+   *  a Vector3 target (an object's position, an aim). The scalar `sourceTransform` reads
+   *  ONE channel; this reads the whole position vector. Resolved in the enumeration seam
+   *  via `resolveEvaluatedTransform` (the EVALUATED position, so an animated / gizmo-
+   *  dragged controller drives correctly), NOT through `inVec`. Optional so other drivers
+   *  serialize byte-identical. */
+  sourceTransformVec: z.object({ node: z.string() }).optional(),
 });
 export type ParamDriverParams = z.infer<typeof ParamDriverParams>;
 

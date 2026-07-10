@@ -21,9 +21,18 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId, Node } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
-import { makeParamDriverChannelValue, type ParamDriverParams } from '../nodes/ParamDriver';
+import {
+  makeParamDriverChannelValue,
+  makeParamDriverVec3ChannelValue,
+  type ParamDriverParams,
+} from '../nodes/ParamDriver';
 import { readBaseParam } from './readBaseParam';
-import { transformSourceOf, readTransformChannelAt } from './transformChannelSource';
+import {
+  transformSourceOf,
+  transformVecSourceOf,
+  readTransformChannelAt,
+  readTransformPositionAt,
+} from './transformChannelSource';
 import { statefulSourceOf, makeStatefulDriverChannelValue } from './statefulOps';
 
 interface NodeLike {
@@ -122,6 +131,14 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
       const src = nodes[transform.node];
       if (src) out.push(src);
     }
+    // #300 F2b — the vec controller road: subscribe the Point-controller node so a
+    // gizmo drag / param edit on it rebuilds the render memo (H48), like the scalar road.
+    const transformVec = transformVecSourceOf(d);
+    if (transformVec && !seen.has(transformVec.node)) {
+      seen.add(transformVec.node);
+      const src = nodes[transformVec.node];
+      if (src) out.push(src);
+    }
   }
   // Walk UP the wired input edges (bounded by `seen`), collecting the compute closure.
   while (stack.length) {
@@ -194,6 +211,10 @@ export function driverParamDeps(
     // (transitively) already reads the target is rejected as a cycle (G6).
     const transform = transformSourceOf(node);
     if (transform) (deps[node.id] ??= []).push(transform.node);
+    // #300 F2b — the vec controller road: driver → Point-controller node, so a bind
+    // whose controller (transitively) already reads the target is rejected as a cycle.
+    const transformVec = transformVecSourceOf(node);
+    if (transformVec) (deps[node.id] ??= []).push(transformVec.node);
     // #297 — the stateful road: driver → (wired) Lag → (param-ref) controller. The
     // driver→Lag edge is a real wired edge the guard's input walk sees; the
     // Lag→controller hop is a transform param-ref it can't. Add it so a bind whose
@@ -222,6 +243,16 @@ export function driverChannelValuesForTarget(
   const out: KeyframeChannelValue[] = [];
   for (const node of driverNodesForTarget(state.nodes, targetId)) {
     try {
+      const transformVec = transformVecSourceOf(node);
+      if (transformVec) {
+        // #300 F2b — the VEC controller road ("Point controller"): read the controller's
+        // WHOLE evaluated POSITION as a Vec3 (so a gizmo-dragged / animated controller
+        // drives correctly) and fold it as a vec3 channel — the SAME fold a position
+        // keyframe rides, so it composes byte-identically with the wired inVec road.
+        const value = readTransformPositionAt(state, transformVec.node, ctx, cache);
+        out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+        continue;
+      }
       const transform = transformSourceOf(node);
       if (transform) {
         // #296 — the Transform Channel road: read the EVALUATED transform of the

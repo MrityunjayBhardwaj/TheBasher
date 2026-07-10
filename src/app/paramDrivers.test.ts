@@ -122,6 +122,72 @@ describe('paramDrivers — the PULL rail read side', () => {
 
 // #294 (Inc 3) — the spare road: a promoted spare param drives a target directly (the
 // `ch()` pull), resolved in the seam via readBaseParam (the evaluator can't see spare).
+describe('paramDrivers — the vec Point-controller road (#300 F2b)', () => {
+  const NULL_ID = 'n_ctl';
+  const DRVV_ID = 'n_drv_vec';
+  const NULL_POS: [number, number, number] = [3, 1, 0];
+
+  /** Default scene + a Null (wired as a scene child so it evaluates) at NULL_POS +
+   *  a ParamDriver reading the Null's WHOLE position onto box.position. */
+  function buildVecDrivenState(): DagState {
+    let state = buildDefaultDagState();
+    const sceneId = state.outputs.scene!.node;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: NULL_ID,
+      nodeType: 'Null',
+      params: { position: NULL_POS, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    } as Op).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: NULL_ID, socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    } as Op).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: DRVV_ID,
+      nodeType: 'ParamDriver',
+      params: {
+        target: BOX_ID,
+        paramPath: 'position',
+        blendMode: 'replace',
+        order: 0,
+        sourceTransformVec: { node: NULL_ID },
+      },
+    } as Op).next;
+    return state;
+  }
+
+  it('folds the Null WHOLE position as a vec3 channel onto the target', () => {
+    const state = buildVecDrivenState();
+    const chans = driverChannelValuesForTarget(state, BOX_ID, ctxAt(0));
+    expect(chans).toHaveLength(1);
+    expect(chans[0].valueType).toBe('vec3');
+    expect(chans[0].sample(0)).toEqual(NULL_POS);
+  });
+
+  it('a MOVED controller flows through to the driven vec (the pull dependency)', () => {
+    let state = buildVecDrivenState();
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: NULL_ID,
+      paramPath: 'position',
+      value: [-2, 4, 1],
+    } as Op).next;
+    expect(driverChannelValuesForTarget(state, BOX_ID, ctxAt(0))[0].sample(0)).toEqual([-2, 4, 1]);
+  });
+
+  it('exposes the edge-less driver→controller dep (G6) + subscribes the controller (H48)', () => {
+    const state = buildVecDrivenState();
+    const deps = driverParamDeps(state.nodes);
+    expect(deps[BOX_ID]).toEqual([DRVV_ID]);
+    expect(deps[DRVV_ID]).toEqual([NULL_ID]);
+    expect(driverSubscriptionNodesForTarget(state.nodes, BOX_ID).map((n) => n.id)).toContain(
+      NULL_ID,
+    );
+  });
+});
+
 describe('paramDrivers — the spare (ch) road', () => {
   const SPARE_HOST = 'n_clamp'; // reuse any node; the spare lives on it, not its params
 

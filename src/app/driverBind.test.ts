@@ -232,6 +232,59 @@ describe('driverBind', () => {
     expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(true);
   });
 
+  it('driverSourceOptions exposes a Null as a vec Point-controller for a vec3 target (#300 F2b)', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    // A vec3 target offers the Null's WHOLE position as ONE transformVec source (not the
+    // nine scalar channels — those are the scalar-target road).
+    const vec = driverSourceOptions(state, BOX_ID, 'vec3').filter(
+      (o) => o.kind === 'transformVec' && o.node === 'ctl',
+    );
+    expect(vec).toHaveLength(1);
+    // The scalar transform-channel sources are absent for a vec target.
+    expect(driverSourceOptions(state, BOX_ID, 'vec3').some((o) => o.kind === 'transform')).toBe(
+      false,
+    );
+  });
+
+  it('binds via a Null Point-controller: edge-less driver carrying sourceTransformVec, NO connect (#300 F2b)', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    const source: DriverSource = {
+      kind: 'transformVec',
+      id: 'xfvec:ctl',
+      label: 'ctl · position',
+      node: 'ctl',
+    };
+    const res = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: 'position',
+      source,
+      driverId: 'drv1',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.ops).toHaveLength(1); // no connect — the vec source is edge-less
+    expect(res.ops[0]).toMatchObject({
+      type: 'addNode',
+      nodeType: 'ParamDriver',
+      params: { target: BOX_ID, paramPath: 'position', sourceTransformVec: { node: 'ctl' } },
+    });
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(true);
+  });
+
   it('buildSetDriverRemapOps sets a range on a transform driver (one setParam, undo-safe)', () => {
     const addNull: Op = {
       type: 'addNode',

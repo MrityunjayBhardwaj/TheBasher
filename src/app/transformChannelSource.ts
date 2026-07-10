@@ -100,3 +100,26 @@ export function readTransformChannelAt(
   const r = source.remap;
   return r ? fit(raw, r.inMin, r.inMax, r.outMin, r.outMax) : raw;
 }
+
+/** #300 F2b — the VEC controller road ("Point controller"): the ref carried by a
+ *  node's `params.sourceTransformVec`, validated (just a controller node id). Null
+ *  when the node has no vec transform source. */
+export function transformVecSourceOf(node: NodeLike): { node: string } | null {
+  const s = ((node.params ?? {}) as { sourceTransformVec?: { node?: unknown } }).sourceTransformVec;
+  if (!s || typeof s.node !== 'string' || !s.node) return null;
+  return { node: s.node };
+}
+
+/** The controller's WHOLE evaluated POSITION [x,y,z] at `ctx` (the vec twin of
+ *  {@link readTransformChannelAt}). A controller not currently rendered (null resolve)
+ *  reads the origin. The ONE per-frame read the vec driver road calls, so read == render
+ *  under scrub (H40) by construction. */
+export function readTransformPositionAt(
+  state: DagState,
+  node: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): [number, number, number] {
+  const xf = resolveEvaluatedTransform(state, node, ctx, cache);
+  return xf ? [xf.position[0], xf.position[1], xf.position[2]] : [0, 0, 0];
+}

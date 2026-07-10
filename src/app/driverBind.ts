@@ -50,7 +50,11 @@ export type DriverSource =
       node: string;
       channel: TransformChannel;
       remap?: { inMin: number; inMax: number; outMin: number; outMax: number };
-    };
+    }
+  // #300 F2b — a controller's WHOLE evaluated POSITION as a Vector3 (the "Point
+  // controller"): drives a Vector3 target (an object's position, an aim). The driver
+  // stores `sourceTransformVec` and reads the vec in the resolver seam, no wire.
+  | { kind: 'transformVec'; id: string; label: string; node: string };
 
 /** The source node id backing a DriverSource (for the cycle guard). */
 function sourceNodeId(source: DriverSource): string {
@@ -128,6 +132,27 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
               channel: source.channel,
               ...(source.remap ? { remap: source.remap } : {}),
             },
+          },
+        },
+      ],
+    };
+  }
+  if (source.kind === 'transformVec') {
+    // #300 F2b — the Point-controller road: one edge-less node carrying the controller
+    // ref; resolved in the seam via resolveEvaluatedTransform (the whole position vec).
+    return {
+      ok: true,
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: driverId,
+          nodeType: 'ParamDriver',
+          params: {
+            target: targetId,
+            paramPath,
+            blendMode: 'replace',
+            order: 0,
+            sourceTransformVec: { node: source.node },
           },
         },
       ],
@@ -241,9 +266,23 @@ export function driverSourceOptions(
       }
     }
     // The scalar-only source roads (spare knob, transform channel) don't apply to a
-    // Vector3 target — a vec target binds to a vector compute output. (A vec controller
-    // source — a Null's whole position — is the F2b road.)
-    if (targetKind === 'vec3') continue;
+    // Vector3 target — a vec target binds to a vector compute output OR a Point
+    // controller (a Null's whole position, the #300 F2b road).
+    if (targetKind === 'vec3') {
+      // #300 F2b — a Null is THE controller; expose its whole evaluated position as a
+      // Vector3 source (the "Point controller"), so dragging the Null moves the target.
+      // Scoped to Null in v1 (any transformable object is a follow-up), matching the
+      // scalar transform-channel road's scoping.
+      if (node.type === 'Null') {
+        out.push({
+          kind: 'transformVec',
+          id: `xfvec:${node.id}`,
+          label: `${label} · position`,
+          node: node.id,
+        });
+      }
+      continue;
+    }
     // Spare road — a numeric spare param is a first-class source (a Controller knob).
     for (const [key, param] of Object.entries(node.spare ?? {})) {
       if (!NUMERIC_SPARE_TYPES.has(param.type)) continue;
