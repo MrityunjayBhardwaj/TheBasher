@@ -23,6 +23,7 @@ import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
+import { SolverNode, PrevFrameNode, SolverInputNode } from './Solver';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
@@ -182,6 +183,14 @@ const ALL: NodeDefinition[] = [
   // Declares `stateful: true`; the real value is produced by the replay seam
   // (src/app/statefulOps.ts), not its passthrough evaluate.
   LagNode as unknown as NodeDefinition,
+  // Solver meta-op — the 3rd OpNet instance (epic #290 Epic 2). A node owning a
+  // user-authored sub-network cooked every frame with a Prev_Frame feedback + seed
+  // (Houdini Solver SOP). Generalizes Lag's fixed recurrence to any per-frame rule;
+  // PrevFrame/SolverInput are the sub-network's feedback + live-input leaves, injected
+  // by the replay seam (statefulOps.ts). Stateful like Lag → replayed, not evaluated.
+  SolverNode as unknown as NodeDefinition,
+  PrevFrameNode as unknown as NodeDefinition,
+  SolverInputNode as unknown as NodeDefinition,
   // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
   // Edge-less to its target ({target, paramPath}, enumerated + folded by the target's
   // followers like a KeyframeChannel), edge-WIRED to the compute graph via `in`. Its

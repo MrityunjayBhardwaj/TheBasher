@@ -78,6 +78,17 @@ const GROUPS: MenuGroup[] = [
       { kind: 'Lag', label: 'Lag' },
     ],
   },
+  {
+    // Epic 2 — the Solver meta-op: a sub-network cooked every frame with a Prev_Frame
+    // feedback + seed (Houdini Solver SOP). Wire the sub-network's output into the
+    // Solver's `body`; PrevFrame/SolverInput are the loop's feedback + live-input leaves.
+    label: 'Solver',
+    items: [
+      { kind: 'Solver', label: 'Solver' },
+      { kind: 'PrevFrame', label: 'Prev Frame' },
+      { kind: 'SolverInput', label: 'Solver Input' },
+    ],
+  },
 ];
 
 function spawnPosition(): [number, number, number] {
