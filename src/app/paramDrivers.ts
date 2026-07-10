@@ -34,6 +34,11 @@ import {
   readTransformPositionAt,
 } from './transformChannelSource';
 import { statefulSourceOf, makeStatefulDriverChannelValue } from './statefulOps';
+import {
+  geometrySampleSourceOf,
+  geometrySampleRefOf,
+  readTerrainSampleAt,
+} from './geometrySampleSource';
 
 interface NodeLike {
   readonly id: string;
@@ -161,6 +166,19 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
       const src = nodes[xfVec.node];
       if (src) out.push(src);
     }
+    // #300 follow-up — a SampleGeometry in the closure reads its terrain + query
+    // controller through PARAM REFS (not wired edges); subscribe both so a gizmo drag on
+    // the controller (or a terrain edit) rebuilds the render memo (H48), like the vec road.
+    const geoRef = geometrySampleRefOf(node);
+    if (geoRef) {
+      for (const id of [geoRef.geometry, geoRef.at]) {
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          const src = nodes[id];
+          if (src) out.push(src);
+        }
+      }
+    }
     if (!node.inputs) continue;
     for (const binding of Object.values(node.inputs)) {
       const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
@@ -232,6 +250,21 @@ export function driverParamDeps(
     const lag = inSrcId?.node ? nodes[inSrcId.node] : undefined;
     const lagXf = lag ? transformSourceOf(lag) : null;
     if (lag && lagXf) (deps[lag.id] ??= []).push(lagXf.node);
+    // #300 follow-up — the geometry-sample road: driver → (wired inVec) SampleGeometry →
+    // (param-ref) terrain + query controller. The driver→SampleGeometry edge is wired (the
+    // guard's input walk sees it); add the SampleGeometry→terrain/at param-ref hops so a
+    // bind whose query controller (transitively) reads the target is rejected as a cycle (G6).
+    const inVecRef = node.inputs?.inVec;
+    const inVecSrcId = (Array.isArray(inVecRef) ? inVecRef[0] : inVecRef) as
+      | { node?: string }
+      | undefined;
+    const geoNode = inVecSrcId?.node ? nodes[inVecSrcId.node] : undefined;
+    const geoRef = geoNode ? geometrySampleRefOf(geoNode) : null;
+    if (geoNode && geoRef) {
+      for (const id of [geoRef.geometry, geoRef.at]) {
+        if (id) (deps[geoNode.id] ??= []).push(id);
+      }
+    }
   }
   return deps;
 }
@@ -282,13 +315,25 @@ export function driverChannelValuesForTarget(
         const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
         out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, value));
       } else {
-        // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be
-        // folded as a point-in-time constant: its value depends on the past. Hand off
-        // to the replay seam, which returns a channel value whose `sample(seconds)`
-        // re-integrates the recurrence from the seed. Both H40 roads call that same
-        // `sample`, so render == read under scrub.
-        const stateful = statefulSourceOf(node, state);
-        if (stateful) {
+        const geoSample = geometrySampleSourceOf(node, state);
+        const stateful = geoSample ? null : statefulSourceOf(node, state);
+        if (geoSample) {
+          // #300 follow-up — a SampleGeometry wired to `inVec` reads GEOMETRY (the ground
+          // point under a query controller's world XZ). Like the stateful road it can't be
+          // a pure evaluate — it needs the terrain's world triangles (state) — so the seam
+          // computes it and folds the point as a vec3 channel, byte-identical to the wired
+          // inVec / Point-controller roads (H40).
+          const ref = geometrySampleRefOf(geoSample);
+          const value: [number, number, number] = ref
+            ? readTerrainSampleAt(state, ref, ctx, cache).point
+            : [0, 0, 0];
+          out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+        } else if (stateful) {
+          // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be
+          // folded as a point-in-time constant: its value depends on the past. Hand off
+          // to the replay seam, which returns a channel value whose `sample(seconds)`
+          // re-integrates the recurrence from the seed. Both H40 roads call that same
+          // `sample`, so render == read under scrub.
           out.push(
             makeStatefulDriverChannelValue(
               state,

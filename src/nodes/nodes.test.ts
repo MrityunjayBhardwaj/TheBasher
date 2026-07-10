@@ -105,6 +105,7 @@ const ALL_TYPES = [
   'Prompt',
   'RenderJob',
   'RenderOutput',
+  'SampleGeometry',
   'Scatter',
   'Scene',
   'Shot',

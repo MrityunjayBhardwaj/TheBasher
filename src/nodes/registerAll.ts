@@ -30,6 +30,7 @@ import {
   PrevFrameVecNode,
   SolverInputVecNode,
 } from './Solver';
+import { SampleGeometryNode } from './geometryQuery';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
@@ -199,6 +200,11 @@ const ALL: NodeDefinition[] = [
   SolverInputNode as unknown as NodeDefinition,
   PrevFrameVecNode as unknown as NodeDefinition,
   SolverInputVecNode as unknown as NodeDefinition,
+  // Geometry query — SampleGeometry (epic #290 vec-rail follow-up). The compute rail's
+  // GEOMETRY reader: drops a vertical ray onto a terrain mesh and outputs the ground
+  // point under a query controller's world XZ. Seam-resolved (needs world triangles →
+  // state), so its passthrough evaluate returns the origin (src/app/geometrySampleSource.ts).
+  SampleGeometryNode as unknown as NodeDefinition,
   // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
   // Edge-less to its target ({target, paramPath}, enumerated + folded by the target's
   // followers like a KeyframeChannel), edge-WIRED to the compute graph via `in`. Its
