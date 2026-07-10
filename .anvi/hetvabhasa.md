@@ -2816,3 +2816,15 @@ Type: boundary (seam vs pure-evaluate) / silent-wrongness. REF: `src/app/statefu
 **The real fix:** gate on the STRUCTURAL whitelist — `TRANSFORM_PARAMS.has(paramPath)` (`position`/`rotation`/`scale`, exported from `resolveTransformParam.ts`). The question "is this a transform param?" is answered by the paramPath alone, independent of render state. Why it matters: if the affordance is shown and used on a transform vec, the READ side (generic `resolveEvaluatedParam`) reflects the driver but the transform RENDER path (not driver-aware until F2b) does not → render ≠ read (H40) — or the reverse. The whitelist gate keeps the two H40 roads consistent regardless of mount state.
 
 **REF:** `src/app/NPanel.tsx` `VectorField` (`isTransformParam = TRANSFORM_PARAMS.has(paramPath)`); `src/app/resolveTransformParam.ts:69-75` (`TransformParamPath` / exported `TRANSFORM_PARAMS`, D-03 whitelist). Caught by a throwaway UI observation during F2a (issue #300). Reinforces the Lokayata gate: a render-state-dependent bug is invisible to unit tests — drive the real UI. Invariant [[V96]].
+
+---
+
+## H154 — A hardcoded test fixture that duplicates a parser's output shape silently diverges when the parser gains fields
+
+**Root cause:** A test defines a literal fixture (`const REF = {geometry, at}`) mirroring the shape a parser (`geometrySampleRefOf`) returns, and passes it straight into the production consumer (`readTerrainSampleAt`). When the parser later gains fields (method/direction/orientation/farthest with defaults), the parser's real callers are fine — but the test's stale literal now has `direction:undefined`, which flows into the production code path (`raycastMesh`→`normalize(undefined)`) and crashes THERE, not in the test setup. The failure LOOKS like a production bug (stack in `rayMesh.ts`) but is a test-fixture drift.
+
+**Detection signal:** A newly-added-param change makes a consumer's OWN tests crash inside production code with `Cannot read properties of undefined`, while the parser + real callers typecheck clean.
+
+**The trap (wrong fix):** "Add a null-guard in `normalize`/`raycastMesh`" — that masks the divergence and lets a genuinely-malformed ref pass silently.
+
+**Real fix:** Build the test fixture through the SAME parser production uses (`geometrySampleRefOf(state.nodes[id])`), never a parallel literal — so it can't drift. If a literal is unavoidable, assert it `.toEqual` the parser output so the drift fails loudly at the source. **REF:** `src/app/geometrySampleSource.test.ts` (the stale `REF`); caught during the full-Ray-op build 2026-07-10. Cousin of [[feedback_test_seed_schema]] (test fixtures must track the real schema).

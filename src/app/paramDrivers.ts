@@ -250,19 +250,22 @@ export function driverParamDeps(
     const lag = inSrcId?.node ? nodes[inSrcId.node] : undefined;
     const lagXf = lag ? transformSourceOf(lag) : null;
     if (lag && lagXf) (deps[lag.id] ??= []).push(lagXf.node);
-    // #300 follow-up — the geometry-sample road: driver → (wired inVec) SampleGeometry →
-    // (param-ref) terrain + query controller. The driver→SampleGeometry edge is wired (the
-    // guard's input walk sees it); add the SampleGeometry→terrain/at param-ref hops so a
-    // bind whose query controller (transitively) reads the target is rejected as a cycle (G6).
-    const inVecRef = node.inputs?.inVec;
-    const inVecSrcId = (Array.isArray(inVecRef) ? inVecRef[0] : inVecRef) as
-      | { node?: string }
-      | undefined;
-    const geoNode = inVecSrcId?.node ? nodes[inVecSrcId.node] : undefined;
-    const geoRef = geoNode ? geometrySampleRefOf(geoNode) : null;
-    if (geoNode && geoRef) {
-      for (const id of [geoRef.geometry, geoRef.at]) {
-        if (id) (deps[geoNode.id] ??= []).push(id);
+    // #300 follow-up — the geometry-sample road: driver → (wired `inVec` for out/normal, or
+    // `in` for distance) SampleGeometry → (param-ref) terrain + query controller. The
+    // driver→SampleGeometry edge is wired (the guard's input walk sees it); add the
+    // SampleGeometry→terrain/at param-ref hops so a bind whose query controller (transitively)
+    // reads the target is rejected as a cycle (G6).
+    for (const socket of ['inVec', 'in'] as const) {
+      const geoInRef = node.inputs?.[socket];
+      const geoSrcId = (Array.isArray(geoInRef) ? geoInRef[0] : geoInRef) as
+        | { node?: string }
+        | undefined;
+      const geoNode = geoSrcId?.node ? nodes[geoSrcId.node] : undefined;
+      const geoRef = geoNode ? geometrySampleRefOf(geoNode) : null;
+      if (geoNode && geoRef) {
+        for (const id of [geoRef.geometry, geoRef.at]) {
+          if (id) (deps[geoNode.id] ??= []).push(id);
+        }
       }
     }
   }
@@ -318,22 +321,27 @@ export function driverChannelValuesForTarget(
         const geoSample = geometrySampleSourceOf(node, state);
         const stateful = geoSample ? null : statefulSourceOf(node, state);
         if (geoSample) {
-          // #300 follow-up — a SampleGeometry wired to `inVec` reads GEOMETRY (the ground
-          // point OR the surface normal under a query controller's world XZ). Like the
-          // stateful road it can't be a pure evaluate — it needs the terrain's world
-          // triangles (state) — so the seam computes it and folds the chosen output (by the
-          // wired socket) as a vec3 channel, byte-identical to the wired inVec / Point-
-          // controller roads (H40).
+          // #300 follow-up — a SampleGeometry (the Ray op) wired to a driver reads GEOMETRY:
+          // the hit POINT (`out`) or surface NORMAL (`normal`) as a Vector3, or the hit
+          // DISTANCE (`distance`) as a Number. Like the stateful road it can't be a pure
+          // evaluate — it needs the terrain's world triangles (state) — so the seam computes
+          // it and folds the chosen output (by the wired socket) through the SAME builder the
+          // wired inVec / transform-channel roads use, so render == read (H40).
           const ref = geometrySampleRefOf(geoSample.node);
           const s = ref ? readTerrainSampleAt(state, ref, ctx, cache) : null;
-          const value: [number, number, number] = !s
-            ? geoSample.socket === 'normal'
-              ? [0, 1, 0]
-              : [0, 0, 0]
-            : geoSample.socket === 'normal'
-              ? (s.sample?.normal ?? [0, 1, 0]) // miss → up (no tilt)
-              : s.point;
-          out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+          if (geoSample.socket === 'distance') {
+            const d = s?.sample?.distance ?? 0; // miss → 0
+            out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, d));
+          } else {
+            const value: [number, number, number] = !s
+              ? geoSample.socket === 'normal'
+                ? [0, 1, 0]
+                : [0, 0, 0]
+              : geoSample.socket === 'normal'
+                ? (s.sample?.normal ?? [0, 1, 0]) // miss → up (no tilt)
+                : s.point;
+            out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+          }
         } else if (stateful) {
           // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be
           // folded as a point-in-time constant: its value depends on the past. Hand off
