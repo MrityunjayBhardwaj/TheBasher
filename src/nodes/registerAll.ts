@@ -23,7 +23,13 @@ import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
-import { SolverNode, PrevFrameNode, SolverInputNode } from './Solver';
+import {
+  SolverNode,
+  PrevFrameNode,
+  SolverInputNode,
+  PrevFrameVecNode,
+  SolverInputVecNode,
+} from './Solver';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
@@ -191,6 +197,8 @@ const ALL: NodeDefinition[] = [
   SolverNode as unknown as NodeDefinition,
   PrevFrameNode as unknown as NodeDefinition,
   SolverInputNode as unknown as NodeDefinition,
+  PrevFrameVecNode as unknown as NodeDefinition,
+  SolverInputVecNode as unknown as NodeDefinition,
   // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).
   // Edge-less to its target ({target, paramPath}, enumerated + folded by the target's
   // followers like a KeyframeChannel), edge-WIRED to the compute graph via `in`. Its

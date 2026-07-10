@@ -46,9 +46,12 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import type { Vec3 } from './types';
 import { TransformSourceSchema } from './ParamDriver';
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
+const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
+const ORIGIN: Vec3 = [0, 0, 0];
 
 // The sub-network leaves carry no params — their value is injected by the replay seam
 // (or 0 outside it). A named empty schema keeps the node-definition types honest.
@@ -83,6 +86,45 @@ export const SolverInputNode: NodeDefinition<LeafParams, number> = {
   evaluate: () => 0,
 };
 
+// ── PrevFrameVec / SolverInputVec — the VEC recurrence/input leaves (S, #300) ──
+//
+// The Vector3 twins of PrevFrame/SolverInput, for a TUPLE-state Solver (a 2nd-order
+// spring's state is TWO Vec3s: position + velocity). A tuple Solver carries a Vec3[]
+// state; PrevFrameVec's `slot` selects WHICH component it feeds back (slot 0 = position,
+// slot 1 = velocity, …), so one sub-network can read every state component. SolverInputVec
+// is the live target vector (the controller's whole position, the F2b Point road). Both
+// are 0-vec leaves here — the replay seam injects the real Vec3 per frame (overrides).
+
+// PrevFrameVec carries a `slot` (which state component it reads back).
+export const PrevFrameVecParams = z.object({
+  slot: z.number().int().min(0).default(0),
+});
+export type PrevFrameVecParams = z.infer<typeof PrevFrameVecParams>;
+
+export const PrevFrameVecNode: NodeDefinition<PrevFrameVecParams, Vec3> = {
+  type: 'PrevFrameVec',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: PrevFrameVecParams,
+  inputs: {},
+  outputs: VECTOR3_OUT,
+  // Origin outside replay; the seam overrides with prevState[slot] each frame.
+  evaluate: () => ORIGIN,
+};
+
+export const SolverInputVecNode: NodeDefinition<LeafParams, Vec3> = {
+  type: 'SolverInputVec',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: LeafParams,
+  inputs: {},
+  outputs: VECTOR3_OUT,
+  // Origin outside replay; the seam injects the live target vector each frame.
+  evaluate: () => ORIGIN,
+};
+
 // ── Solver — the stateful meta-op ─────────────────────────────────────────────
 export const SolverParams = z.object({
   /** The frame the recurrence is seeded from: on the seed frame Prev_Frame = the
@@ -95,10 +137,15 @@ export const SolverParams = z.object({
    *  wired compute graph is time-invariant). ABSENT = the live input reads 0 (a pure
    *  feedback solver). Optional so a bare Solver serializes byte-identical. */
   sourceTransform: TransformSourceSchema.optional(),
+  /** S (#300) — the VEC live input for a TUPLE-state Solver: a controller's WHOLE
+   *  evaluated position (the F2b Point road), injected into SolverInputVec leaves as
+   *  the target vector (a spring's rest target). Present ⇒ the vec/tuple replay path.
+   *  Optional so a scalar Solver serializes byte-identical. */
+  sourceTransformVec: z.object({ node: z.string() }).optional(),
 });
 export type SolverParams = z.infer<typeof SolverParams>;
 
-export const SolverNode: NodeDefinition<SolverParams, number> = {
+export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec3 }> = {
   type: 'Solver',
   version: 1,
   // Not point-in-time reproducible — the real value needs the interval + the previous
@@ -107,13 +154,30 @@ export const SolverNode: NodeDefinition<SolverParams, number> = {
   stateful: true,
   cost: 'medium',
   paramSchema: SolverParams,
-  // `body` = the sub-network's OUTPUT node (the last compute node of the loop rule).
-  // The seam cooks its dependency closure per frame, injecting Prev_Frame/SolverInput.
-  // Wired (unlike Lag's unused `in`), so the render subscription + cycle guard walk it.
-  inputs: { body: { type: 'Number', cardinality: 'single' } },
-  outputs: NUMBER_OUT,
-  // Passthrough of the point-in-time sub-network output (Prev_Frame/SolverInput read 0
-  // here) — a sane degenerate value if something reads the Solver outside the seam. The
-  // real integrated value comes from the replay seam.
-  evaluate: (_params, inputs) => (inputs.body as number | undefined) ?? 0,
+  // `body` = the SCALAR sub-network's OUTPUT node (the last compute node of the loop
+  // rule). `bodies` = the VEC/TUPLE outputs, one per state slot (slot i ← bodies[i]),
+  // for a tuple Solver (a spring: bodies[0]=new position, bodies[1]=new velocity). The
+  // seam cooks the wired one's closure per frame, injecting Prev_Frame(Vec)/SolverInput(Vec).
+  // Wired, so the render subscription + cycle guard walk them.
+  inputs: {
+    body: { type: 'Number', cardinality: 'single' },
+    bodies: { type: 'Vector3', cardinality: 'list' },
+  },
+  // Two output faces: `out` (Number, the scalar Solver) + `outVec` (Vector3, slot 0 of a
+  // tuple Solver — the position a spring drives). A driver reads whichever matches its
+  // target; the real integrated value comes from the replay seam, this is the degenerate
+  // point-in-time passthrough (Prev_Frame/SolverInput read 0/origin here).
+  outputs: {
+    out: { type: 'Number', cardinality: 'single' },
+    outVec: { type: 'Vector3', cardinality: 'single' },
+  },
+  evaluate: (_params, inputs) => {
+    const bodies = inputs.bodies as Vec3[] | undefined;
+    const outVec = bodies && bodies.length > 0 && isVec3(bodies[0]) ? bodies[0] : ORIGIN;
+    return { out: (inputs.body as number | undefined) ?? 0, outVec };
+  },
 };
+
+function isVec3(v: unknown): v is Vec3 {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
+}

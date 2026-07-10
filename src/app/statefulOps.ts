@@ -38,9 +38,18 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx, Node } from '../core/dag/types';
 import { FRAMES_PER_SECOND } from './stores/timeStore';
 import { lagStep } from '../nodes/valueMath';
-import { makeParamDriverChannelValueFn, type ParamDriverParams } from '../nodes/ParamDriver';
-import type { KeyframeChannelNumberValue } from '../nodes/types';
-import { transformSourceOf, readTransformChannelAt } from './transformChannelSource';
+import {
+  makeParamDriverChannelValueFn,
+  makeParamDriverVec3ChannelValueFn,
+  type ParamDriverParams,
+} from '../nodes/ParamDriver';
+import type { KeyframeChannelValue, Vec3 } from '../nodes/types';
+import {
+  transformSourceOf,
+  transformVecSourceOf,
+  readTransformChannelAt,
+  readTransformPositionAt,
+} from './transformChannelSource';
 
 /** Never integrate more than this many frames back in one `sample`. A first-order
  *  lag with factor > 0 has fully converged long before this; the cap only guards
@@ -69,12 +78,31 @@ function singleInputRef(node: NodeLike, socket: string): { node?: string } | und
  * any future stateful op wired into a driver replays through the same path.
  */
 export function statefulSourceOf(driverNode: NodeLike, state: DagState): Node | null {
-  const srcId = singleInputRef(driverNode, 'in')?.node;
+  // A stateful op can drive a scalar target (wired `in`) OR a Vector3 target (wired
+  // `inVec`, S #300 — a vec Solver/spring driving a position). Check both roads.
+  const srcId = singleInputRef(driverNode, 'in')?.node ?? singleInputRef(driverNode, 'inVec')?.node;
   if (!srcId) return null;
   const src = state.nodes[srcId];
   if (!src) return null;
   return getNodeType(src.type)?.stateful ? src : null;
 }
+
+/** The wired refs of a node's MULTI-cardinality `socket` (the Solver's `bodies`), in
+ *  wire order = slot order. Empty when unwired. */
+function multiInputRefs(node: NodeLike, socket: string): { node: string; socket: string }[] {
+  const binding = node.inputs?.[socket];
+  const arr = Array.isArray(binding) ? binding : binding ? [binding] : [];
+  return arr.filter(
+    (r): r is { node: string; socket: string } =>
+      !!r && typeof (r as { node?: unknown }).node === 'string',
+  );
+}
+
+function isVec3(v: unknown): v is Vec3 {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
+}
+
+const ORIGIN: Vec3 = [0, 0, 0];
 
 /** The EvalCtx for a specific integer frame — the per-frame clock the replay samples
  *  its input at (so an animated controller resolves to its value AT that frame). */
@@ -139,12 +167,12 @@ export function integrateLag(
  * `seedAt`/`step` are injected so this stays pure + unit-testable; the impure per-frame
  * reads (a controller channel, a sub-network cook) are bound by the callers.
  */
-export function integrate(
+export function integrate<T>(
   seedFrame: number,
   targetFrame: number,
-  seedAt: (frame: number) => number,
-  step: (prev: number, frame: number) => number,
-): number {
+  seedAt: (frame: number) => T,
+  step: (prev: T, frame: number) => T,
+): T {
   let start = Math.min(seedFrame, targetFrame);
   if (targetFrame - start > MAX_REPLAY_FRAMES) start = targetFrame - MAX_REPLAY_FRAMES;
 
@@ -266,19 +294,148 @@ function replaySolver(
   );
 }
 
+// ── The TUPLE-state Solver — vec state (S, #300, the 2nd-order Spring) ─────────
+//
+// A scalar Solver carries ONE number forward; a 2nd-order spring's state is TWO Vec3s
+// (position + velocity), so the vec Solver carries a Vec3[] tuple. `bodies[i]` is the
+// sub-network output for slot i (bodies[0] = new position, bodies[1] = new velocity);
+// PrevFrameVec(slot) feeds back prevState[slot]; SolverInputVec injects the live target
+// vector (a controller's whole position, the F2b Point road). The Solver's driven value
+// is slot 0 (position). Everything else — the seed+interval replay, determinism under
+// scrub, both H40 roads calling one `sample` — is EXACTLY Lag's/the scalar Solver's
+// contract, only the state type widens (number → Vec3[]).
+
+/** True for a Solver in VEC/tuple mode: its `bodies` (Vector3 multi) input is wired.
+ *  A scalar Solver (only `body` wired) stays on the byte-identical scalar path. */
+function isVecSolver(node: NodeLike): boolean {
+  return node.type === 'Solver' && multiInputRefs(node, 'bodies').length > 0;
+}
+
+/** The vec live-input of a Solver at `ctx`: its `sourceTransformVec` controller's whole
+ *  evaluated position (the F2b Point road). No source ⇒ origin (a pure-feedback solver). */
+function statefulInputVecAt(
+  state: DagState,
+  node: Node,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 {
+  const src = transformVecSourceOf(node);
+  return src ? readTransformPositionAt(state, src.node, ctx, cache) : ORIGIN;
+}
+
+/** The vec sub-network leaves reachable from the Solver's `bodies` roots: PrevFrameVec
+ *  (with its state `slot`) + SolverInputVec. A nested Solver is a leaf boundary (v1). */
+function collectSolverVecLeaves(
+  state: DagState,
+  roots: string[],
+): { prevFrame: { id: string; slot: number }[]; input: string[] } {
+  const prevFrame: { id: string; slot: number }[] = [];
+  const input: string[] = [];
+  const seen = new Set<string>();
+  const rootSet = new Set(roots);
+  const stack = [...roots];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = state.nodes[id];
+    if (!node) continue;
+    if (node.type === 'PrevFrameVec') {
+      const slot = (node.params as { slot?: unknown }).slot;
+      prevFrame.push({ id, slot: typeof slot === 'number' ? slot : 0 });
+    } else if (node.type === 'SolverInputVec') {
+      input.push(id);
+    }
+    if (!rootSet.has(id) && node.type === 'Solver') continue; // nested Solver = leaf boundary
+    for (const binding of Object.values(node.inputs)) {
+      const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+      for (const ref of refs) {
+        const nid = (ref as { node?: string } | undefined)?.node;
+        if (typeof nid === 'string' && !seen.has(nid)) stack.push(nid);
+      }
+    }
+  }
+  return { prevFrame, input };
+}
+
+/** Cook the tuple sub-network once at `frame`: inject prevState[slot] into each
+ *  PrevFrameVec leaf + the live target into every SolverInputVec leaf, then evaluate
+ *  each `bodies[i]` → the new value of slot i. Returns the full new state tuple. No
+ *  shared cache — the injection makes the sub-graph frame-dependent (as the scalar cook). */
+function cookSolverVecStep(
+  state: DagState,
+  bodyRefs: { node: string; socket: string }[],
+  leaves: { prevFrame: { id: string; slot: number }[]; input: string[] },
+  prevState: Vec3[],
+  input: Vec3,
+  frame: number,
+): Vec3[] {
+  const overrides = new Map<string, unknown>();
+  for (const { id, slot } of leaves.prevFrame) overrides.set(id, prevState[slot] ?? ORIGIN);
+  for (const id of leaves.input) overrides.set(id, input);
+  const ctx = ctxAtFrame(frame);
+  return bodyRefs.map((ref) => {
+    try {
+      const v = evaluate(state, ref.node, { ctx, overrides, socket: ref.socket }).value;
+      return isVec3(v) ? v : ORIGIN;
+    } catch {
+      return ORIGIN;
+    }
+  });
+}
+
+/** Replay a vec/tuple Solver up to `frame(targetSeconds)`, returning slot 0 (the driven
+ *  position). Seed: slot 0 = the live target at the seed frame (the spring starts at
+ *  rest ON the target, Houdini's Input_1-seeds-Prev_Frame), every other slot = origin
+ *  (zero velocity). Determinism (H40 under scrub): identical to the scalar path — the
+ *  value at N is a pure function of (seed, target over [seed,N], the sub-network). */
+function replaySolverVec(
+  state: DagState,
+  node: Node,
+  targetSeconds: number,
+  cache?: EvaluatorCache,
+): Vec3 {
+  const params = (node.params ?? {}) as { seedFrame?: unknown };
+  const seedFrame = typeof params.seedFrame === 'number' ? Math.round(params.seedFrame) : 0;
+  const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
+  const bodyRefs = multiInputRefs(node, 'bodies');
+  const inputAt = (frame: number) => statefulInputVecAt(state, node, ctxAtFrame(frame), cache);
+  if (bodyRefs.length === 0) return inputAt(targetFrame); // unfinished → the target, never NaN
+
+  const slots = bodyRefs.length;
+  const leaves = collectSolverVecLeaves(
+    state,
+    bodyRefs.map((r) => r.node),
+  );
+  const seedState = (frame: number): Vec3[] => {
+    const s: Vec3[] = new Array(slots).fill(ORIGIN);
+    s[0] = inputAt(frame); // slot 0 (position) starts on the target; other slots = origin
+    return s;
+  };
+  const result = integrate<Vec3[]>(seedFrame, targetFrame, seedState, (prev, frame) =>
+    cookSolverVecStep(state, bodyRefs, leaves, prev, inputAt(frame), frame),
+  );
+  return result[0] ?? ORIGIN;
+}
+
 /**
  * Build the folded channel value for a driver whose source is a stateful node. The
  * returned value's `sample(seconds)` re-integrates the recurrence — so it lands in
  * the SAME fold pipeline as every other driver/channel, and both H40 roads consume
- * it identically. The switch on `type` selects the preset: Lag's fixed recurrence, or
- * the Solver meta-op's per-frame sub-network cook (Spring and further presets join here).
+ * it identically. Selects the preset: a vec/tuple Solver folds a Vec3 channel (the
+ * Spring driving a position); a scalar Solver / Lag folds a Number channel.
  */
 export function makeStatefulDriverChannelValue(
   state: DagState,
   driverParams: ParamDriverParams,
   statefulNode: Node,
   cache?: EvaluatorCache,
-): KeyframeChannelNumberValue {
+): KeyframeChannelValue {
+  if (isVecSolver(statefulNode)) {
+    return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) =>
+      replaySolverVec(state, statefulNode, seconds, cache),
+    );
+  }
   const replay =
     statefulNode.type === 'Solver'
       ? (seconds: number) => replaySolver(state, statefulNode, seconds, cache)

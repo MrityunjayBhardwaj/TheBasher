@@ -144,13 +144,21 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
   while (stack.length) {
     const node = nodes[stack.pop()!];
     if (!node) continue;
-    // #297 — a node in the closure (e.g. a Lag) may read a controller through a
-    // transform-source PARAM REF (not a wired edge), which the input walk below can't
-    // reach. Subscribe that controller so a gizmo drag on it rebuilds the render memo.
+    // #297 — a node in the closure (a Lag, or a Solver #300) may read a controller
+    // through a transform-source PARAM REF (not a wired edge), which the input walk
+    // below can't reach. Subscribe that controller so a gizmo drag on it rebuilds the
+    // render memo. Both roads: a scalar channel (Lag/scalar Solver) and the vec whole-
+    // position (a vec Solver / spring's SolverInputVec).
     const xf = transformSourceOf(node);
     if (xf && !seen.has(xf.node)) {
       seen.add(xf.node);
       const src = nodes[xf.node];
+      if (src) out.push(src);
+    }
+    const xfVec = transformVecSourceOf(node);
+    if (xfVec && !seen.has(xfVec.node)) {
+      seen.add(xfVec.node);
+      const src = nodes[xfVec.node];
       if (src) out.push(src);
     }
     if (!node.inputs) continue;
