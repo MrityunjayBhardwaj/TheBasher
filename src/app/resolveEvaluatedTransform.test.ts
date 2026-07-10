@@ -158,6 +158,55 @@ describe('resolveEvaluatedTransform', () => {
   });
 });
 
+// #300 F2b — the READ seam is driver-aware: a ParamDriver overlaying a transform
+// param (position/rotation/scale) must fold onto the resolved transform the SAME way
+// the render side does (SceneFromDAG useLayeredChannels), or a driven object renders
+// at the driven pose while the gizmo + inspector read the authored one (the H40 hole).
+// A constant vec source is built from Fit (unconnected in=0 → fit(0,0,1,k,k)=k) — there
+// is no Const node yet, and a plain MakeVec3 folds to [0,0,0] (indistinguishable from
+// the static base).
+describe('resolveEvaluatedTransform — driver-aware (#300 F2b)', () => {
+  it('folds a Vec3 driver overlaying position (read == render, H40)', () => {
+    let state = buildAnimatedState({}); // box static pos = [0,0,0]; drop the pos channel below
+    // Remove the position channel so the ONLY overlay is the driver (isolate the seam).
+    state = applyOp(state, { type: 'removeNode', nodeId: CHAN_ID }).next;
+    const ops: Op[] = [
+      // Fit constants: in unconnected → 0 → fit(0,0,1,k,k) = k.
+      { type: 'addNode', nodeId: 'n_fx', nodeType: 'Fit', params: { outMin: 5, outMax: 5 } },
+      { type: 'addNode', nodeId: 'n_mk', nodeType: 'MakeVec3', params: {} },
+      { type: 'connect', from: { node: 'n_fx', socket: 'out' }, to: { node: 'n_mk', socket: 'x' } },
+      {
+        type: 'addNode',
+        nodeId: 'n_drv',
+        nodeType: 'ParamDriver',
+        params: { target: BOX_ID, paramPath: 'position', blendMode: 'replace', order: 0 },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_mk', socket: 'out' },
+        to: { node: 'n_drv', socket: 'inVec' },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+
+    const r = resolveEvaluatedTransform(state, BOX_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    // The driver replaces position with [5,0,0]; distinct from the static base [0,0,0].
+    expect(r!.position).toEqual([5, 0, 0]);
+    expect(r!.position).not.toEqual(STATIC_POS);
+  });
+
+  it('an undriven box is byte-identical (no driver overlay → the base path)', () => {
+    // The default box with no channel and no driver resolves to its authored pose —
+    // the driver fold is a no-op when driverChannelValuesForTarget is empty.
+    let state = buildAnimatedState({});
+    state = applyOp(state, { type: 'removeNode', nodeId: CHAN_ID }).next;
+    const r = resolveEvaluatedTransform(state, BOX_ID, ctxAt(0));
+    expect(r).not.toBeNull();
+    expect(r!.position).toEqual(STATIC_POS);
+  });
+});
+
 // P7.7 (#91) — the TRAILING glTF-child branch. A GltfChild id is neither a
 // top-level scene-child ref nor a single-hop AnimationLayer target, so the
 // existing match always misses; the new branch fires only on that miss AND
