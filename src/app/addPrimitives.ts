@@ -41,6 +41,12 @@ export type PrimitiveKind =
   | 'Mix'
   | 'CurveRemap'
   | 'Noise'
+  // Vector compute (Vector3 rail) — vectors first-class on the compute rail. Same
+  // floating-node shape as the scalar vocab; MakeVec3/VecBreak3 convert to/from
+  // components, Vec3Math does vector arithmetic.
+  | 'MakeVec3'
+  | 'VecBreak3'
+  | 'Vec3Math'
   // Stateful op — Lag (Epic 2 #297). Same floating-number-node shape as the compute
   // vocabulary; its output trails its input over time (the seam replays it).
   | 'Lag'
@@ -138,6 +144,9 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'Mix' ||
     kind === 'CurveRemap' ||
     kind === 'Noise' ||
+    kind === 'MakeVec3' ||
+    kind === 'VecBreak3' ||
+    kind === 'Vec3Math' ||
     kind === 'Lag'
   );
 }
@@ -215,6 +224,12 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Curve Remap node';
     case 'Noise':
       return 'Noise node';
+    case 'MakeVec3':
+      return 'Make Vec3 node';
+    case 'VecBreak3':
+      return 'Break Vec3 node';
+    case 'Vec3Math':
+      return 'Vec3 Math node';
     case 'Lag':
       return 'Lag node';
     case 'Solver':
@@ -290,6 +305,9 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Mix':
     case 'CurveRemap':
     case 'Noise':
+    case 'MakeVec3':
+    case 'VecBreak3':
+    case 'Vec3Math':
     case 'Lag':
     case 'Solver':
     case 'PrevFrame':

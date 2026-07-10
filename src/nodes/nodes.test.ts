@@ -85,6 +85,7 @@ const ALL_TYPES = [
   'LightProfileSelect',
   'LightRig',
   'LocomotionState',
+  'MakeVec3',
   'MaterialOverride',
   'Math',
   'MediaClip',
@@ -117,6 +118,8 @@ const ALL_TYPES = [
   'TrackTo',
   'Transform',
   'TransformClip',
+  'Vec3Math',
+  'VecBreak3',
   'VideoStitch',
   'WalkPath',
 ];

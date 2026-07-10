@@ -38,6 +38,10 @@ export {
   CurveRemapParams,
   NoiseNode,
   NoiseParams,
+  MakeVec3Node,
+  VecBreak3Node,
+  Vec3MathNode,
+  Vec3MathParams,
   COMPUTE_NODES,
 } from './computeNodes';
 // Driver binding — the PULL half of the overlay rail (epic #290, Inc 2 #293, G1).

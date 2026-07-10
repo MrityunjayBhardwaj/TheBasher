@@ -74,6 +74,10 @@ const GROUPS: MenuGroup[] = [
       { kind: 'Mix', label: 'Mix' },
       { kind: 'CurveRemap', label: 'Curve Remap' },
       { kind: 'Noise', label: 'Noise' },
+      // Vector (Vector3 rail) — build/break a vector, vector arithmetic.
+      { kind: 'MakeVec3', label: 'Make Vec3' },
+      { kind: 'VecBreak3', label: 'Break Vec3' },
+      { kind: 'Vec3Math', label: 'Vec3 Math' },
       // Stateful — output trails its input over time (Epic 2, #297).
       { kind: 'Lag', label: 'Lag' },
     ],
