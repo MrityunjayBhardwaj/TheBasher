@@ -51,6 +51,7 @@ import { useDagStore } from '../core/dag/store';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
+import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
 import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
@@ -639,6 +640,62 @@ function EnumField({
         {options.map((o) => (
           <option key={o} value={o}>
             {o}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** The general node-reference picker — the ONE control for authoring a `{node}` param
+ *  (a SampleGeometry's terrain, a Solver's controller), replacing bespoke presets. Lists
+ *  candidate nodes filtered by the declared `kind` (mesh / transformable / any) + a "none"
+ *  clear; setParams `{node}` or undefined. The Blender object-picker / Houdini node-path
+ *  idiom, generalized: any node declaring `refParams` gets this for free. */
+function NodeRefField({
+  nodeId,
+  paramPath,
+  label,
+  kind,
+  value,
+}: {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  kind: NodeRefKind;
+  value: { node?: string } | undefined;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  // Subscribe to the node map so a newly-added candidate (or a rename) refreshes the list.
+  const nodes = useDagStore((s) => s.state.nodes);
+  const state = useDagStore((s) => s.state);
+  const candidates = useMemo(
+    () => nodeRefCandidates(state, kind, nodeId, { time: { frame: 0, seconds: 0, normalized: 0 } }),
+    // `state` identity changes on every dispatch; `nodes` is the meaningful dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes, kind, nodeId],
+  );
+  const current = value?.node ?? '';
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{label}</span>
+      <select
+        value={current}
+        data-testid={`inspector-noderef-${nodeId}-${paramPath}`}
+        className="max-w-[60%] rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => {
+          const id = e.target.value;
+          dispatch(
+            { type: 'setParam', nodeId, paramPath, value: id ? { node: id } : undefined },
+            'user',
+            `set ${paramPath}`,
+          );
+        }}
+      >
+        <option value="">— none —</option>
+        {candidates.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.label} ({c.type})
           </option>
         ))}
       </select>
@@ -2624,6 +2681,13 @@ export function NPanel() {
   const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
   const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
 
+  // The general node-ref params (SampleGeometry terrain/query, a Solver's controller):
+  // rendered as one NodeRefField block below the header (regardless of section mode), and
+  // filtered out of the raw/sectioned param rows so a set ref doesn't ALSO show as a raw
+  // "(complex)" object row.
+  const refParamMeta = node ? getNodeType(node.type)?.refParams : undefined;
+  const refKeys = refParamMeta ? new Set(Object.keys(refParamMeta)) : null;
+
   // #130 (D-04) — the override-set descriptor for this node type (null for the
   // ~38 node types that track no overrides). `makeOverrideInfo` returns the
   // decorator contract for a covered field, else undefined → ParamRow renders
@@ -2740,12 +2804,33 @@ export function NPanel() {
               {node.type} v{node.version} · {node.id}
             </div>
           </div>
+          {refParamMeta && (
+            // The general node-ref picker block — one NodeRefField per declared ref param,
+            // shown regardless of section mode (and even when the ref is unset).
+            <div data-testid="inspector-refparams" className="flex flex-col py-1">
+              {Object.entries(refParamMeta).map(([key, meta]) => (
+                <NodeRefField
+                  key={key}
+                  nodeId={node.id}
+                  paramPath={key}
+                  label={meta.label ?? key}
+                  kind={meta.kind}
+                  value={
+                    (node.params as Record<string, { node?: string } | undefined> | undefined)?.[
+                      key
+                    ]
+                  }
+                />
+              ))}
+            </div>
+          )}
           {declared.length === 0 ? (
             // D-08 B raw-fallback path: nodes that intentionally omit
             // inspectorSections render their params in a flat list.
             <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
-              {Object.entries((node.params ?? {}) as Record<string, unknown>).map(
-                ([key, value]) => (
+              {Object.entries((node.params ?? {}) as Record<string, unknown>)
+                .filter(([key]) => !refKeys?.has(key)) // ref params render in the block above
+                .map(([key, value]) => (
                   <ParamRow
                     key={key}
                     nodeId={node.id}
@@ -2753,8 +2838,7 @@ export function NPanel() {
                     value={value}
                     overrideInfo={makeOverrideInfo(key)}
                   />
-                ),
-              )}
+                ))}
             </div>
           ) : (
             (() => {
@@ -2769,6 +2853,7 @@ export function NPanel() {
                 (node.params ?? {}) as Record<string, unknown>,
               )) {
                 if (isInputBinding(value)) continue; // socket binding, not param
+                if (refKeys?.has(key)) continue; // ref params render in the block above
                 // v0.6 #2 (#178, W6): slotIndex is the per-submesh addressing
                 // dimension; it renders as the dedicated SlotSelector chrome at
                 // the top of the material section, NOT as a raw numeric row.

@@ -47,6 +47,9 @@ export type PrimitiveKind =
   | 'MakeVec3'
   | 'VecBreak3'
   | 'Vec3Math'
+  // Geometry query — SampleGeometry: reads the ground point under a query node's world
+  // XZ. Floating like the compute vocab; its terrain/query are picked in the inspector.
+  | 'SampleGeometry'
   // Stateful op — Lag (Epic 2 #297). Same floating-number-node shape as the compute
   // vocabulary; its output trails its input over time (the seam replays it).
   | 'Lag'
@@ -132,6 +135,7 @@ function prefixFor(kind: PrimitiveKind): string {
   if (isCamera(kind)) return 'cam';
   if (isCompute(kind)) return 'num';
   if (isSolverKind(kind)) return 'solver';
+  if (kind === 'SampleGeometry') return 'geo';
   if (kind === 'Null') return 'null';
   return 'empty';
 }
@@ -230,6 +234,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Break Vec3 node';
     case 'Vec3Math':
       return 'Vec3 Math node';
+    case 'SampleGeometry':
+      return 'Sample Geometry node';
     case 'Lag':
       return 'Lag node';
     case 'Solver':
@@ -308,11 +314,13 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'MakeVec3':
     case 'VecBreak3':
     case 'Vec3Math':
+    case 'SampleGeometry':
     case 'Lag':
     case 'Solver':
     case 'PrevFrame':
     case 'SolverInput':
       // Solver meta-op + its leaves have full zod defaults (Solver.ts) and no position.
+      // SampleGeometry likewise (its refs are optional, set later in the inspector).
       return {};
   }
 }

@@ -48,6 +48,12 @@ export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3> = {
   paramSchema: SampleGeometryParams,
   inputs: {},
   outputs: { out: { type: 'Vector3', cardinality: 'single' } },
+  // The two inputs are authored through the general node-ref picker in the inspector
+  // (not a bespoke preset) — terrain filtered to meshes, the query to transformables.
+  refParams: {
+    sourceGeometry: { label: 'terrain', kind: 'mesh' },
+    at: { label: 'query', kind: 'transformable' },
+  },
   // The seam (geometrySampleSource.ts) supplies the real ground point; a bare evaluate
   // has no `state` to read world geometry, so it returns the origin (see header).
   evaluate: () => [0, 0, 0],

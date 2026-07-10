@@ -154,6 +154,9 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   stateful: true,
   cost: 'medium',
   paramSchema: SolverParams,
+  // The live controller (a spring's rest target) is authored through the general node-ref
+  // picker in the inspector — the same control SampleGeometry uses, not a bespoke road.
+  refParams: { sourceTransformVec: { label: 'controller', kind: 'transformable' } },
   // `body` = the SCALAR sub-network's OUTPUT node (the last compute node of the loop
   // rule). `bodies` = the VEC/TUPLE outputs, one per state slot (slot i ← bodies[i]),
   // for a tuple Solver (a spring: bodies[0]=new position, bodies[1]=new velocity). The

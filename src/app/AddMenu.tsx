@@ -78,6 +78,9 @@ const GROUPS: MenuGroup[] = [
       { kind: 'MakeVec3', label: 'Make Vec3' },
       { kind: 'VecBreak3', label: 'Break Vec3' },
       { kind: 'Vec3Math', label: 'Vec3 Math' },
+      // Geometry query — sample the ground point under a query node's world XZ (its
+      // terrain + query are picked in the inspector; wire `out` into a position driver).
+      { kind: 'SampleGeometry', label: 'Sample Geometry' },
       // Stateful — output trails its input over time (Epic 2, #297).
       { kind: 'Lag', label: 'Lag' },
     ],
