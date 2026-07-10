@@ -26,6 +26,7 @@ import {
   type DriverSource,
 } from './driverBind';
 import { driverNodesForTarget } from './paramDrivers';
+import { buildSpringOps } from './solverBind';
 
 /** The transform-channel source of a bound driver (#296), if any. A transform driver
  *  reads a controller channel + optionally maps it through a range (the range UI). */
@@ -108,6 +109,26 @@ export function ParamDriverBind({
 
   const bind = (source: DriverSource) => {
     const state = useDagStore.getState().state;
+    // #300 S — the SPRING source isn't a plain bind: it dispatches a tuple-state Solver
+    // sub-network (overshoot + settle) driving this position from the controller.
+    if (source.kind === 'spring') {
+      const base = newDriverId();
+      const result = buildSpringOps(state, {
+        targetId: nodeId,
+        paramPath,
+        controllerId: source.node,
+        idFor: (key) => `${base}_${key}`,
+      });
+      if (!result.ok) {
+        useNotificationStore
+          .getState()
+          .notify({ severity: 'warn', message: `Can't spring: ${result.reason}` });
+        return;
+      }
+      dispatchAtomic(result.ops, 'user', `spring ${paramPath}`);
+      setPicking(false);
+      return;
+    }
     const result = buildBindDriverOps(state, {
       targetId: nodeId,
       paramPath,

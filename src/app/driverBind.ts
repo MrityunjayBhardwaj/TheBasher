@@ -54,7 +54,10 @@ export type DriverSource =
   // #300 F2b — a controller's WHOLE evaluated POSITION as a Vector3 (the "Point
   // controller"): drives a Vector3 target (an object's position, an aim). The driver
   // stores `sourceTransformVec` and reads the vec in the resolver seam, no wire.
-  | { kind: 'transformVec'; id: string; label: string; node: string };
+  | { kind: 'transformVec'; id: string; label: string; node: string }
+  // #300 S — a SPRING follow of a controller: not a plain bind but a preset that builds
+  // a tuple-state Solver sub-network (overshoot + settle). Routed to buildSpringOps.
+  | { kind: 'spring'; id: string; label: string; node: string };
 
 /** The source node id backing a DriverSource (for the cycle guard). */
 function sourceNodeId(source: DriverSource): string {
@@ -157,6 +160,11 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
         },
       ],
     };
+  }
+  if (source.kind === 'spring') {
+    // #300 S — a spring is a PRESET (a whole sub-network via buildSpringOps), not a
+    // single-driver bind; the UI routes it there. Never bound through this builder.
+    return { ok: false, reason: 'spring is authored via buildSpringOps' };
   }
   // A Vector3 source drives a Vector3 target through the driver's `inVec` socket; a
   // Number source through `in`. The driver's evaluate picks the road by which is wired.
@@ -277,7 +285,14 @@ export function driverSourceOptions(
         out.push({
           kind: 'transformVec',
           id: `xfvec:${node.id}`,
-          label: `${label} · position`,
+          label: `${label} · follow`,
+          node: node.id,
+        });
+        // #300 S — a SPRING follow (overshoot + settle) of the same controller.
+        out.push({
+          kind: 'spring',
+          id: `spring:${node.id}`,
+          label: `${label} · spring`,
           node: node.id,
         });
       }

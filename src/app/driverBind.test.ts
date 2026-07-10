@@ -242,14 +242,13 @@ describe('driverBind', () => {
     const state = withNodes(addNull);
     // A vec3 target offers the Null's WHOLE position as ONE transformVec source (not the
     // nine scalar channels — those are the scalar-target road).
-    const vec = driverSourceOptions(state, BOX_ID, 'vec3').filter(
-      (o) => o.kind === 'transformVec' && o.node === 'ctl',
-    );
+    const opts = driverSourceOptions(state, BOX_ID, 'vec3');
+    const vec = opts.filter((o) => o.kind === 'transformVec' && o.node === 'ctl');
     expect(vec).toHaveLength(1);
+    // #300 S — a SPRING follow of the same controller is offered alongside the rigid one.
+    expect(opts.some((o) => o.kind === 'spring' && o.node === 'ctl')).toBe(true);
     // The scalar transform-channel sources are absent for a vec target.
-    expect(driverSourceOptions(state, BOX_ID, 'vec3').some((o) => o.kind === 'transform')).toBe(
-      false,
-    );
+    expect(opts.some((o) => o.kind === 'transform')).toBe(false);
   });
 
   it('binds via a Null Point-controller: edge-less driver carrying sourceTransformVec, NO connect (#300 F2b)', () => {
