@@ -29,7 +29,16 @@ import { TRANSFORM_CHANNELS, type TransformChannel } from '../nodes/ParamDriver'
  *    driver stores the ref in `sourceSpare` and reads it in the resolver seam, no wire.
  */
 export type DriverSource =
-  | { kind: 'output'; id: string; label: string; ref: NodeRef }
+  | {
+      kind: 'output';
+      id: string;
+      label: string;
+      ref: NodeRef;
+      /** The source socket's value type. Absent = 'Number' (the scalar road → driver
+       *  `in`, byte-identical). 'Vector3' → the vec road (driver `inVec`), for a
+       *  Vector3 target. */
+      socketType?: 'Number' | 'Vector3';
+    }
   | { kind: 'spare'; id: string; label: string; node: string; key: string }
   // #296 — a transform CHANNEL of a controller (a Null): the primary controller road
   // (Blender's Transform Channel driver / Houdini `ch("../null/tx")`). Optional `remap`
@@ -124,6 +133,9 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
       ],
     };
   }
+  // A Vector3 source drives a Vector3 target through the driver's `inVec` socket; a
+  // Number source through `in`. The driver's evaluate picks the road by which is wired.
+  const socket = source.socketType === 'Vector3' ? 'inVec' : 'in';
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -134,7 +146,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
     {
       type: 'connect',
       from: source.ref,
-      to: { node: driverId, socket: 'in' },
+      to: { node: driverId, socket },
     },
   ];
   return { ok: true, ops };
@@ -202,23 +214,36 @@ const NUMERIC_SPARE_TYPES = new Set(['float', 'int']);
  * trivial self-cycle) and existing ParamDrivers (introspection-only output). Labelled
  * by `meta.name ?? id` and sorted for a stable menu.
  */
-export function driverSourceOptions(state: DagState, targetId: string): DriverSource[] {
+export function driverSourceOptions(
+  state: DagState,
+  targetId: string,
+  /** The target param's value type. 'number' (default) offers scalar sources (Number
+   *  outputs + numeric spares + transform channels); 'vec3' offers Vector3 outputs (a
+   *  vector compute chain), which bind through the driver's `inVec` socket. */
+  targetKind: 'number' | 'vec3' = 'number',
+): DriverSource[] {
   const out: DriverSource[] = [];
+  const wantType = targetKind === 'vec3' ? 'Vector3' : 'Number';
   for (const node of Object.values(state.nodes)) {
     if (node.id === targetId || node.type === 'ParamDriver') continue;
     const label = node.meta?.name?.trim() || node.id;
     const def = getNodeType(node.type);
     if (def) {
       for (const [socket, desc] of Object.entries(def.outputs)) {
-        if (desc.type !== 'Number') continue;
+        if (desc.type !== wantType) continue;
         out.push({
           kind: 'output',
           id: `out:${node.id}:${socket}`,
           label: `${label} (${node.type})`,
           ref: { node: node.id, socket },
+          ...(wantType === 'Vector3' ? { socketType: 'Vector3' as const } : {}),
         });
       }
     }
+    // The scalar-only source roads (spare knob, transform channel) don't apply to a
+    // Vector3 target — a vec target binds to a vector compute output. (A vec controller
+    // source — a Null's whole position — is the F2b road.)
+    if (targetKind === 'vec3') continue;
     // Spare road — a numeric spare param is a first-class source (a Controller knob).
     for (const [key, param] of Object.entries(node.spare ?? {})) {
       if (!NUMERIC_SPARE_TYPES.has(param.type)) continue;

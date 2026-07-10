@@ -381,3 +381,53 @@ describe('driverBind', () => {
     if (!res.ok) expect(res.reason).toMatch(/cycle/i);
   });
 });
+
+describe('driverBind — the Vector3 road (vec target drive)', () => {
+  const addMakeVec3 = (id: string): Op => ({
+    type: 'addNode',
+    nodeId: id,
+    nodeType: 'MakeVec3',
+    params: {},
+  });
+  const vecSource = (node: string): DriverSource => ({
+    kind: 'output',
+    id: `out:${node}:out`,
+    label: node,
+    ref: { node, socket: 'out' },
+    socketType: 'Vector3',
+  });
+
+  it('a Vector3 source binds through the driver `inVec` socket (not `in`)', () => {
+    const state = withNodes(addMakeVec3('mv1'));
+    const res = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: 'material.emissive',
+      source: vecSource('mv1'),
+      driverId: 'drvV',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    expect(next.nodes.drvV.inputs.inVec).toEqual({ node: 'mv1', socket: 'out' });
+    expect(next.nodes.drvV.inputs.in).toBeUndefined();
+  });
+
+  it("driverSourceOptions('vec3') offers Vector3 outputs and excludes scalar sources", () => {
+    // A Vector3 producer (MakeVec3), a scalar producer (Clamp), and a numeric spare.
+    const state = withNodes(addMakeVec3('mv1'), addClamp('c1'), addSpare('c1', 'knob', 3));
+    const vecOpts = driverSourceOptions(state, BOX_ID, 'vec3');
+    // MakeVec3.out (Vector3) is offered, tagged for the inVec road…
+    const mv = vecOpts.find((o) => o.kind === 'output' && o.ref.node === 'mv1');
+    expect(mv).toBeTruthy();
+    expect(mv?.kind === 'output' && mv.socketType).toBe('Vector3');
+    // …and NO scalar source (Number output / spare) leaks into the vec picker.
+    expect(vecOpts.some((o) => o.kind === 'output' && o.ref.node === 'c1')).toBe(false);
+    expect(vecOpts.some((o) => o.kind === 'spare')).toBe(false);
+    // The scalar picker is unchanged: Clamp.out + the spare, never the Vector3 output.
+    const numOpts = driverSourceOptions(state, BOX_ID, 'number');
+    expect(numOpts.some((o) => o.kind === 'output' && o.ref.node === 'c1')).toBe(true);
+    expect(numOpts.some((o) => o.kind === 'output' && o.ref.node === 'mv1')).toBe(false);
+    expect(numOpts.some((o) => o.kind === 'spare')).toBe(true);
+  });
+});

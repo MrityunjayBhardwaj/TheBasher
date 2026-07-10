@@ -91,7 +91,7 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
-import { resolveTransformParam } from './resolveTransformParam';
+import { resolveTransformParam, TRANSFORM_PARAMS } from './resolveTransformParam';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { driverNodesForTarget } from './paramDrivers';
 import { ParamDriverBind } from './ParamDriverBind';
@@ -457,15 +457,38 @@ function VectorField({
       }),
     [dagState, nodeId, paramPath, frame, seconds, normalized],
   );
-  // Per-param fallback (D-01): resolved Vec3 OR authored value.
-  const effectiveValue: readonly number[] = resolved ?? value;
+  // A TRANSFORM param (position/rotation/scale) is handled by the transform read seam
+  // (resolveTransformParam) + a separate render path that is NOT yet driver-aware, so
+  // the vec PULL rail is gated OFF it (the F2b follow-up). A NON-transform Vec3 (an aim,
+  // a material vector) IS eligible: if a ParamDriver overlays it, show the DRIVEN vector
+  // (resolveEvaluatedParam — the SAME value the renderer folds, H40) and go read-only.
+  // Gate on the paramPath WHITELIST, not `resolved !== null`: an UNRENDERED node's
+  // transform resolves to null, which must NOT flip it to "non-transform" (that would
+  // wrongly expose the vec bind on a floating node's position — an H40 hole once shown).
+  const isTransformParam = TRANSFORM_PARAMS.has(paramPath);
+  const driven = useMemo(
+    () =>
+      !isTransformParam &&
+      driverNodesForTarget(dagState.nodes, nodeId).some(
+        (d) => (d.params as { paramPath?: unknown }).paramPath === paramPath,
+      ),
+    [isTransformParam, dagState, nodeId, paramPath],
+  );
+  const drivenVec = useMemo(() => {
+    if (!driven) return null;
+    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
+      time: { frame, seconds, normalized },
+    });
+    return isVec3(r?.value) ? r!.value : null;
+  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  // Per-param fallback (D-01): driven vec → resolved transform Vec3 → authored value.
+  const effectiveValue: readonly number[] = drivenVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated
   // value. `resolved !== null` means the helper returned a Vec3 (i.e. the
   // selection is a rendered transform-bearing node + paramPath is in the
-  // D-03 whitelist). Un-animated material vecs, non-transform Vec3 params,
-  // or unrenderable selections → resolved is null → readOnly is false →
-  // editing behavior unchanged from today.
-  const readOnly = playing && resolved !== null;
+  // D-03 whitelist). A DRIVEN non-transform vec is also read-only (the driver
+  // owns the value; edit the source). Un-animated undriven vecs → editable.
+  const readOnly = driven || (playing && resolved !== null);
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
@@ -479,6 +502,12 @@ function VectorField({
           />
         ) : null}
         <span className="font-mono text-fg/60">{label}</span>
+        {/* The PULL rail on a NON-transform Vec3 (an aim, a material vector): bind it to
+            a vector compute output. Gated to non-transform — a driven transform vec is
+            the F2b follow-up (the transform read seam isn't driver-aware yet). */}
+        {!isTransformParam && (
+          <ParamDriverBind nodeId={nodeId} paramPath={paramPath} targetKind="vec3" />
+        )}
       </span>
       <div className="flex gap-1">
         {effectiveValue.slice(0, 3).map((v, i) => (
