@@ -33,7 +33,8 @@ import { get as getGeometry } from './geometryRegistry';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveWorldTransform } from './resolveWorldTransform';
-import { nearestPointOnMesh, raycastMesh, type RayHit, type RayOrientation } from './rayMesh';
+import type { RayHit, RayOrientation } from './rayMesh';
+import { buildMeshBvh, nearestPointMeshBvh, raycastMeshBvh, type MeshBvh } from './meshBvh';
 
 type Vec3 = [number, number, number];
 
@@ -120,6 +121,28 @@ interface TerrainMesh {
   positions: ArrayLike<number>;
   index: ArrayLike<number> | null;
   matrix: ArrayLike<number>;
+}
+
+/**
+ * A world-space BVH per terrain mesh, cached across samples/frames so a query is
+ * ~O(log tris) instead of the brute-force O(tris)/sample the seam ran before. Keyed by the
+ * positions array identity (a WeakMap — a geometry rebuild or glTF clone-swap yields a NEW
+ * positions array → a fresh BVH, the old one GC'd) plus the world-matrix hash in a SINGLE
+ * slot: a static terrain (the query moves, the terrain doesn't) reuses ONE BVH forever; an
+ * animated terrain rebuilds per frame, but memory stays bounded to one BVH per geometry.
+ * The BVH is an acceleration only — it returns the SAME hit as `rayMesh`'s brute-force core
+ * (the oracle) within epsilon.
+ */
+const bvhCache = new WeakMap<object, { matrixKey: string; mb: MeshBvh }>();
+
+function cachedMeshBvh(tm: TerrainMesh): MeshBvh {
+  const key = tm.positions as object;
+  const matrixKey = Array.prototype.join.call(tm.matrix, ',');
+  const cached = bvhCache.get(key);
+  if (cached && cached.matrixKey === matrixKey) return cached.mb;
+  const mb = buildMeshBvh(tm.positions, tm.index, tm.matrix);
+  bvhCache.set(key, { matrixKey, mb });
+  return mb;
 }
 
 /**
@@ -217,10 +240,11 @@ export function readTerrainSampleAt(
 
   let sample: RayHit | null = null;
   for (const gm of meshes) {
+    const mb = cachedMeshBvh(gm);
     const hit =
       ref.method === 'nearest'
-        ? nearestPointOnMesh(gm.positions, gm.index, gm.matrix, atPos)
-        : raycastMesh(gm.positions, gm.index, gm.matrix, atPos, ref.direction, {
+        ? nearestPointMeshBvh(mb, atPos)
+        : raycastMeshBvh(mb, atPos, ref.direction, {
             orientation: ref.orientation,
             farthest: ref.farthest,
           });

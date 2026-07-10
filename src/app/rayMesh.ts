@@ -18,7 +18,7 @@
 // REF: src/app/geometrySampleSource.ts (the seam); src/nodes/geometryQuery.ts (the node
 //      params: method/direction/orientation/farthest); Houdini Ray SOP.
 
-type Vec3 = [number, number, number];
+export type Vec3 = [number, number, number];
 
 export interface RayHit {
   /** The world-space hit point. */
@@ -32,7 +32,7 @@ export interface RayHit {
 export type RayOrientation = 'forward' | 'reverse' | 'both';
 
 /** Transform a local point by a column-major 4×4 world matrix (THREE order), affine (w=1). */
-function xf(m: ArrayLike<number>, x: number, y: number, z: number): Vec3 {
+export function xf(m: ArrayLike<number>, x: number, y: number, z: number): Vec3 {
   return [
     m[0] * x + m[4] * y + m[8] * z + m[12],
     m[1] * x + m[5] * y + m[9] * z + m[13],
@@ -47,13 +47,13 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[2] * b[0] - a[0] * b[2],
   a[0] * b[1] - a[1] * b[0],
 ];
-function normalize(v: Vec3): Vec3 {
+export function normalize(v: Vec3): Vec3 {
   const len = Math.hypot(v[0], v[1], v[2]);
   return len < 1e-12 ? [0, 0, 0] : [v[0] / len, v[1] / len, v[2] / len];
 }
 /** The unit face normal of (a,b,c), flipped so it faces toward `toward` (the ray origin /
  *  query point) — so a driven "up" / tilt is consistent regardless of triangle winding. */
-function faceNormalToward(a: Vec3, b: Vec3, c: Vec3, toward: Vec3): Vec3 {
+export function faceNormalToward(a: Vec3, b: Vec3, c: Vec3, toward: Vec3): Vec3 {
   const n = normalize(cross(sub(b, a), sub(c, a)));
   return dot(n, sub(toward, a)) < 0 ? [-n[0], -n[1], -n[2]] : n;
 }
