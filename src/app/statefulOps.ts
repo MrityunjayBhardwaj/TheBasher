@@ -121,15 +121,36 @@ export function integrateLag(
   targetFrame: number,
   factor: number,
 ): number {
-  // Integration window [start, targetFrame]. Before the seed there is no recurrence
-  // (start == targetFrame → loop body never runs → raw input at that frame). The cap
-  // bounds a pathological seed without affecting a converged lag.
+  // Lag is the simplest preset of {@link integrate}: seed = the input at the start
+  // frame, step = close `factor` of the gap toward this frame's input.
+  return integrate(seedFrame, targetFrame, inputAt, (prev, f) => lagStep(prev, inputAt(f), factor));
+}
+
+/**
+ * The PURE integration core shared by every stateful preset (Lag today, the Solver
+ * meta-op below, Spring next). Seed `out` at the start frame via `seedAt`, then fold
+ * `step(prev, frame)` forward to `targetFrame`. Before the seed there is no recurrence
+ * (start == targetFrame → loop body never runs → the seed value). The window is clamped
+ * to {@link MAX_REPLAY_FRAMES} so a malformed seed can't run away.
+ *
+ * Determinism (H40 under scrub): the result depends ONLY on (seedAt, step, seedFrame,
+ * targetFrame) — never on how the playhead reached `targetFrame`. So a forward scrub, a
+ * backward scrub, and a jump all replay the same interval and return the same value.
+ * `seedAt`/`step` are injected so this stays pure + unit-testable; the impure per-frame
+ * reads (a controller channel, a sub-network cook) are bound by the callers.
+ */
+export function integrate(
+  seedFrame: number,
+  targetFrame: number,
+  seedAt: (frame: number) => number,
+  step: (prev: number, frame: number) => number,
+): number {
   let start = Math.min(seedFrame, targetFrame);
   if (targetFrame - start > MAX_REPLAY_FRAMES) start = targetFrame - MAX_REPLAY_FRAMES;
 
-  let out = inputAt(start);
+  let out = seedAt(start);
   for (let f = start + 1; f <= targetFrame; f++) {
-    out = lagStep(out, inputAt(f), factor);
+    out = step(out, f);
   }
   return out;
 }
@@ -154,12 +175,103 @@ function replayLag(
   );
 }
 
+// ── The Solver meta-op — a user-authored sub-network cooked every frame ────────
+//
+// The generalization of Lag: instead of a fixed `lagStep`, the per-frame step COOKS
+// the Solver's sub-network (the dependency closure of its `body` output node),
+// threading the previous frame's output into the network's Prev_Frame leaves and the
+// live input into its SolverInput leaves. This is Houdini's Solver SOP — Prev_Frame
+// (previous output) + Input_1 (live/seed), cooked every frame — on Basher's scalar
+// rail. Reuses everything Lag proved: the integrate core, the replay contract, the
+// fold, both H40 roads.
+
+/** The Prev_Frame + SolverInput leaves reachable from a Solver's `body` output node —
+ *  the sub-network's feedback + live-input injection points. A pure closure walk over
+ *  wired inputs (bounded by `seen`). A NESTED Solver is treated as a leaf boundary (its
+ *  own closure is not merged in) — nested solvers are out of v1 scope. */
+function collectSolverLeaves(
+  state: DagState,
+  bodyNodeId: string,
+): { prevFrame: string[]; input: string[] } {
+  const prevFrame: string[] = [];
+  const input: string[] = [];
+  const seen = new Set<string>();
+  const stack: string[] = [bodyNodeId];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = state.nodes[id];
+    if (!node) continue;
+    if (node.type === 'PrevFrame') prevFrame.push(id);
+    else if (node.type === 'SolverInput') input.push(id);
+    // Don't descend into a nested Solver — it manages its own sub-network (v1: unsupported).
+    if (id !== bodyNodeId && node.type === 'Solver') continue;
+    for (const binding of Object.values(node.inputs)) {
+      const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+      for (const ref of refs) {
+        const nid = (ref as { node?: string } | undefined)?.node;
+        if (typeof nid === 'string' && !seen.has(nid)) stack.push(nid);
+      }
+    }
+  }
+  return { prevFrame, input };
+}
+
+/** Cook the sub-network once at `frame`, injecting `prev` into every Prev_Frame leaf and
+ *  `input` into every SolverInput leaf (evaluate `overrides`). Returns the body node's
+ *  value (0 if non-finite / unevaluable). No shared cache: the injection makes the
+ *  sub-graph value frame-dependent and it is tiny, so a fresh walk per frame is both
+ *  correct (no cross-frame poisoning) and cheap. */
+function cookSolverStep(
+  state: DagState,
+  bodyNodeId: string,
+  leaves: { prevFrame: string[]; input: string[] },
+  prev: number,
+  input: number,
+  frame: number,
+): number {
+  const overrides = new Map<string, unknown>();
+  for (const id of leaves.prevFrame) overrides.set(id, prev);
+  for (const id of leaves.input) overrides.set(id, input);
+  try {
+    const v = evaluate(state, bodyNodeId, { ctx: ctxAtFrame(frame), overrides }).value;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Replay a Solver's sub-network up to `frame(targetSeconds)`. Generalizes {@link
+ *  replayLag}: the per-frame step cooks the sub-network instead of applying `lagStep`.
+ *  Seed = the live input at the seed frame (Houdini Input_1 seeds Prev_Frame; matches
+ *  Lag). An unfinished Solver (no `body` wired) falls back to its live input, never NaN. */
+function replaySolver(
+  state: DagState,
+  node: Node,
+  targetSeconds: number,
+  cache?: EvaluatorCache,
+): number {
+  const params = (node.params ?? {}) as { seedFrame?: unknown };
+  const seedFrame = typeof params.seedFrame === 'number' ? Math.round(params.seedFrame) : 0;
+  const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
+  const inputAt = (frame: number) => statefulInputAt(state, node, ctxAtFrame(frame), cache);
+
+  const bodyId = singleInputRef(node, 'body')?.node;
+  if (!bodyId || !state.nodes[bodyId]) return inputAt(targetFrame);
+  const leaves = collectSolverLeaves(state, bodyId);
+
+  return integrate(seedFrame, targetFrame, inputAt, (prev, frame) =>
+    cookSolverStep(state, bodyId, leaves, prev, inputAt(frame), frame),
+  );
+}
+
 /**
  * Build the folded channel value for a driver whose source is a stateful node. The
  * returned value's `sample(seconds)` re-integrates the recurrence — so it lands in
  * the SAME fold pipeline as every other driver/channel, and both H40 roads consume
- * it identically. Currently only Lag is stateful; the switch on `type` is where
- * Spring (and further presets) join the same contract.
+ * it identically. The switch on `type` selects the preset: Lag's fixed recurrence, or
+ * the Solver meta-op's per-frame sub-network cook (Spring and further presets join here).
  */
 export function makeStatefulDriverChannelValue(
   state: DagState,
@@ -167,7 +279,9 @@ export function makeStatefulDriverChannelValue(
   statefulNode: Node,
   cache?: EvaluatorCache,
 ): KeyframeChannelNumberValue {
-  return makeParamDriverChannelValueFn(driverParams, (seconds) =>
-    replayLag(state, statefulNode, seconds, cache),
-  );
+  const replay =
+    statefulNode.type === 'Solver'
+      ? (seconds: number) => replaySolver(state, statefulNode, seconds, cache)
+      : (seconds: number) => replayLag(state, statefulNode, seconds, cache);
+  return makeParamDriverChannelValueFn(driverParams, replay);
 }

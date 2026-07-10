@@ -12,8 +12,79 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
-import { integrateLag, statefulSourceOf } from './statefulOps';
+import {
+  integrate,
+  integrateLag,
+  makeStatefulDriverChannelValue,
+  statefulSourceOf,
+} from './statefulOps';
 import { driverParamDeps, driverSubscriptionNodesForTarget } from './paramDrivers';
+import { lerp } from '../nodes/valueMath';
+import type { ParamDriverParams } from '../nodes/ParamDriver';
+
+const SOLVER_ID = 'n_solver';
+const PREV_ID = 'n_prev';
+const INPUT_ID = 'n_input';
+const MATH_ID = 'n_math';
+const FPS = 60;
+
+/** box + a scene-wired Null (tx=2) + a Solver whose sub-network is
+ *  `Math(add){a←PrevFrame, b←SolverInput}` (a running accumulator of the live input),
+ *  wired into a ParamDriver overlaying box.material.metalness. The Null is wired into
+ *  the scene so its transform resolves (the Solver's live input reads its `tx`). */
+function buildSolverAccumulatorState(): DagState {
+  let state = buildDefaultDagState();
+  const add = (op: Op) => {
+    state = applyOp(state, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: NULL_ID,
+    nodeType: 'Null',
+    params: { position: [2, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  } as Op);
+  add({
+    type: 'connect',
+    from: { node: NULL_ID, socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  } as Op);
+  add({ type: 'addNode', nodeId: PREV_ID, nodeType: 'PrevFrame', params: {} } as Op);
+  add({ type: 'addNode', nodeId: INPUT_ID, nodeType: 'SolverInput', params: {} } as Op);
+  add({ type: 'addNode', nodeId: MATH_ID, nodeType: 'Math', params: { op: 'add' } } as Op);
+  add({
+    type: 'connect',
+    from: { node: PREV_ID, socket: 'out' },
+    to: { node: MATH_ID, socket: 'a' },
+  } as Op);
+  add({
+    type: 'connect',
+    from: { node: INPUT_ID, socket: 'out' },
+    to: { node: MATH_ID, socket: 'b' },
+  } as Op);
+  add({
+    type: 'addNode',
+    nodeId: SOLVER_ID,
+    nodeType: 'Solver',
+    params: { seedFrame: 0, sourceTransform: { node: NULL_ID, channel: 'tx' } },
+  } as Op);
+  add({
+    type: 'connect',
+    from: { node: MATH_ID, socket: 'out' },
+    to: { node: SOLVER_ID, socket: 'body' },
+  } as Op);
+  add({
+    type: 'addNode',
+    nodeId: DRV_ID,
+    nodeType: 'ParamDriver',
+    params: { target: BOX_ID, paramPath: 'material.metalness', blendMode: 'replace', order: 0 },
+  } as Op);
+  add({
+    type: 'connect',
+    from: { node: SOLVER_ID, socket: 'out' },
+    to: { node: DRV_ID, socket: 'in' },
+  } as Op);
+  return state;
+}
 
 const BOX_ID = 'n_box';
 const NULL_ID = 'n_null';
@@ -167,5 +238,80 @@ describe('the two edge-less hops through a stateful source', () => {
     const state = buildLagDrivenState(null);
     const deps = driverParamDeps(state.nodes);
     expect(deps[LAG_ID]).toBeUndefined();
+  });
+});
+
+describe('the Solver meta-op — a sub-network cooked every frame', () => {
+  it('a Mix sub-network reproduces Lag EXACTLY (the engine proof)', () => {
+    // The Solver step over `Mix{a←PrevFrame, b←SolverInput, factor}` is
+    // lerp(prev, in, factor) == lagStep — so a Solver wrapping one Mix must produce the
+    // byte-identical value Lag produces. Proven at the integrate core (pure, no state).
+    const ramp = (f: number) => f;
+    const factor = 0.3;
+    const solverStep = (prev: number, f: number) => lerp(prev, ramp(f), factor);
+    for (const target of [0, 1, 5, 12, 30]) {
+      expect(integrate(0, target, ramp, solverStep)).toBe(integrateLag(ramp, 0, target, factor));
+    }
+  });
+
+  it('the integrate core folds an arbitrary recurrence (accumulator)', () => {
+    // A running accumulator of a constant input 2: seed=2, then +2 each frame.
+    expect(
+      integrate(
+        0,
+        0,
+        () => 2,
+        (prev) => prev + 2,
+      ),
+    ).toBe(2);
+    expect(
+      integrate(
+        0,
+        3,
+        () => 2,
+        (prev) => prev + 2,
+      ),
+    ).toBe(8);
+  });
+
+  it('cooks the sub-network per frame with Prev_Frame + live input injected (end-to-end)', () => {
+    // The accumulator Solver: Math(add){PrevFrame, SolverInput=Null.tx=2}. seed=2, then
+    // out(f) = out(f−1) + 2. Exercises closure discovery + evaluate overrides + the fold.
+    const state = buildSolverAccumulatorState();
+    const cv = makeStatefulDriverChannelValue(
+      state,
+      state.nodes[DRV_ID].params as ParamDriverParams,
+      state.nodes[SOLVER_ID],
+    );
+    expect(cv.sample(0)).toBe(2); // seed = live input at seedFrame 0
+    expect(cv.sample(1 / FPS)).toBe(4);
+    expect(cv.sample(2 / FPS)).toBe(6);
+    expect(cv.sample(3 / FPS)).toBe(8);
+  });
+
+  it('is scrub-deterministic — same frame lands the same value regardless of call order', () => {
+    const state = buildSolverAccumulatorState();
+    const cv = makeStatefulDriverChannelValue(
+      state,
+      state.nodes[DRV_ID].params as ParamDriverParams,
+      state.nodes[SOLVER_ID],
+    );
+    const at3a = cv.sample(3 / FPS);
+    cv.sample(20 / FPS); // a forward scrub in between
+    expect(cv.sample(3 / FPS)).toBe(at3a); // back to 3 → identical
+  });
+
+  it('is detected as a stateful source + wires its body closure and controller (H48/G6)', () => {
+    const state = buildSolverAccumulatorState();
+    expect(statefulSourceOf(state.nodes[DRV_ID], state)?.id).toBe(SOLVER_ID);
+
+    const subs = driverSubscriptionNodesForTarget(state.nodes, BOX_ID).map((n) => n.id);
+    // The Solver, its whole sub-network (reached via the wired `body` closure), and the
+    // controller (reached via the Solver's transform param-ref) all subscribe.
+    expect(subs).toEqual(expect.arrayContaining([SOLVER_ID, MATH_ID, PREV_ID, INPUT_ID, NULL_ID]));
+
+    const deps = driverParamDeps(state.nodes);
+    expect(deps[BOX_ID]).toContain(DRV_ID);
+    expect(deps[SOLVER_ID]).toContain(NULL_ID); // the Solver → controller hop (G6)
   });
 });
