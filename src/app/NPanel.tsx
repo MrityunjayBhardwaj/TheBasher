@@ -457,30 +457,31 @@ function VectorField({
       }),
     [dagState, nodeId, paramPath, frame, seconds, normalized],
   );
-  // A TRANSFORM param (position/rotation/scale) is handled by the transform read seam
-  // (resolveTransformParam) + a separate render path that is NOT yet driver-aware, so
-  // the vec PULL rail is gated OFF it (the F2b follow-up). A NON-transform Vec3 (an aim,
-  // a material vector) IS eligible: if a ParamDriver overlays it, show the DRIVEN vector
-  // (resolveEvaluatedParam — the SAME value the renderer folds, H40) and go read-only.
-  // Gate on the paramPath WHITELIST, not `resolved !== null`: an UNRENDERED node's
-  // transform resolves to null, which must NOT flip it to "non-transform" (that would
-  // wrongly expose the vec bind on a floating node's position — an H40 hole once shown).
+  // #300 F2b — BOTH transform and non-transform Vec3 params are drivable now that the
+  // transform read seam (resolveEvaluatedTransform → resolveTransformParam) folds drivers
+  // exactly as the render side does (render == read, H40). A driven vec goes read-only
+  // and displays the driven vector. The DISPLAY source differs by kind: a transform vec
+  // reads through `resolved` (the transform seam, which also carries Track-To); a
+  // non-transform vec reads through `resolveEvaluatedParam` (`drivenVec`). `isTransformParam`
+  // is still the STRUCTURAL whitelist (never `resolved !== null` — an unrendered node's
+  // transform resolves to null, which must not misclassify the param, the H153 gate).
   const isTransformParam = TRANSFORM_PARAMS.has(paramPath);
   const driven = useMemo(
     () =>
-      !isTransformParam &&
       driverNodesForTarget(dagState.nodes, nodeId).some(
         (d) => (d.params as { paramPath?: unknown }).paramPath === paramPath,
       ),
-    [isTransformParam, dagState, nodeId, paramPath],
+    [dagState, nodeId, paramPath],
   );
   const drivenVec = useMemo(() => {
-    if (!driven) return null;
+    // A driven TRANSFORM vec shows via `resolved` (the driver-aware transform seam), so
+    // only the non-transform road reads the driven value through resolveEvaluatedParam.
+    if (!driven || isTransformParam) return null;
     const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
       time: { frame, seconds, normalized },
     });
     return isVec3(r?.value) ? r!.value : null;
-  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized]);
   // Per-param fallback (D-01): driven vec → resolved transform Vec3 → authored value.
   const effectiveValue: readonly number[] = drivenVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated
@@ -502,12 +503,11 @@ function VectorField({
           />
         ) : null}
         <span className="font-mono text-fg/60">{label}</span>
-        {/* The PULL rail on a NON-transform Vec3 (an aim, a material vector): bind it to
-            a vector compute output. Gated to non-transform — a driven transform vec is
-            the F2b follow-up (the transform read seam isn't driver-aware yet). */}
-        {!isTransformParam && (
-          <ParamDriverBind nodeId={nodeId} paramPath={paramPath} targetKind="vec3" />
-        )}
+        {/* #300 F2b — the PULL rail on ANY Vec3 param (a position, an aim, a material
+            vector): bind it to a vector compute output OR a Null Point-controller. The
+            transform gate is retired now that the transform read seam folds drivers
+            (render == read, H40). */}
+        <ParamDriverBind nodeId={nodeId} paramPath={paramPath} targetKind="vec3" />
       </span>
       <div className="flex gap-1">
         {effectiveValue.slice(0, 3).map((v, i) => (
