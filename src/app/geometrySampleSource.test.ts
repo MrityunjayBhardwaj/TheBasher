@@ -1,5 +1,5 @@
 // geometrySampleSource — the driver-resolution seam for the SampleGeometry road.
-// The pure ray-vs-mesh math is proven in sampleTerrain.test.ts; this proves the SEAM
+// The pure ray-vs-mesh math is proven in rayMesh.test.ts; this proves the SEAM
 // wiring: it materializes the terrain's world geometry (registry + world matrix) and
 // samples the ground under a query Null. Mirrors resolveWorldTransform.test.ts's
 // buildDefaultDagState + applyOp scaffold. The live boundary-pair (render == read) is
@@ -63,7 +63,17 @@ function buildTerrainState(nullPos: [number, number, number], terrainRotZ = 0): 
   return state;
 }
 
-const REF = { geometry: 'geo_terrain', at: 'geo_null' };
+// The full 6-field ref a default SampleGeometry node parses to (Ray-op defaults:
+// project a straight-down ray, forward orientation, nearest surface). Kept in sync
+// with geometrySampleRefOf's defaults — the assertion below pins them.
+const REF = {
+  geometry: 'geo_terrain',
+  at: 'geo_null',
+  method: 'project' as const,
+  direction: [0, -1, 0] as [number, number, number],
+  orientation: 'forward' as const,
+  farthest: false,
+};
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -117,7 +127,14 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
     const src = geometrySampleSourceOf(state.nodes['geo_drv'], state);
     expect(src?.node.id).toBe('geo_sample');
     expect(src?.socket).toBe('out'); // wired to the point output
-    expect(geometrySampleRefOf(src!.node)).toEqual({ geometry: 'geo_terrain', at: 'geo_null' });
+    expect(geometrySampleRefOf(src!.node)).toEqual({
+      geometry: 'geo_terrain',
+      at: 'geo_null',
+      method: 'project',
+      direction: [0, -1, 0],
+      orientation: 'forward',
+      farthest: false,
+    });
     // A driver with nothing on inVec is not a geometry-sample source.
     expect(geometrySampleSourceOf(state.nodes['n_box'], state)).toBeNull();
   });

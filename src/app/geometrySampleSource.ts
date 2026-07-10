@@ -18,7 +18,7 @@
 // query controller's own position (the object tracks the Null in 3D, un-snapped) — a
 // surfaced KNOWN LIMIT, not a silent no-op.
 //
-// REF: src/app/sampleTerrain.ts (the pure core); src/app/transformChannelSource.ts (the
+// REF: src/app/rayMesh.ts (the pure ray/nearest core); src/app/transformChannelSource.ts (the
 //      pattern); src/app/resolveWorldTransform.ts + geometryRegistry.ts (world geometry).
 
 import type { EvaluatorCache } from '../core/dag/evaluator';
@@ -27,7 +27,7 @@ import type { EvalCtx, Node } from '../core/dag/types';
 import { get as getGeometry } from './geometryRegistry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveWorldTransform } from './resolveWorldTransform';
-import { sampleTerrainHeight, type TerrainSample } from './sampleTerrain';
+import { nearestPointOnMesh, raycastMesh, type RayHit, type RayOrientation } from './rayMesh';
 
 type Vec3 = [number, number, number];
 
@@ -52,22 +52,46 @@ function singleInputRef(node: NodeLike, socket: string): { node: string; socket:
 export interface GeometrySampleRef {
   /** The terrain mesh node id. */
   geometry: string;
-  /** The query controller node id (its world XZ), or null. */
+  /** The query controller node id (its world position), or null. */
   at: string | null;
+  /** Ray SOP Method: cast a ray ('project') or return the nearest surface point ('nearest'). */
+  method: 'project' | 'nearest';
+  /** The ray direction for 'project'. */
+  direction: Vec3;
+  /** Ray SOP Direction Type for 'project'. */
+  orientation: RayOrientation;
+  /** Ray SOP Intersect-Farthest-Surface for 'project'. */
+  farthest: boolean;
 }
 
-/** The parsed refs carried by a SampleGeometry node's params — a valid terrain id plus
- *  the optional query controller. Null when the node is not a configured SampleGeometry. */
+const isVec3 = (v: unknown): v is Vec3 =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+
+/** The parsed config carried by a SampleGeometry node's params — a valid terrain id plus
+ *  the query controller and the Ray-op mode (method/direction/orientation/farthest, with
+ *  Ray-SOP defaults). Null when the node is not a configured SampleGeometry. */
 export function geometrySampleRefOf(node: NodeLike): GeometrySampleRef | null {
   if (node.type !== 'SampleGeometry') return null;
   const p = (node.params ?? {}) as {
     sourceGeometry?: { node?: unknown };
     at?: { node?: unknown };
+    method?: unknown;
+    direction?: unknown;
+    orientation?: unknown;
+    farthest?: unknown;
   };
   const geometry = p.sourceGeometry?.node;
   if (typeof geometry !== 'string' || !geometry) return null;
   const at = typeof p.at?.node === 'string' && p.at.node ? p.at.node : null;
-  return { geometry, at };
+  return {
+    geometry,
+    at,
+    method: p.method === 'nearest' ? 'nearest' : 'project',
+    direction: isVec3(p.direction) ? p.direction : [0, -1, 0],
+    orientation:
+      p.orientation === 'reverse' || p.orientation === 'both' ? p.orientation : 'forward',
+    farthest: p.farthest === true,
+  };
 }
 
 /** The SampleGeometry node wired to a driver's `inVec` + the output socket the driver
@@ -78,25 +102,28 @@ export function geometrySampleSourceOf(
   driverNode: NodeLike,
   state: DagState,
 ): { node: Node; socket: string } | null {
-  const ref = singleInputRef(driverNode, 'inVec');
+  // A vec target reads `out`/`normal` via `inVec`; a scalar target reads `distance` via `in`.
+  const ref = singleInputRef(driverNode, 'inVec') ?? singleInputRef(driverNode, 'in');
   if (!ref) return null;
   const src = state.nodes[ref.node];
   return src && src.type === 'SampleGeometry' ? { node: src as Node, socket: ref.socket } : null;
 }
 
 /**
- * The world-space ground point under the query controller's XZ at `ctx`, plus the raw
- * sample (null when the ray misses the terrain footprint OR the terrain is a gltf/baked
- * mesh the registry can't build sync). On a miss the `point` falls back to the query
- * controller's own world position — the object tracks the Null un-snapped rather than
- * jumping to the origin. This is the ONE per-frame read the driver road calls.
+ * The Ray-op hit for the query at `ctx` — the surface point/normal/distance the driver
+ * reads. Dispatches the node's Method: 'project' casts a ray (`raycastMesh`) from the query
+ * position along `direction` (with orientation + farthest); 'nearest' returns the closest
+ * surface point (`nearestPointOnMesh`). The `sample` is null when a projected ray misses
+ * OR the terrain is a gltf/baked mesh the registry can't build sync; on a miss the `point`
+ * falls back to the query's own world position (the object tracks the query un-snapped
+ * rather than jumping to the origin). This is the ONE per-frame read the driver road calls.
  */
 export function readTerrainSampleAt(
   state: DagState,
   ref: GeometrySampleRef,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
-): { point: Vec3; sample: TerrainSample | null } {
+): { point: Vec3; sample: RayHit | null } {
   const atPos: Vec3 = ref.at
     ? (resolveWorldTransform(state, ref.at, ctx, cache)?.position ?? [0, 0, 0])
     : [0, 0, 0];
@@ -106,14 +133,16 @@ export function readTerrainSampleAt(
   const posAttr = buf?.getAttribute('position');
   if (!posAttr) return { point: atPos, sample: null }; // gltf/baked/non-mesh → un-snapped
 
+  const positions = posAttr.array as ArrayLike<number>;
   const index = buf!.getIndex();
+  const idx = index ? (index.array as ArrayLike<number>) : null;
   const matrix = resolveWorldTransform(state, ref.geometry, ctx, cache)?.matrix ?? IDENTITY16;
-  const sample = sampleTerrainHeight(
-    posAttr.array as ArrayLike<number>,
-    index ? (index.array as ArrayLike<number>) : null,
-    matrix,
-    atPos[0],
-    atPos[2],
-  );
+  const sample =
+    ref.method === 'nearest'
+      ? nearestPointOnMesh(positions, idx, matrix, atPos)
+      : raycastMesh(positions, idx, matrix, atPos, ref.direction, {
+          orientation: ref.orientation,
+          farthest: ref.farthest,
+        });
   return { point: sample ? sample.point : atPos, sample };
 }

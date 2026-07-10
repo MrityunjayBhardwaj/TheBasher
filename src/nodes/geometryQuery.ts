@@ -20,7 +20,7 @@
 // same shape as `sourceTransformVec` — because the value is resolved with `state` at the
 // seam, and (per [[H152]]) a controller can't feed a bare compute node's input anyway.
 //
-// REF: src/app/geometrySampleSource.ts (the seam reader); src/app/sampleTerrain.ts (the
+// REF: src/app/geometrySampleSource.ts (the seam reader); src/app/rayMesh.ts (the
 //      pure ray-vs-mesh core); memory project_drivers-controllers-opnet (the north-star).
 
 import { z } from 'zod';
@@ -33,12 +33,21 @@ const nodeRef = z.object({ node: z.string() }).optional();
 export const SampleGeometryParams = z.object({
   /** The terrain mesh sampled (a mesh node id). */
   sourceGeometry: nodeRef,
-  /** The controller whose world XZ is the query point (a Null / any transformable). */
+  /** The controller whose world position is the query (a Null / any transformable). */
   at: nodeRef,
+  /** Ray SOP Method: 'project' casts a ray along `direction`; 'nearest' returns the
+   *  closest surface point (minimum distance, ignores direction/orientation/farthest). */
+  method: z.enum(['project', 'nearest']).default('project'),
+  /** The ray direction for 'project' (default straight down — a ground drop). */
+  direction: z.tuple([z.number(), z.number(), z.number()]).default([0, -1, 0]),
+  /** Ray SOP Direction Type: which way to cast the ray (both = bidirectional). */
+  orientation: z.enum(['forward', 'reverse', 'both']).default('forward'),
+  /** Ray SOP Intersect-Farthest-Surface: keep the farthest hit instead of the closest. */
+  farthest: z.boolean().default(false),
 });
 export type SampleGeometryParams = z.infer<typeof SampleGeometryParams>;
 
-export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3> = {
+export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3 | number> = {
   type: 'SampleGeometry',
   version: 1,
   // Not stateless-pure in spirit (its real value is seam-resolved from world geometry),
@@ -56,6 +65,9 @@ export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3> = {
   outputs: {
     out: { type: 'Vector3', cardinality: 'single' },
     normal: { type: 'Vector3', cardinality: 'single' },
+    // `distance` (Ray SOP Point-Intersection-Distance): the ray travel (project) or the
+    // nearest-surface distance (nearest). A Number → drives a scalar target (via `in`).
+    distance: { type: 'Number', cardinality: 'single' },
   },
   // The two inputs are authored through the general node-ref picker in the inspector
   // (not a bespoke preset) — terrain filtered to meshes, the query to transformables.
@@ -63,7 +75,7 @@ export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3> = {
     sourceGeometry: { label: 'terrain', kind: 'mesh' },
     at: { label: 'query', kind: 'transformable' },
   },
-  // The seam (geometrySampleSource.ts) supplies the real point/normal; a bare evaluate
-  // has no `state` to read world geometry, so it returns benign defaults (origin + up).
-  evaluate: () => ({ out: [0, 0, 0], normal: [0, 1, 0] }),
+  // The seam (geometrySampleSource.ts) supplies the real point/normal/distance; a bare
+  // evaluate has no `state` to read world geometry, so it returns benign defaults.
+  evaluate: () => ({ out: [0, 0, 0], normal: [0, 1, 0], distance: 0 }),
 };
