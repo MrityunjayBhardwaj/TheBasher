@@ -1004,6 +1004,13 @@ interface KeyframeChannelValueBase {
    * §3.2 (locked decision 1); vyapti V57.
    */
   readonly mute: boolean;
+  /**
+   * Per-channel SOLO (#263). When ANY channel in a fold is solo'd, only solo'd
+   * channels contribute (the rest are gated like mute) — scoped to the channel set
+   * overlayChannels receives (per-object/per-fold). Optional + absent-means-false so
+   * a channel that predates solo, and every driver/strip value, is byte-identical.
+   */
+  readonly solo?: boolean;
   readonly weight: number;
   /**
    * #283 Phase 1 (NLA) — layer COMPOSITION over the fold reducer. `blendMode`

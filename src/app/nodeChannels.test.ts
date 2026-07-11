@@ -90,6 +90,47 @@ describe('channelValuesFromNodes — build sampling values via each node evaluat
     expect(values[0].valueType).toBe('vec3');
     expect(values[0].sample(0)).toEqual([4, 5, 6]);
   });
+
+  describe('per-channel SOLO filter (#263 — per-target, the render==read choke point)', () => {
+    // A solo'd vec3 channel (solo lives on params, surfaced into the value by evaluate).
+    const soloVec3 = (id: string, paramPath: string, value: [number, number, number]) => {
+      const n = vec3Channel(id, 'box1', paramPath, value);
+      return { ...n, params: { ...n.params, solo: true } };
+    };
+
+    it('no channel solo → ALL contribute (byte-identical to pre-solo)', () => {
+      const nodes = directChannelNodesForTarget(
+        {
+          a: numChannel('a', 'box1', 'material.base.metalness', 0.9),
+          b: vec3Channel('b', 'box1', 'position', [1, 2, 3]),
+        },
+        'box1',
+      );
+      expect(channelValuesFromNodes(nodes)).toHaveLength(2);
+    });
+
+    it('any solo on the target → ONLY solo channels contribute (the rest gated like mute)', () => {
+      const nodes = directChannelNodesForTarget(
+        {
+          a: numChannel('a', 'box1', 'scale', 2), // non-solo sibling → dropped
+          b: soloVec3('b', 'position', [1, 2, 3]),
+        },
+        'box1',
+      );
+      const values = channelValuesFromNodes(nodes);
+      expect(values).toHaveLength(1);
+      expect(values[0].paramPath).toBe('position');
+      expect(values[0].solo).toBe(true);
+    });
+
+    it('multiple solo channels all contribute', () => {
+      const nodes = directChannelNodesForTarget(
+        { a: soloVec3('a', 'position', [1, 2, 3]), b: soloVec3('b', 'scale', [2, 2, 2]) },
+        'box1',
+      );
+      expect(channelValuesFromNodes(nodes)).toHaveLength(2);
+    });
+  });
 });
 
 describe('directChannelValuesForTarget — the one-shot read-side form', () => {

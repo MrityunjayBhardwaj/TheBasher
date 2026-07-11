@@ -65,11 +65,27 @@ export function resolveEvaluatedParam(
   //    its VALUE's `.sample()` — the render-identical path (H40 form 1: never raw
   //    keyframe math). Collecting ALL of them (not first-match) is what lets the
   //    compositor read match the render for stacked channels (#283 Phase 1).
+  // Per-channel SOLO (#263), the read twin of the render-side filter in
+  // `channelValuesFromNodes`. Scope is per-TARGET (any solo channel on `nodeId`, on
+  // ANY param), computed identically to the render side so render == read: when the
+  // target has a solo'd channel, only solo'd channels contribute to THIS param too
+  // (so resolving a non-solo sibling param falls back to base). Byte-identical when
+  // nothing is solo'd. Strips/drivers (2b/2c) are appended after — un-gated, matching
+  // the render side (they aren't collected through `channelValuesFromNodes` either).
+  const targetSoloActive = Object.values(state.nodes).some((node) => {
+    if (!node.type.startsWith('KeyframeChannel')) return false;
+    return (
+      (node.params as ChannelParams & { solo?: boolean })?.solo === true &&
+      (node.params as ChannelParams)?.target === nodeId
+    );
+  });
+
   const matches: KeyframeChannelValue[] = [];
   for (const node of Object.values(state.nodes)) {
     if (!node.type.startsWith('KeyframeChannel')) continue;
-    const p = (node.params ?? {}) as ChannelParams;
+    const p = (node.params ?? {}) as ChannelParams & { solo?: boolean };
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
+    if (targetSoloActive && p.solo !== true) continue; // soloed out → contributes nothing
     try {
       matches.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
     } catch {

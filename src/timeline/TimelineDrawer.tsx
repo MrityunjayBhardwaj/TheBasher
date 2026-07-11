@@ -243,6 +243,12 @@ function DockToolbar() {
       ? (s.state.nodes[activeChannelId]?.params as { mute?: boolean } | undefined)?.mute === true
       : false,
   );
+  // Pressed state for the Solo toggle (#263) — same shape as mute.
+  const activeChannelSoloed = useDagStore((s) =>
+    activeChannelId
+      ? (s.state.nodes[activeChannelId]?.params as { solo?: boolean } | undefined)?.solo === true
+      : false,
+  );
   const [simplifyOpen, setSimplifyOpen] = useState(false);
 
   function onKey() {
@@ -271,6 +277,20 @@ function DockToolbar() {
         [{ type: 'setParam', nodeId: activeChannelId, paramPath: 'mute', value: !current }],
         'user',
         'toggle channel mute',
+      );
+  }
+
+  function onSolo() {
+    if (!activeChannelId) return;
+    const node = useDagStore.getState().state.nodes[activeChannelId];
+    if (!node) return; // synthetic clip rows have no DAG node — nothing to solo
+    const current = (node.params as { solo?: boolean }).solo === true;
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: activeChannelId, paramPath: 'solo', value: !current }],
+        'user',
+        'toggle channel solo',
       );
   }
 
@@ -332,6 +352,14 @@ function DockToolbar() {
         disabled={activeChannelId === null}
         active={activeChannelMuted}
         onClick={onMute}
+      />
+      <ToolbarButton
+        id="solo"
+        label="Solo"
+        title="Solo the active channel — only solo'd channels on the same object drive the scene; the rest go quiet. Click again to un-solo."
+        disabled={activeChannelId === null}
+        active={activeChannelSoloed}
+        onClick={onSolo}
       />
       <div className="flex-1" />
       <SimplifyPopover open={simplifyOpen} onClose={() => setSimplifyOpen(false)} />

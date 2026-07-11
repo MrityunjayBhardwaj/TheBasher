@@ -136,6 +136,9 @@ const DIAMOND_OUTLINE = '#ffffff';
 // visible at a glance (#263). Decorative-dim, NOT a gated PALETTE token — the
 // 6-key PALETTE contrast contract must stay exactly 6 keys.
 const LABEL_MUTED = '#5a5f66';
+/** A solo'd channel's label — amber, the universal solo cue (#263). Decorative,
+ *  like LABEL_MUTED (not a gated palette token); high-contrast for the active state. */
+const LABEL_SOLO = '#e5b84a';
 /** Alpha applied to a muted row's diamonds so they read as inactive (#263). */
 const MUTED_ROW_ALPHA = 0.35;
 
@@ -210,6 +213,7 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
       target?: string;
       keyframes?: Array<{ time: number }>;
       mute?: boolean;
+      solo?: boolean;
     };
     // Row label. dispatchDirectFirstKey sets `name === paramPath` (a bare param
     // token like "fov" / "position"), so post-#199 — when EVERY node animates via
@@ -233,6 +237,8 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
       name,
       keyframes: (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time),
       mute: params.mute === true,
+      solo: params.solo === true,
+      targetId: params.target ?? '',
     });
   }
   return rows;
@@ -306,10 +312,18 @@ export function paintStaticLayer(
 
   let rendered = 0;
 
+  // Per-object solo (#263): a row is "soloed out" (gated like mute) when it is not
+  // solo'd but ANOTHER row on the SAME target is — mirroring the resolver's per-fold
+  // scope (overlayChannels). Compute the solo'd target set once.
+  const soloedTargets = new Set<string>();
+  for (const row of rows) if (row.solo && row.targetId) soloedTargets.add(row.targetId);
+
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     const rowTop = rowsTop + r * ROW_HEIGHT_PX;
-    const muted = row.mute === true;
+    const soloedOut = !row.solo && !!row.targetId && soloedTargets.has(row.targetId);
+    // A soloed-out row is silenced by the resolver just like a muted one → dim it too.
+    const muted = row.mute === true || soloedOut;
 
     // Active-channel row tint (a faint highlight on the pinned channel).
     if (activeChannelId !== null && row.channelId === activeChannelId) {
@@ -327,8 +341,8 @@ export function paintStaticLayer(
     ctx.lineTo(cssW, rowTop + ROW_HEIGHT_PX + 0.5);
     ctx.stroke();
 
-    // Channel label (dimmed when the channel is muted — #263).
-    ctx.fillStyle = muted ? LABEL_MUTED : PALETTE.LABEL_TEXT;
+    // Channel label — amber when solo'd, dimmed when muted/soloed-out, else default (#263).
+    ctx.fillStyle = row.solo ? LABEL_SOLO : muted ? LABEL_MUTED : PALETTE.LABEL_TEXT;
     ctx.font = '10px ui-monospace, monospace';
     ctx.textBaseline = 'middle';
     ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 7);

@@ -52,7 +52,9 @@ export function overlayChannels<T>(
   if (!base) return null;
   // Per-channel mute gate (v0.7 #199 — lifted off the retired AnimationLayer):
   // a muted channel contributes nothing. Drop empty-path channels too. If none
-  // remain, return the base unchanged (skip the clone cost).
+  // remain, return the base unchanged (skip the clone cost). (Per-channel SOLO
+  // (#263) is filtered UPSTREAM in `channelValuesFromNodes` — per TARGET, so the
+  // render and read roads agree — not here, where a fold sees only a param-subset.)
   const active = channels.filter((ch) => !ch.mute && ch.paramPath);
   if (active.length === 0) return base;
   const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
