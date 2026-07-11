@@ -31,7 +31,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // not reach the vitest .test.tsx transform here).
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { TimelineCanvas, collectChannelRows, paintStaticLayer, PALETTE } from './TimelineCanvas';
+import {
+  TimelineCanvas,
+  collectChannelRows,
+  paintStaticLayer,
+  gutterGlyphHit,
+  PALETTE,
+} from './TimelineCanvas';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
 import type { Node } from '../core/dag/types';
@@ -315,6 +321,42 @@ describe('PALETTE', () => {
     for (const v of Object.values(PALETTE)) {
       expect(v).toMatch(/^#[0-9a-f]{6}$/);
     }
+  });
+});
+
+// --- gutter mute/solo glyph hit-test (#263 follow-up) ----------------
+// Layout mirrored from TimelineCanvas: RULER_H=17, ROW_HEIGHT_PX=24,
+// LABEL_GUTTER_PX=84, GUTTER_GLYPH_BOX_PX=13 → SOLO band [71,84), MUTE band [58,71).
+// A row's y band is [17 + r*24, 17 + (r+1)*24).
+
+describe('gutterGlyphHit', () => {
+  it('returns null in the ruler band (that scrubs time, never toggles)', () => {
+    expect(gutterGlyphHit(75, 10, 3)).toBeNull();
+    expect(gutterGlyphHit(75, 17, 3)).toBeNull(); // RULER_H boundary is still ruler
+  });
+
+  it('hits the solo glyph in its x-band on the correct row', () => {
+    expect(gutterGlyphHit(75, 22, 3)).toEqual({ rowIndex: 0, kind: 'solo' }); // row 0
+    expect(gutterGlyphHit(71, 46, 3)).toEqual({ rowIndex: 1, kind: 'solo' }); // left edge, row 1
+    expect(gutterGlyphHit(83, 22, 3)).toEqual({ rowIndex: 0, kind: 'solo' }); // right edge inside
+  });
+
+  it('hits the mute glyph in its x-band on the correct row', () => {
+    expect(gutterGlyphHit(62, 22, 3)).toEqual({ rowIndex: 0, kind: 'mute' });
+    expect(gutterGlyphHit(58, 70, 3)).toEqual({ rowIndex: 2, kind: 'mute' }); // left edge, row 2
+  });
+
+  it('returns null in the name zone and outside the gutter', () => {
+    expect(gutterGlyphHit(20, 22, 3)).toBeNull(); // over the label text
+    expect(gutterGlyphHit(50, 22, 3)).toBeNull(); // gap left of the mute glyph
+    expect(gutterGlyphHit(84, 22, 3)).toBeNull(); // at the gutter edge → the track, not a glyph
+    expect(gutterGlyphHit(200, 22, 3)).toBeNull(); // out in the diamond track
+  });
+
+  it('returns null below the last row', () => {
+    // rowCount 2 → rows 0,1 occupy [17,65); py=70 is row 2 → out of range.
+    expect(gutterGlyphHit(75, 70, 2)).toBeNull();
+    expect(gutterGlyphHit(75, 22, 0)).toBeNull(); // no rows at all
   });
 });
 

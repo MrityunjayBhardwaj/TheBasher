@@ -54,10 +54,11 @@
 // (asserting it in vitest would be H32-style fake instrumentation).
 //
 // V8 file-rooted: reads useDagStore + useTimelineSelection + useTimeStore
-// + useViewportStore (the currentFrameRef escape hatch, read-only) for
-// STATIC + playhead needs only. Dispatches ZERO Ops — no dispatchAtomic,
-// no dispatch(), no setParam. It is a pure projection, exactly as
-// Dopesheet was (Dopesheet.tsx:7-9).
+// + useViewportStore (the currentFrameRef escape hatch, read-only) for the
+// STATIC layer + playhead. It is a pure projection on the HOT path — the rAF
+// loop writes ZERO Ops. Discrete USER GESTURES do write, never per-frame: a
+// keyframe drag commits via the retime seams at pointerup (endDrag), and a
+// gutter mute/solo glyph click dispatches a setParam toggle (#263 follow-up).
 //
 // REF: D-W9-2, D-W9-3 (static + hot path), D-W9-4, D-W9-5, D-W9-7,
 //      D-W9-9, D-W9-10; memory/project_p6_w9_plan.md C3+C4;
@@ -141,6 +142,14 @@ const LABEL_MUTED = '#5a5f66';
 const LABEL_SOLO = '#e5b84a';
 /** Alpha applied to a muted row's diamonds so they read as inactive (#263). */
 const MUTED_ROW_ALPHA = 0.35;
+/** Gutter mute/solo toggle glyphs (#263 follow-up) — a per-row click target so a
+ *  channel can be muted/soloed WITHOUT first making it the active channel (the
+ *  toolbar path). Off = dim so the glyphs recede until used; mute-on = warm orange,
+ *  solo-on reuses LABEL_SOLO (amber) so the glyph matches the row-label cue.
+ *  Decorative like LABEL_MUTED/LABEL_SOLO — NOT gated PALETTE tokens (the 6-key
+ *  PALETTE contrast contract must stay exactly 6 keys). */
+const GLYPH_OFF = '#4b5157';
+const GLYPH_MUTE_ON = '#e0774d';
 
 /** Frame ruler band height (CSS px) — reze's 17px top ruler. */
 const RULER_H = 17;
@@ -157,6 +166,17 @@ const DIAMOND_INSET_PX = Math.max(4, DIAMOND_PX / 2);
  *  multi-channel and must show readable channel NAMES, so it's wider. The
  *  unified curve/value gutter is reconciled at the unify slice. */
 const LABEL_GUTTER_PX = 84;
+/** Mute/solo glyph hit-box (CSS px) in the label gutter (#263 follow-up). Two
+ *  single-char glyphs (M, S) seated at the RIGHT edge of the gutter; the channel
+ *  name is truncated to the space left of them. Sized to fit INSIDE the existing
+ *  84px gutter — LABEL_GUTTER_PX must NOT change (it is baked into frameToX; every
+ *  diamond x + the default-view geometry === keyframeToRect parity invariant
+ *  depends on it). */
+const GUTTER_GLYPH_BOX_PX = 13;
+const SOLO_GLYPH_X0 = LABEL_GUTTER_PX - GUTTER_GLYPH_BOX_PX; // right-most glyph (71)
+const MUTE_GLYPH_X0 = SOLO_GLYPH_X0 - GUTTER_GLYPH_BOX_PX; // left of solo (58)
+/** Right edge (CSS px) the channel-name text is truncated to, clearing the glyphs. */
+const GUTTER_NAME_MAX_W = MUTE_GLYPH_X0 - 7;
 const FPS = 60;
 /** Half-width (CSS px) of the playhead's red glow — the rAF strip-restore must
  *  cover this so the glow leaves no trail. reze's glow is ~28px wide → 14 each
@@ -247,6 +267,29 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
 interface Dims {
   cssW: number;
   cssH: number;
+}
+
+/**
+ * Which gutter toggle glyph, if any, a canvas-local (px, py) lands on (#263
+ * follow-up). PURE geometry — the caller maps rowIndex → channel node + dispatches
+ * the mute/solo setParam, so this stays unit-testable without a DAG or a canvas.
+ * Returns null for the ruler band, below the last row, and outside the glyph
+ * x-bands. Mirrors the paint layout in paintStaticLayer EXACTLY (same RULER_H /
+ * ROW_HEIGHT_PX / gutter constants), so the click target sits on the painted glyph.
+ */
+export function gutterGlyphHit(
+  px: number,
+  py: number,
+  rowCount: number,
+): { rowIndex: number; kind: 'mute' | 'solo' } | null {
+  if (py <= RULER_H) return null; // the ruler band scrubs time, never toggles
+  const rowIndex = Math.floor((py - RULER_H) / ROW_HEIGHT_PX);
+  if (rowIndex < 0 || rowIndex >= rowCount) return null;
+  if (px >= SOLO_GLYPH_X0 && px < SOLO_GLYPH_X0 + GUTTER_GLYPH_BOX_PX)
+    return { rowIndex, kind: 'solo' };
+  if (px >= MUTE_GLYPH_X0 && px < MUTE_GLYPH_X0 + GUTTER_GLYPH_BOX_PX)
+    return { rowIndex, kind: 'mute' };
+  return null;
 }
 
 /**
@@ -345,7 +388,26 @@ export function paintStaticLayer(
     ctx.fillStyle = row.solo ? LABEL_SOLO : muted ? LABEL_MUTED : PALETTE.LABEL_TEXT;
     ctx.font = '10px ui-monospace, monospace';
     ctx.textBaseline = 'middle';
-    ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, LABEL_GUTTER_PX - 7);
+    // Real channels reserve the gutter's right edge for the mute/solo glyphs;
+    // read-only clip rows have no DAG node to toggle, so they keep the full gutter.
+    const nameMaxW = row.readOnly ? LABEL_GUTTER_PX - 7 : GUTTER_NAME_MAX_W;
+    ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, nameMaxW);
+
+    // Per-row mute/solo toggle glyphs (#263 follow-up) — a direct click target in
+    // the gutter so a channel can be silenced/isolated without first making it the
+    // active channel (the toolbar path). Off = dim (recedes until used); on =
+    // mute-orange / solo-amber. Skipped on read-only clip rows (no DAG node to
+    // toggle). Hit-tested by gutterGlyphHit (same geometry) in onPointerDown.
+    if (!row.readOnly) {
+      const gy = rowTop + ROW_HEIGHT_PX / 2;
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = row.mute ? GLYPH_MUTE_ON : GLYPH_OFF;
+      ctx.fillText('M', MUTE_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
+      ctx.fillStyle = row.solo ? LABEL_SOLO : GLYPH_OFF;
+      ctx.fillText('S', SOLO_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
+      ctx.textAlign = 'left'; // restore for the next row's name + the ruler labels
+    }
 
     // Diamonds — cull to the visible window first so the count is honest.
     const culled = cullVisibleKeyframes(
@@ -1017,6 +1079,29 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       scrubbingRef.current = true;
       useTimeStore.getState().setTime(rulerXToSeconds(e.clientX, box));
       canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Gutter mute/solo glyph click (#263 follow-up) — toggle that row's channel
+    // directly, WITHOUT first making it active (the toolbar path). Hit-tested
+    // BEFORE row-activate + the diamond drag so a glyph click is a pure toggle:
+    // no selection change, no drag. Read-only clip rows have no DAG node → ignored.
+    const glyph = gutterGlyphHit(px, py, rows.length);
+    if (glyph) {
+      const row = rows[glyph.rowIndex];
+      if (row && !row.readOnly) {
+        const node = useDagStore.getState().state.nodes[row.channelId];
+        if (node) {
+          const current = (node.params as Record<string, unknown>)[glyph.kind] === true;
+          useDagStore
+            .getState()
+            .dispatchAtomic(
+              [{ type: 'setParam', nodeId: row.channelId, paramPath: glyph.kind, value: !current }],
+              'user',
+              `toggle channel ${glyph.kind}`,
+            );
+        }
+      }
       return;
     }
 
