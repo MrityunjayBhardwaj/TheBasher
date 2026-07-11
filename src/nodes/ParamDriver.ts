@@ -27,7 +27,12 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { CHANNEL_BLEND_MODES } from './types';
-import type { KeyframeChannelNumberValue } from './types';
+import type {
+  KeyframeChannelNumberValue,
+  KeyframeChannelVec3Value,
+  KeyframeChannelValue,
+  Vec3,
+} from './types';
 
 /** #296 — the nine readable transform channels of a controller node (Blender's
  *  Transform Channel driver types): t=translate, r=rotate(°), s=scale, per axis. */
@@ -79,6 +84,14 @@ export const ParamDriverParams = z.object({
    *  an animated / auto-keyed controller drives correctly), NOT through `in`. Optional
    *  so wired/spare drivers serialize byte-identical. */
   sourceTransform: TransformSourceSchema.optional(),
+  /** #300 F2b — the VEC controller road (the "Point controller"): the driver reads a
+   *  controller node's WHOLE evaluated POSITION [x,y,z] as a Vector3 and folds it onto
+   *  a Vector3 target (an object's position, an aim). The scalar `sourceTransform` reads
+   *  ONE channel; this reads the whole position vector. Resolved in the enumeration seam
+   *  via `resolveEvaluatedTransform` (the EVALUATED position, so an animated / gizmo-
+   *  dragged controller drives correctly), NOT through `inVec`. Optional so other drivers
+   *  serialize byte-identical. */
+  sourceTransformVec: z.object({ node: z.string() }).optional(),
 });
 export type ParamDriverParams = z.infer<typeof ParamDriverParams>;
 
@@ -119,22 +132,72 @@ export function makeParamDriverChannelValueFn(
   };
 }
 
-export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelNumberValue> = {
+/** The Vec3 twin of {@link makeParamDriverChannelValueFn}: the folded value is a Vec3
+ *  function of the playhead. A driver whose target is a Vector3 param (a position, an
+ *  aim) folds a `KeyframeChannelVec3Value` — the SAME fold pipeline a position keyframe
+ *  channel rides, so a vec driver and a vec channel compose identically. */
+export function makeParamDriverVec3ChannelValueFn(
+  params: ParamDriverParams,
+  sample: (seconds: number) => Vec3,
+): KeyframeChannelVec3Value {
+  return {
+    kind: 'KeyframeChannel',
+    name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
+    target: params.target,
+    paramPath: params.paramPath,
+    mute: false,
+    weight: 1,
+    blendMode: params.blendMode,
+    order: params.order,
+    valueType: 'vec3',
+    sample,
+  };
+}
+
+/** Build a Vec3 driver channel value from a single resolved vector (the constant twin
+ *  of {@link makeParamDriverVec3ChannelValueFn}). */
+export function makeParamDriverVec3ChannelValue(
+  params: ParamDriverParams,
+  value: Vec3,
+): KeyframeChannelVec3Value {
+  return makeParamDriverVec3ChannelValueFn(params, () => value);
+}
+
+/** A runtime Vec3 guard for the `inVec` road (a wired Vector3 output resolves to a
+ *  3-number array). Anything else falls through to the scalar `in` road. */
+function asVec3(v: unknown): Vec3 | null {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number')
+    ? [v[0], v[1], v[2]]
+    : null;
+}
+
+export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelValue> = {
   type: 'ParamDriver',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: ParamDriverParams,
-  inputs: { in: { type: 'Number', cardinality: 'single' } },
+  // Two wired source roads, discriminated by the target param's type: `in` (a scalar
+  // compute output) drives a Number param; `inVec` (a Vector3 compute output) drives a
+  // Vector3 param (a position / aim). A bind wires exactly one; evaluate picks by which
+  // is present. The edge-less spare/transform roads live in the seam, not here.
+  inputs: {
+    in: { type: 'Number', cardinality: 'single' },
+    inVec: { type: 'Vector3', cardinality: 'single' },
+  },
   // Introspection-only output (like Constraint/Strip/Track): the driver is enumerated
   // + overlay-resolved by the target's followers, never wired into the render graph.
   outputs: { out: { type: 'Number', cardinality: 'single' } },
-  evaluate: (params, inputs): KeyframeChannelNumberValue => {
-    // The evaluator resolves `in` by walking the compute graph (the real wired edge);
-    // an unbound driver reads 0 (parity with the compute nodes' unconnected-input
-    // default). Constant over `t` in Inc 2 (no time-varying compute leaf) → H40. A
-    // spare-sourced driver (params.sourceSpare) reads 0 HERE — its real value is
-    // resolved in the paramDrivers seam (evaluate cannot see another node's spare).
+  evaluate: (params, inputs): KeyframeChannelValue => {
+    // The Vector3 road wins when `inVec` is wired (a Vec3 value) — it folds a vec3
+    // channel onto a Vector3 target. Otherwise the scalar road: the evaluator resolves
+    // `in` by walking the compute graph; an unbound driver reads 0 (parity with the
+    // compute nodes' unconnected-input default). Constant over `t` for a stateless
+    // compute leaf → H40. A spare/transform-sourced driver reads 0 HERE — its real
+    // value is resolved in the paramDrivers seam (evaluate cannot see another node's
+    // spare or a controller's evaluated transform).
+    const vec = asVec3(inputs.inVec);
+    if (vec) return makeParamDriverVec3ChannelValue(params, vec);
     const value = (inputs.in as number | undefined) ?? 0;
     return makeParamDriverChannelValue(params, value);
   },

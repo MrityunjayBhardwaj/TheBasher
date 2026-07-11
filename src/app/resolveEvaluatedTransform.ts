@@ -52,6 +52,7 @@ import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfCha
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
+import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 
@@ -232,8 +233,20 @@ export function resolveEvaluatedTransform(
     // channels, folded by the SAME overlayChannels. So a placed Strip's transform is
     // read == rendered (H40). Empty strip set → exactly the bare values (byte-identical).
     const directChannels = layeredChannelValues(state.nodes, selectedId);
-    if (directChannels.length > 0) {
-      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
+    // #300 F2b — the READ side folds the SAME driver overlays the render side already
+    // does (SceneFromDAG `useLayeredChannels` appends `driverChannelValuesForTarget`).
+    // Without this, a driven position/rotation/scale RENDERS at the driven value while
+    // the gizmo + inspector read the AUTHORED one — the displayed≠rendered H40 hole this
+    // increment closes (render side-A == read side-B). ONE band, ONE `overlayChannels`,
+    // both callers (V88/H40): a vec driver on `position` folds a Vec3 channel exactly as
+    // a position keyframe channel does; a scalar driver on a channel folds a Number one.
+    // The transform-source road inside `driverChannelValuesForTarget` may re-enter this
+    // resolver for the CONTROLLER node — a different node, bounded by DAG acyclicity + the
+    // G6 driver-cycle guard (a driver that reads back its own target is rejected at bind).
+    const drivers = driverChannelValuesForTarget(state, selectedId, ctx, cache);
+    const overlays = drivers.length > 0 ? [...directChannels, ...drivers] : directChannels;
+    if (overlays.length > 0) {
+      child = overlayChannels(child, overlays, 1, ctx.time.seconds);
     }
   }
 

@@ -29,7 +29,16 @@ import { TRANSFORM_CHANNELS, type TransformChannel } from '../nodes/ParamDriver'
  *    driver stores the ref in `sourceSpare` and reads it in the resolver seam, no wire.
  */
 export type DriverSource =
-  | { kind: 'output'; id: string; label: string; ref: NodeRef }
+  | {
+      kind: 'output';
+      id: string;
+      label: string;
+      ref: NodeRef;
+      /** The source socket's value type. Absent = 'Number' (the scalar road → driver
+       *  `in`, byte-identical). 'Vector3' → the vec road (driver `inVec`), for a
+       *  Vector3 target. */
+      socketType?: 'Number' | 'Vector3';
+    }
   | { kind: 'spare'; id: string; label: string; node: string; key: string }
   // #296 — a transform CHANNEL of a controller (a Null): the primary controller road
   // (Blender's Transform Channel driver / Houdini `ch("../null/tx")`). Optional `remap`
@@ -41,7 +50,14 @@ export type DriverSource =
       node: string;
       channel: TransformChannel;
       remap?: { inMin: number; inMax: number; outMin: number; outMax: number };
-    };
+    }
+  // #300 F2b — a controller's WHOLE evaluated POSITION as a Vector3 (the "Point
+  // controller"): drives a Vector3 target (an object's position, an aim). The driver
+  // stores `sourceTransformVec` and reads the vec in the resolver seam, no wire.
+  | { kind: 'transformVec'; id: string; label: string; node: string }
+  // #300 S — a SPRING follow of a controller: not a plain bind but a preset that builds
+  // a tuple-state Solver sub-network (overshoot + settle). Routed to buildSpringOps.
+  | { kind: 'spring'; id: string; label: string; node: string };
 
 /** The source node id backing a DriverSource (for the cycle guard). */
 function sourceNodeId(source: DriverSource): string {
@@ -124,6 +140,35 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
       ],
     };
   }
+  if (source.kind === 'transformVec') {
+    // #300 F2b — the Point-controller road: one edge-less node carrying the controller
+    // ref; resolved in the seam via resolveEvaluatedTransform (the whole position vec).
+    return {
+      ok: true,
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: driverId,
+          nodeType: 'ParamDriver',
+          params: {
+            target: targetId,
+            paramPath,
+            blendMode: 'replace',
+            order: 0,
+            sourceTransformVec: { node: source.node },
+          },
+        },
+      ],
+    };
+  }
+  if (source.kind === 'spring') {
+    // #300 S — a spring is a PRESET (a whole sub-network via buildSpringOps), not a
+    // single-driver bind; the UI routes it there. Never bound through this builder.
+    return { ok: false, reason: 'spring is authored via buildSpringOps' };
+  }
+  // A Vector3 source drives a Vector3 target through the driver's `inVec` socket; a
+  // Number source through `in`. The driver's evaluate picks the road by which is wired.
+  const socket = source.socketType === 'Vector3' ? 'inVec' : 'in';
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -134,7 +179,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
     {
       type: 'connect',
       from: source.ref,
-      to: { node: driverId, socket: 'in' },
+      to: { node: driverId, socket },
     },
   ];
   return { ok: true, ops };
@@ -202,22 +247,56 @@ const NUMERIC_SPARE_TYPES = new Set(['float', 'int']);
  * trivial self-cycle) and existing ParamDrivers (introspection-only output). Labelled
  * by `meta.name ?? id` and sorted for a stable menu.
  */
-export function driverSourceOptions(state: DagState, targetId: string): DriverSource[] {
+export function driverSourceOptions(
+  state: DagState,
+  targetId: string,
+  /** The target param's value type. 'number' (default) offers scalar sources (Number
+   *  outputs + numeric spares + transform channels); 'vec3' offers Vector3 outputs (a
+   *  vector compute chain), which bind through the driver's `inVec` socket. */
+  targetKind: 'number' | 'vec3' = 'number',
+): DriverSource[] {
   const out: DriverSource[] = [];
+  const wantType = targetKind === 'vec3' ? 'Vector3' : 'Number';
   for (const node of Object.values(state.nodes)) {
     if (node.id === targetId || node.type === 'ParamDriver') continue;
     const label = node.meta?.name?.trim() || node.id;
     const def = getNodeType(node.type);
     if (def) {
       for (const [socket, desc] of Object.entries(def.outputs)) {
-        if (desc.type !== 'Number') continue;
+        if (desc.type !== wantType) continue;
         out.push({
           kind: 'output',
           id: `out:${node.id}:${socket}`,
           label: `${label} (${node.type})`,
           ref: { node: node.id, socket },
+          ...(wantType === 'Vector3' ? { socketType: 'Vector3' as const } : {}),
         });
       }
+    }
+    // The scalar-only source roads (spare knob, transform channel) don't apply to a
+    // Vector3 target — a vec target binds to a vector compute output OR a Point
+    // controller (a Null's whole position, the #300 F2b road).
+    if (targetKind === 'vec3') {
+      // #300 F2b — a Null is THE controller; expose its whole evaluated position as a
+      // Vector3 source (the "Point controller"), so dragging the Null moves the target.
+      // Scoped to Null in v1 (any transformable object is a follow-up), matching the
+      // scalar transform-channel road's scoping.
+      if (node.type === 'Null') {
+        out.push({
+          kind: 'transformVec',
+          id: `xfvec:${node.id}`,
+          label: `${label} · follow`,
+          node: node.id,
+        });
+        // #300 S — a SPRING follow (overshoot + settle) of the same controller.
+        out.push({
+          kind: 'spring',
+          id: `spring:${node.id}`,
+          label: `${label} · spring`,
+          node: node.id,
+        });
+      }
+      continue;
     }
     // Spare road — a numeric spare param is a first-class source (a Controller knob).
     for (const [key, param] of Object.entries(node.spare ?? {})) {

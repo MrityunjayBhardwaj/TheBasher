@@ -15,6 +15,8 @@
 // PURE: no Math.random, no clocks, no globals — every function is (inputs) → number.
 // REF: Blender fcurve.c noise/ramp math; Houdini VOP fit/clamp/ramp; #292.
 
+import type { Vec3 } from './types';
+
 // ── deterministic fractal value-noise (moved verbatim from channelModifiers.ts) ──
 // A sine-hash of the integer lattice, smoothstep-interpolated → C1-continuous value
 // noise in [-1,1], summed over octaves. Deterministic in `x`, so the curve the
@@ -147,4 +149,63 @@ export function applyMathOp(op: MathOp, a: number, b: number): number {
 export function lagStep(prev: number, input: number, factor: number): number {
   const k = clamp(factor, 0, 1);
   return prev + (input - prev) * k;
+}
+
+// ── vector math (Vector3 rail — the vec compute vocabulary) ──────────────────
+// Vectors are a first-class value on the compute/driver rail (not a Solver-only
+// concern): a Vec3 flows through MakeVec3 / Vec3Math / VecBreak3 exactly as a Number
+// flows through Math / Fit, and drives a Vector3 target (position) the same way a
+// Number drives a scalar. These component-wise primitives are the Vec3 twin of
+// clamp/lerp/fit above. Typed to Vec3 (the position shape); a Vec2/Vec4 sibling is
+// earned when a consumer needs it (Vairagya — no generic-array machinery for one dim).
+// REF: Houdini VOP add/mul/lerp on vector; Blender node "Vector Math"; epic #290.
+
+/** Component-wise sum. */
+export function vec3Add(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+/** Component-wise difference (a − b). */
+export function vec3Sub(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+/** Scale every component by the scalar `s`. */
+export function vec3Scale(a: Vec3, s: number): Vec3 {
+  return [a[0] * s, a[1] * s, a[2] * s];
+}
+
+/** Component-wise linear blend (Mix). `t` is NOT clamped (mirrors {@link lerp}). */
+export function vec3Mix(a: Vec3, b: Vec3, t: number): Vec3 {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
+
+/** Dot product (→ scalar). */
+export function vec3Dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+/** Euclidean length (→ scalar). */
+export function vec3Length(a: Vec3): number {
+  return Math.hypot(a[0], a[1], a[2]);
+}
+
+/** The vector ops the `Vec3Math` compute node exposes via an op-enum. `add`/`sub`/`mix`
+ *  are vec⊗vec (mix by the scalar `s`); `scale` is vec⊗scalar (b ignored). */
+export const VEC3_OPS = ['add', 'sub', 'scale', 'mix'] as const;
+export type Vec3Op = (typeof VEC3_OPS)[number];
+
+/** Apply a Vec3 op. `s` is the scalar operand (scale factor for `scale`, blend `t` for
+ *  `mix`; ignored by `add`/`sub`). Mirrors {@link applyMathOp} for the vector rail. */
+export function applyVec3Op(op: Vec3Op, a: Vec3, b: Vec3, s: number): Vec3 {
+  switch (op) {
+    case 'add':
+      return vec3Add(a, b);
+    case 'sub':
+      return vec3Sub(a, b);
+    case 'scale':
+      return vec3Scale(a, s);
+    case 'mix':
+      return vec3Mix(a, b, s);
+  }
 }

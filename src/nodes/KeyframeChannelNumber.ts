@@ -60,6 +60,7 @@ export const KeyframeChannelNumberParams = z.object({
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
+  solo: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),
   /** #283 Phase 1 (NLA) — layer composition. blendMode 'replace' (legacy
    *  last-writer lerp, default → byte-identical) | 'combine' (additive/manifold
@@ -169,6 +170,7 @@ export const KeyframeChannelNumberNode: NodeDefinition<
       target: params.target,
       paramPath: params.paramPath,
       mute: params.mute,
+      solo: params.solo,
       weight: params.weight,
       blendMode: params.blendMode,
       order: params.order,

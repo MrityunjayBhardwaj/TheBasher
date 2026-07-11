@@ -56,6 +56,15 @@ export interface ChannelRow {
    * fixtures (which omit it) stay structurally identical.
    */
   mute?: boolean;
+  /**
+   * True when the channel's `solo` param is set (#263). Solo is RELATIONAL — when any
+   * channel on the same `targetId` is solo'd, the resolver drives ONLY the solo'd ones
+   * (`overlayChannels.ts`), so the dopesheet paints the solo'd row highlighted and its
+   * soloed-out siblings dimmed. Optional so clip rows / fixtures stay identical.
+   */
+  solo?: boolean;
+  /** The channel's `target` node id — the grouping key for the per-object solo scope. */
+  targetId?: string;
 }
 
 /** The three TRS components a TransformClip carries, in dopesheet row order. */

@@ -232,6 +232,58 @@ describe('driverBind', () => {
     expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(true);
   });
 
+  it('driverSourceOptions exposes a Null as a vec Point-controller for a vec3 target (#300 F2b)', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    // A vec3 target offers the Null's WHOLE position as ONE transformVec source (not the
+    // nine scalar channels — those are the scalar-target road).
+    const opts = driverSourceOptions(state, BOX_ID, 'vec3');
+    const vec = opts.filter((o) => o.kind === 'transformVec' && o.node === 'ctl');
+    expect(vec).toHaveLength(1);
+    // #300 S — a SPRING follow of the same controller is offered alongside the rigid one.
+    expect(opts.some((o) => o.kind === 'spring' && o.node === 'ctl')).toBe(true);
+    // The scalar transform-channel sources are absent for a vec target.
+    expect(opts.some((o) => o.kind === 'transform')).toBe(false);
+  });
+
+  it('binds via a Null Point-controller: edge-less driver carrying sourceTransformVec, NO connect (#300 F2b)', () => {
+    const addNull: Op = {
+      type: 'addNode',
+      nodeId: 'ctl',
+      nodeType: 'Null',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const state = withNodes(addNull);
+    const source: DriverSource = {
+      kind: 'transformVec',
+      id: 'xfvec:ctl',
+      label: 'ctl · position',
+      node: 'ctl',
+    };
+    const res = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: 'position',
+      source,
+      driverId: 'drv1',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.ops).toHaveLength(1); // no connect — the vec source is edge-less
+    expect(res.ops[0]).toMatchObject({
+      type: 'addNode',
+      nodeType: 'ParamDriver',
+      params: { target: BOX_ID, paramPath: 'position', sourceTransformVec: { node: 'ctl' } },
+    });
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(true);
+  });
+
   it('buildSetDriverRemapOps sets a range on a transform driver (one setParam, undo-safe)', () => {
     const addNull: Op = {
       type: 'addNode',
@@ -379,5 +431,55 @@ describe('driverBind', () => {
     });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toMatch(/cycle/i);
+  });
+});
+
+describe('driverBind — the Vector3 road (vec target drive)', () => {
+  const addMakeVec3 = (id: string): Op => ({
+    type: 'addNode',
+    nodeId: id,
+    nodeType: 'MakeVec3',
+    params: {},
+  });
+  const vecSource = (node: string): DriverSource => ({
+    kind: 'output',
+    id: `out:${node}:out`,
+    label: node,
+    ref: { node, socket: 'out' },
+    socketType: 'Vector3',
+  });
+
+  it('a Vector3 source binds through the driver `inVec` socket (not `in`)', () => {
+    const state = withNodes(addMakeVec3('mv1'));
+    const res = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: 'material.emissive',
+      source: vecSource('mv1'),
+      driverId: 'drvV',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    expect(next.nodes.drvV.inputs.inVec).toEqual({ node: 'mv1', socket: 'out' });
+    expect(next.nodes.drvV.inputs.in).toBeUndefined();
+  });
+
+  it("driverSourceOptions('vec3') offers Vector3 outputs and excludes scalar sources", () => {
+    // A Vector3 producer (MakeVec3), a scalar producer (Clamp), and a numeric spare.
+    const state = withNodes(addMakeVec3('mv1'), addClamp('c1'), addSpare('c1', 'knob', 3));
+    const vecOpts = driverSourceOptions(state, BOX_ID, 'vec3');
+    // MakeVec3.out (Vector3) is offered, tagged for the inVec road…
+    const mv = vecOpts.find((o) => o.kind === 'output' && o.ref.node === 'mv1');
+    expect(mv).toBeTruthy();
+    expect(mv?.kind === 'output' && mv.socketType).toBe('Vector3');
+    // …and NO scalar source (Number output / spare) leaks into the vec picker.
+    expect(vecOpts.some((o) => o.kind === 'output' && o.ref.node === 'c1')).toBe(false);
+    expect(vecOpts.some((o) => o.kind === 'spare')).toBe(false);
+    // The scalar picker is unchanged: Clamp.out + the spare, never the Vector3 output.
+    const numOpts = driverSourceOptions(state, BOX_ID, 'number');
+    expect(numOpts.some((o) => o.kind === 'output' && o.ref.node === 'c1')).toBe(true);
+    expect(numOpts.some((o) => o.kind === 'output' && o.ref.node === 'mv1')).toBe(false);
+    expect(numOpts.some((o) => o.kind === 'spare')).toBe(true);
   });
 });

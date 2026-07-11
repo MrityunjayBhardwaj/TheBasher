@@ -26,6 +26,7 @@ import {
   type DriverSource,
 } from './driverBind';
 import { driverNodesForTarget } from './paramDrivers';
+import { buildSpringOps } from './solverBind';
 
 /** The transform-channel source of a bound driver (#296), if any. A transform driver
  *  reads a controller channel + optionally maps it through a range (the range UI). */
@@ -47,7 +48,17 @@ function newDriverId(): string {
   return `drv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
-export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPath: string }) {
+export function ParamDriverBind({
+  nodeId,
+  paramPath,
+  targetKind = 'number',
+}: {
+  nodeId: string;
+  paramPath: string;
+  /** The target param's value type — selects which sources the picker offers (scalar
+   *  Number sources vs Vector3 compute outputs). Vec targets bind through `inVec`. */
+  targetKind?: 'number' | 'vec3';
+}) {
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   // The ParamDriver bound to THIS (target, param), if any. The node ref is identity-
   // stable across unrelated edits (immutable Ops), so default equality re-renders this
@@ -86,7 +97,10 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
       const src = useDagStore.getState().state.nodes[spare.node];
       return `${src?.meta?.name?.trim() || spare.node} · ${spare.key}`;
     }
-    const inBinding = boundDriver.inputs?.in as { node?: string } | undefined;
+    // The wired road: a Number source on `in` OR a Vector3 source on `inVec`.
+    const inBinding = (boundDriver.inputs?.inVec ?? boundDriver.inputs?.in) as
+      | { node?: string }
+      | undefined;
     const srcId = inBinding?.node;
     if (!srcId) return 'unwired';
     const src = useDagStore.getState().state.nodes[srcId];
@@ -95,6 +109,26 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
 
   const bind = (source: DriverSource) => {
     const state = useDagStore.getState().state;
+    // #300 S — the SPRING source isn't a plain bind: it dispatches a tuple-state Solver
+    // sub-network (overshoot + settle) driving this position from the controller.
+    if (source.kind === 'spring') {
+      const base = newDriverId();
+      const result = buildSpringOps(state, {
+        targetId: nodeId,
+        paramPath,
+        controllerId: source.node,
+        idFor: (key) => `${base}_${key}`,
+      });
+      if (!result.ok) {
+        useNotificationStore
+          .getState()
+          .notify({ severity: 'warn', message: `Can't spring: ${result.reason}` });
+        return;
+      }
+      dispatchAtomic(result.ops, 'user', `spring ${paramPath}`);
+      setPicking(false);
+      return;
+    }
     const result = buildBindDriverOps(state, {
       targetId: nodeId,
       paramPath,
@@ -232,7 +266,7 @@ export function ParamDriverBind({ nodeId, paramPath }: { nodeId: string; paramPa
   }
 
   if (picking) {
-    const options = driverSourceOptions(useDagStore.getState().state, nodeId);
+    const options = driverSourceOptions(useDagStore.getState().state, nodeId, targetKind);
     return (
       <select
         autoFocus

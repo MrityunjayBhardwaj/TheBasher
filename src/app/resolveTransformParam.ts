@@ -68,7 +68,7 @@ type Vec3 = [number, number, number];
  *  is the belt-and-suspenders for callsites that pass `string`. */
 export type TransformParamPath = 'position' | 'rotation' | 'scale';
 
-const TRANSFORM_PARAMS: ReadonlySet<string> = new Set<TransformParamPath>([
+export const TRANSFORM_PARAMS: ReadonlySet<string> = new Set<TransformParamPath>([
   'position',
   'rotation',
   'scale',

@@ -21,10 +21,24 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId, Node } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
-import { makeParamDriverChannelValue, type ParamDriverParams } from '../nodes/ParamDriver';
+import {
+  makeParamDriverChannelValue,
+  makeParamDriverVec3ChannelValue,
+  type ParamDriverParams,
+} from '../nodes/ParamDriver';
 import { readBaseParam } from './readBaseParam';
-import { transformSourceOf, readTransformChannelAt } from './transformChannelSource';
+import {
+  transformSourceOf,
+  transformVecSourceOf,
+  readTransformChannelAt,
+  readTransformPositionAt,
+} from './transformChannelSource';
 import { statefulSourceOf, makeStatefulDriverChannelValue } from './statefulOps';
+import {
+  geometrySampleSourceOf,
+  geometrySampleRefOf,
+  readTerrainSampleAt,
+} from './geometrySampleSource';
 
 interface NodeLike {
   readonly id: string;
@@ -122,19 +136,48 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
       const src = nodes[transform.node];
       if (src) out.push(src);
     }
+    // #300 F2b — the vec controller road: subscribe the Point-controller node so a
+    // gizmo drag / param edit on it rebuilds the render memo (H48), like the scalar road.
+    const transformVec = transformVecSourceOf(d);
+    if (transformVec && !seen.has(transformVec.node)) {
+      seen.add(transformVec.node);
+      const src = nodes[transformVec.node];
+      if (src) out.push(src);
+    }
   }
   // Walk UP the wired input edges (bounded by `seen`), collecting the compute closure.
   while (stack.length) {
     const node = nodes[stack.pop()!];
     if (!node) continue;
-    // #297 — a node in the closure (e.g. a Lag) may read a controller through a
-    // transform-source PARAM REF (not a wired edge), which the input walk below can't
-    // reach. Subscribe that controller so a gizmo drag on it rebuilds the render memo.
+    // #297 — a node in the closure (a Lag, or a Solver #300) may read a controller
+    // through a transform-source PARAM REF (not a wired edge), which the input walk
+    // below can't reach. Subscribe that controller so a gizmo drag on it rebuilds the
+    // render memo. Both roads: a scalar channel (Lag/scalar Solver) and the vec whole-
+    // position (a vec Solver / spring's SolverInputVec).
     const xf = transformSourceOf(node);
     if (xf && !seen.has(xf.node)) {
       seen.add(xf.node);
       const src = nodes[xf.node];
       if (src) out.push(src);
+    }
+    const xfVec = transformVecSourceOf(node);
+    if (xfVec && !seen.has(xfVec.node)) {
+      seen.add(xfVec.node);
+      const src = nodes[xfVec.node];
+      if (src) out.push(src);
+    }
+    // #300 follow-up — a SampleGeometry in the closure reads its terrain + query
+    // controller through PARAM REFS (not wired edges); subscribe both so a gizmo drag on
+    // the controller (or a terrain edit) rebuilds the render memo (H48), like the vec road.
+    const geoRef = geometrySampleRefOf(node);
+    if (geoRef) {
+      for (const id of [geoRef.geometry, geoRef.at]) {
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          const src = nodes[id];
+          if (src) out.push(src);
+        }
+      }
     }
     if (!node.inputs) continue;
     for (const binding of Object.values(node.inputs)) {
@@ -194,6 +237,10 @@ export function driverParamDeps(
     // (transitively) already reads the target is rejected as a cycle (G6).
     const transform = transformSourceOf(node);
     if (transform) (deps[node.id] ??= []).push(transform.node);
+    // #300 F2b — the vec controller road: driver → Point-controller node, so a bind
+    // whose controller (transitively) already reads the target is rejected as a cycle.
+    const transformVec = transformVecSourceOf(node);
+    if (transformVec) (deps[node.id] ??= []).push(transformVec.node);
     // #297 — the stateful road: driver → (wired) Lag → (param-ref) controller. The
     // driver→Lag edge is a real wired edge the guard's input walk sees; the
     // Lag→controller hop is a transform param-ref it can't. Add it so a bind whose
@@ -203,6 +250,24 @@ export function driverParamDeps(
     const lag = inSrcId?.node ? nodes[inSrcId.node] : undefined;
     const lagXf = lag ? transformSourceOf(lag) : null;
     if (lag && lagXf) (deps[lag.id] ??= []).push(lagXf.node);
+    // #300 follow-up — the geometry-sample road: driver → (wired `inVec` for out/normal, or
+    // `in` for distance) SampleGeometry → (param-ref) terrain + query controller. The
+    // driver→SampleGeometry edge is wired (the guard's input walk sees it); add the
+    // SampleGeometry→terrain/at param-ref hops so a bind whose query controller (transitively)
+    // reads the target is rejected as a cycle (G6).
+    for (const socket of ['inVec', 'in'] as const) {
+      const geoInRef = node.inputs?.[socket];
+      const geoSrcId = (Array.isArray(geoInRef) ? geoInRef[0] : geoInRef) as
+        | { node?: string }
+        | undefined;
+      const geoNode = geoSrcId?.node ? nodes[geoSrcId.node] : undefined;
+      const geoRef = geoNode ? geometrySampleRefOf(geoNode) : null;
+      if (geoNode && geoRef) {
+        for (const id of [geoRef.geometry, geoRef.at]) {
+          if (id) (deps[geoNode.id] ??= []).push(id);
+        }
+      }
+    }
   }
   return deps;
 }
@@ -222,6 +287,16 @@ export function driverChannelValuesForTarget(
   const out: KeyframeChannelValue[] = [];
   for (const node of driverNodesForTarget(state.nodes, targetId)) {
     try {
+      const transformVec = transformVecSourceOf(node);
+      if (transformVec) {
+        // #300 F2b — the VEC controller road ("Point controller"): read the controller's
+        // WHOLE evaluated POSITION as a Vec3 (so a gizmo-dragged / animated controller
+        // drives correctly) and fold it as a vec3 channel — the SAME fold a position
+        // keyframe rides, so it composes byte-identically with the wired inVec road.
+        const value = readTransformPositionAt(state, transformVec.node, ctx, cache);
+        out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+        continue;
+      }
       const transform = transformSourceOf(node);
       if (transform) {
         // #296 — the Transform Channel road: read the EVALUATED transform of the
@@ -243,13 +318,36 @@ export function driverChannelValuesForTarget(
         const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
         out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, value));
       } else {
-        // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be
-        // folded as a point-in-time constant: its value depends on the past. Hand off
-        // to the replay seam, which returns a channel value whose `sample(seconds)`
-        // re-integrates the recurrence from the seed. Both H40 roads call that same
-        // `sample`, so render == read under scrub.
-        const stateful = statefulSourceOf(node, state);
-        if (stateful) {
+        const geoSample = geometrySampleSourceOf(node, state);
+        const stateful = geoSample ? null : statefulSourceOf(node, state);
+        if (geoSample) {
+          // #300 follow-up — a SampleGeometry (the Ray op) wired to a driver reads GEOMETRY:
+          // the hit POINT (`out`) or surface NORMAL (`normal`) as a Vector3, or the hit
+          // DISTANCE (`distance`) as a Number. Like the stateful road it can't be a pure
+          // evaluate — it needs the terrain's world triangles (state) — so the seam computes
+          // it and folds the chosen output (by the wired socket) through the SAME builder the
+          // wired inVec / transform-channel roads use, so render == read (H40).
+          const ref = geometrySampleRefOf(geoSample.node);
+          const s = ref ? readTerrainSampleAt(state, ref, ctx, cache) : null;
+          if (geoSample.socket === 'distance') {
+            const d = s?.sample?.distance ?? 0; // miss → 0
+            out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, d));
+          } else {
+            const value: [number, number, number] = !s
+              ? geoSample.socket === 'normal'
+                ? [0, 1, 0]
+                : [0, 0, 0]
+              : geoSample.socket === 'normal'
+                ? (s.sample?.normal ?? [0, 1, 0]) // miss → up (no tilt)
+                : s.point;
+            out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+          }
+        } else if (stateful) {
+          // #297 (Epic 2) — a STATEFUL source wired to `in` (a Lag/Spring node) can't be
+          // folded as a point-in-time constant: its value depends on the past. Hand off
+          // to the replay seam, which returns a channel value whose `sample(seconds)`
+          // re-integrates the recurrence from the seed. Both H40 roads call that same
+          // `sample`, so render == read under scrub.
           out.push(
             makeStatefulDriverChannelValue(
               state,

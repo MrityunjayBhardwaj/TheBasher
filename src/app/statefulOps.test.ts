@@ -13,6 +13,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import {
+  cachedIntegrate,
   integrate,
   integrateLag,
   makeStatefulDriverChannelValue,
@@ -177,6 +178,140 @@ describe('integrateLag — the pure interval/seed core', () => {
   });
 });
 
+// S (#300) — the TUPLE-state Solver: a 2nd-order vec spring. State is TWO Vec3 slots
+// (position + velocity); the sub-network is the semi-implicit Euler recurrence
+//   newVel = prevVel + k·(target − prevPos) − c·prevVel   (slot 1)
+//   newPos = prevPos + newVel                             (slot 0)
+// built from Vec3Math nodes reading PrevFrameVec(slot)/SolverInputVec leaves. The
+// controller (a keyframed Null stepping 0→5) is the live target.
+const SPRING_NULL = 'n_sp_null';
+function buildSpringState(k = 0.1, c = 0.1): { state: DagState; solverId: string } {
+  let state = buildDefaultDagState();
+  const add = (op: Op) => {
+    state = applyOp(state, op).next;
+  };
+  const N = (t: string) => `sp_${t}`;
+  add({
+    type: 'addNode',
+    nodeId: SPRING_NULL,
+    nodeType: 'Null',
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  } as Op);
+  add({
+    type: 'connect',
+    from: { node: SPRING_NULL, socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  } as Op);
+  add({
+    type: 'addNode',
+    nodeId: N('chan'),
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 't',
+      target: SPRING_NULL,
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [0, 0, 0], easing: 'linear' },
+        { time: 1 / 60, value: [5, 0, 0], easing: 'linear' },
+      ],
+    },
+  } as Op);
+  add({ type: 'addNode', nodeId: N('in'), nodeType: 'SolverInputVec', params: {} } as Op);
+  add({ type: 'addNode', nodeId: N('pp'), nodeType: 'PrevFrameVec', params: { slot: 0 } } as Op);
+  add({ type: 'addNode', nodeId: N('pv'), nodeType: 'PrevFrameVec', params: { slot: 1 } } as Op);
+  const wire = (from: string, fs: string, to: string, ts: string) =>
+    add({ type: 'connect', from: { node: from, socket: fs }, to: { node: to, socket: ts } } as Op);
+  add({ type: 'addNode', nodeId: N('e'), nodeType: 'Vec3Math', params: { op: 'sub' } } as Op);
+  wire(N('in'), 'out', N('e'), 'a');
+  wire(N('pp'), 'out', N('e'), 'b');
+  add({
+    type: 'addNode',
+    nodeId: N('ke'),
+    nodeType: 'Vec3Math',
+    params: { op: 'scale', scalar: k },
+  } as Op);
+  wire(N('e'), 'out', N('ke'), 'a');
+  add({
+    type: 'addNode',
+    nodeId: N('cv'),
+    nodeType: 'Vec3Math',
+    params: { op: 'scale', scalar: c },
+  } as Op);
+  wire(N('pv'), 'out', N('cv'), 'a');
+  add({ type: 'addNode', nodeId: N('acc'), nodeType: 'Vec3Math', params: { op: 'sub' } } as Op);
+  wire(N('ke'), 'out', N('acc'), 'a');
+  wire(N('cv'), 'out', N('acc'), 'b');
+  add({ type: 'addNode', nodeId: N('nv'), nodeType: 'Vec3Math', params: { op: 'add' } } as Op);
+  wire(N('pv'), 'out', N('nv'), 'a');
+  wire(N('acc'), 'out', N('nv'), 'b');
+  add({ type: 'addNode', nodeId: N('np'), nodeType: 'Vec3Math', params: { op: 'add' } } as Op);
+  wire(N('pp'), 'out', N('np'), 'a');
+  wire(N('nv'), 'out', N('np'), 'b');
+  add({
+    type: 'addNode',
+    nodeId: N('solver'),
+    nodeType: 'Solver',
+    params: { seedFrame: 0, sourceTransformVec: { node: SPRING_NULL } },
+  } as Op);
+  wire(N('np'), 'out', N('solver'), 'bodies'); // slot 0 = new position
+  wire(N('nv'), 'out', N('solver'), 'bodies'); // slot 1 = new velocity
+  return { state, solverId: N('solver') };
+}
+
+const SPRING_DRIVER: ParamDriverParams = {
+  target: BOX_ID,
+  paramPath: 'position',
+  blendMode: 'replace',
+  order: 0,
+} as unknown as ParamDriverParams;
+
+function springX(state: DagState, solverId: string, frame: number): number {
+  const ch = makeStatefulDriverChannelValue(state, SPRING_DRIVER, state.nodes[solverId]);
+  const v = ch.sample(frame / FPS);
+  return Array.isArray(v) ? v[0] : NaN;
+}
+
+describe('the tuple-state Solver — a 2nd-order vec spring (S, #300)', () => {
+  it('overshoots the target then settles to it (a genuine 2nd-order response)', () => {
+    const { state, solverId } = buildSpringState();
+    const peak = Math.max(...Array.from({ length: 30 }, (_, i) => springX(state, solverId, i * 3)));
+    expect(peak).toBeGreaterThan(5); // overshoots past the target (impossible for a 1st-order lag)
+    expect(springX(state, solverId, 180)).toBeCloseTo(5, 1); // settles onto the target
+  });
+
+  it('is scrub-deterministic — a frame samples the same regardless of call order', () => {
+    const { state, solverId } = buildSpringState();
+    const a = springX(state, solverId, 30);
+    springX(state, solverId, 200); // a forward "scrub" in between
+    const b = springX(state, solverId, 30); // back to 30
+    expect(b).toBe(a);
+  });
+
+  it('folds a Vec3 channel — a vec Solver drives a Vector3 target', () => {
+    const { state, solverId } = buildSpringState();
+    const ch = makeStatefulDriverChannelValue(state, SPRING_DRIVER, state.nodes[solverId]);
+    expect(ch.valueType).toBe('vec3');
+    expect(Array.isArray(ch.sample(1))).toBe(true);
+  });
+
+  it('statefulSourceOf detects a vec Solver wired to a driver inVec', () => {
+    let { state } = buildSpringState();
+    const { solverId } = buildSpringState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_vdrv',
+      nodeType: 'ParamDriver',
+      params: { target: BOX_ID, paramPath: 'position', blendMode: 'replace', order: 0 },
+    } as Op).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: solverId, socket: 'outVec' },
+      to: { node: 'n_vdrv', socket: 'inVec' },
+    } as Op).next;
+    expect(statefulSourceOf(state.nodes['n_vdrv'], state)?.id).toBe(solverId);
+  });
+});
+
 describe('statefulSourceOf — routing a stateful source to the replay', () => {
   it('detects a Lag wired into a driver’s `in`', () => {
     const state = buildLagDrivenState();
@@ -313,5 +448,76 @@ describe('the Solver meta-op — a sub-network cooked every frame', () => {
     const deps = driverParamDeps(state.nodes);
     expect(deps[BOX_ID]).toContain(DRV_ID);
     expect(deps[SOLVER_ID]).toContain(NULL_ID); // the Solver → controller hop (G6)
+  });
+});
+
+describe('cachedIntegrate — the O(1) history cache (transparent + sound-by-epoch)', () => {
+  // A distinct DagState identity per test is the epoch; only the object reference matters
+  // to the cache, so a bare cast object is a faithful key.
+  const epoch = () => ({}) as unknown as DagState;
+  const ramp = (f: number) => f;
+  const accum = (prev: number, f: number) => prev + f; // an order-sensitive recurrence
+
+  it('returns EXACTLY the uncached integrate for every frame, regardless of sample order', () => {
+    const st = epoch();
+    // Sample a scrambled order (jump forward, back, mid) — each must equal the oracle.
+    for (const f of [30, 5, 30, 12, 1, 30, 0, 25]) {
+      expect(cachedIntegrate(st, 'n', 0, f, ramp, accum)).toBe(integrate(0, f, ramp, accum));
+    }
+  });
+
+  it('a cached frame is a LOOKUP, not a recompute (the step is not re-invoked)', () => {
+    const st = epoch();
+    let stepCalls = 0;
+    const counting = (prev: number, f: number) => {
+      stepCalls++;
+      return prev + f;
+    };
+    cachedIntegrate(st, 'n', 0, 100, ramp, counting); // builds frames 1..100
+    expect(stepCalls).toBe(100);
+    stepCalls = 0;
+    cachedIntegrate(st, 'n', 0, 50, ramp, counting); // backward → pure lookup
+    cachedIntegrate(st, 'n', 0, 100, ramp, counting); // already built → pure lookup
+    expect(stepCalls).toBe(0);
+  });
+
+  it('extends forward incrementally (only the NEW frames cost a step)', () => {
+    const st = epoch();
+    let stepCalls = 0;
+    const counting = (prev: number, f: number) => {
+      stepCalls++;
+      return prev + f;
+    };
+    cachedIntegrate(st, 'n', 0, 10, ramp, counting);
+    expect(stepCalls).toBe(10);
+    cachedIntegrate(st, 'n', 0, 15, ramp, counting); // only frames 11..15 are new
+    expect(stepCalls).toBe(15);
+  });
+
+  it('a NEW epoch (state identity) drops the block — a changed recurrence is reflected', () => {
+    const st1 = epoch();
+    expect(cachedIntegrate(st1, 'n', 0, 3, ramp, accum)).toBe(integrate(0, 3, ramp, accum));
+    // Same nodeId, a DIFFERENT state object (an edit), a DIFFERENT step → new value, no stale.
+    const st2 = epoch();
+    const doubleAccum = (prev: number, f: number) => prev + 2 * f;
+    expect(cachedIntegrate(st2, 'n', 0, 3, ramp, doubleAccum)).toBe(
+      integrate(0, 3, ramp, doubleAccum),
+    );
+  });
+
+  it('frames before the seed bypass the cache (no recurrence there)', () => {
+    const st = epoch();
+    // seed=5, target=2 (before seed) → seedAt(2), matching the uncached integrate.
+    expect(cachedIntegrate(st, 'n', 5, 2, ramp, accum)).toBe(integrate(5, 2, ramp, accum));
+    expect(cachedIntegrate(st, 'n', 5, 2, ramp, accum)).toBe(2); // seedAt(2) = ramp(2)
+  });
+
+  it('two nodes in one epoch keep independent blocks', () => {
+    const st = epoch();
+    const a = cachedIntegrate(st, 'a', 0, 8, ramp, accum);
+    const b = cachedIntegrate(st, 'b', 0, 8, ramp, (prev, f) => prev + 2 * f);
+    expect(a).toBe(integrate(0, 8, ramp, accum));
+    expect(b).toBe(integrate(0, 8, ramp, (prev, f) => prev + 2 * f));
+    expect(a).not.toBe(b);
   });
 });

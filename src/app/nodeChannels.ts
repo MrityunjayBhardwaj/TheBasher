@@ -175,7 +175,15 @@ export function channelValuesFromNodes(nodes: readonly NodeLike[]): KeyframeChan
     const evaluate = def.evaluate as (params: unknown) => KeyframeChannelValue;
     out.push(evaluate(node.params));
   }
-  return out;
+  // Per-channel SOLO (#263): every caller passes ONE target's (or child's) channel
+  // nodes, so "any solo here" IS the per-object soloActive. When active, only solo'd
+  // channels contribute — the rest are gated like mute. Filtering at this ONE shared
+  // collector (used by SceneFromDAG's render fold, resolveEvaluatedTransform, and
+  // resolveWorldTransform) keeps the scope per-TARGET and identical on every road, so
+  // render == read (a per-fold gate in overlayChannels would differ per param-group).
+  // Byte-identical when nothing is solo'd. The read-side param resolver applies the
+  // SAME per-target rule (resolveEvaluatedParam).
+  return out.some((v) => v.solo === true) ? out.filter((v) => v.solo === true) : out;
 }
 
 /**

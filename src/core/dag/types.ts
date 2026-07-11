@@ -194,6 +194,21 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * this field route to the raw-param fallback rendering (D-08 B).
    */
   inspectorSections?: readonly string[];
+  /**
+   * Node-reference params — the general "pick a node" authoring surface (the
+   * Blender object-picker / Houdini node-path-param idiom). Each entry names a
+   * param that holds a `{ node: string }` reference to another node (e.g. a
+   * SampleGeometry's terrain, a Solver's controller). The Inspector renders a
+   * `NodeRefField` dropdown for each — candidates filtered by `kind` — so the
+   * relationship is authored through ONE general control instead of a bespoke
+   * preset/picker per node type. Surfaced even when the ref is unset (an empty
+   * picker), since an optional `{node}` param is absent from live `node.params`.
+   *
+   * `kind` filters the candidate list: 'mesh' (geometry sources), 'transformable'
+   * (a Null/scene object whose transform is read), or 'any'. Loose typing keeps the
+   * DAG registry app-agnostic — the Inspector owns the candidate resolution.
+   */
+  refParams?: Readonly<Record<string, { label?: string; kind: 'mesh' | 'transformable' | 'any' }>>;
 }
 
 // ---------------------------------------------------------------------------

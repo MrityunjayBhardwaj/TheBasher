@@ -4,7 +4,23 @@
 // unchanged after the noise core moved here.
 
 import { describe, expect, it } from 'vitest';
-import { applyMathOp, clamp, curveRemap, fit, fractalNoise, lagStep, lerp } from './valueMath';
+import {
+  applyMathOp,
+  applyVec3Op,
+  clamp,
+  curveRemap,
+  fit,
+  fractalNoise,
+  lagStep,
+  lerp,
+  vec3Add,
+  vec3Dot,
+  vec3Length,
+  vec3Mix,
+  vec3Scale,
+  vec3Sub,
+} from './valueMath';
+import type { Vec3 } from './types';
 
 describe('clamp', () => {
   it('passes values inside the range and bounds the rest', () => {
@@ -115,5 +131,38 @@ describe('fractalNoise (shared core — determinism + bounds)', () => {
       expect(v).toBeGreaterThanOrEqual(-1);
       expect(v).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe('vector math (Vector3 rail)', () => {
+  const a: Vec3 = [1, 2, 3];
+  const b: Vec3 = [4, 5, 6];
+
+  it('add / sub are component-wise', () => {
+    expect(vec3Add(a, b)).toEqual([5, 7, 9]);
+    expect(vec3Sub(b, a)).toEqual([3, 3, 3]);
+  });
+
+  it('scale multiplies every component', () => {
+    expect(vec3Scale(a, 2)).toEqual([2, 4, 6]);
+    expect(vec3Scale(a, 0)).toEqual([0, 0, 0]);
+  });
+
+  it('mix is component-wise lerp (unclamped, mirrors lerp)', () => {
+    expect(vec3Mix(a, b, 0)).toEqual([1, 2, 3]);
+    expect(vec3Mix(a, b, 1)).toEqual([4, 5, 6]);
+    expect(vec3Mix(a, b, 0.5)).toEqual([2.5, 3.5, 4.5]);
+  });
+
+  it('dot and length are the standard scalar reductions', () => {
+    expect(vec3Dot(a, b)).toBe(1 * 4 + 2 * 5 + 3 * 6); // 32
+    expect(vec3Length([3, 4, 0])).toBe(5);
+  });
+
+  it('applyVec3Op dispatches the op (s is the scalar operand for scale/mix)', () => {
+    expect(applyVec3Op('add', a, b, 99)).toEqual([5, 7, 9]); // s ignored
+    expect(applyVec3Op('sub', b, a, 99)).toEqual([3, 3, 3]); // s ignored
+    expect(applyVec3Op('scale', a, b, 3)).toEqual([3, 6, 9]); // b ignored
+    expect(applyVec3Op('mix', a, b, 0.5)).toEqual([2.5, 3.5, 4.5]);
   });
 });

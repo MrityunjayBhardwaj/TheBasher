@@ -18,8 +18,10 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import type { Vec3 } from './types';
 import {
   applyMathOp,
+  applyVec3Op,
   clamp,
   curveRemap,
   fit,
@@ -27,11 +29,17 @@ import {
   lerp,
   MATH_OPS,
   type MathOp,
+  VEC3_OPS,
+  type Vec3Op,
 } from './valueMath';
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
+const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
 const num = (inputs: Record<string, unknown>, key: string): number =>
   (inputs[key] as number | undefined) ?? 0;
+/** An unconnected Vector3 input defaults to the origin (mirrors `num`'s 0 default). */
+const vec3 = (inputs: Record<string, unknown>, key: string): Vec3 =>
+  (inputs[key] as Vec3 | undefined) ?? [0, 0, 0];
 
 // ── Math — binary arithmetic via an op-enum ──────────────────────────────────
 export const MathParams = z.object({
@@ -157,6 +165,82 @@ export const NoiseNode: NodeDefinition<NoiseParams, number> = {
     params.offset,
 };
 
+// ── vector nodes (Vector3 rail — vectors first-class on the compute rail) ─────
+// The Vec3 twin of the scalar vocab above: build a vector from components, do
+// vector arithmetic, break it back to components. A Vec3 flows through these and
+// drives a Vector3 target (position) exactly as a Number flows through Math/Fit and
+// drives a scalar — closing the scalar-only gap on the compute/driver rail. All
+// vector math comes from the ONE shared core (valueMath.ts), like the scalar nodes.
+
+// ── MakeVec3 — assemble a Vector3 from three scalar inputs ────────────────────
+export const MakeVec3Node: NodeDefinition<Record<string, never>, Vec3> = {
+  type: 'MakeVec3',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: z.object({}),
+  inputs: {
+    x: { type: 'Number', cardinality: 'single' },
+    y: { type: 'Number', cardinality: 'single' },
+    z: { type: 'Number', cardinality: 'single' },
+  },
+  outputs: VECTOR3_OUT,
+  evaluate: (_params, inputs) => [num(inputs, 'x'), num(inputs, 'y'), num(inputs, 'z')],
+};
+
+// ── VecBreak3 — split a Vector3 into its x / y / z scalar outputs ──────────────
+// A multi-output node: `evaluate` returns a record and each consumer references the
+// socket it wants (`extractSocket` picks it). Lets a scalar target/driver read one
+// axis of a vector chain (or a spring's driven component).
+export const VecBreak3Node: NodeDefinition<
+  Record<string, never>,
+  { x: number; y: number; z: number }
+> = {
+  type: 'VecBreak3',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: z.object({}),
+  inputs: { v: { type: 'Vector3', cardinality: 'single' } },
+  outputs: {
+    x: { type: 'Number', cardinality: 'single' },
+    y: { type: 'Number', cardinality: 'single' },
+    z: { type: 'Number', cardinality: 'single' },
+  },
+  evaluate: (_params, inputs) => {
+    const v = vec3(inputs, 'v');
+    return { x: v[0], y: v[1], z: v[2] };
+  },
+};
+
+// ── Vec3Math — vector arithmetic via an op-enum (the Vec3 twin of Math) ────────
+export const Vec3MathParams = z.object({
+  op: z.enum(VEC3_OPS as unknown as [Vec3Op, ...Vec3Op[]]).default('add'),
+  /** The scalar operand for `scale`/`mix` when the `s` input is unconnected. */
+  scalar: z.number().default(1),
+});
+export type Vec3MathParams = z.infer<typeof Vec3MathParams>;
+
+export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
+  type: 'Vec3Math',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: Vec3MathParams,
+  inputs: {
+    a: { type: 'Vector3', cardinality: 'single' },
+    b: { type: 'Vector3', cardinality: 'single' },
+    // Optional scalar override for scale/mix (spring wires velocity·dt here); falls
+    // back to the `scalar` param when unconnected.
+    s: { type: 'Number', cardinality: 'single' },
+  },
+  outputs: VECTOR3_OUT,
+  evaluate: (params, inputs) => {
+    const s = typeof inputs.s === 'number' ? inputs.s : params.scalar;
+    return applyVec3Op(params.op, vec3(inputs, 'a'), vec3(inputs, 'b'), s);
+  },
+};
+
 /** The compute-node vocabulary, for bulk registration (registerAll.ts). */
 export const COMPUTE_NODES: NodeDefinition[] = [
   MathNode as unknown as NodeDefinition,
@@ -165,4 +249,7 @@ export const COMPUTE_NODES: NodeDefinition[] = [
   MixNode as unknown as NodeDefinition,
   CurveRemapNode as unknown as NodeDefinition,
   NoiseNode as unknown as NodeDefinition,
+  MakeVec3Node as unknown as NodeDefinition,
+  VecBreak3Node as unknown as NodeDefinition,
+  Vec3MathNode as unknown as NodeDefinition,
 ];
