@@ -1089,6 +1089,9 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     const glyph = gutterGlyphHit(px, py, rows.length);
     if (glyph) {
       const row = rows[glyph.rowIndex];
+      // Only REAL channel rows paint glyphs → only they swallow the click. A
+      // read-only clip row (no DAG node, no glyph) falls through to row-select
+      // below, preserving its existing gutter-click behavior.
       if (row && !row.readOnly) {
         const node = useDagStore.getState().state.nodes[row.channelId];
         if (node) {
@@ -1101,8 +1104,8 @@ export function TimelineCanvas({ duration }: { duration: number }) {
               `toggle channel ${glyph.kind}`,
             );
         }
+        return;
       }
-      return;
     }
 
     // Row click → activate that channel (#264). Restores the row onClick the
