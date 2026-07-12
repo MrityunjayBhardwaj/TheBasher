@@ -21,21 +21,34 @@
 //      H95 (geometry in one place); vyapti V88 D2; issue #283.
 
 import { visibleFrames, type TimelineView } from './timelineView';
+import {
+  LANE_HEADER_WIDTH_PX,
+  LANE_ROW_HEIGHT_PX,
+  LANE_RULER_HEIGHT_PX,
+  LANE_TRIM_HANDLE_PX,
+  LANE_DRAG_THRESHOLD_PX,
+} from './timelineSettings';
 
-/** Width of the left track-header column (names + M/S/▲▼), in CSS px.
- *  The observed OUTLINE_WIDTH_PX (videoTimelineGeometry.ts:18). */
-export const NLA_HEADER_WIDTH_PX = 220;
-/** Height of one track row, in CSS px (ROW_HEIGHT_PX, videoTimelineGeometry.ts:20). */
-export const NLA_ROW_HEIGHT_PX = 28;
-/** Height of the time ruler atop the lane area, in CSS px (RULER_HEIGHT_PX, :22). */
-export const NLA_RULER_HEIGHT_PX = 22;
-/** Width (CSS px) of the resize-handle hit zone at each end of a strip block
- *  (BAR_TRIM_HANDLE_PX, videoTimelineGeometry.ts:72). */
-export const NLA_STRIP_HANDLE_PX = 8;
-/** Width of the right-side strip-inspector column, in CSS px. */
+// The lane layout constants below are the SHARED `lane` family, single-sourced
+// in timelineSettings.json — they used to be hand-copied literals citing
+// videoTimelineGeometry.ts by file:line, which meant every lane-metric change
+// had to be applied in two places in lockstep. Now both surfaces import the same
+// LANE_* names; these keep the NLA_* aliases so no call site changes.
+
+/** Width of the left track-header column (names + M/S/▲▼), in CSS px. */
+export const NLA_HEADER_WIDTH_PX = LANE_HEADER_WIDTH_PX;
+/** Height of one track row, in CSS px. */
+export const NLA_ROW_HEIGHT_PX = LANE_ROW_HEIGHT_PX;
+/** Height of the time ruler atop the lane area, in CSS px. */
+export const NLA_RULER_HEIGHT_PX = LANE_RULER_HEIGHT_PX;
+/** Width (CSS px) of the resize-handle hit zone at each end of a strip block. */
+export const NLA_STRIP_HANDLE_PX = LANE_TRIM_HANDLE_PX;
+/** Width of the right-side strip-inspector column, in CSS px. NLA-specific
+ *  (the compositor lane has no inspector); happens to equal the header width
+ *  but is a distinct column, so it stays its own literal. */
 export const NLA_INSPECTOR_WIDTH_PX = 220;
-/** Pointer travel (px) that turns a click into a drag (LayerTimeline.tsx:58-59). */
-export const NLA_DRAG_THRESHOLD_PX = 3;
+/** Pointer travel (px) that turns a click into a drag. */
+export const NLA_DRAG_THRESHOLD_PX = LANE_DRAG_THRESHOLD_PX;
 /** Minimum RENDERED width (CSS px) of a strip block, applied as a presentational
  *  `min-width` floor in the component — NOT in the percent math (#288 N5). An
  *  orphan strip has a degenerate zero-length span (end === start → widthPct 0);

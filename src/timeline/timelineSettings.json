@@ -1,0 +1,16 @@
+{
+  "lane": {
+    "rowHeightPx": 28,
+    "rulerHeightPx": 22,
+    "headerWidthPx": 220,
+    "trimHandlePx": 8,
+    "dragThresholdPx": 3
+  },
+  "dopesheet": {
+    "rowHeightPx": 24,
+    "rulerHeightPx": 17,
+    "gutterWidthPx": 84,
+    "diamondPx": 10,
+    "gutterGlyphBoxPx": 13
+  }
+}
