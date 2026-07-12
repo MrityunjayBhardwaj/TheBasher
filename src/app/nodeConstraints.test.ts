@@ -18,6 +18,7 @@ import {
   constraintTargetSet,
   constraintStackForTarget,
   resolveConstraintRotation,
+  resolveTrackToTarget,
 } from './nodeConstraints';
 import { resolveTrackTo } from './resolveTrackTo';
 
@@ -168,6 +169,39 @@ describe('nodeConstraints — the ordered constraint stack (#311)', () => {
     expect(m.aimNode).toBe('');
     expect(m.up).toEqual([0, 1, 0]);
     expect(m.target).toBe(BOX_ID);
+  });
+
+  // #311 T3 — the fold. A SINGLE member must resolve exactly as the pre-stack
+  // first-wins path did (identity); TWO members must now COMPOSE (the capability
+  // first-wins made impossible — the 2nd constraint used to be silently ignored).
+  it('a single-member stack resolves identically to the pure aim resolver (identity)', () => {
+    const state = buildPointTrackTo([0, 0, 0], [5, 0, 0]);
+    expect(resolveConstraintRotation(state, BOX_ID, ctxAt(0))).toEqual(
+      resolveTrackTo([0, 0, 0], [5, 0, 0]),
+    );
+  });
+
+  it('two members compose — the higher-order member wins the rotation band', () => {
+    let state = buildPointTrackTo([0, 0, 0], [5, 0, 0]); // order 0 → aims at +X
+    state = addTrackTo(state, 'n_tt_top', [0, 0, -5], 10); // order 10 → aims at -Z
+
+    // Pre-#311 this 2nd constraint was silently DROPPED (first-wins) and the box kept
+    // aiming at +X. Now the top of the stack owns the band.
+    const rot = resolveConstraintRotation(state, BOX_ID, ctxAt(0))!;
+    expect(minusZ(rot).z).toBeCloseTo(-1, 5);
+    expect(rot).toEqual(resolveTrackTo([0, 0, 0], [0, 0, -5]));
+
+    // The camera aim point follows the SAME winner (one band, one winner).
+    expect(resolveTrackToTarget(state, BOX_ID, ctxAt(0))).toEqual([0, 0, -5]);
+  });
+
+  it('a degenerate top member contributes nothing — the member below still aims', () => {
+    let state = buildPointTrackTo([0, 0, 0], [5, 0, 0]);
+    // Aim point == the object's own world position → zero distance → undefined aim.
+    state = addTrackTo(state, 'n_tt_degen', [0, 0, 0], 10);
+    expect(resolveConstraintRotation(state, BOX_ID, ctxAt(0))).toEqual(
+      resolveTrackTo([0, 0, 0], [5, 0, 0]),
+    );
   });
 });
 

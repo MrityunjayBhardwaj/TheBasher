@@ -173,11 +173,31 @@ export function resolveConstraintRotation(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const tt = trackToForTarget(state.nodes, nodeId);
-  if (!tt) return null;
+  const stack = constraintStackForTarget(state.nodes, nodeId);
+  if (stack.length === 0) return null;
   const objWorld: WorldTransform | null = resolveWorldTransform(state, nodeId, ctx, cache);
   if (!objWorld) return null;
-  const aimWorld = resolveTrackTo(objWorld.position, aimTargetWorld(state, tt, ctx, cache), tt.up);
+
+  // #311 — FOLD the stack bottom → top on the ROTATION band. v1 semantics are
+  // LAST-WRITER-WINS: each member that resolves to a defined aim overwrites the one
+  // below it, and a DEGENERATE member (unresolvable target / zero-distance aim)
+  // contributes nothing — exactly as a muted member would. So a single-member stack
+  // returns that member's aim unchanged: the byte-identity pin (this is why the fold
+  // picks a whole resolved aim rather than blending Euler angles, which would NOT be
+  // identity-preserving for one member).
+  //
+  // Members writing ORTHOGONAL bands need no ordering at all — a future Follow-Path
+  // writes POSITION while this writes ROTATION, so they commute. Per-member influence
+  // blending (two members on the SAME band) is a later phase.
+  let aimWorld: Vec3 | null = null;
+  for (const member of stack) {
+    const memberAim = resolveTrackTo(
+      objWorld.position,
+      aimTargetWorld(state, member, ctx, cache),
+      member.up,
+    );
+    if (memberAim) aimWorld = memberAim;
+  }
   if (!aimWorld) return null;
   // #267 (V45 #1 / I2 / C5) — the aim is derived in WORLD space, but the value we
   // return is written as the node's LOCAL rotation param, which then composes UNDER
@@ -232,9 +252,13 @@ export function resolveTrackToTarget(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const tt = trackToForTarget(state.nodes, nodeId);
-  if (!tt) return null;
-  return aimTargetWorld(state, tt, ctx, cache);
+  // #311 — the aim band is LAST-WRITER-WINS, so the TOP of the stack owns the aim
+  // point, matching the member `resolveConstraintRotation` folds last. A single-member
+  // stack is `[0]` either way → byte-identical to the pre-stack first-wins path.
+  const stack = constraintStackForTarget(state.nodes, nodeId);
+  const winner = stack[stack.length - 1];
+  if (!winner) return null;
+  return aimTargetWorld(state, winner, ctx, cache);
 }
 
 /** The world aim-target position for a resolved Track-To: the aim node's world
