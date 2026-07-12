@@ -22,12 +22,10 @@
 //                   that must move the e2e baselines in lockstep — never a
 //                   "cleanup" to match the lane family.
 //
-// SCOPE (slice 1): the `lane` family is wired — `videoTimelineGeometry.ts` and
-// `nlaLaneGeometry.ts` import the LANE_* names below, retiring the hand-copied
-// literals that used to cite each other by file:line. The `dopesheet` group is
-// the SOT of record for those values but is NOT yet wired into TimelineCanvas
-// (that is slice 3); until then TimelineCanvas keeps its own literals and they
-// must equal the DOPESHEET_* values here.
+// WIRED: the `lane` family feeds `videoTimelineGeometry.ts` + `nlaLaneGeometry.ts`
+// (via LANE_*); the `dopesheet` family feeds `TimelineCanvas.tsx` (via DOPESHEET_*).
+// Both families' literals used to be hand-copied across surfaces; this module is
+// now the single home for every timeline layout metric.
 //
 // REF: hetvabhasa H95 (e2e mirror geometry constants); vyapti V50 (shared
 //      dopesheet/curve view model); project_timeline-geometry-consolidation.
@@ -70,10 +68,12 @@ export const LANE_TRIM_HANDLE_PX = timelineSettings.lane.trimHandlePx;
 /** Pointer travel (CSS px) that turns a click into a drag on a lane. */
 export const LANE_DRAG_THRESHOLD_PX = timelineSettings.lane.dragThresholdPx;
 
-// ── Dopesheet family (keyframe grid) — NOT yet wired (slice 3) ────────────────
-// These are the SOT of record for the dopesheet metrics. TimelineCanvas.tsx
-// still owns its own literals for now; keep the two in sync until slice 3 wires
-// TimelineCanvas to import these. Do NOT change these to match the lane family.
+// ── Dopesheet family (keyframe grid) — consumed by TimelineCanvas.tsx ─────────
+// The dense keyframe grid, tighter than a lane by design. Do NOT change these to
+// match the lane family. The gutter + diamond inset are baked into frameToX (the
+// V50 default-view === keyframeToRect parity), and the drag/position e2e mirror
+// these pixels (the H95 trap), so a value change is a visual change that must
+// move the e2e baselines in lockstep.
 
 /** Height of one dopesheet channel row, in CSS px (dense grid, by design). */
 export const DOPESHEET_ROW_HEIGHT_PX = timelineSettings.dopesheet.rowHeightPx;
