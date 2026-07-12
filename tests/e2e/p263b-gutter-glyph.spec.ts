@@ -26,6 +26,7 @@ interface W {
   __basher_dag?: {
     getState: () => {
       state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      dispatchAtomic: (ops: unknown[], source?: string, description?: string) => void;
     };
   };
   __basher_mesh_world_position?: (id: string) => [number, number, number] | null;
@@ -65,32 +66,64 @@ test.beforeEach(async ({ page }) => {
 test('gutter M/S glyphs toggle a row directly — render follows (mute reverts, solo isolates)', async ({
   page,
 }) => {
-  // ── Author TWO channels on n_box: position x→4 and scale x→2 at t=2 ──────
-  // Authored position-FIRST so its channel node is created first → dopesheet
-  // row 0 = position, row 1 = scale (collectChannelRows is insertion-ordered).
-  await page.evaluate(() =>
-    (window as unknown as W).__basher_selection!.getState().select('n_box'),
-  );
-  await expect(page.getByTestId('inspector')).toBeVisible();
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await page.getByTestId('autokey-toggle').click();
-
-  // position: key at t=0, then x=4 at t=2.
-  await setTime(page, 0);
-  await page.getByTestId('inspector-diamond-n_box-position').click();
+  // ── Seed TWO channels on n_box via the DAG, not the flaky inspector ───────
+  // The Auto-Key + diamond + fill/Tab authoring dance is the linux
+  // channel-authoring flake; this spec is about the GUTTER GLYPHS, so author
+  // the channels deterministically (same pattern as ux11-curve-editor). The
+  // position op is FIRST so its channel node is created first → dopesheet row 0
+  // = position, row 1 = scale (collectChannelRows is insertion-ordered). Native
+  // mesh channels are free-floating — they target n_box's dagId with no
+  // connection edge (dispatchMutator.ts:805) and are read by the same
+  // overlayChannels resolver, so render == read holds end-to-end.
+  await page.evaluate(() => {
+    const w = window as unknown as W;
+    const dag = w.__basher_dag!.getState();
+    if (!dag.state.nodes['ch_p263b_pos']) {
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'ch_p263b_pos',
+            nodeType: 'KeyframeChannelVec3',
+            params: {
+              name: 'position',
+              target: 'n_box',
+              paramPath: 'position',
+              keyframes: [
+                { time: 0, value: [0, 0, 0], easing: 'linear' },
+                { time: 2, value: [4, 0, 0], easing: 'linear' },
+              ],
+            },
+          },
+          {
+            type: 'addNode',
+            nodeId: 'ch_p263b_scl',
+            nodeType: 'KeyframeChannelVec3',
+            params: {
+              name: 'scale',
+              target: 'n_box',
+              paramPath: 'scale',
+              keyframes: [
+                { time: 0, value: [1, 1, 1], easing: 'linear' },
+                { time: 2, value: [2, 1, 1], easing: 'linear' },
+              ],
+            },
+          },
+        ],
+        'user',
+        'p263b seed',
+      );
+    }
+    w.__basher_selection!.getState().select('n_box');
+  });
   await setTime(page, 2);
-  const px = page.getByTestId('inspector-vec-n_box-position-x');
-  await px.fill('4');
-  await px.press('Tab');
-
-  // scale: key at t=0 (base 1,1,1), then x=2 at t=2.
-  await setTime(page, 0);
-  await page.getByTestId('inspector-diamond-n_box-scale').click();
-  await setTime(page, 2);
-  const sx = page.getByTestId('inspector-vec-n_box-scale-x');
-  await sx.fill('2');
-  await sx.press('Tab');
-
+  // Wait for the render commit to flow both seeded channels onto the box.
+  await page.waitForFunction(() => {
+    const w = window as unknown as W;
+    const p = w.__basher_mesh_world_position!('n_box');
+    const s = w.__basher_mesh_world_scale!('n_box');
+    return p !== null && s !== null && Math.abs(p[0] - 4) < 0.1 && Math.abs(s[0] - 2) < 0.1;
+  });
   // Baseline at t=2: both channels drive.
   expect(await boxX(page)).toBeCloseTo(4, 1);
   expect(await boxScaleX(page)).toBeCloseTo(2, 1);

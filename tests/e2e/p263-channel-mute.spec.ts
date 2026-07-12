@@ -21,6 +21,7 @@ interface W {
   __basher_dag?: {
     getState: () => {
       state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      dispatchAtomic: (ops: unknown[], source?: string, description?: string) => void;
     };
   };
   __basher_timeline_selection?: { getState: () => { activeChannelId: string | null } };
@@ -54,19 +55,46 @@ test.beforeEach(async ({ page }) => {
 test('a dopesheet row click arms the toolbar; Mute silences the channel in the render', async ({
   page,
 }) => {
-  // ── Author a position channel that displaces the box to x=4 at t=2 ──────
-  await page.evaluate(() =>
-    (window as unknown as W).__basher_selection!.getState().select('n_box'),
-  );
-  await expect(page.getByTestId('inspector')).toBeVisible();
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await setTime(page, 0);
-  await page.getByTestId('inspector-diamond-n_box-position').click();
-  await page.getByTestId('autokey-toggle').click();
+  // ── Seed a position channel (x 0→4 at t=2) via the DAG, not the inspector ─
+  // The Auto-Key + diamond + fill/Tab authoring dance is the linux
+  // channel-authoring flake; this spec is about the ROW-SELECT + Mute path, so
+  // author the channel deterministically (same pattern as ux11-curve-editor).
+  // A native mesh channel is free-floating — it targets n_box's dagId with no
+  // connection edge (dispatchMutator.ts:805) and is read by the same
+  // overlayChannels resolver, so render == read still holds end-to-end.
+  await page.evaluate(() => {
+    const w = window as unknown as W;
+    const dag = w.__basher_dag!.getState();
+    if (!dag.state.nodes['ch_p263_pos']) {
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'ch_p263_pos',
+            nodeType: 'KeyframeChannelVec3',
+            params: {
+              name: 'pos',
+              target: 'n_box',
+              paramPath: 'position',
+              keyframes: [
+                { time: 0, value: [0, 0, 0], easing: 'linear' },
+                { time: 2, value: [4, 0, 0], easing: 'linear' },
+              ],
+            },
+          },
+        ],
+        'user',
+        'p263 seed',
+      );
+    }
+    w.__basher_selection!.getState().select('n_box');
+  });
   await setTime(page, 2);
-  const xin = page.getByTestId('inspector-vec-n_box-position-x');
-  await xin.fill('4');
-  await xin.press('Tab');
+  // Wait for the render commit to flow the seeded channel onto the box.
+  await page.waitForFunction(() => {
+    const r = (window as unknown as W).__basher_mesh_world_position!('n_box');
+    return r !== null && Math.abs(r[0] - 4) < 0.1;
+  });
   expect(await boxX(page)).toBeCloseTo(4, 1);
 
   // ── Open the dopesheet and select the channel by CLICKING ITS ROW (#264) ─
