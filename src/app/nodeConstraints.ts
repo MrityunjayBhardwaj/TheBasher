@@ -60,9 +60,6 @@ export interface ActiveConstraint {
   readonly order: number;
 }
 
-/** @deprecated the single-constraint alias — kept while callers migrate to the stack. */
-export type ActiveTrackTo = ActiveConstraint;
-
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 }
@@ -267,7 +264,7 @@ export function resolveTrackToTarget(
  *  aim). Shared by the mesh-rotation and camera-lookAt consumers. */
 function aimTargetWorld(
   state: DagState,
-  tt: ActiveTrackTo,
+  tt: ActiveConstraint,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
