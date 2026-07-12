@@ -1195,8 +1195,14 @@ export interface TrackToConstraintValue {
   readonly aimPoint: Vec3;
   /** Roll reference (default +Y). */
   readonly up: Vec3;
-  /** Bypass — a muted constraint contributes nothing (the future OperatorStack). */
+  /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   readonly mute: boolean;
+  /** Position in the target's ordered constraint stack (low → high, bottom → top).
+   *  Edge-less operators order by this field, not by a wire (the geometry stack's
+   *  sub-chain model doesn't fit — a constraint has no data edge). Mirrors
+   *  `ParamDriver.order`. Default 0 → every pre-stack project is a single-member
+   *  stack in table order, byte-identical to the old first-wins scan. */
+  readonly order: number;
 }
 
 export type ConstraintValue = TrackToConstraintValue;

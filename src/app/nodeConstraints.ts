@@ -45,12 +45,19 @@ interface NodeLike {
   readonly params?: unknown;
 }
 
-/** The resolved aim parameters of a Track-To constraint. */
-export interface ActiveTrackTo {
+/** One resolved member of an object's constraint stack (the normalized, coerced
+ *  aim params — never a raw node: every consumer reads `aimNode`/`aimPoint`/`up`
+ *  and relies on the guards below). */
+export interface ActiveConstraint {
   readonly target: string;
   readonly aimNode: string;
   readonly aimPoint: Vec3;
   readonly up: Vec3;
+  /** The constraint node itself — Phase 2's panel needs to know which node a row
+   *  edits/mutes/removes. */
+  readonly nodeId: string;
+  /** Its position in the stack (already applied by the sort; carried for the UI). */
+  readonly order: number;
 }
 
 function isVec3(v: unknown): v is Vec3 {
@@ -58,46 +65,87 @@ function isVec3(v: unknown): v is Vec3 {
 }
 
 /**
- * The first ACTIVE (non-muted, non-empty-target) Track-To constraint whose
- * `target` is `nodeId`, or null. v1 is one constraint per node — the
- * OperatorStack (a chain of constraints) is a later slice; first-wins keeps this
- * deterministic until then.
+ * The relational POSE operators — the constraint species ([[V98]]): edge-less,
+ * `{node}`-ref, seam-resolved, writing an object's POSE. The CHOP analogue of
+ * `OperatorPredicate` (the SOP-stack's membership test). Track-To today;
+ * Follow-Path / Copy-Location join here as members, NOT as new sidecars ([[H157]]).
  */
-export function trackToForTarget(
+export function isRelationalPoseNode(node: NodeLike | undefined): boolean {
+  return node?.type === 'TrackTo';
+}
+
+/**
+ * The ordered constraint STACK for `nodeId` — every ACTIVE (non-muted) relational
+ * pose operator whose `target` is `nodeId`, sorted bottom → top by `order`.
+ *
+ * ORDERING (the [[V98]] decision): a constraint is EDGE-LESS, so the stack cannot be
+ * a wired sub-chain like the geometry stack (`operatorStack.ts`: "modifiers are
+ * [sub-chains]; constraints aren't"). It orders by the `order` FIELD instead —
+ * mirroring the driver rail (`ParamDriver.order`).
+ *
+ * BYTE-IDENTITY PIN: `Array.prototype.sort` is stable (ES2019+), and every project
+ * authored before the stack has `order === 0` on every constraint — so the sort is a
+ * no-op over `Object.values` table order, and `[0]` is exactly the node the old
+ * first-wins scan returned. A single-member stack therefore resolves identically.
+ */
+export function constraintStackForTarget(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
-): ActiveTrackTo | null {
-  if (!nodeId) return null;
-  for (const node of Object.values(nodes)) {
-    if (node.type !== 'TrackTo') continue;
+): ActiveConstraint[] {
+  if (!nodeId) return [];
+  const stack: ActiveConstraint[] = [];
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!isRelationalPoseNode(node)) continue;
     const p = node.params as {
       target?: unknown;
       aimNode?: unknown;
       aimPoint?: unknown;
       up?: unknown;
       mute?: unknown;
+      order?: unknown;
     };
     if (p.target !== nodeId) continue;
     if (p.mute === true) continue;
-    return {
+    stack.push({
       target: nodeId,
       aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
       aimPoint: isVec3(p.aimPoint) ? p.aimPoint : [0, 0, 0],
       up: isVec3(p.up) ? p.up : [0, 1, 0],
-    };
+      nodeId: id,
+      order: typeof p.order === 'number' ? p.order : 0,
+    });
   }
-  return null;
+  // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
+  stack.sort((a, b) => a.order - b.order);
+  return stack;
 }
 
 /**
- * The set of node ids constrained by at least one active Track-To. Built in ONE
- * pass — the renderer computes it once and tests membership per child, so the
- * child map stays O(N), never O(N²) (the B13 trap).
+ * The BOTTOM member of `nodeId`'s constraint stack, or null. This is the old
+ * first-wins accessor, preserved for the single-constraint consumers (the studio-light
+ * rig's "is this light rig-aimed?" test, the camera look-at dropdown's current aim,
+ * and the camera aim point) — all of which still author exactly one constraint per
+ * object until the Constraints panel (#312) lands.
+ */
+export function trackToForTarget(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): ActiveConstraint | null {
+  return constraintStackForTarget(nodes, nodeId)[0] ?? null;
+}
+
+/**
+ * The set of node ids constrained by at least one active relational pose operator.
+ * Built in ONE pass — the renderer computes it once and tests membership per child,
+ * so the child map stays O(N), never O(N²) (the B13 trap).
+ *
+ * Keeps the empty-target guard: an unbound `TrackTo` (`target: ''`, the schema
+ * default) is INERT and must not enter the set.
  */
 export function constraintTargetSet(nodes: Readonly<Record<string, NodeLike>>): Set<string> {
   const targets = new Set<string>();
   for (const node of Object.values(nodes)) {
-    if (node.type !== 'TrackTo') continue;
+    if (!isRelationalPoseNode(node)) continue;
     const p = node.params as { target?: unknown; mute?: unknown };
     if (typeof p.target !== 'string' || !p.target) continue;
     if (p.mute === true) continue;
@@ -122,11 +170,31 @@ export function resolveConstraintRotation(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const tt = trackToForTarget(state.nodes, nodeId);
-  if (!tt) return null;
+  const stack = constraintStackForTarget(state.nodes, nodeId);
+  if (stack.length === 0) return null;
   const objWorld: WorldTransform | null = resolveWorldTransform(state, nodeId, ctx, cache);
   if (!objWorld) return null;
-  const aimWorld = resolveTrackTo(objWorld.position, aimTargetWorld(state, tt, ctx, cache), tt.up);
+
+  // #311 — FOLD the stack bottom → top on the ROTATION band. v1 semantics are
+  // LAST-WRITER-WINS: each member that resolves to a defined aim overwrites the one
+  // below it, and a DEGENERATE member (unresolvable target / zero-distance aim)
+  // contributes nothing — exactly as a muted member would. So a single-member stack
+  // returns that member's aim unchanged: the byte-identity pin (this is why the fold
+  // picks a whole resolved aim rather than blending Euler angles, which would NOT be
+  // identity-preserving for one member).
+  //
+  // Members writing ORTHOGONAL bands need no ordering at all — a future Follow-Path
+  // writes POSITION while this writes ROTATION, so they commute. Per-member influence
+  // blending (two members on the SAME band) is a later phase.
+  let aimWorld: Vec3 | null = null;
+  for (const member of stack) {
+    const memberAim = resolveTrackTo(
+      objWorld.position,
+      aimTargetWorld(state, member, ctx, cache),
+      member.up,
+    );
+    if (memberAim) aimWorld = memberAim;
+  }
   if (!aimWorld) return null;
   // #267 (V45 #1 / I2 / C5) — the aim is derived in WORLD space, but the value we
   // return is written as the node's LOCAL rotation param, which then composes UNDER
@@ -181,9 +249,13 @@ export function resolveTrackToTarget(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const tt = trackToForTarget(state.nodes, nodeId);
-  if (!tt) return null;
-  return aimTargetWorld(state, tt, ctx, cache);
+  // #311 — the aim band is LAST-WRITER-WINS, so the TOP of the stack owns the aim
+  // point, matching the member `resolveConstraintRotation` folds last. A single-member
+  // stack is `[0]` either way → byte-identical to the pre-stack first-wins path.
+  const stack = constraintStackForTarget(state.nodes, nodeId);
+  const winner = stack[stack.length - 1];
+  if (!winner) return null;
+  return aimTargetWorld(state, winner, ctx, cache);
 }
 
 /** The world aim-target position for a resolved Track-To: the aim node's world
@@ -192,7 +264,7 @@ export function resolveTrackToTarget(
  *  aim). Shared by the mesh-rotation and camera-lookAt consumers. */
 function aimTargetWorld(
   state: DagState,
-  tt: ActiveTrackTo,
+  tt: ActiveConstraint,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {

@@ -16,7 +16,9 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import {
   trackToForTarget,
   constraintTargetSet,
+  constraintStackForTarget,
   resolveConstraintRotation,
+  resolveTrackToTarget,
 } from './nodeConstraints';
 import { resolveTrackTo } from './resolveTrackTo';
 
@@ -83,6 +85,123 @@ describe('nodeConstraints — enumeration', () => {
     const state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
     expect(constraintTargetSet(state.nodes).has(BOX_ID)).toBe(true);
     expect(constraintTargetSet(state.nodes).size).toBe(1);
+  });
+
+  // #311 T1 — a PRE-STACK project (authored with no `order`, exactly as
+  // buildPointTrackTo does) must deserialize to order 0, so it is a single-member
+  // stack in node-table order == the old first-wins scan. No migration needed: the
+  // zod `.default(0)` fills it at addNode. This is the serialize byte-identity pin.
+  it('an order-less TrackTo (pre-stack project) defaults to order 0', () => {
+    const state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
+    expect((state.nodes[TT_ID].params as { order?: unknown }).order).toBe(0);
+  });
+});
+
+// #311 T2 — the ordered stack. The byte-identity claim under test: with every
+// constraint at order 0 (every pre-stack project), the stable sort is a no-op over
+// node-table order, so `[0]` is the node the old first-wins scan returned.
+describe('nodeConstraints — the ordered constraint stack (#311)', () => {
+  /** Add a 2nd/3rd Track-To on BOX_ID with an explicit order. */
+  function addTrackTo(state: DagState, id: string, aimPoint: Vec3, order: number): DagState {
+    return applyOp(state, {
+      type: 'addNode',
+      nodeId: id,
+      nodeType: 'TrackTo',
+      params: {
+        name: id,
+        target: BOX_ID,
+        aimNode: '',
+        aimPoint,
+        up: [0, 1, 0],
+        mute: false,
+        order,
+      },
+    } as Op).next;
+  }
+
+  it('stacks every active constraint on the target, sorted bottom → top by order', () => {
+    let state = buildPointTrackTo([0, 0, 0], [1, 0, 0]); // TT_ID, order 0
+    state = addTrackTo(state, 'n_tt_b', [0, 0, 1], -5); // sorts BELOW the default
+    state = addTrackTo(state, 'n_tt_c', [0, 1, 0], 10); // sorts ABOVE it
+
+    const stack = constraintStackForTarget(state.nodes, BOX_ID);
+    expect(stack.map((m) => m.nodeId)).toEqual(['n_tt_b', TT_ID, 'n_tt_c']);
+    expect(stack.map((m) => m.order)).toEqual([-5, 0, 10]);
+  });
+
+  it('[0] equals the old first-wins scan when every order is 0 (the identity pin)', () => {
+    let state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
+    state = addTrackTo(state, 'n_tt_b', [0, 0, 1], 0); // SAME order → stable → table order
+    const stack = constraintStackForTarget(state.nodes, BOX_ID);
+    expect(stack).toHaveLength(2);
+    // Stable sort keeps the first-declared node first — exactly first-wins.
+    expect(stack[0].nodeId).toBe(TT_ID);
+    expect(trackToForTarget(state.nodes, BOX_ID)?.nodeId).toBe(TT_ID);
+  });
+
+  it('excludes muted members and other targets; an unbound TrackTo is inert', () => {
+    let state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
+    state = addTrackTo(state, 'n_tt_muted', [0, 0, 1], 1);
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'n_tt_muted',
+      paramPath: 'mute',
+      value: true,
+    }).next;
+    expect(constraintStackForTarget(state.nodes, BOX_ID).map((m) => m.nodeId)).toEqual([TT_ID]);
+    expect(constraintStackForTarget(state.nodes, 'n_camera')).toEqual([]);
+
+    // An unbound constraint (target '') must not leak into the target set.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_tt_unbound',
+      nodeType: 'TrackTo',
+      params: { name: 'unbound' },
+    } as Op).next;
+    expect(constraintTargetSet(state.nodes).has('')).toBe(false);
+    expect(constraintTargetSet(state.nodes).size).toBe(1);
+  });
+
+  it('members carry the normalized aim shape (never raw node params)', () => {
+    const state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
+    const [m] = constraintStackForTarget(state.nodes, BOX_ID);
+    expect(m.aimPoint).toEqual([1, 0, 0]);
+    expect(m.aimNode).toBe('');
+    expect(m.up).toEqual([0, 1, 0]);
+    expect(m.target).toBe(BOX_ID);
+  });
+
+  // #311 T3 — the fold. A SINGLE member must resolve exactly as the pre-stack
+  // first-wins path did (identity); TWO members must now COMPOSE (the capability
+  // first-wins made impossible — the 2nd constraint used to be silently ignored).
+  it('a single-member stack resolves identically to the pure aim resolver (identity)', () => {
+    const state = buildPointTrackTo([0, 0, 0], [5, 0, 0]);
+    expect(resolveConstraintRotation(state, BOX_ID, ctxAt(0))).toEqual(
+      resolveTrackTo([0, 0, 0], [5, 0, 0]),
+    );
+  });
+
+  it('two members compose — the higher-order member wins the rotation band', () => {
+    let state = buildPointTrackTo([0, 0, 0], [5, 0, 0]); // order 0 → aims at +X
+    state = addTrackTo(state, 'n_tt_top', [0, 0, -5], 10); // order 10 → aims at -Z
+
+    // Pre-#311 this 2nd constraint was silently DROPPED (first-wins) and the box kept
+    // aiming at +X. Now the top of the stack owns the band.
+    const rot = resolveConstraintRotation(state, BOX_ID, ctxAt(0))!;
+    expect(minusZ(rot).z).toBeCloseTo(-1, 5);
+    expect(rot).toEqual(resolveTrackTo([0, 0, 0], [0, 0, -5]));
+
+    // The camera aim point follows the SAME winner (one band, one winner).
+    expect(resolveTrackToTarget(state, BOX_ID, ctxAt(0))).toEqual([0, 0, -5]);
+  });
+
+  it('a degenerate top member contributes nothing — the member below still aims', () => {
+    let state = buildPointTrackTo([0, 0, 0], [5, 0, 0]);
+    // Aim point == the object's own world position → zero distance → undefined aim.
+    state = addTrackTo(state, 'n_tt_degen', [0, 0, 0], 10);
+    expect(resolveConstraintRotation(state, BOX_ID, ctxAt(0))).toEqual(
+      resolveTrackTo([0, 0, 0], [5, 0, 0]),
+    );
   });
 });
 
