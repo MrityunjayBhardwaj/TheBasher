@@ -13,13 +13,25 @@
 //      (frameToX); hetvabhasa H95 (geometry in one place); issue #237.
 
 import { frameToX } from '../../timeline/timelineCanvasGeometry';
+import {
+  LANE_HEADER_WIDTH_PX,
+  LANE_ROW_HEIGHT_PX,
+  LANE_RULER_HEIGHT_PX,
+  LANE_TRIM_HANDLE_PX,
+  LANE_DRAG_THRESHOLD_PX,
+} from '../../timeline/timelineSettings';
+
+// The layout constants are the SHARED `lane` family, single-sourced in
+// timelineSettings.json (retiring the hand-copy this file and nlaLaneGeometry.ts
+// used to keep in lockstep). Re-exported under their original names so call
+// sites (LayerTimeline.tsx) are untouched.
 
 /** Width of the left layer-outline column (names + toggles), in CSS px. */
-export const OUTLINE_WIDTH_PX = 220;
+export const OUTLINE_WIDTH_PX = LANE_HEADER_WIDTH_PX;
 /** Height of one layer row, in CSS px. */
-export const ROW_HEIGHT_PX = 28;
+export const ROW_HEIGHT_PX = LANE_ROW_HEIGHT_PX;
 /** Height of the frame ruler atop the track area, in CSS px. */
-export const RULER_HEIGHT_PX = 22;
+export const RULER_HEIGHT_PX = LANE_RULER_HEIGHT_PX;
 
 /** A layer's extent on the comp timeline, in comp frames. */
 export interface LayerBarSpan {
@@ -68,8 +80,13 @@ export function barPercent(span: LayerBarSpan, totalFrames: number): BarPercent 
 // e2e mirrors these, so they must have ONE home shared with the component).
 
 /** Width (CSS px) of the trim-handle hit zone at each end of a layer bar. The
- *  body between the two handles is the slide zone. */
-export const BAR_TRIM_HANDLE_PX = 8;
+ *  body between the two handles is the slide zone. (Shared `lane` family —
+ *  timelineSettings.json.) */
+export const BAR_TRIM_HANDLE_PX = LANE_TRIM_HANDLE_PX;
+
+/** Pointer travel (CSS px) past which a press on a bar becomes a drag, not a
+ *  click-to-select. (Shared `lane` family — timelineSettings.json.) */
+export const BAR_DRAG_THRESHOLD_PX = LANE_DRAG_THRESHOLD_PX;
 
 /** Which part of a bar a drag is moving. */
 export type BarDragMode = 'trim-left' | 'trim-right' | 'slide';
