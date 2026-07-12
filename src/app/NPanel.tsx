@@ -78,6 +78,7 @@ import { RevertImportedClipConnector } from './animate/RevertImportedClipConnect
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
+import { ConstraintStackControls } from './ConstraintStackControls';
 import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
 import {
   FMODIFIER_TYPES,
@@ -2928,6 +2929,16 @@ export function NPanel() {
                           modifier's own params (count/offset) still render as the
                           ParamRows below, so selecting a modifier shows both. */}
                       {sectionId === 'modifier' ? <ModifierStackControls nodeId={node.id} /> : null}
+                      {/* #312 — the CONSTRAINT stack UI: the same rows as the modifier
+                          stack (OperatorStackRows), over a different enumerator + op-
+                          builders (a constraint is edge-less, so add/move/remove write
+                          `target`/`order` fields rather than re-wiring). Renders for the
+                          constrained OBJECT and for any constraint in its stack, so
+                          selecting a Track-To shows the stack it belongs to plus its own
+                          params in the ParamRows below. */}
+                      {sectionId === 'constraint' ? (
+                        <ConstraintStackControls nodeId={node.id} />
+                      ) : null}
                       {/* #270 — a channel's per-side extend rules render as one
                           "Extend / Before / After" control at the top of the animate
                           section (Blender-grounded single per-side affordance). The

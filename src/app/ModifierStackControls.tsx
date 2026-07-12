@@ -1,19 +1,29 @@
-// ModifierStackControls — the inspector UI for the geometry OperatorStack (epic
-// #201, #209, V58). The Blender modifier-stack panel: for the selected mesh (the
-// base, or any modifier in its chain) it lists the stack bottom→top, with per-row
-// mute / reorder / delete, and an "+ Add Modifier" button. Every action is an
-// atomic Op chain from operatorStack.ts (dispatchAtomic → save/undo/animate free).
+// ModifierStackControls — the GEOMETRY stack (SOP) binding of the shared stack panel
+// (epic #201, #209, V58; re-cut onto OperatorStackRows in #312). The Blender modifier
+// stack: for the selected mesh (the base, or any modifier in its chain) it lists the
+// stack bottom→top, with per-row mute / reorder / delete, and "+ Add Modifier".
 //
-// It renders for both a selected mesh-producer (Box/Sphere — the base) AND a
-// selected modifier (resolveStackBase walks down to the base), so the same stack
-// shows whichever the user picked. Clicking a row selects that modifier so its
-// params (count/offset) edit in the same section's ParamRows below.
+// This file owns only what is GEOMETRY-SPECIFIC:
+//   - enumeration  : enumerateModifierStack — an edge-wired sub-chain walk.
+//   - op-builders  : operatorStack.ts — add/move/remove are RE-WIRING.
+//   - the unsupported-source banner (a modifier only reshapes a primitive leaf mesh).
+// The rows themselves (mute ●/◌, reorder ▲▼, remove ✕, + Add) are the shared
+// OperatorStackRows, which the CONSTRAINT stack renders too — the presentation is the
+// genuine overlap; the enumeration and the builders are not (a constraint is edge-less,
+// so it can't be a sub-chain).
 //
-// REF: src/app/operatorStack.ts; src/nodes/ArrayModifier.ts;
-//      src/app/NPanel.tsx (renders this in the 'modifier' section); vyapti V58.
+// It renders for both a selected mesh-producer (Box/Sphere — the base) AND a selected
+// modifier (resolveStackBase walks down to the base), so the same stack shows whichever
+// the user picked. Clicking a row selects that modifier so its params (count/offset)
+// edit in the same section's ParamRows below.
+//
+// REF: src/app/OperatorStackRows.tsx (the shared rows); src/app/operatorStack.ts;
+//      src/nodes/ArrayModifier.ts; src/app/NPanel.tsx (renders this in the 'modifier'
+//      section); vyapti V58.
 
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
+import { OperatorStackRows } from './OperatorStackRows';
 import {
   buildAddModifierOps,
   buildMoveModifierOps,
@@ -30,6 +40,12 @@ const ADDABLE: ReadonlyArray<{ type: string; label: string }> = [
   { type: 'MirrorModifier', label: 'Mirror' },
 ];
 
+/** #256 (V38) — a geometry modifier only rewrites a PRIMITIVE leaf mesh
+ *  (`sourceGeometryRef` handles box/sphere/baked); on a glTF / Group / other source it
+ *  passes THROUGH unchanged (async geometry is a documented v1 follow-up). Silently
+ *  doing nothing reads as "the modifier is broken" on an imported asset. */
+const SUPPORTED_BASE_TYPES = new Set(['BoxMesh', 'SphereMesh', 'BakedMesh']);
+
 export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   const state = useDagStore((s) => s.state);
   const selectedNodeId = useSelectionStore((s) => s.selectedNodeId);
@@ -38,12 +54,6 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   const base = resolveStackBase(state, nodeId);
   const stack = enumerateModifierStack(state, base);
 
-  // #256 (V38) — a geometry modifier only rewrites a PRIMITIVE leaf mesh
-  // (`sourceGeometryRef` handles box/sphere/baked); on a glTF / Group / other
-  // source it passes THROUGH unchanged (async geometry is a documented v1
-  // follow-up). Silently doing nothing reads as "the modifier is broken" on an
-  // imported asset. Surface the limitation so the no-op is EXPECTED, not a bug.
-  const SUPPORTED_BASE_TYPES = new Set(['BoxMesh', 'SphereMesh', 'BakedMesh']);
   const baseType = state.nodes[base]?.type;
   const unsupportedSource =
     stack.length > 0 && baseType != null && !SUPPORTED_BASE_TYPES.has(baseType);
@@ -68,97 +78,29 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
     }
   }
 
-  const btn =
-    'rounded border border-border px-1.5 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg';
-
   return (
-    <div data-testid="modifier-stack" className="flex flex-col gap-1 text-xs">
-      {unsupportedSource ? (
-        <p
-          data-testid="modifier-unsupported-source"
-          className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
-        >
-          ⚠ Modifiers only reshape primitive meshes (Box, Sphere). This{' '}
-          {baseType === 'GltfAsset' ? 'imported' : baseType} source passes through unchanged.
-        </p>
-      ) : null}
-      {stack.length === 0 ? (
-        <p className="px-1 py-0.5 text-fg/60">No modifiers.</p>
-      ) : (
-        stack.map((m, i) => {
-          const active = m.nodeId === selectedNodeId;
-          return (
-            <div
-              key={m.nodeId}
-              data-testid={`modifier-row-${m.nodeId}`}
-              className={`flex items-center gap-1 rounded border px-1 py-0.5 ${
-                active ? 'border-accent bg-bg-2' : 'border-border'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => select(m.nodeId)}
-                className={`flex-1 truncate text-left ${m.muted ? 'text-fg/60 line-through' : 'text-fg'}`}
-                title={m.label}
-              >
-                {m.label}
-              </button>
-              <button
-                type="button"
-                data-testid={`modifier-mute-${m.nodeId}`}
-                aria-pressed={m.muted}
-                onClick={() => onMute(m.nodeId)}
-                className={btn}
-                title={m.muted ? 'Un-mute modifier' : 'Mute modifier (bypass)'}
-              >
-                {m.muted ? '◌' : '●'}
-              </button>
-              <button
-                type="button"
-                data-testid={`modifier-up-${m.nodeId}`}
-                onClick={() => onMove(m.nodeId, 'up')}
-                disabled={i === stack.length - 1}
-                className={btn}
-                title="Move up (later in the stack)"
-              >
-                ▲
-              </button>
-              <button
-                type="button"
-                data-testid={`modifier-down-${m.nodeId}`}
-                onClick={() => onMove(m.nodeId, 'down')}
-                disabled={i === 0}
-                className={btn}
-                title="Move down (earlier in the stack)"
-              >
-                ▼
-              </button>
-              <button
-                type="button"
-                data-testid={`modifier-remove-${m.nodeId}`}
-                onClick={() => onRemove(m.nodeId)}
-                className={btn}
-                title="Remove modifier"
-              >
-                ✕
-              </button>
-            </div>
-          );
-        })
-      )}
-      <div className="flex items-center gap-1 pt-0.5">
-        {ADDABLE.map((a) => (
-          <button
-            key={a.type}
-            type="button"
-            data-testid={`modifier-add-${a.type}`}
-            onClick={() => onAdd(a.type)}
-            className="rounded border border-border bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    <OperatorStackRows
+      testIdPrefix="modifier"
+      entries={stack}
+      addable={ADDABLE}
+      selectedNodeId={selectedNodeId}
+      emptyLabel="No modifiers."
+      onSelect={select}
+      onMute={onMute}
+      onMove={onMove}
+      onRemove={onRemove}
+      onAdd={onAdd}
+      banner={
+        unsupportedSource ? (
+          <p
+            data-testid="modifier-unsupported-source"
+            className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
           >
-            + {a.label}
-          </button>
-        ))}
-      </div>
-    </div>
+            ⚠ Modifiers only reshape primitive meshes (Box, Sphere). This{' '}
+            {baseType === 'GltfAsset' ? 'imported' : baseType} source passes through unchanged.
+          </p>
+        ) : null
+      }
+    />
   );
 }

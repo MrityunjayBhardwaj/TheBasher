@@ -53,11 +53,15 @@ export interface ActiveConstraint {
   readonly aimNode: string;
   readonly aimPoint: Vec3;
   readonly up: Vec3;
-  /** The constraint node itself — Phase 2's panel needs to know which node a row
+  /** The constraint node itself — the panel needs to know which node a row
    *  edits/mutes/removes. */
   readonly nodeId: string;
   /** Its position in the stack (already applied by the sort; carried for the UI). */
   readonly order: number;
+  /** Bypassed. Members are ACTIVE-only by default (a muted constraint contributes
+   *  nothing to the fold); the authoring panel asks for muted ones too, so it can
+   *  render a bypassed row and let the user re-enable it. */
+  readonly muted: boolean;
 }
 
 function isVec3(v: unknown): v is Vec3 {
@@ -91,6 +95,11 @@ export function isRelationalPoseNode(node: NodeLike | undefined): boolean {
 export function constraintStackForTarget(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
+  /** Include BYPASSED members. The resolvers want active-only (a muted constraint
+   *  contributes nothing); the authoring panel wants every member, so it can render a
+   *  bypassed row and let the user re-enable it. Both views come from THIS one scan +
+   *  sort, so the order the panel shows is always the order the fold applies. */
+  includeMuted = false,
 ): ActiveConstraint[] {
   if (!nodeId) return [];
   const stack: ActiveConstraint[] = [];
@@ -105,7 +114,8 @@ export function constraintStackForTarget(
       order?: unknown;
     };
     if (p.target !== nodeId) continue;
-    if (p.mute === true) continue;
+    const isMuted = p.mute === true;
+    if (isMuted && !includeMuted) continue;
     stack.push({
       target: nodeId,
       aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
@@ -113,6 +123,7 @@ export function constraintStackForTarget(
       up: isVec3(p.up) ? p.up : [0, 1, 0],
       nodeId: id,
       order: typeof p.order === 'number' ? p.order : 0,
+      muted: isMuted,
     });
   }
   // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).

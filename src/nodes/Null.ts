@@ -36,7 +36,7 @@ export const NullNode: NodeDefinition<NullParams, NullValue> = {
   paramSchema: NullParams,
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['transform'],
+  inspectorSections: ['transform', 'constraint'],
   evaluate(params) {
     return {
       kind: 'Null',

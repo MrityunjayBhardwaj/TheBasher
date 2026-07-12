@@ -99,7 +99,10 @@ describe('C2 — inspectorSections declarations', () => {
 
   it('Group is transform-primary then layout (#222 — a Group is movable as a unit)', () => {
     const snap = snapshotRegistry();
-    expect(snap.Group.inspectorSections).toEqual(['transform', 'layout']);
+    // #312 — a Group has a POSE, so it also carries a constraint stack. The pin's
+    // intent is PRIMACY (transform leads, layout trails), which still holds.
+    expect(snap.Group.inspectorSections).toEqual(['transform', 'constraint', 'layout']);
+    expect(snap.Group.inspectorSections?.[0]).toBe('transform');
   });
 
   it('Scene declares environment + layout (UX #9 — environment is the primary domain)', () => {
@@ -108,9 +111,32 @@ describe('C2 — inspectorSections declarations', () => {
     expect(snap.Scene.inspectorSections?.[0]).toBe('environment');
   });
 
-  it('Transform declares only "transform" (the catalog leader)', () => {
+  it('Transform is transform-primary (the catalog leader)', () => {
     const snap = snapshotRegistry();
-    expect(snap.Transform.inspectorSections).toEqual(['transform']);
+    // #312 — a Transform has a POSE, so it also carries a constraint stack. It remains
+    // the minimal transform-led node (no mesh/material/layout of its own).
+    expect(snap.Transform.inspectorSections).toEqual(['transform', 'constraint']);
+    expect(snap.Transform.inspectorSections?.[0]).toBe('transform');
+  });
+
+  // #312 — the constraint stack is a POSE concern: every posable node (mesh, light,
+  // camera, Group, Transform, Null) declares it, so you select the OBJECT and see its
+  // Constraints panel — the modifier-stack idiom. A node with no pose must NOT.
+  it('every transform-declaring node also declares "constraint"; poseless nodes do not', () => {
+    const snap = snapshotRegistry();
+    for (const [type, def] of Object.entries(snap)) {
+      const sections = def.inspectorSections;
+      if (!sections) continue;
+      if (sections.includes('transform')) {
+        expect(sections, `${type} is posable → must offer constraints`).toContain('constraint');
+      } else if (type !== 'TrackTo') {
+        // TrackTo is itself a constraint — it declares the section so selecting a row
+        // still shows the stack it belongs to.
+        expect(sections, `${type} has no pose → must not offer constraints`).not.toContain(
+          'constraint',
+        );
+      }
+    }
   });
 
   it('legacy character/animation glue nodes intentionally omit inspectorSections (D-08 B raw-fallback)', () => {
