@@ -49,3 +49,6 @@ lerna-debug.log*
 # GPL pattern source — DO NOT ship in MIT repo. Reference checkout only.
 blockbench/
 .planning/
+
+# Ānvīkṣikī — catalogues live in ~/.anvideck (anvi_artifacts); .anvi here is a symlink
+.anvi
