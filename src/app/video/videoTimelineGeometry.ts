@@ -18,6 +18,7 @@ import {
   LANE_ROW_HEIGHT_PX,
   LANE_RULER_HEIGHT_PX,
   LANE_TRIM_HANDLE_PX,
+  LANE_DRAG_THRESHOLD_PX,
 } from '../../timeline/timelineSettings';
 
 // The layout constants are the SHARED `lane` family, single-sourced in
@@ -82,6 +83,10 @@ export function barPercent(span: LayerBarSpan, totalFrames: number): BarPercent 
  *  body between the two handles is the slide zone. (Shared `lane` family —
  *  timelineSettings.json.) */
 export const BAR_TRIM_HANDLE_PX = LANE_TRIM_HANDLE_PX;
+
+/** Pointer travel (CSS px) past which a press on a bar becomes a drag, not a
+ *  click-to-select. (Shared `lane` family — timelineSettings.json.) */
+export const BAR_DRAG_THRESHOLD_PX = LANE_DRAG_THRESHOLD_PX;
 
 /** Which part of a bar a drag is moving. */
 export type BarDragMode = 'trim-left' | 'trim-right' | 'slide';

@@ -38,6 +38,7 @@ import { dispatchRetimeKeyframe, dispatchMutatorFromUI } from '../animate/dispat
 import { buildRemoveEffectOps, buildToggleEffectMuteOp } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
 import {
+  BAR_DRAG_THRESHOLD_PX as DRAG_THRESHOLD_PX,
   BAR_TRIM_HANDLE_PX,
   OUTLINE_WIDTH_PX,
   ROW_HEIGHT_PX,
@@ -55,8 +56,6 @@ import {
 } from './videoTimelineGeometry';
 
 const RULER_TICKS = 4; // → ticks at 0, ¼, ½, ¾, end
-/** Movement (CSS px) past which a press becomes a drag, not a click-to-select. */
-const DRAG_THRESHOLD_PX = 3;
 
 /** A keyframeable scalar property of a layer, shown as a twirl-down dopesheet row.
  *  `paramPath` is the channel target path; `get` reads the authored base from the
