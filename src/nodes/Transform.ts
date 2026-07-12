@@ -27,7 +27,7 @@ export const TransformNode: NodeDefinition<TransformParams, TransformValue> = {
   paramSchema: TransformParams,
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['transform'],
+  inspectorSections: ['transform', 'constraint'],
   evaluate(params, inputs) {
     return {
       kind: 'Transform',

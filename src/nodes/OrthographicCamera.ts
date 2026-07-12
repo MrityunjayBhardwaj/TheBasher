@@ -25,7 +25,7 @@ export const OrthographicCameraNode: NodeDefinition<
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // UX #12 — Camera (lens) primary, Transform secondary (mirrors PerspectiveCamera).
-  inspectorSections: ['camera', 'transform'],
+  inspectorSections: ['camera', 'transform', 'constraint'],
   evaluate(params) {
     return {
       kind: 'OrthographicCamera',

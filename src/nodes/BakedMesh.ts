@@ -96,7 +96,7 @@ export const BakedMeshNode: NodeDefinition<BakedMeshParams, BakedMeshValue> = {
   paramSchema: BakedMeshParams,
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['mesh', 'transform', 'material'],
+  inspectorSections: ['mesh', 'transform', 'constraint', 'material'],
   evaluate(params) {
     return {
       kind: 'BakedMesh',
