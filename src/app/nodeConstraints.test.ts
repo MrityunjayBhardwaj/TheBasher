@@ -84,6 +84,15 @@ describe('nodeConstraints — enumeration', () => {
     expect(constraintTargetSet(state.nodes).has(BOX_ID)).toBe(true);
     expect(constraintTargetSet(state.nodes).size).toBe(1);
   });
+
+  // #311 T1 — a PRE-STACK project (authored with no `order`, exactly as
+  // buildPointTrackTo does) must deserialize to order 0, so it is a single-member
+  // stack in node-table order == the old first-wins scan. No migration needed: the
+  // zod `.default(0)` fills it at addNode. This is the serialize byte-identity pin.
+  it('an order-less TrackTo (pre-stack project) defaults to order 0', () => {
+    const state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
+    expect((state.nodes[TT_ID].params as { order?: unknown }).order).toBe(0);
+  });
 });
 
 describe('resolveConstraintRotation — point target', () => {

@@ -35,8 +35,15 @@ export const TrackToParams = z.object({
   aimPoint: Vec3Schema.default([0, 0, 0]),
   /** Roll reference for the aim basis (default +Y). */
   up: Vec3Schema.default([0, 1, 0]),
-  /** Bypass — a muted constraint contributes nothing (the future OperatorStack). */
+  /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
+  /** Position in the target's ordered constraint stack (low → high, bottom → top).
+   *  A relational operator is EDGE-LESS, so the stack orders by this field rather
+   *  than by a wire — the geometry stack's sub-chain model cannot apply (see
+   *  `operatorStack.ts`: "modifiers are [sub-chains]; constraints aren't"). Mirrors
+   *  `ParamDriver.order`. Default 0 → a pre-stack project is a single-member stack in
+   *  node-table order, byte-identical to the old first-wins scan. */
+  order: z.number().default(0),
 });
 export type TrackToParams = z.infer<typeof TrackToParams>;
 
@@ -61,6 +68,7 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
       aimPoint: params.aimPoint,
       up: params.up,
       mute: params.mute,
+      order: params.order,
     };
   },
 };
