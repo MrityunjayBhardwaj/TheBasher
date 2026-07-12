@@ -87,6 +87,14 @@ import {
   type TimelineView,
 } from './timelineView';
 import { useTimelineViewStore } from './timelineViewStore';
+import {
+  DOPESHEET_ROW_HEIGHT_PX,
+  DOPESHEET_RULER_HEIGHT_PX,
+  DOPESHEET_GUTTER_WIDTH_PX,
+  DOPESHEET_DIAMOND_PX,
+  DOPESHEET_DIAMOND_INSET_PX,
+  DOPESHEET_GUTTER_GLYPH_BOX_PX,
+} from './timelineSettings';
 import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
@@ -151,28 +159,18 @@ const MUTED_ROW_ALPHA = 0.35;
 const GLYPH_OFF = '#4b5157';
 const GLYPH_MUTE_ON = '#e0774d';
 
-/** Frame ruler band height (CSS px) — reze's 17px top ruler. */
-const RULER_H = 17;
-/** Row height (CSS px) — one channel row in the dopesheet. */
-const ROW_HEIGHT_PX = 24;
-/** Diamond box (CSS px) — reze's 45° diamond (~5px half-diagonal). */
-const DIAMOND_PX = 10;
-/** Edge inset (CSS px) reserved each side of the track so a terminal keyframe
- *  lands flush. Baked into frameToX so default-view geometry === keyframeToRect
- *  (the e2e-safety parity invariant — see timelineView.ts). */
-const DIAMOND_INSET_PX = Math.max(4, DIAMOND_PX / 2);
-/** Left gutter (CSS px) for channel labels. reze's gutter is 36px because it
- *  holds value-axis NUMBERS for one object's curves; Basher's dopesheet is
- *  multi-channel and must show readable channel NAMES, so it's wider. The
- *  unified curve/value gutter is reconciled at the unify slice. */
-const LABEL_GUTTER_PX = 84;
-/** Mute/solo glyph hit-box (CSS px) in the label gutter (#263 follow-up). Two
- *  single-char glyphs (M, S) seated at the RIGHT edge of the gutter; the channel
- *  name is truncated to the space left of them. Sized to fit INSIDE the existing
- *  84px gutter — LABEL_GUTTER_PX must NOT change (it is baked into frameToX; every
- *  diamond x + the default-view geometry === keyframeToRect parity invariant
- *  depends on it). */
-const GUTTER_GLYPH_BOX_PX = 13;
+// The dopesheet-family layout metrics are single-sourced in timelineSettings.json
+// (accessor timelineSettings.ts holds the WHY: dense keyframe grid, by design;
+// the gutter is baked into frameToX for the V50 default-view === keyframeToRect
+// parity invariant, so these must NOT change without moving the mirroring e2e in
+// lockstep — the H95 trap). Kept under their local names so the ~40 usages below
+// and the derived glyph offsets are untouched (pixel-identical).
+const RULER_H = DOPESHEET_RULER_HEIGHT_PX;
+const ROW_HEIGHT_PX = DOPESHEET_ROW_HEIGHT_PX;
+const DIAMOND_PX = DOPESHEET_DIAMOND_PX;
+const DIAMOND_INSET_PX = DOPESHEET_DIAMOND_INSET_PX;
+const LABEL_GUTTER_PX = DOPESHEET_GUTTER_WIDTH_PX;
+const GUTTER_GLYPH_BOX_PX = DOPESHEET_GUTTER_GLYPH_BOX_PX;
 const SOLO_GLYPH_X0 = LABEL_GUTTER_PX - GUTTER_GLYPH_BOX_PX; // right-most glyph (71)
 const MUTE_GLYPH_X0 = SOLO_GLYPH_X0 - GUTTER_GLYPH_BOX_PX; // left of solo (58)
 /** Right edge (CSS px) the channel-name text is truncated to, clearing the glyphs. */
