@@ -8,16 +8,17 @@
 // constraint, first freezing the current aim into the authored lookAt so the
 // camera does not jump.
 //
-// This is a CONVENIENCE surface over the constraint stack, not a second constraint
-// system (#317): it reads and edits the TOP (winning) member — the one the aim band's
-// last-writer-wins fold actually obeys — through the SAME `constraintStackForTarget`
-// enumeration the resolvers and the Constraints panel use. It adds a new constraint via
-// the shared top-of-stack rule (`nextConstraintOrder`), reuses the existing node when
-// re-targeting, and removes it on clear (no orphan nodes). A camera may legitimately
-// carry more than one constraint now that the Constraints panel (#312) exists.
+// This is a CONVENIENCE surface over the constraint stack, not a second constraint system
+// (#317). It reads, edits, and clears exactly ONE member: the WINNER — the top of the
+// stack, which is the member the aim band's last-writer-wins fold actually obeys and the
+// viewport renders (`activeConstraintForTarget`, the same enumeration the resolvers and
+// the Constraints panel use). New aims land on top via the shared `nextConstraintOrder`.
+// A camera may legitimately carry several constraints now that the Constraints panel
+// (#312) exists; managing the rest of the stack is that panel's job, not this dropdown's —
+// which is also why a MUTED member is left strictly alone here.
 //
-// REF: src/app/nodeConstraints.ts (activeConstraintForTarget / constraintStackForTarget /
-//      nextConstraintOrder / resolveTrackToTarget),
+// REF: src/app/nodeConstraints.ts (activeConstraintForTarget / nextConstraintOrder /
+//      resolveTrackToTarget),
 //      src/app/activeCamera.ts (lookAt derivation), issue #204 / vyapti V60.
 
 import { useMemo } from 'react';
@@ -25,7 +26,6 @@ import { useDagStore } from '../core/dag/store';
 import type { Op } from '../core/dag/types';
 import {
   activeConstraintForTarget,
-  constraintStackForTarget,
   isRelationalPoseNode,
   nextConstraintOrder,
   resolveTrackToTarget,
@@ -80,12 +80,16 @@ export function CameraLookAtTarget({ nodeId }: { nodeId: string }) {
     () => activeConstraintForTarget(nodes, nodeId)?.aimNode ?? '',
     [nodes, nodeId],
   );
-  // The constraint this dropdown edits/removes. Muted members included, so a bypassed
-  // aim is re-used (and un-muted below) rather than orphaned behind a second node.
-  const existingTTId = useMemo(() => {
-    const stack = constraintStackForTarget(nodes, nodeId, true);
-    return stack[stack.length - 1]?.nodeId;
-  }, [nodes, nodeId]);
+  // The constraint this dropdown edits/removes — THE SAME member it displays. Anything
+  // else is incoherent: reading the winner while writing a different node means "clear"
+  // could delete a bypassed constraint and leave the camera still aimed by an active one
+  // below it. So: operate on the winner, or (when nothing is aiming) create a new one on
+  // top. A MUTED constraint is deliberately left alone — the user bypassed it in the
+  // Constraints panel, and this dropdown must not silently resurrect it.
+  const existingTTId = useMemo(
+    () => activeConstraintForTarget(nodes, nodeId)?.nodeId,
+    [nodes, nodeId],
+  );
 
   const onChange = (value: string) => {
     const state = useDagStore.getState().state;
@@ -102,10 +106,7 @@ export function CameraLookAtTarget({ nodeId }: { nodeId: string }) {
     }
     if (existingTTId) {
       dispatchAtomic(
-        [
-          { type: 'setParam', nodeId: existingTTId, paramPath: 'aimNode', value },
-          { type: 'setParam', nodeId: existingTTId, paramPath: 'mute', value: false },
-        ],
+        [{ type: 'setParam', nodeId: existingTTId, paramPath: 'aimNode', value }],
         'user',
         'set look-at target',
       );
