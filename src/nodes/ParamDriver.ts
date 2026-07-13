@@ -66,8 +66,19 @@ export const ParamDriverParams = z.object({
    *  Inc 2 authors only 'replace'; the field exists so a driver + channel stack folds
    *  deterministically (V88 D2/D3). */
   blendMode: z.enum(CHANNEL_BLEND_MODES).default('replace'),
-  /** Bottom→top fold position among all overlays on the band (V88 D2). Default 0. */
+  /** Bottom→top fold position among all overlays on the band (V88 D2). Default 0.
+   *  #315 — AUTHORABLE at last: the driver stack (`driverStackForTarget`) enumerates by
+   *  this field and the two fold seams (overlayChannels / resolveEvaluatedParam) already
+   *  stable-sort by it. Before the stack every creation site hardcoded 0, so the stable
+   *  sort degenerated to node-table order — the arbitrary-order bug. Default 0 keeps a
+   *  pre-stack project byte-identical (a no-op sort over an all-zero corpus). */
   order: z.number().default(0),
+  /** #315 — Bypass. A muted driver contributes NOTHING to its band: it is dropped at
+   *  ENUMERATION (so a bypassed stateful driver is never even replayed), and the flag is
+   *  carried on the emitted channel value so both fold seams' existing mute gates
+   *  (overlayChannels.ts:58) hold it out too. Mirrors `TrackTo.mute` — the pose twin.
+   *  Default false → the pre-#315 channel-value shape is unchanged. */
+  mute: z.boolean().default(false),
   /** #294 (Inc 3) — the SECOND source road: instead of a wired compute output on
    *  `in`, the driver's value pulls directly from a promoted spare param on another
    *  node (the Houdini `ch("../ctrl/knob")` pull — GT §1, "the driver binding itself,
@@ -123,7 +134,17 @@ export function makeParamDriverChannelValueFn(
     name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
     target: params.target,
     paramPath: params.paramPath,
-    mute: false,
+    // #315 — the driver's OWN bypass flag, not a hardcoded false. `?? false` because a
+    // params object built by hand (not zod-parsed) has no `mute`, and this field is a
+    // GATE: an `undefined` here must stay falsy, never leak into the fold as a
+    // truthiness accident. Same defensiveness overlayChannels applies to blendMode/weight.
+    //
+    // NOTE this flag is BELT, not braces: the real bypass happens at ENUMERATION
+    // (paramDrivers.driverStackForTarget drops muted members) — which is what makes mute
+    // hold on BOTH roads. The render fold gates on `ch.mute` (overlayChannels.ts:58) but
+    // the READ fold (resolveEvaluatedParam) does NOT, so relying on the fold gates alone
+    // would mute the viewport and not the read side (an H40 render≠read split).
+    mute: params.mute ?? false,
     weight: 1,
     blendMode: params.blendMode,
     order: params.order,
@@ -145,7 +166,7 @@ export function makeParamDriverVec3ChannelValueFn(
     name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
     target: params.target,
     paramPath: params.paramPath,
-    mute: false,
+    mute: params.mute ?? false, // #315 — as the scalar twin above.
     weight: 1,
     blendMode: params.blendMode,
     order: params.order,

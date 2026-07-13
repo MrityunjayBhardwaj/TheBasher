@@ -50,8 +50,21 @@ interface NodeLike {
 interface DriverParams {
   target?: unknown;
   paramPath?: unknown;
+  order?: unknown;
+  mute?: unknown;
   sourceSpare?: { node?: unknown; key?: unknown };
   // `sourceTransform` is parsed by the shared `transformSourceOf`, not here.
+}
+
+/** A driver's fold position (#315). Absent/non-numeric → 0, the pre-stack default. */
+function driverOrderOf(node: NodeLike): number {
+  const o = ((node.params ?? {}) as DriverParams).order;
+  return typeof o === 'number' ? o : 0;
+}
+
+/** Bypassed (#315). Mirrors `TrackTo.mute` — the pose twin of this species. */
+export function isDriverMuted(node: NodeLike): boolean {
+  return ((node.params ?? {}) as DriverParams).mute === true;
 }
 
 /** The spare-param source ref of a driver, if it pulls from a promoted spare (the
@@ -92,6 +105,48 @@ export function driverNodesForTarget<T extends NodeLike>(
     out.push(node);
   }
   return out;
+}
+
+/**
+ * The ordered driver STACK for `targetId` — the bound ParamDrivers overlaying it,
+ * stable-sorted bottom → top by `order`, optionally narrowed to ONE param band and
+ * optionally including bypassed members (#315).
+ *
+ * THE ONE SCAN + SORT. The fold seam (`driverChannelValuesForTarget` below) takes the
+ * ACTIVE members of every band; the Drivers panel (#316) takes ONE band including its
+ * muted members, so it can render a bypassed row the user can re-enable. Both views come
+ * from HERE, so the order the panel shows is always the order the fold applies — the
+ * drift a second, panel-local scan would introduce is impossible by construction. The
+ * pose twin is `constraintStackForTarget` (nodeConstraints.ts); the contrast with the
+ * SOP stack (`operatorStack.ts`, a wired sub-chain) is the species difference: a driver
+ * is EDGE-LESS, so its stack orders by a FIELD, not by a wire.
+ *
+ * BYTE-IDENTITY PIN: `Array.prototype.sort` is stable (ES2019+), and every project
+ * authored before this stack has `order === 0` on every driver — so the sort is a no-op
+ * over `Object.values` table order, and the fold receives exactly the array it did
+ * pre-#315. (That all-zero corpus under a stable sort IS the bug being fixed: with no
+ * authorable order, "sorted" degenerated to arbitrary node-table order. The sort was
+ * never missing — the ORDER was.)
+ */
+export function driverStackForTarget<T extends NodeLike>(
+  nodes: Readonly<Record<string, T>>,
+  targetId: string,
+  /** Narrow to one `(target, paramPath)` band. Undefined = every band on the target
+   *  (what the fold wants — it groups by paramPath downstream anyway). */
+  paramPath?: string,
+  /** Include BYPASSED members. The fold wants active-only (a muted driver contributes
+   *  nothing, and skipping it here means a bypassed STATEFUL driver is never even
+   *  replayed); the panel wants every member. */
+  includeMuted = false,
+): T[] {
+  const stack = driverNodesForTarget(nodes, targetId).filter((node) => {
+    if (paramPath !== undefined && ((node.params ?? {}) as DriverParams).paramPath !== paramPath) {
+      return false;
+    }
+    return includeMuted || !isDriverMuted(node);
+  });
+  // Stable → equal `order` keeps node-table order (the pre-stack fold order).
+  return stack.sort((a, b) => driverOrderOf(a) - driverOrderOf(b));
 }
 
 /**
@@ -206,6 +261,11 @@ export function driverTargetSet(nodes: Readonly<Record<string, NodeLike>>): Set<
   const targets = new Set<string>();
   for (const node of Object.values(nodes)) {
     if (!isBoundDriver(node)) continue;
+    // #315 — a BYPASSED driver must not pull its target into the overlay mount: a node
+    // whose only driver is muted has no driven param, so it renders its base value on
+    // the plain path (the mirror of `constraintTargetSet`'s mute guard). Re-enabling is
+    // a setParam → the set is recomputed → the target mounts again.
+    if (isDriverMuted(node)) continue;
     targets.add(((node.params ?? {}) as DriverParams).target as string);
   }
   return targets;
@@ -285,7 +345,12 @@ export function driverChannelValuesForTarget(
   cache?: EvaluatorCache,
 ): KeyframeChannelValue[] {
   const out: KeyframeChannelValue[] = [];
-  for (const node of driverNodesForTarget(state.nodes, targetId)) {
+  // #315 — the ordered stack, ACTIVE members only. A muted driver is dropped HERE, at
+  // enumeration, not merely gated at the fold: skipping it means a bypassed STATEFUL
+  // driver (a Lag/Solver) is never replayed at all. Both fold seams sort by `order`
+  // again downstream, so this sort is about the ENUMERATION being deterministic — what
+  // the panel lists is what the fold folds.
+  for (const node of driverStackForTarget(state.nodes, targetId)) {
     try {
       const transformVec = transformVecSourceOf(node);
       if (transformVec) {

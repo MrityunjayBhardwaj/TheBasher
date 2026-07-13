@@ -15,9 +15,12 @@ import {
   driverChannelValuesForTarget,
   driverNodesForTarget,
   driverParamDeps,
+  driverStackForTarget,
   driverSubscriptionNodesForTarget,
   driverTargetSet,
+  isDriverMuted,
 } from './paramDrivers';
+import { overlayChannels } from '../nodes/overlayChannels';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 const BOX_ID = 'n_box';
@@ -117,6 +120,138 @@ describe('paramDrivers — the PULL rail read side', () => {
     } as Op).next;
     expect(driverTargetSet(state.nodes).size).toBe(0);
     expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))).toBeNull();
+  });
+});
+
+// #315 — the ordered driver STACK + mute. Before this, `order` was declared but never
+// authorable (every creation site hardcoded 0), so the fold seams' stable sort
+// degenerated to arbitrary node-table order; and `mute` did not exist at all. These
+// pin BOTH: the winner is the TOP of the stack (deterministic, and it FLIPS when the
+// order flips), and a bypassed driver contributes nothing — on the read road AND the
+// render road, which must agree (H40).
+describe('paramDrivers — the ordered driver stack + mute (#315)', () => {
+  const CLAMP_B_ID = 'n_clamp_b';
+  const DRV_B_ID = 'n_drv_b';
+
+  /** Two drivers on the SAME (target, paramPath) band — the case that used to fold in
+   *  arbitrary order. A: value 0.2 @ orderA. B: value 0.8 @ orderB. */
+  function buildTwoDriverState(orderA: number, orderB: number): DagState {
+    let state = buildDrivenState(0.2); // CLAMP_ID → DRV_ID @ order 0
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: DRV_ID,
+      paramPath: 'order',
+      value: orderA,
+    } as Op).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: CLAMP_B_ID,
+      nodeType: 'Clamp',
+      params: { min: 0.8, max: 1 },
+    } as Op).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: DRV_B_ID,
+      nodeType: 'ParamDriver',
+      params: { target: BOX_ID, paramPath: PARAM, blendMode: 'replace', order: orderB },
+    } as Op).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: CLAMP_B_ID, socket: 'out' },
+      to: { node: DRV_B_ID, socket: 'in' },
+    } as Op).next;
+    return state;
+  }
+
+  const muteOp = (nodeId: string, mute: boolean): Op =>
+    ({ type: 'setParam', nodeId, paramPath: 'mute', value: mute }) as Op;
+
+  it('enumerates bottom → top by `order` — and the enumeration IS the fold order', () => {
+    const state = buildTwoDriverState(0, 1);
+    // The ONE scan+sort (what the #316 panel will list) — bottom first.
+    expect(driverStackForTarget(state.nodes, BOX_ID).map((n) => n.id)).toEqual([DRV_ID, DRV_B_ID]);
+    // …and the channel values the fold receives arrive in that same order. If these
+    // two ever disagree, the panel's rows would lie about what actually renders.
+    expect(driverChannelValuesForTarget(state, BOX_ID, ctxAt(0)).map((c) => c.order)).toEqual([
+      0, 1,
+    ]);
+  });
+
+  it('the TOP of the stack wins the band — on the READ road', () => {
+    // B (0.8) on top → B wins.
+    expect(
+      resolveEvaluatedParam(buildTwoDriverState(0, 1), BOX_ID, PARAM, ctxAt(0))?.value,
+    ).toBeCloseTo(0.8);
+    // Flip the order → A (0.2) on top → the winner FLIPS. This is the whole fix: the
+    // outcome is now a function of authored order, not of node-table key order.
+    expect(
+      resolveEvaluatedParam(buildTwoDriverState(1, 0), BOX_ID, PARAM, ctxAt(0))?.value,
+    ).toBeCloseTo(0.2);
+  });
+
+  it('the RENDER road folds to the same winner (render == read, H40)', () => {
+    const state = buildTwoDriverState(0, 1);
+    const chans = driverChannelValuesForTarget(state, BOX_ID, ctxAt(0));
+    // The render seam folds these through overlayChannels — the same primitive
+    // SceneFromDAG uses. It must land where resolveEvaluatedParam landed.
+    const folded = overlayChannels({ material: { metalness: 0 } }, chans, 1, 0);
+    expect(folded?.material.metalness).toBeCloseTo(0.8);
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))?.value).toBeCloseTo(0.8);
+  });
+
+  it('MUTING the top driver hands the band to the one below it', () => {
+    let state = buildTwoDriverState(0, 1);
+    state = applyOp(state, muteOp(DRV_B_ID, true)).next;
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))?.value).toBeCloseTo(0.2);
+    // Dropped at ENUMERATION — a bypassed driver is never even evaluated.
+    expect(driverStackForTarget(state.nodes, BOX_ID).map((n) => n.id)).toEqual([DRV_ID]);
+    expect(driverChannelValuesForTarget(state, BOX_ID, ctxAt(0))).toHaveLength(1);
+    // Un-mute → it comes back and wins again (the flag is not one-way).
+    state = applyOp(state, muteOp(DRV_B_ID, false)).next;
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))?.value).toBeCloseTo(0.8);
+  });
+
+  it('muting EVERY driver falls the param back to its base (and unmounts the overlay)', () => {
+    let state = buildTwoDriverState(0, 1);
+    state = applyOp(state, muteOp(DRV_ID, true)).next;
+    state = applyOp(state, muteOp(DRV_B_ID, true)).next;
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))).toBeNull(); // base fallback
+    expect(driverTargetSet(state.nodes).has(BOX_ID)).toBe(false); // no overlay mount
+  });
+
+  it('the panel view keeps muted members — so a bypassed row can be re-enabled', () => {
+    let state = buildTwoDriverState(0, 1);
+    state = applyOp(state, muteOp(DRV_B_ID, true)).next;
+    const rows = driverStackForTarget(state.nodes, BOX_ID, PARAM, true);
+    expect(rows.map((n) => n.id)).toEqual([DRV_ID, DRV_B_ID]);
+    expect(rows.map((n) => isDriverMuted(n))).toEqual([false, true]);
+  });
+
+  it('narrows to ONE param band — a driver on another param is a different stack', () => {
+    let state = buildTwoDriverState(0, 1);
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: DRV_B_ID,
+      paramPath: 'paramPath',
+      value: 'material.roughness',
+    } as Op).next;
+    expect(driverStackForTarget(state.nodes, BOX_ID, PARAM).map((n) => n.id)).toEqual([DRV_ID]);
+    expect(
+      driverStackForTarget(state.nodes, BOX_ID, 'material.roughness').map((n) => n.id),
+    ).toEqual([DRV_B_ID]);
+    // Different bands don't contend: each keeps its own value.
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))?.value).toBeCloseTo(0.2);
+    expect(resolveEvaluatedParam(state, BOX_ID, 'material.roughness', ctxAt(0))?.value).toBeCloseTo(
+      0.8,
+    );
+  });
+
+  it('BYTE-IDENTITY: a single all-zero-order driver is untouched by the stack', () => {
+    // The pre-#315 corpus: one driver, order 0, no mute. Stable sort over it is a no-op.
+    const state = buildDrivenState(0.7);
+    expect(driverStackForTarget(state.nodes, BOX_ID).map((n) => n.id)).toEqual([DRV_ID]);
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0))?.value).toBeCloseTo(0.7);
+    expect(driverChannelValuesForTarget(state, BOX_ID, ctxAt(0))[0].mute).toBe(false);
   });
 });
 
