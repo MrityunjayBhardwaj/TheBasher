@@ -483,3 +483,51 @@ describe('driverBind — the Vector3 road (vec target drive)', () => {
     expect(numOpts.some((o) => o.kind === 'spare')).toBe(true);
   });
 });
+
+// #315 — a bind lands the new driver on TOP of its band. Before this, every road wrote
+// a hardcoded `order: 0`, so a SECOND driver on one band tied with the first and the
+// fold's stable sort fell back to node-table (hash) order — unauthored and arbitrary.
+describe('buildBindDriverOps — the new driver lands on top of its band (#315)', () => {
+  const driverOrderIn = (ops: Op[]): number | undefined =>
+    (
+      ops.find((o) => o.type === 'addNode' && o.nodeType === 'ParamDriver') as
+        | { params?: { order?: number } }
+        | undefined
+    )?.params?.order;
+
+  it('the FIRST driver on a band still gets order 0 (byte-identical)', () => {
+    const state = withNodes(addClamp('c1'));
+    const r = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: PARAM,
+      source: outSource('c1'),
+      driverId: 'd1',
+    });
+    expect(r.ok).toBe(true);
+    expect(driverOrderIn(r.ops!)).toBe(0);
+  });
+
+  it('a SECOND driver on the SAME band lands ABOVE it — no tie, no hash order', () => {
+    const state = withNodes(addClamp('c1'), addClamp('c2'), addDriver('d1', BOX_ID, PARAM));
+    const r = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: PARAM,
+      source: outSource('c2'),
+      driverId: 'd2',
+    });
+    expect(r.ok).toBe(true);
+    expect(driverOrderIn(r.ops!)).toBe(1); // the existing d1 is at 0
+  });
+
+  it('a driver on a DIFFERENT band of the same target starts its own stack at 0', () => {
+    const state = withNodes(addClamp('c1'), addClamp('c2'), addDriver('d1', BOX_ID, PARAM));
+    const r = buildBindDriverOps(state, {
+      targetId: BOX_ID,
+      paramPath: 'material.roughness', // a different band — does not contend with d1
+      source: outSource('c2'),
+      driverId: 'd2',
+    });
+    expect(r.ok).toBe(true);
+    expect(driverOrderIn(r.ops!)).toBe(0);
+  });
+});

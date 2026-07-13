@@ -18,7 +18,7 @@ import type { DagState } from '../core/dag/state';
 import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
-import { driverNodesForTarget, driverParamDeps } from './paramDrivers';
+import { driverNodesForTarget, driverParamDeps, nextDriverOrder } from './paramDrivers';
 import { TRANSFORM_CHANNELS, type TransformChannel } from '../nodes/ParamDriver';
 
 /**
@@ -94,6 +94,11 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
   if (wouldCreateCycle(state, srcNode, targetId, 32, driverParamDeps(state.nodes))) {
     return { ok: false, reason: 'binding would create a driver cycle' };
   }
+  // #315 — land the new driver on TOP of whatever already drives this band, instead of
+  // the hardcoded 0 every road used to write. An empty band → 0 (byte-identical); a
+  // SECOND driver on the band → 1, so the two no longer tie and fall back to node-table
+  // order. The panel (#316) reorders from here.
+  const order = nextDriverOrder(state.nodes, targetId, paramPath);
   if (source.kind === 'spare') {
     // The `ch()` road — one edge-less node carrying the spare ref; no `connect`. Its
     // value is resolved in the paramDrivers seam (readBaseParam), not through `in`.
@@ -108,7 +113,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
             target: targetId,
             paramPath,
             blendMode: 'replace',
-            order: 0,
+            order,
             sourceSpare: { node: source.node, key: source.key },
           },
         },
@@ -129,7 +134,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
             target: targetId,
             paramPath,
             blendMode: 'replace',
-            order: 0,
+            order,
             sourceTransform: {
               node: source.node,
               channel: source.channel,
@@ -154,7 +159,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
             target: targetId,
             paramPath,
             blendMode: 'replace',
-            order: 0,
+            order,
             sourceTransformVec: { node: source.node },
           },
         },
@@ -174,7 +179,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
       type: 'addNode',
       nodeId: driverId,
       nodeType: 'ParamDriver',
-      params: { target: targetId, paramPath, blendMode: 'replace', order: 0 },
+      params: { target: targetId, paramPath, blendMode: 'replace', order },
     },
     {
       type: 'connect',

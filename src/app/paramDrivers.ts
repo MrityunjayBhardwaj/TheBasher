@@ -150,6 +150,29 @@ export function driverStackForTarget<T extends NodeLike>(
 }
 
 /**
+ * The `order` a NEW driver on `(targetId, paramPath)` should take: one above the current
+ * top of that band (#315). The driver twin of `buildAddConstraintOps`' `topOrder + 1`.
+ *
+ * This is what makes the stack's order actually AUTHORED rather than merely authorable.
+ * Every bind site hardcoded 0, so a second driver on a band tied with the first and the
+ * stable sort fell back to `Object.values` key order — the arbitrary-order bug. Newest
+ * now lands on top, deterministically.
+ *
+ * BYTE-IDENTITY: an EMPTY band → `-1 + 1 === 0`, exactly the constant the sites used to
+ * hardcode. The single-driver case (nearly all of them) is unchanged; only the 2nd+
+ * driver on one band — the broken case — gets a new value. Counts muted members too, so
+ * bypassing a driver doesn't make the next bind collide with it.
+ */
+export function nextDriverOrder(
+  nodes: Readonly<Record<string, NodeLike>>,
+  targetId: string,
+  paramPath: string,
+): number {
+  const band = driverStackForTarget(nodes, targetId, paramPath, true);
+  return band.length === 0 ? 0 : driverOrderOf(band[band.length - 1]) + 1;
+}
+
+/**
  * The render-subscription node set for `targetId`'s drivers: each bound ParamDriver
  * PLUS its transitive input-edge closure (the compute nodes feeding `in`). A render
  * memo keyed off this array (shallow) rebuilds the driven value only when the driver
