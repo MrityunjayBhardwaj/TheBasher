@@ -93,6 +93,16 @@ test('the Drivers panel drives the stack: order / mute / remove', async ({ page 
   // TOP of the band wins.
   await expect.poll(async () => await metalness(page)).toBeCloseTo(0.8, 1);
 
+  // SELECTING a row must KEEP the panel (the driver resolves back to its target) — the
+  // Track-To idiom. If ParamDriver didn't declare the 'driver' section, the stack would
+  // vanish the instant you clicked a row in it, which would make the panel unusable.
+  await page.getByTestId('driver-row-d_b').getByRole('button', { name: 'c_b' }).click();
+  await expect(page.getByTestId(`driver-band-${METAL}`)).toBeVisible();
+  await expect(page.getByTestId('driver-row-d_b')).toBeVisible();
+  // Re-select the object for the rest of the run.
+  await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select('n_box'));
+  await expect(page.getByTestId(`driver-band-${METAL}`)).toBeVisible();
+
   // REORDER — lift the bottom driver above the top one. The fold winner must follow.
   await page.getByTestId('driver-up-d_a').click();
   await expect.poll(async () => await metalness(page)).toBeCloseTo(0.2, 1);

@@ -152,6 +152,12 @@ export function ParamDriverBind({
     setPicking(false);
   };
 
+  // Unbind clears the WHOLE band — every driver on this param, not just the one the chip
+  // above happens to name. That is deliberate, and the two surfaces ask different questions
+  // (#316): this row is param-level ("is this param driven?" → ✕ means "stop driving it"),
+  // while the Drivers panel is driver-level (remove ONE member and the rest of the stack
+  // keeps writing). Removing only the top driver here would silently leave the param still
+  // driven by the one beneath it — an ✕ that doesn't clear is worse than one that clears all.
   const unbind = () => {
     const state = useDagStore.getState().state;
     const ops = buildUnbindDriverOps(state, nodeId, paramPath);
