@@ -101,7 +101,8 @@ describe('C2 — inspectorSections declarations', () => {
     const snap = snapshotRegistry();
     // #312 — a Group has a POSE, so it also carries a constraint stack. The pin's
     // intent is PRIMACY (transform leads, layout trails), which still holds.
-    expect(snap.Group.inspectorSections).toEqual(['transform', 'constraint', 'layout']);
+    // #316 — and its params are drivable, so it carries a Drivers stack too.
+    expect(snap.Group.inspectorSections).toEqual(['transform', 'constraint', 'driver', 'layout']);
     expect(snap.Group.inspectorSections?.[0]).toBe('transform');
   });
 
@@ -115,8 +116,32 @@ describe('C2 — inspectorSections declarations', () => {
     const snap = snapshotRegistry();
     // #312 — a Transform has a POSE, so it also carries a constraint stack. It remains
     // the minimal transform-led node (no mesh/material/layout of its own).
-    expect(snap.Transform.inspectorSections).toEqual(['transform', 'constraint']);
+    // #316 — plus the Drivers stack (the param half of the same relational species).
+    expect(snap.Transform.inspectorSections).toEqual(['transform', 'constraint', 'driver']);
     expect(snap.Transform.inspectorSections?.[0]).toBe('transform');
+  });
+
+  // #316 — the DRIVER stack is the PARAM half of the SAME relational species the
+  // constraint stack covers for POSE ([[V98]]). The rule that keeps the two halves from
+  // drifting: anything CONSTRAINABLE is also DRIVABLE — if you can pose it, you can drive
+  // its params, and you must be able to SEE the driver stack that writes them. A new node
+  // type that declares 'constraint' and forgets 'driver' would silently ship with an
+  // invisible, unbypassable driver stack — exactly the hole #315/#316 exist to close.
+  it('constrainable ⟹ drivable: every "constraint" node also declares "driver"', () => {
+    const snap = snapshotRegistry();
+    for (const [type, def] of Object.entries(snap)) {
+      const sections = def.inspectorSections;
+      if (!sections?.includes('constraint')) continue;
+      expect(sections, `${type} is constrainable → must also offer drivers`).toContain('driver');
+    }
+  });
+
+  // The ParamDriver declares 'driver' WITHOUT a pose — selecting a driver row must keep
+  // its own stack on screen (the panel resolves a selected driver back to its target),
+  // exactly as a TrackTo does for the constraint stack.
+  it('ParamDriver declares "driver" so selecting a row keeps the panel', () => {
+    const snap = snapshotRegistry();
+    expect(snap.ParamDriver.inspectorSections).toEqual(['driver']);
   });
 
   // #312 — the constraint stack is a POSE concern: every posable node (mesh, light,
@@ -129,7 +154,7 @@ describe('C2 — inspectorSections declarations', () => {
       if (!sections) continue;
       if (sections.includes('transform')) {
         expect(sections, `${type} is posable → must offer constraints`).toContain('constraint');
-      } else if (type !== 'TrackTo') {
+      } else if (type !== 'TrackTo' && type !== 'ParamDriver') {
         // TrackTo is itself a constraint — it declares the section so selecting a row
         // still shows the stack it belongs to.
         expect(sections, `${type} has no pose → must not offer constraints`).not.toContain(

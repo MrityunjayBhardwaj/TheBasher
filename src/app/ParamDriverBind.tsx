@@ -25,7 +25,7 @@ import {
   type DriverRemap,
   type DriverSource,
 } from './driverBind';
-import { driverNodesForTarget } from './paramDrivers';
+import { driverStackForTarget } from './paramDrivers';
 import { buildSpringOps } from './solverBind';
 
 /** The transform-channel source of a bound driver (#296), if any. A transform driver
@@ -63,12 +63,19 @@ export function ParamDriverBind({
   // The ParamDriver bound to THIS (target, param), if any. The node ref is identity-
   // stable across unrelated edits (immutable Ops), so default equality re-renders this
   // control ONLY when the binding actually changes.
+  // #316 — the TOP of this param's driver band: the member the fold applies LAST, i.e. the
+  // one whose value the param actually shows. This used to be an unsorted first match over
+  // the node table, so once a param carried two drivers the chip described an ARBITRARY one
+  // — the same defect the camera look-at dropdown had on the pose side (#317). The band is
+  // asked for through the shared enumeration, so what this chip names is what the fold
+  // resolves. Muted members are included: a bypassed driver is still THIS param's binding,
+  // and the chip must keep showing it (with the Drivers panel offering the un-mute).
   const boundDriver = useStoreWithEqualityFn(
     useDagStore,
-    (s) =>
-      driverNodesForTarget(s.state.nodes, nodeId).find(
-        (d) => (d.params as { paramPath?: unknown }).paramPath === paramPath,
-      ) ?? null,
+    (s) => {
+      const band = driverStackForTarget(s.state.nodes, nodeId, paramPath, true);
+      return band[band.length - 1] ?? null;
+    },
     Object.is,
   );
   const [picking, setPicking] = useState(false);
@@ -145,6 +152,12 @@ export function ParamDriverBind({
     setPicking(false);
   };
 
+  // Unbind clears the WHOLE band — every driver on this param, not just the one the chip
+  // above happens to name. That is deliberate, and the two surfaces ask different questions
+  // (#316): this row is param-level ("is this param driven?" → ✕ means "stop driving it"),
+  // while the Drivers panel is driver-level (remove ONE member and the rest of the stack
+  // keeps writing). Removing only the top driver here would silently leave the param still
+  // driven by the one beneath it — an ✕ that doesn't clear is worse than one that clears all.
   const unbind = () => {
     const state = useDagStore.getState().state;
     const ops = buildUnbindDriverOps(state, nodeId, paramPath);

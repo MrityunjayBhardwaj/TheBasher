@@ -46,6 +46,8 @@ describe('SECTION_IDS', () => {
       'channel',
       // Operator substrate — CHOP/constraints (epic #201, V58).
       'constraint',
+      // Operator substrate — CHOP/drivers (#316) — the PARAM half of the same species.
+      'driver',
       // Operator substrate — SOP/modifiers (epic #201, #209, V58).
       'modifier',
       // Operator substrate — video effects (epic #235, V58 lift to Image).

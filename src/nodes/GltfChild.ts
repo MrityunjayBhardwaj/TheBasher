@@ -89,7 +89,7 @@ export const GltfChildNode: NodeDefinition<GltfChildParams, GltfChildValue> = {
   // 'material' hosts a READ-ONLY readout of this child's embedded glTF materials
   // (UX #8) — the child owns no material PARAMS, so the section renders only the
   // GltfMaterialReadout (NPanel), not editable rows. Editing is via MaterialOverride.
-  inspectorSections: ['transform', 'constraint', 'material'],
+  inspectorSections: ['transform', 'constraint', 'driver', 'material'],
   evaluate(params): GltfChildValue {
     return {
       kind: 'GltfChild',

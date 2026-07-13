@@ -105,7 +105,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
     transformClip: { type: 'TransformClip', cardinality: 'single' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['mesh', 'transform', 'constraint', 'material'],
+  inspectorSections: ['mesh', 'transform', 'constraint', 'driver', 'material'],
   evaluate(params, inputs: ResolvedInputs): GltfAssetValue {
     return {
       kind: 'GltfAsset',

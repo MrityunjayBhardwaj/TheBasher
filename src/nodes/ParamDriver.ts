@@ -198,6 +198,11 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
   pure: true,
   cost: 'cheap',
   paramSchema: ParamDriverParams,
+  // #316 — selecting a driver row in the Drivers panel must keep that panel on screen
+  // (the panel resolves a selected driver back to its `target`), exactly as selecting a
+  // Track-To keeps the Constraints panel. Without this the stack would vanish the moment
+  // you clicked a row in it.
+  inspectorSections: ['driver'],
   // Two wired source roads, discriminated by the target param's type: `in` (a scalar
   // compute output) drives a Number param; `inVec` (a Vector3 compute output) drives a
   // Vector3 param (a position / aim). A bind wires exactly one; evaluate picks by which
