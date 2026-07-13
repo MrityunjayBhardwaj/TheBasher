@@ -22,6 +22,7 @@ import type { Node } from '../core/dag/types';
 import type { Op } from '../core/dag/types';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveActiveRigNode } from './resolveRigLightSources';
+import { constraintStackForTarget } from './nodeConstraints';
 
 type Vec3 = [number, number, number];
 
@@ -94,10 +95,11 @@ function legacyStudioLightsOnScene(state: DagState): string[] {
   for (const ref of refs) {
     const n = state.nodes[ref.node];
     if (n?.type !== 'AreaLight') continue;
-    // A Track-To targets it → it's a rig light (studioLightRig discipline).
-    const aimed = Object.values(state.nodes).some(
-      (t) => t.type === 'TrackTo' && (t.params as { target?: unknown }).target === ref.node,
-    );
+    // A pose constraint targets it → it's a rig light (studioLightRig discipline).
+    // #317 — asked through the SHARED stack enumeration rather than a raw
+    // `type === 'TrackTo'` scan. Muted members count: a bypassed aim still marks the
+    // light as rig-authored (and the raw scan it replaces counted them too).
+    const aimed = constraintStackForTarget(state.nodes, ref.node, true).length > 0;
     if (aimed) out.push(ref.node);
   }
   return out;
@@ -208,16 +210,19 @@ function rigLightIds(state: DagState, rigId: string): string[] {
   return refs.map((r) => r.node);
 }
 
-/** The Track-To node ids aiming any of `lightIds` (edge-less, removable directly). */
-function trackTosForLights(state: DagState, lightIds: readonly string[]): string[] {
-  const set = new Set(lightIds);
-  const out: string[] = [];
-  for (const n of Object.values(state.nodes)) {
-    if (n.type !== 'TrackTo') continue;
-    const t = (n.params as { target?: unknown }).target;
-    if (typeof t === 'string' && set.has(t)) out.push(n.id);
-  }
-  return out;
+/**
+ * The constraint node ids on any of `lightIds` (edge-less, removable directly).
+ *
+ * #317 — enumerated through the SHARED stack rather than a raw `type === 'TrackTo'` scan,
+ * so deleting a profile takes the light's WHOLE stack with it. The old scan matched one
+ * hardcoded type: a light carrying a second constraint (now possible from the Constraints
+ * panel, and a Follow-Path once it lands) would have left an ORPHAN node pointing at a
+ * deleted light. `includeMuted` — a bypassed constraint is still a node, and still has to go.
+ */
+function constraintsForLights(state: DagState, lightIds: readonly string[]): string[] {
+  return lightIds.flatMap((id) =>
+    constraintStackForTarget(state.nodes, id, true).map((c) => c.nodeId),
+  );
 }
 
 /**
@@ -234,7 +239,7 @@ export function buildDeleteProfileOps(state: DagState, rigId: string): Op[] | nu
 
   const selId = activeProfileSelect(state);
   const lightIds = rigLightIds(state, rigId);
-  const trackToIds = trackTosForLights(state, lightIds);
+  const trackToIds = constraintsForLights(state, lightIds);
 
   const ops: Op[] = [];
 

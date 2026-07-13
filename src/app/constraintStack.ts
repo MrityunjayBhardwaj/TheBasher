@@ -23,7 +23,11 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { constraintStackForTarget, isRelationalPoseNode } from './nodeConstraints';
+import {
+  constraintStackForTarget,
+  isRelationalPoseNode,
+  nextConstraintOrder,
+} from './nodeConstraints';
 import type { StackRowEntry } from './OperatorStackRows';
 import { nodeDisplayName } from './sceneTreeWalk';
 
@@ -61,8 +65,6 @@ export function buildAddConstraintOps(
   explicitId?: string,
 ): { ops: Op[]; constraintId: string } | null {
   if (!state.nodes[targetId]) return null;
-  const stack = constraintStackForTarget(state.nodes, targetId, true);
-  const topOrder = stack.length > 0 ? stack[stack.length - 1].order : -1;
   const constraintId = explicitId ?? newId('con');
   return {
     ops: [
@@ -70,7 +72,10 @@ export function buildAddConstraintOps(
         type: 'addNode',
         nodeId: constraintId,
         nodeType: constraintType,
-        params: { target: targetId, order: topOrder + 1 },
+        // #317 — the top-of-stack rule now has ONE home (`nextConstraintOrder`), shared
+        // with the sidecar creation sites (camera look-at, studio lights) so every road
+        // that adds a constraint lands it on top the same way. Pose twin of nextDriverOrder.
+        params: { target: targetId, order: nextConstraintOrder(state.nodes, targetId) },
       },
     ],
     constraintId,

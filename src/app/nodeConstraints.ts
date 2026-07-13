@@ -132,17 +132,65 @@ export function constraintStackForTarget(
 }
 
 /**
- * The BOTTOM member of `nodeId`'s constraint stack, or null. This is the old
- * first-wins accessor, preserved for the single-constraint consumers (the studio-light
- * rig's "is this light rig-aimed?" test, the camera look-at dropdown's current aim,
- * and the camera aim point) — all of which still author exactly one constraint per
- * object until the Constraints panel (#312) lands.
+ * The BOTTOM member of `nodeId`'s constraint stack, or null — the old first-wins accessor.
+ *
+ * ⚠️ #317 — do NOT use this to answer "what is this object's aim?". The aim band is
+ * LAST-WRITER-WINS, so the member that actually aims the object is the TOP one:
+ * {@link activeConstraintForTarget}. The two coincide only while an object carries exactly
+ * one constraint — which stopped being guaranteed when the Constraints panel (#312) shipped.
+ * The camera look-at dropdown made precisely this mistake and displayed the LOSING
+ * constraint (fixed in #317).
+ *
+ * Legitimate remaining use: as an EXISTENCE predicate ("is this light rig-aimed at all?",
+ * `studioLightRig.ts:54`), where which member you get is irrelevant.
  */
 export function trackToForTarget(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
 ): ActiveConstraint | null {
   return constraintStackForTarget(nodes, nodeId)[0] ?? null;
+}
+
+/**
+ * The WINNING member of `nodeId`'s constraint stack — the TOP one (#317).
+ *
+ * The aim band is LAST-WRITER-WINS, so the top member is the one `resolveConstraintRotation`
+ * folds last and `resolveTrackToTarget` resolves: it is what the object ACTUALLY does. Any
+ * surface that DISPLAYS or EDITS "the current aim" must read THIS, not `trackToForTarget`
+ * (the BOTTOM member) — they coincide for a single-constraint object and DIVERGE the moment
+ * the Constraints panel adds a second one, at which point a bottom-reading surface shows the
+ * loser. That was the live bug in the camera look-at dropdown before #317.
+ *
+ * `includeMuted` is false: a bypassed constraint aims nothing, so it cannot be the winner.
+ */
+export function activeConstraintForTarget(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): ActiveConstraint | null {
+  const stack = constraintStackForTarget(nodes, nodeId);
+  return stack[stack.length - 1] ?? null;
+}
+
+/**
+ * The `order` a NEW constraint on `nodeId` should take: one above the current top (#317).
+ * The pose twin of `nextDriverOrder` (paramDrivers.ts) — the two halves of the species get
+ * the same rule, so "newest lands on top" holds whether you author a constraint or a driver.
+ *
+ * BYTE-IDENTITY: an EMPTY stack → 0, exactly the value a creation site that never set `order`
+ * got from the schema default. Every site that creates a constraint on a FRESH object (a new
+ * studio light, an imported profile light) therefore keeps writing 0. Only a site that
+ * constrains an object which may ALREADY carry one — the camera look-at dropdown — changes
+ * behaviour, and there the old hardcoded 0 was the bug: it TIED with the existing member and
+ * the stable sort fell back to node-table order.
+ *
+ * Counts MUTED members: bypassing a constraint must not make the next one collide with it.
+ */
+export function nextConstraintOrder(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): number {
+  const stack = constraintStackForTarget(nodes, nodeId, true);
+  return stack.length === 0 ? 0 : stack[stack.length - 1].order + 1;
 }
 
 /**
@@ -263,8 +311,9 @@ export function resolveTrackToTarget(
   // #311 — the aim band is LAST-WRITER-WINS, so the TOP of the stack owns the aim
   // point, matching the member `resolveConstraintRotation` folds last. A single-member
   // stack is `[0]` either way → byte-identical to the pre-stack first-wins path.
-  const stack = constraintStackForTarget(state.nodes, nodeId);
-  const winner = stack[stack.length - 1];
+  // #317 — "the top member" now has ONE name (`activeConstraintForTarget`), so the
+  // authoring surfaces display/edit exactly the member this resolves.
+  const winner = activeConstraintForTarget(state.nodes, nodeId);
   if (!winner) return null;
   return aimTargetWorld(state, winner, ctx, cache);
 }

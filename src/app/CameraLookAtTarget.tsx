@@ -8,16 +8,28 @@
 // constraint, first freezing the current aim into the authored lookAt so the
 // camera does not jump.
 //
-// One Track-To per camera (v1, first-wins — mirrors trackToForTarget). Reuses the
-// existing TrackTo node when re-targeting; removes it on clear (no orphan nodes).
+// This is a CONVENIENCE surface over the constraint stack, not a second constraint
+// system (#317): it reads and edits the TOP (winning) member — the one the aim band's
+// last-writer-wins fold actually obeys — through the SAME `constraintStackForTarget`
+// enumeration the resolvers and the Constraints panel use. It adds a new constraint via
+// the shared top-of-stack rule (`nextConstraintOrder`), reuses the existing node when
+// re-targeting, and removes it on clear (no orphan nodes). A camera may legitimately
+// carry more than one constraint now that the Constraints panel (#312) exists.
 //
-// REF: src/app/nodeConstraints.ts (trackToForTarget / resolveTrackToTarget),
+// REF: src/app/nodeConstraints.ts (activeConstraintForTarget / constraintStackForTarget /
+//      nextConstraintOrder / resolveTrackToTarget),
 //      src/app/activeCamera.ts (lookAt derivation), issue #204 / vyapti V60.
 
 import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { Op } from '../core/dag/types';
-import { resolveTrackToTarget, trackToForTarget } from './nodeConstraints';
+import {
+  activeConstraintForTarget,
+  constraintStackForTarget,
+  isRelationalPoseNode,
+  nextConstraintOrder,
+  resolveTrackToTarget,
+} from './nodeConstraints';
 import { useTimeStore } from './stores/timeStore';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
@@ -46,7 +58,9 @@ export function CameraLookAtTarget({ nodeId }: { nodeId: string }) {
   const options = useMemo(() => {
     const out: { id: string; name: string }[] = [];
     for (const [id, n] of Object.entries(nodes)) {
-      if (id === nodeId || n.type === 'TrackTo') continue;
+      // #317 — the SPECIES predicate, not a hardcoded type: Follow-Path / Copy-Location
+      // are relational pose nodes too and must never appear as aim TARGETS.
+      if (id === nodeId || isRelationalPoseNode(n)) continue;
       const p = (n.params ?? {}) as Record<string, unknown>;
       if (!isVec3(p.position)) continue;
       out.push({ id, name: typeof p.name === 'string' && p.name ? p.name : id });
@@ -55,16 +69,22 @@ export function CameraLookAtTarget({ nodeId }: { nodeId: string }) {
     return out;
   }, [nodes, nodeId]);
 
-  // The currently-bound target (active constraint), and the reusable TrackTo id.
+  // #317 — the dropdown must show and edit the constraint the camera ACTUALLY OBEYS.
+  // The aim band is last-writer-wins, so that is the TOP of the stack — which is what
+  // `resolveTrackToTarget` resolves and what the viewport renders. This used to read
+  // `trackToForTarget` (the BOTTOM member) and scan for its own first `type === 'TrackTo'`
+  // match: identical for a single constraint, but the moment the Constraints panel adds a
+  // second one, the dropdown displayed and re-targeted the LOSER while the camera aimed
+  // somewhere else. Both now come from the ONE shared stack enumeration.
   const boundTargetId = useMemo(
-    () => trackToForTarget(nodes, nodeId)?.aimNode ?? '',
+    () => activeConstraintForTarget(nodes, nodeId)?.aimNode ?? '',
     [nodes, nodeId],
   );
+  // The constraint this dropdown edits/removes. Muted members included, so a bypassed
+  // aim is re-used (and un-muted below) rather than orphaned behind a second node.
   const existingTTId = useMemo(() => {
-    const e = Object.entries(nodes).find(
-      ([, n]) => n.type === 'TrackTo' && (n.params as { target?: unknown })?.target === nodeId,
-    );
-    return e?.[0];
+    const stack = constraintStackForTarget(nodes, nodeId, true);
+    return stack[stack.length - 1]?.nodeId;
   }, [nodes, nodeId]);
 
   const onChange = (value: string) => {
@@ -105,6 +125,11 @@ export function CameraLookAtTarget({ nodeId }: { nodeId: string }) {
           aimPoint,
           up: [0, 1, 0],
           mute: false,
+          // #317 — land it on TOP of whatever the camera already carries. The hardcoded
+          // 0 this replaces TIED with an existing constraint, and the stable sort then
+          // fell back to node-table order — so which one aimed the camera was arbitrary.
+          // An unconstrained camera (the common case) still gets 0: byte-identical.
+          order: nextConstraintOrder(nodes, nodeId),
         },
       },
       'user',
