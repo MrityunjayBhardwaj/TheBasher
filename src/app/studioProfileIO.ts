@@ -21,6 +21,7 @@ import { z } from 'zod';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { activeProfileSelect, enumerateProfiles, uniqueProfileName } from './studioProfiles';
+import { nextConstraintOrder } from './nodeConstraints';
 
 type Vec3 = [number, number, number];
 
@@ -223,6 +224,9 @@ export function buildImportProfilesOps(
             aimPoint: profile.center,
             up: [0, 1, 0],
             mute: false,
+            // #317 — through the shared top-of-stack rule, like every other creation
+            // road. A freshly-created light has an empty stack → 0: byte-identical.
+            order: nextConstraintOrder(state.nodes, lightId),
           },
         },
       );
