@@ -23,6 +23,7 @@ export type SectionId =
   | 'animate'
   | 'channel'
   | 'constraint'
+  | 'driver'
   | 'modifier'
   | 'effect'
   | 'environment'
@@ -39,6 +40,11 @@ export const SECTION_IDS: readonly SectionId[] = [
   // Operator substrate — CHOP/constraints (epic #201, V58). The TrackTo node
   // declares this section; param-routing predicates land here in a later slice.
   'constraint',
+  // Operator substrate — CHOP/drivers (#316, V98/V99). The PARAM-writing half of the
+  // same relational species the 'constraint' section covers for POSE. Declared by every
+  // node that declares 'constraint' (a scene object whose params can be driven) plus the
+  // ParamDriver itself, so selecting a driver row keeps its stack on screen.
+  'driver',
   // Operator substrate — SOP/modifiers (epic #201, #209, V58). The geometry
   // operator stack (ArrayModifier et al.) declares this section.
   'modifier',

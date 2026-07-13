@@ -45,7 +45,7 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
   paramSchema: AreaLightParams,
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['transform', 'constraint'],
+  inspectorSections: ['transform', 'constraint', 'driver'],
   evaluate(params) {
     const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
     const scale = params.scale ?? ([1, 1, 1] as [number, number, number]);

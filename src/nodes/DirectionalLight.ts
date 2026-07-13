@@ -28,7 +28,7 @@ export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, Direct
   paramSchema: DirectionalLightParams,
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['transform', 'constraint'],
+  inspectorSections: ['transform', 'constraint', 'driver'],
   evaluate(params) {
     // Defensive default for rotation — projects saved before the
     // rotation field existed land with `undefined` here because the

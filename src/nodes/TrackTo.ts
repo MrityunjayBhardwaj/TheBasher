@@ -57,7 +57,7 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   // `out` socket exists for introspection/future stack wiring; nothing consumes it.
   inputs: {},
   outputs: { out: { type: 'Constraint', cardinality: 'single' } },
-  inspectorSections: ['constraint'],
+  inspectorSections: ['constraint', 'driver'],
   evaluate(params): TrackToConstraintValue {
     return {
       kind: 'Constraint',

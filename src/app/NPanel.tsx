@@ -79,6 +79,7 @@ import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
+import { DriverStackControls } from './DriverStackControls';
 import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
 import {
   FMODIFIER_TYPES,
@@ -2939,6 +2940,14 @@ export function NPanel() {
                       {sectionId === 'constraint' ? (
                         <ConstraintStackControls nodeId={node.id} />
                       ) : null}
+                      {/* #316 — the DRIVER stack UI: the PARAM-writing half of the same
+                          relational species, on the same shared rows (OperatorStackRows,
+                          the third caller). One stack per driven param BAND — the fold
+                          groups by paramPath, so two drivers contend only when they write
+                          the same param. Renders for the driven OBJECT and for any driver
+                          in its stacks. Creation stays on the param row (ParamDriverBind),
+                          which is where the source is chosen. */}
+                      {sectionId === 'driver' ? <DriverStackControls nodeId={node.id} /> : null}
                       {/* #270 — a channel's per-side extend rules render as one
                           "Extend / Before / After" control at the top of the animate
                           section (Blender-grounded single per-side affordance). The
