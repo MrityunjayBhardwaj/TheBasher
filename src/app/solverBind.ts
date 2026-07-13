@@ -20,7 +20,7 @@
 import type { DagState } from '../core/dag/state';
 import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
-import { driverParamDeps } from './paramDrivers';
+import { driverParamDeps, nextDriverOrder } from './paramDrivers';
 
 const BODY = 'body';
 
@@ -174,7 +174,13 @@ export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuild
       type: 'addNode',
       nodeId: id('driver'),
       nodeType: 'ParamDriver',
-      params: { target: targetId, paramPath, blendMode: 'replace', order: 0 },
+      // #315 — top of the band, like every other bind road (empty band → 0, byte-identical).
+      params: {
+        target: targetId,
+        paramPath,
+        blendMode: 'replace',
+        order: nextDriverOrder(state.nodes, targetId, paramPath),
+      },
     },
     wire({ node: id('solver'), socket: 'outVec' }, { node: id('driver'), socket: 'inVec' }),
   ];
