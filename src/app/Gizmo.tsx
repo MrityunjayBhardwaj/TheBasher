@@ -69,6 +69,7 @@ import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveActiveCameraPoseAt } from './activeCamera';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet } from './nodeConstraints';
+import { useActiveCurvePoint } from './curvePointSelection';
 
 type Vec3 = [number, number, number];
 
@@ -589,11 +590,14 @@ function SingleGizmo() {
 // history records the committed action, not the in-betweens). Used by the Multi +
 // Camera gizmos, whose TransformControls expose raw onMouseDown/Up; SingleGizmo
 // brackets inside onDraggingChanged (it has the extra character-walk branch).
-function startGizmoDrag(): void {
+// Exported for the curve point gizmo (#322), which is a THIRD TransformControls over the
+// same two rules — suppress orbit while dragging, coalesce the drag into one undo entry.
+// Shared rather than re-typed so a point drag can never acquire its own undo semantics.
+export function startGizmoDrag(): void {
   useGizmoStore.getState().setDragging(true);
   useDagStore.getState().beginInteraction();
 }
-function endGizmoDrag(description: string): void {
+export function endGizmoDrag(description: string): void {
   useGizmoStore.getState().setDragging(false);
   useDagStore.getState().endInteraction(description);
 }
@@ -1241,8 +1245,16 @@ export function Gizmo() {
   const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
   const primaryId = useSelectionStore((s) => s.primaryNodeId);
   const nodes = useDagStore((s) => s.state.nodes);
+  // #322 — THE ELEMENT-GIZMO GATE (Blender's object→element swap). When a control point of
+  // the selected Curve is picked, the OBJECT gizmo yields: CurvePointHandles mounts a
+  // translate gizmo on the POINT instead. Two TransformControls in one viewport would fight
+  // over the pointer, and the director would have no way to tell which one a drag moves.
+  // The one accessor decides (curvePointSelection.ts) — never a second read of the raw
+  // store, so what hides the gizmo and what mounts the point gizmo are the same fact.
+  const curvePoint = useActiveCurvePoint();
   let manipCount = 0;
   for (const id of selectedIds) if (getManipulable(nodes[id] ?? null)) manipCount++;
+  if (curvePoint) return null;
   if (manipCount > 1) return <MultiGizmo />;
   const primary = primaryId ? nodes[primaryId] : null;
   if (primary && (primary.type === 'PerspectiveCamera' || primary.type === 'OrthographicCamera')) {

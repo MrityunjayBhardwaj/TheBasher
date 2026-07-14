@@ -62,6 +62,9 @@ import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { getActiveCurvePoint } from './curvePointSelection';
+import { deleteCurvePoint, extrudeCurvePoint, toggleCurveClosed } from './curvePointCommands';
+import { useCurveSelectionStore } from './stores/curveSelectionStore';
 
 interface KeyframeSample {
   time: number;
@@ -184,6 +187,13 @@ function dismissTopmostTransient(): void {
   // (without changing the selection) before any deeper Esc behavior.
   if (useBoxSelectStore.getState().active) {
     useBoxSelectStore.getState().cancel();
+    return;
+  }
+  // 0b. #322 — a curve POINT sub-selection is a rung BELOW the object selection: Esc drops
+  // the point first (the object gizmo returns, the curve stays selected), and only a second
+  // Esc deselects the curve. Blender's Esc/right-click backs out one level at a time.
+  if (getActiveCurvePoint()) {
+    useCurveSelectionStore.getState().clear();
     return;
   }
   const chrome = useChromeStore.getState();
@@ -408,6 +418,27 @@ export function KeyboardShortcuts() {
       // typing in a field (the isTypingTarget guard earlier already returned for
       // typing surfaces, so reaching here means not-typing). Keys 1/2/3/4 are
       // unbound (the old MODE_KEYS).
+      // #322 — CURVE-POINT CONTEXT KEYS. Live only while a control point of the selected
+      // Curve is picked, so with no point selected every one of these keys behaves exactly
+      // as it always has (E is still the rotate tool). This is the same context-override
+      // shape as Delete-removes-a-keyframe-when-one-is-selected, below: the more specific
+      // selection claims the key. Blender does the same — E is extrude in edit mode.
+      const activePoint = getActiveCurvePoint();
+      if (activePoint && (e.key === 'e' || e.key === 'E')) {
+        // Extrude: a new point after this one, which becomes the selection — grab it and
+        // the path grows. (Refused for nothing: an insert always succeeds.)
+        e.preventDefault();
+        extrudeCurvePoint(activePoint.nodeId, activePoint.pointIndex);
+        return;
+      }
+      if (activePoint && (e.key === 'c' || e.key === 'C')) {
+        // Close / open the loop. A closed path wraps (a follower loops rather than stopping
+        // at the end) — the same flag the inspector's `closed` checkbox writes.
+        e.preventDefault();
+        toggleCurveClosed(activePoint.nodeId);
+        return;
+      }
+
       const toolMatch = TOOL_KEYS.find((t) => t.key === e.key.toLowerCase());
       if (toolMatch) {
         useEditorStore.getState().setActiveTool(toolMatch.tool);
@@ -526,6 +557,17 @@ export function KeyboardShortcuts() {
               e.preventDefault();
               return;
             }
+          }
+          // #322 — curve-point-delete override, the same shape as the keyframe one above: a
+          // point sub-selection is MORE specific than the node selection, so it claims the
+          // key. Returns UNCONDITIONALLY, including when the delete is refused at the
+          // two-point floor (which announces itself) — falling through would delete the
+          // whole CURVE because the director asked to remove one of its points, which is
+          // the worst possible reading of the gesture.
+          if (activePoint) {
+            e.preventDefault();
+            deleteCurvePoint(activePoint.nodeId, activePoint.pointIndex);
+            return;
           }
           // Remove all selected nodes (Blender's X/Delete). V1 clean:
           // dispatchAtomic disconnect + removeNode ops. The removeNode
