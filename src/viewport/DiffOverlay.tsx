@@ -173,6 +173,43 @@ function GhostChild({ value }: { value: SceneObject }) {
           />
         </mesh>
       );
+    // #324 — the two objects the agent can now CREATE must also be PREVIEWABLE. Without a
+    // ghost they fell to the default below and the diff bar offered the director "add a
+    // curve — accept?" over an unchanged viewport: nothing to approve but a sentence. An
+    // agent proposal you cannot SEE is a proposal you cannot judge.
+    case 'Curve':
+      return (
+        <group
+          position={value.position as [number, number, number]}
+          rotation={degVec3ToRad(value.rotation as [number, number, number])}
+          scale={value.scale as [number, number, number]}
+        >
+          {/* The baked polyline — the same `samples` the real CurveLine draws, so the ghost
+              is the SHAPE the director will get, not a stand-in box for it. */}
+          <line>
+            <bufferGeometry>
+              <bufferAttribute
+                attach="attributes-position"
+                args={[new Float32Array((value.samples ?? []).flat()), 3]}
+              />
+            </bufferGeometry>
+            <lineBasicMaterial transparent opacity={0.6} color="#d98a2b" depthWrite={false} />
+          </line>
+        </group>
+      );
+    case 'Null':
+      return (
+        <mesh position={value.position as [number, number, number]}>
+          <sphereGeometry args={[0.12, 10, 8]} />
+          <meshBasicMaterial
+            transparent
+            opacity={0.4}
+            color="#9ad0ff"
+            depthWrite={false}
+            wireframe
+          />
+        </mesh>
+      );
     // #231 Inc 2 — lights/cameras can be group children but have no diff-ghost
     // preview (the ghost is geometry-only); render nothing for them.
     default:

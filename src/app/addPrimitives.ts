@@ -13,55 +13,85 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 
-export type PrimitiveKind =
+/**
+ * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
+ * transform: a body the director can see, select, pose, parent and talk about.
+ *
+ * This list is DATA, not documentation, and `PrimitiveKind` is derived FROM it (below) —
+ * because the agent's vocabulary is derived from it too (`meshAdd`'s `kind` enum,
+ * `identify`'s primitive types). It used to be the other way round: `PrimitiveKind` was a
+ * hand-written union and the agent kept a hand-copied SUBSET of it. Nothing forced the copy
+ * to track the original, so `Null` (#296) and `Curve` (#321) each shipped mouse-creatable
+ * and VOICELESS — the agent's zod enum rejected them at runtime, with no compile error and
+ * no failing test to notice. A director could build a path with the mouse and not be able to
+ * SAY "add a curve", which is the entire camera-rig story (#324).
+ *
+ * Derived, that class is gone: a new scene object is agent-addressable the moment it exists,
+ * and a kind that belongs to NEITHER list fails to typecheck rather than failing silently at
+ * the user.
+ */
+export const SCENE_OBJECT_KINDS = [
   // Meshes
-  | 'Cube'
-  | 'Sphere'
+  'Cube',
+  'Sphere',
   // Lights
-  | 'DirectionalLight'
-  | 'PointLight'
-  | 'SpotLight'
-  | 'AreaLight'
-  | 'AmbientLight'
+  'DirectionalLight',
+  'PointLight',
+  'SpotLight',
+  'AreaLight',
+  'AmbientLight',
   // Cameras
-  | 'PerspectiveCamera'
-  | 'OrthographicCamera'
+  'PerspectiveCamera',
+  'OrthographicCamera',
   // Empties
-  | 'Group'
-  | 'Transform'
-  // #296 — a Null controller: a standalone transformable scene object (no child),
-  // so unlike Group/Transform it wires straight into scene.children.
-  | 'Null'
+  'Group',
+  'Transform',
+  // #296 — a Null controller: a standalone transformable scene object (no child), so unlike
+  // Group/Transform it wires straight into scene.children.
+  'Null',
   // #321 — a Curve path: like a Null it is a standalone transformable scene object, so it
   // wires straight into scene.children (not a wrapper like Group/Transform).
-  | 'Curve'
-  // Compute — scalar driver sources (Epic 1 Inc 1 vocabulary). Float floating
-  // nodes: they feed ParamDrivers via the pull rail, never the render tree, so
-  // they are added unwired (like empties). #294 Inc 3.
-  | 'Math'
-  | 'Fit'
-  | 'Clamp'
-  | 'Mix'
-  | 'CurveRemap'
-  | 'Noise'
-  // Vector compute (Vector3 rail) — vectors first-class on the compute rail. Same
-  // floating-node shape as the scalar vocab; MakeVec3/VecBreak3 convert to/from
-  // components, Vec3Math does vector arithmetic.
-  | 'MakeVec3'
-  | 'VecBreak3'
-  | 'Vec3Math'
-  // Geometry query — SampleGeometry: reads the ground point under a query node's world
-  // XZ. Floating like the compute vocab; its terrain/query are picked in the inspector.
-  | 'SampleGeometry'
-  // Stateful op — Lag (Epic 2 #297). Same floating-number-node shape as the compute
-  // vocabulary; its output trails its input over time (the seam replays it).
-  | 'Lag'
-  // Solver meta-op + its sub-network leaves (Epic 2). Floating number nodes like the
-  // compute vocabulary; the Solver owns a sub-network cooked every frame (Houdini
-  // Solver SOP), PrevFrame/SolverInput are its feedback + live-input leaves.
-  | 'Solver'
-  | 'PrevFrame'
-  | 'SolverInput';
+  'Curve',
+] as const;
+export type SceneObjectKind = (typeof SCENE_OBJECT_KINDS)[number];
+
+/**
+ * THE COMPUTE / FLOATING VOCABULARY — number and vector nodes added UNWIRED. They feed
+ * ParamDrivers through the pull rail and never enter the render tree, so they have no
+ * transform, no body and nothing to select in the viewport. Deliberately NOT part of the
+ * agent's `mesh.add` vocabulary: "add a Lag" is not a sentence a director says, and these
+ * are authored where their sources are picked (the inspector).
+ */
+export const COMPUTE_KINDS = [
+  // Scalar driver sources (Epic 1 Inc 1 vocabulary). #294 Inc 3.
+  'Math',
+  'Fit',
+  'Clamp',
+  'Mix',
+  'CurveRemap',
+  'Noise',
+  // Vector compute (Vector3 rail) — MakeVec3/VecBreak3 convert to/from components,
+  // Vec3Math does vector arithmetic.
+  'MakeVec3',
+  'VecBreak3',
+  'Vec3Math',
+  // Geometry query — SampleGeometry reads the ground point under a query node's world XZ;
+  // its terrain/query are picked in the inspector.
+  'SampleGeometry',
+  // Stateful op — Lag (Epic 2 #297). Its output trails its input over time (the seam
+  // replays it).
+  'Lag',
+  // Solver meta-op + its sub-network leaves (Epic 2). The Solver owns a sub-network cooked
+  // every frame (Houdini Solver SOP); PrevFrame/SolverInput are its feedback + live-input
+  // leaves.
+  'Solver',
+  'PrevFrame',
+  'SolverInput',
+] as const;
+export type ComputeKind = (typeof COMPUTE_KINDS)[number];
+
+/** Every kind `buildAddPrimitiveOps` accepts. Derived — see SCENE_OBJECT_KINDS. */
+export type PrimitiveKind = SceneObjectKind | ComputeKind;
 
 export interface AddResult {
   ops: Op[];
@@ -165,7 +195,12 @@ function isSolverKind(kind: PrimitiveKind): boolean {
   return kind === 'Solver' || kind === 'PrevFrame' || kind === 'SolverInput';
 }
 
-function nodeTypeFor(kind: PrimitiveKind): string {
+/** The Add-menu kind → the DAG node type it creates. Exported because the agent's
+ *  IDENTIFY vocabulary is derived from it (`ALL_PRIMITIVE_TYPES`, identify.ts): the two
+ *  speak different dialects of the same thing — a director says "cube", the DAG says
+ *  "BoxMesh" — and this is the ONE translation between them. A second copy is how a scene
+ *  object ends up creatable but un-referrable (#324). */
+export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
     case 'Cube':
       return 'BoxMesh';
