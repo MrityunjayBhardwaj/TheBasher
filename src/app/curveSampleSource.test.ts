@@ -119,6 +119,54 @@ describe('curveSampleSource — arc-length parameterization', () => {
     expect(sampler.length).toBeGreaterThan(18);
   });
 
+  it('inherits a PARENT Group’s transform — arc length stays constant-speed under it', () => {
+    // The case the seam exists for, and the one a local-space table could never survive:
+    // the curve itself is untransformed, but its PARENT stretches x by 6. Local arc length
+    // is unchanged; world arc length is not. Nothing in the curve's own params says so —
+    // only the scene-tree walk knows, which is exactly why this read cannot live in the
+    // node's pure `evaluate`.
+    let state = applyOp(buildDefaultDagState(), {
+      type: 'addNode',
+      nodeId: 'g1',
+      nodeType: 'Group',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [6, 1, 1] },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'c1',
+      nodeType: 'Curve',
+      params: {
+        points: [
+          [0, 0, 0],
+          [1, 0, 0],
+          [1, 0, 1],
+          [0, 0, 1],
+        ],
+        resolution: 32,
+      },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'c1', socket: 'out' },
+      to: { node: 'g1', socket: 'children' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'g1', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    }).next;
+
+    const sampler = curveSamplerFor(state, 'c1', CTX)!;
+    expect(sampler).toBeTruthy();
+
+    // The parent's 6x stretch reached the sample: the world path is far longer than the
+    // ~3-unit local one. (A local-space table would report ~3 and place a follower wrong.)
+    expect(sampler.length).toBeGreaterThan(10);
+
+    // And it is still constant-speed in u despite the inherited non-uniform scale.
+    expect(spread(gapsAt((u) => sampler.pointAt(u), 16))).toBeLessThan(1.15);
+  });
+
   it('the world transform moves the sampled point (the curve is posed like any object)', () => {
     const base = addCurve(buildDefaultDagState(), 'c1', {});
     const moved = addCurve(buildDefaultDagState(), 'c1', { position: [0, 7, 0] });
