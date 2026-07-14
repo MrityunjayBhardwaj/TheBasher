@@ -1,0 +1,119 @@
+// curvePoints — the AUTHORING half of the Curve path (#321): every edit to a curve's
+// control points, as pure `Op[]`.
+//
+// THE ONE AUTHORITY. Two surfaces edit these points — the inspector's numeric rows (here,
+// #321) and the viewport's grabbable handles (#322) — and they must not each re-derive the
+// array math. "Insert a point" has to mean the same thing whichever surface you use, or the
+// two drift and the bug reads as "the viewport and the panel disagree". Same discipline as
+// the constraint/driver stacks: ONE enumeration + ONE set of op-builders behind every
+// surface, never a second copy in the UI.
+//
+// WHOLE-ARRAY REPLACE, always. `setParam`'s path walker is dot-only and explicitly refuses
+// to descend into arrays (`setAtPath`, core/dag/ops.ts) — a paramPath of `points.3` would
+// replace the whole array with `{3: …}` and fail zod re-validation. So each edit reads the
+// current array, maps a new one, and writes `points` entire. This is the established
+// pattern for every array param in the codebase (a glTF's `materials`, a channel's
+// `keyframes`), and undo comes free: the inverse op carries the prior array.
+//
+// REF: src/nodes/Curve.ts (the schema + MIN_CURVE_POINTS); src/core/dag/ops.ts (why the
+//      whole-array write); src/app/constraintStack.ts (the pure-Op[] builder convention).
+
+import type { DagState } from '../core/dag/state';
+import type { Op } from '../core/dag/types';
+import { MIN_CURVE_POINTS } from '../nodes/Curve';
+import type { Vec3 } from '../nodes/types';
+
+/** The curve's authored control points (LOCAL space), or null when `nodeId` is not a
+ *  Curve. Every builder below reads through this — one accessor, one truth. */
+export function curvePointsOf(state: DagState, nodeId: string): Vec3[] | null {
+  const node = state.nodes[nodeId];
+  if (!node || node.type !== 'Curve') return null;
+  const pts = (node.params as { points?: unknown }).points;
+  if (!Array.isArray(pts)) return null;
+  return pts as Vec3[];
+}
+
+/** The one write. Every builder funnels here so there is exactly one place that knows the
+ *  param is called `points` and that the array is written whole. */
+function writePoints(nodeId: string, points: readonly Vec3[]): Op[] {
+  return [{ type: 'setParam', nodeId, paramPath: 'points', value: points }];
+}
+
+/** Move one control point. */
+export function buildSetCurvePointOps(
+  state: DagState,
+  nodeId: string,
+  index: number,
+  value: Vec3,
+): Op[] | null {
+  const points = curvePointsOf(state, nodeId);
+  if (!points || index < 0 || index >= points.length) return null;
+  return writePoints(
+    nodeId,
+    points.map((p, i) => (i === index ? value : p)),
+  );
+}
+
+/**
+ * Insert a new point AFTER `index`, placed at the midpoint of the span it splits — so the
+ * path's shape is preserved at the moment of insertion and the new point is immediately
+ * grabbable where the director expects it (rather than at the origin, which would fling the
+ * path across the scene). Inserting after the LAST point of an open curve has no following
+ * span, so the point EXTENDS the path: it continues the final direction by the same step
+ * (Blender's extrude). A closed curve wraps, so the midpoint always exists.
+ */
+export function buildInsertCurvePointOps(
+  state: DagState,
+  nodeId: string,
+  index: number,
+): Op[] | null {
+  const points = curvePointsOf(state, nodeId);
+  if (!points || index < 0 || index >= points.length) return null;
+  const node = state.nodes[nodeId];
+  const closed = (node?.params as { closed?: unknown })?.closed === true;
+
+  const a = points[index];
+  const isLast = index === points.length - 1;
+  let next: Vec3;
+  if (!isLast || closed) {
+    const b = points[isLast ? 0 : index + 1];
+    next = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  } else {
+    // Extend past the end, continuing the last span's direction. A 1-span degenerate
+    // curve (both points coincident) would extend by zero, so fall back to a unit step
+    // on +X — a new point the user can actually see and grab.
+    const prev = points[points.length - 2] ?? a;
+    const d: Vec3 = [a[0] - prev[0], a[1] - prev[1], a[2] - prev[2]];
+    const len = Math.hypot(d[0], d[1], d[2]);
+    next = len > 1e-6 ? [a[0] + d[0], a[1] + d[1], a[2] + d[2]] : [a[0] + 1, a[1], a[2]];
+  }
+
+  const out = points.slice();
+  out.splice(index + 1, 0, next);
+  return writePoints(nodeId, out);
+}
+
+/** Remove a control point. Null (a refused edit, not a silent no-op) when the curve is
+ *  already at the two-point floor below which it stops being a path at all. */
+export function buildDeleteCurvePointOps(
+  state: DagState,
+  nodeId: string,
+  index: number,
+): Op[] | null {
+  const points = curvePointsOf(state, nodeId);
+  if (!points || index < 0 || index >= points.length) return null;
+  if (points.length <= MIN_CURVE_POINTS) return null;
+  return writePoints(
+    nodeId,
+    points.filter((_, i) => i !== index),
+  );
+}
+
+/** Open ⇄ closed. A closed curve loops (and a Follow-Path over it wraps rather than
+ *  clamping — curveSampleSource.ts). */
+export function buildToggleCurveClosedOp(state: DagState, nodeId: string): Op[] | null {
+  const node = state.nodes[nodeId];
+  if (!node || node.type !== 'Curve') return null;
+  const closed = (node.params as { closed?: unknown }).closed === true;
+  return [{ type: 'setParam', nodeId, paramPath: 'closed', value: !closed }];
+}

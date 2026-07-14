@@ -42,6 +42,7 @@ type IconKind =
   | 'camera'
   | 'skeleton'
   | 'scatter'
+  | 'curve'
   | 'dot';
 
 // Map a DAG node type to a visual icon family. Suffix matches (…Light /
@@ -53,6 +54,7 @@ function kindForNodeType(nodeType: string): IconKind {
   if (nodeType === 'Transform') return 'transform';
   if (nodeType === 'MaterialOverride') return 'material';
   if (nodeType === 'Scatter') return 'scatter';
+  if (nodeType === 'Curve') return 'curve';
   if (nodeType === 'GltfSkeleton') return 'skeleton';
   if (nodeType.endsWith('Light')) return 'light';
   if (nodeType.endsWith('Camera')) return 'camera';
@@ -70,6 +72,14 @@ function kindForNodeType(nodeType: string): IconKind {
 }
 
 const GLYPHS: Record<IconKind, ReactNode> = {
+  // An S-bend through two control points — the path (#321).
+  curve: (
+    <>
+      <path d="M2 12c3 0 3.5-8 6.5-8S12 12 14 12" />
+      <circle cx="2.5" cy="12" r="1.3" />
+      <circle cx="13.5" cy="12" r="1.3" />
+    </>
+  ),
   // Stacked layers — the scene root.
   scene: (
     <>

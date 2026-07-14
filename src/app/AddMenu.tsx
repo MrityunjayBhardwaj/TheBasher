@@ -60,6 +60,10 @@ const GROUPS: MenuGroup[] = [
       // #296 — a Null controller: a transformable scene object you grab with the
       // gizmo; a driver reads its transform channels to drive other params.
       { kind: 'Null', label: 'Null (Controller)' },
+      // #321 — a Curve path. Grouped with the empties because it is likewise a
+      // non-rendering, transformable scene object that exists to be REFERENCED (by
+      // Follow-Path) rather than to be seen in the final image.
+      { kind: 'Curve', label: 'Curve (Path)' },
     ],
   },
   {

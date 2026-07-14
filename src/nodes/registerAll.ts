@@ -76,6 +76,7 @@ import { TrackToNode } from './TrackTo';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
 import { NullNode } from './Null';
+import { CurveNode } from './Curve';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 
@@ -106,6 +107,8 @@ const ALL: NodeDefinition[] = [
   TransformNode as unknown as NodeDefinition,
   // #296 — a Null controller: a transformable, geometry-less scene object (Empty).
   NullNode as unknown as NodeDefinition,
+  // #321 — a Curve: a transformable PATH scene object (control points + Catmull-Rom).
+  CurveNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,
   ScatterNode as unknown as NodeDefinition,

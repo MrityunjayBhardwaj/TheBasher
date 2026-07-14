@@ -48,6 +48,8 @@ describe('SECTION_IDS', () => {
       'constraint',
       // Operator substrate — CHOP/drivers (#316) — the PARAM half of the same species.
       'driver',
+      // The path's SHAPE — a Curve's control points / closed / resolution (#321).
+      'curve',
       // Operator substrate — SOP/modifiers (epic #201, #209, V58).
       'modifier',
       // Operator substrate — video effects (epic #235, V58 lift to Image).
