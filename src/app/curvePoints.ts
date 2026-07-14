@@ -39,6 +39,41 @@ function writePoints(nodeId: string, points: readonly Vec3[]): Op[] {
   return [{ type: 'setParam', nodeId, paramPath: 'points', value: points }];
 }
 
+/** A resolved control-point selection: the point the viewport handles, the point gizmo and
+ *  the keyboard are all talking about. */
+export interface CurvePointSelection {
+  nodeId: string;
+  pointIndex: number;
+  /** The point's authored (LOCAL) coordinates. */
+  point: Vec3;
+}
+
+/**
+ * THE ONE ACCESSOR for "which control point is selected" (#322).
+ *
+ * `curveSelectionStore` holds a raw (nodeId, index) pair and validates nothing — because
+ * whether that pair still names a real point is a question about the DAG, not about the UI.
+ * A point can vanish under the selection at any moment: delete the point, delete the curve,
+ * undo the add. Every reader — the handles, the point gizmo, the Delete/E shortcuts, the
+ * gate that hides the object gizmo — asks HERE, so a stale index is never acted on, and the
+ * four surfaces can never disagree about what is selected. (The same rule the constraint
+ * and driver stacks learned the hard way: when several surfaces address "the current one",
+ * they must all address it through the SAME accessor, or the UI narrates one thing while
+ * the engine does another.)
+ *
+ * Null ⇒ there is no live point selection ⇒ the object gizmo owns the viewport.
+ */
+export function resolveCurvePointSelection(
+  state: DagState,
+  selection: { nodeId: string | null; pointIndex: number | null },
+): CurvePointSelection | null {
+  const { nodeId, pointIndex } = selection;
+  if (!nodeId || pointIndex === null || !Number.isInteger(pointIndex)) return null;
+  const points = curvePointsOf(state, nodeId);
+  if (!points || pointIndex < 0 || pointIndex >= points.length) return null;
+  return { nodeId, pointIndex, point: points[pointIndex] };
+}
+
 /** Move one control point. */
 export function buildSetCurvePointOps(
   state: DagState,

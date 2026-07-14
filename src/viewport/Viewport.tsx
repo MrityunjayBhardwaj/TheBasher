@@ -16,6 +16,8 @@ import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
+import { CurvePointHandles } from '../app/CurvePointHandles';
+import { useCurveSelectionStore } from '../app/stores/curveSelectionStore';
 import { ProjectionToggle } from '../app/ProjectionToggle';
 import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
@@ -223,6 +225,10 @@ export function Viewport() {
           // the next stroke still has a target (else one stray click drops the
           // light mid-painting).
           if (useLightBrushStore.getState().active) return;
+          // #322 — a click on empty space drops the curve POINT sub-selection too (the
+          // object gizmo returns). Cleared alongside the node selection, not instead of it:
+          // they are two levels of the same gesture ("I'm done editing this").
+          useCurveSelectionStore.getState().clear();
           useSelectionStore.getState().clear();
         }}
       >
@@ -267,6 +273,12 @@ export function Viewport() {
           <GpuProbe />
           <GroundClick />
           <Gizmo />
+          {/* #322 — the selected Curve's control-point handles + the element gizmo that
+              mounts on a picked point. A SIBLING of <Gizmo/>, deliberately OUTSIDE the
+              SceneFromDAG subtree: inside it, every handle click would also travel up the
+              object-selection onClick band and re-select (or drill into) the curve. The two
+              gizmos never coexist — Gizmo yields the moment a point is picked. */}
+          <CurvePointHandles />
           {/* #226 — box-select: the in-Canvas projection + commit half. The DOM
               marquee + pointer capture is BoxSelectOverlay, below the Canvas. */}
           <BoxSelect />
