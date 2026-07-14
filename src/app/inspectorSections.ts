@@ -24,6 +24,7 @@ export type SectionId =
   | 'channel'
   | 'constraint'
   | 'driver'
+  | 'curve'
   | 'modifier'
   | 'effect'
   | 'environment'
@@ -45,6 +46,9 @@ export const SECTION_IDS: readonly SectionId[] = [
   // node that declares 'constraint' (a scene object whose params can be driven) plus the
   // ParamDriver itself, so selecting a driver row keeps its stack on screen.
   'driver',
+  // The path itself (#321) — a Curve's control points, closed flag and resolution. Its TRS
+  // stays in 'transform' (a curve is posed like any object); this section owns the SHAPE.
+  'curve',
   // Operator substrate — SOP/modifiers (epic #201, #209, V58). The geometry
   // operator stack (ArrayModifier et al.) declares this section.
   'modifier',
@@ -102,6 +106,15 @@ export function paramToSection(
       paramPath === 'roll')
   ) {
     return 'transform';
+  }
+  // Curve params (#321) — the path's SHAPE. `points` renders through a dedicated rows
+  // control (a variable-length vec3 list has no generic param row); `closed` and
+  // `resolution` are ordinary rows that land here beside it.
+  if (
+    declaredSections.includes('curve') &&
+    (paramPath === 'points' || paramPath === 'closed' || paramPath === 'resolution')
+  ) {
+    return 'curve';
   }
   // Mesh params — size / radius / segments / topology hints.
   if (

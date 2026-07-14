@@ -63,6 +63,7 @@ const ALL_TYPES = [
   'ColorCorrect',
   'ComfyUIWorkflow',
   'Composition',
+  'Curve',
   'CurveRemap',
   'Cut',
   'DepthPass',

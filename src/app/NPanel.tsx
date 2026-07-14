@@ -80,6 +80,7 @@ import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
 import { DriverStackControls } from './DriverStackControls';
+import { CurvePointRows } from './CurvePointRows';
 import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
 import {
   FMODIFIER_TYPES,
@@ -2948,6 +2949,12 @@ export function NPanel() {
                           in its stacks. Creation stays on the param row (ParamDriverBind),
                           which is where the source is chosen. */}
                       {sectionId === 'driver' ? <DriverStackControls nodeId={node.id} /> : null}
+                      {/* #321 — a Curve's control points. A variable-length vec3 list has
+                          no generic param row, so `points` routes here and renders through
+                          a dedicated control (filtered out of the rows below so it doesn't
+                          double-render as a raw array). `closed` and `resolution` stay
+                          ordinary rows beneath it. */}
+                      {sectionId === 'curve' ? <CurvePointRows nodeId={node.id} /> : null}
                       {/* #270 — a channel's per-side extend rules render as one
                           "Extend / Before / After" control at the top of the animate
                           section (Blender-grounded single per-side affordance). The
@@ -2969,7 +2976,8 @@ export function NPanel() {
                               ([key]) =>
                                 key !== 'extendBefore' &&
                                 key !== 'extendAfter' &&
-                                key !== 'modifiers',
+                                key !== 'modifiers' &&
+                                key !== 'points',
                             )
                             .map(([key, value]) => (
                               <ParamRow

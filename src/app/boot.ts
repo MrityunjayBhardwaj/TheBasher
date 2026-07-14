@@ -307,6 +307,20 @@ export function boot(): Promise<void> {
       w.__basher_time = useTimeStore;
       // v0.6 #4 W4 — route store seam so e2e can observe/drive home↔editor.
       w.__basher_route = useRouteStore;
+      // #321 curve seam — sample a Curve by WORLD arc-length from a spec. Without this,
+      // the seam's output is unobservable from the running app, and the one thing worth
+      // pinning would go untested: that the point Follow-Path will fly to (composed by
+      // `resolveWorldTransform`) lies ON the line the viewport draws (composed by a
+      // three.js <group>). Two transform compositions of the same TRS — if they ever
+      // diverge, the camera travels a path the director cannot see.
+      void import('./curveSampleSource').then((m) => {
+        w.__basher_curve_sample = (nodeId: string, u: number) => {
+          const t = useTimeStore.getState();
+          return m.readCurveSampleAt(useDagStore.getState().state, nodeId, u, {
+            time: { frame: t.frame, seconds: t.seconds, normalized: t.normalized },
+          });
+        };
+      });
       // #168 render seam — render the production frame to a PNG data URL (no
       // download) so the falsifiable e2e can decode pixels and assert the
       // render isn't blank (H68) / is the right size / excludes chrome.

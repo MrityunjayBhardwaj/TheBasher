@@ -32,6 +32,9 @@ export type PrimitiveKind =
   // #296 — a Null controller: a standalone transformable scene object (no child),
   // so unlike Group/Transform it wires straight into scene.children.
   | 'Null'
+  // #321 — a Curve path: like a Null it is a standalone transformable scene object, so it
+  // wires straight into scene.children (not a wrapper like Group/Transform).
+  | 'Curve'
   // Compute — scalar driver sources (Epic 1 Inc 1 vocabulary). Float floating
   // nodes: they feed ParamDrivers via the pull rail, never the render tree, so
   // they are added unwired (like empties). #294 Inc 3.
@@ -108,7 +111,7 @@ export function buildAddPrimitiveOps(
   // Wire into the scene where applicable. Meshes go under .children,
   // lights under .lights. Cameras + empties stay floating (the user
   // wires them deliberately).
-  if (isMesh(kind) || kind === 'Null') {
+  if (isMesh(kind) || kind === 'Null' || kind === 'Curve') {
     ops.push({
       type: 'connect',
       from: { node: id, socket: 'out' },
@@ -137,6 +140,7 @@ function prefixFor(kind: PrimitiveKind): string {
   if (isSolverKind(kind)) return 'solver';
   if (kind === 'SampleGeometry') return 'geo';
   if (kind === 'Null') return 'null';
+  if (kind === 'Curve') return 'curve';
   return 'empty';
 }
 
@@ -192,6 +196,8 @@ function isCamera(kind: PrimitiveKind): boolean {
 
 function humanLabel(kind: PrimitiveKind): string {
   switch (kind) {
+    case 'Curve':
+      return 'curve';
     case 'Cube':
       return 'cube';
     case 'Sphere':
@@ -302,6 +308,10 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Transform':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Null':
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // #321 — the seed path. Points are LOCAL to the curve's origin (so the TRS gizmo moves
+    // the whole path), and the zod default supplies them; we only place the origin.
+    case 'Curve':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     // Compute nodes have full zod defaults on every param (computeNodes.ts) and no
     // position — an empty object lets the addNode parse fill the defaults.

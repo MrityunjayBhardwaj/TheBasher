@@ -697,6 +697,30 @@ export interface NullValue {
   readonly scale: Vec3;
 }
 
+// #321 (Phase 3, the camera rig) — a Curve is a PATH: a transformable scene object whose
+// control points define a spline other operators travel along (Follow-Path, Phase 4). It
+// carries a TRS like any object, plus the authored `points` and the dense `samples` its
+// evaluate bakes from them (centripetal Catmull-Rom — curveMath.ts).
+//
+// `samples` are LOCAL-space, and deliberately carry no arc-length table: arc length must
+// be measured in WORLD space (a non-uniform scale on the curve or its parent makes local
+// distance disproportionate to world distance), and `evaluate` is pure — it has no
+// `state` and cannot see `resolveWorldTransform`. The table therefore lives in the seam,
+// `src/app/curveSampleSource.ts`. A path is not render geometry in v1 (Blender's curve
+// only renders once it has a bevel), so the renderer draws it as editor chrome.
+export interface CurveValue {
+  readonly kind: 'Curve';
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+  /** The authored control points, LOCAL to the curve's TRS. The spline passes through them. */
+  readonly points: readonly Vec3[];
+  readonly closed: boolean;
+  /** The baked local-space polyline (see curveMath.sampleCurve). Closed curves repeat
+   *  the first point as the last, so consumers walk a flat strip with no wrap case. */
+  readonly samples: readonly Vec3[];
+}
+
 export interface GroupValue {
   readonly kind: 'Group';
   // #222 — a Group is transformable as a unit (Blender's parent/Empty). `pivot`
@@ -910,6 +934,7 @@ export type SceneChild =
   | GltfAssetValue
   | TransformValue
   | NullValue
+  | CurveValue
   | GroupValue
   | MaterialOverrideValue
   | ScatterValue
