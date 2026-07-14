@@ -59,6 +59,17 @@ const HANDLE_HOVER_COLOR = '#ffd08a';
 /** local→world factor giving the handle a ~constant on-screen size, so a point is as
  *  clickable on a 100-unit path as on a 1-unit one (the reticle's rule). */
 const HANDLE_SCREEN_SCALE = 0.018;
+/**
+ * A FLOOR under that scale — because the handle is not alone at that point. CurveLine draws
+ * a control-point dot of a FIXED world radius (0.07), and a purely screen-scaled handle
+ * shrinks below it as the camera closes in: at ~4 units the handle disappears inside the dot,
+ * and by ~1.5 the pick sphere is smaller than the dot's silhouette, so a click on the dot the
+ * director can SEE lands on the dot's mesh (the object band) and picks no point at all. The
+ * handle looks alive and behaves dead — precisely when the director has zoomed in to place a
+ * point exactly. The floor keeps the handle (0.09) and its pick sphere (0.234) larger than the
+ * dot at every distance; above ~5 units the screen scale exceeds it and this never engages.
+ */
+const MIN_HANDLE_SCALE = 0.09;
 /** The visible dot, in the handle's own (screen-scaled) space. */
 const HANDLE_RADIUS = 1;
 /** The invisible hit sphere — deliberately much larger than the dot: the director aims at a
@@ -100,7 +111,7 @@ function PointHandle({
     const g = group.current;
     if (!g) return;
     const d = camera.position.distanceTo(g.getWorldPosition(_v)) || 1;
-    g.scale.setScalar(d * HANDLE_SCREEN_SCALE);
+    g.scale.setScalar(Math.max(d * HANDLE_SCREEN_SCALE, MIN_HANDLE_SCALE));
   });
 
   const color = selected ? HANDLE_SELECTED_COLOR : hovered ? HANDLE_HOVER_COLOR : HANDLE_COLOR;
