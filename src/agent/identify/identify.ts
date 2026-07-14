@@ -24,6 +24,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Node, NodeId, NodeTypeId } from '../../core/dag/types';
 import type { Candidate, IdentifyArgs, IdentifyResult, IdentifyStrategy } from './types';
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
+import { SCENE_OBJECT_KINDS, nodeTypeFor } from '../../app/addPrimitives';
 
 // ---------------------------------------------------------------------------
 // Schema (zod) — boundary validation per V7 / H5.
@@ -276,25 +277,18 @@ function isSelectionPhrase(q: string): boolean {
  * fires. Order: longest match wins (e.g. "directional light" before
  * "light").
  */
-// Generic-primitive type set — what "object", "thing", "everything"
-// expand to. Lights count as primitives (they're scene-visible nodes
-// the user manipulates); cameras and empties (Group/Transform) count
-// too. Aggregators (Scene) and authoring nodes (MaterialOverride,
-// Scatter) are intentionally excluded — those aren't user-visible
-// "things" the prompt phrase refers to.
-const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
-  'BoxMesh',
-  'SphereMesh',
-  'DirectionalLight',
-  'PointLight',
-  'SpotLight',
-  'AreaLight',
-  'AmbientLight',
-  'PerspectiveCamera',
-  'OrthographicCamera',
-  'Group',
-  'Transform',
-];
+// Generic-primitive type set — what "object", "thing", "everything" expand to.
+//
+// DERIVED from the Add menu's scene-object vocabulary (#324), not a second hand-written copy
+// of it. The two lists were kept in parallel by hand, and they drifted exactly as you would
+// expect: `Null` and `Curve` were addable with the mouse but "everything" silently skipped
+// them, so a director could not refer to an object they had just made. The rule the derivation
+// states is: **whatever the director can ADD, they can also TALK ABOUT.**
+//
+// (Aggregators like Scene and authoring nodes like MaterialOverride/Scatter stay out for the
+// same reason as before — they are not things the phrase "the objects" points at. They aren't
+// scene-object KINDS either, so the derivation excludes them for free.)
+const ALL_PRIMITIVE_TYPES: NodeTypeId[] = SCENE_OBJECT_KINDS.map(nodeTypeFor) as NodeTypeId[];
 
 function inferNodeTypes(q: string): NodeTypeId[] | null {
   const matches: NodeTypeId[] = [];
@@ -318,6 +312,12 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
   if (/\borthographic\s+camera\b/.test(q)) return ['OrthographicCamera'];
   if (/\b(camera|cameras)\b/.test(q)) return ['PerspectiveCamera', 'OrthographicCamera'];
   if (/\bcharacter(s)?\b/.test(q)) return ['Character'];
+  // #324 — the words a DIRECTOR uses for the two objects the agent was blind to. Neither is
+  // ever called by its type name in a sentence: nobody says "add a Curve node", they say
+  // "make a path for the camera to fly along" or "put a target where she's looking".
+  // Checked BEFORE 'group'/'transform' so "empty" can't be captured by a looser rule later.
+  if (/\b(curve(s)?|path(s)?|spline(s)?)\b/.test(q)) return ['Curve'];
+  if (/\b(null(s)?|empty|empties|controller(s)?|target(s)?)\b/.test(q)) return ['Null'];
   if (/\bgroup(s)?\b/.test(q)) return ['Group'];
   if (/\btransform(s)?\b/.test(q)) return ['Transform'];
 
