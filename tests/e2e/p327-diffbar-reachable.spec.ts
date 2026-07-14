@@ -146,6 +146,24 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
     expect(await reachableSamples(page, 'diffbar-reject')).toBe(9);
   });
 
+  test('reachable in the NARROW layout too (the other branch of the reserve)', async ({ page }) => {
+    // Below the breakpoint the side panels become off-canvas drawers that
+    // OVERLAY rather than reserve, so the bar takes the full width minus the
+    // edge gaps — a different branch of centerSurfaceWidthCss, and one nothing
+    // else would have exercised.
+    //
+    // (An OPEN drawer sits at zIndex 40, above this bar. That is not this bug
+    // returning: an open drawer is modal — it sits behind a dismissing scrim,
+    // so nothing underneath it is clickable BY DESIGN, and drawers are closed
+    // by default. The reachable state is the default state.)
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.goto('/');
+    await proposeCurve(page);
+
+    expect(await reachableSamples(page, 'diffbar-apply')).toBe(9);
+    expect(await reachableSamples(page, 'diffbar-reject')).toBe(9);
+  });
+
   test('the bar does not shove the viewport canvas when a diff arrives', async ({ page }) => {
     // It used to sit in the NORMAL FLOW of the view3d slot, so proposing a diff
     // pushed the canvas down by the bar's height — the ghost preview jumped at
