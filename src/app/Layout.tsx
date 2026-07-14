@@ -54,8 +54,9 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import {
   BOTTOM_BAND,
+  CENTER_SURFACE_MAX_WIDTH,
   CENTER_SURFACE_TOP,
-  centerSideReserved,
+  centerSurfaceWidthCss,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
   OUTLINER_WIDTH,
@@ -141,12 +142,14 @@ export function Layout() {
     };
   };
 
-  // Centered surfaces (toolbar + bottom stack): full-width minus edge gaps when
-  // narrow (the drawers overlay rather than reserve), else the desktop
-  // collapse-aware reserve (follow-up 1).
-  const centerSurfaceWidth = isNarrow
-    ? `calc(100% - ${2 * ISLAND_GAP}px)`
-    : `min(960px, calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px))`;
+  // Centered surfaces (toolbar + bottom stack): the collapse-aware reserve, from
+  // the ONE geometry source (V46) — see centerSurfaceWidthCss. Capped at 960.
+  const centerSurfaceWidth = centerSurfaceWidthCss({
+    isNarrow,
+    leftCollapsed: leftSidebarCollapsed,
+    inspectorCollapsed,
+    capPx: CENTER_SURFACE_MAX_WIDTH,
+  });
 
   // The 2D View (UV + Render Result) is a BOUNDED center surface — a Blender-
   // style editor area, not a full-bleed backdrop — so its tabs and pane chrome
@@ -155,9 +158,11 @@ export function Layout() {
   // centered surfaces (V46: one geometry source), but no 960px cap — the editor
   // fills the clear band. Starts below the toolbar (CENTER_SURFACE_TOP) and
   // stops above the bottom agent/timeline stack (BOTTOM_BAND).
-  const twoDViewWidth = isNarrow
-    ? `calc(100% - ${2 * ISLAND_GAP}px)`
-    : `calc(100% - ${centerSideReserved(leftSidebarCollapsed, inspectorCollapsed)}px)`;
+  const twoDViewWidth = centerSurfaceWidthCss({
+    isNarrow,
+    leftCollapsed: leftSidebarCollapsed,
+    inspectorCollapsed,
+  });
   const twoDViewStyle: CSSProperties = {
     // 'block' (not 'flex') — TwoDView is h-full/w-full and owns its own flex
     // column; the wrapper just bounds it. Keeps the p26 display:block contract.

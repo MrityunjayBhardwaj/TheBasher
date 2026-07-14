@@ -93,3 +93,35 @@ export function centerSideReserved(leftCollapsed: boolean, inspectorCollapsed: b
   const rightW = sideIslandWidth(inspectorCollapsed, INSPECTOR_WIDTH);
   return 2 * (ISLAND_GAP + Math.max(leftW, rightW) + ISLAND_GAP);
 }
+
+/** Width cap for a centered surface that should not stretch the full clear band
+ *  (the toolbar pill and the bottom agent/timeline stack). The 2D View and the
+ *  DiffBar are bars/editors — they fill the band and pass no cap. */
+export const CENTER_SURFACE_MAX_WIDTH = 960;
+
+/** The CSS width a VIEWPORT-CENTERED surface must take to stay in the clear band
+ *  between the side islands — the ONE place that decision is spelled, so a new
+ *  centered surface CANNOT be born un-reserved.
+ *
+ *  Every centered surface had been hand-copying this same ternary (toolbar,
+ *  2D View, bottom stack — three copies). The DiffBar was never given a copy,
+ *  and so its right-aligned Apply/Reject sat UNDER the inspector island: the
+ *  agent proposed and the director could not accept (#327 — the button was
+ *  visible and unreachable, which is why a `toBeVisible()` suite never saw it).
+ *  A hand-copied geometry rule drifts exactly like a hand-copied vocabulary
+ *  does (V101); the reserve is now DERIVED by every centered surface from this
+ *  one function instead of re-stated by each.
+ *
+ *  Narrow: the side panels are off-canvas drawers that OVERLAY rather than
+ *  reserve, so a centered surface takes the full width minus the edge gaps. */
+export function centerSurfaceWidthCss(opts: {
+  isNarrow: boolean;
+  leftCollapsed: boolean;
+  inspectorCollapsed: boolean;
+  /** Optional px cap; omit to fill the whole clear band. */
+  capPx?: number;
+}): string {
+  if (opts.isNarrow) return `calc(100% - ${2 * ISLAND_GAP}px)`;
+  const band = `calc(100% - ${centerSideReserved(opts.leftCollapsed, opts.inspectorCollapsed)}px)`;
+  return opts.capPx === undefined ? band : `min(${opts.capPx}px, ${band})`;
+}
