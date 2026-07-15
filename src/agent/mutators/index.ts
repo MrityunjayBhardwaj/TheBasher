@@ -5,11 +5,13 @@
 export {
   registerMutator,
   getMutator,
+  getMutatorMetadata,
   listMutators,
-  listMutatorMetadata,
+  listMutatorSummaries,
+  firstSentence,
   __resetMutatorRegistryForTests,
 } from './catalog';
-export type { MutatorMetadata } from './catalog';
+export type { MutatorMetadata, MutatorSummary } from './catalog';
 export type {
   MutatorDefinition,
   MutatorContract,
