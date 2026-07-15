@@ -19,12 +19,12 @@
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from '../tools/types';
-import { getMutator, listMutatorMetadata } from './catalog';
+import { getMutator, getMutatorMetadata, listMutatorSummaries } from './catalog';
 import { validatePlan } from './validate';
 import type { MutatorValidationResult } from './types';
 
 // ---------------------------------------------------------------------------
-// agent.listMutators
+// agent.listMutators  (the PICKER — name + one-line summary + specExample)
 // ---------------------------------------------------------------------------
 
 const listMutatorsSchema = z.object({}).default({});
@@ -32,22 +32,57 @@ const listMutatorsSchema = z.object({}).default({});
 export const listMutatorsTool: ToolDefinition<Record<string, never>> = {
   name: 'agent.listMutators',
   description:
-    'List Mutator catalog entries — name, description, contract, specExample. ' +
-    'IMPORTANT: the returned names ("mutator.rotate", "mutator.duplicate", ' +
-    'etc.) are VALUES for the `mutator` arg of agent.proposePlan, NOT callable ' +
-    'tool names. Do not call "mutator.X" directly; use agent.proposePlan({ ' +
-    'mutator: "mutator.X", spec: {...} }) instead. Read-only; call BEFORE ' +
-    'proposing a plan to pick the right Mutator and copy its specExample shape.',
+    'List the Mutator catalog as name + one-line summary + specExample — ' +
+    'everything needed to pick a Mutator AND build the agent.proposePlan call. ' +
+    'Read-only; call once, then go straight to agent.proposePlan (copy the ' +
+    "chosen entry's specExample). Only call agent.getMutator if a plan is " +
+    'rejected and you need the full contract to understand why. ' +
+    'IMPORTANT: the names ("mutator.rotate", "mutator.duplicate", etc.) are ' +
+    'VALUES for the `mutator` arg of agent.proposePlan, NOT callable tool ' +
+    'names — never call "mutator.X" directly.',
   paramSchema: listMutatorsSchema as unknown as z.ZodType<
     Record<string, never>,
     z.ZodTypeDef,
     unknown
   >,
   handler(_args, _ctx: ToolContext): ToolResult {
+    // Compact (no pretty-print) — the picker is machine-read, and the
+    // indentation is pure overhead the model re-parses every round (#332).
     return {
       ops: [],
-      text: JSON.stringify({ mutators: listMutatorMetadata() }, null, 2),
+      text: JSON.stringify({ mutators: listMutatorSummaries() }),
     };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// agent.getMutator  (the DETAIL — full contract + specExample for ONE)
+// ---------------------------------------------------------------------------
+
+const getMutatorSchema = z.object({
+  name: z.string().min(1).describe('Mutator name from agent.listMutators, e.g. "mutator.rotate".'),
+});
+
+export type GetMutatorArgs = z.infer<typeof getMutatorSchema>;
+
+export const getMutatorTool: ToolDefinition<GetMutatorArgs> = {
+  name: 'agent.getMutator',
+  description:
+    "Fetch ONE Mutator's full detail — the complete description plus the " +
+    'contract (required edges / node types, preserved + lossy aspects). ' +
+    'Read-only. agent.listMutators already gives the summary + specExample you ' +
+    'need to propose; call THIS only when a plan was rejected and you need the ' +
+    'contract to understand the gate failure.',
+  paramSchema: getMutatorSchema,
+  handler(args: GetMutatorArgs, _ctx: ToolContext): ToolResult {
+    const meta = getMutatorMetadata(args.name);
+    if (!meta) {
+      return {
+        ops: [],
+        text: `ERROR: unknown mutator "${args.name}". Call agent.listMutators for the registered names.`,
+      };
+    }
+    return { ops: [], text: JSON.stringify(meta, null, 2) };
   },
 };
 
@@ -64,9 +99,9 @@ const proposePlanSchema = z.object({
   spec: z
     .unknown()
     .describe(
-      'Mutator-specific spec object. Call agent.listMutators FIRST and copy ' +
-        'the matching `specExample` field shape — substitute real node ids ' +
-        'into `targetSelectors` and adjust value fields as needed.',
+      "Mutator-specific spec object. Copy the chosen entry's `specExample` " +
+        'shape from agent.listMutators — substitute real node ids into ' +
+        '`targetSelectors` and adjust value fields as needed.',
     ),
 });
 

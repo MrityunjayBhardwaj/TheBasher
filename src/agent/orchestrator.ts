@@ -522,7 +522,7 @@ export function buildUnknownToolError(name: string): ToolResult {
       text:
         `ERROR: unknown tool "${name}". Mutators are NOT callable tools. ` +
         `Use agent.proposePlan({ mutator: "${name}", intent: "...", spec: {...} }) ` +
-        `instead. Call agent.listMutators to see the spec shape (specExample field).`,
+        `instead. Call agent.getMutator({ name: "${name}" }) to see the spec shape (specExample field).`,
     };
   }
   return { ops: [], text: `ERROR: unknown tool "${name}"` };
@@ -635,7 +635,7 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
     ``,
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
-    `- Prefer agent.proposePlan with a Mutator over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, label, reason } you can react to. Call agent.listMutators to see the registered catalog and contracts.`,
+    `- Prefer agent.proposePlan with a Mutator over raw dag.exec for common operations. Mutators run five validation gates BEFORE producing ops; rejection comes back as { ok: false, gate, label, reason } you can react to. The flow is: agent.listMutators (name + one-line summary + specExample — pick one and copy its specExample) → agent.proposePlan({ mutator, intent, spec }). Only call agent.getMutator({ name }) if a plan is rejected and you need the full contract to see why.`,
     `- IMPORTANT: Mutators are NOT tools. The names returned by agent.listMutators ("mutator.rotate", "mutator.duplicate", etc.) are VALUES for the \`mutator\` argument of agent.proposePlan — not callable tool names. Do NOT call "mutator.rotate" or "mutator.duplicate" directly; they will fail with "unknown tool". Always: agent.proposePlan({ mutator: "mutator.X", intent: "...", spec: { ... } }).`,
     `- Use dag.inspect when you need to discover node ids or types you don't already know.`,
     `- Use dag.exec only for ops the Mutator catalog does not cover (raw addNode/connect/disconnect for node types not yet wrapped, custom multi-step plans). Make sure new nodes are wired into the scene aggregator's "children" socket so they appear.`,

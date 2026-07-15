@@ -160,7 +160,9 @@ describe('buildUnknownToolError — Wave B mutator.X corrective hint (#31)', () 
     // proposePlan call shape — both are required so the LLM's next
     // round is a fix, not another mistake.
     expect(result.text).toContain('agent.proposePlan({ mutator: "mutator.rotate"');
-    expect(result.text).toContain('agent.listMutators');
+    // The model already HAS the name (it tried to call it as a tool), so the
+    // corrective points at getMutator for the spec shape — not listMutators.
+    expect(result.text).toContain('agent.getMutator({ name: "mutator.rotate" })');
   });
 
   it('mutator.duplicate (Goal 4 case): same corrective shape with the actual name interpolated', () => {
