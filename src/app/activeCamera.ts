@@ -57,7 +57,7 @@ function channelExtendArgs(
   return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
 }
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
-import { resolveTrackToTarget } from './nodeConstraints';
+import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
@@ -329,6 +329,25 @@ export function resolveCameraPoseAt(
   // lookAt (over the static param + any lookAt channel above). null → no camera
   // constraint → the channel/static lookAt stands (byte-identical to pre-#204).
   const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+
+  // #339 Follow-Path — a camera is posed by THIS resolver, not by the mesh road
+  // (ConstrainedR / resolveEvaluatedTransform), so the POSITION band has to be folded here
+  // too or the headline case is the one that silently doesn't work: a Follow-Path on a
+  // camera would place nothing while a Follow-Path on a cube worked perfectly, because a
+  // camera never goes near the scene-child walk. Same fold, same seam, same order as the
+  // aim below — one band, every caller.
+  //
+  // The two bands need no ordering HERE, and for a nicer reason than on the mesh road: a
+  // camera aims by a lookAt POINT, not a rotation, so the orientation is derived from
+  // (position → lookAt) downstream by `cameraOrientationQuat`. Move the camera and the aim
+  // follows for free. `resolveConstraintPosition` returns PARENT-LOCAL, which is exactly
+  // what the parent compose below expects.
+  const followed = resolveConstraintPosition(state, node.id, ctx, cache);
+  if (followed) {
+    pose ??= { ...base };
+    pose.position = followed;
+  }
+
   const aimTarget = resolveTrackToTarget(state, node.id, ctx, cache);
   if (aimTarget) {
     pose ??= { ...base };

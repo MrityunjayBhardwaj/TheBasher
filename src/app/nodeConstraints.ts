@@ -33,6 +33,8 @@ import {
   resolveParentWorldMatrix,
   type WorldTransform,
 } from './resolveWorldTransform';
+import { readCurveSampleAt } from './curveSampleSource';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 
 type Vec3 = [number, number, number];
@@ -75,7 +77,62 @@ function isVec3(v: unknown): v is Vec3 {
  * Follow-Path / Copy-Location join here as members, NOT as new sidecars ([[H157]]).
  */
 export function isRelationalPoseNode(node: NodeLike | undefined): boolean {
-  return node?.type === 'TrackTo';
+  return node?.type === 'TrackTo' || node?.type === 'FollowPath';
+}
+
+/** One member of an object's constraint stack, BEFORE any band-specific coercion:
+ *  the node's identity, its slot, and its raw params. This is what the ONE scan
+ *  produces; each band derives its own typed view from it (see below). */
+export interface PoseStackMember {
+  readonly nodeId: string;
+  readonly type: string;
+  readonly order: number;
+  readonly muted: boolean;
+  readonly params: Record<string, unknown>;
+}
+
+/**
+ * THE ONE SCAN — every relational pose operator targeting `nodeId`, muted-filtered and
+ * sorted bottom → top by `order`. Type-AGNOSTIC: it selects members and orders them, and
+ * says nothing about what any of them writes.
+ *
+ * WHY THIS EXISTS (#339, and it is the whole shape of the slice): until Follow-Path there
+ * was one band, so the scan could hand back a Track-To-shaped value and nobody noticed the
+ * conflation. A second band made it load-bearing: enumerating and ordering the stack is
+ * SHARED (an object has ONE constraint stack, and the panel, the ordering rule and both
+ * folds must agree on its membership and its order), while COERCING a member into aim
+ * params is Track-To's private business. Fusing the two meant a Follow-Path enumerated
+ * into the aim view would come out as `aimNode: ''` → `aimPoint: [0,0,0]` and the rotation
+ * fold would silently aim the object at the world origin.
+ *
+ * So: ONE scan here; each band filters it by type and coerces its own members. Adding a
+ * third pose operator costs a view + a fold, never another scan — which is precisely the
+ * property that makes the stack an abstraction rather than a convention.
+ */
+export function relationalPoseStackForTarget(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+  includeMuted = false,
+): PoseStackMember[] {
+  if (!nodeId) return [];
+  const stack: PoseStackMember[] = [];
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!isRelationalPoseNode(node)) continue;
+    const p = (node.params ?? {}) as Record<string, unknown>;
+    if (p.target !== nodeId) continue;
+    const isMuted = p.mute === true;
+    if (isMuted && !includeMuted) continue;
+    stack.push({
+      nodeId: id,
+      type: node.type,
+      order: typeof p.order === 'number' ? p.order : 0,
+      muted: isMuted,
+      params: p,
+    });
+  }
+  // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
+  stack.sort((a, b) => a.order - b.order);
+  return stack;
 }
 
 /**
@@ -97,38 +154,73 @@ export function constraintStackForTarget(
   nodeId: string,
   /** Include BYPASSED members. The resolvers want active-only (a muted constraint
    *  contributes nothing); the authoring panel wants every member, so it can render a
-   *  bypassed row and let the user re-enable it. Both views come from THIS one scan +
+   *  bypassed row and let the user re-enable it. Both views come from THE one scan +
    *  sort, so the order the panel shows is always the order the fold applies. */
   includeMuted = false,
 ): ActiveConstraint[] {
-  if (!nodeId) return [];
-  const stack: ActiveConstraint[] = [];
-  for (const [id, node] of Object.entries(nodes)) {
-    if (!isRelationalPoseNode(node)) continue;
-    const p = node.params as {
-      target?: unknown;
-      aimNode?: unknown;
-      aimPoint?: unknown;
-      up?: unknown;
-      mute?: unknown;
-      order?: unknown;
-    };
-    if (p.target !== nodeId) continue;
-    const isMuted = p.mute === true;
-    if (isMuted && !includeMuted) continue;
-    stack.push({
-      target: nodeId,
-      aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
-      aimPoint: isVec3(p.aimPoint) ? p.aimPoint : [0, 0, 0],
-      up: isVec3(p.up) ? p.up : [0, 1, 0],
-      nodeId: id,
-      order: typeof p.order === 'number' ? p.order : 0,
-      muted: isMuted,
+  return relationalPoseStackForTarget(nodes, nodeId, includeMuted)
+    .filter((m) => m.type === 'TrackTo')
+    .map((m) => {
+      const p = m.params;
+      return {
+        target: nodeId,
+        aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
+        aimPoint: isVec3(p.aimPoint) ? p.aimPoint : [0, 0, 0],
+        up: isVec3(p.up) ? p.up : [0, 1, 0],
+        nodeId: m.nodeId,
+        order: m.order,
+        muted: m.muted,
+      };
     });
-  }
-  // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
-  stack.sort((a, b) => a.order - b.order);
-  return stack;
+}
+
+/** One resolved member of an object's FOLLOW-PATH (position) band — the normalized,
+ *  coerced path params. The POSITION twin of {@link ActiveConstraint}.
+ *
+ *  `evalTime` here is the AUTHORED param. The fold does NOT use it directly: it resolves
+ *  the value through `resolveEvaluatedParam` so a keyframe or a driver on `evalTime` is
+ *  honoured (see `resolveConstraintPosition`). It is carried so a caller that wants the
+ *  authored number — the inspector, the agent — has it without a second read. */
+export interface ActiveFollowPath {
+  readonly target: string;
+  /** The Curve node id. Empty → degenerate (contributes nothing to the fold). */
+  readonly curve: string;
+  /** The AUTHORED fraction along the path. Not the resolved one — see above. */
+  readonly evalTime: number;
+  readonly offset: number;
+  readonly nodeId: string;
+  readonly order: number;
+  readonly muted: boolean;
+}
+
+/**
+ * The ordered FOLLOW-PATH stack for `nodeId` — the POSITION band's view of THE one scan
+ * ({@link relationalPoseStackForTarget}), bottom → top.
+ *
+ * The twin of `constraintStackForTarget`, and the pair of them IS the band split: same
+ * membership, same order, different question. A Track-To in this object's stack simply
+ * isn't in this view, and vice versa — which is why the two operators compose on one
+ * object with nothing to order between them.
+ */
+export function followPathStackForTarget(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+  includeMuted = false,
+): ActiveFollowPath[] {
+  return relationalPoseStackForTarget(nodes, nodeId, includeMuted)
+    .filter((m) => m.type === 'FollowPath')
+    .map((m) => {
+      const p = m.params;
+      return {
+        target: nodeId,
+        curve: typeof p.curve === 'string' ? p.curve : '',
+        evalTime: typeof p.evalTime === 'number' ? p.evalTime : 0,
+        offset: typeof p.offset === 'number' ? p.offset : 0,
+        nodeId: m.nodeId,
+        order: m.order,
+        muted: m.muted,
+      };
+    });
 }
 
 /**
@@ -184,12 +276,17 @@ export function activeConstraintForTarget(
  * the stable sort fell back to node-table order.
  *
  * Counts MUTED members: bypassing a constraint must not make the next one collide with it.
+ *
+ * #339 — counts members of EVERY band (the type-agnostic scan), not just Track-Tos. An
+ * object has ONE constraint stack and one `order` space; asking only the aim band would
+ * hand a new Follow-Path the slot an existing Track-To already occupies, and the tie would
+ * fall back to node-table order — the exact defect that made the old hardcoded 0 a bug.
  */
 export function nextConstraintOrder(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
 ): number {
-  const stack = constraintStackForTarget(nodes, nodeId, true);
+  const stack = relationalPoseStackForTarget(nodes, nodeId, true);
   return stack.length === 0 ? 0 : stack[stack.length - 1].order + 1;
 }
 
@@ -234,6 +331,22 @@ export function resolveConstraintRotation(
   const objWorld: WorldTransform | null = resolveWorldTransform(state, nodeId, ctx, cache);
   if (!objWorld) return null;
 
+  // #339 — THE AIM ORIGIN IS THE FOLLOWED POSITION WHEN THERE IS ONE.
+  //
+  // The two bands are orthogonal in what they WRITE, but they are NOT independent: an aim
+  // is derived FROM the object's position, so the rotation band READS what the position
+  // band writes. `resolveWorldTransform` deliberately composes pure TRS and applies no
+  // constraints (that is what keeps it cycle-free — see its header), so its `position` is
+  // where the object was AUTHORED, not where its Follow-Path put it. Aiming from there
+  // would make "fly the path while locked on the hero" — the sentence this whole rig
+  // exists for — compute the aim from a point the camera is not at, and be wrong by
+  // exactly the distance the path moved it.
+  //
+  // So the position band resolves FIRST and the aim starts from its result. No cycle: the
+  // followed position depends only on the CURVE's world (a different node, resolved by the
+  // pure TRS walk) and never re-enters this resolver.
+  const aimOrigin = resolveFollowedWorldPosition(state, nodeId, ctx, cache) ?? objWorld.position;
+
   // #311 — FOLD the stack bottom → top on the ROTATION band. v1 semantics are
   // LAST-WRITER-WINS: each member that resolves to a defined aim overwrites the one
   // below it, and a DEGENERATE member (unresolvable target / zero-distance aim)
@@ -248,7 +361,7 @@ export function resolveConstraintRotation(
   let aimWorld: Vec3 | null = null;
   for (const member of stack) {
     const memberAim = resolveTrackTo(
-      objWorld.position,
+      aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
       member.up,
     );
@@ -265,6 +378,74 @@ export function resolveConstraintRotation(
   const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
   if (!parentWorld) return aimWorld;
   return worldAimToParentLocal(aimWorld, parentWorld);
+}
+
+/**
+ * The WORLD point `nodeId`'s Follow-Path stack places it at, or null when it has no
+ * active, non-degenerate Follow-Path.
+ *
+ * The POSITION band's fold, and the twin of `resolveConstraintRotation`'s aim fold:
+ * bottom → top, LAST-WRITER-WINS, and a DEGENERATE member (no curve, or a `curve` that
+ * isn't a resolvable Curve) contributes nothing — exactly as a muted one would. So a
+ * single-member stack is just that member's point.
+ *
+ * `evalTime` is read through `resolveEvaluatedParam` — the render-identical path — NOT off
+ * the raw param. That is what makes it keyframeable and driveable; reading it raw would
+ * leave it a dead number and quietly falsify the whole reason the seam is arc-length
+ * parameterized. `offset` IS raw: it is the constant that spreads objects along one shared
+ * animation, so animating it would defeat its purpose.
+ *
+ * WORLD, not parent-local — the aim fold needs a world origin and the seam speaks world.
+ * `resolveConstraintPosition` is the parent-local view for the transform band.
+ */
+function resolveFollowedWorldPosition(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 | null {
+  const stack = followPathStackForTarget(state.nodes, nodeId);
+  if (stack.length === 0) return null;
+  let world: Vec3 | null = null;
+  for (const member of stack) {
+    if (!member.curve) continue; // degenerate — unbound path
+    const resolved = resolveEvaluatedParam(state, member.nodeId, 'evalTime', ctx, cache);
+    const evalTime = typeof resolved?.value === 'number' ? resolved.value : member.evalTime;
+    const sample = readCurveSampleAt(state, member.curve, evalTime + member.offset, ctx, cache);
+    // Copied, not aliased: the seam's point is readonly (and table-owned) — this resolver
+    // hands back a plain mutable Vec3 like every other band here.
+    if (sample) world = [sample.point[0], sample.point[1], sample.point[2]];
+  }
+  return world;
+}
+
+/**
+ * The derived POSITION (the node's LOCAL position param, parent-relative) for `nodeId`
+ * from its active Follow-Path stack, or null when it follows nothing. Pure (a function of
+ * state + ctx). The sibling of {@link resolveConstraintRotation} — one band each, and both
+ * are consumed by the SAME two callers (the read-side resolver + the renderer), so what
+ * the inspector reads is what the viewport draws.
+ *
+ * PARENT-LOCAL, mirroring the aim fold's own re-expression: the value is written as the
+ * node's local position and then composed UNDER its parent by the renderer's `<group>`, so
+ * a world point must be pulled back through parentWorld⁻¹ or a parented follower lands at
+ * the path point double-transformed. A top-level node has no parent world → the world point
+ * IS the local one.
+ */
+export function resolveConstraintPosition(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 | null {
+  const world = resolveFollowedWorldPosition(state, nodeId, ctx, cache);
+  if (!world) return null;
+  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
+  if (!parentWorld) return world;
+  const v = new THREE.Vector3(world[0], world[1], world[2]).applyMatrix4(
+    parentWorld.clone().invert(),
+  );
+  return [v.x, v.y, v.z];
 }
 
 /** Re-express a WORLD aim rotation (Euler XYZ, degrees) into the parent-local frame:
@@ -321,7 +502,14 @@ export function resolveTrackToTarget(
 /** The world aim-target position for a resolved Track-To: the aim node's world
  *  position (via #202) when set, else the fixed `aimPoint`. Unresolvable node-ref
  *  → fall back to `aimPoint` (never throw; a deleted target must not blank the
- *  aim). Shared by the mesh-rotation and camera-lookAt consumers. */
+ *  aim). Shared by the mesh-rotation and camera-lookAt consumers.
+ *
+ *  #339 — the SAME position/rotation coupling as the aim ORIGIN, one node over: if the
+ *  thing being aimed AT follows a path, `resolveWorldTransform` reports where it was
+ *  authored, not where the path put it, so the aim would trail the subject by the whole
+ *  offset. Aiming at a hero riding a path is the mirror image of flying a camera along
+ *  one, and it must not need a different rule. Cycle-free for the same reason: a followed
+ *  position depends only on the CURVE's pure-TRS world. */
 function aimTargetWorld(
   state: DagState,
   tt: ActiveConstraint,
@@ -329,6 +517,8 @@ function aimTargetWorld(
   cache?: EvaluatorCache,
 ): Vec3 {
   if (!tt.aimNode) return tt.aimPoint;
+  const followed = resolveFollowedWorldPosition(state, tt.aimNode, ctx, cache);
+  if (followed) return followed;
   const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
   return targetWorld ? targetWorld.position : tt.aimPoint;
 }

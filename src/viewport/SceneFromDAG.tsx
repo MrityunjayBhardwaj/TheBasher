@@ -69,6 +69,7 @@ import {
 import {
   constraintTargetSet,
   resolveConstraintRotation,
+  resolveConstraintPosition,
   resolveTrackToTarget,
 } from '../app/nodeConstraints';
 import { childEdges } from '../app/resolveWorldTransform';
@@ -1679,10 +1680,23 @@ function ConstrainedR({
         transients,
       ) ?? value;
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
+    // #339 — the POSITION band. A Follow-Path derives the position from a curve, so it
+    // overrides the authored/animated one exactly as the aim overrides rotation. Both
+    // bands come from the SAME seam the read side calls (resolveEvaluatedTransform), so
+    // the gizmo/inspector and this mesh cannot disagree about where the object is.
+    const followed = resolveConstraintPosition(state, pickId, ctx, cache);
     const rec = base as unknown as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    if (aim && 'rotation' in rec) patch.rotation = aim;
+    if (followed && 'position' in rec) patch.position = followed;
     const v =
-      aim && 'rotation' in rec ? ({ ...rec, rotation: aim } as unknown as SceneObject) : base;
-    return { v, aimKey: aim ? aim.join(',') : '' };
+      Object.keys(patch).length > 0 ? ({ ...rec, ...patch } as unknown as SceneObject) : base;
+    // The skip-key must cover EVERY band this builds, or a change in an unkeyed band
+    // silently stops re-rendering (the H48 static-node guard would eat the update).
+    return {
+      v,
+      aimKey: `${aim ? aim.join(',') : ''}|${followed ? followed.join(',') : ''}`,
+    };
   };
 
   const [patched, setPatched] = useState<SceneObject>(

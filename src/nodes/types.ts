@@ -1230,7 +1230,36 @@ export interface TrackToConstraintValue {
   readonly order: number;
 }
 
-export type ConstraintValue = TrackToConstraintValue;
+/**
+ * A Follow-Path constraint value (issue #339). The POSITION-band twin of
+ * `TrackToConstraintValue`: same edge-less species (enumerated + seam-resolved — a path
+ * is another object's world geometry, unreachable from a pure `evaluate`), different
+ * band. Track-To derives rotation from where the object IS; this derives position from
+ * the path, so the two compose on one target with nothing to order.
+ *
+ * `evalTime` here is the AUTHORED param. The resolver reads it through
+ * `resolveEvaluatedParam` so keyframes/drivers on it are honoured — this value is for
+ * agent/introspection completeness, like Track-To's.
+ */
+export interface FollowPathConstraintValue {
+  readonly kind: 'Constraint';
+  readonly constraintType: 'followPath';
+  readonly name: string;
+  /** The constrained node id whose position this derives. */
+  readonly target: string;
+  /** The Curve node followed. Empty / not a Curve → degenerate, contributes nothing. */
+  readonly curve: string;
+  /** Fraction of the path's world ARC LENGTH: 0 = start, 1 = end. Closed paths wrap. */
+  readonly evalTime: number;
+  /** Added to `evalTime` before sampling (spread objects along one animated path). */
+  readonly offset: number;
+  /** Bypass — a muted constraint contributes nothing (the constraint stack). */
+  readonly mute: boolean;
+  /** Position in the target's ordered constraint stack (low → high, bottom → top). */
+  readonly order: number;
+}
+
+export type ConstraintValue = TrackToConstraintValue | FollowPathConstraintValue;
 
 export interface ShotValue {
   readonly kind: 'Shot';
