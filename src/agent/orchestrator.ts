@@ -26,7 +26,7 @@
 //
 // REF: THESIS.md §18-21, krama K3, vyapti V7 + V11.
 
-import type { LLMConfig, ChatMessage, AssistantToolCall } from './transport/types';
+import type { LLMConfig, ChatMessage, AssistantToolCall, ToolSchema } from './transport/types';
 import { streamChatCompletion, buildToolSchemas } from './transport/openai';
 import { getTool, listTools } from './tools/registry';
 import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
@@ -49,11 +49,77 @@ import type { StorageCapability } from '../core/storage';
 // 8 covers the realistic compose patterns; bound stays so a confused
 // model can't loop forever.
 const MAX_ROUNDS = 8;
+// The token budget is the REAL economic limiter; MAX_ROUNDS is only a runaway
+// backstop (a confused model looping forever). For the two to be consistent the
+// budget must afford a realistic MAX_ROUNDS-round compose pattern — otherwise
+// it silently kills legitimate multi-step turns long before the round cap and
+// MAX_ROUNDS=8 is a lie. Post-#332 a real compose round costs ~7k tokens, so a
+// budget that wants all 8 rounds needs ~60k. This default is generous headroom
+// for programmatic callers; the interactive caller sets its own (AgentChat).
 const DEFAULT_TURN_TOKEN_BUDGET = 150_000;
 const PARAMS_PREVIEW_LIMIT = 240;
 /** Cap on prior session messages threaded into the LLM context. Anchored:
  * always keep the first user message + the most-recent ones up to this cap. */
 const MAX_HISTORY_MESSAGES = 16;
+
+// --- Cost accounting (#333) --------------------------------------------------
+//
+// The turn's token guard used to be fed EXCLUSIVELY from the provider's `usage`
+// chunk. Two failure modes fell out of that:
+//   1. Fails open. A provider that omits `usage` from its stream (not every
+//      OpenAI-compatible endpoint emits it) left the running total at 0 — so
+//      the guard NEVER FIRED and the turn ran to MAX_ROUNDS unbounded, spending
+//      real money with no ceiling and no warning. A guard that silently turns
+//      itself off is worse than none, because it is believed.
+//   2. Post-hoc. The total was only checked AFTER a round had already streamed,
+//      so an oversized round could not be prevented — only the next one blocked.
+// The helpers below fix both: a local estimate keeps the guard live when the
+// provider is silent, and the same estimate lets us refuse the NEXT round up
+// front. The estimate is deliberately rough and rounds up (~4 chars/token over
+// JSON) — the safe direction for a guard; it is never used to bill, only bound.
+
+/** Chars-per-token heuristic for the local fallback estimate. */
+export const CHARS_PER_TOKEN = 4;
+
+export function estimateTokensFromChars(chars: number): number {
+  return Math.ceil(Math.max(0, chars) / CHARS_PER_TOKEN);
+}
+
+/** Estimated INPUT tokens for the next request (wire messages + tool schemas). */
+export function estimateRequestTokens(messages: ChatMessage[], toolSchemas: ToolSchema[]): number {
+  return estimateTokensFromChars(
+    JSON.stringify(messages).length + JSON.stringify(toolSchemas).length,
+  );
+}
+
+/**
+ * Token cost of one round. Prefers the provider's reported `usage`; falls back
+ * to the local estimate (request input + streamed output chars) when the
+ * provider omits it, so the total is NEVER left at 0 and the guard can never be
+ * silently disabled. `estimated` tells the caller the fallback was taken — the
+ * caller must surface it (no silent degradation, V38).
+ */
+export function accountRoundTokens(
+  usage: { prompt_tokens: number; completion_tokens: number } | undefined,
+  requestEstimateTokens: number,
+  outputChars: number,
+): { promptTokens: number; completionTokens: number; total: number; estimated: boolean } {
+  if (usage) {
+    return {
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      total: usage.prompt_tokens + usage.completion_tokens,
+      estimated: false,
+    };
+  }
+  const completionTokens = estimateTokensFromChars(outputChars);
+  return {
+    promptTokens: requestEstimateTokens,
+    completionTokens,
+    total: requestEstimateTokens + completionTokens,
+    estimated: true,
+  };
+}
 
 export interface TurnResult {
   /** Assistant text response (accumulated from streaming deltas across all rounds). */
@@ -145,6 +211,10 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
   let mutationToolCallCount = 0;
   let error: string | null = null;
   let totalTokens = 0;
+  // True once any round has had to fall back to a local token estimate (the
+  // provider omitted `usage`). Surfaced in the guard message so an estimated
+  // stop never masquerades as an exact one (V38).
+  let estimatedAccounting = false;
   const turnBudget = config.maxTurnTokens ?? DEFAULT_TURN_TOKEN_BUDGET;
 
   // Wave B (Identify pre-stage). When the user phrase references existing
@@ -181,6 +251,21 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       if (signal?.aborted) break;
 
+      // Pre-flight cost guard (#333): refuse a round we can't afford BEFORE
+      // spending it. The post-round guard below only catches an overspend after
+      // the round has already streamed; this estimates the outgoing request and
+      // stops first. Skipped while nothing has been spent yet — the user's
+      // request must get at least one attempt, and the post-round guard still
+      // bounds a first round whose OUTPUT balloons. Only the request INPUT is
+      // knowable here; output is bounded after the fact.
+      const requestTokens = estimateRequestTokens(messages, toolSchemas);
+      if (totalTokens > 0 && totalTokens + requestTokens > turnBudget) {
+        sessionStore.appendToLastAssistant(
+          `\n\n[Cost guard: the next round (~${requestTokens} more tokens) would exceed the ${turnBudget}-token budget — stopping before spending it${estimatedAccounting ? ' (token counts estimated — this provider omits usage)' : ''}.]`,
+        );
+        break;
+      }
+
       // F5: a fresh assistant bubble per round. Clean separation in the UI
       // between "round 1 said X, called inspect" and "round 2 said Y, called exec".
       sessionStore.addMessage({ role: 'assistant', content: '' });
@@ -195,9 +280,12 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         }
       >();
       // F3: capture exactly one usage event per round (provider sends
-      // cumulative-per-request totals on the final chunk).
-      let roundPromptTokens = 0;
-      let roundCompletionTokens = 0;
+      // cumulative-per-request totals on the final chunk). roundUsage stays
+      // undefined when the provider omits usage — that is the signal to fall
+      // back to the local estimate (#333). roundOutputChars accumulates the
+      // streamed text + tool-call args so the estimate has an output term.
+      let roundUsage: { prompt_tokens: number; completion_tokens: number } | undefined;
+      let roundOutputChars = 0;
 
       // Per-round tool_choice override — used to force agent.identify
       // for round 1 when the heuristic fires. Cleared after the round
@@ -215,12 +303,14 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
             case 'text': {
               const t = chunk.text ?? '';
               roundText.push(t);
+              roundOutputChars += t.length;
               sessionStore.appendToLastAssistant(t);
               break;
             }
             case 'tool_call': {
               const tc = chunk.tool_call!;
               const idx = tc.index ?? 0;
+              roundOutputChars += tc.function.arguments.length + tc.function.name.length;
               const existing = toolCallAccumulators.get(idx);
               if (existing) {
                 existing.argsBuffer += tc.function.arguments;
@@ -236,10 +326,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
               break;
             }
             case 'done': {
-              if (chunk.usage) {
-                roundPromptTokens = chunk.usage.prompt_tokens;
-                roundCompletionTokens = chunk.usage.completion_tokens;
-              }
+              if (chunk.usage) roundUsage = chunk.usage;
               break;
             }
             case 'error': {
@@ -253,17 +340,30 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
 
       allText.push(...roundText);
 
-      // F3: one addTokenUsage per round. The session store accumulates
-      // across the turn; UI shows the running total.
-      if (roundPromptTokens > 0 || roundCompletionTokens > 0) {
-        sessionStore.addTokenUsage(roundPromptTokens, roundCompletionTokens);
-        totalTokens += roundPromptTokens + roundCompletionTokens;
+      // F3 / #333: one addTokenUsage per round. Prefer the provider's usage;
+      // fall back to a local estimate when it is absent so the total is never
+      // stuck at 0 (which used to disable the guard entirely). The session
+      // store accumulates across the turn; the UI shows the running total.
+      const acct = accountRoundTokens(roundUsage, requestTokens, roundOutputChars);
+      if (acct.estimated && !estimatedAccounting) {
+        estimatedAccounting = true;
+        // Surface the degradation once per turn (V38): the guard is now running
+        // on an estimate because this provider reported no usage.
+        console.warn(
+          '[agent] provider reported no token usage; cost guard is using a local estimate',
+        );
+      }
+      if (acct.total > 0) {
+        sessionStore.addTokenUsage(acct.promptTokens, acct.completionTokens);
+        totalTokens += acct.total;
       }
 
-      // A5: hard cost guard. Abort the loop instead of silently spending.
+      // A5 / #333: hard cost guard AFTER the round — catches a round whose
+      // OUTPUT ballooned past what the pre-flight estimate could see. Together
+      // with the pre-flight check above, spending is bounded on both ends.
       if (totalTokens > turnBudget) {
         sessionStore.appendToLastAssistant(
-          `\n\n[Cost guard: turn exceeded ${turnBudget} tokens — stopping.]`,
+          `\n\n[Cost guard: turn exceeded ${turnBudget} tokens — stopping${estimatedAccounting ? ' (token counts estimated — this provider omits usage)' : ''}.]`,
         );
         break;
       }

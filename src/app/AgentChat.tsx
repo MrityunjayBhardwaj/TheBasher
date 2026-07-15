@@ -36,7 +36,12 @@ function getLLMConfig(): LLMConfig {
     model: winOverrides['__BASHER_LLM_MODEL'] ?? env.VITE_BASHER_LLM_MODEL ?? DEFAULT_MODEL,
     temperature: 0.7,
     maxTokens: 4096,
-    maxTurnTokens: 30_000,
+    // Sized to afford a realistic multi-round compose turn. The orchestrator's
+    // MAX_ROUNDS is 8 and a real compose round costs ~7k tokens post-#332, so a
+    // budget that wants those rounds needs ~60k; the old 30k silently killed
+    // legitimate multi-step turns around round 4-5 (#333). Lower this only to
+    // deliberately cap cost — not by accident.
+    maxTurnTokens: 60_000,
   };
 }
 

@@ -10,10 +10,15 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  accountRoundTokens,
   buildUnknownToolError,
+  CHARS_PER_TOKEN,
+  estimateRequestTokens,
+  estimateTokensFromChars,
   parseProposePlanClosureSpec,
   parseProposePlanMeta,
 } from './orchestrator';
+import type { ChatMessage, ToolSchema } from './transport/types';
 
 describe('parseProposePlanClosureSpec — edge-kind validation (#14)', () => {
   it('accepts a valid spec with known edge kinds', () => {
@@ -176,5 +181,58 @@ describe('buildUnknownToolError — Wave B mutator.X corrective hint (#31)', () 
     expect(result.ops).toEqual([]);
     expect(result.text).toBe('ERROR: unknown tool "random.nonexistent"');
     expect(result.text).not.toContain('proposePlan');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cost accounting (#333) — the turn budget guard must stay live even when a
+// provider omits `usage`, and must estimate the next round before spending it.
+// ---------------------------------------------------------------------------
+
+describe('estimateTokensFromChars', () => {
+  it('rounds up at ~4 chars/token and floors at zero', () => {
+    expect(estimateTokensFromChars(0)).toBe(0);
+    expect(estimateTokensFromChars(4)).toBe(1);
+    expect(estimateTokensFromChars(5)).toBe(2); // ceil, not floor — safe direction for a guard
+    expect(estimateTokensFromChars(-100)).toBe(0); // never negative
+    expect(CHARS_PER_TOKEN).toBe(4);
+  });
+});
+
+describe('estimateRequestTokens', () => {
+  it('is non-zero for a real request and grows with the payload', () => {
+    const tools: ToolSchema[] = [{ name: 't', description: 'd', parameters: {} }];
+    const small: ChatMessage[] = [{ role: 'user', content: 'hi' }];
+    const big: ChatMessage[] = [{ role: 'user', content: 'x'.repeat(4000) }];
+    expect(estimateRequestTokens(small, tools)).toBeGreaterThan(0);
+    expect(estimateRequestTokens(big, tools)).toBeGreaterThan(estimateRequestTokens(small, tools));
+  });
+});
+
+describe('accountRoundTokens', () => {
+  it('uses the provider usage exactly when present (no estimation)', () => {
+    const acct = accountRoundTokens({ prompt_tokens: 1200, completion_tokens: 300 }, 9999, 9999);
+    expect(acct).toEqual({
+      promptTokens: 1200,
+      completionTokens: 300,
+      total: 1500,
+      estimated: false,
+    });
+  });
+
+  it('THE #333 PIN: with NO provider usage, still returns a non-zero total so the guard can fire', () => {
+    // This is the fails-open bug. Before the fix, a provider that omitted
+    // `usage` left the running total at 0 and the guard NEVER fired — the turn
+    // ran to MAX_ROUNDS unbounded. The estimate must be > 0 and flagged.
+    const acct = accountRoundTokens(undefined, 5000, 400);
+    expect(acct.estimated).toBe(true);
+    expect(acct.total).toBe(5000 + 100); // requestEstimate + ceil(400/4)
+    expect(acct.total).toBeGreaterThan(0);
+  });
+
+  it('estimated accounting still accrues even with zero output (input alone bounds the turn)', () => {
+    const acct = accountRoundTokens(undefined, 5000, 0);
+    expect(acct.total).toBe(5000);
+    expect(acct.estimated).toBe(true);
   });
 });
