@@ -104,6 +104,39 @@ describe('studioProfiles (#208)', () => {
     expect(state.nodes[light!.lightId]).toBeUndefined();
   });
 
+  // #339 — deleting a profile must take the light's WHOLE pose stack, of EVERY band, not
+  // just its aim. The rig light already carries a Track-To; give it a Follow-Path too and
+  // both constraint nodes must go. Left behind, the Follow-Path is an ORPHAN pointing at a
+  // deleted light — #317's bug, which its own comment predicted would return "once
+  // Follow-Path lands". It did: narrowing the shared enumeration to the aim band (#339)
+  // re-opened it, and only this test says so.
+  it('deleting a profile removes EVERY band of its lights’ constraints — no orphan', () => {
+    let state = buildDefaultDagState();
+    const key = buildAddProfileOps(state, 'Key', [0, 0, 0])!;
+    state = apply(state, key.ops);
+    const light = buildAddStudioLightOps(state, [0, 0, 0], resolveActiveRigNode(state));
+    state = apply(state, light!.ops);
+
+    // The rig light gains a second constraint on the OTHER band.
+    state = apply(state, [
+      {
+        type: 'addNode',
+        nodeId: 'n_fp_light',
+        nodeType: 'FollowPath',
+        params: { target: light!.lightId, curve: '', order: 1 },
+      },
+    ]);
+    expect(state.nodes['n_fp_light']).toBeDefined();
+
+    state = apply(state, buildDeleteProfileOps(state, key.rigId)!);
+
+    expect(state.nodes[light!.lightId]).toBeUndefined();
+    expect(
+      state.nodes['n_fp_light'],
+      'the Follow-Path must not outlive the light it targets',
+    ).toBeUndefined();
+  });
+
   it('de-dupes a colliding "+ Profile" name (count renumber after a delete)', () => {
     let state = buildDefaultDagState();
     // [Profile 1, Profile 2], then delete Profile 1 → count is 1 again.

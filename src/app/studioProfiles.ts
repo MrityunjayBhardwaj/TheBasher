@@ -22,7 +22,7 @@ import type { Node } from '../core/dag/types';
 import type { Op } from '../core/dag/types';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveActiveRigNode } from './resolveRigLightSources';
-import { constraintStackForTarget } from './nodeConstraints';
+import { constraintStackForTarget, relationalPoseStackForTarget } from './nodeConstraints';
 
 type Vec3 = [number, number, number];
 
@@ -95,10 +95,15 @@ function legacyStudioLightsOnScene(state: DagState): string[] {
   for (const ref of refs) {
     const n = state.nodes[ref.node];
     if (n?.type !== 'AreaLight') continue;
-    // A pose constraint targets it → it's a rig light (studioLightRig discipline).
+    // AIMED by a Track-To → it's a rig light (studioLightRig discipline).
     // #317 — asked through the SHARED stack enumeration rather than a raw
     // `type === 'TrackTo'` scan. Muted members count: a bypassed aim still marks the
     // light as rig-authored (and the raw scan it replaces counted them too).
+    // #339 — the AIM band specifically, and deliberately: this asks "is this light
+    // rig-aimed?" (see the header), which only the aim band answers. A light that merely
+    // follows a path is not "a rig light with no rig" and must not be adopted into a
+    // profile. Contrast `constraintsForLights`, which asks "which nodes point at this
+    // light" — a band-agnostic question that reads the type-agnostic scan.
     const aimed = constraintStackForTarget(state.nodes, ref.node, true).length > 0;
     if (aimed) out.push(ref.node);
   }
@@ -218,10 +223,17 @@ function rigLightIds(state: DagState, rigId: string): string[] {
  * hardcoded type: a light carrying a second constraint (now possible from the Constraints
  * panel, and a Follow-Path once it lands) would have left an ORPHAN node pointing at a
  * deleted light. `includeMuted` — a bypassed constraint is still a node, and still has to go.
+ *
+ * #339 — and "the WHOLE stack" means the TYPE-AGNOSTIC scan, not one band's view. This is a
+ * DELETE: the question is "which nodes point at this light", which has nothing to do with
+ * what any of them writes. Asking the aim band would resurrect the exact orphan the note
+ * above describes — for the very node it was waiting for. (Follow-Path landed; the sentence
+ * came true.) Contrast `legacyStudioLightsOnScene`, which asks a band-SPECIFIC question and
+ * rightly reads the aim view.
  */
 function constraintsForLights(state: DagState, lightIds: readonly string[]): string[] {
   return lightIds.flatMap((id) =>
-    constraintStackForTarget(state.nodes, id, true).map((c) => c.nodeId),
+    relationalPoseStackForTarget(state.nodes, id, true).map((c) => c.nodeId),
   );
 }
 
