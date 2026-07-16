@@ -197,18 +197,31 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   /**
    * Node-reference params — the general "pick a node" authoring surface (the
    * Blender object-picker / Houdini node-path-param idiom). Each entry names a
-   * param that holds a `{ node: string }` reference to another node (e.g. a
-   * SampleGeometry's terrain, a Solver's controller). The Inspector renders a
+   * param that holds a reference to another node (e.g. a SampleGeometry's terrain,
+   * a Solver's controller, a Follow-Path's curve). The Inspector renders a
    * `NodeRefField` dropdown for each — candidates filtered by `kind` — so the
    * relationship is authored through ONE general control instead of a bespoke
    * preset/picker per node type. Surfaced even when the ref is unset (an empty
-   * picker), since an optional `{node}` param is absent from live `node.params`.
+   * picker), since an unset ref is absent (or an empty string) in live `node.params`.
    *
    * `kind` filters the candidate list: 'mesh' (geometry sources), 'transformable'
-   * (a Null/scene object whose transform is read), or 'any'. Loose typing keeps the
-   * DAG registry app-agnostic — the Inspector owns the candidate resolution.
+   * (a Null/scene object whose transform is read), 'curve' (a Curve the arc-length
+   * sampler can consume), or 'any'. Loose typing keeps the DAG registry app-agnostic
+   * — the Inspector owns the candidate resolution.
+   *
+   * `shape` is how the param STORES the reference:
+   *   • 'ref' (default) — a `{ node: string }` object (SampleGeometry, Solver).
+   *   • 'id'            — a plain string id (the constraint family: `TrackTo.aimNode`,
+   *                       `FollowPath.curve`). These must stay strings because the
+   *                       constraint enumeration compares them directly (`p.target`),
+   *                       so the picker drives the raw id rather than wrapping it.
    */
-  refParams?: Readonly<Record<string, { label?: string; kind: 'mesh' | 'transformable' | 'any' }>>;
+  refParams?: Readonly<
+    Record<
+      string,
+      { label?: string; kind: 'mesh' | 'transformable' | 'curve' | 'any'; shape?: 'id' | 'ref' }
+    >
+  >;
 }
 
 // ---------------------------------------------------------------------------

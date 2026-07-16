@@ -80,6 +80,12 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   inputs: {},
   outputs: { out: { type: 'Constraint', cardinality: 'single' } },
   inspectorSections: ['constraint', 'driver'],
+  // The path is bound through the general node-ref picker (#341). `shape:'id'` because
+  // `curve` is a plain string id (the fold reads it raw); `kind:'curve'` filters the
+  // candidates to nodes the arc-length sampler can actually consume (curveSamplerFor
+  // resolves) — the exact mirror of TrackTo's `transformable` aim target, one band over.
+  // Without this, a Follow-Path renders no field for `curve` and is unbindable by mouse.
+  refParams: { curve: { label: 'curve', kind: 'curve', shape: 'id' } },
   evaluate(params): FollowPathConstraintValue {
     return {
       kind: 'Constraint',

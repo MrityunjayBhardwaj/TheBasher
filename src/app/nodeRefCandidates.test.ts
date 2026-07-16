@@ -41,6 +41,8 @@ function buildScene(): DagState {
       to: { node: 'n_scene', socket: 'children' },
     },
     { type: 'addNode', nodeId: 'geo_sample', nodeType: 'SampleGeometry', params: {} },
+    // A Curve (seeds a valid 2-point path by default → curveSamplerFor resolves).
+    { type: 'addNode', nodeId: 'geo_curve', nodeType: 'Curve', params: {} },
   ];
   for (const op of ops) state = applyOp(state, op).next;
   return state;
@@ -69,6 +71,16 @@ describe('nodeRefCandidates', () => {
     expect(ids).toContain('geo_terrain');
     expect(ids).not.toContain('n_scene'); // aggregator — no position
     expect(ids).not.toContain('n_time'); // TimeSource — no position
+  });
+
+  it("'curve' offers only Curves the sampler can consume, never a mesh / Null / camera", () => {
+    // The ground-truth mirror of 'mesh': curveSamplerFor resolves, not merely type==='Curve'.
+    const ids = nodeRefCandidates(buildScene(), 'curve', 'geo_sample', ctx).map((c) => c.id);
+    expect(ids).toContain('geo_curve');
+    expect(ids).not.toContain('geo_terrain');
+    expect(ids).not.toContain('n_box');
+    expect(ids).not.toContain('geo_null');
+    expect(ids).not.toContain('n_camera');
   });
 
   it('excludes the querying node itself and sorts by label', () => {
