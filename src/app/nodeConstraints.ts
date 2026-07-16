@@ -311,6 +311,29 @@ export function constraintTargetSet(nodes: Readonly<Record<string, NodeLike>>): 
 }
 
 /**
+ * The set of node ids whose POSITION is driven by at least one active Follow-Path — the
+ * membership gate for the position band's followers (mirrors {@link constraintTargetSet}
+ * for the aim band). `constraintTargetSet` mixes both bands, so it can't tell "is followed"
+ * from "is aimed"; a light gets its per-frame position follower ONLY when it is in THIS set,
+ * so a merely Track-To'd (aimed, not followed) light — and every static light — pays nothing
+ * (built once, O(1) membership per light — the B13 trap). Same empty-target + mute guard.
+ *
+ * #343 — this is what lets a Follow-Path move a LIGHT (the 4th pose road): a light is flat in
+ * `scene.lights`, never a scene child, so it needs its own follower rather than the mesh road.
+ */
+export function followPathTargetSet(nodes: Readonly<Record<string, NodeLike>>): Set<string> {
+  const targets = new Set<string>();
+  for (const node of Object.values(nodes)) {
+    if (node.type !== 'FollowPath') continue;
+    const p = node.params as { target?: unknown; mute?: unknown };
+    if (typeof p.target !== 'string' || !p.target) continue;
+    if (p.mute === true) continue;
+    targets.add(p.target);
+  }
+  return targets;
+}
+
+/**
  * The derived aim rotation (Euler XYZ, DEGREES) for `nodeId` from its active
  * Track-To, or null when the node is unconstrained / the aim is undefined
  * (degenerate distance, unresolvable target). Pure (a function of state + ctx).

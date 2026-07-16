@@ -32,6 +32,7 @@ import {
   followPathStackForTarget,
   relationalPoseStackForTarget,
   constraintTargetSet,
+  followPathTargetSet,
   nextConstraintOrder,
   resolveConstraintPosition,
   resolveConstraintRotation,
@@ -151,6 +152,31 @@ describe('FollowPath — band separation (the enumeration is shared, the coercio
   it('constraintTargetSet includes a Follow-Path-only target (it must mount a follower)', () => {
     const state = buildFollowing();
     expect(constraintTargetSet(state.nodes).has(BOX_ID)).toBe(true);
+  });
+
+  it('followPathTargetSet is the POSITION-band gate: a followed target is in, a Track-To-only target is NOT', () => {
+    // A followed object is in both sets.
+    const followed = buildFollowing();
+    expect(followPathTargetSet(followed.nodes).has(BOX_ID)).toBe(true);
+    expect(constraintTargetSet(followed.nodes).has(BOX_ID)).toBe(true);
+
+    // A Track-To-only object is in constraintTargetSet (it is aimed) but NOT in
+    // followPathTargetSet (its position is not driven) — this is the whole reason the
+    // position band needs its own set: a merely-aimed light must not mount a position follower.
+    let aimed = buildDefaultDagState();
+    aimed = applyOp(aimed, {
+      type: 'addNode',
+      nodeId: 'n_tt_only',
+      nodeType: 'TrackTo',
+      params: { target: BOX_ID, aimPoint: [0, 0, 0] },
+    }).next;
+    expect(constraintTargetSet(aimed.nodes).has(BOX_ID)).toBe(true);
+    expect(followPathTargetSet(aimed.nodes).has(BOX_ID)).toBe(false);
+  });
+
+  it('followPathTargetSet excludes a MUTED Follow-Path (a bypassed follower must not mount)', () => {
+    const muted = buildFollowing({ mute: true });
+    expect(followPathTargetSet(muted.nodes).has(BOX_ID)).toBe(false);
   });
 
   it('nextConstraintOrder counts BOTH bands — a new member never ties with the other band', () => {
