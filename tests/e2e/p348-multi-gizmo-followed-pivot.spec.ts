@@ -115,9 +115,8 @@ const rendered = (page: import('@playwright/test').Page, id: string) =>
 
 const median = (a: V3, b: V3): V3 => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
 
-function closeTo(actual: V3, expected: V3, tol = 0.01) {
+function closeTo(actual: V3, expected: V3) {
   for (let i = 0; i < 3; i++) expect(actual[i]).toBeCloseTo(expected[i], 2);
-  void tol;
 }
 
 test.describe('#348 — the group gizmo pivots on rendered origins', () => {
