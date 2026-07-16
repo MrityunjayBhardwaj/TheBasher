@@ -397,8 +397,16 @@ export function resolveConstraintRotation(
  *
  * WORLD, not parent-local — the aim fold needs a world origin and the seam speaks world.
  * `resolveConstraintPosition` is the parent-local view for the transform band.
+ *
+ * PUBLIC for the UI surfaces that must address an object where it RENDERS rather than where
+ * it was authored (box-select, #342). Such a caller reads this ON TOP of the pure
+ * `resolveWorldTransform` — it must never be folded INTO that walk. The pure walk is what
+ * this resolver's own inputs (the curve's world) read, so folding it in closes a cycle
+ * (A follows curve C, C parented under A → ∞). The pure/applied SPLIT is the cycle guard,
+ * and the renderer already embodies it: `ConstrainedR` applies the band to an object's local
+ * while the band reads pure worlds for its inputs.
  */
-function resolveFollowedWorldPosition(
+export function resolveFollowedWorldPosition(
   state: DagState,
   nodeId: string,
   ctx: EvalCtx,
