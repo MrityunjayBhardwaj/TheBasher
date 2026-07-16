@@ -660,13 +660,19 @@ function NodeRefField({
   paramPath,
   label,
   kind,
+  shape,
   value,
 }: {
   nodeId: string;
   paramPath: string;
   label: string;
   kind: NodeRefKind;
-  value: { node?: string } | undefined;
+  /** How the param STORES the ref: a `{node}` object ('ref', the default) or a plain
+   *  string id ('id', the constraint family — `target`/`aimNode`/`curve` are compared
+   *  raw by the enumeration, so they must stay strings). */
+  shape: 'id' | 'ref';
+  /** The raw param value — a `{node}` object for 'ref', a string for 'id'. */
+  value: unknown;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
   // Subscribe to the node map so a newly-added candidate (or a rename) refreshes the list.
@@ -678,7 +684,14 @@ function NodeRefField({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodes, kind, nodeId],
   );
-  const current = value?.node ?? '';
+  // Read the current id out of whichever shape this param uses (an unset ref is absent
+  // in either shape → '').
+  const current =
+    shape === 'id'
+      ? typeof value === 'string'
+        ? value
+        : ''
+      : ((value as { node?: string } | undefined)?.node ?? '');
   return (
     <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{label}</span>
@@ -688,8 +701,11 @@ function NodeRefField({
         className="max-w-[60%] rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         onChange={(e) => {
           const id = e.target.value;
+          // 'id' writes the raw string (and '' for none — the param's own empty default,
+          // which the enumeration reads as inert); 'ref' wraps it (or clears to undefined).
+          const next = shape === 'id' ? id : id ? { node: id } : undefined;
           dispatch(
-            { type: 'setParam', nodeId, paramPath, value: id ? { node: id } : undefined },
+            { type: 'setParam', nodeId, paramPath, value: next },
             'user',
             `set ${paramPath}`,
           );
@@ -2818,11 +2834,8 @@ export function NPanel() {
                   paramPath={key}
                   label={meta.label ?? key}
                   kind={meta.kind}
-                  value={
-                    (node.params as Record<string, { node?: string } | undefined> | undefined)?.[
-                      key
-                    ]
-                  }
+                  shape={meta.shape ?? 'ref'}
+                  value={(node.params as Record<string, unknown> | undefined)?.[key]}
                 />
               ))}
             </div>

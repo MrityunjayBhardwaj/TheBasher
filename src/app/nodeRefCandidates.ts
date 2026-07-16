@@ -12,17 +12,22 @@
 //   • 'transformable'— the node carries a vec3 `position` param (what the world resolver
 //                      reads) → a Null / mesh / group / camera / light; excludes infra
 //                      nodes (Scene, RenderOutput, TimeSource, ParamDriver) that have none.
+//   • 'curve'        — `curveSamplerFor` resolves (non-null) → a Curve the arc-length
+//                      sampler can actually consume (a Follow-Path's path). The exact
+//                      mirror of 'mesh' one band over: "what the sampler can consume",
+//                      not merely "a node of type Curve".
 //   • 'any'          — every node except the querying node itself.
 //
 // REF: src/core/dag/types.ts (NodeDefinition.refParams); src/app/resolveEvaluatedMesh.ts;
-//      src/app/NPanel.tsx (NodeRefField).
+//      src/app/curveSampleSource.ts (curveSamplerFor); src/app/NPanel.tsx (NodeRefField).
 
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
+import { curveSamplerFor } from './curveSampleSource';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 
-export type NodeRefKind = 'mesh' | 'transformable' | 'any';
+export type NodeRefKind = 'mesh' | 'transformable' | 'curve' | 'any';
 
 export interface NodeRefCandidate {
   id: string;
@@ -57,7 +62,9 @@ export function nodeRefCandidates(
         ? true
         : kind === 'transformable'
           ? isVec3((node.params as { position?: unknown } | undefined)?.position)
-          : resolveEvaluatedMesh(state, node.id, ctx, cache) !== null; // 'mesh'
+          : kind === 'curve'
+            ? curveSamplerFor(state, node.id, ctx, cache) !== null // 'curve'
+            : resolveEvaluatedMesh(state, node.id, ctx, cache) !== null; // 'mesh'
     if (!ok) continue;
     out.push({ id: node.id, label: node.meta?.name?.trim() || node.id, type: node.type });
   }

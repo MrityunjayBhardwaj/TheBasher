@@ -152,17 +152,12 @@ test('the object RENDERS where the seam says the path is — offset + rotated + 
   expect(gap).toBeLessThan(1e-3);
 });
 
-// SCOPE, STATED HONESTLY (#341): the ADD and the MUTE below are real affordances — real
-// clicks on real buttons. The BIND is not: it goes through an op, because the inspector
-// currently offers NO field for `curve` at all (a string param renders as read-only text,
-// so an unset ref renders as nothing). That is a family-wide gap — `TrackTo.aimNode` has
-// the same hole, hidden only by the bespoke camera look-at dropdown — and it is filed as
-// #341, not fixed here.
-//
-// Saying so in place matters: this test reaches past the affordance for exactly the step
-// that HAS no affordance, which is #327's lesson recurring. An unlabelled `dispatchAtomic`
-// here would read as "the panel road is covered" when the panel road is broken.
-test('the director adds Follow Path from the panel; it binds and bypasses (bind via op — see #341)', async ({
+// The ADD, the BIND and the MUTE below are ALL real affordances now — real clicks on real
+// controls. #341 closed the one hole this test used to reach past: the curve was bound
+// through an op because the inspector offered NO field for it. It offers the general
+// node-ref picker now (proven end-to-end in p341-constraint-ref-picker), so the promised
+// "this becomes a click on the picker" has landed and the apology is gone.
+test('the director adds Follow Path from the panel, binds it via the picker, and bypasses it', async ({
   page,
 }) => {
   await boot(page);
@@ -191,22 +186,20 @@ test('the director adds Follow Path from the panel; it binds and bypasses (bind 
     Math.hypot(unbound![0] - before![0], unbound![1] - before![1], unbound![2] - before![2]),
   ).toBeLessThan(1e-6);
 
-  // Bind it to the path — through an OP, because there is no field to type into (#341).
-  // When #341 lands this becomes a click on the picker, and this comment goes away.
-  await page.evaluate(
-    ([id, cid]) => {
-      const dag = (window as unknown as UiWindow).__basher_dag.getState();
-      dag.dispatchAtomic(
-        [
-          { type: 'setParam', nodeId: id, paramPath: 'curve', value: cid },
-          { type: 'setParam', nodeId: id, paramPath: 'evalTime', value: 1 },
-        ],
+  // Bind it to the path with the REAL picker (#341): select the constraint's row so its
+  // inspector shows, then choose the curve in the node-ref <select>. evalTime → 1 (the path
+  // end) is set through an op — evalTime is a plain number field, not the gap #341 closed.
+  await rows.first().locator('button').first().click();
+  await page.getByTestId(`inspector-noderef-${fpId}-curve`).selectOption(curveId);
+  await page.evaluate((id) => {
+    (window as unknown as UiWindow).__basher_dag
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: id, paramPath: 'evalTime', value: 1 }],
         'user',
-        'bind the path',
+        'set evalTime',
       );
-    },
-    [fpId, curveId],
-  );
+  }, fpId);
   await page.waitForTimeout(400);
 
   const seamEnd = await page.evaluate(
@@ -221,7 +214,12 @@ test('the director adds Follow Path from the panel; it binds and bypasses (bind 
   );
   expect(gap).toBeLessThan(1e-3);
 
-  // And the row can be bypassed — the object returns to where it was authored.
+  // And the row can be bypassed — the object returns to where it was authored. (Re-select
+  // n_box: clicking the constraint row above moved the selection to the FollowPath, so the
+  // object's Constraints panel — where the mute toggle lives — needs to be showing again.)
+  await page.evaluate(() =>
+    (window as unknown as UiWindow).__basher_selection.getState().select('n_box'),
+  );
   await page.getByTestId(`constraint-mute-${fpId}`).click();
   await expect(page.getByTestId(`constraint-mute-${fpId}`)).toHaveAttribute('aria-pressed', 'true');
   await page.waitForTimeout(300);
