@@ -212,6 +212,35 @@ export function resolveEvaluatedTransform(
         scale: [resolved.scale[0], resolved.scale[1], resolved.scale[2]],
       };
     }
+
+    // 4c. FOLLOWED-LIGHT branch (#343). A light is wired FLAT into scene.lights, never a
+    //   scene child, so the index-correspondence walk above always misses it → this
+    //   resolver returned null for a light, and its gizmo/inspector fell back to the RAW
+    //   authored position. Once a light follows a path (the render road moves it), that
+    //   raw position is stale — the displayed≠rendered (H40) hole. So: if the selection is
+    //   a LIGHT that is actually followed, return the followed position (a flat light's
+    //   local == world, so resolveConstraintPosition's null-parent path gives world
+    //   directly — the camera road's contract). Gated tightly: an UNCONSTRAINED light still
+    //   returns null → gizmo uses raw params, byte-identical; a followed CAMERA is excluded
+    //   by the kind check (it keeps resolveCameraPoseAt); a followed mesh/Null/Group already
+    //   matched the children walk above and never reaches here.
+    let lightVal: unknown;
+    try {
+      lightVal = evaluate(state, selectedId, { cache, ctx }).value;
+    } catch {
+      lightVal = null;
+    }
+    if ((lightVal as { kind?: unknown } | null)?.kind === 'light') {
+      const followed = resolveConstraintPosition(state, selectedId, ctx, cache);
+      if (followed) {
+        const lv = lightVal as { rotation?: unknown; scale?: unknown };
+        return {
+          position: followed,
+          rotation: isVec3(lv.rotation) ? (lv.rotation as Vec3) : null,
+          scale: isVec3(lv.scale) ? (lv.scale as Vec3) : null,
+        };
+      }
+    }
     return null;
   }
 

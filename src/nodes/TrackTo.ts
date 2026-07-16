@@ -58,6 +58,12 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   inputs: {},
   outputs: { out: { type: 'Constraint', cardinality: 'single' } },
   inspectorSections: ['constraint', 'driver'],
+  // The aim target is authored through the general node-ref picker (the same surface as
+  // SampleGeometry/Solver), so a director can bind a Track-To's target from its own
+  // inspector instead of only through the bespoke camera look-at dropdown (#341, the last
+  // sidecar). `shape:'id'` because `aimNode` is a plain string id (the enumeration reads
+  // it raw); `transformable` because the aim reads the target's WORLD position.
+  refParams: { aimNode: { label: 'aim target', kind: 'transformable', shape: 'id' } },
   evaluate(params): TrackToConstraintValue {
     return {
       kind: 'Constraint',

@@ -68,6 +68,7 @@ import {
 } from '../app/paramDrivers';
 import {
   constraintTargetSet,
+  followPathTargetSet,
   resolveConstraintRotation,
   resolveConstraintPosition,
   resolveTrackToTarget,
@@ -225,6 +226,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     ...driverTargetSet(state.nodes),
   ]);
   const constraintTargets = constraintTargetSet(state.nodes);
+  // #343 — the POSITION-band membership gate (Follow-Path only). Built once, O(1) per
+  // light: a light mounts its per-frame position follower ONLY if it is followed, so a
+  // Track-To'd-but-not-followed light and every static light pay nothing (B13).
+  const followPathTargets = followPathTargetSet(state.nodes);
   // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
   // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
   // membership actually changes (an overlay added/removed anywhere), NOT on every
@@ -340,6 +345,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             nodeId={lid}
             constrained={lid != null && constraintTargets.has(lid)}
             hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+            followsPath={lid != null && followPathTargets.has(lid)}
           />
         );
       })}
@@ -355,6 +361,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             nodeId={lid}
             constrained={lid != null && constraintTargets.has(lid)}
             hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+            followsPath={lid != null && followPathTargets.has(lid)}
           />
         );
       })}
@@ -704,6 +711,7 @@ const LightNode = memo(function LightNode({
   nodeId,
   constrained,
   hasDirectChannels,
+  followsPath,
 }: {
   value: LightValue;
   /** The light's DAG node id (for Track-To resolution); null if unmapped. */
@@ -712,13 +720,25 @@ const LightNode = memo(function LightNode({
   constrained: boolean;
   /** True iff this light is driven by free-floating direct channels (V57). */
   hasDirectChannels: boolean;
+  /** True iff this light's POSITION is driven by an active Follow-Path (#343). */
+  followsPath: boolean;
 }) {
   // Seam A (#211, V57) — a light animated by free-floating direct channels
   // overlays its channels per-frame through DirectChannelsLightR, the light
-  // analogue of SceneChildNode → DirectChannelsR. A static light (the common
-  // case) renders the per-kind switch directly, so it pays nothing.
-  if (hasDirectChannels && nodeId) {
-    return <DirectChannelsLightR value={value} nodeId={nodeId} constrained={constrained} />;
+  // analogue of SceneChildNode → DirectChannelsR. #343 — a FOLLOWED light takes
+  // the SAME per-frame path (its position is derived from a curve at the live
+  // playhead, exactly as a channel is), so it also routes through here. A static,
+  // un-followed light (the common case) renders the per-kind switch directly and
+  // pays nothing.
+  if ((hasDirectChannels || followsPath) && nodeId) {
+    return (
+      <DirectChannelsLightR
+        value={value}
+        nodeId={nodeId}
+        constrained={constrained}
+        followsPath={followsPath}
+      />
+    );
   }
   return <LightKindR value={value} nodeId={nodeId} constrained={constrained} />;
 });
@@ -824,37 +844,71 @@ function DirectChannelsLightR({
   value,
   nodeId,
   constrained,
+  followsPath,
 }: {
   value: LightValue;
   nodeId: string;
   constrained: boolean;
+  followsPath: boolean;
 }) {
   const channels = useLayeredChannels(nodeId);
   const transients = useTransientEditStore((s) => s.edits);
-  const sample = (seconds: number): LightValue =>
-    overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, nodeId, transients) ??
-    value;
+  // #343 — the position band resolves through the shared evaluator; a stable cache HITS
+  // across frames while the curve/target are unchanged (the H48 / ConstrainedR pattern).
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  // The per-frame light value: channel → transient overlay, then (if followed) the
+  // Follow-Path POSITION band OVERRIDES the authored/animated position — exactly as
+  // ConstrainedR does for a mesh, so a followed light illuminates from the path point.
+  // Returns the value AND a `followKey` so the skip below covers the position band too:
+  // a paused target/curve edit changes the followed point while seconds/channels/value are
+  // all unchanged, and without the key the H48 static-node guard would eat that update.
+  const build = (seconds: number): { v: LightValue; followKey: string } => {
+    const overlaid =
+      overlayTransients(
+        overlayChannels(value, channels, 1, seconds) ?? value,
+        nodeId,
+        transients,
+      ) ?? value;
+    if (!followsPath) return { v: overlaid, followKey: '' };
+    const state = useDagStore.getState().state;
+    const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+    const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
+    if (!followed) return { v: overlaid, followKey: '' };
+    return {
+      v: {
+        ...(overlaid as unknown as Record<string, unknown>),
+        position: followed,
+      } as unknown as LightValue,
+      followKey: followed.join(','),
+    };
+  };
 
-  const [patched, setPatched] = useState<LightValue>(() => sample(useTimeStore.getState().seconds));
+  const [patched, setPatched] = useState<LightValue>(
+    () => build(useTimeStore.getState().seconds).v,
+  );
   const lastApplied = useRef<{
     seconds: number;
     channels: unknown;
     transients: unknown;
     value: unknown;
+    followKey: string;
   } | null>(null);
   useFrame(() => {
     const seconds = useTimeStore.getState().seconds;
+    const { v, followKey } = build(seconds);
+    const la = lastApplied.current;
     if (
-      lastApplied.current !== null &&
-      lastApplied.current.seconds === seconds &&
-      lastApplied.current.channels === channels &&
-      lastApplied.current.transients === transients &&
-      lastApplied.current.value === value
+      la !== null &&
+      la.seconds === seconds &&
+      la.channels === channels &&
+      la.transients === transients &&
+      la.value === value &&
+      la.followKey === followKey
     ) {
       return;
     }
-    lastApplied.current = { seconds, channels, transients, value };
-    setPatched(sample(seconds));
+    lastApplied.current = { seconds, channels, transients, value, followKey };
+    setPatched(v);
   });
   return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
 }
