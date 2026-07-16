@@ -8,7 +8,9 @@
 // Discipline: lives in src/viewport/ but writes only through useSelectionStore (a
 // UI projection, not the DAG) — the same V1/V8 contract selectNodeOnClick keeps.
 // Reads world origins via the pure resolveWorldTransform (one band, H40 / V37) so a
-// box-select hits an object exactly where it RENDERS.
+// box-select hits an object exactly where it RENDERS — plus the Follow-Path position
+// band ON TOP (#342), because the pure walk is TRS-only and a follower renders where
+// its path puts it, not where it was authored.
 
 import { useThree } from '@react-three/fiber';
 import { useEffect } from 'react';
@@ -18,6 +20,7 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useBoxSelectStore } from '../app/stores/boxSelectStore';
 import { resolveWorldTransform } from '../app/resolveWorldTransform';
+import { resolveFollowedWorldPosition } from '../app/nodeConstraints';
 import { getViewportSelectableIds } from '../app/selectableNodes';
 import { boxSelectHits, type BoxCandidate, type PixelRect, type ScreenPoint } from './boxSelect';
 
@@ -44,7 +47,15 @@ export function BoxSelect() {
       const candidates: BoxCandidate[] = [];
       for (const id of getViewportSelectableIds(state)) {
         const wt = resolveWorldTransform(state, id, ctx);
-        if (wt) candidates.push({ id, world: wt.position });
+        if (!wt) continue;
+        // A Follow-Path moves an object's ORIGIN, and resolveWorldTransform is pure TRS —
+        // it deliberately applies no constraint band, because that purity is what the band's
+        // own inputs read. So a follower must be boxed at its FOLLOWED world point (what the
+        // renderer draws) rather than its authored one; unfollowed objects keep the pure
+        // origin byte-for-byte. Reading the band ON TOP of the pure walk (never folded INTO
+        // it) is the same split the renderer uses — and is why this can't cycle. #342.
+        const followed = resolveFollowedWorldPosition(state, id, ctx);
+        candidates.push({ id, world: followed ?? wt.position });
       }
       const hits = boxSelectHits(candidates, rect, project);
       const sel = useSelectionStore.getState();
