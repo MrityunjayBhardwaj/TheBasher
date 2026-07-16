@@ -15,6 +15,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
 import { isSectionId } from './inspectorSections';
+import { isRelationalPoseNode } from './nodeConstraints';
 import { registerAllNodes } from '../nodes/registerAll';
 
 beforeAll(() => {
@@ -154,9 +155,13 @@ describe('C2 — inspectorSections declarations', () => {
       if (!sections) continue;
       if (sections.includes('transform')) {
         expect(sections, `${type} is posable → must offer constraints`).toContain('constraint');
-      } else if (type !== 'TrackTo' && type !== 'ParamDriver') {
-        // TrackTo is itself a constraint — it declares the section so selecting a row
-        // still shows the stack it belongs to.
+      } else if (!isRelationalPoseNode({ type }) && type !== 'ParamDriver') {
+        // The exception is DERIVED from the species predicate, not a list of type names
+        // (#339): a relational pose operator is itself a constraint, so it declares the
+        // section — selecting its row still shows the stack it belongs to. Track-To and
+        // Follow-Path qualify, and so will the next one, without editing this test. A
+        // hand-copied name list here would go stale exactly like the two vocabularies in
+        // #324 did — silently, and only for the newest member.
         expect(sections, `${type} has no pose → must not offer constraints`).not.toContain(
           'constraint',
         );

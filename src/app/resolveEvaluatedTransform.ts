@@ -53,7 +53,7 @@ import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
-import { resolveConstraintRotation } from './nodeConstraints';
+import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
@@ -285,5 +285,12 @@ export function resolveEvaluatedTransform(
   const aim = resolveConstraintRotation(state, selectedId, ctx, cache);
   if (aim) rotation = aim;
 
-  return { position: c.position as Vec3, rotation, scale };
+  // #339 — a Follow-Path constraint DERIVES this node's position from a curve, so it
+  // OVERRIDES the authored/animated position exactly as the aim overrides rotation. The
+  // second band, resolved the same way at the same seam and applied by the same two
+  // callers (here and ConstrainedR) — one band, two callers, read == render.
+  const followed = resolveConstraintPosition(state, selectedId, ctx, cache);
+  const position = followed ?? (c.position as Vec3);
+
+  return { position, rotation, scale };
 }

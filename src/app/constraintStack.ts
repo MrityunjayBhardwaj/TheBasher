@@ -24,7 +24,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import {
-  constraintStackForTarget,
+  relationalPoseStackForTarget,
   isRelationalPoseNode,
   nextConstraintOrder,
 } from './nodeConstraints';
@@ -36,6 +36,7 @@ import { nodeDisplayName } from './sceneTreeWalk';
  *  new bespoke panel. */
 export const ADDABLE_CONSTRAINTS: ReadonlyArray<{ type: string; label: string }> = [
   { type: 'TrackTo', label: 'Track To' },
+  { type: 'FollowPath', label: 'Follow Path' },
 ];
 
 function newId(prefix: string): string {
@@ -48,7 +49,11 @@ function newId(prefix: string): string {
  * SAME order the resolver folds them.
  */
 export function constraintStackEntries(state: DagState, targetId: string): StackRowEntry[] {
-  return constraintStackForTarget(state.nodes, targetId, true).map((m) => ({
+  // #339 — the TYPE-AGNOSTIC scan: an object has ONE constraint stack, and the panel is
+  // its view. Reading a single band's view here would render a stack that silently omits
+  // every member of the other one — a Follow-Path a director could neither see, reorder,
+  // bypass nor remove, while it moved the object.
+  return relationalPoseStackForTarget(state.nodes, targetId, true).map((m) => ({
     nodeId: m.nodeId,
     muted: m.muted,
     label: nodeDisplayName(state.nodes[m.nodeId]),
@@ -111,7 +116,10 @@ export function buildMoveConstraintOps(
   const targetId = (node.params as { target?: unknown }).target;
   if (typeof targetId !== 'string' || !targetId) return null;
 
-  const stack = constraintStackForTarget(state.nodes, targetId, true);
+  // #339 — the type-agnostic scan, for the same reason the panel uses it: the rows the
+  // user is reordering are the WHOLE stack. Moving against a single band's view would
+  // compute the neighbour from a different list than the one on screen.
+  const stack = relationalPoseStackForTarget(state.nodes, targetId, true);
   const i = stack.findIndex((m) => m.nodeId === constraintId);
   if (i < 0) return null;
   const j = dir === 'up' ? i + 1 : i - 1;

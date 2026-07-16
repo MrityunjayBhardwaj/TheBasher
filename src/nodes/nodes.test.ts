@@ -69,6 +69,7 @@ const ALL_TYPES = [
   'DepthPass',
   'DirectionalLight',
   'Fit',
+  'FollowPath',
   'GltfAsset',
   'GltfChild',
   'GltfSkeleton',

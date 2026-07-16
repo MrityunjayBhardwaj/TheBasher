@@ -73,6 +73,7 @@ import { StripNode } from './Strip';
 import { TimeSourceNode } from './TimeSource';
 import { TrackNode } from './Track';
 import { TrackToNode } from './TrackTo';
+import { FollowPathNode } from './FollowPath';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
 import { NullNode } from './Null';
@@ -143,6 +144,10 @@ const ALL: NodeDefinition[] = [
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).
   TrackToNode as unknown as NodeDefinition,
+  // #339 — the POSITION-band constraint. Same edge-less species as TrackTo (it reads a
+  // Curve's WORLD geometry, so it resolves in the seam, not in evaluate); it joins the
+  // SAME stack as a member rather than bringing its own resolver + panel.
+  FollowPathNode as unknown as NodeDefinition,
   // Operator substrate — SOP/modifiers (epic #201, #209, V58). A geometry operator
   // is a Mesh→Mesh wrapper sub-chain node (edge-WIRED, unlike the edge-less
   // constraint above) that rewrites its source geometry into a rebuildable handle.
