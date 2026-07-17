@@ -31,7 +31,7 @@
 //
 // REF: PLAN.md Wave 1 Task 2; CONTEXT §B/§H; RESEARCH §B; vyapti V1/V20; hetvabhasa H40.
 
-import type { EvaluatorCache } from '../core/dag/evaluator';
+import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
@@ -41,6 +41,7 @@ import type {
   InlineMaterialSpec,
   MeshTransform,
   MirrorAxis,
+  ObjectValue,
   Vec3,
 } from '../nodes/types';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
@@ -325,6 +326,35 @@ export function resolveEvaluatedMesh(
       uvs: resolveRegistryUVs(geometry), // sync-buildable → real UV islands (#209 follow-up)
       material: source.material,
       transform: source.transform,
+    };
+  }
+
+  if (node.type === 'Object') {
+    // The object↔data split (#362): the Object owns the pose; the mesh face is
+    // reached THROUGH the typed `data` socket. Evaluate the Object — its value
+    // carries the resolved `data` (the SAME geometry handle + material the data
+    // node built, so read-side parity with the renderer's ObjectR is by
+    // construction) plus the Object's own TRS. `data: null` is an Empty → no mesh;
+    // non-mesh data (camera/light in later phases) → no mesh here either.
+    const value = evaluate(state, selectedId, { ctx, cache }).value as ObjectValue | undefined;
+    const data = value?.data;
+    if (!value || !data || data.kind !== 'MeshData') return null;
+    const geometry = data.geometry;
+    // The pose is the Object's own band (the same evaluated walk the primitives
+    // use — animation/constraints/channels overlay it, V57); fall back to the
+    // value's static TRS when the Object isn't in the rendered scene to walk.
+    const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
+      position: value.position,
+      rotation: value.rotation,
+      scale: isVec3(value.scale) ? value.scale : IDENTITY_SCALE, // C-1 hydrate guard
+    });
+    return {
+      geometry,
+      uvs: resolveRegistryUVs(geometry),
+      // Already a complete IR (the data node hydrated it) — pass it verbatim so the
+      // read-side material is byte-identical to what ObjectR renders.
+      material: data.material,
+      transform,
     };
   }
 
