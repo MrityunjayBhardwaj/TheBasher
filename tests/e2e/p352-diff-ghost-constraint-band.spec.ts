@@ -36,6 +36,7 @@ import { expect, test, type Page } from './_fixtures';
 
 const FOLLOWER_SIZE = 0.37; // unique in the scene → picks this subject's ghost, only it
 const CONTROL_SIZE = 0.53; // the static control: proposed-alongside, constrained by nothing
+const AIMER_SIZE = 0.41; // the Track-To subject — the ROTATION band's own signature
 const EVAL_TIME = 0.5; // a fraction of WORLD ARC LENGTH (not a spline t) — V100
 
 interface CurveSample {
@@ -218,6 +219,106 @@ function dist(a: [number, number, number], b: [number, number, number]): number 
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
+/** Every GHOST mesh of a given box size, as the euler rotation (DEGREES) the renderer
+ *  composed. Same discriminator as `ghostWorldPositions`. */
+async function ghostRotationsDeg(page: Page, size: number): Promise<[number, number, number][]> {
+  return page.evaluate((size) => {
+    const scene = (window as unknown as GhostWin).__basher_three.getState().scene as {
+      traverse: (cb: (o: unknown) => void) => void;
+    };
+    const hits: [number, number, number][] = [];
+    scene.traverse((o: unknown) => {
+      const obj = o as {
+        material?: { opacity?: number; wireframe?: boolean };
+        geometry?: { parameters?: { width?: number } };
+        rotation?: { x: number; y: number; z: number };
+      };
+      if (!obj.material || !obj.geometry || !obj.rotation) return;
+      if (obj.material.opacity !== 0.35 || obj.material.wireframe !== true) return;
+      if (obj.geometry.parameters?.width !== size) return;
+      hits.push([
+        (obj.rotation.x * 180) / Math.PI,
+        (obj.rotation.y * 180) / Math.PI,
+        (obj.rotation.z * 180) / Math.PI,
+      ]);
+    });
+    return hits;
+  }, size);
+}
+
+/** A cube at the origin plus an aim target off to one side, then propose "point the cube
+ *  at the target". The ROTATION band's analogue of the Follow-Path seed. */
+async function seedAimSceneAndPropose(page: Page) {
+  await page.evaluate(
+    ({ aimerSize, controlSize }) => {
+      const dag = (window as unknown as GhostWin).__basher_dag.getState();
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'n_p352_aimer',
+            nodeType: 'BoxMesh',
+            params: { name: 'Aimer', position: [0, 0, 0], size: [aimerSize, aimerSize, aimerSize] },
+          },
+          {
+            type: 'connect',
+            from: { node: 'n_p352_aimer', socket: 'out' },
+            to: { node: 'n_scene', socket: 'children' },
+          },
+          {
+            type: 'addNode',
+            nodeId: 'n_p352_aimctl',
+            nodeType: 'BoxMesh',
+            params: {
+              name: 'AimControl',
+              position: [0, 0, 0],
+              size: [controlSize, controlSize, controlSize],
+            },
+          },
+          {
+            type: 'connect',
+            from: { node: 'n_p352_aimctl', socket: 'out' },
+            to: { node: 'n_scene', socket: 'children' },
+          },
+          {
+            type: 'addNode',
+            nodeId: 'n_p352_aimtarget',
+            nodeType: 'Null',
+            params: { name: 'Target', position: [6, 4, -5] },
+          },
+          {
+            type: 'connect',
+            from: { node: 'n_p352_aimtarget', socket: 'out' },
+            to: { node: 'n_scene', socket: 'children' },
+          },
+        ],
+        'user',
+        'p352 aim seed',
+      );
+    },
+    { aimerSize: AIMER_SIZE, controlSize: CONTROL_SIZE },
+  );
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const w = window as unknown as GhostWin;
+    w.__basher_diff.getState().propose(
+      w.__basher_dag.getState().state,
+      [
+        {
+          type: 'addNode',
+          nodeId: 'p352_track',
+          nodeType: 'TrackTo',
+          params: { target: 'n_p352_aimer', aimNode: 'n_p352_aimtarget', order: 0, mute: false },
+        },
+      ],
+      'point the cube at the target',
+      ['agent:mutator.constrain'],
+    );
+  });
+  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await page.waitForTimeout(200);
+}
+
 test('the ghost of a proposed follower lands ON THE PATH, not at its authored origin', async ({
   page,
 }) => {
@@ -245,6 +346,30 @@ test('the ghost of a proposed follower lands ON THE PATH, not at its authored or
 
   // And it genuinely MOVED: pre-fix this ghost sat at the authored origin, ~9.7 away.
   expect(dist(ghosts[0], [0, 0, 0])).toBeGreaterThan(1);
+});
+
+// THE ROTATION BAND. Found in self-review, by OBSERVING a proposed Track-To instead of
+// trusting the position fix's symmetry: the first cut of this fix applied only the position
+// band — the one the #352 observation happened to name, via Follow-Path — so "point the cube
+// at the target — accept?" previewed an UNROTATED cube. That is this very bug surviving in
+// the other band, a miss hiding behind a correct sibling ([[V104]]). A Track-To PLACES an
+// object by orientation, and the road's job is to place it as the proposal would.
+test('a proposed Track-To ROTATES the ghost — both bands, not just position', async ({ page }) => {
+  await boot(page);
+  await seedAimSceneAndPropose(page);
+
+  const rots = await ghostRotationsDeg(page, AIMER_SIZE);
+  expect(rots, 'exactly one ghost carries the aimer signature').toHaveLength(1);
+
+  // Aimed from the origin at [6,4,-5] — a real 3-axis aim. Pre-fix this read [0,0,0]:
+  // the ghost showed the proposal doing nothing at all.
+  const magnitude = Math.hypot(...rots[0]);
+  expect(magnitude, 'the ghost carries the derived aim, not the authored zero').toBeGreaterThan(5);
+
+  // The control shares the proposal and the overlay but is named by no constraint.
+  const ctl = await ghostRotationsDeg(page, CONTROL_SIZE);
+  expect(ctl).toHaveLength(1);
+  expect(Math.hypot(...ctl[0]), 'the unconstrained ghost stays unrotated').toBeLessThan(0.01);
 });
 
 test('the STATIC control ghosts at its authored origin — the band is conditional', async ({

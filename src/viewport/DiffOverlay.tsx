@@ -11,7 +11,7 @@ import { useMemo } from 'react';
 import { useDiffStore } from '../agent/diff';
 import { evaluate, createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
-import { resolveConstraintPosition } from '../app/nodeConstraints';
+import { resolveConstraintPosition, resolveConstraintRotation } from '../app/nodeConstraints';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { degVec3ToRad } from './rotation';
@@ -75,10 +75,10 @@ function DiffOverlayInner({
   );
 }
 
-/** #352 / [[V104]] — apply the POSITION band on top of a ghost child's purely-evaluated
+/** #352 / [[V104]] — apply the pose bands on top of a ghost child's purely-evaluated
  *  value. The ghost READS nothing and DISPLAYS a result, so it applies the band; the
- *  band's own inputs (the curve's world) keep reading the fork's PURE walk, and that
- *  split is the cycle guard — no guard needed here.
+ *  band's own inputs (the curve's world, the aim target's world) keep reading the fork's
+ *  PURE walk, and that split is the cycle guard — no guard needed here.
  *
  *  This is the mirror of `ConstrainedR`'s patch (SceneFromDAG.tsx): the fork evaluate
  *  above mirrors SceneFromDAG's TOP-LEVEL evaluate but never its ConstrainedR wrapper,
@@ -89,12 +89,20 @@ function DiffOverlayInner({
  *  Resolves against the FORK — the PROPOSED scene — never the live store: the whole
  *  point is to show what the un-committed op would do.
  *
- *  POSITION ONLY, and kind-agnostic by patching the value rather than each switch arm:
- *  a Follow-Path writes no rotation/scale, and every ghost kind that has a `position`
- *  gets it for free (the rotation band is Track-To's, whose ghost is the camera frustum
- *  half of #352). For a TOP-LEVEL child the parent world is identity, so the parent-local
- *  position the resolver returns IS the world point this ghost renders at — ConstrainedR's
- *  own v1 contract. A nested child under a followed container is the #346 analogue.
+ *  BOTH BANDS, because the road's job is "place the object as the proposal would" and
+ *  a Track-To places it by ORIENTATION. Applying only the position band (the one the
+ *  #352 observation happened to name, via Follow-Path) left "point the cube at the
+ *  target — accept?" previewing an UNROTATED cube — this bug's own defect surviving in
+ *  the other band, and a miss hiding behind a correct sibling ([[V104]]). Found by
+ *  observing a proposed Track-To rather than by trusting the first fix's symmetry.
+ *
+ *  Kind-agnostic by patching the value rather than each switch arm, so every ghost kind
+ *  carrying `position`/`rotation` gets it. `resolveConstraintRotation` returns Euler XYZ
+ *  DEGREES — the shape `GhostChild` already feeds to `degVec3ToRad`, matching the
+ *  renderer (V37/H40). For a TOP-LEVEL child the parent world is identity, so the
+ *  parent-local values the resolvers return ARE what this ghost renders at —
+ *  ConstrainedR's own v1 contract. A nested child under a followed container is the
+ *  #346 analogue. Scale is untouched: no band writes it.
  */
 function applyGhostPoseBand(
   state: DagState,
@@ -104,10 +112,14 @@ function applyGhostPoseBand(
   cache: EvaluatorCache,
 ): SceneObject {
   if (!nodeId) return value;
-  const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
   const rec = value as unknown as Record<string, unknown>;
-  if (!followed || !('position' in rec)) return value;
-  return { ...rec, position: followed } as unknown as SceneObject;
+  const aim = resolveConstraintRotation(state, nodeId, ctx, cache);
+  const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
+  const patch: Record<string, unknown> = {};
+  if (aim && 'rotation' in rec) patch.rotation = aim;
+  if (followed && 'position' in rec) patch.position = followed;
+  if (Object.keys(patch).length === 0) return value;
+  return { ...rec, ...patch } as unknown as SceneObject;
 }
 
 function GhostCamera({ value }: { value: CameraValue | null }) {
