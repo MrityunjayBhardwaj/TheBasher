@@ -68,7 +68,7 @@ import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldT
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveActiveCameraPoseAt } from './activeCamera';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
-import { constraintTargetSet } from './nodeConstraints';
+import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 
 type Vec3 = [number, number, number];
@@ -658,6 +658,7 @@ function MultiGizmo() {
   useEffect(() => {
     if (!groupNode) return;
     const state = useDagStore.getState().state;
+    const ctx = { time: { frame, seconds, normalized } };
     const seeds: NonNullable<typeof seedRef.current>['nodes'] = [];
     for (const id of selectedIds) {
       const node = state.nodes[id];
@@ -666,11 +667,19 @@ function MultiGizmo() {
       let world: THREE.Matrix4;
       let parentWorld: THREE.Matrix4 | null = null;
       try {
-        const wt = resolveWorldTransform(state, id, { time: { frame, seconds, normalized } });
+        const wt = resolveWorldTransform(state, id, ctx);
         world = wt
           ? new THREE.Matrix4().fromArray(wt.matrix)
           : new THREE.Matrix4().setPosition(...manip.position);
-        parentWorld = resolveParentWorldMatrix(state, id, { time: { frame, seconds, normalized } });
+        // A Follow-Path moves the ORIGIN, and resolveWorldTransform is pure TRS — it applies
+        // no band (that purity is what the band's own inputs read). So a follower's seed world
+        // must be re-based onto the point it actually renders at, or `origins` below medians a
+        // phantom and the whole group orbits a pivot that is nowhere near any object. Position
+        // ONLY — the band writes no rotation/scale, so the rest of the matrix stands. Read on
+        // top of the pure walk, never folded into it (#348).
+        const followed = resolveFollowedWorldPosition(state, id, ctx);
+        if (followed) world.setPosition(followed[0], followed[1], followed[2]);
+        parentWorld = resolveParentWorldMatrix(state, id, ctx);
       } catch {
         world = new THREE.Matrix4().setPosition(...manip.position);
         parentWorld = null;
