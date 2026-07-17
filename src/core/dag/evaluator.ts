@@ -8,9 +8,14 @@
 //      `expensive` will route to a worker in P1+. The hook lives here so
 //      callers don't need to change.
 //
-// Cache key: hash(nodeType, paramsHash, inputHashesSorted, time IFF !pure).
-// Pure nodes do not include time in their hash; downstream invalidation is
-// driven by upstream Time-source nodes when those land in P3.
+// Cache key: `${node.id}@${node.type}#${node.version}|p:${paramsHash}|i:${inputsHash}${timePart}`
+// — i.e. node.id AND version are part of the key, NOT just (type, params, inputs).
+// Consequence: two STRUCTURALLY IDENTICAL nodes do NOT share a cache entry (the id
+// differs), which is deliberate — it lets `invalidate()` target a single node by id
+// prefix. `timePart` is appended only when `!pure`; pure nodes omit time so downstream
+// invalidation is driven by upstream Time-source nodes when those land in P3.
+// (An earlier version of this comment listed the key WITHOUT id/version — drift; the
+// code below at `const cacheKey` is authoritative.)
 //
 // REF: THESIS.md §10, §51, vyapti V2 (purity), krama K2 step 6 (invalidate).
 
