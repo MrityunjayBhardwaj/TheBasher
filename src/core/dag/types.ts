@@ -59,6 +59,12 @@ export type SocketTypeName =
   // below are SUPERSEDED by this (no node decl uses them after #231 Inc 1); kept
   // until a cleanup pass confirms zero references (Chesterton).
   | 'SceneObject'
+  // #361 (object↔data split, Phase 1) — the typed `data` socket. An `Object`
+  // owns the transform and points, through this socket, at a data node that owns
+  // geometry (later: camera/light data). Distinct from 'SceneObject': an
+  // 'ObjectData' value carries NO transform and is not itself a scene child —
+  // it is what an Object POINTS AT. See docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1.
+  | 'ObjectData'
   | 'Mesh'
   | 'Material'
   | 'Texture'

@@ -15,6 +15,8 @@ import { BakedMeshNode } from './BakedMesh';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
+import { BoxDataNode } from './BoxData';
+import { ObjectNode } from './ObjectNode';
 import { CameraSelectNode } from './CameraSelect';
 import { CharacterNode } from './Character';
 import { ClipSelectNode } from './ClipSelect';
@@ -95,6 +97,11 @@ const ALL: NodeDefinition[] = [
   AreaLightNode as unknown as NodeDefinition,
   // Meshes
   BoxMeshNode as unknown as NodeDefinition,
+  // #361 — object↔data split (Phase 1): the Object half (owns TRS, points at
+  // data) + the BoxData half (geometry + material, no transform). Coexist with
+  // the fused nodes; nothing migrates yet.
+  ObjectNode as unknown as NodeDefinition,
+  BoxDataNode as unknown as NodeDefinition,
   SphereMeshNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
   // P7.7 — addressable proxy per glTF scene child (issue #91). Inputless,

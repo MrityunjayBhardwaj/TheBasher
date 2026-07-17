@@ -35,6 +35,20 @@ const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 const ORIGIN: Vec3 = [0, 0, 0];
 
 /**
+ * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
+ * descriptor). Shared by the fused `BoxMesh` source projection (below) AND the
+ * `BoxData` node of the object↔data split (#361), so both roads hand the registry
+ * the identical key → one cached build, byte-identical geometry (H40, no drift).
+ */
+export function boxGeometryRef(size: Vec3): GeometryRef {
+  return {
+    key: `box|${size[0]},${size[1]},${size[2]}`,
+    kind: 'box',
+    descriptor: { kind: 'box', size },
+  };
+}
+
+/**
  * Project a resolved mesh VALUE into the source `GeometryRef` a modifier consumes.
  * Box/Sphere build the SAME deterministic key `resolveEvaluatedMesh` builds (so
  * the array key matches on both roads). BakedMesh / ModifiedMesh already carry a
@@ -43,14 +57,8 @@ const ORIGIN: Vec3 = [0, 0, 0];
  */
 export function sourceGeometryRef(value: SceneChild): GeometryRef | null {
   switch (value.kind) {
-    case 'BoxMesh': {
-      const s = value.size;
-      return {
-        key: `box|${s[0]},${s[1]},${s[2]}`,
-        kind: 'box',
-        descriptor: { kind: 'box', size: s },
-      };
-    }
+    case 'BoxMesh':
+      return boxGeometryRef(value.size);
     case 'SphereMesh':
       return {
         key: `sphere|${value.radius}|${value.widthSegments}|${value.heightSegments}`,
