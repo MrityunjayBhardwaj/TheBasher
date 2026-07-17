@@ -926,6 +926,52 @@ export interface CharacterValue {
   readonly pose: PosedSkeletonValue;
 }
 
+// ---------------------------------------------------------------------------
+// #361 — Object↔data split (Phase 1). The `data` half and the `Object` half.
+//
+// The domain both Blender, Houdini AND Maya converge on: an Object OWNS the
+// transform; the data it points at (geometry now; camera/light later) is a
+// SEPARATE node reached through the typed 'ObjectData' socket. Phase 1 lands
+// these BESIDE the fused nodes (BoxMesh/…): nothing migrates, and an
+// `Object → MeshData` pair renders byte-identically to the fused mesh.
+// See docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1.
+// ---------------------------------------------------------------------------
+
+/**
+ * The data half — geometry + material, and DELIBERATELY NO transform. Carries
+ * the same `GeometryRef` handle every mesh/baked/array value already uses (never
+ * inline buffers), so the Object that points here renders through the identical
+ * geometryRegistry path. `material` mirrors the read-side union
+ * (InlineMaterialSpec | BakedMaterialSpec | null) so a data node can hold either
+ * an inline (box/sphere) or a baked material without a per-kind switch.
+ */
+export interface MeshDataValue {
+  readonly kind: 'MeshData';
+  readonly geometry: GeometryRef;
+  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+}
+
+/**
+ * The value union flowing through the 'ObjectData' socket. Phase 1 seeds it with
+ * MeshData; CameraData / LightData join in later phases (the same "one socket,
+ * discriminate on value.kind" discipline V78 uses for 'SceneObject').
+ */
+export type ObjectData = MeshDataValue;
+
+/**
+ * The Object half — owns the transform, points at data. Renders `data.geometry`
+ * at its own TRS, exactly as a fused mesh renders its geometry at its TRS, so an
+ * `Object → MeshData` pair is byte-identical to the fused node beside it.
+ * `data: null` is an Empty (the Group/Null/Transform collapse, a later phase).
+ */
+export interface ObjectValue {
+  readonly kind: 'Object';
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+  readonly data: ObjectData | null;
+}
+
 export type SceneChild =
   | BoxMeshValue
   | SphereMeshValue
@@ -938,7 +984,9 @@ export type SceneChild =
   | GroupValue
   | MaterialOverrideValue
   | ScatterValue
-  | CharacterValue;
+  | CharacterValue
+  // #361 — the Object half of the object↔data split (Phase 1, coexists w/ fused).
+  | ObjectValue;
 
 // #231 — the UNIFIED scene-object value: anything that flows through a
 // 'SceneObject' socket (Scene/Group `children`, `lights`, `camera`, …). It is
