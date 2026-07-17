@@ -473,22 +473,22 @@ Map every producer/consumer/serializer/test of a TRS param across the 17 fused t
 > - ✅ **Surface map** — 17-type map produced; expanded #356 from 1 vestigial type to **3** (§1.1); corrected the stale §0 duck-type row (`DiffOverlay` is now a parallel list, not a duck-type).
 > - ⏳ **Remaining before code (needs the checkpoint's go-ahead):** file the phase sub-issues + the row-7 glTF `GeometryRef` follow-up; the small `ref/houdini/SOP.md` §6 catalogue fix. **No implementation code until this checkpoint is approved.**
 
-**Phase 1 — `Object` + `data` land, coexisting.** New node types; nothing migrates; fused nodes untouched. Byte-identical.
+**Phase 1 (#361) — `Object` + `data` land, coexisting.** New node types; nothing migrates; fused nodes untouched. Byte-identical.
 _Observe:_ an Object+MeshData pair renders identically to the fused BoxMesh beside it.
 
-**Phase 2 — The pose contract + road collapse.** `Posable` becomes the type; the three duck-types die; cameras/lights become scene children; the band applies at one road pair.
+**Phase 2 (#362) — The pose contract + road collapse.** `Posable` becomes the type; the three duck-types die; cameras/lights become scene children; the band applies at one road pair.
 _Observe:_ the p343 kind-coverage e2e passes with **glTF added to the kind set** — the case that could not exist before.
 
-**Phase 3 — glTF as Objects (#231 E).** The import builds Object(s) + data. `GltfAsset` stops declaring Object sections.
+**Phase 3 (#363) — glTF as Objects (#231 E).** The import builds Object(s) + data. `GltfAsset` stops declaring Object sections.
 _Observe:_ select the imported model, add Follow Path from the real panel, it rides the path.
 
-**Phase 4 — size-vs-scale (#231 D) + the §3.1 modifier move (folded, scoped Phase 0).** `size` is data; `scale` is Object. Un-conflates `getManipulable`'s `sizeFallback` (`Gizmo.tsx:168`).
+**Phase 4 (#364) — size-vs-scale (#231 D) + the §3.1 modifier move (folded, scoped Phase 0).** `size` is data; `scale` is Object. Un-conflates `getManipulable`'s `sizeFallback` (`Gizmo.tsx:168`).
 The §3.1 modifier move rides here because both touch the same helpers. **5-file edit list (grounded):** (1) `ArrayModifier.ts` — socket `SceneObject`→data, drop TRS+material from output; (2) `MirrorModifier.ts` — identical (the only other caller of the doomed helpers); (3) `modifierGeometry.ts` — **delete `sourceTransform` + `sourceMaterial`** (their only callers are these two modifiers; all other `sourceTransform` grep hits are the unrelated driver binding), **keep** `sourceGeometryRef`/`arrayGeometryRef`/`mirrorGeometryRef`; (4) `resolveEvaluatedMesh.ts:276-329` — drop `source.transform`/`source.material` from the array+mirror branches; (5) `types.ts:538-547` — `ModifiedMeshValue` loses its TRS band + material. **Tests that break (expected):** `ArrayModifier.test.ts` / `MirrorModifier.test.ts` (transform+material assertions; **geometry survives**), `resolveEvaluatedMesh` branch tests. This confirms §3.1's thesis: `sourceTransform`/`sourceMaterial` **exist only because a mesh value fuses geometry+transform+material** — with a data-node source there is nothing to carry, so both evaporate. **Caveat:** sequence `sourceMaterial`'s deletion with row 8's `material` socket (or keep an interim shim) — do not strand material mid-flight.
 
-**Phase 5 — Retire the fused nodes + migrate.** The only breaking phase; gated behind §5.
+**Phase 5 (#365) — Retire the fused nodes + migrate.** The only breaking phase; gated behind §5.
 _Observe:_ open a pre-split `.basher` → renders identically, channels still bound, constraints still aim.
 
-**Phase 6 — Catalogue + memory.** Promote V-object, amend V78, re-derive dharana boundaries, retire the stale road-table prose in H170.
+**Phase 6 (#366) — Catalogue + memory.** Promote V-object, amend V78, re-derive dharana boundaries, retire the stale road-table prose in H170.
 
 **→ Milestone 2 — Templates / HDA.** Own design doc. **Nesting is its research question, up front** (`Solver.ts:40`: "Nested Solvers… out of scope"). Survey game-engine prefabs first (`dcc-reference.md` §24's own highest-value gap).
 
