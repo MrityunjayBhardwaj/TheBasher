@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { applyOp, emptyDagState } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
+import { nodeRefCandidates } from './nodeRefCandidates';
 import type { DagState, Op } from '../core/dag/types';
 
 registerAllNodes();
@@ -73,5 +74,22 @@ describe('object↔data split (#362) — the read road sees an Object as its dat
       { type: 'addNode', nodeId: 'o', nodeType: 'Object', params: { position: POS } },
     ]);
     expect(resolveEvaluatedMesh(state, 'o', ctx)).toBeNull();
+  });
+
+  it('the constraint/ref picker offers the Object but NOT its data node (§4: data has no pose)', () => {
+    const state = build([
+      { type: 'addNode', nodeId: 'd', nodeType: 'BoxData', params: { size: SIZE } },
+      { type: 'addNode', nodeId: 'o', nodeType: 'Object', params: { position: POS } },
+      { type: 'connect', from: { node: 'd', socket: 'out' }, to: { node: 'o', socket: 'data' } },
+    ]);
+    // 'transformable' (a Track-To aim / Copy-Location target): has a world pose.
+    const posable = nodeRefCandidates(state, 'transformable', 'other', ctx).map((c) => c.id);
+    expect(posable).toContain('o'); // the Object is a valid pose target
+    expect(posable).not.toContain('d'); // a data node has no world pose (§4)
+    // 'mesh' (a geometry sampler source): resolves to an evaluated mesh. The Object
+    // does (through its data, Slice 2); the raw data node does not (it has no pose).
+    const meshes = nodeRefCandidates(state, 'mesh', 'other', ctx).map((c) => c.id);
+    expect(meshes).toContain('o');
+    expect(meshes).not.toContain('d');
   });
 });

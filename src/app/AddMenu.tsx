@@ -33,6 +33,11 @@ const GROUPS: MenuGroup[] = [
     items: [
       { kind: 'Cube', label: 'Cube' },
       { kind: 'Sphere', label: 'UV Sphere' },
+      // #362 — the split-native Object: a posable Object wired to a BoxData (the
+      // object↔data split). Renders + poses like a cube, but through the split path
+      // the fused Cube will migrate to (Phase 5). Creating it is the one multi-node
+      // Add build (Object + BoxData + two edges).
+      { kind: 'Object', label: 'Object (Box)' },
     ],
   },
   {
