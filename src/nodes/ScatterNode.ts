@@ -43,7 +43,11 @@ export const ScatterNode: NodeDefinition<ScatterNodeParams, ScatterValue> = {
   paramSchema: ScatterNodeParams,
   inputs: { assets: { type: 'SceneObject', cardinality: 'list' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['mesh', 'transform', 'constraint', 'driver', 'material'],
+  // The pose contract (#362, §9): a Scatter has no single object pose — it spreads
+  // per-instance TRS over its assets and evaluates to a value with NO `position`.
+  // So it drops the inert transform/constraint panels (#356) and keeps the sections
+  // that actually edit it: mesh (density/seed/bounds), material, and driver.
+  inspectorSections: ['mesh', 'driver', 'material'],
   evaluate(params, inputs) {
     const assets = (inputs.assets as SceneChild[] | undefined) ?? [];
     const count = Math.min(params.density, SCATTER_MAX);

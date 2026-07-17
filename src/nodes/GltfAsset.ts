@@ -105,7 +105,13 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
     transformClip: { type: 'TransformClip', cardinality: 'single' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['mesh', 'transform', 'constraint', 'driver', 'material'],
+  // The pose contract (#362, §9): a GltfAsset's pose lives on its import-root Group
+  // (#222/V67 — the Group carries position + pivot and mounts the gizmo; this node
+  // resolves to NO `position`, so its transform panel was inert #356). It stays the
+  // DATA under that Group and drops the inert transform/constraint panels, keeping
+  // mesh/material (the asset's editable surface) + driver. Phase 3 (#363) makes the
+  // import build explicit Object(s) + data; this is the honest interim.
+  inspectorSections: ['mesh', 'driver', 'material'],
   evaluate(params, inputs: ResolvedInputs): GltfAssetValue {
     return {
       kind: 'GltfAsset',
