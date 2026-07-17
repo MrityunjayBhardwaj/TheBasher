@@ -127,6 +127,7 @@ import type {
   InlineMaterialSpec,
   MaterialValue,
   ModifiedMeshValue,
+  ObjectValue,
   PointLightValue,
   RenderOutputValue,
   ScatterValue,
@@ -1448,6 +1449,10 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
       return <ScatterR value={value} override={override} />;
     case 'Character':
       return <CharacterR value={value} />;
+    // #361 — the object↔data split's Object half. Renders its data's geometry at
+    // its own TRS, byte-identical to the fused mesh it will replace (Phase 1).
+    case 'Object':
+      return <ObjectR value={value} override={override} />;
   }
 });
 
@@ -2030,6 +2035,36 @@ function ModifiedMeshR({
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
   if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+    >
+      <primitive object={geom} attach="geometry" />
+      <primitive object={material} attach="material" />
+    </mesh>
+  );
+}
+
+// #361 — ObjectR: renders the object↔data split's Object half (Phase 1).
+// An Object OWNS the TRS and points at data; it draws `data.geometry` (a shared
+// GeometryRef handle) at its own transform with the data's inline material — the
+// SAME `geometryRegistry.get` + `usePrimitiveMaterial` path ModifiedMeshR uses, so
+// an `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band,
+// no parallel render logic). `data: null` = an Empty → renders nothing. Selection
+// /onClick come from the enclosing SceneChildNode band, like the other leaf Rs.
+function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
+  const shading = useViewportStore((s) => s.shading);
+  // Hooks run unconditionally (rules-of-hooks): the material builds even for an
+  // Empty; the geom guard below is a plain branch with no hooks after it. Narrow
+  // to the inline material (`base` distinguishes it from a BakedMaterialSpec);
+  // Phase 1's BoxData only ever emits inline, baked data is a later phase.
+  const mat = value.data?.material ?? null;
+  const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
+  const material = usePrimitiveMaterial(inlineMat, override, shading);
+  const geom = value.data ? geometryRegistry.get(value.data.geometry) : null;
+  if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
   return (
     <mesh
       position={value.position as [number, number, number]}
