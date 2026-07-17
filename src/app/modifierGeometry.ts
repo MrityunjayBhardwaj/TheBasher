@@ -35,13 +35,6 @@ const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 const ORIGIN: Vec3 = [0, 0, 0];
 
 /**
- * Project a resolved mesh VALUE into the source `GeometryRef` a modifier consumes.
- * Box/Sphere build the SAME deterministic key `resolveEvaluatedMesh` builds (so
- * the array key matches on both roads). BakedMesh / ModifiedMesh already carry a
- * handle — pass it through (chained modifiers). Returns null for a non-leaf-mesh
- * value (Transform/Group/glTF/Scatter/Character) — out of v1 scope.
- */
-/**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
  * descriptor). Shared by the fused `BoxMesh` source projection (below) AND the
  * `BoxData` node of the object↔data split (#361), so both roads hand the registry
@@ -55,6 +48,13 @@ export function boxGeometryRef(size: Vec3): GeometryRef {
   };
 }
 
+/**
+ * Project a resolved mesh VALUE into the source `GeometryRef` a modifier consumes.
+ * Box/Sphere build the SAME deterministic key `resolveEvaluatedMesh` builds (so
+ * the array key matches on both roads). BakedMesh / ModifiedMesh already carry a
+ * handle — pass it through (chained modifiers). Returns null for a non-leaf-mesh
+ * value (Transform/Group/glTF/Scatter/Character) — out of v1 scope.
+ */
 export function sourceGeometryRef(value: SceneChild): GeometryRef | null {
   switch (value.kind) {
     case 'BoxMesh':
