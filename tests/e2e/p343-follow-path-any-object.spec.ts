@@ -168,6 +168,14 @@ test('a followed OBJECT renders on the path (#362 — the split-native kind, mes
   );
   expect(rendered, 'the Object must be mounted (its named group renders its data)').toBeTruthy();
   expect(gap(rendered!, seam), 'the followed Object must render on the path').toBeLessThan(1e-3);
+  // Boundary pair: the READ road (what the gizmo seeds from + the inspector shows) must
+  // fold the same Follow-Path band as the RENDER road — else the Object renders on the
+  // path while the gizmo sits at its authored spot (the H40 displayed≠rendered hole).
+  const read = await page.evaluate(() =>
+    (window as unknown as UiWindow).__basher_evaluated_transform('n_obj'),
+  );
+  expect(read, 'the read road must resolve the Object too (gizmo/inspector)').toBeTruthy();
+  expect(gap(read!.position, seam), 'render == read for the followed Object').toBeLessThan(1e-3);
 });
 
 test('a followed LIGHT illuminates from the path (the 4th road, #343)', async ({ page }) => {
