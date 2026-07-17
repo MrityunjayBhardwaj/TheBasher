@@ -11,6 +11,9 @@ import { useMemo } from 'react';
 import { useDiffStore } from '../agent/diff';
 import { evaluate, createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
+import { resolveConstraintPosition, resolveConstraintRotation } from '../app/nodeConstraints';
+import type { DagState } from '../core/dag/state';
+import type { EvalCtx } from '../core/dag/types';
 import { degVec3ToRad } from './rotation';
 import type { RenderOutputValue, CameraValue, LightValue, SceneObject } from '../nodes/types';
 
@@ -38,11 +41,20 @@ function DiffOverlayInner({
   const target = diff.forkState.outputs['render'];
   if (!target) return null;
 
-  const result = evaluate(diff.forkState, target.node, {
-    cache,
-    ctx: { time: { frame, seconds, normalized } },
-  });
+  const ctx: EvalCtx = { time: { frame, seconds, normalized } };
+  const result = evaluate(diff.forkState, target.node, { cache, ctx });
   const value = result.value as RenderOutputValue;
+
+  // #352 — recover each top-level ghost child's producer nodeId so the pose band can be
+  // applied to it. Index i in `value.scene.children` corresponds to index i in the Scene
+  // aggregator's `inputs.children` — the SAME index-correspondence the renderer uses to
+  // recover pick ids (SceneFromDAG.tsx). Read from the FORK: the proposal's scene.
+  const sceneRef = diff.forkState.outputs.scene;
+  const sceneNode = sceneRef ? diff.forkState.nodes[sceneRef.node] : null;
+  const childRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.children)
+      ? (sceneNode.inputs.children as { node: string; socket: string }[])
+      : [];
 
   return (
     // editorChrome: agent-diff ghost preview is an editor overlay, never part
@@ -54,10 +66,60 @@ function DiffOverlayInner({
         <GhostLight key={`ghost-light:${i}`} value={light} />
       ))}
       {value.scene.children.map((child, i) => (
-        <GhostChild key={`ghost-child:${i}`} value={child} />
+        <GhostChild
+          key={`ghost-child:${i}`}
+          value={applyGhostPoseBand(diff.forkState, childRefs[i]?.node ?? null, child, ctx, cache)}
+        />
       ))}
     </group>
   );
+}
+
+/** #352 / [[V104]] — apply the pose bands on top of a ghost child's purely-evaluated
+ *  value. The ghost READS nothing and DISPLAYS a result, so it applies the band; the
+ *  band's own inputs (the curve's world, the aim target's world) keep reading the fork's
+ *  PURE walk, and that split is the cycle guard — no guard needed here.
+ *
+ *  This is the mirror of `ConstrainedR`'s patch (SceneFromDAG.tsx): the fork evaluate
+ *  above mirrors SceneFromDAG's TOP-LEVEL evaluate but never its ConstrainedR wrapper,
+ *  which is exactly why the ghost was [[H170]]'s unfolded FIFTH road — it ghosted a
+ *  proposed "cube follows path" at the cube's AUTHORED position, showing no change at
+ *  the very moment the director is asked to judge one.
+ *
+ *  Resolves against the FORK — the PROPOSED scene — never the live store: the whole
+ *  point is to show what the un-committed op would do.
+ *
+ *  BOTH BANDS, because the road's job is "place the object as the proposal would" and
+ *  a Track-To places it by ORIENTATION. Applying only the position band (the one the
+ *  #352 observation happened to name, via Follow-Path) left "point the cube at the
+ *  target — accept?" previewing an UNROTATED cube — this bug's own defect surviving in
+ *  the other band, and a miss hiding behind a correct sibling ([[V104]]). Found by
+ *  observing a proposed Track-To rather than by trusting the first fix's symmetry.
+ *
+ *  Kind-agnostic by patching the value rather than each switch arm, so every ghost kind
+ *  carrying `position`/`rotation` gets it. `resolveConstraintRotation` returns Euler XYZ
+ *  DEGREES — the shape `GhostChild` already feeds to `degVec3ToRad`, matching the
+ *  renderer (V37/H40). For a TOP-LEVEL child the parent world is identity, so the
+ *  parent-local values the resolvers return ARE what this ghost renders at —
+ *  ConstrainedR's own v1 contract. A nested child under a followed container is the
+ *  #346 analogue. Scale is untouched: no band writes it.
+ */
+function applyGhostPoseBand(
+  state: DagState,
+  nodeId: string | null,
+  value: SceneObject,
+  ctx: EvalCtx,
+  cache: EvaluatorCache,
+): SceneObject {
+  if (!nodeId) return value;
+  const rec = value as unknown as Record<string, unknown>;
+  const aim = resolveConstraintRotation(state, nodeId, ctx, cache);
+  const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
+  const patch: Record<string, unknown> = {};
+  if (aim && 'rotation' in rec) patch.rotation = aim;
+  if (followed && 'position' in rec) patch.position = followed;
+  if (Object.keys(patch).length === 0) return value;
+  return { ...rec, ...patch } as unknown as SceneObject;
 }
 
 function GhostCamera({ value }: { value: CameraValue | null }) {
