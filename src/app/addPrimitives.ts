@@ -52,6 +52,11 @@ export const SCENE_OBJECT_KINDS = [
   // #321 — a Curve path: like a Null it is a standalone transformable scene object, so it
   // wires straight into scene.children (not a wrapper like Group/Transform).
   'Curve',
+  // #362 — the split-native Object: the pose half, wired to a BoxData (the data half), so
+  // it renders + poses like a cube but through the object↔data split. It is the ONE
+  // multi-node build in buildAddPrimitiveOps (Object + BoxData + two edges). Derived here,
+  // it is agent-addressable and identify-referrable the moment it exists (V101).
+  'Object',
 ] as const;
 export type SceneObjectKind = (typeof SCENE_OBJECT_KINDS)[number];
 
@@ -127,6 +132,38 @@ export function buildAddPrimitiveOps(
 ): AddResult | null {
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return null;
+
+  // #362 — the split-native Object is the ONE multi-node primitive: an Object (the pose)
+  // wired to a BoxData (geometry + material), then into the scene. Selection + chained
+  // mutators land on the Object (the posable half). This is the mouse-driven twin of the
+  // programmatic Object→BoxData pair Phase 1 built by hand.
+  if (kind === 'Object') {
+    const dataId = newId('data');
+    const objId = newId('obj');
+    return {
+      ops: [
+        { type: 'addNode', nodeId: dataId, nodeType: 'BoxData', params: { size: [1, 1, 1] } },
+        {
+          type: 'addNode',
+          nodeId: objId,
+          nodeType: 'Object',
+          params: paramsFor('Object', position),
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: objId, socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: objId, socket: 'out' },
+          to: { node: sceneRef.node, socket: 'children' },
+        },
+      ],
+      description: `Add ${humanLabel('Object')}`,
+      newNodeId: objId,
+    };
+  }
 
   const id = newId(prefixFor(kind));
   const ops: Op[] = [];
@@ -257,6 +294,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'transform';
     case 'Null':
       return 'null (controller)';
+    case 'Object':
+      return 'object';
     case 'Math':
       return 'Math node';
     case 'Fit':
@@ -343,6 +382,9 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Transform':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Null':
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // #362 — the Object node owns the TRS (the data node it points at owns none).
+    case 'Object':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     // #321 — the seed path. Points are LOCAL to the curve's origin (so the TRS gizmo moves
     // the whole path), and the zod default supplies them; we only place the origin.

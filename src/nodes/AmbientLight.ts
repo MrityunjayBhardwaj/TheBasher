@@ -21,7 +21,11 @@ export const AmbientLightNode: NodeDefinition<AmbientLightParams, AmbientLightVa
   paramSchema: AmbientLightParams,
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
-  inspectorSections: ['transform', 'constraint', 'driver'],
+  // The pose contract (#362, §9): ambient light is positionless — it evaluates to
+  // a value with NO `position`, so it must NOT advertise a Constraints panel that
+  // moves nothing (#356). It stays drivable (intensity over time); intensity/color
+  // render via the raw-fallback bucket, exactly as the posable lights' params do.
+  inspectorSections: ['driver'],
   evaluate(params) {
     return { kind: 'AmbientLight', intensity: params.intensity, color: params.color };
   },

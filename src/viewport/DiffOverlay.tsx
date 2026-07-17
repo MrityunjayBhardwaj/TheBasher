@@ -145,6 +145,25 @@ function GhostLight({ value }: { value: LightValue }) {
   );
 }
 
+// Kinds a diff-ghost deliberately does NOT preview — a VISIBLE opt-out (§9), not a
+// silent fall-through. Lights/cameras carry no geometry; a glTF/baked/modified mesh
+// needs its loaded asset clone or OPFS bytes (async, outside this sync overlay). A
+// NEW SceneObject kind lands in neither a case below nor this list, so the `.includes`
+// exhaustiveness gate in `default` stops compiling — the add-a-kind decision (ghost
+// it, or opt out here) can no longer be made silently (#357 / K22 step 8).
+const GHOSTLESS_KINDS = [
+  'GltfAsset',
+  'BakedMesh',
+  'ModifiedMesh',
+  'DirectionalLight',
+  'PointLight',
+  'SpotLight',
+  'AreaLight',
+  'AmbientLight',
+  'PerspectiveCamera',
+  'OrthographicCamera',
+] as const satisfies readonly SceneObject['kind'][];
+
 function GhostChild({ value }: { value: SceneObject }) {
   switch (value.kind) {
     case 'BoxMesh':
@@ -198,8 +217,6 @@ function GhostChild({ value }: { value: SceneObject }) {
           ))}
         </group>
       );
-    case 'GltfAsset':
-      return null; // glTF ghost would require asset loading — skip for v0.5
     case 'MaterialOverride':
       if (!value.child) return null;
       return <GhostChild value={value.child} />;
@@ -272,9 +289,46 @@ function GhostChild({ value }: { value: SceneObject }) {
           />
         </mesh>
       );
-    // #231 Inc 2 — lights/cameras can be group children but have no diff-ghost
-    // preview (the ghost is geometry-only); render nothing for them.
+    case 'Object': {
+      // The object↔data split (#362): an Object ghosts its data's geometry at its
+      // own TRS — the same thing ObjectR renders — so an agent's "add an Object"
+      // proposal is SEEN, not just described. `data: null` is an Empty, and a
+      // gltf/baked/array/mirror handle needs the loaded asset, so those ghost
+      // nothing (the same contract GltfAsset has in GHOSTLESS_KINDS above).
+      const data = value.data;
+      if (!data || data.kind !== 'MeshData') return null;
+      const desc = data.geometry.descriptor;
+      const color = data.material && 'base' in data.material ? data.material.base.color : '#ffffff';
+      const geom =
+        desc.kind === 'box' ? (
+          <boxGeometry args={desc.size as [number, number, number]} />
+        ) : desc.kind === 'sphere' ? (
+          <sphereGeometry args={[desc.radius, desc.widthSegments, desc.heightSegments]} />
+        ) : null;
+      if (!geom) return null;
+      return (
+        <mesh
+          position={value.position as [number, number, number]}
+          rotation={degVec3ToRad(value.rotation as [number, number, number])}
+          scale={value.scale as [number, number, number]}
+        >
+          {geom}
+          <meshBasicMaterial
+            transparent
+            opacity={0.35}
+            color={color}
+            depthWrite={false}
+            wireframe
+          />
+        </mesh>
+      );
+    }
     default:
+      // Exhaustiveness gate (§9 / #357): `.includes` on the `as const` list types its
+      // argument as a declared ghostless kind, so a NEW SceneObject kind that is neither
+      // cased above nor listed there fails to compile HERE — the ghost decision (draw it,
+      // or opt out) can no longer be made silently. The list is also the runtime source.
+      GHOSTLESS_KINDS.includes(value.kind);
       return null;
   }
 }
