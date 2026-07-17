@@ -3,6 +3,8 @@ export { AmbientLightNode, AmbientLightParams } from './AmbientLight';
 export { AnimationClipNode, AnimationClipParams } from './AnimationClip';
 export { AreaLightNode, AreaLightParams } from './AreaLight';
 export { BoxMeshNode, BoxMeshParams } from './BoxMesh';
+export { BoxDataNode, BoxDataParams } from './BoxData';
+export { ObjectNode, ObjectParams } from './ObjectNode';
 export { CharacterNode, CharacterParams } from './Character';
 export { DirectionalLightNode, DirectionalLightParams } from './DirectionalLight';
 export { GltfAssetNode, GltfAssetParams } from './GltfAsset';

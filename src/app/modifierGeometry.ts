@@ -41,16 +41,24 @@ const ORIGIN: Vec3 = [0, 0, 0];
  * handle — pass it through (chained modifiers). Returns null for a non-leaf-mesh
  * value (Transform/Group/glTF/Scatter/Character) — out of v1 scope.
  */
+/**
+ * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
+ * descriptor). Shared by the fused `BoxMesh` source projection (below) AND the
+ * `BoxData` node of the object↔data split (#361), so both roads hand the registry
+ * the identical key → one cached build, byte-identical geometry (H40, no drift).
+ */
+export function boxGeometryRef(size: Vec3): GeometryRef {
+  return {
+    key: `box|${size[0]},${size[1]},${size[2]}`,
+    kind: 'box',
+    descriptor: { kind: 'box', size },
+  };
+}
+
 export function sourceGeometryRef(value: SceneChild): GeometryRef | null {
   switch (value.kind) {
-    case 'BoxMesh': {
-      const s = value.size;
-      return {
-        key: `box|${s[0]},${s[1]},${s[2]}`,
-        kind: 'box',
-        descriptor: { kind: 'box', size: s },
-      };
-    }
+    case 'BoxMesh':
+      return boxGeometryRef(value.size);
     case 'SphereMesh':
       return {
         key: `sphere|${value.radius}|${value.widthSegments}|${value.heightSegments}`,
