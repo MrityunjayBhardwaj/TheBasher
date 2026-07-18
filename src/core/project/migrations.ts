@@ -20,6 +20,8 @@ type FormatMigration = (raw: unknown) => unknown;
 const formatMigrations: Record<number, FormatMigration> = {
   // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
   1: migrateAnimationLayers,
+  // v2 → v3 (#365 Phase 5a): split each fused BoxMesh into Object + BoxData.
+  2: migrateFusedBoxToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -41,6 +43,7 @@ interface RawRef {
 interface RawNode {
   id?: string;
   type?: string;
+  version?: number;
   params?: Record<string, unknown>;
   inputs?: Record<string, RawRef | RawRef[]>;
 }
@@ -122,6 +125,113 @@ export function migrateAnimationLayers(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 2 };
+}
+
+// ── v2 → v3: fused BoxMesh → Object + BoxData (object↔data split, #365 Ph5a) ──
+// Splits each fused `BoxMesh` B into an `Object` O (owns the transform) + a fresh
+// `BoxData` D (owns geometry `size` + material). O INHERITS B's id, so every
+// consumer edge, channel `target`, constraint `target` and saved selection that
+// named B still resolves — only `size`/`material.*` channels re-target to D (the
+// §5 id-stability crux; getting it backwards silently orphans every channel).
+// Each box is first normalized through BoxMesh's OWN version ladder, so an old
+// node-version box (v1 no-scale, v2 {name,color} material) reaches the current v4
+// shape BEFORE the split — its inline material keeps its byte-identical migrated
+// look (roughness 0.5, not the new-box 0.3). Runs on RAW JSON before the schema
+// parses. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
+
+/** A channel `paramPath` that addresses the DATA half (geometry/material), so its
+ *  channel must follow the data node. Everything else (position/rotation/scale)
+ *  stays on the inherited-id Object and needs no re-target. */
+function isDataParamPath(paramPath: unknown): boolean {
+  if (typeof paramPath !== 'string') return false;
+  return (
+    paramPath === 'size' ||
+    paramPath.startsWith('size.') ||
+    paramPath.startsWith('size[') ||
+    paramPath.startsWith('material')
+  );
+}
+
+/** A collision-free id for the split-off data node, derived from the box id. */
+function freshDataId(nodes: Record<string, RawNode>, boxId: string): string {
+  let id = `${boxId}__data`;
+  let n = 1;
+  while (nodes[id]) id = `${boxId}__data${n++}`;
+  return id;
+}
+
+export function migrateFusedBoxToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 3 };
+
+  const boxDef = getNodeType('BoxMesh');
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const boxDataVersion = getNodeType('BoxData')?.version ?? 1;
+
+  // boxId → its split-off data node id (used to re-target data-half channels).
+  const dataIdByBox = new Map<string, string>();
+
+  for (const box of Object.values(nodes)) {
+    if (box?.type !== 'BoxMesh' || !box.id) continue;
+
+    // Normalize the box through BoxMesh's OWN migration ladder first (reuse, not a
+    // parallel copy), so an old-node-version box reaches the v4 shape — keeping its
+    // material's byte-identical migrated look — BEFORE it is split.
+    let params: Record<string, unknown> = { ...(box.params ?? {}) };
+    if (boxDef) {
+      let v = typeof box.version === 'number' ? box.version : boxDef.version;
+      let safety = 64;
+      while (v < boxDef.version && safety-- > 0) {
+        const step = boxDef.migrations?.[v];
+        if (!step) break;
+        params = step(params) as Record<string, unknown>;
+        v++;
+      }
+    }
+
+    const dataId = freshDataId(nodes, box.id);
+    dataIdByBox.set(box.id, dataId);
+
+    // The DATA half — geometry + material, no transform, no inputs.
+    nodes[dataId] = {
+      id: dataId,
+      type: 'BoxData',
+      version: boxDataVersion,
+      params: { size: params.size, material: params.material },
+      inputs: {},
+    };
+
+    // The OBJECT half — B converted IN PLACE (inherits the id). Owns the transform,
+    // points at the data node through `data`; any pre-existing inputs are kept.
+    box.type = 'Object';
+    box.version = objectVersion;
+    box.params = {
+      position: params.position,
+      rotation: params.rotation,
+      scale: params.scale,
+    };
+    box.inputs = { ...(box.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-target the channels that address the DATA half. A channel names its subject
+  // by `params.target` (node id) + `params.paramPath`; position/rotation/scale
+  // channels keep target = the box id (now the Object) and need no change.
+  if (dataIdByBox.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const dataId = dataIdByBox.get(target);
+      if (dataId && n.params && isDataParamPath(n.params.paramPath)) {
+        n.params.target = dataId;
+      }
+    }
+  }
+
+  return { ...proj, formatVersion: 3 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {

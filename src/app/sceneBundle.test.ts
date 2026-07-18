@@ -288,8 +288,13 @@ describe('bundleToProject', () => {
     expect(project.name).toBe('Orig');
     expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(project.createdAt).toBe(9999);
-    // The DAG survives the round-trip: identical node id set.
-    expect(Object.keys(project.state.nodes).sort()).toEqual(Object.keys(src.state.nodes).sort());
+    // The DAG survives the round-trip. #365 Phase 5a (Slice 1b): the default project is now
+    // split-native (its box is already an Object + BoxData), so the format migration's
+    // BoxMesh→split pass finds no fused box to split — no node is added or lost.
+    const migratedIds = Object.keys(project.state.nodes);
+    const srcIds = Object.keys(src.state.nodes);
+    for (const id of srcIds) expect(migratedIds).toContain(id);
+    expect(migratedIds.length).toBe(srcIds.length);
     expect(project.state.outputs).toEqual(src.state.outputs);
   });
 

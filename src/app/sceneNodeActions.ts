@@ -23,12 +23,46 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // consulted alongside the edge universe (one shared `channelNodesTargeting`).
   const idSet = new Set<NodeId>(ids);
   const allIds = [...idSet];
+
+  // #365 — a split Object OWNS its BoxData through `data`. Deleting the Object
+  // orphans that data node (unrendered, but persisted → save bloat), so
+  // garbage-collect it too — but ONLY when every surviving consumer is also being
+  // deleted. A shared data node (fan-out: another Object still points at it) stays,
+  // and removeNode would refuse it anyway. Blender's orphan-data purge on the owned
+  // leaf. A KeyframeChannel targets a data param via `params.target` (not an edge),
+  // so it is NOT a "consumer" here — an animated size/material node is still an
+  // orphan once its Object is gone. This runs BEFORE the channel sweep below so the
+  // channels targeting a GC'd BoxData are swept with it; appended AFTER the Objects
+  // so each data node's removeNode runs once its consuming Object is gone (removeNode
+  // refuses while an output is still consumed).
+  for (const nodeId of ids) {
+    const dataId = refsOf(state.nodes[nodeId]?.inputs?.data)[0]?.node;
+    if (!dataId || idSet.has(dataId) || !state.nodes[dataId]) continue;
+    const hasSurvivingConsumer = Object.entries(state.nodes).some(
+      ([cid, c]) =>
+        !idSet.has(cid) &&
+        Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === dataId)),
+    );
+    if (!hasSurvivingConsumer) {
+      idSet.add(dataId);
+      allIds.push(dataId);
+    }
+  }
+
+  // [[H136]] a free-floating KeyframeChannel references its target via
+  // `params.target`, NOT an edge — the consumer walk below is blind to it. Delete
+  // the channels targeting any removed node too (the Object OR its GC'd BoxData),
+  // else they orphan (they survive pointing at a missing id → invisible save bloat).
+  // The id-reference universe consulted alongside the edge universe (one shared
+  // `channelNodesTargeting`); runs after the data-node GC so a data-param channel is
+  // caught.
   for (const ch of channelNodesTargeting(state.nodes, idSet)) {
     if (!idSet.has(ch.id)) {
       idSet.add(ch.id);
       allIds.push(ch.id);
     }
   }
+
   const ops: Op[] = [];
   for (const nodeId of allIds) {
     for (const [consumerId, consumer] of Object.entries(state.nodes)) {
@@ -65,11 +99,15 @@ function freshId(base: string, taken: Set<string>): string {
   return id;
 }
 
-/** The hierarchy sockets the duplicate walk FOLLOWS to gather the subtree: a Group
- *  aggregates `children`; Transform/MaterialOverride wrap a single `target`. Any
- *  OTHER input (a shared material, a geometry source) is NOT followed — it stays
- *  shared by the clone (re-pointed to the same original node). */
-const HIERARCHY_SOCKETS = ['children', 'target'];
+/** The sockets the duplicate walk FOLLOWS to gather the subtree — i.e. the nodes a
+ *  clone OWNS and therefore deep-copies (Blender Shift+D duplicates the object AND
+ *  its data). A Group aggregates `children`; Transform/MaterialOverride wrap a single
+ *  `target`; a split Object (#365) owns its geometry/material through `data`. Any
+ *  OTHER input (a shared material node, a geometry source) is NOT followed — it stays
+ *  shared by the clone (re-pointed to the same original node). Without `data` here a
+ *  duplicated split Object would keep pointing at the ORIGINAL BoxData (a linked copy:
+ *  recolour one, both change) — not the independent copy Shift+D promises. */
+const OWNED_SOCKETS = ['children', 'target', 'data'];
 
 function refsOf(binding: unknown): { node: string; socket: string }[] {
   if (Array.isArray(binding)) return binding as { node: string; socket: string }[];
@@ -78,9 +116,10 @@ function refsOf(binding: unknown): { node: string; socket: string }[] {
 
 /**
  * Ops to DUPLICATE the scene subtree rooted at `rootId` (Blender Shift-D): deep-copy
- * the node + its hierarchy descendants (children / wrapper target) with fresh ids,
- * re-wire the internal edges among the clones, keep every NON-hierarchy input shared
- * with the original, and connect the new root as a sibling right AFTER the original.
+ * the node + its OWNED descendants (children / wrapper target / a split Object's `data`
+ * node) with fresh ids, re-wire the internal edges among the clones, keep every OTHER
+ * (non-owned) input shared with the original, and connect the new root as a sibling
+ * right AFTER the original.
  * Returns the ops (one atomic → one undo) + the new root id to select, or null when
  * the node isn't a wired scene child (nothing to duplicate-as-sibling).
  *
@@ -119,7 +158,7 @@ export function buildDuplicateNodeOps(
     if (!node) return;
     seen.add(id);
     subtree.push(id);
-    for (const socket of HIERARCHY_SOCKETS) {
+    for (const socket of OWNED_SOCKETS) {
       for (const ref of refsOf(node.inputs[socket])) if (ref?.node) visit(ref.node);
     }
   };

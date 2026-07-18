@@ -14,8 +14,8 @@
 // `example_<slug>` ids let the HOME split the gallery into "Examples" vs "Your
 // projects" from the SAME `listProjectMetadata` read (no second data path).
 //
-// All examples use pure primitives (BoxMesh) — no OPFS asset dependency — so
-// seeding never races asset loading.
+// All examples use pure primitives (the Object+BoxData split, #365 Phase 5a) — no OPFS
+// asset dependency — so seeding never races asset loading.
 
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
@@ -69,18 +69,32 @@ function scaffold(): Op[] {
   ];
 }
 
-function box(nodeId: string, position: [number, number, number], color: string): Op {
-  return {
-    type: 'addNode',
-    nodeId,
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position,
-      rotation: [0, 0, 0],
-      material: { name: 'default', base: { color } },
+// #365 Phase 5a (Slice 1b) — a box is the object↔data split: a BoxData (geometry + material)
+// and an Object (pose) wired data→object. The Object keeps `nodeId`, so `childEdge(nodeId)`
+// still wires it into scene.children unchanged. Same pair the load-migration produces (K23).
+function box(nodeId: string, position: [number, number, number], color: string): Op[] {
+  return [
+    {
+      type: 'addNode',
+      nodeId: `${nodeId}_data`,
+      nodeType: 'BoxData',
+      params: {
+        size: [1, 1, 1],
+        material: { name: 'default', base: { color } },
+      },
     },
-  };
+    {
+      type: 'addNode',
+      nodeId,
+      nodeType: 'Object',
+      params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    },
+    {
+      type: 'connect',
+      from: { node: `${nodeId}_data`, socket: 'out' },
+      to: { node: nodeId, socket: 'data' },
+    },
+  ];
 }
 
 function childEdge(nodeId: string): Op {
@@ -94,20 +108,20 @@ function childEdge(nodeId: string): Op {
 // Example 1 — the inviting starter scene (the old "demo"): two boxes, framed.
 const STARTER_OPS: Op[] = [
   ...scaffold(),
-  box('n_box', [-0.7, 0, 0], '#5af07a'),
+  ...box('n_box', [-0.7, 0, 0], '#5af07a'),
   childEdge('n_box'),
-  box('n_box_2', [0.9, 0, -0.4], '#7aaaff'),
+  ...box('n_box_2', [0.9, 0, -0.4], '#7aaaff'),
   childEdge('n_box_2'),
 ];
 
 // Example 2 — a small color study: three boxes in a row.
 const TRIO_OPS: Op[] = [
   ...scaffold(),
-  box('n_box_a', [-1.4, 0, 0], '#f06464'),
+  ...box('n_box_a', [-1.4, 0, 0], '#f06464'),
   childEdge('n_box_a'),
-  box('n_box_b', [0, 0, 0], '#64f08c'),
+  ...box('n_box_b', [0, 0, 0], '#64f08c'),
   childEdge('n_box_b'),
-  box('n_box_c', [1.4, 0, 0], '#6496f0'),
+  ...box('n_box_c', [1.4, 0, 0], '#6496f0'),
   childEdge('n_box_c'),
 ];
 

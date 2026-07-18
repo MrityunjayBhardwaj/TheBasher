@@ -15,17 +15,85 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { Box3, Vector3 } from 'three';
-import { applyOp, __resetRegistryForTests } from '../../core/dag';
+import { applyOp, emptyDagState, __resetRegistryForTests } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
-import { buildDefaultDagState } from '../../core/project/default';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
 import { dispatchApplyTransform } from './dispatchApplyTransform';
 
 const BOX_ID = 'n_box';
+
+// #365 Phase 5a (Slice 1b) — the default project is split-native now (n_box is an Object over
+// a BoxData). These tests exercise the FUSED primitive → BakedMesh Apply path (baking the
+// split box is a Slice-2 deliverable), so they build a genuine fused BoxMesh scene, mirroring
+// the pre-split default (camera + light + time + scene + render + the box wired to children).
+function buildFusedBoxState(): DagState {
+  let s = emptyDagState();
+  const add = (op: Op) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_camera',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_light',
+    nodeType: 'DirectionalLight',
+    params: { intensity: 1.1, position: [5, 5, 3], color: '#ffffff' },
+  });
+  add({
+    type: 'addNode',
+    nodeId: BOX_ID,
+    nodeType: 'BoxMesh',
+    params: {
+      size: [1, 1, 1],
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      material: { name: 'default', base: { color: '#5af07a' } },
+    },
+  });
+  add({ type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} });
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'addNode',
+    nodeId: 'n_render',
+    nodeType: 'RenderOutput',
+    params: { postFx: { tonemap: 'ACES', smaa: true } },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_camera', socket: 'out' },
+    to: { node: 'n_scene', socket: 'camera' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_light', socket: 'out' },
+    to: { node: 'n_scene', socket: 'lights' },
+  });
+  add({
+    type: 'connect',
+    from: { node: BOX_ID, socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_scene', socket: 'out' },
+    to: { node: 'n_render', socket: 'scene' },
+  });
+  return {
+    ...s,
+    outputs: {
+      scene: { node: 'n_scene', socket: 'out' },
+      render: { node: 'n_render', socket: 'out' },
+    },
+  };
+}
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -53,7 +121,7 @@ function makeDispatch(stateRef: { current: DagState }) {
 
 describe('dispatchApplyTransform (primitives)', () => {
   it('SC-1: Apply a Box scale=[2,1,1] → BakedMesh bbox 2×1×1, transform identity', async () => {
-    let state = buildDefaultDagState();
+    let state = buildFusedBoxState();
     state = applyOp(state, {
       type: 'setParam',
       nodeId: BOX_ID,
@@ -104,7 +172,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('rewires the consumer edge: the BakedMesh feeds the Scene where the Box did', async () => {
-    const state = buildDefaultDagState();
+    const state = buildFusedBoxState();
     const storage = new MemoryStorage();
     const stateRef = { current: state };
     const { fn } = makeDispatch(stateRef);
@@ -140,7 +208,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single
     // socket's connect-before-disconnect threw ("bound producer is <baked>, not
     // n_box") and rolled back the whole atomic composite → Apply silently no-op'd.
-    let state = buildDefaultDagState();
+    let state = buildFusedBoxState();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_mod',
@@ -202,7 +270,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('awaits the OPFS write BEFORE the Op composite (reload-safe ordering)', async () => {
-    const state = buildDefaultDagState();
+    const state = buildFusedBoxState();
     const storage = new MemoryStorage();
     const writeSpy = vi.spyOn(storage, 'write');
     const stateRef = { current: state };
@@ -227,7 +295,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('SC-8: rejects when a TRS band is animated (D-04), DAG byte-unchanged', async () => {
-    let state = buildDefaultDagState();
+    let state = buildFusedBoxState();
     // Add a KeyframeChannelVec3 targeting the box position → animated.
     state = applyOp(state, {
       type: 'addNode',
@@ -264,7 +332,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('H45: baking one Box does NOT corrupt the shared registry geometry', async () => {
-    let state = buildDefaultDagState();
+    let state = buildFusedBoxState();
     // A second Box of the SAME size shares the registry geometry key.
     state = applyOp(state, {
       type: 'addNode',
@@ -299,7 +367,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('Sphere path also bakes (covered, not Box-only)', async () => {
-    let state = buildDefaultDagState();
+    let state = buildFusedBoxState();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_sphere',
@@ -348,7 +416,7 @@ const CHILD_NAME = 'Cube';
 
 /** A state with a GltfAsset (→Scene.children) + one GltfChild proxy at scale 2. */
 function gltfChildState() {
-  let state = buildDefaultDagState();
+  let state = buildFusedBoxState();
   const sceneId = state.outputs.scene!.node;
   state = applyOp(state, {
     type: 'addNode',

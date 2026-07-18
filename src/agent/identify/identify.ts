@@ -288,7 +288,16 @@ function isSelectionPhrase(q: string): boolean {
 // (Aggregators like Scene and authoring nodes like MaterialOverride/Scatter stay out for the
 // same reason as before — they are not things the phrase "the objects" points at. They aren't
 // scene-object KINDS either, so the derivation excludes them for free.)
-const ALL_PRIMITIVE_TYPES: NodeTypeId[] = SCENE_OBJECT_KINDS.map(nodeTypeFor) as NodeTypeId[];
+// #365 Phase 5a (Slice 1b) — a Cube now maps to nodeType 'Object' (the split's pose half),
+// so the derivation no longer yields 'BoxMesh'. A not-yet-migrated save can still hold a
+// fused 'BoxMesh', so it is appended as a LEGACY coexistence type: "the objects"/"everything"
+// must find both the new Objects and any old fused boxes. Slice 2 retires 'BoxMesh' and drops
+// this tail.
+const LEGACY_FUSED_TYPES: NodeTypeId[] = ['BoxMesh'] as NodeTypeId[];
+const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
+  ...(SCENE_OBJECT_KINDS.map(nodeTypeFor) as NodeTypeId[]),
+  ...LEGACY_FUSED_TYPES,
+];
 
 function inferNodeTypes(q: string): NodeTypeId[] | null {
   const matches: NodeTypeId[] = [];
@@ -305,7 +314,10 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
     return ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight', 'AmbientLight'];
   }
 
-  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxMesh'];
+  // #365 Phase 5a (Slice 1b) — a cube is now the Object+BoxData split (nodeType 'Object'),
+  // but a fused 'BoxMesh' can still exist in a not-yet-migrated save, so "cube" resolves to
+  // BOTH during coexistence. Slice 2 retires 'BoxMesh' and this drops back to ['Object'].
+  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxMesh', 'Object'];
   if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereMesh'];
   // Specific cameras before the generic "camera" rule (parallels lights).
   if (/\bperspective\s+camera\b/.test(q)) return ['PerspectiveCamera'];

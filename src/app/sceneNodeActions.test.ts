@@ -61,6 +61,108 @@ describe('buildDeleteNodesOps', () => {
     ]);
   });
 
+  it('#365 also removes a split Object’s orphaned BoxData', () => {
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'obj', socket: 'out' }] },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: { id: 'data', type: 'BoxData', params: { size: [1, 1, 1] }, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    const ops = buildDeleteNodesOps(state, ['obj']);
+    // The Object is removed AND its now-orphaned BoxData too (no save bloat).
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'obj' });
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'data' });
+    // Order: the data node's removeNode comes AFTER the Object's (its only consumer
+    // must be gone first, else removeNode refuses).
+    const idxObj = ops.findIndex((o) => o.type === 'removeNode' && o.nodeId === 'obj');
+    const idxData = ops.findIndex((o) => o.type === 'removeNode' && o.nodeId === 'data');
+    expect(idxData).toBeGreaterThan(idxObj);
+  });
+
+  it('#365 KEEPS a shared BoxData when a sibling Object still points at it', () => {
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: {
+            children: [
+              { node: 'objA', socket: 'out' },
+              { node: 'objB', socket: 'out' },
+            ],
+          },
+        },
+        objA: {
+          id: 'objA',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        objB: {
+          id: 'objB',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: { id: 'data', type: 'BoxData', params: { size: [1, 1, 1] }, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    const ops = buildDeleteNodesOps(state, ['objA']);
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'objA' });
+    // objB still consumes `data` → it must survive (fan-out, not orphaned).
+    expect(ops.some((o) => o.type === 'removeNode' && o.nodeId === 'data')).toBe(false);
+  });
+
+  it('#365 also removes a channel targeting the GC’d BoxData (animated split cube)', () => {
+    // A migrated animated cube: the size channel targets the BoxData (data-param
+    // channels retarget to the data node). Deleting the Object GC's the BoxData —
+    // the channel must be swept with it, else it orphans pointing at a dead id.
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'obj', socket: 'out' }] },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: { id: 'data', type: 'BoxData', params: { size: [1, 1, 1] }, inputs: {} },
+        ch: {
+          id: 'ch',
+          type: 'KeyframeChannelVec3',
+          params: { target: 'data', paramPath: 'size', keyframes: [] },
+          inputs: {},
+        },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    const removed = buildDeleteNodesOps(state, ['obj'])
+      .filter((o) => o.type === 'removeNode')
+      .map((o) => (o as { nodeId: string }).nodeId);
+    expect(removed).toContain('obj');
+    expect(removed).toContain('data');
+    expect(removed, 'the size channel targeting the BoxData is swept too').toContain('ch');
+  });
+
   it('[[H136]] also removes a free-floating channel targeting the deleted node', () => {
     const ops = buildDeleteNodesOps(animatedState(), ['box']);
     // channel `ch` targets `box` via params.target (no edge) — must be removed too.
@@ -109,6 +211,59 @@ describe('buildDuplicateNodeOps', () => {
         from: { node: 'grp_copy', socket: 'out' },
         to: { node: 'scene', socket: 'children' },
         index: 2,
+      },
+    ]);
+  });
+
+  it('deep-copies a split Object: the clone gets its OWN, independent BoxData (#365)', () => {
+    // A split Object owns its geometry/material through `data`. Duplicating it must
+    // clone the BoxData too and point clone.data at the clone — NOT the original
+    // (which would be a linked copy: recolour one, both change). Blender Shift+D.
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'obj', socket: 'out' }] },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: { position: [0, 0, 0] },
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: {
+          id: 'data',
+          type: 'BoxData',
+          params: { size: [1, 1, 1], material: { base: { color: '#ff0000' } } },
+          inputs: {},
+        },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+
+    const res = buildDuplicateNodeOps(state, 'obj')!;
+    expect(res.newRootId).toBe('obj_copy');
+    expect(res.ops).toEqual([
+      { type: 'addNode', nodeId: 'obj_copy', nodeType: 'Object', params: { position: [0, 0, 0] } },
+      {
+        type: 'addNode',
+        nodeId: 'data_copy',
+        nodeType: 'BoxData',
+        params: { size: [1, 1, 1], material: { base: { color: '#ff0000' } } },
+      },
+      // clone.data → the CLONED BoxData, not the original 'data' (independence).
+      {
+        type: 'connect',
+        from: { node: 'data_copy', socket: 'out' },
+        to: { node: 'obj_copy', socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'obj_copy', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+        index: 1,
       },
     ]);
   });

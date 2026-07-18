@@ -535,13 +535,16 @@ describe('mesh.add tool', () => {
     const types2 = result2.ops.map((o) => o.type);
     expect(types2).toEqual(types1);
 
-    // addNode(Cube) + connect → scene.children = 2 ops
-    expect(result1.ops).toHaveLength(2);
+    // #365 Phase 5a (Slice 1b) — a Cube is the object↔data split: addNode(BoxData) +
+    // addNode(Object) + connect(data→object) + connect(object→scene.children) = 4 ops.
+    expect(result1.ops).toHaveLength(4);
     expect(result1.ops[0].type).toBe('addNode');
-    expect(result1.ops[1].type).toBe('connect');
-    // The same nodeType in both calls
-    expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('BoxMesh');
-    expect((result2.ops[0] as { nodeType: string }).nodeType).toBe('BoxMesh');
+    expect(result1.ops[1].type).toBe('addNode');
+    // The same node types in both calls (data leaf then the posable Object).
+    expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('BoxData');
+    expect((result1.ops[1] as { nodeType: string }).nodeType).toBe('Object');
+    expect((result2.ops[0] as { nodeType: string }).nodeType).toBe('BoxData');
+    expect((result2.ops[1] as { nodeType: string }).nodeType).toBe('Object');
   });
 
   it('returns Op[] for a PointLight with no connect (twice-call — structural check)', () => {

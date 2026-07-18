@@ -8,6 +8,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
+import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -36,17 +37,19 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
   buildClosureSpec(spec): ClosureSpec {
     return {
       rootSelectors: spec.targetSelectors,
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'data'],
     };
   },
   preconditions(spec, _closure, state) {
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
       if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
-      const params = node.params as Record<string, unknown> | undefined;
-      const hasMaterial = params?.material && typeof params.material === 'object';
-      const hasColor = typeof params?.color === 'string';
-      if (!hasMaterial && !hasColor) {
+      // #365 Phase 5a — a split Object's material lives on the BoxData it points at, so resolve
+      // the true material owner (self for a fused mesh, the data node for a split Object).
+      const matOwner = resolveDataParamOwner(state, id, 'material');
+      const hasColor =
+        typeof (node.params as Record<string, unknown> | undefined)?.color === 'string';
+      if (!matOwner && !hasColor) {
         return {
           ok: false,
           reason: `Target "${id}" (${node.type}) has no material.base.color or color param.`,
@@ -59,16 +62,17 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
     const ops: Op[] = [];
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
-      const params = node.params as Record<string, unknown>;
-      if (params.material && typeof params.material === 'object') {
+      // Material → the resolved owner (the BoxData for a split Object); light `color` → self.
+      const matOwner = resolveDataParamOwner(state, id, 'material');
+      if (matOwner) {
         ops.push({
           type: 'setParam',
-          nodeId: id,
+          nodeId: matOwner,
           // v0.6 #2 (#178): the inline color now lives at material.base.color.
           paramPath: 'material.base.color',
           value: spec.color,
         });
-      } else if (typeof params.color === 'string') {
+      } else if (typeof (node.params as Record<string, unknown>).color === 'string') {
         ops.push({
           type: 'setParam',
           nodeId: id,

@@ -27,7 +27,11 @@ export type EdgeKind =
   | 'lights'
   | 'time'
   | 'animation'
-  | 'pass-input';
+  | 'pass-input'
+  // #365 Phase 5a — the object↔data split: an Object points at its geometry/material data node
+  // through the `data` socket. A mutator that edits a data param (material/size) follows this
+  // so the data node is in its closure and the edit is not rejected as out-of-scope.
+  | 'data';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */

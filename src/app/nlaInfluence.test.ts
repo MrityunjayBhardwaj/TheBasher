@@ -103,7 +103,10 @@ describe('3B — the influenceAt ramp closure (fold site build)', () => {
 
 // --- Cases 5-6: fold site #2 (resolveEvaluatedParam) — the ONLY coverage for :91/:103 ---
 
-const BOX_ID = 'n_box';
+// #365 Phase 5a (Slice 1b) — material lives on the BoxData node now (the split), so a
+// material channel targets it, not the Object (n_box). resolveEvaluatedParam is kind-agnostic
+// (params + fold), so the fold-site behavior under test is unchanged.
+const BOX_ID = 'n_box_data';
 const PARAM = 'material.base.metalness'; // OpenPBR IR numeric leaf, default 0
 const ctxAt = (seconds: number) => ({
   time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
