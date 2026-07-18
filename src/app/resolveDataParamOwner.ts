@@ -1,0 +1,48 @@
+// resolveDataParamOwner — "which node owns this data param?" for the object↔data split.
+//
+// #365 Phase 5a: a scene object is now an `Object` (owning the transform) pointing at a data
+// node (owning geometry + material) through its `data` input. So a data param — `material`,
+// `size` — no longer lives on the node you selected/identified (the Object); it lives on the
+// node the Object points at. Every editor that writes a data param (the inspector, the
+// material/size mutators) must reach through `data` to find the true owner, or it silently
+// edits a param the Object doesn't have.
+//
+// This is the ONE place that reach lives, so a new data param or a new data-carrying wrapper
+// is handled in a single spot rather than re-derived at each call site (V101 — one projection,
+// not a parallel list). Transform params (position/rotation/scale) stay on the Object and need
+// no reach — this helper returns the Object's own id for those.
+//
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; src/nodes/BoxData.ts; #365 Phase 5a.
+
+import type { DagState } from '../core/dag/state';
+
+/**
+ * The id of the node that owns `paramRoot` (a top-level param key, e.g. 'material' or 'size')
+ * for the scene object `id`: the node itself if its params carry that key, otherwise the node
+ * it points at via its `data` input (the object↔data split). Returns null when neither carries
+ * it — the caller should treat that as "this target has no such param".
+ */
+export function resolveDataParamOwner(
+  state: DagState,
+  id: string,
+  paramRoot: string,
+): string | null {
+  const node = state.nodes[id];
+  if (!node) return null;
+
+  const params = node.params as Record<string, unknown> | undefined;
+  if (params && paramRoot in params) return id;
+
+  // Reach through the split: the Object owns the transform; the data node it points at via
+  // `data` owns geometry + material.
+  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+    | { node?: string }
+    | undefined;
+  if (dataRef?.node) {
+    const dataNode = state.nodes[dataRef.node];
+    const dataParams = dataNode?.params as Record<string, unknown> | undefined;
+    if (dataParams && paramRoot in dataParams) return dataRef.node;
+  }
+
+  return null;
+}

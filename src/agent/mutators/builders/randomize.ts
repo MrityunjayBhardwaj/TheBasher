@@ -42,6 +42,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { mulberry32, randRange } from '../../../nodes/random';
+import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
 
 // ---------------------------------------------------------------------------
 // Sub-schemas (D-08 — bound discipline)
@@ -189,9 +190,13 @@ function sampleScaleFactor(rng: () => number, range: ScaleRangeT): number {
 //   canScale:    scale.ts:46-47
 // ---------------------------------------------------------------------------
 
-function canColor(params: Record<string, unknown> | undefined): boolean {
-  const hasMaterial = !!params?.material && typeof params.material === 'object';
-  const hasColor = typeof params?.color === 'string';
+// #365 Phase 5a — color/scale live on the BoxData a split Object points at, so these probes
+// resolve the true owner through `data` (a fused mesh owns them itself; a light owns `color`).
+// Rotation stays on the Object, so canRotation reads the target's own params.
+function canColor(state: DagState, id: string): boolean {
+  const hasMaterial = resolveDataParamOwner(state, id, 'material') !== null;
+  const hasColor =
+    typeof (state.nodes[id]?.params as Record<string, unknown> | undefined)?.color === 'string';
   return hasMaterial || hasColor;
 }
 
@@ -200,9 +205,10 @@ function canRotation(params: Record<string, unknown> | undefined): boolean {
   return Array.isArray(rot) && rot.length === 3;
 }
 
-function canScale(params: Record<string, unknown> | undefined): boolean {
-  const hasSize = Array.isArray(params?.size) && (params!.size as unknown[]).length === 3;
-  const hasRadius = typeof params?.radius === 'number';
+function canScale(state: DagState, id: string): boolean {
+  const hasSize = resolveDataParamOwner(state, id, 'size') !== null;
+  const hasRadius =
+    typeof (state.nodes[id]?.params as Record<string, unknown> | undefined)?.radius === 'number';
   return hasSize || hasRadius;
 }
 
@@ -261,7 +267,7 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
   buildClosureSpec(spec): ClosureSpec {
     return {
       rootSelectors: spec.targetSelectors,
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'data'],
     };
   },
   // D-10 anti-silent-skip: enumerate the (target, property) cartesian
@@ -273,7 +279,7 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
       if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
       const params = node.params as Record<string, unknown> | undefined;
       for (const prop of spec.properties) {
-        if (prop === 'color' && !canColor(params)) {
+        if (prop === 'color' && !canColor(state, id)) {
           return {
             ok: false,
             reason:
@@ -289,7 +295,7 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
               `— incompatible with property "rotation".`,
           };
         }
-        if (prop === 'scale' && !canScale(params)) {
+        if (prop === 'scale' && !canScale(state, id)) {
           return {
             ok: false,
             reason:
@@ -314,12 +320,13 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
 
       for (const prop of spec.properties) {
         if (prop === 'color') {
-          // mirror setMaterialColor.ts — material.base.color vs color paramPath
+          // mirror setMaterialColor.ts — material.base.color (resolved owner) vs light `color`
           const hex = sampleHslToHex(rng, spec.ranges.color!);
-          if (params.material && typeof params.material === 'object') {
+          const matOwner = resolveDataParamOwner(state, id, 'material');
+          if (matOwner) {
             ops.push({
               type: 'setParam',
-              nodeId: id,
+              nodeId: matOwner,
               // v0.6 #2 (#178): the inline color now lives at material.base.color.
               paramPath: 'material.base.color',
               value: hex,
@@ -346,13 +353,18 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
             value: next,
           });
         } else {
-          // scale — mirror scale.ts:67-83 — uniform scalar multiply size or radius
+          // scale — mirror scale.ts — uniform scalar multiply size (resolved owner) or radius
           const factor = sampleScaleFactor(rng, spec.ranges.scale!);
-          if (Array.isArray(params.size)) {
-            const size = params.size as [number, number, number];
+          const sizeOwner = resolveDataParamOwner(state, id, 'size');
+          if (sizeOwner) {
+            const size = (state.nodes[sizeOwner].params as Record<string, unknown>).size as [
+              number,
+              number,
+              number,
+            ];
             ops.push({
               type: 'setParam',
-              nodeId: id,
+              nodeId: sizeOwner,
               paramPath: 'size',
               value: [size[0] * factor, size[1] * factor, size[2] * factor],
             });

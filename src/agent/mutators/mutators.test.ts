@@ -869,6 +869,99 @@ describe('setMaterialColor mutator', () => {
 });
 
 // ---------------------------------------------------------------------------
+// object↔data split (#365 Phase 5a Slice 1c) — the data-param mutators reach
+// through an Object's `data` edge to the BoxData that owns material + size, so
+// "make the cube red" / "double the cube" target the data node, not the pose.
+// ---------------------------------------------------------------------------
+
+/** An Object (pose) wired to a BoxData (geometry + material) and into a Scene. */
+function buildSplitObjectScene(): DagState {
+  let s = emptyDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'data',
+    nodeType: 'BoxData',
+    params: { size: [1, 1, 1], material: { name: 'default', base: { color: '#ff0000' } } },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'obj',
+    nodeType: 'Object',
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'data', socket: 'out' },
+    to: { node: 'obj', socket: 'data' },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'obj', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  return { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+}
+
+describe('split-Object data-param mutators reach the BoxData (#365)', () => {
+  it('setMaterialColor writes material.base.color on the DATA node, not the Object', () => {
+    const state = buildSplitObjectScene();
+    const result = validatePlan(
+      setMaterialColorMutator,
+      { targetSelectors: ['obj'], color: '#0000ff' },
+      state,
+      'paint',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ops).toHaveLength(1);
+    const op = result.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('data');
+    expect(op.paramPath).toBe('material.base.color');
+    expect(op.value).toBe('#0000ff');
+  });
+
+  it('scale multiplies size on the DATA node, not the Object', () => {
+    const state = buildSplitObjectScene();
+    const result = validatePlan(scaleMutator, { targetSelectors: ['obj'], factor: 2 }, state, 's');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const op = result.ops.find((o) => o.type === 'setParam');
+    if (op?.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('data');
+    expect(op.paramPath).toBe('size');
+    expect(op.value).toEqual([2, 2, 2]);
+  });
+
+  it('randomize color + scale target the DATA node', () => {
+    const state = buildSplitObjectScene();
+    const result = validatePlan(
+      randomizeMutator,
+      {
+        targetSelectors: ['obj'],
+        properties: ['color', 'scale'],
+        ranges: {
+          color: { h: [0, 360], s: [0.5, 1], l: [0.4, 0.6] },
+          scale: { factor: [1.5, 1.5] },
+        },
+        seed: 7,
+      },
+      state,
+      'r',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const op of result.ops) {
+      if (op.type === 'setParam') expect(op.nodeId).toBe('data');
+    }
+    const paths = result.ops.filter((o) => o.type === 'setParam').map((o) => o.paramPath);
+    expect(paths).toContain('material.base.color');
+    expect(paths).toContain('size');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // randomize mutator — P7.2 / issue #26 path B
 //
 // Per-target randomization across {color, rotation, scale}. ONE call emits

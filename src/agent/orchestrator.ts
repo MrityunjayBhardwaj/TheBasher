@@ -925,6 +925,9 @@ const KNOWN_EDGE_KINDS_LIST = [
   'time',
   'animation',
   'pass-input',
+  // #365 Phase 5a — the object↔data split's `data` edge (Object → its geometry/material node),
+  // followed by the material/size mutators so the data node is in their closure.
+  'data',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

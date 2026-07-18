@@ -9,6 +9,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
+import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
 
 const ScaleSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
@@ -35,17 +36,19 @@ export const scaleMutator: MutatorDefinition<ScaleSpec> = {
   buildClosureSpec(spec): ClosureSpec {
     return {
       rootSelectors: spec.targetSelectors,
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'data'],
     };
   },
   preconditions(spec, _closure, state) {
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
       if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
-      const params = node.params as Record<string, unknown> | undefined;
-      const hasSize = Array.isArray(params?.size) && (params!.size as unknown[]).length === 3;
-      const hasRadius = typeof params?.radius === 'number';
-      if (!hasSize && !hasRadius) {
+      // #365 Phase 5a — a split Object's geometry `size` lives on the BoxData it points at, so
+      // resolve the true size owner (self for a fused mesh, the data node for a split Object).
+      const sizeOwner = resolveDataParamOwner(state, id, 'size');
+      const hasRadius =
+        typeof (node.params as Record<string, unknown> | undefined)?.radius === 'number';
+      if (!sizeOwner && !hasRadius) {
         return {
           ok: false,
           reason: `Target "${id}" (${node.type}) has no scalable size/radius param.`,
@@ -64,21 +67,26 @@ export const scaleMutator: MutatorDefinition<ScaleSpec> = {
 
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
-      const params = node.params as Record<string, unknown>;
-      if (Array.isArray(params.size)) {
-        const size = params.size as [number, number, number];
+      // Size → the resolved owner (the BoxData for a split Object); Sphere `radius` → self.
+      const sizeOwner = resolveDataParamOwner(state, id, 'size');
+      if (sizeOwner) {
+        const size = (state.nodes[sizeOwner].params as Record<string, unknown>).size as [
+          number,
+          number,
+          number,
+        ];
         ops.push({
           type: 'setParam',
-          nodeId: id,
+          nodeId: sizeOwner,
           paramPath: 'size',
           value: [size[0] * factor[0], size[1] * factor[1], size[2] * factor[2]],
         });
-      } else if (typeof params.radius === 'number') {
+      } else if (typeof (node.params as Record<string, unknown>).radius === 'number') {
         ops.push({
           type: 'setParam',
           nodeId: id,
           paramPath: 'radius',
-          value: params.radius * uniformFactor,
+          value: ((node.params as Record<string, unknown>).radius as number) * uniformFactor,
         });
       }
     }
