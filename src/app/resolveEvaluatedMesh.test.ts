@@ -54,9 +54,11 @@ describe('resolveEvaluatedMesh', () => {
   it('box geometry key changes when size changes (no false sharing)', () => {
     let state = buildDefaultDagState();
     const before = resolveEvaluatedMesh(state, BOX_ID, ctxAt(0))!.geometry.key;
+    // #365 Phase 5a (Slice 1b) — size lives on the BoxData node now; the read is still through
+    // the Object (BOX_ID, which resolves the geometry via its `data` edge).
     state = applyOp(state, {
       type: 'setParam',
-      nodeId: BOX_ID,
+      nodeId: 'n_box_data',
       paramPath: 'size',
       value: [2, 3, 4],
     }).next;

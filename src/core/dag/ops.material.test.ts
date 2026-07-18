@@ -19,15 +19,17 @@ beforeEach(() => {
   __reseedAllNodesForTests();
 });
 
+// #365 Phase 5a (Slice 1b) — the box's material lives on the BoxData node now (n_box_data),
+// not the Object (n_box). The R6 partial-reparse behavior is identical (same openpbr schema).
 function setParam(paramPath: string, value: unknown): Op {
-  return { type: 'setParam', nodeId: 'n_box', paramPath, value } as Op;
+  return { type: 'setParam', nodeId: 'n_box_data', paramPath, value } as Op;
 }
 
 describe('partial material setParam re-parse (R6 — every sibling defaulted)', () => {
   it('material.base.metalness edit succeeds; siblings stay defaulted', () => {
     const state = buildDefaultDagState();
     const next = applyOp(state, setParam('material.base.metalness', 0.7)).next;
-    const mat = next.nodes.n_box.params.material as InlineMaterialSpec;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
     expect(mat.base.metalness).toBe(0.7); // edited field landed
     expect(mat.base.color).toBe('#5af07a'); // sibling preserved
     expect(mat.specular.roughness).toBe(0.3); // sibling defaulted, NOT dropped
@@ -38,7 +40,7 @@ describe('partial material setParam re-parse (R6 — every sibling defaulted)', 
   it('material.base.color edit succeeds and keeps the full IR', () => {
     const state = buildDefaultDagState();
     const next = applyOp(state, setParam('material.base.color', '#ff0000')).next;
-    const mat = next.nodes.n_box.params.material as InlineMaterialSpec;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
     expect(mat.base.color).toBe('#ff0000');
     expect(mat.specular.ior).toBe(1.5);
     expect(mat.emission.color).toBe('#000000');
@@ -47,7 +49,7 @@ describe('partial material setParam re-parse (R6 — every sibling defaulted)', 
   it('material.specular.roughness edit succeeds (deepest nested scalar)', () => {
     const state = buildDefaultDagState();
     const next = applyOp(state, setParam('material.specular.roughness', 0.85)).next;
-    const mat = next.nodes.n_box.params.material as InlineMaterialSpec;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
     expect(mat.specular.roughness).toBe(0.85);
     expect(mat.base.metalness).toBe(0); // sibling lobe untouched
   });

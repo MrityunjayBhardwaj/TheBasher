@@ -16,7 +16,7 @@
 // REF: PLAN.md W1 (1.6); THESIS §52; vyapti V4/V10/V32; hetvabhasa H14/H25; #178.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, applyOp, type DagState } from '../dag';
+import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
@@ -159,11 +159,68 @@ describe('v1 box → normalize + split to Object + BoxData (byte-identical rende
 // byte-identical to a fused box; a `position` channel stays on the Object while a
 // `size` channel re-targets the data node. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
 
+/** A genuinely FUSED BoxMesh scene, wired into a Scene — the pre-split shape. The default
+ *  project is split-native now (#365 Phase 5a Slice 1b), so a migration fixture must build a
+ *  real fused BoxMesh by hand; matches the default box's size + material so the byte-identical
+ *  comparison against the (now-split) default holds. */
+function buildFusedBoxDagState(): DagState {
+  let s = emptyDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_box',
+    nodeType: 'BoxMesh',
+    params: {
+      size: [1, 1, 1],
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      material: { name: 'default', base: { color: '#5af07a' } },
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_camera',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
+  });
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'addNode',
+    nodeId: 'n_render',
+    nodeType: 'RenderOutput',
+    params: { postFx: { tonemap: 'ACES', smaa: true } },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_box', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_camera', socket: 'out' },
+    to: { node: 'n_scene', socket: 'camera' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_scene', socket: 'out' },
+    to: { node: 'n_render', socket: 'scene' },
+  });
+  return {
+    ...s,
+    outputs: {
+      scene: { node: 'n_scene', socket: 'out' },
+      render: { node: 'n_render', socket: 'out' },
+    },
+  };
+}
+
 /** A serialized formatVersion-2 (pre-split) project: one fused BoxMesh built by
  *  the real pipeline (authoritative shape) + a position channel and a size
  *  channel targeting it, then stamped formatVersion 2. */
 function buildV2FusedBoxJson() {
-  let s = buildDefaultDagState();
+  let s = buildFusedBoxDagState();
   s = applyOp(s, {
     type: 'addNode',
     nodeId: 'n_pos',

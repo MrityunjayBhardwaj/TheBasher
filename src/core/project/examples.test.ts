@@ -34,8 +34,10 @@ describe('example projects (v0.6 #4 W4)', () => {
       // Wired through to a render sink like default.ts.
       expect(project.state.outputs.render).toBeTruthy();
       expect(project.state.outputs.scene).toBeTruthy();
-      // At least one mesh child so the opened scene is non-empty + selectable.
-      expect(nodes.some((n) => n.type === 'BoxMesh')).toBe(true);
+      // At least one mesh child so the opened scene is non-empty + selectable. #365 Phase 5a
+      // (Slice 1b): boxes are the split now — an Object (pose) over a BoxData (geometry).
+      expect(nodes.some((n) => n.type === 'Object')).toBe(true);
+      expect(nodes.some((n) => n.type === 'BoxData')).toBe(true);
     }
   });
 

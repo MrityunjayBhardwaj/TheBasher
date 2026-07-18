@@ -151,8 +151,11 @@ describe('default node registration', () => {
 describe('default project', () => {
   it('builds the THESIS App. C DAG with the canonical n_time clock', () => {
     const state = buildDefaultDagState();
+    // #365 Phase 5a (Slice 1b) — the box is the object↔data split: n_box (the Object/pose) +
+    // n_box_data (the BoxData/geometry).
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
+      'n_box_data',
       'n_camera',
       'n_light',
       'n_render',
@@ -249,9 +252,12 @@ describe('determinism harness — V2 twice-eval', () => {
     const light = sceneVal!.lights[0];
     if (light.kind !== 'DirectionalLight') throw new Error('expected DirectionalLight');
     expect(light.intensity).toBeCloseTo(1.1);
+    // #365 Phase 5a (Slice 1b) — the scene child is now the split Object; its geometry (size)
+    // lives on the BoxData it points at, reached through `child.data`.
     const child = sceneVal!.children[0];
-    if (child.kind !== 'BoxMesh') throw new Error('expected BoxMesh');
-    expect(child.size).toEqual([1, 1, 1]);
+    if (child.kind !== 'Object') throw new Error('expected Object');
+    if (child.data?.kind !== 'MeshData') throw new Error('expected the Object to carry MeshData');
+    expect(child.data.geometry.descriptor).toEqual({ kind: 'box', size: [1, 1, 1] });
   });
 });
 

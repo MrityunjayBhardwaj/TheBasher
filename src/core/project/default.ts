@@ -1,6 +1,7 @@
 // The minimum viable Basher project — THESIS.md App. C, P0 deliverable.
-// Five authored nodes (camera, light, box, time root, scene aggregator)
-// plus the RenderOutput sink. Boot Basher with this DAG → see a cube →
+// Authored nodes: camera, light, the box (an Object posed over a BoxData — the
+// object↔data split, #365 Phase 5a), time root, scene aggregator, plus the
+// RenderOutput sink. Boot Basher with this DAG → see a cube →
 // edit camera position → see new angle → save → reload → identical state.
 //
 // `n_time` is the canonical project clock. THESIS §49 makes Time a
@@ -28,18 +29,31 @@ const DEFAULT_OPS: Op[] = [
     nodeType: 'DirectionalLight',
     params: { intensity: 1.1, position: [5, 5, 3], color: '#ffffff' },
   },
+  // #365 Phase 5a (Slice 1b) — the box is split-native: a BoxData (geometry + material) and
+  // an Object (pose) that points at it via `data`. The Object keeps the id `n_box`, so the
+  // scene.children edge below (and any reference to the box) is unchanged — the same pair the
+  // load-migration produces for old fused saves (K23). A new project is split-native.
   {
     type: 'addNode',
-    nodeId: 'n_box',
-    nodeType: 'BoxMesh',
+    nodeId: 'n_box_data',
+    nodeType: 'BoxData',
     params: {
       size: [1, 1, 1],
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
       // v0.6 #2 (#178): OpenPBR IR. base.color explicit; the remaining lobes fill
       // from the zod NEW-box defaults (specular.roughness 0.3 etc).
       material: { name: 'default', base: { color: '#5af07a' } },
     },
+  },
+  {
+    type: 'addNode',
+    nodeId: 'n_box',
+    nodeType: 'Object',
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  },
+  {
+    type: 'connect',
+    from: { node: 'n_box_data', socket: 'out' },
+    to: { node: 'n_box', socket: 'data' },
   },
   { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },
   { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
