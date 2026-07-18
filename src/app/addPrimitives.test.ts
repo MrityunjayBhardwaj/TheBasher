@@ -26,18 +26,29 @@ describe('buildAddPrimitiveOps', () => {
     expect(buildAddPrimitiveOps(empty, 'Cube', [0, 0, 0])).toBeNull();
   });
 
-  it('Cube: emits addNode(BoxMesh) → connect to scene.children', () => {
+  it('Cube: emits the object↔data split — BoxData + Object + wire + connect to scene.children', () => {
+    // #365 Phase 5a (Slice 1b) — a Cube is the split-native pair now: a BoxData (geometry)
+    // and an Object (pose) wired data→object, the Object into scene.children. Selection lands
+    // on the Object (the posable half), so newNodeId is the Object's id.
     const state = seedSceneState();
     const r = buildAddPrimitiveOps(state, 'Cube', [1, 2, 3])!;
-    expect(r.ops).toHaveLength(2);
-    expect(r.ops[0].type).toBe('addNode');
-    if (r.ops[0].type !== 'addNode') throw new Error();
-    expect(r.ops[0].nodeType).toBe('BoxMesh');
-    expect((r.ops[0].params as { position: number[] }).position).toEqual([1, 2, 3]);
-    expect(r.ops[1]).toMatchObject({
+    expect(r.ops).toHaveLength(4);
+    if (r.ops[0].type !== 'addNode' || r.ops[1].type !== 'addNode') throw new Error();
+    expect(r.ops[0].nodeType).toBe('BoxData');
+    expect(r.ops[1].nodeType).toBe('Object');
+    expect((r.ops[1].params as { position: number[] }).position).toEqual([1, 2, 3]);
+    // BoxData → Object.data, then Object → scene.children.
+    expect(r.ops[2]).toMatchObject({
       type: 'connect',
+      from: { node: r.ops[0].nodeId },
+      to: { node: r.ops[1].nodeId, socket: 'data' },
+    });
+    expect(r.ops[3]).toMatchObject({
+      type: 'connect',
+      from: { node: r.ops[1].nodeId },
       to: { node: 'n_scene', socket: 'children' },
     });
+    expect(r.newNodeId).toBe(r.ops[1].nodeId);
   });
 
   it('Sphere: emits addNode(SphereMesh) with default radius/segments + connect', () => {

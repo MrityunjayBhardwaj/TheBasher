@@ -31,13 +31,12 @@ const GROUPS: MenuGroup[] = [
   {
     label: 'Mesh',
     items: [
+      // #365 Phase 5a (Slice 1b) — "Cube" now builds the object↔data split (an Object posed
+      // over a BoxData), the same pair the load-migration produces for old fused saves. The
+      // split is invisible to the director: one "Cube" item, no separate "Object (Box)"
+      // (Phase 2's scaffold, now folded in).
       { kind: 'Cube', label: 'Cube' },
       { kind: 'Sphere', label: 'UV Sphere' },
-      // #362 — the split-native Object: a posable Object wired to a BoxData (the
-      // object↔data split). Renders + poses like a cube, but through the split path
-      // the fused Cube will migrate to (Phase 5). Creating it is the one multi-node
-      // Add build (Object + BoxData + two edges).
-      { kind: 'Object', label: 'Object (Box)' },
     ],
   },
   {

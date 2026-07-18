@@ -52,11 +52,6 @@ export const SCENE_OBJECT_KINDS = [
   // #321 — a Curve path: like a Null it is a standalone transformable scene object, so it
   // wires straight into scene.children (not a wrapper like Group/Transform).
   'Curve',
-  // #362 — the split-native Object: the pose half, wired to a BoxData (the data half), so
-  // it renders + poses like a cube but through the object↔data split. It is the ONE
-  // multi-node build in buildAddPrimitiveOps (Object + BoxData + two edges). Derived here,
-  // it is agent-addressable and identify-referrable the moment it exists (V101).
-  'Object',
 ] as const;
 export type SceneObjectKind = (typeof SCENE_OBJECT_KINDS)[number];
 
@@ -133,11 +128,14 @@ export function buildAddPrimitiveOps(
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return null;
 
-  // #362 — the split-native Object is the ONE multi-node primitive: an Object (the pose)
-  // wired to a BoxData (geometry + material), then into the scene. Selection + chained
-  // mutators land on the Object (the posable half). This is the mouse-driven twin of the
-  // programmatic Object→BoxData pair Phase 1 built by hand.
-  if (kind === 'Object') {
+  // #365 Phase 5a (Slice 1b) — a Cube IS the object↔data split: an Object (the pose) wired
+  // to a BoxData (geometry + material), then into the scene. It is the ONE multi-node build
+  // here. Selection + chained mutators land on the Object (the posable half); a BoxData owns
+  // the geometry. This makes new cubes split-native — the same pair the load-migration
+  // produces for old fused BoxMesh saves (K23) — so "Cube" and the migration converge on one
+  // shape. (Phase 2 introduced this via a separate "Object (Box)" item; Slice 1b folds it
+  // into plain "Cube" and retires that scaffold word — one director noun for the box.)
+  if (kind === 'Cube') {
     const dataId = newId('data');
     const objId = newId('obj');
     return {
@@ -147,7 +145,7 @@ export function buildAddPrimitiveOps(
           type: 'addNode',
           nodeId: objId,
           nodeType: 'Object',
-          params: paramsFor('Object', position),
+          params: paramsFor('Cube', position),
         },
         {
           type: 'connect',
@@ -160,7 +158,7 @@ export function buildAddPrimitiveOps(
           to: { node: sceneRef.node, socket: 'children' },
         },
       ],
-      description: `Add ${humanLabel('Object')}`,
+      description: `Add ${humanLabel('Cube')}`,
       newNodeId: objId,
     };
   }
@@ -235,12 +233,15 @@ function isSolverKind(kind: PrimitiveKind): boolean {
 /** The Add-menu kind → the DAG node type it creates. Exported because the agent's
  *  IDENTIFY vocabulary is derived from it (`ALL_PRIMITIVE_TYPES`, identify.ts): the two
  *  speak different dialects of the same thing — a director says "cube", the DAG says
- *  "BoxMesh" — and this is the ONE translation between them. A second copy is how a scene
- *  object ends up creatable but un-referrable (#324). */
+ *  "Object" (the pose half of the object↔data split, since #365 Phase 5a; a BoxData holds
+ *  the geometry) — and this is the ONE translation between them. A second copy is how a
+ *  scene object ends up creatable but un-referrable (#324). */
 export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
+    // #365 Phase 5a (Slice 1b) — a Cube is now the split; the node the director selects and
+    // refers to is the Object (the BoxData is its data leaf, not a scene object).
     case 'Cube':
-      return 'BoxMesh';
+      return 'Object';
     case 'Sphere':
       return 'SphereMesh';
     default:
@@ -248,8 +249,11 @@ export function nodeTypeFor(kind: PrimitiveKind): string {
   }
 }
 
+/** Fused mesh primitives (still geometry+transform in one node). Cube is NO LONGER here —
+ *  it builds the Object+BoxData split via the early-return branch above (#365 Phase 5a).
+ *  Sphere stays fused until a SphereData node exists. */
 function isMesh(kind: PrimitiveKind): boolean {
-  return kind === 'Cube' || kind === 'Sphere';
+  return kind === 'Sphere';
 }
 
 function isLight(kind: PrimitiveKind): boolean {
@@ -294,8 +298,6 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'transform';
     case 'Null':
       return 'null (controller)';
-    case 'Object':
-      return 'object';
     case 'Math':
       return 'Math node';
     case 'Fit':
@@ -331,13 +333,11 @@ function humanLabel(kind: PrimitiveKind): string {
  *  else accepts the spawn point. */
 function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown> {
   switch (kind) {
+    // #365 Phase 5a (Slice 1b) — Cube's params are the OBJECT half's TRS only (the BoxData it
+    // points at owns the geometry + material). The split branch above wires the pair; this
+    // supplies the Object node's params.
     case 'Cube':
-      return {
-        size: [1, 1, 1],
-        position,
-        rotation: [0, 0, 0],
-        material: { name: 'default', color: '#5af07a' },
-      };
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Sphere':
       return {
         radius: 0.5,
@@ -382,9 +382,6 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Transform':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Null':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
-    // #362 — the Object node owns the TRS (the data node it points at owns none).
-    case 'Object':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     // #321 — the seed path. Points are LOCAL to the curve's origin (so the TRS gizmo moves
     // the whole path), and the zod default supplies them; we only place the origin.
