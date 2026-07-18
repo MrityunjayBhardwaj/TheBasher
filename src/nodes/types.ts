@@ -475,15 +475,10 @@ export interface EvaluatedMesh {
 // Meshes (socket type: 'SceneObject') — recursive union
 // ---------------------------------------------------------------------------
 
-export interface BoxMeshValue {
-  readonly kind: 'BoxMesh';
-  readonly size: Vec3;
-  readonly position: Vec3;
-  readonly rotation: Vec3;
-  /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `size`. */
-  readonly scale: Vec3;
-  readonly material: InlineMaterialSpec;
-}
+// #365 Phase 5a (Slice 2): the fused `BoxMeshValue` is RETIRED — a box is now an `Object`
+// (transform) pointing at a `BoxData` (geometry + material) through its `data` socket. Old
+// saves are split on load by the migration (the `BoxMesh` node type stays a migration-only
+// relic). No value kind carries the fused box any longer, making it unrepresentable.
 
 export interface SphereMeshValue {
   readonly kind: 'SphereMesh';
@@ -973,7 +968,6 @@ export interface ObjectValue {
 }
 
 export type SceneChild =
-  | BoxMeshValue
   | SphereMeshValue
   | BakedMeshValue
   | ModifiedMeshValue

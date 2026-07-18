@@ -116,7 +116,6 @@ import type {
   AmbientLightValue,
   AreaLightValue,
   BakedMeshValue,
-  BoxMeshValue,
   CharacterValue,
   DirectionalLightValue,
   GltfAssetValue,
@@ -1391,8 +1390,6 @@ interface MeshChildProps {
 
 const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
-    case 'BoxMesh':
-      return <BoxMeshR value={value} override={override} />;
     case 'SphereMesh':
       return <SphereMeshR value={value} override={override} />;
     case 'BakedMesh':
@@ -1947,25 +1944,8 @@ function usePrimitiveMaterial(
   return material;
 }
 
-function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
-  const shading = useViewportStore((s) => s.shading);
-  const material = usePrimitiveMaterial(value.material, override, shading);
-  return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // v0.6 #1 (D-01) — apply the uniform TRS scale band, EXACTLY as TransformR
-      // does on its <group> (line 978). `size` (the geometry below) is the
-      // separate parametric capability; scale is the transform band the gizmo
-      // drives. `?? [1,1,1]` is the C-1 / V10/H14 consumer-side hydrate guard.
-      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-    >
-      <boxGeometry args={value.size as [number, number, number]} />
-      <primitive object={material} attach="material" />
-    </mesh>
-  );
-}
-
+// #365 Phase 5a (Slice 2): BoxMeshR is RETIRED — a box renders through <ObjectR> (the split's
+// Object → BoxData road, byte-identical). SphereMeshR keeps rendering the still-fused sphere.
 function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
   const shading = useViewportStore((s) => s.shading);
   const material = usePrimitiveMaterial(value.material, override, shading);
