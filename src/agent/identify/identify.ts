@@ -94,7 +94,7 @@ export function identify(
   // 1. Exact-id strategy.
   if (state.nodes[raw]) {
     return commitMatch(
-      [toCandidate(state.nodes[raw])],
+      [toCandidate(state, state.nodes[raw])],
       'exact-id',
       `Exact node id "${raw}" matched.`,
       hint,
@@ -114,7 +114,7 @@ export function identify(
     const candidates = [...selectedNodeIds]
       .map((id) => state.nodes[id])
       .filter((n): n is Node => Boolean(n))
-      .map(toCandidate);
+      .map((n) => toCandidate(state, n));
     if (candidates.length === 0) {
       return {
         type: 'no-match',
@@ -138,7 +138,7 @@ export function identify(
   if (hadType && inferredTypes) {
     typeMatched = Object.values(state.nodes)
       .filter((n) => inferredTypes.includes(n.type))
-      .map(toCandidate);
+      .map((n) => toCandidate(state, n));
   }
 
   // 4. Color-match — narrow type-matched (or all nodes if no type) by
@@ -146,9 +146,16 @@ export function identify(
   const colorHex = inferColor(q);
   const hadColor = colorHex !== null;
   const colorMatched = colorHex
-    ? (typeMatched.length > 0 ? typeMatched : Object.values(state.nodes).map(toCandidate)).filter(
-        (c) => colorsInSameFamily(nodeColorHex(state.nodes[c.id]), colorHex),
-      )
+    ? (typeMatched.length > 0
+        ? typeMatched
+        : // No type word: scan the scene-object universe, NOT every node. A split cube's
+          // color lives on its BoxData, which identify reaches through `data` (V107) — so
+          // scanning data leaves too would surface the BoxData as a phantom selectable AND
+          // double-count the cube (Object via reach + BoxData via own material).
+          Object.values(state.nodes)
+            .filter((n) => ALL_PRIMITIVE_TYPES.includes(n.type))
+            .map((n) => toCandidate(state, n))
+      ).filter((c) => colorsInSameFamily(nodeColorHex(state, state.nodes[c.id]), colorHex))
     : null;
 
   // Conjunction logic: when the query supplies BOTH a color and a type,
@@ -288,15 +295,12 @@ function isSelectionPhrase(q: string): boolean {
 // (Aggregators like Scene and authoring nodes like MaterialOverride/Scatter stay out for the
 // same reason as before — they are not things the phrase "the objects" points at. They aren't
 // scene-object KINDS either, so the derivation excludes them for free.)
-// #365 Phase 5a (Slice 1b) — a Cube now maps to nodeType 'Object' (the split's pose half),
-// so the derivation no longer yields 'BoxMesh'. A not-yet-migrated save can still hold a
-// fused 'BoxMesh', so it is appended as a LEGACY coexistence type: "the objects"/"everything"
-// must find both the new Objects and any old fused boxes. Slice 2 retires 'BoxMesh' and drops
-// this tail.
-const LEGACY_FUSED_TYPES: NodeTypeId[] = ['BoxMesh'] as NodeTypeId[];
+// #365 Phase 5a — a Cube maps to nodeType 'Object' (the split's pose half). Slice 1b added
+// a fused 'BoxMesh' coexistence tail so "the objects"/"everything" also found not-yet-migrated
+// saves; Slice 2 retires the fused value kind (old saves split on load, K23), so the tail is
+// gone — every scene object is an Object (or another split-native kind).
 const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
   ...(SCENE_OBJECT_KINDS.map(nodeTypeFor) as NodeTypeId[]),
-  ...LEGACY_FUSED_TYPES,
 ];
 
 function inferNodeTypes(q: string): NodeTypeId[] | null {
@@ -314,10 +318,9 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
     return ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight', 'AmbientLight'];
   }
 
-  // #365 Phase 5a (Slice 1b) — a cube is now the Object+BoxData split (nodeType 'Object'),
-  // but a fused 'BoxMesh' can still exist in a not-yet-migrated save, so "cube" resolves to
-  // BOTH during coexistence. Slice 2 retires 'BoxMesh' and this drops back to ['Object'].
-  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxMesh', 'Object'];
+  // #365 Phase 5a — a cube is the Object+BoxData split (nodeType 'Object'). Slice 2 retired
+  // the fused 'BoxMesh' value kind (old saves split on load), so "cube" resolves to 'Object'.
+  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['Object'];
   if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereMesh'];
   // Specific cameras before the generic "camera" rule (parallels lights).
   if (/\bperspective\s+camera\b/.test(q)) return ['PerspectiveCamera'];
@@ -479,11 +482,10 @@ function colorsInSameFamily(a: string | null, b: string | null): boolean {
   return hueDistance(A.h, B.h) <= 25 && Math.abs(A.l - B.l) < 0.3 && Math.abs(A.s - B.s) < 0.3;
 }
 
-function nodeColorHex(node: Node | undefined): string | null {
-  if (!node) return null;
-  const params = node.params as Record<string, unknown> | undefined;
+// Read a color hex directly off a node's OWN params (no split reach).
+function colorFromParams(params: Record<string, unknown> | undefined): string | null {
   if (!params) return null;
-  // BoxMesh / SphereMesh shape: params.material.base.color (v0.6 #2 OpenPBR IR).
+  // BoxData / SphereMesh shape: params.material.base.color (v0.6 #2 OpenPBR IR).
   // Dual-accept a legacy top-level color (pre-migration in-memory objects).
   const material = params.material as { base?: { color?: unknown }; color?: unknown } | undefined;
   if (typeof material?.base?.color === 'string') {
@@ -499,21 +501,40 @@ function nodeColorHex(node: Node | undefined): string | null {
   return null;
 }
 
-function toCandidate(node: Node): Candidate {
+// The color hex for a node, reaching through the object↔data split: a split cube's
+// material lives on the BoxData its Object points at via `data`, not on the Object itself
+// (V107 — every consumer of a data param must reach through `data` to the owner, same as
+// resolveDataParamOwner does for the inspector/mutators). Own params win; the data node
+// is the fallback so a directly-inspected BoxData/SphereMesh/light still resolves.
+function nodeColorHex(state: DagState, node: Node | undefined): string | null {
+  if (!node) return null;
+  const own = colorFromParams(node.params as Record<string, unknown> | undefined);
+  if (own !== null) return own;
+
+  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+    | { node?: string }
+    | undefined;
+  if (dataRef?.node) {
+    const dataNode = state.nodes[dataRef.node];
+    return colorFromParams(dataNode?.params as Record<string, unknown> | undefined);
+  }
+  return null;
+}
+
+function toCandidate(state: DagState, node: Node): Candidate {
   return {
     id: node.id,
     nodeType: node.type,
-    summary: summarizeNode(node),
+    summary: summarizeNode(state, node),
   };
 }
 
-function summarizeNode(node: Node): string | undefined {
+function summarizeNode(state: DagState, node: Node): string | undefined {
   const params = node.params as Record<string, unknown> | undefined;
-  if (!params) return undefined;
   const bits: string[] = [];
-  const pos = params.position;
+  const pos = params?.position;
   if (Array.isArray(pos) && pos.length === 3) bits.push(`pos [${pos.join(',')}]`);
-  const color = nodeColorHex(node);
+  const color = nodeColorHex(state, node);
   if (color) bits.push(`color ${color}`);
   return bits.length > 0 ? bits.join(', ') : undefined;
 }

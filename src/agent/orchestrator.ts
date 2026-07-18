@@ -699,17 +699,22 @@ Op shape examples (use inside dag.exec's "ops" array). Tokens like
 block's "Anchors" section (e.g. "scene → n_scene"). Never use the
 literal string "scene", "render", "ground" etc. as a node id.
 
-1. Add a red BoxMesh:
-   {"type":"addNode","nodeId":"box1","nodeType":"BoxMesh","params":{"size":[1,1,1],"position":[0,1,0],"rotation":[0,0,0],"material":{"name":"default","color":"#ff0000"}}}
+1. Add a red cube — the object↔data split: an Object (the pose: position/
+   rotation/scale) wired via its "data" socket to a BoxData (geometry "size" +
+   "material"). The Object is the scene child; the BoxData is its data leaf.
+   {"type":"addNode","nodeId":"boxData1","nodeType":"BoxData","params":{"size":[1,1,1],"material":{"name":"default","color":"#ff0000"}}}
+   {"type":"addNode","nodeId":"box1","nodeType":"Object","params":{"position":[0,1,0],"rotation":[0,0,0]}}
+   {"type":"connect","from":{"node":"boxData1","socket":"out"},"to":{"node":"box1","socket":"data"}}
 
-2. Wire into scene children (replace <sceneId> with the actual scene id):
+2. Wire the Object into scene children (replace <sceneId> with the actual scene id):
    {"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
 
 3. Remove a node:
    {"type":"removeNode","nodeId":"box1"}
 
-4. Change a param:
-   {"type":"setParam","nodeId":"box1","paramPath":"material.base.color","value":"#00ff00"}
+4. Change a param — geometry + material live on the BoxData; the transform
+   (position/rotation/scale) lives on the Object:
+   {"type":"setParam","nodeId":"boxData1","paramPath":"material.base.color","value":"#00ff00"}
 
 5. Disconnect:
    {"type":"disconnect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
