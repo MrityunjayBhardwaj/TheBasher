@@ -29,6 +29,28 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
       allIds.push(ch.id);
     }
   }
+
+  // #365 — a split Object OWNS its BoxData through `data`. Deleting the Object
+  // orphans that data node (unrendered, but persisted → save bloat), so
+  // garbage-collect it too — but ONLY when every surviving consumer is also being
+  // deleted. A shared data node (fan-out: another Object still points at it) stays,
+  // and removeNode would refuse it anyway. Blender's orphan-data purge on the owned
+  // leaf. Appended AFTER the Objects so each data node's removeNode runs once its
+  // consuming Object is gone (removeNode refuses while an output is still consumed).
+  for (const nodeId of [...idSet]) {
+    const dataId = refsOf(state.nodes[nodeId]?.inputs?.data)[0]?.node;
+    if (!dataId || idSet.has(dataId) || !state.nodes[dataId]) continue;
+    const hasSurvivingConsumer = Object.entries(state.nodes).some(
+      ([cid, c]) =>
+        !idSet.has(cid) &&
+        Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === dataId)),
+    );
+    if (!hasSurvivingConsumer) {
+      idSet.add(dataId);
+      allIds.push(dataId);
+    }
+  }
+
   const ops: Op[] = [];
   for (const nodeId of allIds) {
     for (const [consumerId, consumer] of Object.entries(state.nodes)) {

@@ -61,6 +61,72 @@ describe('buildDeleteNodesOps', () => {
     ]);
   });
 
+  it('#365 also removes a split Object’s orphaned BoxData', () => {
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'obj', socket: 'out' }] },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: { id: 'data', type: 'BoxData', params: { size: [1, 1, 1] }, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    const ops = buildDeleteNodesOps(state, ['obj']);
+    // The Object is removed AND its now-orphaned BoxData too (no save bloat).
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'obj' });
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'data' });
+    // Order: the data node's removeNode comes AFTER the Object's (its only consumer
+    // must be gone first, else removeNode refuses).
+    const idxObj = ops.findIndex((o) => o.type === 'removeNode' && o.nodeId === 'obj');
+    const idxData = ops.findIndex((o) => o.type === 'removeNode' && o.nodeId === 'data');
+    expect(idxData).toBeGreaterThan(idxObj);
+  });
+
+  it('#365 KEEPS a shared BoxData when a sibling Object still points at it', () => {
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: {
+            children: [
+              { node: 'objA', socket: 'out' },
+              { node: 'objB', socket: 'out' },
+            ],
+          },
+        },
+        objA: {
+          id: 'objA',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        objB: {
+          id: 'objB',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: { id: 'data', type: 'BoxData', params: { size: [1, 1, 1] }, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    const ops = buildDeleteNodesOps(state, ['objA']);
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'objA' });
+    // objB still consumes `data` → it must survive (fan-out, not orphaned).
+    expect(ops.some((o) => o.type === 'removeNode' && o.nodeId === 'data')).toBe(false);
+  });
+
   it('[[H136]] also removes a free-floating channel targeting the deleted node', () => {
     const ops = buildDeleteNodesOps(animatedState(), ['box']);
     // channel `ch` targets `box` via params.target (no edge) — must be removed too.
