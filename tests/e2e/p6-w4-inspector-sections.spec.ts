@@ -49,19 +49,60 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('P6.W4#1 selecting a BoxMesh renders Mesh/Transform/Material section headers', async ({
+// #365 Phase 5a (Slice 1b/1c) — the seed box is a split Object now (its Mesh/Material sections
+// come from the linked BoxData, not the Object itself). Tests #2/#3/#5 pin the section
+// MACHINERY (default-collapse, order, persistence) of a fused mesh-primary node, so they add a
+// fused SphereMesh (still geometry+transform+material in one node) and drive that — keeping
+// their intent without coupling to the split's two-node inspector layout. Test #1 stays on the
+// split box: it proves the linked-data reach makes Mesh + Material reachable for a cube.
+async function addAndSelectFusedSphere(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_dag?: unknown }).__basher_dag),
+  );
+  const id = await page.evaluate(() => {
+    const w = window as unknown as {
+      __basher_dag: {
+        getState: () => { dispatch: (op: unknown, source: string, desc: string) => void };
+      };
+    };
+    const sid = `sphere_test_${Date.now().toString(36)}`;
+    w.__basher_dag
+      .getState()
+      .dispatch(
+        { type: 'addNode', nodeId: sid, nodeType: 'SphereMesh', params: {} },
+        'user',
+        'e2e fused sphere',
+      );
+    return sid;
+  });
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_selection?: unknown }).__basher_selection),
+  );
+  await page.evaluate((sid) => {
+    const w = window as unknown as {
+      __basher_selection: { getState: () => { select: (id: string) => void } };
+    };
+    w.__basher_selection.getState().select(sid);
+  }, id);
+}
+
+test('P6.W4#1 selecting a split cube renders Mesh/Transform/Material section headers (linked-data reach)', async ({
   page,
 }) => {
+  // The seed box is a split Object: Transform is its own section, Mesh + Material come from the
+  // linked BoxData (the Slice 1c reach). All three headers must be visible.
   await page.getByTestId('scene-tree-row-n_box').click();
   await expect(page.getByTestId('inspector-section-mesh')).toBeVisible();
   await expect(page.getByTestId('inspector-section-transform')).toBeVisible();
   await expect(page.getByTestId('inspector-section-material')).toBeVisible();
+  // The linked-data region is what surfaces Mesh + Material for the Object.
+  await expect(page.getByTestId('inspector-linked-data')).toBeVisible();
 });
 
 test('P6.W4#2 §5.8 default-collapsed rule — primary expanded, others collapsed', async ({
   page,
 }) => {
-  await page.getByTestId('scene-tree-row-n_box').click();
+  await addAndSelectFusedSphere(page);
   // Mesh = primary domain → not collapsed (body visible).
   await expect(page.getByTestId('inspector-section-mesh')).not.toHaveAttribute(
     'data-collapsed',
@@ -80,8 +121,8 @@ test('P6.W4#2 §5.8 default-collapsed rule — primary expanded, others collapse
 });
 
 test('P6.W4#3 toggling a section header persists across reload', async ({ page }) => {
-  await page.getByTestId('scene-tree-row-n_box').click();
-  // Expand Transform (default-collapsed for BoxMesh).
+  await addAndSelectFusedSphere(page);
+  // Expand Transform (default-collapsed for a mesh-primary node).
   await page.getByTestId('inspector-section-toggle-transform').click();
   await expect(page.getByTestId('inspector-section-transform')).not.toHaveAttribute(
     'data-collapsed',
@@ -105,7 +146,9 @@ test('P6.W4#3 toggling a section header persists across reload', async ({ page }
     };
     w.__basher_chrome.getState().setLeftSidebarCollapsed(false);
   });
-  await page.getByTestId('scene-tree-row-n_box').click();
+  // The dispatched sphere is gone after reload (not persisted), but the collapse state is keyed
+  // by node TYPE in localStorage — a fresh SphereMesh shows the persisted choices.
+  await addAndSelectFusedSphere(page);
   // Both user choices survive reload.
   await expect(page.getByTestId('inspector-section-mesh')).toHaveAttribute(
     'data-collapsed',
@@ -170,10 +213,10 @@ test('P6.W4#4 raw-fallback path: legacy nodes render flat (no sections)', async 
   await expect(page.getByTestId('inspector-section-transform')).toHaveCount(0);
 });
 
-test('P6.W4#5 sections appear in declared order (mesh → transform → material for BoxMesh)', async ({
+test('P6.W4#5 sections appear in declared order (mesh → transform → material for a fused mesh)', async ({
   page,
 }) => {
-  await page.getByTestId('scene-tree-row-n_box').click();
+  await addAndSelectFusedSphere(page);
   // Read DOM order of section headers.
   const order = await page.evaluate(() => {
     const sections = Array.from(document.querySelectorAll('[data-testid^="inspector-section-"]'))

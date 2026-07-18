@@ -2678,6 +2678,54 @@ function SectionCard({
   );
 }
 
+/**
+ * #365 Phase 5a (Slice 1c) — the object↔data split reach for the inspector. A split Object's
+ * geometry + material live on the BoxData it points at (its `data` input), NOT on the Object,
+ * whose own sections are only transform/constraint/driver. So when an Object is selected, this
+ * renders the LINKED data node's sections (mesh, material) beneath the Object's, with every
+ * edit routed to the DATA node's id (ParamRow already renders the MaterialEditor for a material
+ * IR and a VectorField for `size`). Without it a cube's colour + size are unreachable from the
+ * inspector. Generic over the data node's declared sections, so a future SphereData surfaces
+ * the same way.
+ */
+function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
+  const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
+  if (!dataNode) return null;
+  const declared: SectionId[] = (getNodeType(dataNode.type)?.inspectorSections ?? []).filter(
+    isSectionId,
+  );
+  if (declared.length === 0) return null;
+
+  const grouped = new Map<SectionId, [string, unknown][]>();
+  for (const [key, value] of Object.entries((dataNode.params ?? {}) as Record<string, unknown>)) {
+    if (isInputBinding(value)) continue;
+    const section = paramToSection(key, declared);
+    if (section === null) continue;
+    if (!grouped.has(section)) grouped.set(section, []);
+    grouped.get(section)!.push([key, value]);
+  }
+
+  return (
+    <div data-testid="inspector-linked-data" className="flex flex-col">
+      <div className="px-3 pt-1 font-mono text-[10px] uppercase tracking-wide text-fg/40">
+        Data · {dataNode.type}
+      </div>
+      {declared.map((sectionId) => (
+        <SectionCard
+          key={sectionId}
+          nodeType={dataNode.type}
+          sectionId={sectionId}
+          declaredSections={declared}
+        >
+          {(grouped.get(sectionId) ?? []).map(([key, value]) => (
+            <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
+          ))}
+        </SectionCard>
+      ))}
+    </div>
+  );
+}
+
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
@@ -3033,6 +3081,16 @@ export function NPanel() {
               );
             })()
           )}
+          {/* #365 Phase 5a (Slice 1c) — a split Object owns only the transform; its geometry +
+              material live on the BoxData it points at via `data`. Render that data node's
+              sections here so a selected cube's colour + size are editable (routed to the data
+              node). */}
+          {(() => {
+            const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+              | { node?: string }
+              | undefined;
+            return dataRef?.node ? <LinkedDataSections dataNodeId={dataRef.node} /> : null;
+          })()}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
               edit / remove controller knobs + promote them to the Controllers dock.
               A footer control (not a per-node-type section) since spare params are
