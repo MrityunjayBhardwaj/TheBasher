@@ -449,7 +449,9 @@ export function MenuBar() {
   );
   const currentFrame = useTimeStore((s) => s.frame);
   const selectedNode = selectedId ? dag.nodes[selectedId] : undefined;
-  const isPrimitive = selectedNode?.type === 'BoxMesh' || selectedNode?.type === 'SphereMesh';
+  // #365 Phase 5a (Slice 2): a cube is a split Object, not a bakeable primitive here (Apply on
+  // a cube awaits an Object+BoxData bake path). SphereMesh remains the primitive that bakes.
+  const isPrimitive = selectedNode?.type === 'SphereMesh';
   const applyAnimated = Boolean(
     selectedId && isPrimitive && isTransformAnimated(dag, selectedId, currentFrame),
   );

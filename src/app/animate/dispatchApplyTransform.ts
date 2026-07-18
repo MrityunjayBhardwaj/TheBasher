@@ -190,7 +190,10 @@ export async function dispatchApplyTransform(
     );
   }
 
-  if (node.type !== 'BoxMesh' && node.type !== 'SphereMesh') {
+  // #365 Phase 5a (Slice 2): the fused `BoxMesh` arm is gone. A cube is now a split Object,
+  // which does NOT pass this gate — so Apply-Transform on a cube is unavailable until a bake
+  // path for a posed Object+BoxData lands (tracked as a follow-up). SphereMesh stays bakeable.
+  if (node.type !== 'SphereMesh') {
     return {
       ok: false,
       reason: `Apply: "${node.type}" is not a bakeable mesh.`,

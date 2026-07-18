@@ -149,7 +149,7 @@ export function resolveMeshTexture(state: DagState, nodeId: string): MeshTexture
     return fromBakedRef(mat?.map ?? null);
   }
 
-  if (node.type === 'BoxMesh' || node.type === 'SphereMesh') {
+  if (node.type === 'SphereMesh') {
     const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
     const mat = mesh?.material as { maps?: { albedo?: BakedTextureRef | null } } | null;
     return fromBakedRef(mat?.maps?.albedo ?? null);

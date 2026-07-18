@@ -64,7 +64,7 @@ export function resolveMeshUVs(state: DagState, nodeId: string): UVSource {
   const node = state.nodes[nodeId];
   if (!node) return NONE;
 
-  if (node.type === 'BoxMesh' || node.type === 'SphereMesh') {
+  if (node.type === 'SphereMesh') {
     const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
     return mesh?.uvs ? { uvs: mesh.uvs, status: 'ok' } : NONE;
   }
