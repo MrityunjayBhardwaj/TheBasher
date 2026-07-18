@@ -7,12 +7,13 @@
 //     Rotate writes to params.rotation when present. Scale writes to
 //     params.scale when present.
 //     v0.6 #1 (D-01/D-03): BoxMesh/SphereMesh now carry a real `scale` TRS
-//     band, so `getManipulable` resolves their `scaleParamPath` to 'scale'
-//     (NOT 'size') — the gizmo scale handle drives the non-destructive
-//     transform band, leaving the parametric geometry `size` untouched, with
-//     ZERO node-kind special-casing. The `size` fallback below is now a LEGACY
-//     path retained only for any node that still has size-but-no-scale (none
-//     for primitives after v0.6 #1).
+//     band, so `getManipulable` resolves their `scaleParamPath` to 'scale' —
+//     the gizmo scale handle drives the non-destructive transform band,
+//     leaving the parametric geometry `size` untouched, with ZERO node-kind
+//     special-casing. The object↔data split (#231 D) puts size (geometry) and
+//     scale (transform) on different nodes, so a scale handle can never write
+//     `size`: the legacy size-as-scale fallback is retired — the conflation is
+//     now unrepresentable.
 //   - Character: gizmo position seeds from the upstream LocomotionState;
 //     on drag END, the macro `buildWalkToOps` emits an atomic chain that
 //     walks the character to the new position. Per-frame setParam isn't
@@ -151,9 +152,10 @@ interface Manipulable {
   rotation: Vec3 | null;
   scale: Vec3 | null;
   /** Param path the scale handle should write to. 'scale' for nodes that
-   *  declare a scale vec3; 'size' for BoxMesh-style nodes whose geometry
-   *  IS the scale. null when scale should be hidden. */
-  scaleParamPath: 'scale' | 'size' | null;
+   *  declare a scale vec3; null when scale should be hidden. (The legacy
+   *  'size' variant — geometry-as-scale — is retired: #231 D puts size and
+   *  scale on separate nodes, so the gizmo never writes `size`.) */
+  scaleParamPath: 'scale' | null;
   scaleSeed: Vec3 | null;
 }
 
@@ -165,19 +167,12 @@ function getManipulable(node: Node | null): Manipulable | null {
   if (!isVec3(p.position)) return null;
   const rotation = isVec3(p.rotation) ? (p.rotation as Vec3) : null;
   const explicitScale = isVec3(p.scale) ? (p.scale as Vec3) : null;
-  const sizeFallback = isVec3(p.size) ? (p.size as Vec3) : null;
-  const scaleParamPath: Manipulable['scaleParamPath'] = explicitScale
-    ? 'scale'
-    : sizeFallback
-      ? 'size'
-      : null;
-  const scaleSeed = explicitScale ?? sizeFallback;
   return {
     position: p.position as Vec3,
     rotation,
     scale: explicitScale,
-    scaleParamPath,
-    scaleSeed,
+    scaleParamPath: explicitScale ? 'scale' : null,
+    scaleSeed: explicitScale,
   };
 }
 

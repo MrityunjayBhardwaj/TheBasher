@@ -299,12 +299,12 @@ export function resolveEvaluatedTransform(
     position?: unknown;
     rotation?: unknown;
     scale?: unknown;
-    size?: unknown;
   };
   if (!isVec3(c.position)) return null; // identity-null: not a transformable child
   let rotation = isVec3(c.rotation) ? (c.rotation as Vec3) : null;
-  // Mirror getManipulable:69-76 — explicit scale wins, then size fallback.
-  const scale = isVec3(c.scale) ? (c.scale as Vec3) : isVec3(c.size) ? (c.size as Vec3) : null;
+  // #231 D — scale is the TRS band only; the legacy size-as-scale fallback is
+  // retired (size is geometry, on a separate node). Mirror of getManipulable.
+  const scale = isVec3(c.scale) ? (c.scale as Vec3) : null;
 
   // #204 (epic #201) — a Track-To constraint DERIVES this node's rotation from
   // its world position → the aim target ([[V58]]), so it OVERRIDES the
