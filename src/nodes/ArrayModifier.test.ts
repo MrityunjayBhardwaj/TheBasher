@@ -1,5 +1,5 @@
 // ArrayModifier — the first geometry MODIFIER (SOP), the geometry half of V58
-// (epic #201, #209). Proves: a box source → a ModifiedMesh carrying an `array`
+// (epic #201, #209). Proves: a sphere source → a ModifiedMesh carrying an `array`
 // geometry handle + INHERITED transform/material; mute = identity passthrough; a
 // non-leaf source passes through; and — the unit-level boundary-pair — the
 // `array` geometry KEY the node's evaluate emits is BYTE-IDENTICAL to the key the
@@ -19,21 +19,25 @@ import { hydrateInlineMaterial } from './materialSchema';
 import { ArrayModifierNode } from './ArrayModifier';
 import type {
   BakedMeshValue,
-  BoxMeshValue,
+  SphereMeshValue,
   ModifiedMeshValue,
   SceneChild,
   TransformValue,
 } from './types';
 
-const BOX_ID = 'n_box';
 const MOD_ID = 'n_array';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
-function boxValue(position: [number, number, number]): BoxMeshValue {
+// #365 Phase 5a (Slice 2): the fused box value kind retired; SphereMesh is the still-fused
+// leaf-mesh source that sourceGeometryRef/sourceTransform/sourceMaterial consume. The array's
+// assertions (array descriptor, inherited TRS, material ref) are geometry-kind-agnostic.
+function sphereValue(position: [number, number, number]): SphereMeshValue {
   return {
-    kind: 'BoxMesh',
-    size: [1, 1, 1],
+    kind: 'SphereMesh',
+    radius: 1,
+    widthSegments: 8,
+    heightSegments: 6,
     position,
     rotation: [0, 0, 0],
     scale: [1, 1, 1],
@@ -54,8 +58,8 @@ beforeEach(() => {
 });
 
 describe('ArrayModifier.evaluate', () => {
-  it('a box source → a ModifiedMesh with an array geometry handle + inherited TRS/material', () => {
-    const src = boxValue([3, 0, 0]);
+  it('a sphere source → a ModifiedMesh with an array geometry handle + inherited TRS/material', () => {
+    const src = sphereValue([3, 0, 0]);
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src) as ModifiedMeshValue;
     expect(out.kind).toBe('ModifiedMesh');
     expect(out.geometry.kind).toBe('array');
@@ -66,7 +70,7 @@ describe('ArrayModifier.evaluate', () => {
   });
 
   it('muted → identity passthrough (byte-identical to no modifier — the stack mute-bypass)', () => {
-    const src = boxValue([0, 0, 0]);
+    const src = sphereValue([0, 0, 0]);
     const out = evalMod({ count: 5, offset: [2, 0, 0], muted: true }, src);
     expect(out).toBe(src); // same reference — no ModifiedMesh produced
   });
@@ -118,9 +122,25 @@ describe('ArrayModifier.evaluate', () => {
 });
 
 describe('ArrayModifier — read-side parity (boundary-pair)', () => {
-  it('resolveEvaluatedMesh derives the SAME array geometry key the evaluate path emits', () => {
-    // Wire Box → ArrayModifier and resolve the modifier the read-side way.
+  // #365 Phase 5a (Slice 2): the source is a still-fused SphereMesh (the box value kind
+  // retired). A modifier consuming a split Object is the deferred modifier-move — a follow-up —
+  // so the evaluate↔read byte-identity property is pinned here on the primitive that still
+  // has a fused value on BOTH sides of the boundary.
+  const SPHERE_ID = 'n_sphere';
+  function withSphere() {
     let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: SPHERE_ID,
+      nodeType: 'SphereMesh',
+      params: { radius: 1, widthSegments: 8, heightSegments: 6 },
+    }).next;
+    return state;
+  }
+
+  it('resolveEvaluatedMesh derives the SAME array geometry key the evaluate path emits', () => {
+    // Wire Sphere → ArrayModifier and resolve the modifier the read-side way.
+    let state = withSphere();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: MOD_ID,
@@ -129,7 +149,7 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
+      from: { node: SPHERE_ID, socket: 'out' },
       to: { node: MOD_ID, socket: 'target' },
     }).next;
 
@@ -141,16 +161,16 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     expect(resolved!.uvs).not.toBeNull();
     expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
 
-    // The evaluate path projects the SAME box (size [1,1,1]) with the same params.
+    // The evaluate path projects the SAME sphere with the same params.
     const evald = evalMod(
       { count: 4, offset: [3, 0, 0], muted: false },
-      boxValue([0, 0, 0]),
+      sphereValue([0, 0, 0]),
     ) as ModifiedMeshValue;
     expect(resolved!.geometry.key).toBe(evald.geometry.key); // byte-identical → no drift
   });
 
   it('a muted modifier resolves to the source mesh on the read side too', () => {
-    let state = buildDefaultDagState();
+    let state = withSphere();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: MOD_ID,
@@ -159,10 +179,10 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
+      from: { node: SPHERE_ID, socket: 'out' },
       to: { node: MOD_ID, socket: 'target' },
     }).next;
     const resolved = resolveEvaluatedMesh(state, MOD_ID, ctx);
-    expect(resolved!.geometry.kind).toBe('box'); // passthrough — the source's own handle
+    expect(resolved!.geometry.kind).toBe('sphere'); // passthrough — the source's own handle
   });
 });

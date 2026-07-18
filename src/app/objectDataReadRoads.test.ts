@@ -31,7 +31,7 @@ function build(ops: Op[]): DagState {
 }
 
 describe('object↔data split (#362) — the read road sees an Object as its data mesh', () => {
-  it('resolveEvaluatedMesh(Object) ≡ resolveEvaluatedMesh(fused BoxMesh): same handle + material', () => {
+  it('resolveEvaluatedMesh(Object) ≡ an independently-built Object→BoxData: same handle + material', () => {
     const objState = build([
       { type: 'addNode', nodeId: 'd', nodeType: 'BoxData', params: { size: SIZE } },
       { type: 'addNode', nodeId: 'o', nodeType: 'Object', params: { position: POS } },
@@ -40,19 +40,24 @@ describe('object↔data split (#362) — the read road sees an Object as its dat
     const objMesh = resolveEvaluatedMesh(objState, 'o', ctx);
     expect(objMesh).not.toBeNull();
 
-    const fusedState = build([
-      { type: 'addNode', nodeId: 'b', nodeType: 'BoxMesh', params: { size: SIZE, position: POS } },
+    // The fused `BoxMesh` value kind is retired (Slice 2) — it is unrepresentable as an
+    // evaluated mesh. The parity anchor is now a SECOND, independently-built split cube with
+    // the same size + pose: it must land on the same deterministic geometry key + material.
+    const cubeState = build([
+      { type: 'addNode', nodeId: 'd2', nodeType: 'BoxData', params: { size: SIZE } },
+      { type: 'addNode', nodeId: 'o2', nodeType: 'Object', params: { position: POS } },
+      { type: 'connect', from: { node: 'd2', socket: 'out' }, to: { node: 'o2', socket: 'data' } },
     ]);
-    const fusedMesh = resolveEvaluatedMesh(fusedState, 'b', ctx);
-    expect(fusedMesh).not.toBeNull();
+    const cubeMesh = resolveEvaluatedMesh(cubeState, 'o2', ctx);
+    expect(cubeMesh).not.toBeNull();
 
     // Same geometry HANDLE (deterministic key → one registry build → same buffers).
-    expect(objMesh!.geometry.key).toBe(fusedMesh!.geometry.key);
-    expect(objMesh!.geometry).toEqual(fusedMesh!.geometry);
-    // Same material spec (BoxData hydrates via the SAME schema BoxMesh uses).
-    expect(objMesh!.material).toEqual(fusedMesh!.material);
+    expect(objMesh!.geometry.key).toBe(cubeMesh!.geometry.key);
+    expect(objMesh!.geometry).toEqual(cubeMesh!.geometry);
+    // Same material spec (BoxData hydrates via the SAME schema each split cube uses).
+    expect(objMesh!.material).toEqual(cubeMesh!.material);
     // Same UV islands (both project through the shared registry).
-    expect(objMesh!.uvs).toEqual(fusedMesh!.uvs);
+    expect(objMesh!.uvs).toEqual(cubeMesh!.uvs);
   });
 
   it('the transform band is the OBJECT’s pose, not the data node’s (data owns no TRS)', () => {

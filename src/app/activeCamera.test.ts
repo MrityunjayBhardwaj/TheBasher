@@ -14,6 +14,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCube } from '../test-utils/splitCube';
 
 // buildDefaultDagState / applyOp resolve node types from the registry, which
 // is populated by registerAll (a side-effecting boot step in the real app).
@@ -432,12 +433,11 @@ describe('activeCamera — Track-To migration (#204)', () => {
   function buildCameraTrackTo(opts: { aimNode?: string; aimPoint?: [number, number, number] }) {
     let state = buildDefaultDagState();
     if (opts.aimNode) {
-      state = applyOp(state, {
-        type: 'addNode',
-        nodeId: opts.aimNode,
-        nodeType: 'BoxMesh',
-        params: { position: [7, 0, 0], size: [1, 1, 1] },
-      }).next;
+      state = makeSplitCube(state, {
+        objectId: opts.aimNode,
+        position: [7, 0, 0],
+        size: [1, 1, 1],
+      }).state;
       state = applyOp(state, {
         type: 'connect',
         from: { node: opts.aimNode, socket: 'out' },

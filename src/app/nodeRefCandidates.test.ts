@@ -10,6 +10,7 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCube } from '../test-utils/splitCube';
 import { nodeRefCandidates } from './nodeRefCandidates';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -17,13 +18,12 @@ const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 /** Default scene (n_box mesh, n_camera, n_light) + a terrain mesh + a Null. */
 function buildScene(): DagState {
   let state = buildDefaultDagState();
+  state = makeSplitCube(state, {
+    objectId: 'geo_terrain',
+    size: [10, 1, 10],
+    position: [0, 0, 0],
+  }).state;
   const ops: Op[] = [
-    {
-      type: 'addNode',
-      nodeId: 'geo_terrain',
-      nodeType: 'BoxMesh',
-      params: { size: [10, 1, 10], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    },
     {
       type: 'connect',
       from: { node: 'geo_terrain', socket: 'out' },

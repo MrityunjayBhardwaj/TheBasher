@@ -11,6 +11,7 @@ import { buildDefaultDagState, buildDefaultProject } from '../core/project/defau
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
+import { makeSplitCube } from '../test-utils/splitCube';
 // P7.12 D-04 — node defs for the inputs:{} purity assertion.
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
@@ -304,8 +305,8 @@ describe('ScatterNode determinism (V2)', () => {
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'asset',
-      nodeType: 'BoxMesh',
-      params: { size: [0.5, 0.5, 0.5] },
+      nodeType: 'SphereMesh',
+      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
     }).next;
     state = applyOp(state, {
       type: 'addNode',
@@ -354,8 +355,8 @@ describe('ScatterNode determinism (V2)', () => {
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'asset',
-      nodeType: 'BoxMesh',
-      params: { size: [0.5, 0.5, 0.5] },
+      nodeType: 'SphereMesh',
+      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
     }).next;
     expect(() =>
       applyOp(state, {
@@ -391,8 +392,8 @@ describe('SceneChild recursion', () => {
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1] },
+      nodeType: 'SphereMesh',
+      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
     }).next;
     state = applyOp(state, {
       type: 'addNode',
@@ -408,7 +409,7 @@ describe('SceneChild recursion', () => {
     const v = evaluate(state, 'tx').value as TransformValue;
     expect(v.kind).toBe('Transform');
     expect(v.position).toEqual([2, 0, 0]);
-    expect(v.child?.kind).toBe('BoxMesh');
+    expect(v.child?.kind).toBe('SphereMesh');
   });
 
   it('Group flattens a child list', () => {
@@ -417,8 +418,8 @@ describe('SceneChild recursion', () => {
       state = applyOp(state, {
         type: 'addNode',
         nodeId: id,
-        nodeType: 'BoxMesh',
-        params: { size: [1, 1, 1] },
+        nodeType: 'SphereMesh',
+        params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
       }).next;
     }
     state = applyOp(state, {
@@ -440,7 +441,7 @@ describe('SceneChild recursion', () => {
     const v = evaluate(state, 'g').value as GroupValue;
     expect(v.kind).toBe('Group');
     expect(v.children).toHaveLength(2);
-    expect(v.children.every((c) => c.kind === 'BoxMesh')).toBe(true);
+    expect(v.children.every((c) => c.kind === 'SphereMesh')).toBe(true);
   });
 
   it('MaterialOverride wraps a child', () => {
@@ -448,8 +449,8 @@ describe('SceneChild recursion', () => {
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1] },
+      nodeType: 'SphereMesh',
+      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
     }).next;
     state = applyOp(state, {
       type: 'addNode',
@@ -466,7 +467,7 @@ describe('SceneChild recursion', () => {
     expect(v.kind).toBe('MaterialOverride');
     expect(v.material.color).toBe('#ff0000');
     expect(v.material.roughness).toBeCloseTo(0.2);
-    expect(v.child?.kind).toBe('BoxMesh');
+    expect(v.child?.kind).toBe('SphereMesh');
   });
 });
 
@@ -1454,12 +1455,7 @@ function buildPassState(passType: 'BeautyPass' | 'IDPass') {
     nodeType: 'PerspectiveCamera',
     params: { fov: 45, position: [0, 0, 5] },
   }).next;
-  state = applyOp(state, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1] },
-  }).next;
+  state = makeSplitCube(state, { objectId: 'box' }).state;
   state = applyOp(state, {
     type: 'addNode',
     nodeId: 'scene',
@@ -1733,12 +1729,7 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
       nodeType: 'PerspectiveCamera',
       params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: opts.boxPosition ?? [0, 0, 0] },
-    }).next;
+    s = makeSplitCube(s, { objectId: 'box', position: opts.boxPosition ?? [0, 0, 0] }).state;
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, {
       type: 'connect',
@@ -1885,12 +1876,7 @@ describe('P5 — VideoStitch (impure metadata, D-01/D-05)', () => {
       nodeType: 'PerspectiveCamera',
       params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [0, 0, 0] },
-    }).next;
+    s = makeSplitCube(s, { objectId: 'box', position: [0, 0, 0] }).state;
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, {
       type: 'connect',

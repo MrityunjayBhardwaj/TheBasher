@@ -23,14 +23,17 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
 import { dispatchApplyTransform } from './dispatchApplyTransform';
+import { makeSplitCube } from '../../test-utils/splitCube';
 
-const BOX_ID = 'n_box';
+const PRIM_ID = 'n_prim';
 
-// #365 Phase 5a (Slice 1b) — the default project is split-native now (n_box is an Object over
-// a BoxData). These tests exercise the FUSED primitive → BakedMesh Apply path (baking the
-// split box is a Slice-2 deliverable), so they build a genuine fused BoxMesh scene, mirroring
-// the pre-split default (camera + light + time + scene + render + the box wired to children).
-function buildFusedBoxState(): DagState {
+// #365 Phase 5a (Slice 2) — the fused box value kind is retired, so the last FUSED primitive
+// that still bakes is the SphereMesh. These tests exercise the fused-primitive → BakedMesh
+// Apply MECHANISM (bbox bake, consumer rewire, OPFS ordering, animated-reject) on a sphere of
+// radius 0.5 — whose bounding box is 1×1×1, identical to the old unit box, so the bbox
+// assertions are unchanged. Apply on a split cube (Object) is a documented gap (a bake path
+// for a posed Object+BoxData is a follow-up); the rejection is pinned by its own test below.
+function buildFusedSphereState(): DagState {
   let s = emptyDagState();
   const add = (op: Op) => {
     s = applyOp(s, op).next;
@@ -49,10 +52,14 @@ function buildFusedBoxState(): DagState {
   });
   add({
     type: 'addNode',
-    nodeId: BOX_ID,
-    nodeType: 'BoxMesh',
+    nodeId: PRIM_ID,
+    nodeType: 'SphereMesh',
+    // radius 0.5 → a 1×1×1 bounding box, identical to the retired unit box, so the bbox-bake
+    // assertions carry over verbatim.
     params: {
-      size: [1, 1, 1],
+      radius: 0.5,
+      widthSegments: 16,
+      heightSegments: 16,
       position: [0, 0, 0],
       rotation: [0, 0, 0],
       material: { name: 'default', base: { color: '#5af07a' } },
@@ -78,7 +85,7 @@ function buildFusedBoxState(): DagState {
   });
   add({
     type: 'connect',
-    from: { node: BOX_ID, socket: 'out' },
+    from: { node: PRIM_ID, socket: 'out' },
     to: { node: 'n_scene', socket: 'children' },
   });
   add({
@@ -121,10 +128,10 @@ function makeDispatch(stateRef: { current: DagState }) {
 
 describe('dispatchApplyTransform (primitives)', () => {
   it('SC-1: Apply a Box scale=[2,1,1] → BakedMesh bbox 2×1×1, transform identity', async () => {
-    let state = buildFusedBoxState();
+    let state = buildFusedSphereState();
     state = applyOp(state, {
       type: 'setParam',
-      nodeId: BOX_ID,
+      nodeId: PRIM_ID,
       paramPath: 'scale',
       value: [2, 1, 1],
     }).next;
@@ -134,7 +141,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     const { fn, calls } = makeDispatch(stateRef);
     const selected: string[] = [];
 
-    const result = await dispatchApplyTransform(BOX_ID, 'all', {
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
       state,
       storage,
       currentFrame: 0,
@@ -150,7 +157,7 @@ describe('dispatchApplyTransform (primitives)', () => {
 
     // The original Box is gone; exactly one BakedMesh exists.
     const next = stateRef.current;
-    expect(next.nodes[BOX_ID]).toBeUndefined();
+    expect(next.nodes[PRIM_ID]).toBeUndefined();
     const baked = next.nodes[result.bakedId];
     expect(baked).toBeDefined();
     expect(baked.type).toBe('BakedMesh');
@@ -172,12 +179,12 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('rewires the consumer edge: the BakedMesh feeds the Scene where the Box did', async () => {
-    const state = buildFusedBoxState();
+    const state = buildFusedSphereState();
     const storage = new MemoryStorage();
     const stateRef = { current: state };
     const { fn } = makeDispatch(stateRef);
 
-    const result = await dispatchApplyTransform(BOX_ID, 'all', {
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
       state,
       storage,
       currentFrame: 0,
@@ -191,7 +198,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // The Scene's children no longer reference the Box; they reference the baked id.
     const refsBox = Object.values(next.nodes).some((n) =>
       Object.values(n.inputs).some((b) =>
-        (Array.isArray(b) ? b : [b]).some((r) => r.node === BOX_ID),
+        (Array.isArray(b) ? b : [b]).some((r) => r.node === PRIM_ID),
       ),
     );
     const refsBaked = Object.values(next.nodes).some((n) =>
@@ -208,7 +215,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single
     // socket's connect-before-disconnect threw ("bound producer is <baked>, not
     // n_box") and rolled back the whole atomic composite → Apply silently no-op'd.
-    let state = buildFusedBoxState();
+    let state = buildFusedSphereState();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_mod',
@@ -218,13 +225,13 @@ describe('dispatchApplyTransform (primitives)', () => {
     // box.out → n_mod.target (single). Box stays wired to Scene.children (list) too.
     state = applyOp(state, {
       type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
+      from: { node: PRIM_ID, socket: 'out' },
       to: { node: 'n_mod', socket: 'target' },
     }).next;
     // non-identity scale so Apply actually bakes.
     state = applyOp(state, {
       type: 'setParam',
-      nodeId: BOX_ID,
+      nodeId: PRIM_ID,
       paramPath: 'scale',
       value: [2, 1, 1],
     }).next;
@@ -233,7 +240,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     const stateRef = { current: state };
     const { fn, calls } = makeDispatch(stateRef);
 
-    const result = await dispatchApplyTransform(BOX_ID, 'all', {
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
       state,
       storage,
       currentFrame: 0,
@@ -246,7 +253,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(calls).toHaveLength(1); // still ONE atomic composite
 
     const next = stateRef.current;
-    expect(next.nodes[BOX_ID]).toBeUndefined(); // box baked away
+    expect(next.nodes[PRIM_ID]).toBeUndefined(); // box baked away
     // the modifier's single `target` now points at the baked node (still a bare
     // ref, not promoted to a list), and Scene.children too.
     const modTarget = next.nodes['n_mod'].inputs.target;
@@ -265,12 +272,12 @@ describe('dispatchApplyTransform (primitives)', () => {
     }
     let back = fwd;
     for (let i = inverses.length - 1; i >= 0; i--) back = applyOp(back, inverses[i]).next;
-    expect(back.nodes[BOX_ID]).toBeDefined();
-    expect((back.nodes['n_mod'].inputs.target as { node: string }).node).toBe(BOX_ID);
+    expect(back.nodes[PRIM_ID]).toBeDefined();
+    expect((back.nodes['n_mod'].inputs.target as { node: string }).node).toBe(PRIM_ID);
   });
 
   it('awaits the OPFS write BEFORE the Op composite (reload-safe ordering)', async () => {
-    const state = buildFusedBoxState();
+    const state = buildFusedSphereState();
     const storage = new MemoryStorage();
     const writeSpy = vi.spyOn(storage, 'write');
     const stateRef = { current: state };
@@ -283,7 +290,7 @@ describe('dispatchApplyTransform (primitives)', () => {
       return [];
     };
 
-    const result = await dispatchApplyTransform(BOX_ID, 'all', {
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
       state,
       storage,
       currentFrame: 0,
@@ -295,7 +302,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('SC-8: rejects when a TRS band is animated (D-04), DAG byte-unchanged', async () => {
-    let state = buildFusedBoxState();
+    let state = buildFusedSphereState();
     // Add a KeyframeChannelVec3 targeting the box position → animated.
     state = applyOp(state, {
       type: 'addNode',
@@ -303,7 +310,7 @@ describe('dispatchApplyTransform (primitives)', () => {
       nodeType: 'KeyframeChannelVec3',
       params: {
         name: 'pos',
-        target: BOX_ID,
+        target: PRIM_ID,
         paramPath: 'position',
         keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
       },
@@ -312,7 +319,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     const storage = new MemoryStorage();
     const writeSpy = vi.spyOn(storage, 'write');
     let dispatched = 0;
-    const result = await dispatchApplyTransform(BOX_ID, 'all', {
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
       state,
       storage,
       currentFrame: 30, // a non-key frame → 'animated'
@@ -331,21 +338,26 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it('H45: baking one Box does NOT corrupt the shared registry geometry', async () => {
-    let state = buildFusedBoxState();
-    // A second Box of the SAME size shares the registry geometry key.
+  it('H45: baking one primitive does NOT corrupt the shared registry geometry', async () => {
+    let state = buildFusedSphereState();
+    // A second sphere with the SAME params shares the registry geometry key with PRIM_ID.
     state = applyOp(state, {
       type: 'addNode',
-      nodeId: 'n_box2',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1] },
+      nodeId: 'n_sphere2',
+      nodeType: 'SphereMesh',
+      params: { radius: 0.5, widthSegments: 16, heightSegments: 16 },
     }).next;
 
     // Prime the shared geometry by resolving + getting it before the bake.
     const sharedRef = {
-      key: 'box|1,1,1',
-      kind: 'box' as const,
-      descriptor: { kind: 'box' as const, size: [1, 1, 1] as [number, number, number] },
+      key: 'sphere|0.5|16|16',
+      kind: 'sphere' as const,
+      descriptor: {
+        kind: 'sphere' as const,
+        radius: 0.5,
+        widthSegments: 16,
+        heightSegments: 16,
+      },
     };
     const sharedBefore = geometryRegistry.get(sharedRef)!;
     const posBefore = Float32Array.from(sharedBefore.getAttribute('position').array);
@@ -353,7 +365,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     const storage = new MemoryStorage();
     const stateRef = { current: state };
     const { fn } = makeDispatch(stateRef);
-    await dispatchApplyTransform(BOX_ID, 'all', {
+    await dispatchApplyTransform(PRIM_ID, 'all', {
       state,
       storage,
       currentFrame: 0,
@@ -366,37 +378,29 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(Array.from(posAfter)).toEqual(Array.from(posBefore));
   });
 
-  it('Sphere path also bakes (covered, not Box-only)', async () => {
-    let state = buildFusedBoxState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_sphere',
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 8, heightSegments: 6, scale: [2, 2, 2] },
-    }).next;
-    // Wire it into the scene so it has a consumer edge (mirror the box).
-    const sceneId = state.outputs.scene!.node;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'n_sphere', socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    }).next;
+  it('a split cube (Object) rejects Apply — the documented Slice-2 gap (no bake path yet)', async () => {
+    // #365 Phase 5a (Slice 2): a cube is an Object → BoxData split, NOT a bakeable fused
+    // primitive. Apply on it must reject cleanly and leave the DAG byte-unchanged until an
+    // Object+BoxData bake path lands (a tracked follow-up).
+    let state = buildFusedSphereState();
+    const cube = makeSplitCube(state, {
+      objectId: 'n_cube',
+      connectTo: { node: state.outputs.scene!.node, socket: 'children' },
+    });
+    state = cube.state;
 
     const storage = new MemoryStorage();
     const stateRef = { current: state };
     const { fn, calls } = makeDispatch(stateRef);
-    const result = await dispatchApplyTransform('n_sphere', 'all', {
+    const result = await dispatchApplyTransform(cube.objectId, 'all', {
       state,
       storage,
       currentFrame: 0,
       dispatchAtomic: fn,
       setSelection: () => {},
     });
-    expect(result.ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    if (!result.ok) return;
-    expect(stateRef.current.nodes['n_sphere']).toBeUndefined();
-    expect(stateRef.current.nodes[result.bakedId].type).toBe('BakedMesh');
+    expect(result.ok).toBe(false); // not a bakeable mesh
+    expect(calls).toHaveLength(0); // DAG byte-unchanged
   });
 });
 
@@ -416,7 +420,7 @@ const CHILD_NAME = 'Cube';
 
 /** A state with a GltfAsset (→Scene.children) + one GltfChild proxy at scale 2. */
 function gltfChildState() {
-  let state = buildFusedBoxState();
+  let state = buildFusedSphereState();
   const sceneId = state.outputs.scene!.node;
   state = applyOp(state, {
     type: 'addNode',
