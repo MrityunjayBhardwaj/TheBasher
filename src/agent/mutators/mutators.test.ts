@@ -1338,6 +1338,59 @@ describe('duplicate mutator', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // object↔data split (#365 Phase 5a) — duplicating a split Object deep-copies
+  // its linked data node (Blender Shift+D). Cloning ONLY the Object leaves the
+  // clone's `data` unwired → an empty render; the two must be independent.
+  // ---------------------------------------------------------------------------
+  it('deep-copies a split Object: the clone gets its OWN, independent BoxData', () => {
+    const state = buildSplitObjectScene();
+    const result = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['obj'], offset: [2, 0, 0] },
+      state,
+      'dup split',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // Two addNodes: the Object clone AND a fresh BoxData clone (not just the Object).
+    const addNodes = result.ops.filter((o) => o.type === 'addNode');
+    expect(addNodes).toHaveLength(2);
+    const objClone = addNodes.find((o) => o.type === 'addNode' && o.nodeType === 'Object');
+    const dataClone = addNodes.find((o) => o.type === 'addNode' && o.nodeType === 'BoxData');
+    if (objClone?.type !== 'addNode' || dataClone?.type !== 'addNode') {
+      throw new Error('expected an Object clone and a BoxData clone');
+    }
+    // The clone's data node is a FRESH id — not the source's 'data' node.
+    expect(dataClone.nodeId).not.toBe('data');
+    // Deep-copied params: same content, distinct object.
+    expect(dataClone.params).toEqual(state.nodes['data'].params);
+
+    // clone.data → the FRESH BoxData (the whole point — not a shared fan-out).
+    const dataWire = result.ops.find(
+      (o) => o.type === 'connect' && o.to.node === objClone.nodeId && o.to.socket === 'data',
+    );
+    if (dataWire?.type !== 'connect') throw new Error('expected a clone.data connect');
+    expect(dataWire.from.node).toBe(dataClone.nodeId);
+
+    // Independence, applied end-to-end: recolour the CLONE's data; the source stands.
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: dataClone.nodeId,
+      paramPath: 'material.base.color',
+      value: '#00ff00',
+    }).next;
+    const sourceData = s.nodes['data'].params as { material: { base: { color: string } } };
+    const cloneData = s.nodes[dataClone.nodeId].params as {
+      material: { base: { color: string } };
+    };
+    expect(cloneData.material.base.color).toBe('#00ff00');
+    expect(sourceData.material.base.color).toBe('#ff0000'); // untouched — fully independent
+  });
+
+  // ---------------------------------------------------------------------------
   // Emission order — issue #19.
   //
   // The mutator emits `addNode(clone)` before every `connect` whose `from`

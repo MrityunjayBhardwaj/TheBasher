@@ -9,12 +9,22 @@
 // Lossy: pose/animation references are NOT deep-cloned — the dup will
 // share the source's animation channels (acceptable for v0.5; Wave D
 // can revisit when KeyframeChannel lands in P3).
+//
+// #365 Phase 5a (object↔data split) — a split Object owns only its TRS and
+// points at a data node (BoxData: geometry + material) through its `data`
+// input. Cloning ONLY the Object leaves the clone's `data` unwired → the
+// dup renders as an empty. So a clone whose source carries a `data` input
+// deep-copies that data node too (fresh id, deep-copied params) and wires
+// clone.data → the new data node. This is Blender's Shift+D: the two cubes
+// are fully independent — recolour one, the other stands (NOT a shared
+// fan-out). Only the `data`-owned node is deep-copied; any other refs the
+// source carries follow the existing (shallow) wiring below.
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
-import type { Op, NodeId } from '../../../core/dag/types';
+import type { Op, NodeId, NodeRef } from '../../../core/dag/types';
 
 const DuplicateSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
@@ -29,7 +39,9 @@ export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
     'Duplicate one or more nodes. Each clone gets a fresh id and is wired ' +
     'into the same consumer (typically scene.children) as its source. ' +
     'Position is offset by `offset` (default [1,0,0]). Preserves rotation, ' +
-    'scale, material; does NOT deep-clone animation channels.',
+    'scale, material; a split Object also gets an independent deep copy of ' +
+    'its linked data node (geometry + material); does NOT deep-clone ' +
+    'animation channels.',
   spec: DuplicateSpec,
   specExample: { targetSelectors: ['node_id'], offset: [1, 0, 0] },
   contract: {
@@ -86,6 +98,36 @@ export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
         params: clonedParams,
       });
 
+      // #365 Phase 5a — deep-copy the linked data node (Blender Shift+D). A split
+      // Object's geometry + material live on the node it points at via `data`;
+      // cloning only the Object leaves the clone's `data` unwired → it renders as
+      // an empty. Emit a fresh data node (deep-copied params) and wire it to the
+      // clone's `data` socket, BEFORE that connect so the op layer's from-node
+      // check (applyConnect) sees it exist. The two objects are now independent.
+      const dataRef = firstRef(source.inputs?.data);
+      if (dataRef) {
+        const dataNode = state.nodes[dataRef.node];
+        if (dataNode) {
+          const dataCloneId = nextFreshId(dataRef.node, usedIds);
+          usedIds.add(dataCloneId);
+          const dataParams = JSON.parse(JSON.stringify(dataNode.params ?? {})) as Record<
+            string,
+            unknown
+          >;
+          ops.push({
+            type: 'addNode',
+            nodeId: dataCloneId,
+            nodeType: dataNode.type,
+            params: dataParams,
+          });
+          ops.push({
+            type: 'connect',
+            from: { node: dataCloneId, socket: dataRef.socket },
+            to: { node: cloneId, socket: 'data' },
+          });
+        }
+      }
+
       // Wire the clone into every consumer the source already feeds.
       // Closure (parent edge) ensures every such consumer is in scope —
       // gate 3 accepts these connect ops.
@@ -106,6 +148,12 @@ export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
     return ops;
   },
 };
+
+/** The first NodeRef of an input binding (single ref or array), or undefined. */
+function firstRef(binding: NodeRef | NodeRef[] | undefined): NodeRef | undefined {
+  if (!binding) return undefined;
+  return Array.isArray(binding) ? binding[0] : binding;
+}
 
 function nextFreshId(base: NodeId, used: Set<NodeId>): NodeId {
   let n = 1;
