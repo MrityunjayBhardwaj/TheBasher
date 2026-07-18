@@ -113,6 +113,59 @@ describe('buildDuplicateNodeOps', () => {
     ]);
   });
 
+  it('deep-copies a split Object: the clone gets its OWN, independent BoxData (#365)', () => {
+    // A split Object owns its geometry/material through `data`. Duplicating it must
+    // clone the BoxData too and point clone.data at the clone — NOT the original
+    // (which would be a linked copy: recolour one, both change). Blender Shift+D.
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'obj', socket: 'out' }] },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: { position: [0, 0, 0] },
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: {
+          id: 'data',
+          type: 'BoxData',
+          params: { size: [1, 1, 1], material: { base: { color: '#ff0000' } } },
+          inputs: {},
+        },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+
+    const res = buildDuplicateNodeOps(state, 'obj')!;
+    expect(res.newRootId).toBe('obj_copy');
+    expect(res.ops).toEqual([
+      { type: 'addNode', nodeId: 'obj_copy', nodeType: 'Object', params: { position: [0, 0, 0] } },
+      {
+        type: 'addNode',
+        nodeId: 'data_copy',
+        nodeType: 'BoxData',
+        params: { size: [1, 1, 1], material: { base: { color: '#ff0000' } } },
+      },
+      // clone.data → the CLONED BoxData, not the original 'data' (independence).
+      {
+        type: 'connect',
+        from: { node: 'data_copy', socket: 'out' },
+        to: { node: 'obj_copy', socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'obj_copy', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+        index: 1,
+      },
+    ]);
+  });
+
   it('[[H136]] clones a free-floating channel re-targeted to the duplicate', () => {
     const res = buildDuplicateNodeOps(animatedState(), 'box')!;
     const chAdd = res.ops.find(

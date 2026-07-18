@@ -65,11 +65,15 @@ function freshId(base: string, taken: Set<string>): string {
   return id;
 }
 
-/** The hierarchy sockets the duplicate walk FOLLOWS to gather the subtree: a Group
- *  aggregates `children`; Transform/MaterialOverride wrap a single `target`. Any
- *  OTHER input (a shared material, a geometry source) is NOT followed — it stays
- *  shared by the clone (re-pointed to the same original node). */
-const HIERARCHY_SOCKETS = ['children', 'target'];
+/** The sockets the duplicate walk FOLLOWS to gather the subtree — i.e. the nodes a
+ *  clone OWNS and therefore deep-copies (Blender Shift+D duplicates the object AND
+ *  its data). A Group aggregates `children`; Transform/MaterialOverride wrap a single
+ *  `target`; a split Object (#365) owns its geometry/material through `data`. Any
+ *  OTHER input (a shared material node, a geometry source) is NOT followed — it stays
+ *  shared by the clone (re-pointed to the same original node). Without `data` here a
+ *  duplicated split Object would keep pointing at the ORIGINAL BoxData (a linked copy:
+ *  recolour one, both change) — not the independent copy Shift+D promises. */
+const OWNED_SOCKETS = ['children', 'target', 'data'];
 
 function refsOf(binding: unknown): { node: string; socket: string }[] {
   if (Array.isArray(binding)) return binding as { node: string; socket: string }[];
@@ -78,9 +82,10 @@ function refsOf(binding: unknown): { node: string; socket: string }[] {
 
 /**
  * Ops to DUPLICATE the scene subtree rooted at `rootId` (Blender Shift-D): deep-copy
- * the node + its hierarchy descendants (children / wrapper target) with fresh ids,
- * re-wire the internal edges among the clones, keep every NON-hierarchy input shared
- * with the original, and connect the new root as a sibling right AFTER the original.
+ * the node + its OWNED descendants (children / wrapper target / a split Object's `data`
+ * node) with fresh ids, re-wire the internal edges among the clones, keep every OTHER
+ * (non-owned) input shared with the original, and connect the new root as a sibling
+ * right AFTER the original.
  * Returns the ops (one atomic → one undo) + the new root id to select, or null when
  * the node isn't a wired scene child (nothing to duplicate-as-sibling).
  *
@@ -119,7 +124,7 @@ export function buildDuplicateNodeOps(
     if (!node) return;
     seen.add(id);
     subtree.push(id);
-    for (const socket of HIERARCHY_SOCKETS) {
+    for (const socket of OWNED_SOCKETS) {
       for (const ref of refsOf(node.inputs[socket])) if (ref?.node) visit(ref.node);
     }
   };
