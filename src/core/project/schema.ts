@@ -12,12 +12,22 @@
 // node deleted. After it runs no AnimationLayer node exists, so the (now-removed)
 // node type is never looked up. REF: docs/UNIFICATION-DESIGN.md §4; krama K5.
 //
+// formatVersion=3 (object↔data split, #365 Phase 5a): a fused `BoxMesh` is split
+// into an `Object` (owns the transform — INHERITS the old id, so every channel /
+// constraint / selection / edge that named the box still resolves) + a fresh
+// `BoxData` (owns geometry `size` + material). `migrateFusedBoxToSplit` runs on
+// raw JSON BEFORE this schema parses; it normalizes each box through BoxMesh's
+// own version ladder first (so a v2-era material keeps its byte-identical look),
+// re-targets `size`/`material.*` channels to the data node, and leaves
+// `position`/`rotation`/`scale` channels on the inherited-id Object.
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; krama K5.
+//
 // REF: THESIS.md §52, vyapti V4, krama K5.
 
 import { z } from 'zod';
 import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 
-export const PROJECT_FORMAT_VERSION = 2;
+export const PROJECT_FORMAT_VERSION = 3;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

@@ -288,8 +288,13 @@ describe('bundleToProject', () => {
     expect(project.name).toBe('Orig');
     expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(project.createdAt).toBe(9999);
-    // The DAG survives the round-trip: identical node id set.
-    expect(Object.keys(project.state.nodes).sort()).toEqual(Object.keys(src.state.nodes).sort());
+    // The DAG survives the round-trip. The formatVersion-1 bundle runs the full
+    // migration ladder: no original node id is lost (the default box keeps its id
+    // as the Object), and the object↔data split adds exactly one BoxData node.
+    const migratedIds = Object.keys(project.state.nodes);
+    const srcIds = Object.keys(src.state.nodes);
+    for (const id of srcIds) expect(migratedIds).toContain(id);
+    expect(migratedIds.length).toBe(srcIds.length + 1); // + the split-off BoxData
     expect(project.state.outputs).toEqual(src.state.outputs);
   });
 

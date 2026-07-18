@@ -77,24 +77,32 @@ function ctxAt(seconds: number) {
   return { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
 }
 
-describe('BoxMesh v1 → v4 migration (byte-identical render gate)', () => {
-  it('steps version 1 → 4 (scale + material + uvTransform) and adds scale=identity', () => {
+describe('v1 box → normalize + split to Object + BoxData (byte-identical render gate)', () => {
+  it('normalizes a v1 box through BoxMesh’s OWN ladder, THEN splits (Object gets scale=identity)', () => {
     const migrated = loadFromBytes(V1_BOX_PROJECT);
-    const box = migrated.state.nodes.n_box;
-    expect(box.version).toBe(4);
-    expect((box.params as { scale?: unknown }).scale).toEqual([1, 1, 1]);
+    // formatVersion 1 → 2 (AnimationLayer) → 3 (split). The box node keeps its id
+    // but is now an Object; the v1→v4 normalization ran first (scale=identity).
+    const obj = migrated.state.nodes.n_box;
+    expect(obj.type).toBe('Object');
+    expect((obj.params as { scale?: unknown }).scale).toEqual([1, 1, 1]);
+    const data = splitDataNode(migrated, 'n_box');
+    expect(data).toBeDefined();
+    expect((data!.params as { size?: unknown }).size).toEqual([2, 3, 4]);
   });
 
-  it('leaves non-material params byte-identical; widens material preserving the look', () => {
+  it('splits byte-identically: position → Object; size + widened material → the data node (look preserved, roughness 0.5)', () => {
     const migrated = loadFromBytes(V1_BOX_PROJECT);
-    const p = migrated.state.nodes.n_box.params as Record<string, unknown>;
     const orig = V1_BOX_PROJECT.state.nodes.n_box.params;
-    expect(p.size).toEqual(orig.size);
-    expect(p.position).toEqual(orig.position);
-    expect(p.rotation).toEqual(orig.rotation);
-    // Material is NO LONGER byte-equal (it widened to the OpenPBR IR) — but the
-    // LOOK is preserved: base.color carried over, roughness = CURRENT look (0.5).
-    const mat = p.material as InlineMaterialSpec;
+    // Transform lands on the Object, byte-identical.
+    const op = migrated.state.nodes.n_box.params as Record<string, unknown>;
+    expect(op.position).toEqual(orig.position);
+    expect(op.rotation).toEqual(orig.rotation);
+    // Geometry + material land on the data node. The v1 flat material widened to
+    // the OpenPBR IR but the LOOK is preserved (roughness = CURRENT look 0.5), so
+    // the normalize-then-split keeps a pre-#178 box byte-identical.
+    const data = splitDataNode(migrated, 'n_box')!;
+    expect((data.params as { size?: unknown }).size).toEqual(orig.size);
+    const mat = (data.params as { material: InlineMaterialSpec }).material;
     expect(mat.base.color).toBe('#5af07a'); // preserved from the v1 flat color
     expect(mat.specular.roughness).toBe(CURRENT_LOOK_ROUGHNESS); // 0.5, not OpenPBR 0.3 (R1)
     expect(mat.base.metalness).toBe(0);
@@ -131,13 +139,142 @@ describe('BoxMesh v1 → v4 migration (byte-identical render gate)', () => {
     expect(mat.specular.roughness).not.toBe(CURRENT_LOOK_ROUGHNESS);
   });
 
-  it('is idempotent — re-running the load path is a stable no-op', () => {
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
     const once = loadFromBytes(V1_BOX_PROJECT);
-    // Re-serialize the migrated project and load again (the round-trip the user
-    // hits on every subsequent save/load). nodeVersions now records BoxMesh: 3.
+    // Re-serialize the migrated (split) project and load again — the round-trip
+    // the user hits on every subsequent save/load. formatVersion is now 3, so no
+    // format migration runs; the Object + BoxData pair is stable.
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_box).toEqual(once.state.nodes.n_box);
-    expect(twice.state.nodes.n_box.version).toBe(4);
+    expect(splitDataNode(twice, 'n_box')).toEqual(splitDataNode(once, 'n_box'));
+    expect(twice.state.nodes.n_box.type).toBe('Object');
+  });
+});
+
+// ── object↔data split (#365 Phase 5a): fused BoxMesh → Object + BoxData ──────
+// A formatVersion-2 project with a fused BoxMesh is split on load: the box node
+// becomes an `Object` (INHERITS the id — so every edge/channel/constraint that
+// named it still resolves) + a fresh `BoxData` (size + material). THE gate:
+// resolveEvaluatedMesh('<box id>') — the SAME read the renderer draws — is
+// byte-identical to a fused box; a `position` channel stays on the Object while a
+// `size` channel re-targets the data node. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
+
+/** A serialized formatVersion-2 (pre-split) project: one fused BoxMesh built by
+ *  the real pipeline (authoritative shape) + a position channel and a size
+ *  channel targeting it, then stamped formatVersion 2. */
+function buildV2FusedBoxJson() {
+  let s = buildDefaultDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_pos',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_box',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [0, 0, 0], easing: 'linear' },
+        { time: 1, value: [0, 6, 0], easing: 'linear' },
+      ],
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_size',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'size',
+      target: 'n_box',
+      paramPath: 'size',
+      keyframes: [
+        { time: 0, value: [1, 1, 1], easing: 'linear' },
+        { time: 1, value: [2, 2, 2], easing: 'linear' },
+      ],
+    },
+  }).next;
+  const nodes = JSON.parse(JSON.stringify(s.nodes));
+  return {
+    formatVersion: 2,
+    id: 'p365-split',
+    name: 'pre-split box',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: { BoxMesh: nodes.n_box.version, KeyframeChannelVec3: nodes.n_pos.version },
+    state: { nodes, outputs: s.outputs },
+  };
+}
+
+/** The BoxData node a split produced from the box `boxId` (the sole BoxData whose
+ *  id starts with `${boxId}__data`). */
+function splitDataNode(project: Project, boxId: string) {
+  return Object.values(project.state.nodes).find(
+    (n) => n.type === 'BoxData' && n.id.startsWith(`${boxId}__data`),
+  );
+}
+
+describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#365)', () => {
+  it('splits the box: n_box becomes an Object (id inherited) + a wired BoxData', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxJson());
+    expect(migrated.formatVersion).toBe(3);
+    // The box node keeps its id but is now an Object owning only the transform.
+    const obj = migrated.state.nodes.n_box;
+    expect(obj.type).toBe('Object');
+    const op = obj.params as Record<string, unknown>;
+    expect(op.position).toEqual([0, 0, 0]);
+    expect(op.scale).toEqual([1, 1, 1]);
+    expect(op.size).toBeUndefined(); // size left the Object
+    expect(op.material).toBeUndefined(); // material left the Object
+    // A fresh BoxData owns the geometry + material and nothing else.
+    const data = splitDataNode(migrated, 'n_box');
+    expect(data).toBeDefined();
+    expect((data!.params as { size?: unknown }).size).toEqual([1, 1, 1]);
+    expect((data!.params as { material?: unknown }).material).toBeDefined();
+    // The Object points at the data node through `data`.
+    const dataRef = (obj.inputs as Record<string, { node: string }>).data;
+    expect(dataRef.node).toBe(data!.id);
+  });
+
+  it('renders byte-identically to a fused box (the split is invisible)', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxJson());
+    const split = resolveEvaluatedMesh(migrated.state, 'n_box', ctxAt(0));
+    const fused = resolveEvaluatedMesh(buildDefaultDagState(), 'n_box', ctxAt(0));
+    expect(split).not.toBeNull();
+    expect(fused).not.toBeNull();
+    expect(split!.geometry.descriptor).toEqual(fused!.geometry.descriptor);
+    expect(split!.material).toEqual(fused!.material);
+    expect(split!.transform.position).toEqual(fused!.transform.position);
+    expect(split!.transform.scale).toEqual(fused!.transform.scale);
+  });
+
+  it('the Object inherits the id, so a position channel still animates it', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxJson());
+    // The position channel still targets n_box (now the Object) — unchanged.
+    expect((migrated.state.nodes.n_pos.params as { target: string }).target).toBe('n_box');
+    const p0 = resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(0))!.position;
+    const p1 = resolveEvaluatedTransform(migrated.state, 'n_box', ctxAt(1))!.position;
+    expect(p0[1]).toBe(0);
+    expect(p1[1]).toBe(6); // the channel drives the Object's position
+  });
+
+  it('routes channels by paramPath: data params (size, material.*) → the data node, transform → the Object', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxJson());
+    const data = splitDataNode(migrated, 'n_box')!;
+    // A `size` channel addresses a param that now lives on the data node, so it
+    // re-targets there — NOT orphaned onto the transform-only Object. (A
+    // `material.*` channel takes the identical branch.) The §5/§9 no-orphan crux.
+    expect((migrated.state.nodes.n_size.params as { target: string }).target).toBe(data.id);
+    expect('size' in (data.params as object)).toBe(true); // the target actually owns `size`
+    // A `position` channel addresses the transform → it stays on the inherited-id
+    // Object (zero rewrite — the whole point of inheriting the box's id).
+    expect((migrated.state.nodes.n_pos.params as { target: string }).target).toBe('n_box');
+  });
+
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
+    const once = loadFromBytes(buildV2FusedBoxJson());
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_box).toEqual(once.state.nodes.n_box);
+    expect(splitDataNode(twice, 'n_box')).toEqual(splitDataNode(once, 'n_box'));
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'BoxMesh')).toBe(false);
   });
 });
 
@@ -296,7 +433,7 @@ function childRefNodes(state: DagState): string[] {
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
-    expect(migrated.formatVersion).toBe(2);
+    expect(migrated.formatVersion).toBe(3); // 1→2 (layer retire) → 3 (box split)
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
