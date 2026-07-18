@@ -127,6 +127,42 @@ describe('buildDeleteNodesOps', () => {
     expect(ops.some((o) => o.type === 'removeNode' && o.nodeId === 'data')).toBe(false);
   });
 
+  it('#365 also removes a channel targeting the GC’d BoxData (animated split cube)', () => {
+    // A migrated animated cube: the size channel targets the BoxData (data-param
+    // channels retarget to the data node). Deleting the Object GC's the BoxData —
+    // the channel must be swept with it, else it orphans pointing at a dead id.
+    const state = {
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'obj', socket: 'out' }] },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'data', socket: 'out' } },
+        },
+        data: { id: 'data', type: 'BoxData', params: { size: [1, 1, 1] }, inputs: {} },
+        ch: {
+          id: 'ch',
+          type: 'KeyframeChannelVec3',
+          params: { target: 'data', paramPath: 'size', keyframes: [] },
+          inputs: {},
+        },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    const removed = buildDeleteNodesOps(state, ['obj'])
+      .filter((o) => o.type === 'removeNode')
+      .map((o) => (o as { nodeId: string }).nodeId);
+    expect(removed).toContain('obj');
+    expect(removed).toContain('data');
+    expect(removed, 'the size channel targeting the BoxData is swept too').toContain('ch');
+  });
+
   it('[[H136]] also removes a free-floating channel targeting the deleted node', () => {
     const ops = buildDeleteNodesOps(animatedState(), ['box']);
     // channel `ch` targets `box` via params.target (no edge) — must be removed too.

@@ -23,21 +23,19 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // consulted alongside the edge universe (one shared `channelNodesTargeting`).
   const idSet = new Set<NodeId>(ids);
   const allIds = [...idSet];
-  for (const ch of channelNodesTargeting(state.nodes, idSet)) {
-    if (!idSet.has(ch.id)) {
-      idSet.add(ch.id);
-      allIds.push(ch.id);
-    }
-  }
 
   // #365 — a split Object OWNS its BoxData through `data`. Deleting the Object
   // orphans that data node (unrendered, but persisted → save bloat), so
   // garbage-collect it too — but ONLY when every surviving consumer is also being
   // deleted. A shared data node (fan-out: another Object still points at it) stays,
   // and removeNode would refuse it anyway. Blender's orphan-data purge on the owned
-  // leaf. Appended AFTER the Objects so each data node's removeNode runs once its
-  // consuming Object is gone (removeNode refuses while an output is still consumed).
-  for (const nodeId of [...idSet]) {
+  // leaf. A KeyframeChannel targets a data param via `params.target` (not an edge),
+  // so it is NOT a "consumer" here — an animated size/material node is still an
+  // orphan once its Object is gone. This runs BEFORE the channel sweep below so the
+  // channels targeting a GC'd BoxData are swept with it; appended AFTER the Objects
+  // so each data node's removeNode runs once its consuming Object is gone (removeNode
+  // refuses while an output is still consumed).
+  for (const nodeId of ids) {
     const dataId = refsOf(state.nodes[nodeId]?.inputs?.data)[0]?.node;
     if (!dataId || idSet.has(dataId) || !state.nodes[dataId]) continue;
     const hasSurvivingConsumer = Object.entries(state.nodes).some(
@@ -48,6 +46,20 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
     if (!hasSurvivingConsumer) {
       idSet.add(dataId);
       allIds.push(dataId);
+    }
+  }
+
+  // [[H136]] a free-floating KeyframeChannel references its target via
+  // `params.target`, NOT an edge — the consumer walk below is blind to it. Delete
+  // the channels targeting any removed node too (the Object OR its GC'd BoxData),
+  // else they orphan (they survive pointing at a missing id → invisible save bloat).
+  // The id-reference universe consulted alongside the edge universe (one shared
+  // `channelNodesTargeting`); runs after the data-node GC so a data-param channel is
+  // caught.
+  for (const ch of channelNodesTargeting(state.nodes, idSet)) {
+    if (!idSet.has(ch.id)) {
+      idSet.add(ch.id);
+      allIds.push(ch.id);
     }
   }
 
