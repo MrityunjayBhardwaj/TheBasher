@@ -38,6 +38,7 @@
 // future reader; the D-06 boundary-pair is the load-bearing observation.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -181,8 +182,8 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
     w.__basher_selection!.getState().select('n_box');
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+  // #365 Slice 2: the split Object's Transform is default-expanded; open idempotently.
+  await openInspectorSection(page, 'transform');
 
   // V57 direct channels (#199): read the rendered position through the SAME
   // resolveEvaluatedTransform the renderer overlays the channel into.
@@ -535,8 +536,8 @@ test.describe('P7.4 D-06 — NPanel displayed value == evaluated render-walk (th
       if (!ak.enabled) ak.toggle(); // ON
     });
     await expect(page.getByTestId('inspector')).toBeVisible();
-    await page.getByTestId('inspector-section-toggle-transform').click();
-    await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+    // #365 Slice 2: the split Object's Transform is default-expanded; open idempotently.
+    await openInspectorSection(page, 'transform');
 
     // Sample the Y/Z curve at a CONTROL time t2=1.5 BEFORE the edit (the
     // non-perturbation reference). V57 direct channels (#199): read the

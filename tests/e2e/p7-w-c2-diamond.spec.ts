@@ -16,6 +16,7 @@
 // REF: .planning/phases/07-animation-authoring/PLAN.md Wave C (C2).
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface KF {
   time: number;
@@ -80,8 +81,8 @@ test.beforeEach(async ({ page }) => {
   // BoxMesh declares inspectorSections ['mesh','transform','material'];
   // only the first ('mesh') is default-expanded (§5.8). 'position' lives
   // in 'transform', so expand it (real affordance — the section toggle).
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+  // #365 Slice 2: the split Object's Transform is default-expanded; open idempotently.
+  await openInspectorSection(page, 'transform');
 });
 
 test('P7.C2 diamond: none → first-key composite → on-key (one undo entry)', async ({ page }) => {

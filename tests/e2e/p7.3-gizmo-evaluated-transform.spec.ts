@@ -17,6 +17,7 @@
 // + proxy values, never "the effect should have run".
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -161,8 +162,8 @@ async function seedAnimatedCube(page: import('@playwright/test').Page) {
     w.__basher_selection!.getState().select('n_box');
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+  // #365 Slice 2: the split Object's Transform is default-expanded; open idempotently.
+  await openInspectorSection(page, 'transform');
 
   // Observe the cube genuinely animates BEFORE returning (the seed is
   // bug-independent: eval position moves from [0,0,0] at t=0 toward
