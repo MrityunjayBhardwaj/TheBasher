@@ -11,8 +11,7 @@ import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
-import { resolveMeshUVs } from './resolveMeshUVs';
-import { resolveMeshTexture } from './resolveMeshTexture';
+import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { unionUVBounds } from './uvIslands';
 import * as geometryRegistry from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
@@ -625,7 +624,7 @@ export function boot(): Promise<void> {
         sampled: boolean;
       } => {
         const state = useDagStore.getState().state;
-        const src = resolveMeshUVs(state, nodeId);
+        const src = resolveMeshUVSpace(state, nodeId).uvs;
         return {
           status: src.status,
           islandCount: src.uvs ? src.uvs.islands.length : 0,
@@ -644,7 +643,7 @@ export function boot(): Promise<void> {
         nodeId: NodeId,
       ): { status: string; hasImage: boolean; width: number; height: number; flipY: boolean } => {
         const state = useDagStore.getState().state;
-        const t = resolveMeshTexture(state, nodeId);
+        const t = resolveMeshUVSpace(state, nodeId).texture;
         return {
           status: t.status,
           hasImage: t.image !== null,

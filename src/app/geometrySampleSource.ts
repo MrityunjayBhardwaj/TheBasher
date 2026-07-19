@@ -16,7 +16,7 @@
 // Terrain kinds: box/sphere/array/mirror build sync from the registry, and a baked mesh
 // hits once its render primes the registry. A `gltf` terrain has no registry geometry (it
 // lives only in the loaded three.js clone), so we read its world triangles from the SAME
-// production-safe clone the renderer mounts (`getGltfClone`, like `resolveMeshUVs`) — see
+// production-safe clone the renderer mounts (`getGltfClone`, like `resolveMeshUVSpace`) — see
 // `gltfTerrainMeshes`. Only an UN-LOADED gltf / UN-primed baked mesh yields no geometry;
 // then the sample falls back to the query controller's own position (the object tracks the
 // Null in 3D, un-snapped) — a surfaced KNOWN LIMIT, not a silent no-op.
@@ -150,7 +150,7 @@ function cachedMeshBvh(tm: TerrainMesh): MeshBvh {
  * mounted glTF (the async asset hasn't loaded yet, or the node isn't glTF at all). The
  * registry can't build a `gltf` geometry synchronously — the geometry lives only in the
  * loaded three.js clone — so we read it from the SAME production-safe clone the renderer
- * mounts (`getGltfClone`, as `resolveMeshUVs`/`resolveMeshTexture` already do), which makes
+ * mounts (`getGltfClone`, as `resolveMeshUVSpace` already does), which makes
  * render == read by construction. Each mesh's transform is composed as
  * `nodeWorld · (cloneRoot⁻¹ · meshWorld)`: the parenthesised part is the mesh's pose
  * RELATIVE to the clone root, so wherever the clone happens to be mounted cancels out —
