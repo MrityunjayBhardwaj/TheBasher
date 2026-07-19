@@ -8,6 +8,7 @@
 // box-select fills and the multi-gizmo / multi-inspector consume (#225/#226).
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 import type { Page } from '@playwright/test';
 
 interface OutlinerWindow {
@@ -28,26 +29,29 @@ test.beforeEach(async ({ page }) => {
     timeout: 15000,
   });
   // Two extra boxes so the tree has n_box, n_box_b, n_box_c in order.
-  await page.evaluate(() => {
-    const w = window as unknown as OutlinerWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    const ops: unknown[] = [];
-    for (const id of ['n_box_b', 'n_box_c']) {
-      ops.push({
-        type: 'addNode',
-        nodeId: id,
-        nodeType: 'BoxMesh',
-        params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      });
-      ops.push({
-        type: 'connect',
-        from: { node: id, socket: 'out' },
-        to: { node: sceneId, socket: 'children' },
-      });
-    }
-    dag.dispatchAtomic(ops, 'user', 'add boxes');
-  });
+  await page.evaluate(
+    ({ built }) => {
+      const w = window as unknown as OutlinerWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      const ops: unknown[] = [];
+      for (const [id, cubeOps] of Object.entries(built)) {
+        ops.push(...(cubeOps as unknown[]));
+        ops.push({
+          type: 'connect',
+          from: { node: id, socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        });
+      }
+      dag.dispatchAtomic(ops, 'user', 'add boxes');
+    },
+    {
+      built: {
+        n_box_b: splitCubeOps({ objectId: 'n_box_b' }),
+        n_box_c: splitCubeOps({ objectId: 'n_box_c' }),
+      },
+    },
+  );
 });
 
 const selection = (page: Page) =>

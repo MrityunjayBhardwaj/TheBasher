@@ -47,9 +47,13 @@ async function seedRoughnessAnim(page: import('@playwright/test').Page) {
     const api = w.__basher_dag!.getState();
     const dispatch = (op: unknown) => api.dispatch(op);
     const nodes = () => w.__basher_dag!.getState().state.nodes;
-    const boxId = 'n_box';
-    // V57: a free-floating direct channel targets the box by dagId — no
-    // AnimationLayer wrapper, no scene rewire. The box stays its own scene child.
+    // #365 — `material` lives on the cube's linked BoxData after the object↔data
+    // split, and the inspector renders those rows against that node, so a keyed
+    // material channel targets the DATA half. The Object (n_box) stays the scene
+    // child; #398 folds the data node's channels into its overlay.
+    const boxId = Object.keys(nodes()).find((k) => nodes()[k].type === 'BoxData') ?? 'n_box_data';
+    // V57: a free-floating direct channel targets the node by dagId — no
+    // AnimationLayer wrapper, no scene rewire. The Object stays its own scene child.
     dispatch({
       type: 'addNode',
       nodeId: 'seed_ch',
@@ -116,11 +120,14 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
       w.__basher_selection!.getState().select('n_box');
     });
     await expect(page.getByTestId('inspector')).toBeVisible();
-    const editor = page.getByTestId('inspector-material-editor-n_box');
+    // The material section (and its ParamDiamond) is rendered against the linked
+    // BoxData (the material's owner), so the editor + diamond testids are keyed to
+    // n_box_data even though the user selected the Object n_box.
+    const editor = page.getByTestId('inspector-material-editor-n_box_data');
     if (!(await editor.isVisible())) {
       await page.getByTestId('inspector-section-toggle-material').click();
     }
-    const diamond = page.getByTestId(`inspector-diamond-n_box-${PARAM}`);
+    const diamond = page.getByTestId(`inspector-diamond-n_box_data-${PARAM}`);
     await expect(diamond).toBeVisible();
 
     // Between keys (t=1) → 'animated' (green, text-accent).
@@ -138,8 +145,9 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
     await expect(diamond).toHaveClass(/text-record/);
 
     // A transient (held edit) → orange (text-warn) wins regardless of anim state.
+    // The diamond reads the transient on the material's owner (the BoxData).
     await page.evaluate((p) => {
-      (window as unknown as BasherWindow).__basher_transient!.getState().set('n_box', p, 0.42);
+      (window as unknown as BasherWindow).__basher_transient!.getState().set('n_box_data', p, 0.42);
     }, PARAM);
     await expect(diamond).toHaveClass(/text-warn/);
   });

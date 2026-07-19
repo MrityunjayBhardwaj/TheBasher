@@ -11,6 +11,7 @@ import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { identify } from './identify';
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
 import { shouldRunIdentifyRound } from '../orchestrator';
+import { makeSplitCube } from '../../test-utils/splitCube';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -18,25 +19,18 @@ beforeEach(() => {
 });
 
 function buildScene(): DagState {
-  // Three cubes (red, green, blue) + one sphere + scene aggregator.
+  // Three split cubes (red, green, blue) + one sphere + scene aggregator.
+  // #365 Phase 5a: a cube is an Object (pose) → BoxData (geometry+material). The color a
+  // query like "the red cube" matches lives on the BoxData; identify reaches through `data`
+  // to find it (V107). The Object is the scene child the type-filter matches on.
   let s = emptyDagState();
-  const cubes = [
+  const cubes: { id: string; color: string; pos: [number, number, number] }[] = [
     { id: 'redCube', color: '#ff0000', pos: [0, 0, 0] },
     { id: 'greenCube', color: '#00ff00', pos: [2, 0, 0] },
     { id: 'blueCube', color: '#0000ff', pos: [4, 0, 0] },
   ];
   for (const c of cubes) {
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: c.id,
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: c.pos,
-        rotation: [0, 0, 0],
-        material: { name: 'default', base: { color: c.color } },
-      },
-    }).next;
+    s = makeSplitCube(s, { objectId: c.id, color: c.color, position: c.pos }).state;
   }
   s = applyOp(s, {
     type: 'addNode',
@@ -191,8 +185,9 @@ describe('identify — match strategies', () => {
   it('filter.types narrows to specific node types', () => {
     const state = buildScene();
     // Without filter "red" alone has no resolver; with filter we can target
-    // BoxMesh and the color filter narrows to redCube.
-    const r = identify({ query: 'red', filter: { types: ['BoxMesh'] } }, state);
+    // the split cube's Object type and the color filter narrows to redCube
+    // (identify reaches through `data` to the BoxData's material, V107).
+    const r = identify({ query: 'red', filter: { types: ['Object'] } }, state);
     expect(r.type).toBe('match');
     if (r.type === 'match') expect(r.selectors).toEqual(['redCube']);
   });
@@ -253,18 +248,8 @@ describe('identify — quantifiers (#24)', () => {
 
   it('"both cubes" with 2 cubes → match (plural-after-the without "the")', () => {
     let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'cube1',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'cube2',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0] },
-    }).next;
+    s = makeSplitCube(s, { objectId: 'cube1', position: [0, 0, 0] }).state;
+    s = makeSplitCube(s, { objectId: 'cube2', position: [2, 0, 0] }).state;
     const r = identify({ query: 'both cubes' }, s);
     expect(r.type).toBe('match');
     if (r.type === 'match') expect(r.selectors).toHaveLength(2);
@@ -352,51 +337,12 @@ describe('identify — generic-noun aliases (#25)', () => {
 describe('identify — color resolution (#16 + #18)', () => {
   function buildColorScene(): DagState {
     let s = emptyDagState();
-    // Pure red, off-red (picker-sampled), pink, light gray.
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'pureRed',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'm', base: { color: '#ff0000' } },
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'offRed',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [1, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'm', base: { color: '#fa0a0a' } },
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'pink',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [2, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'm', base: { color: '#ffaaaa' } },
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'lightGray',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [3, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'm', base: { color: '#cccccc' } },
-      },
-    }).next;
+    // Pure red, off-red (picker-sampled), pink, light gray — split cubes; the color a
+    // query narrows on lives on each cube's BoxData (identify reaches through `data`, V107).
+    s = makeSplitCube(s, { objectId: 'pureRed', color: '#ff0000', position: [0, 0, 0] }).state;
+    s = makeSplitCube(s, { objectId: 'offRed', color: '#fa0a0a', position: [1, 0, 0] }).state;
+    s = makeSplitCube(s, { objectId: 'pink', color: '#ffaaaa', position: [2, 0, 0] }).state;
+    s = makeSplitCube(s, { objectId: 'lightGray', color: '#cccccc', position: [3, 0, 0] }).state;
     return s;
   }
 
@@ -450,28 +396,8 @@ describe('identify — color family saturation bound (#29)', () => {
   // REJECTED, salmon STILL matches (salmon is genuinely reddish).
   function familyScene(refHex: string, probeId: string, probeHex: string): DagState {
     let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'ref',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'm', base: { color: refHex } },
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: probeId,
-      nodeType: 'BoxMesh',
-      params: {
-        size: [1, 1, 1],
-        position: [1, 0, 0],
-        rotation: [0, 0, 0],
-        material: { name: 'm', base: { color: probeHex } },
-      },
-    }).next;
+    s = makeSplitCube(s, { objectId: 'ref', color: refHex, position: [0, 0, 0] }).state;
+    s = makeSplitCube(s, { objectId: probeId, color: probeHex, position: [1, 0, 0] }).state;
     return s;
   }
   function matches(refHex: string, family: string, probeId: string, probeHex: string): boolean {

@@ -9,6 +9,7 @@
 // projected origin selects exactly that object.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BoxSelectWindow {
   __basher_dag: {
@@ -43,29 +44,27 @@ test.beforeEach(async ({ page }) => {
     { timeout: 15000 },
   );
   // Add a second box at x=3 so the two objects project to distinct screen points.
-  await page.evaluate(() => {
-    const w = window as unknown as BoxSelectWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_box_b',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_box_b', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-      ],
-      'user',
-      'add second box',
-    );
-    w.__basher_selection.getState().select(null);
-  });
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as BoxSelectWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_box_b', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'user',
+        'add second box',
+      );
+      w.__basher_selection.getState().select(null);
+    },
+    { ops: splitCubeOps({ objectId: 'n_box_b', position: [3, 0, 0] }) },
+  );
 });
 
 test('a box around one origin selects exactly that object (and makes it active)', async ({

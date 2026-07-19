@@ -4,6 +4,7 @@
 // reverts (it is now a real keyframe).
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface KF {
   time: number;
@@ -98,7 +99,7 @@ async function setupPausedOffKeyEdit(page: import('@playwright/test').Page) {
     if (ak.enabled) ak.toggle();
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
-  await page.getByTestId('inspector-section-toggle-transform').click();
+  await openInspectorSection(page, 'transform');
   const posX = page.getByTestId('inspector-vec-n_box-position-x');
   await posX.fill('9'); // transient [9, *, *]
   await posX.press('Tab');

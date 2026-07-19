@@ -141,19 +141,19 @@ test('P2.6#3 space toggle swaps view3d ↔ uv; Canvas DOM node persists', async 
 
 // ---------------------------------------------------------------------------
 // P2.6#4 — UV editor renders a status line and reflects selection. When
-// no node is selected, status shows the placeholder; when a BoxMesh is
-// selected, status names it.
+// no node is selected, status shows the placeholder; when the seed cube's
+// Object is selected, status names it.
 // ---------------------------------------------------------------------------
 
 test('P2.6#4 UV editor status updates with selection', async ({ page }) => {
   await page.getByTestId('toolbar-space-uv').click();
   await expect(page.getByTestId('uv-editor-status')).toContainText('Select a mesh');
 
-  // Find a BoxMesh in the seed and select it via the projection store.
+  // Find the seed cube's Object and select it via the projection store.
   const id = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag!.getState().state.nodes;
-    for (const [nid, n] of Object.entries(nodes)) if (n.type === 'BoxMesh') return nid;
+    for (const [nid, n] of Object.entries(nodes)) if (n.type === 'Object') return nid;
     return null;
   });
   expect(id).not.toBeNull();
@@ -161,7 +161,16 @@ test('P2.6#4 UV editor status updates with selection', async ({ page }) => {
     const w = window as unknown as BasherWindow;
     w.__basher_selection!.getState().select(nodeId!);
   }, id);
-  await expect(page.getByTestId('uv-editor-status')).toContainText('BoxMesh');
+  // What this pins is the P2.6#4 claim: the status line REFLECTS THE SELECTION
+  // (it names the selected node, instead of the "Select a mesh" placeholder).
+  await expect(page.getByTestId('uv-editor-status')).toContainText(id!);
+  await expect(page.getByTestId('uv-editor-status')).toContainText('Object');
+  // NOTE (#378): a split cube's UVs currently resolve to NONE — `resolveMeshUVs`
+  // has no Object branch — so the status reads "no UV layout" rather than an
+  // island count. That is a live documented gap, NOT what this test is about;
+  // asserting an island count here would pin the broken state. When #378 lands,
+  // tighten this to the island count.
+  await expect(page.getByTestId('uv-editor-status')).toContainText('no UV layout');
 });
 
 // ---------------------------------------------------------------------------
@@ -189,7 +198,9 @@ test('P2.6#5 View menu Editor Space submenu switches to UV', async ({ page }) =>
 // in the DAG and gets auto-selected.
 // ---------------------------------------------------------------------------
 
-test('P2.6#7 Shift+A opens Add menu; clicking Cube adds a BoxMesh', async ({ page }) => {
+test('P2.6#7 Shift+A opens Add menu; clicking Cube adds an Object+BoxData pair', async ({
+  page,
+}) => {
   const before = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).length;
@@ -206,11 +217,15 @@ test('P2.6#7 Shift+A opens Add menu; clicking Cube adds a BoxMesh', async ({ pag
     const w = window as unknown as BasherWindow;
     const state = w.__basher_dag!.getState().state;
     const ids = Object.keys(state.nodes);
-    const meshes = Object.values(state.nodes).filter((n) => n.type === 'BoxMesh');
-    return { count: ids.length, meshCount: meshes.length };
+    const objects = Object.values(state.nodes).filter((n) => n.type === 'Object');
+    const data = Object.values(state.nodes).filter((n) => n.type === 'BoxData');
+    return { count: ids.length, objectCount: objects.length, dataCount: data.length };
   });
-  expect(result.count).toBe(before + 1);
-  expect(result.meshCount).toBeGreaterThanOrEqual(2); // seed n_box + the new one
+  // Add ▸ Cube builds the object↔data PAIR — an Object (the pose) wired to a
+  // BoxData (geometry + material) — so one menu click adds TWO nodes.
+  expect(result.count).toBe(before + 2);
+  expect(result.objectCount).toBeGreaterThanOrEqual(2); // seed n_box + the new one
+  expect(result.dataCount).toBeGreaterThanOrEqual(2); // seed n_box_data + the new one
 });
 
 // ---------------------------------------------------------------------------

@@ -116,17 +116,20 @@ test('P6-W5#2 the visual ADD palette creates a real DAG node + auto-selects it',
     () =>
       Object.keys((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).length,
   );
-  expect(after).toBe(before + 1);
+  // #365 Slice 2: Add ▸ Cube is split-native — it builds TWO nodes, an `Object`
+  // (pose) and its `BoxData` (geometry + material), so the count grows by 2.
+  expect(after).toBe(before + 2);
 
-  // Auto-selected, and the selected node is a REAL Op-built BoxMesh DAG node
-  // (V34 — every added object reduces to the one substrate, no second pipeline).
+  // Auto-selected, and the selected node is a REAL Op-built DAG node — the posable
+  // `Object` half (V34 — every added object reduces to the one substrate, no second
+  // pipeline).
   const selId = await selectedIdOf(page);
   expect(selId).not.toBeNull();
   const selType = await page.evaluate(
     (id) => (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[id!].type,
     selId,
   );
-  expect(selType).toBe('BoxMesh');
+  expect(selType).toBe('Object');
 });
 
 test('P6-W5#3 a real viewport click selects the object; clicking empty clears it', async ({

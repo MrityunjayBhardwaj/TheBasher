@@ -4,6 +4,13 @@
 // material (side-A via __basher_mesh_material). Falsifiable: if the editor stops
 // dispatching setParam (or the renderer stops reading the IR) the assertions go
 // RED.
+//
+// #365 Slice 2: the default box is a split Object (`n_box`) pointing at a BoxData
+// (`n_box_data`) that owns the material. The user still SELECTS the Object, so the
+// inspector reaches through `data` and renders the material section keyed to the
+// DATA node — the editor/input/colour testids and the DAG material param live on
+// `n_box_data`. The rendered mesh is the Object's scene child, so the side-A read
+// (`__basher_mesh_material`) stays on `n_box`.
 
 import { expect, test } from './_fixtures';
 
@@ -39,14 +46,14 @@ test.describe('v0.6 #2 W3 — NPanel material editor lands on the real material'
     await expect(page.getByTestId('inspector')).toBeVisible();
 
     // Expand the material section if collapsed (clicking an open one would close it).
-    const editor = page.getByTestId('inspector-material-editor-n_box');
+    const editor = page.getByTestId('inspector-material-editor-n_box_data');
     if (!(await editor.isVisible())) {
       await page.getByTestId('inspector-section-toggle-material').click();
     }
     await expect(editor).toBeVisible(); // the placeholder (complex) is GONE
 
     // --- scalar: specular.roughness → 0.8 ---
-    const roughness = page.getByTestId('inspector-input-n_box-material.specular.roughness');
+    const roughness = page.getByTestId('inspector-input-n_box_data-material.specular.roughness');
     await expect(roughness).toBeVisible();
     await roughness.fill('0.8');
     await roughness.press('Tab');
@@ -57,7 +64,7 @@ test.describe('v0.6 #2 W3 — NPanel material editor lands on the real material'
     });
 
     // --- colour: base.color → #ff8800 (via the hex input, commit on blur) ---
-    const hex = page.getByTestId('inspector-colorhex-n_box-material.base.color');
+    const hex = page.getByTestId('inspector-colorhex-n_box_data-material.base.color');
     await expect(hex).toBeVisible();
     await hex.fill('#ff8800');
     await hex.press('Enter');
@@ -93,17 +100,17 @@ test.describe('v0.6 #2 W3 — NPanel material editor lands on the real material'
       (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box'),
     );
     await expect(page.getByTestId('inspector')).toBeVisible();
-    const editor = page.getByTestId('inspector-material-editor-n_box');
+    const editor = page.getByTestId('inspector-material-editor-n_box_data');
     if (!(await editor.isVisible())) {
       await page.getByTestId('inspector-section-toggle-material').click();
     }
-    const swatch = page.getByTestId('inspector-color-n_box-material.base.color');
+    const swatch = page.getByTestId('inspector-color-n_box_data-material.base.color');
     await expect(swatch).toBeVisible();
 
     const matBefore = await page.evaluate(
       () =>
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box']?.params
-          ?.material,
+        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box_data']
+          ?.params?.material,
     );
     const undoBefore = await page.evaluate(
       () => (window as unknown as BasherWindow).__basher_dag!.getState().undoStack.length,
@@ -132,8 +139,8 @@ test.describe('v0.6 #2 W3 — NPanel material editor lands on the real material'
     await page.evaluate(() => (window as unknown as BasherWindow).__basher_dag!.getState().undo());
     const matUndone = await page.evaluate(
       () =>
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box']?.params
-          ?.material,
+        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box_data']
+          ?.params?.material,
     );
     expect(JSON.stringify(matUndone)).toBe(JSON.stringify(matBefore));
   });

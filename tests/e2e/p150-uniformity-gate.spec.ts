@@ -13,6 +13,7 @@
 // REF: PLAN.md Wave 4 Task 11; CONTEXT D-04; hetvabhasa H40/H58; vyapti V20.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -95,8 +96,7 @@ test.describe('v0.6 #1 Wave 4 — gizmo scale on a Box is uniform (renders + ins
 
     // (C) the inspector transform-section scale field shows it (consumed surface).
     await expect(page.getByTestId('inspector')).toBeVisible();
-    await page.getByTestId('inspector-section-toggle-transform').click();
-    await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+    await openInspectorSection(page, 'transform');
     const sx = await page.getByTestId('inspector-vec-n_box-scale-x').inputValue();
     const sy = await page.getByTestId('inspector-vec-n_box-scale-y').inputValue();
     const sz = await page.getByTestId('inspector-vec-n_box-scale-z').inputValue();
@@ -107,14 +107,17 @@ test.describe('v0.6 #1 Wave 4 — gizmo scale on a Box is uniform (renders + ins
     // (D) the geometry `size` is UNTOUCHED — the gizmo touched the band, not the
     // capability. The mesh section still shows a DISTINCT size field (uniform TRS
     // proof: size and scale coexist as separate concepts).
+    // #365 Slice 2: `size` lives on the split cube's BoxData (`n_box_data`); the
+    // inspector renders its mesh section via LinkedDataSections, so the field's
+    // testid is keyed by the data node id.
     const size = await page.evaluate(
       () =>
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box'].params
-          .size,
+        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box_data']
+          .params.size,
     );
     expect(size).toEqual([1, 1, 1]);
     expect(resolved!.geometry.descriptor.size).toEqual([1, 1, 1]);
-    await expect(page.getByTestId('inspector-vec-n_box-size-x')).toBeVisible();
+    await expect(page.getByTestId('inspector-vec-n_box_data-size-x')).toBeVisible();
   });
 
   test('falsification: editing size changes geometry but leaves transform.scale at 2×', async ({
@@ -128,11 +131,13 @@ test.describe('v0.6 #1 Wave 4 — gizmo scale on a Box is uniform (renders + ins
       return r !== null && Math.abs(r[0] - 2) < 1e-4;
     });
 
-    // Now edit the SEPARATE geometry capability.
+    // Now edit the SEPARATE geometry capability. #365 Slice 2: `size` lives on the
+    // split cube's BoxData (`n_box_data`); a setParam aimed at the Object is silently
+    // rejected, so target the data node.
     await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_dag!.getState().dispatch({
         type: 'setParam',
-        nodeId: 'n_box',
+        nodeId: 'n_box_data',
         paramPath: 'size',
         value: [3, 3, 3],
       }),

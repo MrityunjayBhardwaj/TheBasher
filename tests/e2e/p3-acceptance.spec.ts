@@ -88,8 +88,9 @@ test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ pag
     };
     const dag = w.__basher_dag.getState();
     // Find the seed box id.
-    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'BoxMesh')?.[0];
-    if (!boxId) throw new Error('seed box not found');
+    // The seed cube's Object — the pose half of the object↔data split.
+    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Object')?.[0];
+    if (!boxId) throw new Error('seed box Object not found');
     // TimeSource (P2 may seed one — fall through if so).
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
@@ -138,8 +139,9 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
       };
     };
     const dag = w.__basher_dag.getState();
-    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'BoxMesh')?.[0];
-    if (!boxId) throw new Error('seed box not found');
+    // The seed cube's Object — the pose half of the object↔data split.
+    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Object')?.[0];
+    if (!boxId) throw new Error('seed box Object not found');
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
     }

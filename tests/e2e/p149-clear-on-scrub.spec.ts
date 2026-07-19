@@ -4,6 +4,7 @@
 // clear (the jitter guard, observed end-to-end).
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -75,7 +76,7 @@ test.describe('#149 clear-on-scrub (D-149-2)', () => {
       if (ak.enabled) ak.toggle();
     });
     await expect(page.getByTestId('inspector')).toBeVisible();
-    await page.getByTestId('inspector-section-toggle-transform').click();
+    await openInspectorSection(page, 'transform');
     const posX = page.getByTestId('inspector-vec-n_box-position-x');
     await posX.fill('9');
     await posX.press('Tab');

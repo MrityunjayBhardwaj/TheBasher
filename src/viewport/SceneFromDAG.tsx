@@ -49,7 +49,7 @@ import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
-import { useTransientEditStore } from '../app/stores/transientEditStore';
+import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import {
   channelValuesFromNodes,
@@ -79,6 +79,7 @@ import { CurveLineR } from './CurveLine';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
+import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -116,7 +117,6 @@ import type {
   AmbientLightValue,
   AreaLightValue,
   BakedMeshValue,
-  BoxMeshValue,
   CharacterValue,
   DirectionalLightValue,
   GltfAssetValue,
@@ -226,6 +226,16 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     ...stripTargetSet(state.nodes),
     ...driverTargetSet(state.nodes),
   ]);
+  // #398 — the object↔data reach for MEMBERSHIP. A data-param channel (material, size)
+  // targets the DATA node, because that is the node the inspector renders those rows
+  // against. But this set gates whether a scene child mounts its overlay at all, and it
+  // is keyed by the SCENE CHILD. Without this, an animated cube's Object is absent from
+  // the set, DirectChannelsR never mounts, and the viewport silently never repaints —
+  // no error anywhere, because "not animated" and "animated but unmounted" look the same.
+  for (const node of Object.values(state.nodes)) {
+    const dataId = linkedDataNodeId(state, node.id);
+    if (dataId && directChannelTargets.has(dataId)) directChannelTargets.add(node.id);
+  }
   const constraintTargets = constraintTargetSet(state.nodes);
   // #343 — the POSITION-band membership gate (Follow-Path only). Built once, O(1) per
   // light: a light mounts its per-frame position follower ONLY if it is followed, so a
@@ -841,6 +851,64 @@ function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
   }, [contribNodes, driverNodes, targetId, cache]);
 }
 
+/**
+ * #398 — the object↔data reach for the OVERLAY. Channels on a scene child's linked data
+ * node, with each `paramPath` rebased under `data.` so `overlayChannels` writes them where
+ * the renderer actually reads: `ObjectR` takes geometry and material off `value.data`, not
+ * off the Object's own params.
+ *
+ * The fold itself is untouched — this only changes which channels are collected and the path
+ * they land on, so a node with no linked data (every fused node, every Empty) returns an empty
+ * array and its overlay stays byte-identical.
+ */
+function useDataParamChannels(targetId: string): KeyframeChannelValue[] {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  const dataChannels = useLayeredChannels(dataId ?? '');
+  return useMemo(
+    () =>
+      dataId === null
+        ? EMPTY_CHANNELS
+        : dataChannels.map((ch) => ({ ...ch, paramPath: `data.${ch.paramPath}` })),
+    [dataId, dataChannels],
+  );
+}
+
+/** Stable empty array — a fused node must not churn the overlay memo every render (H48). */
+const EMPTY_CHANNELS: KeyframeChannelValue[] = [];
+
+/** #365 Slice 2 — the TRANSIENT twin of useDataParamChannels. A split cube's
+ *  material/size HELD edits (the paused, un-keyed orange state) live on its linked
+ *  BoxData, but DirectChannelsR overlays transients keyed by the OBJECT (`pickId`).
+ *  Fold the data node's held edits into the map, re-keyed to the Object with their
+ *  paramPath rebased under `data.`, so `overlayTransients(pickId)` writes them where
+ *  ObjectR reads (`value.data.*`) — the same rebasing #398 gave data-param channels.
+ *  Returns the ORIGINAL map ref for a fused node or when no data edit is held, so a
+ *  static/fused scene never churns the overlay memo during playback (H48). */
+function useDataParamTransients(
+  targetId: string,
+  edits: Map<string, TransientEdit>,
+): Map<string, TransientEdit> {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  return useMemo(() => {
+    if (dataId === null) return edits;
+    let hasDataEdit = false;
+    for (const e of edits.values()) {
+      if (e.nodeId === dataId) {
+        hasDataEdit = true;
+        break;
+      }
+    }
+    if (!hasDataEdit) return edits;
+    const merged = new Map(edits);
+    for (const e of edits.values()) {
+      if (e.nodeId !== dataId) continue;
+      const paramPath = `data.${e.paramPath}`;
+      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
+    }
+    return merged;
+  }, [dataId, edits, targetId]);
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -1391,8 +1459,6 @@ interface MeshChildProps {
 
 const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
-    case 'BoxMesh':
-      return <BoxMeshR value={value} override={override} />;
     case 'SphereMesh':
       return <SphereMeshR value={value} override={override} />;
     case 'BakedMesh':
@@ -1659,12 +1725,23 @@ function DirectChannelsR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channels = useLayeredChannels(pickId);
+  const ownChannels = useLayeredChannels(pickId);
+  // #398 — a cube's material/size channels live on its linked BoxData; fold them in
+  // rebased under `data.` so they land where ObjectR reads. Empty for a fused node.
+  const dataChannels = useDataParamChannels(pickId);
+  const channels = useMemo(
+    () => (dataChannels.length === 0 ? ownChannels : [...ownChannels, ...dataChannels]),
+    [ownChannels, dataChannels],
+  );
   // Subscribe the transient SET so a PAUSED edit re-applies (the AnimationLayerR
   // #149 B2c mechanism; safe under H48 — `edits` is a stable empty Map ref during
   // playback). overlayChannels runs FIRST (committed curve), then the transient
   // overlays on top (the live uncommitted edit), keyed by this node's id.
-  const transients = useTransientEditStore((s) => s.edits);
+  const rawTransients = useTransientEditStore((s) => s.edits);
+  // #365 Slice 2 — fold a split cube's data-node held edits in, rebased under `data.`
+  // (the transient twin of #398's data-param channels). Ref-stable for a fused node
+  // or when no data edit is held, so the useFrame gate below still bails (H48).
+  const transients = useDataParamTransients(pickId, rawTransients);
   const sample = (seconds: number): SceneObject =>
     overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
     value;
@@ -1947,25 +2024,8 @@ function usePrimitiveMaterial(
   return material;
 }
 
-function BoxMeshR({ value, override }: { value: BoxMeshValue; override?: MaterialValue }) {
-  const shading = useViewportStore((s) => s.shading);
-  const material = usePrimitiveMaterial(value.material, override, shading);
-  return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // v0.6 #1 (D-01) — apply the uniform TRS scale band, EXACTLY as TransformR
-      // does on its <group> (line 978). `size` (the geometry below) is the
-      // separate parametric capability; scale is the transform band the gizmo
-      // drives. `?? [1,1,1]` is the C-1 / V10/H14 consumer-side hydrate guard.
-      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-    >
-      <boxGeometry args={value.size as [number, number, number]} />
-      <primitive object={material} attach="material" />
-    </mesh>
-  );
-}
-
+// #365 Phase 5a (Slice 2): BoxMeshR is RETIRED — a box renders through <ObjectR> (the split's
+// Object → BoxData road, byte-identical). SphereMeshR keeps rendering the still-fused sphere.
 function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
   const shading = useViewportStore((s) => s.shading);
   const material = usePrimitiveMaterial(value.material, override, shading);

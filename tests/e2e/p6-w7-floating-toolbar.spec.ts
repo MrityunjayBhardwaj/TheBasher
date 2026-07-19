@@ -88,14 +88,15 @@ test('P6.W7#4 keyboard E sets rotate; R8 reflects it (V19 — keyboard ↔ R8 sy
 });
 
 test('P6.W7#5 R8 Home button reframes camera on selected node', async ({ page }) => {
-  // Pick a BoxMesh from the seed (P0 seeds at least one).
+  // Pick the seed cube's Object — the pose half of the object↔data split, which
+  // is what a camera reframe targets (its geometry lives on the linked BoxData).
   const id = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag!.getState().state.nodes;
-    for (const [nid, n] of Object.entries(nodes)) if (n.type === 'BoxMesh') return nid;
+    for (const [nid, n] of Object.entries(nodes)) if (n.type === 'Object') return nid;
     return null;
   });
-  expect(id, 'seed should contain a BoxMesh').not.toBeNull();
+  expect(id, 'seed should contain an Object').not.toBeNull();
 
   await page.evaluate((nodeId) => {
     const w = window as unknown as BasherWindow;

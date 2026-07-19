@@ -57,8 +57,6 @@ export function boxGeometryRef(size: Vec3): GeometryRef {
  */
 export function sourceGeometryRef(value: SceneChild): GeometryRef | null {
   switch (value.kind) {
-    case 'BoxMesh':
-      return boxGeometryRef(value.size);
     case 'SphereMesh':
       return {
         key: `sphere|${value.radius}|${value.widthSegments}|${value.heightSegments}`,
@@ -85,7 +83,6 @@ export function sourceGeometryRef(value: SceneChild): GeometryRef | null {
  */
 export function sourceTransform(value: SceneChild): MeshTransform {
   switch (value.kind) {
-    case 'BoxMesh':
     case 'SphereMesh':
     case 'BakedMesh':
     case 'ModifiedMesh':
@@ -101,7 +98,7 @@ export function sourceTransform(value: SceneChild): MeshTransform {
 
 /** The inline material a modifier inherits from its source value, or null. */
 export function sourceMaterial(value: SceneChild): InlineMaterialSpec | null {
-  if (value.kind === 'BoxMesh' || value.kind === 'SphereMesh') return value.material;
+  if (value.kind === 'SphereMesh') return value.material;
   if (value.kind === 'ModifiedMesh') return value.material;
   return null;
 }

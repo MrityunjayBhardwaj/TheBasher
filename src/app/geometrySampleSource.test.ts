@@ -14,6 +14,7 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCube } from '../test-utils/splitCube';
 import {
   geometrySampleRefOf,
   geometrySampleSourceOf,
@@ -26,18 +27,13 @@ const ctxAt = (seconds: number) => ({ time: { frame: 0, seconds, normalized: 0 }
  *  wired into the default scene's children. `nullPos` places the query point. */
 function buildTerrainState(nullPos: [number, number, number], terrainRotZ = 0): DagState {
   let state = buildDefaultDagState();
+  state = makeSplitCube(state, {
+    objectId: 'geo_terrain',
+    size: [20, 1, 20],
+    position: [0, 2, 0],
+    rotation: [0, 0, terrainRotZ],
+  }).state;
   const ops: Op[] = [
-    {
-      type: 'addNode',
-      nodeId: 'geo_terrain',
-      nodeType: 'BoxMesh',
-      params: {
-        size: [20, 1, 20],
-        position: [0, 2, 0],
-        rotation: [0, 0, terrainRotZ],
-        scale: [1, 1, 1],
-      },
-    },
     {
       type: 'connect',
       from: { node: 'geo_terrain', socket: 'out' },

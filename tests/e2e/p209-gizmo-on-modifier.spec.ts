@@ -48,17 +48,27 @@ interface ThreeObjLike {
 const BOX = 'giz_box';
 const MIR = 'giz_mirror';
 
-/** The world-space x of the rendered 48-vert mirror mesh (its inherited transform). */
-function mirrorMeshX(page: import('@playwright/test').Page): Promise<number | null> {
-  return page.evaluate(() => {
+// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
+// BoxMesh — a split Object as a modifier target is the undecided #377 path. The
+// mirror merges 2× the source, whatever the sphere's vert count is; the count is a
+// rendezvous marker to locate the rendered mesh, so it is derived at runtime rather
+// than hardcoded (the sphere-agnostic form of the old `=== 48`).
+
+/** The world-space x of the rendered mirror mesh (its inherited transform), located
+ *  by its runtime-derived merged vertex count. */
+function mirrorMeshX(
+  page: import('@playwright/test').Page,
+  mergedCount: number,
+): Promise<number | null> {
+  return page.evaluate((want) => {
     const w = window as unknown as GizWindow;
     const scene = w.__basher_three.getState().scene;
     let x: number | null = null;
     scene?.traverse((o) => {
-      if (o.type === 'Mesh' && o.geometry?.attributes?.position?.count === 48) x = o.position.x;
+      if (o.type === 'Mesh' && o.geometry?.attributes?.position?.count === want) x = o.position.x;
     });
     return x;
-  });
+  }, mergedCount);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -97,8 +107,8 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
           {
             type: 'addNode',
             nodeId: box,
-            nodeType: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [1, 0, 0] },
+            nodeType: 'SphereMesh',
+            params: { radius: 0.5, position: [1, 0, 0] },
           },
           {
             type: 'addNode',
@@ -125,10 +135,16 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
     { box: BOX, mir: MIR },
   );
 
+  // Wait for the mirror to build, then capture its merged vertex count (2× the
+  // sphere source) as the rendezvous marker for locating the rendered mesh.
   await page.waitForFunction(
-    (mir) => (window as unknown as GizWindow).__basher_modified_vertex_count(mir) === 48,
+    (mir) => (window as unknown as GizWindow).__basher_modified_vertex_count(mir) != null,
     MIR,
     { timeout: 15_000 },
+  );
+  const mergedCount = await page.evaluate(
+    (mir) => (window as unknown as GizWindow).__basher_modified_vertex_count(mir)!,
+    MIR,
   );
 
   // (a) The gizmo MOUNTED (it was inert on a modifier before) and seeded at the
@@ -170,5 +186,5 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
 
   // …and the rendered modified mesh followed (it inherits the base transform):
   // base moved +4 in x → the mesh's rendered x moved with it.
-  await expect.poll(() => mirrorMeshX(page).then((x) => x && Math.round(x))).toBe(5);
+  await expect.poll(() => mirrorMeshX(page, mergedCount).then((x) => x && Math.round(x))).toBe(5);
 });

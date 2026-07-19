@@ -1,6 +1,12 @@
+// #365 Phase 5a (Slice 2): BoxMesh is a MIGRATION-ONLY RELIC. The fused box value kind is
+// retired (a box is now an Object → BoxData split); this node type stays REGISTERED solely so
+// the load-time migration (migrations.ts reads only `version` + `migrations`) can normalize an
+// old fused box through its version ladder before splitting it. Nothing constructs or evaluates
+// a BoxMesh at runtime any more — `evaluate` is a retired sentinel, and there is no value kind
+// left for it to return.
+
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { BoxMeshValue } from './types';
 import {
   hydrateInlineMaterial,
   migrateInlineMaterialV2toV3,
@@ -25,7 +31,7 @@ export const BoxMeshParams = z.object({
 });
 export type BoxMeshParams = z.infer<typeof BoxMeshParams>;
 
-export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
+export const BoxMeshNode: NodeDefinition<BoxMeshParams, never> = {
   type: 'BoxMesh',
   version: 4,
   pure: true,
@@ -58,19 +64,10 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, BoxMeshValue> = {
       material: hydrateInlineMaterial((old as { material?: unknown }).material, BOX_DEFAULT_COLOR),
     }),
   },
-  evaluate(params) {
-    return {
-      kind: 'BoxMesh',
-      size: params.size,
-      position: params.position,
-      rotation: params.rotation,
-      // C-1 (V10/H14 two-layer guard): the hydrate seam can bypass paramSchema
-      // parse (in-memory state surgery / test fixtures / agent ops), so default
-      // identity HERE too, not just in the schema + migration.
-      scale: params.scale ?? [1, 1, 1],
-      // v0.6 #2 (#178) layer 3 — hydrate the inline material with `?? default`
-      // per field (dual-accepts a legacy top-level color mid-migration).
-      material: hydrateInlineMaterial(params.material, BOX_DEFAULT_COLOR),
-    };
+  // RETIRED (#365 Phase 5a Slice 2). A box is an Object → BoxData split; old saves are
+  // migrated on load, so no live BoxMesh node ever reaches evaluate. It is kept only as a
+  // hard fail-fast: if one somehow does, that is a migration bug, not a silent null render.
+  evaluate(): never {
+    throw new Error('BoxMesh is retired; projects migrate to Object+BoxData on load');
   },
 };

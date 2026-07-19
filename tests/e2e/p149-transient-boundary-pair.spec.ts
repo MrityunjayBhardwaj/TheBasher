@@ -9,6 +9,7 @@
 // __basher_mesh_material; side B calls the resolver via __basher_evaluated_*.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface Vec3Tuple {
   0: number;
@@ -78,13 +79,22 @@ async function seedWrappedAnimatedBox(
     const sceneId = findType('Scene');
     if (!sceneId) throw new Error('no Scene');
     const boxId = 'n_box';
+    // #365 Slice 2: the seed cube is a split Object → BoxData. Transform params
+    // (position/rotation/scale) live on the Object; geometry + material params
+    // (size/material.*) live on the BoxData. Route the channel to the half that
+    // owns the param (mirrors migrations.isDataParamPath / §10.4 channel targeting)
+    // — a channel aimed at the wrong half silently animates nothing.
+    const p = chan.paramPath;
+    const isDataParam =
+      p === 'size' || p.startsWith('size.') || p.startsWith('size[') || p.startsWith('material');
+    const target = isDataParam ? 'n_box_data' : boxId;
     dispatch({
       type: 'addNode',
       nodeId: 'seed_ch',
       nodeType: chan.nodeType,
       params: {
         name: 'seed_ch',
-        target: boxId,
+        target,
         paramPath: chan.paramPath,
         keyframes: chan.keyframes,
       },
@@ -121,7 +131,7 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     // path (VectorComponent → routeAnimatedGrab → transient, since paused +
     // animated + Auto-Key OFF). At t=1 the curve x=2, so editing x→9 holds [9,*,*].
     await expect(page.getByTestId('inspector')).toBeVisible();
-    await page.getByTestId('inspector-section-toggle-transform').click();
+    await openInspectorSection(page, 'transform');
     const posX = page.getByTestId('inspector-vec-n_box-position-x');
     await expect(posX).toBeVisible();
     await posX.fill('9');
@@ -202,9 +212,12 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     expect(String(noTransient.sideB).toLowerCase()).toBe(String(noTransient.sideA).toLowerCase());
 
     // (b) WITH a transient — set a held edit, the render + read both overlay it.
+    // #365 Slice 2: material lives on the split cube's BoxData, so the transient is
+    // keyed by the data node (like the channel above); the render/read seams keyed
+    // by the Object reach through `data` to overlay it (part (a) proves the reach).
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
-      w.__basher_transient!.getState().set('n_box', 'material.base.color', '#ff0000');
+      w.__basher_transient!.getState().set('n_box_data', 'material.base.color', '#ff0000');
     });
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;

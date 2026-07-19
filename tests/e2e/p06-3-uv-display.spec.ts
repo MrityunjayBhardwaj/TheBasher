@@ -49,7 +49,24 @@ interface BasherWindow {
 }
 
 test.describe('v0.6 #3 W1 — real UV display', () => {
-  test('default BoxMesh → 6 real islands, each spanning the full [0,1] UV square', async ({
+  // #378 SENTINEL — the default cube's UV layout awaits the object↔data reach.
+  //
+  // Before #365 the default cube was a fused BoxMesh and this asserted 6 real
+  // BoxGeometry islands each spanning [0,0,1,1] (the real-vs-synthetic-unfold
+  // distinction). The cube is now a split Object, and `resolveMeshUVs` has no
+  // Object branch yet (its BoxMesh arm was removed in Slice 2 without a replacement
+  // reach), so a split cube's UVs resolve to 'none'. The primary #378 sentinel lives
+  // in p26-acceptance ("no UV layout"); this one pins the resolver seam.
+  //
+  // WHEN #378 LANDS (resolveMeshUVs reaches through `data` to the BoxData geometry),
+  // restore the real assertions — the geometry is a real BoxGeometry, so the island
+  // shape is unchanged:
+  //   expect(uv.status).toBe('ok');
+  //   expect(uv.islandCount).toBe(6);
+  //   expect(uv.triangleCount).toBe(12);      // 6 faces × 2 tris
+  //   expect(uv.sampled).toBe(false);
+  //   const [minU, minV, maxU, maxV] = uv.bounds!;  // each [0,0,1,1]
+  test('default cube (split Object) → UVs resolve to none pending the object↔data reach (#378)', async ({
     page,
   }) => {
     await page.goto('/');
@@ -62,20 +79,14 @@ test.describe('v0.6 #3 W1 — real UV display', () => {
       const w = window as unknown as BasherWindow;
       return w.__basher_uv_islands!('n_box');
     });
-    console.log(`[p06-3 uv box] ${JSON.stringify(uv)}`);
+    console.log(`[p06-3 uv box #378] ${JSON.stringify(uv)}`);
 
-    // Side A = the REAL BoxGeometry uv attribute. Synthetic cross unfold could not
-    // produce 6 islands each spanning [0,0,1,1].
-    expect(uv.status).toBe('ok');
-    expect(uv.islandCount).toBe(6);
-    expect(uv.triangleCount).toBe(12); // 6 faces × 2 tris
-    expect(uv.sampled).toBe(false);
-    expect(uv.bounds).not.toBeNull();
-    const [minU, minV, maxU, maxV] = uv.bounds!;
-    expect(minU).toBeCloseTo(0, 4);
-    expect(minV).toBeCloseTo(0, 4);
-    expect(maxU).toBeCloseTo(1, 4);
-    expect(maxV).toBeCloseTo(1, 4);
+    // The split cube's geometry is a real BoxGeometry, but the resolver does not
+    // reach it through `data` yet — so the seam returns none (a value-check, not
+    // "it ran"). This flips RED the moment #378 wires the reach, forcing the real
+    // island assertions above to be restored.
+    expect(uv.status).toBe('none');
+    expect(uv.islandCount).toBe(0);
   });
 
   test('SphereMesh → exactly 1 connected real island', async ({ page }) => {

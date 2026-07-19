@@ -123,37 +123,8 @@ export function resolveEvaluatedMesh(
   const node = state.nodes[selectedId];
   if (!node) return null;
 
-  if (node.type === 'BoxMesh') {
-    const p = node.params as {
-      size?: unknown;
-      position?: unknown;
-      rotation?: unknown;
-      scale?: unknown;
-      material?: unknown;
-    };
-    if (!isVec3(p.size) || !isVec3(p.position) || !isVec3(p.rotation)) return null;
-    const size = p.size;
-    const geometry: GeometryRef = {
-      key: `box|${size[0]},${size[1]},${size[2]}`,
-      kind: 'box',
-      descriptor: { kind: 'box', size },
-    };
-    const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
-      position: p.position,
-      rotation: p.rotation,
-      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard (fallback base)
-    });
-    return {
-      geometry,
-      uvs: resolveRegistryUVs(geometry), // v0.6 #3 — real box UV islands (sync)
-      // Layer-4 consumer: hydrate to a COMPLETE IR so the renderer (W2) never
-      // reads an undefined sub-field. isMaterialSpec dual-accepts legacy/widened.
-      material: isMaterialSpec(p.material)
-        ? hydrateInlineMaterial(p.material, FALLBACK_MATERIAL_COLOR)
-        : null,
-      transform,
-    };
-  }
+  // #365 Phase 5a (Slice 2): the fused `BoxMesh` branch is gone — a box is a split Object,
+  // resolved by the `node.type === 'Object'` branch below (reach through `data` to the BoxData).
 
   if (node.type === 'SphereMesh') {
     const p = node.params as {

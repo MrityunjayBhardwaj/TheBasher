@@ -1,12 +1,15 @@
 // #361 — Object↔data split, Phase 1. The byte-identical pin.
 //
-// An `Object → BoxData` pair must render byte-identically to a fused `BoxMesh`.
-// "Render" reduces to two facts the renderer consumes: the geometry HANDLE (a
-// deterministic `GeometryRef` key → one registry build → the same BufferGeometry)
-// and the material spec (→ the same three.js material). This test pins both at the
-// value level through the real DAG evaluate path, plus that the Object composes
-// its TRS over the data. If a later change makes the Object build a different
-// geometry key or a different material than the fused box, this goes red.
+// An `Object → BoxData` pair must build the SAME geometry handle + material spec the box
+// always had. "Render" reduces to two facts the renderer consumes: the geometry HANDLE (a
+// deterministic `GeometryRef` key → one registry build → the same BufferGeometry) and the
+// material spec (→ the same three.js material). This test pins both at the value level
+// through the real DAG evaluate path, plus that the Object composes its TRS over the data.
+//
+// #365 Phase 5a (Slice 2): the fused `BoxMesh` value kind is retired, so the pin is now
+// against the CANONICAL box→handle projection (`boxGeometryRef` — the one the fused box also
+// used) and the canonical OpenPBR default material, not a live fused evaluate. Old-save
+// byte-identity through the migration is proven separately by migrations.test.ts.
 //
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §7 (Phase 1) / §9 (test strategy).
 
@@ -14,9 +17,14 @@ import { describe, it, expect } from 'vitest';
 import { applyOp, emptyDagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
 import { registerAllNodes } from './registerAll';
-import { sourceGeometryRef } from '../app/modifierGeometry';
+import { boxGeometryRef } from '../app/modifierGeometry';
+import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
 import type { DagState, Op } from '../core/dag/types';
-import type { BoxMeshValue, MeshDataValue, ObjectValue } from './types';
+import type { MeshDataValue, ObjectValue } from './types';
+
+// The box's default color — the value BoxData (and the retired fused box) seed the OpenPBR IR
+// with. Kept in sync with BoxData.ts / the former BoxMesh.ts.
+const BOX_DEFAULT_COLOR = '#5af07a';
 
 registerAllNodes();
 
@@ -30,8 +38,7 @@ function build(ops: Op[]): DagState {
 }
 
 describe('object↔data split (#361) — Object+BoxData ≡ a fused BoxMesh', () => {
-  it('the Object→BoxData geometry handle is identical to the fused box handle', () => {
-    // The data half.
+  it('the Object→BoxData geometry handle is the canonical box handle', () => {
     const dataState = build([
       { type: 'addNode', nodeId: 'd', nodeType: 'BoxData', params: { size: SIZE } },
       { type: 'addNode', nodeId: 'o', nodeType: 'Object', params: { position: POS } },
@@ -42,33 +49,27 @@ describe('object↔data split (#361) — Object+BoxData ≡ a fused BoxMesh', ()
     const data = obj.data as MeshDataValue;
     expect(data.kind).toBe('MeshData');
 
-    // The fused box, same size — its downstream geometry handle is what the
-    // renderer/registry would build. sourceGeometryRef is the ONE box→handle
-    // projection both roads share.
-    const fusedState = build([
-      { type: 'addNode', nodeId: 'b', nodeType: 'BoxMesh', params: { size: SIZE } },
-    ]);
-    const box = evaluate(fusedState, 'b').value as BoxMeshValue;
-    const fusedRef = sourceGeometryRef(box);
-
-    // Identical key ⇒ one shared registry build ⇒ byte-identical BufferGeometry.
-    expect(data.geometry.key).toBe(fusedRef?.key);
-    expect(data.geometry).toEqual(fusedRef);
+    // boxGeometryRef is the ONE box→handle projection the renderer/registry builds from —
+    // the same one the retired fused box used. Identical key ⇒ one shared registry build ⇒
+    // byte-identical BufferGeometry.
+    const canonicalRef = boxGeometryRef(SIZE);
+    expect(data.geometry.key).toBe(canonicalRef.key);
+    expect(data.geometry).toEqual(canonicalRef);
   });
 
-  it('the Object→BoxData material equals the fused box material', () => {
+  it('the Object→BoxData material is the canonical OpenPBR default', () => {
     const dataState = build([
       { type: 'addNode', nodeId: 'd', nodeType: 'BoxData', params: { size: SIZE } },
     ]);
     const data = evaluate(dataState, 'd').value as MeshDataValue;
 
-    const fusedState = build([
-      { type: 'addNode', nodeId: 'b', nodeType: 'BoxMesh', params: { size: SIZE } },
-    ]);
-    const box = evaluate(fusedState, 'b').value as BoxMeshValue;
-
-    // Same OpenPBR schema, same default color, same hydrate — byte-identical spec.
-    expect(data.material).toEqual(box.material);
+    // The same OpenPBR schema + hydrate the box always used (formerly BoxMesh, now BoxData) —
+    // a complete, byte-identical inline material spec.
+    const expectedMaterial = hydrateInlineMaterial(
+      openpbrMaterialSchema(BOX_DEFAULT_COLOR).parse(undefined),
+      BOX_DEFAULT_COLOR,
+    );
+    expect(data.material).toEqual(expectedMaterial);
   });
 
   it('the Object owns the transform and points at its data (posable by construction)', () => {

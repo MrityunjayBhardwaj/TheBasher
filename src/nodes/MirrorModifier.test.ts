@@ -1,5 +1,5 @@
 // MirrorModifier — the second geometry MODIFIER (SOP), epic #201 / #209, V58.
-// Proves: a box source → a ModifiedMesh carrying a `mirror` geometry handle +
+// Proves: a sphere source → a ModifiedMesh carrying a `mirror` geometry handle +
 // INHERITED transform/material; mute = identity passthrough; a non-leaf source
 // passes through; and — the unit-level boundary-pair — the `mirror` geometry KEY
 // the node's evaluate emits is BYTE-IDENTICAL to the key the read-side
@@ -17,17 +17,20 @@ import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
 import { hydrateInlineMaterial } from './materialSchema';
 import { MirrorModifierNode } from './MirrorModifier';
-import type { BoxMeshValue, ModifiedMeshValue, SceneChild, TransformValue } from './types';
+import type { SphereMeshValue, ModifiedMeshValue, SceneChild, TransformValue } from './types';
 
-const BOX_ID = 'n_box';
 const MOD_ID = 'n_mirror';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
-function boxValue(position: [number, number, number]): BoxMeshValue {
+// #365 Phase 5a (Slice 2): the fused box value kind retired; SphereMesh is the still-fused
+// leaf-mesh source the modifier consumes. The mirror's assertions are geometry-kind-agnostic.
+function sphereValue(position: [number, number, number]): SphereMeshValue {
   return {
-    kind: 'BoxMesh',
-    size: [1, 1, 1],
+    kind: 'SphereMesh',
+    radius: 1,
+    widthSegments: 8,
+    heightSegments: 6,
     position,
     rotation: [0, 0, 0],
     scale: [1, 1, 1],
@@ -52,8 +55,8 @@ beforeEach(() => {
 });
 
 describe('MirrorModifier.evaluate', () => {
-  it('a box source → a ModifiedMesh with a mirror geometry handle + inherited TRS/material', () => {
-    const src = boxValue([3, 0, 0]);
+  it('a sphere source → a ModifiedMesh with a mirror geometry handle + inherited TRS/material', () => {
+    const src = sphereValue([3, 0, 0]);
     const out = evalMod({ axis: 'x', muted: false }, src) as ModifiedMeshValue;
     expect(out.kind).toBe('ModifiedMesh');
     expect(out.geometry.kind).toBe('mirror');
@@ -64,7 +67,7 @@ describe('MirrorModifier.evaluate', () => {
   });
 
   it('the axis param feeds the descriptor + key (distinct axes → distinct keys)', () => {
-    const src = boxValue([0, 0, 0]);
+    const src = sphereValue([0, 0, 0]);
     const x = evalMod({ axis: 'x', muted: false }, src) as ModifiedMeshValue;
     const y = evalMod({ axis: 'y', muted: false }, src) as ModifiedMeshValue;
     expect(y.geometry.descriptor).toMatchObject({ kind: 'mirror', axis: 'y' });
@@ -72,7 +75,7 @@ describe('MirrorModifier.evaluate', () => {
   });
 
   it('muted → identity passthrough (byte-identical to no modifier — the stack mute-bypass)', () => {
-    const src = boxValue([0, 0, 0]);
+    const src = sphereValue([0, 0, 0]);
     const out = evalMod({ axis: 'x', muted: true }, src);
     expect(out).toBe(src); // same reference — no ModifiedMesh produced
   });
@@ -95,8 +98,23 @@ describe('MirrorModifier.evaluate', () => {
 });
 
 describe('MirrorModifier — read-side parity (boundary-pair)', () => {
-  it('resolveEvaluatedMesh derives the SAME mirror geometry key the evaluate path emits', () => {
+  // #365 Phase 5a (Slice 2): the source is a still-fused SphereMesh (the box value kind
+  // retired; a modifier on a split Object is the deferred modifier-move follow-up). The
+  // evaluate↔read byte-identity is pinned on the primitive that still has a fused value.
+  const SPHERE_ID = 'n_sphere';
+  function withSphere() {
     let state = buildDefaultDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: SPHERE_ID,
+      nodeType: 'SphereMesh',
+      params: { radius: 1, widthSegments: 8, heightSegments: 6 },
+    }).next;
+    return state;
+  }
+
+  it('resolveEvaluatedMesh derives the SAME mirror geometry key the evaluate path emits', () => {
+    let state = withSphere();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: MOD_ID,
@@ -105,7 +123,7 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
+      from: { node: SPHERE_ID, socket: 'out' },
       to: { node: MOD_ID, socket: 'target' },
     }).next;
 
@@ -116,13 +134,13 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
     expect(resolved!.uvs).not.toBeNull();
     expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
 
-    // The evaluate path projects the SAME box (size [1,1,1]) with the same axis.
-    const evald = evalMod({ axis: 'z', muted: false }, boxValue([0, 0, 0])) as ModifiedMeshValue;
+    // The evaluate path projects the SAME sphere with the same axis.
+    const evald = evalMod({ axis: 'z', muted: false }, sphereValue([0, 0, 0])) as ModifiedMeshValue;
     expect(resolved!.geometry.key).toBe(evald.geometry.key); // byte-identical → no drift
   });
 
   it('a muted modifier resolves to the source mesh on the read side too', () => {
-    let state = buildDefaultDagState();
+    let state = withSphere();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: MOD_ID,
@@ -131,10 +149,10 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: BOX_ID, socket: 'out' },
+      from: { node: SPHERE_ID, socket: 'out' },
       to: { node: MOD_ID, socket: 'target' },
     }).next;
     const resolved = resolveEvaluatedMesh(state, MOD_ID, ctx);
-    expect(resolved!.geometry.kind).toBe('box'); // passthrough — the source's own handle
+    expect(resolved!.geometry.kind).toBe('sphere'); // passthrough — the source's own handle
   });
 });

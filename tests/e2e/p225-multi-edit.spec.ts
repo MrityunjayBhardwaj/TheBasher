@@ -8,6 +8,7 @@
 // node's param in the live DAG — they must match, and one undo reverts all.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_dag: {
@@ -34,28 +35,26 @@ test.beforeEach(async ({ page }) => {
     { timeout: 15000 },
   );
   // Add a second box at a different x so the shared field is "mixed".
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_box_b',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_box_b', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-      ],
-      'user',
-      'add second box',
-    );
-  });
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_box_b', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'user',
+        'add second box',
+      );
+    },
+    { ops: splitCubeOps({ objectId: 'n_box_b', position: [3, 0, 0] }) },
+  );
 });
 
 test('N selected → shared edit sets the value on all and undo reverts the batch', async ({

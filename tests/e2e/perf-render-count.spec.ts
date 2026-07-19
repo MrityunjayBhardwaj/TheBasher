@@ -21,6 +21,7 @@
 //      src/perf/renderCounter.ts, [[H48]] [[B13]] [[H40]]. Branch ux-overhall.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 // Plain glTF (NOT cube-draco — the Draco decoder fails under the test route, so the
 // asset would throw past the AssetErrorBoundary and never mount/subscribe).
@@ -63,7 +64,7 @@ test('H48/B13 — unrelated edit re-renders a glTF asset 0× (own-node edit stil
 }) => {
   // Mount a glTF asset + an UNRELATED sibling box under the scene.
   await page.evaluate(
-    ({ ref }) => {
+    ({ ref, cubeOps }) => {
       const dag = (window as unknown as RcWindow).__basher_dag.getState();
       const sceneRef = dag.state.outputs.scene ?? dag.state.outputs.render;
       if (!sceneRef) throw new Error('no scene output');
@@ -74,7 +75,7 @@ test('H48/B13 — unrelated edit re-renders a glTF asset 0× (own-node edit stil
           from: { node: 'rc_gltf', socket: 'out' },
           to: { node: sceneRef.node, socket: 'children' },
         },
-        { type: 'addNode', nodeId: 'rc_box', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
+        ...(cubeOps as DagOp[]),
         {
           type: 'connect',
           from: { node: 'rc_box', socket: 'out' },
@@ -84,7 +85,7 @@ test('H48/B13 — unrelated edit re-renders a glTF asset 0× (own-node edit stil
       if (dag.dispatchAtomic) dag.dispatchAtomic(ops, 'user', 'rc setup');
       else ops.forEach((op) => dag.dispatch(op));
     },
-    { ref: ASSET_REF },
+    { ref: ASSET_REF, cubeOps: splitCubeOps({ objectId: 'rc_box' }) },
   );
 
   // Wait for GltfAssetR to mount, then let its render count STABILISE (a late

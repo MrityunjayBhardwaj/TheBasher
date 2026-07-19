@@ -68,7 +68,9 @@ async function addRigLight(page: import('@playwright/test').Page, id: string): P
         // island (floats over centre) and the camera-helper frustum lines (cross the
         // origin) — so the projected click lands on solid cube body, not chrome.
         { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, 4, 0] },
-        { type: 'setParam', nodeId: 'n_box', paramPath: 'size', value: [3, 3, 3] },
+        // #365 Slice 2: `size` lives on the split cube's BoxData; a setParam aimed at
+        // the Object (`n_box`) is silently rejected, so target `n_box_data`.
+        { type: 'setParam', nodeId: 'n_box_data', paramPath: 'size', value: [3, 3, 3] },
         {
           type: 'addNode',
           nodeId: id,

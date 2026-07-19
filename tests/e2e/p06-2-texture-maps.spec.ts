@@ -5,6 +5,12 @@
 // OPFS → renders (hasMap + mapImageOk). FALSIFY: break the colorspace assignment
 // → the srgb assertion goes RED (done in the W7 sweep).
 
+// #365 Slice 2: the default box is a split Object (`n_box`) → BoxData
+// (`n_box_data`) which owns the material. Selecting the Object makes the inspector
+// render the material (and its map rows) keyed to the DATA node, so the map-file
+// input and the asset-error row live on `n_box_data`; the rendered mesh read
+// (`__basher_mesh_material`) stays on the Object `n_box`.
+
 import { expect, test } from './_fixtures';
 
 interface MeshMaterial {
@@ -27,7 +33,7 @@ async function selectBoxAndOpenMaterial(page: import('@playwright/test').Page) {
     (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
-  const editor = page.getByTestId('inspector-material-editor-n_box');
+  const editor = page.getByTestId('inspector-material-editor-n_box_data');
   if (!(await editor.isVisible())) {
     await page.getByTestId('inspector-section-toggle-material').click();
   }
@@ -42,7 +48,7 @@ test.describe('v0.6 #2 W5 — texture maps on the real material', () => {
 
     // Pick a real PNG into the albedo slot (the hidden file input is set directly).
     await page
-      .getByTestId('inspector-map-file-n_box-albedo')
+      .getByTestId('inspector-map-file-n_box_data-albedo')
       .setInputFiles('public/fixtures/multifile/flat/texture.png');
 
     // The renderer loads the persisted map back from OPFS via useBakedTexture —
@@ -67,7 +73,7 @@ test.describe('v0.6 #2 W5 — texture maps on the real material', () => {
 
     // 4 garbage bytes as a .png → TextureLoader decode fails → MapRow catches and
     // reports to assetErrorStore → the AssetErrorBanner renders the failure row.
-    await page.getByTestId('inspector-map-file-n_box-albedo').setInputFiles({
+    await page.getByTestId('inspector-map-file-n_box_data-albedo').setInputFiles({
       name: 'bad.png',
       mimeType: 'image/png',
       buffer: Buffer.from([1, 2, 3, 4]),
@@ -75,6 +81,6 @@ test.describe('v0.6 #2 W5 — texture maps on the real material', () => {
 
     const banner = page.getByTestId('asset-error-banner');
     await expect(banner).toBeVisible();
-    await expect(page.getByTestId('asset-error-row-n_box:albedo')).toBeVisible();
+    await expect(page.getByTestId('asset-error-row-n_box_data:albedo')).toBeVisible();
   });
 });

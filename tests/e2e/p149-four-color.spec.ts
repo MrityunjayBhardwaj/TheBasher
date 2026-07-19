@@ -5,6 +5,7 @@
 // at once. Orange clears on commit (now a real key) AND on scrub (discarded).
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -60,7 +61,7 @@ async function seedTwoBandAnimatedBox(page: import('@playwright/test').Page) {
     (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box'),
   );
   await expect(page.getByTestId('inspector')).toBeVisible();
-  await page.getByTestId('inspector-section-toggle-transform').click();
+  await openInspectorSection(page, 'transform');
 }
 
 const diamond = (page: import('@playwright/test').Page, band: string) =>

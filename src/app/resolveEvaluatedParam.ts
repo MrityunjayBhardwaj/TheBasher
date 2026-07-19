@@ -29,6 +29,7 @@ import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { readBaseParam } from './readBaseParam';
+import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 interface ChannelParams {
@@ -51,11 +52,13 @@ interface ChannelParams {
  */
 export function resolveEvaluatedParam(
   state: DagState,
-  nodeId: string,
+  requestedNodeId: string,
   paramPath: string,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): { value: unknown } | null {
+  const nodeId = requestedNodeId;
+
   // 1. Transient wins (the held edit — same precedence as render + transform read).
   const transient = useTransientEditStore.getState().get(nodeId, paramPath);
   if (transient) return { value: transient.value };
@@ -112,8 +115,25 @@ export function resolveEvaluatedParam(
     if (v.paramPath === paramPath) matches.push(v);
   }
 
-  // 3. No channel/driver → base (caller reads node.params[paramPath]).
-  if (matches.length === 0) return null;
+  // 3. No channel/driver on the requested node → before giving up, reach through the
+  //    object↔data split (#398). A cube's `material`/`size` live on its linked data node,
+  //    and the inspector renders those rows against THAT node, so a keyed material channel
+  //    targets the data half while a caller naturally names the cube (the Object). Without
+  //    this reach the render overlays the animated value and every read surface reports the
+  //    static base — the two roads disagree (H40).
+  //
+  //    Deliberately a FALLBACK rather than an up-front redirect: a channel authored against
+  //    the Object with a data paramPath must keep resolving too (both conventions exist, and
+  //    up-front redirection silently breaks the first). Everything above is untouched, so a
+  //    node that resolves on its own — every fused node — is byte-identical.
+  if (matches.length === 0) {
+    const paramRoot = paramPath.split('.')[0] ?? paramPath;
+    const ownerId = resolveDataParamOwner(state, requestedNodeId, paramRoot);
+    if (ownerId !== null && ownerId !== requestedNodeId) {
+      return resolveEvaluatedParam(state, ownerId, paramPath, ctx, cache);
+    }
+    return null;
+  }
 
   // Single channel — the pre-#283 first-match contract, byte-identical.
   // #283 Phase 3: a crossfading match (carries `influenceAt`) MUST fall through to

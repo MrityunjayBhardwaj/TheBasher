@@ -13,6 +13,7 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCube } from '../test-utils/splitCube';
 import {
   trackToForTarget,
   constraintTargetSet,
@@ -251,13 +252,12 @@ describe('resolveConstraintRotation — node-ref target', () => {
       paramPath: 'position',
       value: [0, 0, 0],
     }).next;
+    state = makeSplitCube(state, {
+      objectId: TARGET_ID,
+      position: [10, 0, 0],
+      size: [1, 1, 1],
+    }).state;
     const ops: Op[] = [
-      {
-        type: 'addNode',
-        nodeId: TARGET_ID,
-        nodeType: 'BoxMesh',
-        params: { position: [10, 0, 0], size: [1, 1, 1] },
-      },
       {
         type: 'connect',
         from: { node: TARGET_ID, socket: 'out' },

@@ -13,6 +13,7 @@
 // the all-static control (test 3) stays green.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 type V3 = [number, number, number];
 
@@ -49,14 +50,9 @@ async function boot(page: import('@playwright/test').Page) {
 /** Add a static second box. With `follow`, also put n_box on an offset+rotated+scaled curve. */
 async function scene(page: import('@playwright/test').Page, follow: boolean) {
   await page.evaluate(
-    ({ follow, staticPos }) => {
+    ({ follow, cubeOps }) => {
       const ops: unknown[] = [
-        {
-          type: 'addNode',
-          nodeId: 'n_box_b',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: staticPos, rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
+        ...cubeOps,
         {
           type: 'connect',
           from: { node: 'n_box_b', socket: 'out' },
@@ -99,7 +95,7 @@ async function scene(page: import('@playwright/test').Page, follow: boolean) {
         .getState()
         .dispatchAtomic(ops, 'user', 'p348 scene');
     },
-    { follow, staticPos: STATIC_BOX },
+    { follow, cubeOps: splitCubeOps({ objectId: 'n_box_b', position: STATIC_BOX }) },
   );
   await page.waitForTimeout(500);
   await page.evaluate(() =>

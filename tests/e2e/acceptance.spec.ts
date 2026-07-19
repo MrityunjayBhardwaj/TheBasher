@@ -6,6 +6,7 @@
 // individual tests assume http://localhost:5173 is up.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,11 +37,7 @@ test.beforeEach(async ({ page }) => {
  *  only click when the body isn't already shown — a blind toggle would COLLAPSE
  *  an already-expanded section after reload. */
 async function ensureCameraTransformExpanded(page: import('@playwright/test').Page) {
-  const body = page.getByTestId('inspector-section-body-transform');
-  if (!(await body.isVisible().catch(() => false))) {
-    await page.getByTestId('inspector-section-toggle-transform').click();
-  }
-  await expect(body).toBeVisible();
+  await openInspectorSection(page, 'transform');
 }
 
 test('#1 dev server boots in <5s and renders the boot status', async ({ page }) => {
@@ -183,12 +180,12 @@ test('#5 inspector edit propagates to viewport within 16ms (DAG dispatch latency
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
   await page.getByTestId('scene-tree-row-n_box').click();
-  // P6 W4 — BoxMesh declares ['mesh', 'transform', 'material']. Mesh is
-  // the primary domain (expanded by default); Transform/Material are
-  // default-collapsed per §5.8. Position lives in Transform, so expand
-  // it before querying inspector-vec-n_box-position-x.
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+  // #365 Slice 2 — the seed cube is a split Object declaring
+  // ['transform', 'constraint', 'driver'], so Transform is the primary domain
+  // (default-EXPANDED per §5.8). Position lives in Transform; open it
+  // idempotently (a blind toggle would collapse it) before querying
+  // inspector-vec-n_box-position-x.
+  await openInspectorSection(page, 'transform');
   // Time the dispatch round-trip: instrumentation reads from useDagStore in
   // Inspector's onChange (synchronous). Actual paint timing on the viewport
   // is gated by the next rAF; we measure dispatch + state propagation.

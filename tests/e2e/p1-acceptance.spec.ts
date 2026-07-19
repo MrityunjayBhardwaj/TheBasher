@@ -235,10 +235,14 @@ test('P1#3 ScatterNode produces deterministic placement; setParam(density) chang
     w.__basher_dag!.getState().dispatchAtomic(
       [
         {
+          // #365 Slice 2: the scattered asset is a fused SphereMesh, not the retired
+          // fused BoxMesh — a split Object as a Scatter source is the undecided #377
+          // path. This test only checks Scatter determinism + setParam, which is
+          // geometry-agnostic.
           type: 'addNode',
           nodeId: 'p1_box',
-          nodeType: 'BoxMesh',
-          params: { size: [0.3, 0.3, 0.3] },
+          nodeType: 'SphereMesh',
+          params: { radius: 0.15 },
         },
         {
           type: 'addNode',

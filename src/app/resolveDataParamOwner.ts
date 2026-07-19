@@ -17,6 +17,26 @@
 import type { DagState } from '../core/dag/state';
 
 /**
+ * The id of the data node `id` points at through its `data` input, or null when it points at
+ * nothing (a fused node, or an Empty). Param-agnostic — use this when you need the linked data
+ * node itself rather than the owner of one particular param.
+ *
+ * #398: the render's channel overlay needs this. A data-param channel targets the DATA node
+ * (the inspector renders those rows keyed to it), while the overlay is keyed by the SCENE
+ * CHILD — so without this reach an animated material or size resolves to nothing and the
+ * viewport silently never repaints.
+ */
+export function linkedDataNodeId(state: DagState, id: string): string | null {
+  const node = state.nodes[id];
+  if (!node) return null;
+  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+    | { node?: string }
+    | undefined;
+  const dataId = dataRef?.node;
+  return dataId && state.nodes[dataId] ? dataId : null;
+}
+
+/**
  * The id of the node that owns `paramRoot` (a top-level param key, e.g. 'material' or 'size')
  * for the scene object `id`: the node itself if its params carry that key, otherwise the node
  * it points at via its `data` input (the object↔data split). Returns null when neither carries

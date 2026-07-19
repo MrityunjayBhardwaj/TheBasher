@@ -1,6 +1,7 @@
-// v0.6 #2 (#178) W2 — the default BoxMesh renders through the ONE shared
-// PrimitiveMaterial builder as a MeshPhysicalMaterial, with NO colour regression
-// after the Standard→Physical switch.
+// v0.6 #2 (#178) W2 — the default cube (a split Object → BoxData after #365) renders
+// through the ONE shared PrimitiveMaterial builder as a MeshPhysicalMaterial, with NO
+// colour regression after the Standard→Physical switch. The mesh read is keyed by the
+// Object scene child `n_box`; the material lives on its linked BoxData.
 //
 // H40 discipline: side-A is the REAL three.js mesh.material read via the
 // __basher_mesh_material seam (NOT the resolver). Falsifiable — if openpbrToThree

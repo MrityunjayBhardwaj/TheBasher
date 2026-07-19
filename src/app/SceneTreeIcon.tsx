@@ -59,7 +59,6 @@ function kindForNodeType(nodeType: string): IconKind {
   if (nodeType.endsWith('Light')) return 'light';
   if (nodeType.endsWith('Camera')) return 'camera';
   if (
-    nodeType === 'BoxMesh' ||
     nodeType === 'SphereMesh' ||
     nodeType === 'BakedMesh' ||
     nodeType === 'GltfAsset' ||

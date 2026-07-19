@@ -166,22 +166,6 @@ const GHOSTLESS_KINDS = [
 
 function GhostChild({ value }: { value: SceneObject }) {
   switch (value.kind) {
-    case 'BoxMesh':
-      return (
-        <mesh
-          position={value.position as [number, number, number]}
-          rotation={degVec3ToRad(value.rotation as [number, number, number])}
-        >
-          <boxGeometry args={(value.size ?? [1, 1, 1]) as [number, number, number]} />
-          <meshBasicMaterial
-            transparent
-            opacity={0.35}
-            color={value.material.base.color}
-            depthWrite={false}
-            wireframe
-          />
-        </mesh>
-      );
     case 'SphereMesh':
       return (
         <mesh

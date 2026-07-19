@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCube } from '../test-utils/splitCube';
 import { stubEncoder } from './encoders/stubEncoder';
 import { runRenderJob } from './runRenderJob';
 
@@ -38,12 +39,7 @@ function buildJobState(opts: {
     nodeType: 'PerspectiveCamera',
     params: { fov: 45, position: [0, 0, 5] },
   }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1] },
-  }).next;
+  s = makeSplitCube(s, { objectId: 'box', size: [1, 1, 1] }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   s = applyOp(s, {
     type: 'connect',
