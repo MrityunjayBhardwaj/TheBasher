@@ -49,7 +49,7 @@ import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
-import { useTransientEditStore } from '../app/stores/transientEditStore';
+import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import {
   channelValuesFromNodes,
@@ -875,6 +875,39 @@ function useDataParamChannels(targetId: string): KeyframeChannelValue[] {
 
 /** Stable empty array — a fused node must not churn the overlay memo every render (H48). */
 const EMPTY_CHANNELS: KeyframeChannelValue[] = [];
+
+/** #365 Slice 2 — the TRANSIENT twin of useDataParamChannels. A split cube's
+ *  material/size HELD edits (the paused, un-keyed orange state) live on its linked
+ *  BoxData, but DirectChannelsR overlays transients keyed by the OBJECT (`pickId`).
+ *  Fold the data node's held edits into the map, re-keyed to the Object with their
+ *  paramPath rebased under `data.`, so `overlayTransients(pickId)` writes them where
+ *  ObjectR reads (`value.data.*`) — the same rebasing #398 gave data-param channels.
+ *  Returns the ORIGINAL map ref for a fused node or when no data edit is held, so a
+ *  static/fused scene never churns the overlay memo during playback (H48). */
+function useDataParamTransients(
+  targetId: string,
+  edits: Map<string, TransientEdit>,
+): Map<string, TransientEdit> {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  return useMemo(() => {
+    if (dataId === null) return edits;
+    let hasDataEdit = false;
+    for (const e of edits.values()) {
+      if (e.nodeId === dataId) {
+        hasDataEdit = true;
+        break;
+      }
+    }
+    if (!hasDataEdit) return edits;
+    const merged = new Map(edits);
+    for (const e of edits.values()) {
+      if (e.nodeId !== dataId) continue;
+      const paramPath = `data.${e.paramPath}`;
+      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
+    }
+    return merged;
+  }, [dataId, edits, targetId]);
+}
 
 function DirectChannelsLightR({
   value,
@@ -1704,7 +1737,11 @@ function DirectChannelsR({
   // #149 B2c mechanism; safe under H48 — `edits` is a stable empty Map ref during
   // playback). overlayChannels runs FIRST (committed curve), then the transient
   // overlays on top (the live uncommitted edit), keyed by this node's id.
-  const transients = useTransientEditStore((s) => s.edits);
+  const rawTransients = useTransientEditStore((s) => s.edits);
+  // #365 Slice 2 — fold a split cube's data-node held edits in, rebased under `data.`
+  // (the transient twin of #398's data-param channels). Ref-stable for a fused node
+  // or when no data edit is held, so the useFrame gate below still bails (H48).
+  const transients = useDataParamTransients(pickId, rawTransients);
   const sample = (seconds: number): SceneObject =>
     overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
     value;
