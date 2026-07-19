@@ -1,14 +1,15 @@
 // dispatchApplyTransform (primitives) — Phase 151 Wave 2 Task 5 (issue #151).
 //
-// Pins the Box/Sphere Apply contract:
-//   - SC-1: Apply a Box scale=[2,1,1] → the BakedMesh geometry bbox is 2×1×1 of
-//     the unit box; the new node's transform is identity.
+// Pins the primitive Apply contract (the fused box was retired in #365 Slice 2 — the
+// mechanism now runs on a fused SphereMesh and on a split Object, see below):
+//   - SC-1: Apply scale=[2,1,1] → the BakedMesh geometry bbox is 2×1×1 of the unit
+//     1×1×1 bbox; the new node's transform is identity.
 //   - the original node is removed, ONE BakedMesh added, edges rewired.
 //   - ONE dispatchAtomic (one Cmd+Z).
 //   - the OPFS write is AWAITED before the Op composite (the bytes exist first).
 //   - SC-8: an animated TRS band rejects (D-04 dispatch-side belt).
-//   - H45: the SHARED registry geometry is NOT mutated (a sibling Box of the same
-//     size still resolves to the unit box).
+//   - H45: the SHARED registry geometry is NOT mutated (a sibling primitive of the
+//     same size still resolves to the unit geometry).
 //
 // REF: PLAN.md Wave 2 Task 5; hetvabhasa H45; vyapti V1/V20; success SC-1/SC-5/SC-8.
 
@@ -130,7 +131,7 @@ function makeDispatch(stateRef: { current: DagState }) {
 }
 
 describe('dispatchApplyTransform (primitives)', () => {
-  it('SC-1: Apply a Box scale=[2,1,1] → BakedMesh bbox 2×1×1, transform identity', async () => {
+  it('SC-1: Apply scale=[2,1,1] → BakedMesh bbox 2×1×1, transform identity', async () => {
     let state = buildFusedSphereState();
     state = applyOp(state, {
       type: 'setParam',

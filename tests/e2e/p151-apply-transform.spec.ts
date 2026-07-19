@@ -105,8 +105,9 @@ async function applyTransform(page: import('@playwright/test').Page, id: string,
 }
 
 /** Inject a fused SphereMesh (radius 0.5 → 1×1×1 bbox) wired into the scene and
- *  wait for it to render. The Apply MECHANISM runs on this working producer; a split
- *  cube (Object) is the #376 gap, pinned separately. Returns the node id. */
+ *  wait for it to render. The Apply MECHANISM runs on this working producer; the split
+ *  cube bakes through the SAME mechanism and is covered by its own case below (#376).
+ *  Returns the node id. */
 async function seedApplySphere(page: import('@playwright/test').Page, id: string) {
   await page.evaluate((nodeId) => {
     const w = window as unknown as BasherWindow;
