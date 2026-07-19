@@ -4,10 +4,14 @@
 // Lives in src/app/ (file-rooted V8); never touches the DAG.
 //
 // v0.6 #3 (#181, W1): promoted from synthetic Box/Sphere unfolds (uvLayout.ts)
-// to REAL islands for EVERY producer, via the ONE source resolver
-// `resolveMeshUVs` (the SAME path the __basher_uv_islands seam reads, so the
-// panel and the seam never drift — H40). Islands are topological connected
-// components (a display grouping; Blender shows islands too), NOT seam/unwrap edit.
+// to REAL islands for EVERY producer. Islands are topological connected components
+// (a display grouping; Blender shows islands too), NOT seam/unwrap edit.
+//
+// #406: the layout and the texture backdrop resolve through the ONE
+// `resolveMeshUVSpace` projection over the (mesh, material) pair — the SAME path the
+// __basher_uv_islands / __basher_uv_texture seams read, so the panel and the seams
+// never drift (H40). Previously two independent resolvers with two independent
+// useMemos over identical deps; that symmetry was the tell that it was one query.
 //
 // The component is mounted as a sibling to the 3D Viewport in Layout.tsx;
 // visibility flips via display:none so the Canvas (and its GPU state) survives the
@@ -16,8 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
-import { resolveMeshUVs } from './resolveMeshUVs';
-import { resolveMeshTexture, type MeshTextureSource } from './resolveMeshTexture';
+import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { usePanZoomCanvas } from './usePanZoomCanvas';
 
 // Opacity of the texture backdrop. Dimmed (Blender default) so the bright island
@@ -36,24 +39,23 @@ export function UVEditor() {
   // texture actually resolves — the control hides otherwise).
   const [showTexture, setShowTexture] = useState(true);
 
-  const source = useMemo(
-    () =>
-      primaryId ? resolveMeshUVs(dagState, primaryId) : { uvs: null, status: 'none' as const },
-    // retry forces a re-resolve when async geometry was still loading last pass.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dagState, primaryId, retry],
-  );
-
-  // The base-color texture backdrop (UX #10), resolved THROUGH the V33-sibling
-  // resolveMeshTexture — same read-only-projection discipline as the UV layout.
-  const texture: MeshTextureSource = useMemo(
+  // ONE resolve for the (mesh, material) pair (#406) — the layout and the backdrop are
+  // facets of a single query, so they can no longer disagree about what the selection is
+  // or whether its source is ready.
+  const space = useMemo(
     () =>
       primaryId
-        ? resolveMeshTexture(dagState, primaryId)
-        : { image: null, flipY: false, width: 0, height: 0, status: 'none' as const },
+        ? resolveMeshUVSpace(dagState, primaryId)
+        : {
+            uvs: { uvs: null, status: 'none' as const },
+            texture: { image: null, flipY: false, width: 0, height: 0, status: 'none' as const },
+          },
+    // retry forces a re-resolve when an async source was still loading last pass.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dagState, primaryId, retry],
   );
+  const source = space.uvs;
+  const texture = space.texture;
 
   useEffect(() => {
     // Re-resolve while EITHER the UV geometry or the texture bytes are still
