@@ -8,6 +8,7 @@
 // Math gate: translate = same world delta on all; rotate = orbit about median.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_dag: {
@@ -34,29 +35,28 @@ test.beforeEach(async ({ page }) => {
       ),
     { timeout: 15000 },
   );
-  // Second box at [4,0,0]; n_box is at [0,0,0] → median [2,0,0].
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_box_b',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: [4, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_box_b', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-      ],
-      'user',
-      'add box b',
-    );
-  });
+  // Second cube at [4,0,0]; n_box is at [0,0,0] → median [2,0,0]. Built as the
+  // object↔data pair — n_box_b is the Object, so it is what the gizmo poses.
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_box_b', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'user',
+        'add box b',
+      );
+    },
+    { ops: splitCubeOps({ objectId: 'n_box_b', position: [4, 0, 0] }) },
+  );
   await page.evaluate(() =>
     (window as unknown as BasherWindow).__basher_selection
       .getState()
