@@ -41,6 +41,12 @@ interface BasherWindow {
   };
 }
 
+// #365 Slice 2: the default cube is a split Object (n_box) → BoxData (n_box_data)
+// that owns the material. Selecting the Object makes the inspector reach through
+// `data`, so the material editor, map row and uvTransform controls are keyed to the
+// DATA node; the rendered mesh (the side-A __basher_mesh_material read) stays on the
+// Object n_box. This is NOT the #378 UV-EDITOR gap — the inspector's placement
+// controls drive material.uvTransform, which the renderer reads directly.
 async function selectBoxAndAttachMap(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.waitForFunction(() => {
@@ -50,13 +56,13 @@ async function selectBoxAndAttachMap(page: import('@playwright/test').Page) {
   await page.evaluate(() => {
     (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
   });
-  const editor = page.getByTestId('inspector-material-editor-n_box');
+  const editor = page.getByTestId('inspector-material-editor-n_box_data');
   if (!(await editor.isVisible())) {
     await page.getByTestId('inspector-section-toggle-material').click();
   }
   await expect(editor).toBeVisible();
   await page
-    .getByTestId('inspector-map-file-n_box-albedo')
+    .getByTestId('inspector-map-file-n_box_data-albedo')
     .setInputFiles('public/fixtures/multifile/flat/texture.png');
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
@@ -78,16 +84,16 @@ test.describe('v0.6 #3 W2 — texture placement', () => {
     expect(before!.mapCenter).toEqual([0.5, 0.5]); // rotate/scale about centre
 
     // SC-1 — tiling → real Texture.repeat.
-    await page.getByTestId('inspector-uvtransform-tilingX-n_box').fill('2');
-    await page.getByTestId('inspector-uvtransform-tilingY-n_box').fill('3');
+    await page.getByTestId('inspector-uvtransform-tilingX-n_box_data').fill('2');
+    await page.getByTestId('inspector-uvtransform-tilingY-n_box_data').fill('3');
     await page.waitForFunction(() => {
       const m = (window as unknown as BasherWindow).__basher_mesh_material!('n_box');
       return m != null && m.mapRepeat != null && m.mapRepeat[0] === 2 && m.mapRepeat[1] === 3;
     });
 
     // SC-2 — offset + rotation → real Texture.offset/.rotation.
-    await page.getByTestId('inspector-uvtransform-offsetX-n_box').fill('0.25');
-    await page.getByTestId('inspector-uvtransform-rotation-n_box').fill('0.5');
+    await page.getByTestId('inspector-uvtransform-offsetX-n_box_data').fill('0.25');
+    await page.getByTestId('inspector-uvtransform-rotation-n_box_data').fill('0.5');
     await page.waitForFunction(() => {
       const m = (window as unknown as BasherWindow).__basher_mesh_material!('n_box');
       return (
@@ -118,26 +124,38 @@ test.describe('v0.6 #3 W2 — texture placement', () => {
       const w = window as unknown as BasherWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
-      const box1 = dag.state.nodes.n_box.params.material as {
+      // box1's material (with the attached albedo) lives on the split cube's BoxData.
+      const box1 = dag.state.nodes.n_box_data.params.material as {
         maps: { albedo: unknown };
       };
+      // #365 Slice 2: the second box is a split cube too — a BoxData carrying the SAME
+      // albedo ref (same hash → same cached Texture instance) and an Object pointing at
+      // it. Independent placement must still hold per BoxData material (the A-5 clone).
       dag.dispatchAtomic(
         [
           {
             type: 'addNode',
-            nodeId: 'n_box2',
-            nodeType: 'BoxMesh',
+            nodeId: 'n_box2_data',
+            nodeType: 'BoxData',
             params: {
               size: [1, 1, 1],
-              position: [2, 0, 0],
-              rotation: [0, 0, 0],
-              scale: [1, 1, 1],
               material: {
                 name: 'box2',
                 base: { color: '#ffffff' },
                 maps: { albedo: box1.maps.albedo },
               },
             },
+          },
+          {
+            type: 'addNode',
+            nodeId: 'n_box2',
+            nodeType: 'Object',
+            params: { position: [2, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          },
+          {
+            type: 'connect',
+            from: { node: 'n_box2_data', socket: 'out' },
+            to: { node: 'n_box2', socket: 'data' },
           },
           {
             type: 'connect',
@@ -155,14 +173,14 @@ test.describe('v0.6 #3 W2 — texture placement', () => {
     });
 
     // Distinct tiling on each box.
-    await page.getByTestId('inspector-uvtransform-tilingX-n_box').fill('4');
+    await page.getByTestId('inspector-uvtransform-tilingX-n_box_data').fill('4');
     await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
       w.__basher_dag.getState().dispatchAtomic(
         [
           {
             type: 'setParam',
-            nodeId: 'n_box2',
+            nodeId: 'n_box2_data',
             paramPath: 'material.uvTransform.tiling',
             value: [7, 7],
           },
