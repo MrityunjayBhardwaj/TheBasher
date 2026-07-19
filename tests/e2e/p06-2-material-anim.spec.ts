@@ -47,9 +47,13 @@ async function seedRoughnessAnim(page: import('@playwright/test').Page) {
     const api = w.__basher_dag!.getState();
     const dispatch = (op: unknown) => api.dispatch(op);
     const nodes = () => w.__basher_dag!.getState().state.nodes;
-    const boxId = 'n_box';
-    // V57: a free-floating direct channel targets the box by dagId — no
-    // AnimationLayer wrapper, no scene rewire. The box stays its own scene child.
+    // #365 — `material` lives on the cube's linked BoxData after the object↔data
+    // split, and the inspector renders those rows against that node, so a keyed
+    // material channel targets the DATA half. The Object (n_box) stays the scene
+    // child; #398 folds the data node's channels into its overlay.
+    const boxId = Object.keys(nodes()).find((k) => nodes()[k].type === 'BoxData') ?? 'n_box_data';
+    // V57: a free-floating direct channel targets the node by dagId — no
+    // AnimationLayer wrapper, no scene rewire. The Object stays its own scene child.
     dispatch({
       type: 'addNode',
       nodeId: 'seed_ch',

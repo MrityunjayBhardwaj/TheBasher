@@ -103,6 +103,46 @@ describe('resolveEvaluatedParam (C2 — generic non-transform resolver)', () => 
     expect(r?.value).toBe(0.3);
   });
 
+  // #398 — the object↔data reach. A cube's `material` lives on its linked BoxData, and the
+  // inspector renders those rows against that node, so a keyed material channel targets the
+  // DATA half while a caller naturally names the cube (the Object). The resolver must find it,
+  // or the render overlays the animated value while every read surface reports the static base.
+  it('reaches through the split: a channel on the DATA node resolves when asked on the Object', () => {
+    let state = buildDefaultDagState();
+    const dataId = Object.keys(state.nodes).find((k) => state.nodes[k].type === 'BoxData');
+    expect(dataId, 'seed should be split (Object + BoxData)').toBeTruthy();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_on_data',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'rough',
+        target: dataId,
+        paramPath: 'material.specular.roughness',
+        keyframes: [
+          { time: 0, value: 0.1, easing: 'linear' },
+          { time: 2, value: 0.9, easing: 'linear' },
+        ],
+      },
+    }).next;
+
+    // Asked on the OBJECT — the id a caller naturally has.
+    const viaObject = resolveEvaluatedParam(state, BOX_ID, 'material.specular.roughness', ctxAt(1));
+    expect(viaObject?.value).toBeCloseTo(0.5, 5);
+
+    // Asked on the DATA node directly — the same answer, no double-reach.
+    const viaData = resolveEvaluatedParam(state, dataId!, 'material.specular.roughness', ctxAt(1));
+    expect(viaData?.value).toBeCloseTo(0.5, 5);
+  });
+
+  // The reach is a FALLBACK, not a redirect: a channel authored against the Object with a
+  // data paramPath must keep resolving. Both conventions exist and an up-front redirect
+  // silently breaks this one (it did — 20 driver/param tests went red).
+  it('still resolves a channel authored against the Object itself', () => {
+    const state = buildState(); // channel targets BOX_ID with 'material.metalness'
+    expect(resolveEvaluatedParam(state, BOX_ID, PARAM, ctxAt(0.5))?.value).toBeCloseTo(0.5, 5);
+  });
+
   // GREP GATE (H40 form 1) — the resolver MUST NOT re-implement keyframe
   // interpolation; it must go through the channel value's .sample(). Banning
   // raw keyframe-array math here keeps render and read on the same code path.

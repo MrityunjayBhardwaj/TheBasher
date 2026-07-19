@@ -79,6 +79,7 @@ import { CurveLineR } from './CurveLine';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
+import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -225,6 +226,16 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     ...stripTargetSet(state.nodes),
     ...driverTargetSet(state.nodes),
   ]);
+  // #398 — the object↔data reach for MEMBERSHIP. A data-param channel (material, size)
+  // targets the DATA node, because that is the node the inspector renders those rows
+  // against. But this set gates whether a scene child mounts its overlay at all, and it
+  // is keyed by the SCENE CHILD. Without this, an animated cube's Object is absent from
+  // the set, DirectChannelsR never mounts, and the viewport silently never repaints —
+  // no error anywhere, because "not animated" and "animated but unmounted" look the same.
+  for (const node of Object.values(state.nodes)) {
+    const dataId = linkedDataNodeId(state, node.id);
+    if (dataId && directChannelTargets.has(dataId)) directChannelTargets.add(node.id);
+  }
   const constraintTargets = constraintTargetSet(state.nodes);
   // #343 — the POSITION-band membership gate (Follow-Path only). Built once, O(1) per
   // light: a light mounts its per-frame position follower ONLY if it is followed, so a
@@ -839,6 +850,31 @@ function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
     return drivers.length === 0 ? channels : [...channels, ...drivers];
   }, [contribNodes, driverNodes, targetId, cache]);
 }
+
+/**
+ * #398 — the object↔data reach for the OVERLAY. Channels on a scene child's linked data
+ * node, with each `paramPath` rebased under `data.` so `overlayChannels` writes them where
+ * the renderer actually reads: `ObjectR` takes geometry and material off `value.data`, not
+ * off the Object's own params.
+ *
+ * The fold itself is untouched — this only changes which channels are collected and the path
+ * they land on, so a node with no linked data (every fused node, every Empty) returns an empty
+ * array and its overlay stays byte-identical.
+ */
+function useDataParamChannels(targetId: string): KeyframeChannelValue[] {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  const dataChannels = useLayeredChannels(dataId ?? '');
+  return useMemo(
+    () =>
+      dataId === null
+        ? EMPTY_CHANNELS
+        : dataChannels.map((ch) => ({ ...ch, paramPath: `data.${ch.paramPath}` })),
+    [dataId, dataChannels],
+  );
+}
+
+/** Stable empty array — a fused node must not churn the overlay memo every render (H48). */
+const EMPTY_CHANNELS: KeyframeChannelValue[] = [];
 
 function DirectChannelsLightR({
   value,
@@ -1656,7 +1692,14 @@ function DirectChannelsR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channels = useLayeredChannels(pickId);
+  const ownChannels = useLayeredChannels(pickId);
+  // #398 — a cube's material/size channels live on its linked BoxData; fold them in
+  // rebased under `data.` so they land where ObjectR reads. Empty for a fused node.
+  const dataChannels = useDataParamChannels(pickId);
+  const channels = useMemo(
+    () => (dataChannels.length === 0 ? ownChannels : [...ownChannels, ...dataChannels]),
+    [ownChannels, dataChannels],
+  );
   // Subscribe the transient SET so a PAUSED edit re-applies (the AnimationLayerR
   // #149 B2c mechanism; safe under H48 — `edits` is a stable empty Map ref during
   // playback). overlayChannels runs FIRST (committed curve), then the transient
