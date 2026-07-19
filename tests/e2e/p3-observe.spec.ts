@@ -59,8 +59,10 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
     const dispatch = (op: unknown) => w.__basher_dag.getState().dispatch(op);
     const nodes = () => w.__basher_dag.getState().state.nodes;
 
-    const boxId = Object.entries(nodes()).find(([, n]) => n.type === 'BoxMesh')?.[0];
-    if (!boxId) throw new Error('no BoxMesh');
+    // The seed cube's Object — the channel below targets `position`, a transform
+    // param, which the Object owns after the object↔data split.
+    const boxId = Object.entries(nodes()).find(([, n]) => n.type === 'Object')?.[0];
+    if (!boxId) throw new Error('no Object');
 
     if (!Object.values(nodes()).some((n) => n.type === 'TimeSource')) {
       dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });

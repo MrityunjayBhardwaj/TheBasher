@@ -136,9 +136,10 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
       };
     };
     const dag = w.__basher_dag.getState();
-    // Find a BoxMesh from the seed.
-    const node = Object.values(dag.state.nodes).find((n) => n.type === 'BoxMesh');
-    if (!node) throw new Error('seed project missing BoxMesh');
+    // Find the seed cube's Object — `position` is a transform param, so it lives
+    // on the Object half of the object↔data split, not on the linked BoxData.
+    const node = Object.values(dag.state.nodes).find((n) => n.type === 'Object');
+    if (!node) throw new Error('seed project missing Object');
     const nodeId = Object.keys(dag.state.nodes).find((k) => dag.state.nodes[k] === node);
     dag.dispatchAtomic(
       [{ type: 'setParam', nodeId, paramPath: 'position', value: [1, 0, 0] }],

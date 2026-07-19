@@ -151,8 +151,9 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
-    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'BoxMesh')?.[0];
-    if (!boxId) throw new Error('seed box not found');
+    // The seed cube's Object — the pose half of the object↔data split.
+    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Object')?.[0];
+    if (!boxId) throw new Error('seed box Object not found');
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
     }
