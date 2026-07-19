@@ -6,7 +6,10 @@
 // isn't ready yet returns status 'loading' (never a Suspense throw — the panel
 // is not inside a Suspense boundary, and the seam must not throw).
 //
-//   - Box / Sphere → the resolver's EvaluatedMesh.uvs (sync registry geometry, A-2).
+//   - Sphere / Object → the resolver's EvaluatedMesh.uvs (sync registry geometry, A-2).
+//     An Object is the object↔data split's scene node (#365): resolveEvaluatedMesh
+//     reaches its geometry through the `data` socket, so a split cube resolves its
+//     real BoxGeometry islands here (#378).
 //   - glTF / GltfChild → the loaded asset clone (gltfCloneRegistry, A-3).
 //   - BakedMesh → geometryRegistry.get (sync hit once BakedMeshR has primed it;
 //     null on miss = 'loading', NEVER the throwing resolveBakedGeometry).
@@ -64,7 +67,12 @@ export function resolveMeshUVs(state: DagState, nodeId: string): UVSource {
   const node = state.nodes[nodeId];
   if (!node) return NONE;
 
-  if (node.type === 'SphereMesh') {
+  // SphereMesh (fused) and Object (the object↔data split) share ONE arm on purpose:
+  // both reach their geometry through `resolveEvaluatedMesh`, which is the single
+  // read-side twin of what the renderer mounts. The Object arm reaches through the
+  // `data` socket to the linked mesh data there, so this file never re-derives that
+  // reach (V101 — one projection, not a parallel list). #378.
+  if (node.type === 'SphereMesh' || node.type === 'Object') {
     const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
     return mesh?.uvs ? { uvs: mesh.uvs, status: 'ok' } : NONE;
   }
