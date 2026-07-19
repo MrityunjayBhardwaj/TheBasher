@@ -22,7 +22,7 @@ import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
-import { dispatchApplyTransform } from './dispatchApplyTransform';
+import { dispatchApplyTransform, canApplyTransform } from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
 
 const PRIM_ID = 'n_prim';
@@ -470,6 +470,103 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(next.nodes['n_shared_data']).toBeDefined(); // the SHARED data survived
     expect(next.nodes['n_cube_b']).toBeDefined(); // …and the sibling still poses it
     expect(next.nodes['n_cube_b'].inputs.data).toEqual({ node: 'n_shared_data', socket: 'out' });
+  });
+
+  it('undo restores BOTH halves of a baked split cube (one Cmd+Z)', async () => {
+    // The bake retires two nodes in one composite, so undo has to bring both back. The
+    // sphere's undo round-trip (SC-5) only ever exercised a ONE-node retirement, so this
+    // is genuinely new ground rather than a re-assertion — the second removeNode is the
+    // part that could have had no inverse.
+    let state = buildFusedSphereState();
+    const cube = makeSplitCube(state, {
+      objectId: 'n_cube',
+      position: [2, 0, 0],
+      connectTo: { node: state.outputs.scene!.node, socket: 'children' },
+    });
+    state = cube.state;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn, calls } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(cube.objectId, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    expect(stateRef.current.nodes[cube.objectId]).toBeUndefined();
+    expect(stateRef.current.nodes[cube.dataId]).toBeUndefined();
+
+    // Apply each op's inverse in reverse — the same round-trip SC-5 uses.
+    const composite = calls[0];
+    let fwd = state;
+    const inverses: Op[] = [];
+    for (const op of composite) {
+      const r = applyOp(fwd, op);
+      fwd = r.next;
+      inverses.push(r.inverse);
+    }
+    let back = fwd;
+    for (let i = inverses.length - 1; i >= 0; i--) back = applyOp(back, inverses[i]).next;
+
+    // Both halves are back AND re-wired to each other — restoring the nodes without the
+    // `data` edge would leave a cube that renders nothing, which is the failure this
+    // asserts against rather than merely counting nodes.
+    expect(back.nodes[cube.objectId]).toBeDefined();
+    expect(back.nodes[cube.dataId]).toBeDefined();
+    expect(back.nodes[cube.objectId].inputs.data).toEqual({ node: cube.dataId, socket: 'out' });
+  });
+});
+
+describe('canApplyTransform — the offer side of the boundary-pair (#376)', () => {
+  it('offers Apply for a split cube, and NOT for an Empty Object', () => {
+    // The predicate the menu item and the NPanel control both consume. Admitting every
+    // `Object` by type alone left Apply enabled for an Empty, which then failed with an
+    // internal-sounding "could not resolve mesh" — an affordance that promises something
+    // the dispatcher will refuse.
+    let state = buildFusedSphereState();
+    const cube = makeSplitCube(state, { objectId: 'n_cube' });
+    state = cube.state;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_empty',
+      nodeType: 'Object',
+      params: {},
+    }).next;
+
+    expect(canApplyTransform(state, cube.objectId)).toBe(true);
+    expect(canApplyTransform(state, 'n_empty')).toBe(false);
+    expect(canApplyTransform(state, PRIM_ID)).toBe(true); // the still-fused sphere
+    expect(canApplyTransform(state, 'no_such_node')).toBe(false);
+  });
+
+  it('agrees with the dispatcher — anything it refuses is never offered', async () => {
+    // The property that makes this a boundary-pair rather than a second list: for an
+    // Empty, the predicate says no AND the dispatcher rejects. If these ever diverge the
+    // UI is lying about what will happen.
+    let state = buildFusedSphereState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_empty',
+      nodeType: 'Object',
+      params: {},
+    }).next;
+
+    const stateRef = { current: state };
+    const { fn, calls } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_empty', 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+
+    expect(canApplyTransform(state, 'n_empty')).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(calls).toHaveLength(0); // refused before any mutation
   });
 });
 

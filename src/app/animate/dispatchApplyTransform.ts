@@ -188,6 +188,39 @@ function nextBakedId(state: DagState): string {
 }
 
 /**
+ * The node types Apply admits before asking the resolver. This is an ADMISSION filter, not
+ * a capability test — the resolver below is what actually decides whether something is a
+ * mesh. Kept in one function so the dispatcher's gate and the UI predicate share it rather
+ * than each spelling the types out (the drift that #377/#406 are about).
+ */
+function isBakeableWrapperType(type: string): boolean {
+  return type === 'SphereMesh' || type === 'Object';
+}
+
+/** Whether a node IS a mesh does not vary with time, so a zero ctx is exact for the
+ *  offer-side predicate below (the bake itself still resolves at the current frame). */
+const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
+
+/**
+ * Can Apply-Transform bake `nodeId`? THE one predicate the two UI surfaces consume, so an
+ * OFFERED Apply and an ACCEPTED Apply cannot disagree (the render==read boundary-pair by
+ * construction, instead of three type lists kept in sync by hand).
+ *
+ * #376 follow-up: admitting every `Object` by type alone left the menu item and the NPanel
+ * control ENABLED for an Empty, which then failed with an internal-sounding "could not
+ * resolve mesh". Asking the shared resolver here is exact — an Object whose `data` is not
+ * MeshData (an Empty today; a camera/light data node in a later phase) is correctly not
+ * offered, with no capability list to keep updated.
+ *
+ * Mesh-ness does not vary with time, so a zero ctx is exact for this question.
+ */
+export function canApplyTransform(state: DagState, nodeId: string): boolean {
+  const node = state.nodes[nodeId];
+  if (!node || !isBakeableWrapperType(node.type)) return false;
+  return resolveEvaluatedMesh(state, nodeId, ZERO_CTX) !== null;
+}
+
+/**
  * Apply the (masked) transform of a Box/Sphere into baked geometry, swapping the
  * node for a BakedMesh in one atomic, undoable composite. Returns the new id.
  *
@@ -225,7 +258,7 @@ export async function dispatchApplyTransform(
   // MeshData (an Empty, or a camera/light data node in a later phase) resolves to a null
   // mesh at step 1 below and is rejected there, so this admits by type and lets the ONE
   // resolver decide what is actually a mesh (no second capability list to drift — #377).
-  if (node.type !== 'SphereMesh' && node.type !== 'Object') {
+  if (!isBakeableWrapperType(node.type)) {
     return {
       ok: false,
       reason: `Apply: "${node.type}" is not a bakeable mesh.`,

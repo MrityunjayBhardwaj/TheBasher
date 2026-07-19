@@ -26,6 +26,7 @@ import {
 import type { ProjectMetadata } from '../core/project/io';
 import {
   dispatchApplyTransform,
+  canApplyTransform,
   isTransformAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
@@ -448,11 +449,11 @@ export function MenuBar() {
     s.selectedNodeIds.size === 1 ? s.selectedNodeId : null,
   );
   const currentFrame = useTimeStore((s) => s.frame);
-  const selectedNode = selectedId ? dag.nodes[selectedId] : undefined;
-  // #376: a split `Object` bakes alongside the still-fused `SphereMesh` — the same two types
-  // the dispatcher admits. An Object whose data is not a mesh (an Empty) is rejected by the
-  // dispatcher's resolve step; enabling the item for it costs a no-op click, not a bad bake.
-  const isPrimitive = selectedNode?.type === 'SphereMesh' || selectedNode?.type === 'Object';
+  // #376 follow-up: ask the ONE shared predicate rather than re-spelling the types here.
+  // Admitting every `Object` by type left this enabled for an Empty, which then failed with
+  // an internal-sounding "could not resolve mesh" — offered and accepted now agree by
+  // construction.
+  const isPrimitive = Boolean(selectedId && canApplyTransform(dag, selectedId));
   const applyAnimated = Boolean(
     selectedId && isPrimitive && isTransformAnimated(dag, selectedId, currentFrame),
   );
