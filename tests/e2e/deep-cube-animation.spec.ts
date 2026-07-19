@@ -25,6 +25,7 @@
 //      H40 (render==resolver), H48 (snapshot time, never subscribe).
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -104,8 +105,7 @@ test.describe('DEEP — animating a cube end-to-end through the real UI', () => 
       (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
     });
     await expect(page.getByTestId('inspector')).toBeVisible();
-    await page.getByTestId('inspector-section-toggle-transform').click();
-    await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+    await openInspectorSection(page, 'transform');
 
     expect(await channelCount(page)).toBe(0);
 

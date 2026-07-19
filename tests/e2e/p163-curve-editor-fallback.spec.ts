@@ -8,6 +8,7 @@
 // where there is no Inspector — the spec's `getByTestId('inspector')` never
 // appears. This was deterministic test debt, not a product bug.
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface W {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, { type: string }> } } };
@@ -44,10 +45,7 @@ test('keyed object → curve editor shows its curve without picking a Dopesheet 
     if (ak.enabled) ak.toggle();
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
-  await page
-    .getByTestId('inspector-section-toggle-transform')
-    .click()
-    .catch(() => {});
+  await openInspectorSection(page, 'transform');
   await page.getByTestId('inspector-diamond-n_box-position').click();
   await page.waitForTimeout(100);
 

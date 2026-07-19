@@ -17,6 +17,7 @@
 // AnimationLayer wrapper; no splice, no orphan-topology risk).
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -86,10 +87,9 @@ async function selectBoxAndOpenTransform(page: import('@playwright/test').Page) 
     w.__basher_selection!.getState().select('n_box');
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
-  // BoxMesh: Mesh is the primary domain; Transform is default-collapsed
-  // (§5.8). Position lives in Transform — expand it to reach the input.
-  await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+  // #365 Slice 2: the seed cube is now a split Object whose Transform section is
+  // default-expanded — guard the toggle so it opens (not collapses) regardless.
+  await openInspectorSection(page, 'transform');
 }
 
 async function editPositionX(page: import('@playwright/test').Page, v: string) {
@@ -293,7 +293,9 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     // rewires it.
     const before = await evalRenderRoot(page, 0);
     expect(before.sceneChildKinds).not.toContain('AnimationLayer'); // never a wrapper (#199)
-    expect(before.sceneChildKinds).toContain('BoxMesh'); // n_box renders directly
+    // #365 Slice 2: the seed cube is a split `Object` (pose) → `BoxData`, so the
+    // scene child renders directly as an `Object`, not the retired fused `BoxMesh`.
+    expect(before.sceneChildKinds).toContain('Object'); // n_box renders directly
 
     // 2 — Through the REAL Wave C diamond (→ first-key seam): at frame 0,
     //     rotation = [0,0,0]. Click the rotation diamond → ONE free-floating
@@ -380,9 +382,10 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     //      (no AnimationLayer wrapper ever spliced in). The animation is a
     //      free-floating direct channel overlaid by the renderer/resolver, so
     //      the scene topology is unchanged by keying — exactly one child, the box.
-    expect(r0.sceneChildKinds).toEqual(['BoxMesh']);
-    expect(r1.sceneChildKinds).toEqual(['BoxMesh']);
-    expect(r2.sceneChildKinds).toEqual(['BoxMesh']);
+    // #365 Slice 2: that sole child is the split `Object`, not the fused `BoxMesh`.
+    expect(r0.sceneChildKinds).toEqual(['Object']);
+    expect(r1.sceneChildKinds).toEqual(['Object']);
+    expect(r2.sceneChildKinds).toEqual(['Object']);
 
     // 4c — THE DELTA: rotation strictly advances 0 → 180 → 360 over
     //      t=0→2s (cubic-eased, smoothstep(0.5)=0.5 → exact 180 @ t=1).

@@ -123,10 +123,12 @@ test.describe('v0.6 #1 Wave 3 — renderer applies transform.scale == resolver (
     expect(r![1]).toBeCloseTo(s![1], 4);
     expect(r![2]).toBeCloseTo(s![2], 4);
     // The geometry `size` param is UNTOUCHED — scale is a distinct band (D-01).
+    // #365 Slice 2: `size` lives on the split cube's BoxData (`n_box_data`), not the
+    // Object (`n_box`, which owns only the transform). Read it off the data node.
     const size = await page.evaluate(
       () =>
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box'].params
-          .size,
+        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes['n_box_data']
+          .params.size,
     );
     expect(size).toEqual([1, 1, 1]);
   });
