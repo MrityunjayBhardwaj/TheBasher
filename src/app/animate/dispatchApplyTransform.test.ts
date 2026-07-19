@@ -31,8 +31,11 @@ const PRIM_ID = 'n_prim';
 // that still bakes is the SphereMesh. These tests exercise the fused-primitive → BakedMesh
 // Apply MECHANISM (bbox bake, consumer rewire, OPFS ordering, animated-reject) on a sphere of
 // radius 0.5 — whose bounding box is 1×1×1, identical to the old unit box, so the bbox
-// assertions are unchanged. Apply on a split cube (Object) is a documented gap (a bake path
-// for a posed Object+BoxData is a follow-up); the rejection is pinned by its own test below.
+// assertions are unchanged.
+//
+// #376 — a split cube (Object + BoxData) bakes through the same mechanism. Its cases below
+// cover what the split makes newly true: the PAIR retires, a SHARED data node survives, one
+// undo restores both halves, and the offer-side predicate matches what the dispatcher accepts.
 function buildFusedSphereState(): DagState {
   let s = emptyDagState();
   const add = (op: Op) => {
