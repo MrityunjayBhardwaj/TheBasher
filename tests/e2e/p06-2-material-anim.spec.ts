@@ -120,11 +120,14 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
       w.__basher_selection!.getState().select('n_box');
     });
     await expect(page.getByTestId('inspector')).toBeVisible();
-    const editor = page.getByTestId('inspector-material-editor-n_box');
+    // The material section (and its ParamDiamond) is rendered against the linked
+    // BoxData (the material's owner), so the editor + diamond testids are keyed to
+    // n_box_data even though the user selected the Object n_box.
+    const editor = page.getByTestId('inspector-material-editor-n_box_data');
     if (!(await editor.isVisible())) {
       await page.getByTestId('inspector-section-toggle-material').click();
     }
-    const diamond = page.getByTestId(`inspector-diamond-n_box-${PARAM}`);
+    const diamond = page.getByTestId(`inspector-diamond-n_box_data-${PARAM}`);
     await expect(diamond).toBeVisible();
 
     // Between keys (t=1) → 'animated' (green, text-accent).
@@ -142,8 +145,9 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
     await expect(diamond).toHaveClass(/text-record/);
 
     // A transient (held edit) → orange (text-warn) wins regardless of anim state.
+    // The diamond reads the transient on the material's owner (the BoxData).
     await page.evaluate((p) => {
-      (window as unknown as BasherWindow).__basher_transient!.getState().set('n_box', p, 0.42);
+      (window as unknown as BasherWindow).__basher_transient!.getState().set('n_box_data', p, 0.42);
     }, PARAM);
     await expect(diamond).toHaveClass(/text-warn/);
   });
