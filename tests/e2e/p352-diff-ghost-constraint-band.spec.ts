@@ -33,6 +33,7 @@
 // H165 (#327 — why the real button matters), THESIS.md §19 (diff-first).
 
 import { expect, test, type Page } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 const FOLLOWER_SIZE = 0.37; // unique in the scene → picks this subject's ghost, only it
 const CONTROL_SIZE = 0.53; // the static control: proposed-alongside, constrained by nothing
@@ -79,8 +80,11 @@ async function boot(page: Page) {
  *  arc length stops tracking world arc length — the case where the two compositions have
  *  something to disagree about) plus two boxes at the origin, neither constrained yet. */
 async function seedScene(page: Page) {
+  // #365 Slice 2: the follower + control are split cubes. Their distinct sizes (the
+  // ghost discriminator) live on each BoxData; the Object keeps the id, so the
+  // Follow-Path proposal, the scene connect and the ghost signature are unchanged.
   await page.evaluate(
-    ({ followerSize, controlSize }) => {
+    ({ followerOps, controlOps }) => {
       const dag = (window as unknown as GhostWin).__basher_dag.getState();
       dag.dispatchAtomic(
         [
@@ -107,31 +111,13 @@ async function seedScene(page: Page) {
             from: { node: 'n_p352_path', socket: 'out' },
             to: { node: 'n_scene', socket: 'children' },
           },
-          {
-            type: 'addNode',
-            nodeId: 'n_p352_box',
-            nodeType: 'BoxMesh',
-            params: {
-              name: 'Follower',
-              position: [0, 0, 0],
-              size: [followerSize, followerSize, followerSize],
-            },
-          },
+          ...followerOps,
           {
             type: 'connect',
             from: { node: 'n_p352_box', socket: 'out' },
             to: { node: 'n_scene', socket: 'children' },
           },
-          {
-            type: 'addNode',
-            nodeId: 'n_p352_static',
-            nodeType: 'BoxMesh',
-            params: {
-              name: 'Control',
-              position: [0, 0, 0],
-              size: [controlSize, controlSize, controlSize],
-            },
-          },
+          ...controlOps,
           {
             type: 'connect',
             from: { node: 'n_p352_static', socket: 'out' },
@@ -142,7 +128,18 @@ async function seedScene(page: Page) {
         'p352 seed',
       );
     },
-    { followerSize: FOLLOWER_SIZE, controlSize: CONTROL_SIZE },
+    {
+      followerOps: splitCubeOps({
+        objectId: 'n_p352_box',
+        position: [0, 0, 0],
+        size: [FOLLOWER_SIZE, FOLLOWER_SIZE, FOLLOWER_SIZE],
+      }),
+      controlOps: splitCubeOps({
+        objectId: 'n_p352_static',
+        position: [0, 0, 0],
+        size: [CONTROL_SIZE, CONTROL_SIZE, CONTROL_SIZE],
+      }),
+    },
   );
   await page.waitForTimeout(300);
 }
@@ -249,32 +246,20 @@ async function ghostRotationsDeg(page: Page, size: number): Promise<[number, num
 /** A cube at the origin plus an aim target off to one side, then propose "point the cube
  *  at the target". The ROTATION band's analogue of the Follow-Path seed. */
 async function seedAimSceneAndPropose(page: Page) {
+  // #365 Slice 2: the aimer + control are split cubes; the Track-To proposal targets
+  // the Object (n_p352_aimer), and the ghost signature is each BoxData's size.
   await page.evaluate(
-    ({ aimerSize, controlSize }) => {
+    ({ aimerOps, controlOps }) => {
       const dag = (window as unknown as GhostWin).__basher_dag.getState();
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: 'n_p352_aimer',
-            nodeType: 'BoxMesh',
-            params: { name: 'Aimer', position: [0, 0, 0], size: [aimerSize, aimerSize, aimerSize] },
-          },
+          ...aimerOps,
           {
             type: 'connect',
             from: { node: 'n_p352_aimer', socket: 'out' },
             to: { node: 'n_scene', socket: 'children' },
           },
-          {
-            type: 'addNode',
-            nodeId: 'n_p352_aimctl',
-            nodeType: 'BoxMesh',
-            params: {
-              name: 'AimControl',
-              position: [0, 0, 0],
-              size: [controlSize, controlSize, controlSize],
-            },
-          },
+          ...controlOps,
           {
             type: 'connect',
             from: { node: 'n_p352_aimctl', socket: 'out' },
@@ -296,7 +281,18 @@ async function seedAimSceneAndPropose(page: Page) {
         'p352 aim seed',
       );
     },
-    { aimerSize: AIMER_SIZE, controlSize: CONTROL_SIZE },
+    {
+      aimerOps: splitCubeOps({
+        objectId: 'n_p352_aimer',
+        position: [0, 0, 0],
+        size: [AIMER_SIZE, AIMER_SIZE, AIMER_SIZE],
+      }),
+      controlOps: splitCubeOps({
+        objectId: 'n_p352_aimctl',
+        position: [0, 0, 0],
+        size: [CONTROL_SIZE, CONTROL_SIZE, CONTROL_SIZE],
+      }),
+    },
   );
   await page.waitForTimeout(300);
   await page.evaluate(() => {
