@@ -29,6 +29,8 @@ interface TexResult {
 }
 interface BasherWindow {
   __basher_uv_texture?: (nodeId: string) => TexResult;
+  __basher_selection?: { getState: () => { select: (id: string) => void } };
+  __basher_mesh_material?: (nodeId: string) => { hasMap: boolean; mapImageOk: boolean } | null;
   __basher_dag: { getState: () => { state: { nodes: Record<string, { type: string }> } } };
   __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<{ gltfAssetId: string }>;
   __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
@@ -113,7 +115,10 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
       () => typeof (window as unknown as BasherWindow).__basher_uv_texture === 'function',
     );
 
-    // Default BoxMesh carries no texture.
+    // The default split cube carries no texture. NOTE (#378): on its own this arm
+    // is VACUOUS — 'none' is also what a resolver that never reaches the data node
+    // returns, so it cannot tell "reached, no map" from "never reached". The
+    // positive pair below is what makes the reach observable; keep them together.
     const box = await readTexture(page, 'n_box');
     console.log(`[ux10 tex n_box] ${JSON.stringify(box)}`);
     expect(box.status).toBe('none');
@@ -127,5 +132,56 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
     console.log(`[ux10 tex plain child ${childId}] ${JSON.stringify(child)}`);
     expect(child.status).toBe('none');
     expect(child.hasImage).toBe(false);
+  });
+
+  // #378 — the split cube's TEXTURE road as a render==read boundary-pair.
+  //
+  // The negative arm above ('none' for a bare cube) is vacuous: it passes both when
+  // the resolver reaches the BoxData and finds no map, AND when it never reaches the
+  // data node at all. So attach a REAL albedo map to the cube's data node and assert
+  // the read side (resolveMeshTexture, via __basher_uv_texture on the Object) agrees
+  // with the render side (the mounted three.js material, via __basher_mesh_material).
+  // 2×2 with an image CANNOT collide with the 0×0/no-image failure value.
+  test('split cube + albedo map → UV-editor backdrop matches the RENDERED material (#378)', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const w = window as unknown as BasherWindow;
+      return (
+        typeof w.__basher_uv_texture === 'function' &&
+        typeof w.__basher_mesh_material === 'function' &&
+        Boolean(w.__basher_selection)
+      );
+    });
+
+    // Selecting the Object makes the inspector reach through `data`, so the material
+    // editor + map row are keyed to the DATA node (n_box_data) while the rendered mesh
+    // stays on the Object (n_box) — the split's two sides.
+    await page.evaluate(() => {
+      (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
+    });
+    const editor = page.getByTestId('inspector-material-editor-n_box_data');
+    if (!(await editor.isVisible())) {
+      await page.getByTestId('inspector-section-toggle-material').click();
+    }
+    await expect(editor).toBeVisible();
+    await page
+      .getByTestId('inspector-map-file-n_box_data-albedo')
+      .setInputFiles('public/fixtures/multifile/flat/texture.png');
+
+    // SIDE A (render) — the mounted material actually carries a decoded map.
+    await page.waitForFunction(() => {
+      const m = (window as unknown as BasherWindow).__basher_mesh_material!('n_box');
+      return m != null && m.hasMap && m.mapImageOk;
+    });
+
+    // SIDE B (read) — resolveMeshTexture reaches the same map through the Object.
+    const tex = await readTexture(page, 'n_box');
+    console.log(`[ux10 tex split-cube #378] ${JSON.stringify(tex)}`);
+    expect(tex.status).toBe('ok');
+    expect(tex.hasImage).toBe(true);
+    expect(tex.width).toBe(2);
+    expect(tex.height).toBe(2);
   });
 });

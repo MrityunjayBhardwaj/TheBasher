@@ -165,12 +165,10 @@ test('P2.6#4 UV editor status updates with selection', async ({ page }) => {
   // (it names the selected node, instead of the "Select a mesh" placeholder).
   await expect(page.getByTestId('uv-editor-status')).toContainText(id!);
   await expect(page.getByTestId('uv-editor-status')).toContainText('Object');
-  // NOTE (#378): a split cube's UVs currently resolve to NONE — `resolveMeshUVs`
-  // has no Object branch — so the status reads "no UV layout" rather than an
-  // island count. That is a live documented gap, NOT what this test is about;
-  // asserting an island count here would pin the broken state. When #378 lands,
-  // tighten this to the island count.
-  await expect(page.getByTestId('uv-editor-status')).toContainText('no UV layout');
+  // #378 LANDED: the split cube resolves its real UV layout through the object↔data
+  // reach, so the status now reports the island count instead of "no UV layout".
+  // Tightened from the sentinel — "no UV layout" was the broken state.
+  await expect(page.getByTestId('uv-editor-status')).toContainText('6 islands');
 });
 
 // ---------------------------------------------------------------------------

@@ -12,8 +12,10 @@
 //   - BakedMesh → the baked material's `map` BakedTextureRef, peeked from the
 //     baked-texture loader cache (null on miss = 'loading'; never the throwing
 //     resolveBakedTexture).
-//   - Box / Sphere → the inline material's `maps.albedo` BakedTextureRef, same
-//     non-throwing peek.
+//   - Sphere / Object → the inline material's `maps.albedo` BakedTextureRef, same
+//     non-throwing peek. An Object is the object↔data split's scene node (#365):
+//     resolveEvaluatedMesh reaches the data node's hydrated material through the
+//     `data` socket, so a split cube's albedo map resolves here (#378).
 //
 // WHY flipY MATTERS (the registration invariant — V48):
 //   The UVEditor draws an island vertex (u,v) at screen (ox+u·sz, oy+(1-v)·sz)
@@ -149,7 +151,12 @@ export function resolveMeshTexture(state: DagState, nodeId: string): MeshTexture
     return fromBakedRef(mat?.map ?? null);
   }
 
-  if (node.type === 'SphereMesh') {
+  // SphereMesh (fused) and Object (the object↔data split) share ONE arm — the exact
+  // mirror of the resolveMeshUVs sibling. Both read the inline material through
+  // `resolveEvaluatedMesh`, which for an Object carries the data node's already-
+  // hydrated material verbatim, so the backdrop is byte-identical to what the
+  // renderer paints. #378.
+  if (node.type === 'SphereMesh' || node.type === 'Object') {
     const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
     const mat = mesh?.material as { maps?: { albedo?: BakedTextureRef | null } } | null;
     return fromBakedRef(mat?.maps?.albedo ?? null);
