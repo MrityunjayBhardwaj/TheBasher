@@ -4,8 +4,9 @@
 // `axis` (the param that surfaced the gap), which is the strongest case: changing
 // the dropdown must flow UI → setParam → DAG → the LIVE render.
 //
-// BOUNDARY-PAIR: a 1×1×1 box mirrored at offset 2 separates along the chosen axis.
-// axis 'x' → the rendered mesh spans x∈[-0.5,4.5] (≈5 wide), y≈1 tall. Switching
+// BOUNDARY-PAIR: a radius-0.5 sphere ([-0.5,0.5] bbox) mirrored at offset 2 separates
+// along the chosen axis. axis 'x' → the rendered mesh spans x∈[-0.5,4.5] (≈5 wide),
+// y≈1 tall (the sphere's diameter). Switching
 // the dropdown to 'y' must make the SAME rendered mesh span y∈[-0.5,4.5] and x≈1 —
 // i.e. the viewport followed the dropdown, not just the DAG param.
 //
@@ -42,17 +43,25 @@ interface ThreeObjLike {
 const BOX = 'enum_box';
 const MIR = 'enum_mirror';
 
-/** The axis-aligned span of the 48-vert mirror mesh, read off the live three scene. */
+// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
+// BoxMesh (a split Object as a modifier target is the undecided #377 path). A
+// radius-0.5 sphere shares the box's [-0.5,0.5] bounding box, so the ≈5×≈1 mirror
+// span assertions are geometry-agnostic; only the vert-count marker (2× the source)
+// is derived at runtime rather than hardcoded.
+
+/** The axis-aligned span of the mirror mesh (located by its runtime-derived merged
+ *  vertex count), read off the live three scene. */
 function mirrorSpan(
   page: import('@playwright/test').Page,
+  mergedCount: number,
 ): Promise<{ x: number; y: number } | null> {
-  return page.evaluate(() => {
+  return page.evaluate((want) => {
     const w = window as unknown as EnumWindow;
     const scene = w.__basher_three.getState().scene;
     let span: { x: number; y: number } | null = null;
     scene?.traverse((o) => {
       const g = o.geometry?.attributes?.position;
-      if (o.type !== 'Mesh' || !g || g.count !== 48) return;
+      if (o.type !== 'Mesh' || !g || g.count !== want) return;
       let minX = Infinity,
         maxX = -Infinity,
         minY = Infinity,
@@ -66,7 +75,7 @@ function mirrorSpan(
       span = { x: maxX - minX, y: maxY - minY };
     });
     return span;
-  });
+  }, mergedCount);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -103,8 +112,8 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
           {
             type: 'addNode',
             nodeId: box,
-            nodeType: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [0, 0, 0] },
+            nodeType: 'SphereMesh',
+            params: { radius: 0.5, position: [0, 0, 0] },
           },
           {
             type: 'addNode',
@@ -132,9 +141,14 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
   );
 
   await page.waitForFunction(
-    (mir) => (window as unknown as EnumWindow).__basher_modified_vertex_count(mir) === 48,
+    (mir) => (window as unknown as EnumWindow).__basher_modified_vertex_count(mir) != null,
     MIR,
     { timeout: 15_000 },
+  );
+  // The merged mirror count (2× the sphere source) — the marker for locating the mesh.
+  const mergedCount = await page.evaluate(
+    (mir) => (window as unknown as EnumWindow).__basher_modified_vertex_count(mir)!,
+    MIR,
   );
 
   // The axis param is a <select> (not a read-only span), with the schema's options.
@@ -144,8 +158,8 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
   expect((await select.locator('option').allTextContents()).sort()).toEqual(['x', 'y', 'z']);
 
   // axis 'x' at offset 2 → the mesh spans ≈5 in x, ≈1 in y.
-  await expect.poll(() => mirrorSpan(page).then((s) => s && Math.round(s.x))).toBe(5);
-  const spanX = await mirrorSpan(page);
+  await expect.poll(() => mirrorSpan(page, mergedCount).then((s) => s && Math.round(s.x))).toBe(5);
+  const spanX = await mirrorSpan(page, mergedCount);
   expect(Math.round(spanX!.y)).toBe(1);
 
   // Change the dropdown to 'y' — UI → setParam → DAG.
@@ -161,7 +175,7 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
     .toBe('y');
 
   // …and the LIVE render followed: the SAME mesh now spans ≈5 in y, ≈1 in x.
-  await expect.poll(() => mirrorSpan(page).then((s) => s && Math.round(s.y))).toBe(5);
-  const spanY = await mirrorSpan(page);
+  await expect.poll(() => mirrorSpan(page, mergedCount).then((s) => s && Math.round(s.y))).toBe(5);
+  const spanY = await mirrorSpan(page, mergedCount);
   expect(Math.round(spanY!.x)).toBe(1);
 });

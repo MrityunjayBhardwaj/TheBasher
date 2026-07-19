@@ -1,8 +1,8 @@
 // #209 — the Mirror MODIFIER (epic #201, §5; the SECOND geometry operator, V58).
 // Observes on the LIVE app (Lokayata) that Mirror, like Array, wires as a Mesh→Mesh
-// sub-chain (Box → MirrorModifier → Scene.children) and actually rewrites the
+// sub-chain (Sphere → MirrorModifier → Scene.children) and actually rewrites the
 // rendered geometry — the viewport shows the merged source+reflection (2× verts),
-// not the bare box.
+// not the bare source.
 //
 // BOUNDARY-PAIR (H40 / V37): the rendered mesh's vertex count (side A — read off the
 // three scene) == the resolver's registry-built count (side B —
@@ -11,12 +11,18 @@
 // drift between the render road and the read-side road.
 //
 // FALSIFICATION: muting the modifier (the stack mute-bypass, V58) collapses the
-// output back to the source box's vertex count — so it is the operator that
-// produced the extra geometry, not a stray mesh.
+// output back to the source's vertex count — so it is the operator that produced the
+// extra geometry, not a stray mesh. Asserted as the muted(×1) / unmuted(×2) PAIR so
+// the check is primitive-agnostic (the source's vert count is derived at runtime).
 //
-// COMPOSITION: a MIXED chain Box → Array(3) → Mirror renders cumulatively (3 × 24 =
-// 72, then mirrored = 144) — proving the substrate composes ACROSS modifier types,
-// not just Array-of-Array. The recursive registry build is the risky bit.
+// COMPOSITION: a MIXED chain Sphere → Array(3) → Mirror renders cumulatively (3 ×
+// source, then mirrored = 6 × source) — proving the substrate composes ACROSS
+// modifier types, not just Array-of-Array. The recursive registry build is the risky bit.
+//
+// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
+// BoxMesh — a split Object as a modifier target is the undecided #377 path. The
+// source's vert count is whatever the sphere builds; the test asserts the mirror
+// RATIO against a runtime-derived passthrough, so it never names a box constant.
 //
 // REF: src/nodes/MirrorModifier.ts; src/app/modifierGeometry.ts;
 //      src/app/geometryRegistry.ts (build 'mirror' + reverseWinding);
@@ -64,6 +70,45 @@ function meshVertexCounts(page: import('@playwright/test').Page): Promise<number
   });
 }
 
+/** The modifier's resolver vertex count once it has built (non-null). */
+async function modifiedCount(page: import('@playwright/test').Page, id: string): Promise<number> {
+  await page.waitForFunction(
+    (nid) => (window as unknown as ModWindow).__basher_modified_vertex_count(nid) != null,
+    id,
+    { timeout: 15_000 },
+  );
+  return page.evaluate(
+    (nid) => (window as unknown as ModWindow).__basher_modified_vertex_count(nid)!,
+    id,
+  );
+}
+
+/** Set a modifier's `muted` and wait for its resolver count to reach `want`. */
+async function setMutedAndWait(
+  page: import('@playwright/test').Page,
+  id: string,
+  muted: boolean,
+  want: number,
+): Promise<void> {
+  await page.evaluate(
+    ({ nid, m }) => {
+      (window as unknown as ModWindow).__basher_dag
+        .getState()
+        .dispatchAtomic(
+          [{ type: 'setParam', nodeId: nid, paramPath: 'muted', value: m }],
+          'e2e',
+          'mute',
+        );
+    },
+    { nid: id, m: muted },
+  );
+  await page.waitForFunction(
+    ({ nid, w }) => (window as unknown as ModWindow).__basher_modified_vertex_count(nid) === w,
+    { nid: id, w: want },
+    { timeout: 15_000 },
+  );
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   const layout = page.getByTestId('layout');
@@ -82,7 +127,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('#209 — Box → MirrorModifier → Scene renders the MERGED mirror; render verts == resolver verts (H40)', async ({
+test('#209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; render verts == resolver verts (H40)', async ({
   page,
 }) => {
   await page.evaluate(
@@ -95,8 +140,8 @@ test('#209 — Box → MirrorModifier → Scene renders the MERGED mirror; rende
           {
             type: 'addNode',
             nodeId: box,
-            nodeType: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [4, 0, 0] },
+            nodeType: 'SphereMesh',
+            params: { radius: 0.5, position: [4, 0, 0] },
           },
           // offset 2 → the reflected half lands across x=2, separated from the source
           // (a geometry-centered primitive mirrored at the origin would just overlap).
@@ -118,23 +163,14 @@ test('#209 — Box → MirrorModifier → Scene renders the MERGED mirror; rende
           },
         ],
         'e2e',
-        'box → mirror → scene',
+        'sphere → mirror → scene',
       );
     },
     { box: MBOX, mir: MMIR },
   );
 
-  // Side B (resolver): the registry-built mirror = source + reflection = 2 × 24 = 48.
-  await page.waitForFunction(
-    (mir) => (window as unknown as ModWindow).__basher_modified_vertex_count(mir) !== null,
-    MMIR,
-    { timeout: 15_000 },
-  );
-  const resolverCount = await page.evaluate(
-    (mir) => (window as unknown as ModWindow).__basher_modified_vertex_count(mir),
-    MMIR,
-  );
-  expect(resolverCount).toBe(48); // 2 × 24 — source + reflection merged
+  // Side B (resolver): the registry-built mirror = source + reflection = 2 × source.
+  const resolverCount = await modifiedCount(page, MMIR);
 
   // Side A (render): the live viewport contains a mesh with exactly that vertex count.
   await page.waitForFunction(
@@ -158,9 +194,17 @@ test('#209 — Box → MirrorModifier → Scene renders the MERGED mirror; rende
   const out = await page.evaluate(() => (window as unknown as ModWindow).__basher_render_png!());
   expect(out).not.toBeNull();
   expect(out!.dataUrl.startsWith('data:image/png')).toBe(true);
+
+  // Derive the source passthrough at runtime (mute → the bare source) and assert the
+  // muted(×1) / unmuted(×2) pair — genuinely mirrored, primitive-agnostic.
+  expect(resolverCount % 2).toBe(0);
+  const src = resolverCount / 2;
+  await setMutedAndWait(page, MMIR, true, src);
+  expect(resolverCount).toBe(2 * src);
+  expect(resolverCount).toBeGreaterThan(src);
 });
 
-test('#209 — muting the Mirror collapses the output back to the source box (falsification)', async ({
+test('#209 — muting the Mirror collapses the output back to the source (falsification)', async ({
   page,
 }) => {
   await page.evaluate(
@@ -173,8 +217,8 @@ test('#209 — muting the Mirror collapses the output back to the source box (fa
           {
             type: 'addNode',
             nodeId: box,
-            nodeType: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [4, 0, 0] },
+            nodeType: 'SphereMesh',
+            params: { radius: 0.5, position: [4, 0, 0] },
           },
           {
             type: 'addNode',
@@ -194,40 +238,24 @@ test('#209 — muting the Mirror collapses the output back to the source box (fa
           },
         ],
         'e2e',
-        'box → mirror → scene',
+        'sphere → mirror → scene',
       );
     },
     { box: MBOX, mir: MMIR },
   );
 
-  await page.waitForFunction(
-    (mir) => (window as unknown as ModWindow).__basher_modified_vertex_count(mir) === 48,
-    MMIR,
-    { timeout: 15_000 },
-  );
+  // Active → 2 × source. Derive the source passthrough by muting.
+  const active = await modifiedCount(page, MMIR);
+  expect(active % 2).toBe(0);
+  const src = active / 2;
+  await setMutedAndWait(page, MMIR, true, src); // mute → the source passes through
+  expect(active).toBe(2 * src);
 
-  // Mute it → the source box passes through → 24 verts.
-  await page.evaluate((mir) => {
-    const w = window as unknown as ModWindow;
-    w.__basher_dag
-      .getState()
-      .dispatchAtomic(
-        [{ type: 'setParam', nodeId: mir, paramPath: 'muted', value: true }],
-        'e2e',
-        'mute',
-      );
-  }, MMIR);
-
-  await page.waitForFunction(
-    (mir) => (window as unknown as ModWindow).__basher_modified_vertex_count(mir) === 24,
-    MMIR,
-    { timeout: 15_000 },
-  );
   const counts = await meshVertexCounts(page);
-  expect(counts).not.toContain(48); // the mirrored geometry is gone
+  expect(counts).not.toContain(active); // the mirrored geometry is gone
 });
 
-test('#209 — a MIXED chain Box → Array(3) → Mirror composes (72 → 144 — cross-modifier recursive build)', async ({
+test('#209 — a MIXED chain Sphere → Array(3) → Mirror composes (3× → 6× — cross-modifier recursive build)', async ({
   page,
 }) => {
   const ARR = 'p209m_arr';
@@ -241,8 +269,8 @@ test('#209 — a MIXED chain Box → Array(3) → Mirror composes (72 → 144 �
           {
             type: 'addNode',
             nodeId: box,
-            nodeType: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [4, 0, 0] },
+            nodeType: 'SphereMesh',
+            params: { radius: 0.5, position: [4, 0, 0] },
           },
           {
             type: 'addNode',
@@ -273,33 +301,39 @@ test('#209 — a MIXED chain Box → Array(3) → Mirror composes (72 → 144 �
           },
         ],
         'e2e',
-        'box → array → mirror → scene',
+        'sphere → array → mirror → scene',
       );
     },
     { box: MBOX, arr: ARR, mir: MMIR },
   );
 
-  // Side B: array (3 × 24 = 72) then mirror (× 2) = 144 verts at the top of the chain.
-  await page.waitForFunction(
-    (mir) => (window as unknown as ModWindow).__basher_modified_vertex_count(mir) === 144,
-    MMIR,
-    { timeout: 15_000 },
-  );
+  // Side B: array (3 × source) then mirror (× 2) at the top of the chain.
+  const top = await modifiedCount(page, MMIR);
+  const arrCount = await modifiedCount(page, ARR);
+  expect(top).toBe(2 * arrCount); // the mirror doubled the arrayed result
+
   // Side A: the live render contains that cumulative mesh (boundary-pair through the mixed chain).
   await page.waitForFunction(
-    () => {
+    (want) => {
       const w = window as unknown as ModWindow;
       const scene = w.__basher_three.getState().scene;
       let found = false;
       scene?.traverse((o) => {
         const g = (o as ThreeObjLike).geometry?.attributes?.position;
-        if ((o as ThreeObjLike).type === 'Mesh' && g && g.count === 144) found = true;
+        if ((o as ThreeObjLike).type === 'Mesh' && g && g.count === want) found = true;
       });
       return found;
     },
-    undefined,
+    top,
     { timeout: 15_000 },
   );
   const counts = await meshVertexCounts(page);
-  expect(counts).toContain(144);
+  expect(counts).toContain(top);
+
+  // Derive the source passthrough (mute the array) and pin the full 3 × 2 chain.
+  expect(arrCount % 3).toBe(0);
+  const src = arrCount / 3;
+  await setMutedAndWait(page, ARR, true, src);
+  expect(arrCount).toBe(3 * src);
+  expect(top).toBe(6 * src);
 });
