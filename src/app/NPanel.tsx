@@ -58,6 +58,7 @@ import { countOverrideSlots } from './resolveOverrideSlots';
 import { useTimeStore } from './stores/timeStore';
 import {
   dispatchApplyTransform,
+  canApplyTransform,
   isTransformAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
@@ -2729,6 +2730,12 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
+  // #376 follow-up — the OFFER side of Apply, asked through the ONE shared predicate so the
+  // control appears exactly when the dispatcher would accept it (never for an Empty Object).
+  // Selected down to a boolean so unrelated DAG changes don't re-render the panel.
+  const canApply = useDagStore((s) =>
+    selectedId ? canApplyTransform(s.state, selectedId) : false,
+  );
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
   // #225 — when >1 node is selected the inspector renders the shared-edit
@@ -3051,10 +3058,11 @@ export function NPanel() {
                             ))}
                       {/* Phase 151 — Apply control in the transform card for a
                           selected primitive. Bakes TRS → BakedMesh via the same
-                          helper the Object ▸ Apply menu uses (one undo). #365
-                          Slice 2: a cube is a split Object (Apply on it awaits an
-                          Object+BoxData bake path), so only SphereMesh shows it. */}
-                      {sectionId === 'transform' && node.type === 'SphereMesh' ? (
+                          helper the Object ▸ Apply menu uses (one undo). #376: a
+                          split `Object` bakes too. Gated by the shared
+                          canApplyTransform predicate, so the control is offered
+                          exactly when the dispatcher would accept it. */}
+                      {sectionId === 'transform' && canApply ? (
                         <ApplyTransformControl nodeId={node.id} />
                       ) : null}
                       {/* #228 Slice D — Set Origin to Geometry for a Group (its

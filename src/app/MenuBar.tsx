@@ -26,6 +26,7 @@ import {
 import type { ProjectMetadata } from '../core/project/io';
 import {
   dispatchApplyTransform,
+  canApplyTransform,
   isTransformAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
@@ -448,10 +449,11 @@ export function MenuBar() {
     s.selectedNodeIds.size === 1 ? s.selectedNodeId : null,
   );
   const currentFrame = useTimeStore((s) => s.frame);
-  const selectedNode = selectedId ? dag.nodes[selectedId] : undefined;
-  // #365 Phase 5a (Slice 2): a cube is a split Object, not a bakeable primitive here (Apply on
-  // a cube awaits an Object+BoxData bake path). SphereMesh remains the primitive that bakes.
-  const isPrimitive = selectedNode?.type === 'SphereMesh';
+  // #376 follow-up: ask the ONE shared predicate rather than re-spelling the types here.
+  // Admitting every `Object` by type left this enabled for an Empty, which then failed with
+  // an internal-sounding "could not resolve mesh" — offered and accepted now agree by
+  // construction.
+  const isPrimitive = Boolean(selectedId && canApplyTransform(dag, selectedId));
   const applyAnimated = Boolean(
     selectedId && isPrimitive && isTransformAnimated(dag, selectedId, currentFrame),
   );

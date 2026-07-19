@@ -35,6 +35,7 @@ import type { StorageCapability } from '../../core/storage/StorageCapability';
 import * as geometryRegistry from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
+import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
@@ -122,6 +123,35 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
   };
 }
 
+/**
+ * Narrow the resolved mesh material to the baked spec (#376). An `Object`'s data node
+ * hands back `InlineMaterialSpec | BakedMaterialSpec | null` — a spec that is ALREADY
+ * baked (it carries `materialClass`) passes through verbatim rather than being funnelled
+ * through the inline converter, which would read `.base.color` off a shape that has none
+ * and silently flatten the material to white.
+ */
+function bakedSpecFromMeshMaterial(
+  material: InlineMaterialSpec | BakedMaterialSpec | null,
+): BakedMaterialSpec {
+  if (material && 'materialClass' in material) return material;
+  return bakedSpecFromInline(material);
+}
+
+/**
+ * The data node this Object poses, when retiring the Object should retire it too (#376).
+ *
+ * Returns null when there is no linked data node, or when the data node is SHARED — a
+ * fan-out `BoxData` posed by a second Object must survive this bake, or the sibling
+ * renders empty. Sharing is counted over real graph edges, so the check stays honest as
+ * fan-out lands (#391).
+ */
+function exclusiveDataNodeOf(state: DagState, objectId: string): string | null {
+  const dataId = linkedDataNodeId(state, objectId);
+  if (!dataId) return null;
+  const consumers = consumerEdgesOf(state, dataId);
+  return consumers.length <= 1 ? dataId : null;
+}
+
 /** Find every consumer edge of `nodeId`.out, capturing socket + list index. */
 interface ConsumerEdge {
   consumer: string;
@@ -158,6 +188,39 @@ function nextBakedId(state: DagState): string {
 }
 
 /**
+ * The node types Apply admits before asking the resolver. This is an ADMISSION filter, not
+ * a capability test — the resolver below is what actually decides whether something is a
+ * mesh. Kept in one function so the dispatcher's gate and the UI predicate share it rather
+ * than each spelling the types out (the drift that #377/#406 are about).
+ */
+function isBakeableWrapperType(type: string): boolean {
+  return type === 'SphereMesh' || type === 'Object';
+}
+
+/** Whether a node IS a mesh does not vary with time, so a zero ctx is exact for the
+ *  offer-side predicate below (the bake itself still resolves at the current frame). */
+const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
+
+/**
+ * Can Apply-Transform bake `nodeId`? THE one predicate the two UI surfaces consume, so an
+ * OFFERED Apply and an ACCEPTED Apply cannot disagree (the render==read boundary-pair by
+ * construction, instead of three type lists kept in sync by hand).
+ *
+ * #376 follow-up: admitting every `Object` by type alone left the menu item and the NPanel
+ * control ENABLED for an Empty, which then failed with an internal-sounding "could not
+ * resolve mesh". Asking the shared resolver here is exact — an Object whose `data` is not
+ * MeshData (an Empty today; a camera/light data node in a later phase) is correctly not
+ * offered, with no capability list to keep updated.
+ *
+ * Mesh-ness does not vary with time, so a zero ctx is exact for this question.
+ */
+export function canApplyTransform(state: DagState, nodeId: string): boolean {
+  const node = state.nodes[nodeId];
+  if (!node || !isBakeableWrapperType(node.type)) return false;
+  return resolveEvaluatedMesh(state, nodeId, ZERO_CTX) !== null;
+}
+
+/**
  * Apply the (masked) transform of a Box/Sphere into baked geometry, swapping the
  * node for a BakedMesh in one atomic, undoable composite. Returns the new id.
  *
@@ -190,10 +253,12 @@ export async function dispatchApplyTransform(
     );
   }
 
-  // #365 Phase 5a (Slice 2): the fused `BoxMesh` arm is gone. A cube is now a split Object,
-  // which does NOT pass this gate — so Apply-Transform on a cube is unavailable until a bake
-  // path for a posed Object+BoxData lands (tracked as a follow-up). SphereMesh stays bakeable.
-  if (node.type !== 'SphereMesh') {
+  // #376: a split `Object` bakes alongside the still-fused `SphereMesh`. The gate stays
+  // TYPE-based rather than probing for mesh-ish params — an `Object` whose `data` is not
+  // MeshData (an Empty, or a camera/light data node in a later phase) resolves to a null
+  // mesh at step 1 below and is rejected there, so this admits by type and lets the ONE
+  // resolver decide what is actually a mesh (no second capability list to drift — #377).
+  if (!isBakeableWrapperType(node.type)) {
     return {
       ok: false,
       reason: `Apply: "${node.type}" is not a bakeable mesh.`,
@@ -229,7 +294,7 @@ export async function dispatchApplyTransform(
 
   // 4 — atomic Op composite (Q1): addNode → connect-before-disconnect → removeNode.
   const bakedId = nextBakedId(state);
-  const spec = bakedSpecFromInline(mesh.material as InlineMaterialSpec | null);
+  const spec = bakedSpecFromMeshMaterial(mesh.material);
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -271,6 +336,15 @@ export async function dispatchApplyTransform(
     }
   }
   ops.push({ type: 'removeNode', nodeId: selectedId });
+  // #376 — retire the PAIR. The pose baked into the geometry, so the Object goes; its
+  // data node has to go with it or it is left orphaned in the graph (no consumer, still
+  // saved). Guarded by exclusivity: a SHARED data node is posed by another Object too,
+  // and removing it would empty that sibling. Ordered AFTER the Object's removeNode so
+  // the `data` edge is already gone when the data node is dropped.
+  if (node.type === 'Object') {
+    const dataId = exclusiveDataNodeOf(state, selectedId);
+    if (dataId) ops.push({ type: 'removeNode', nodeId: dataId });
+  }
 
   const dispatchAtomic = deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore);
   try {
