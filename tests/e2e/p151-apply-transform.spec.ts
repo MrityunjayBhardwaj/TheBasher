@@ -6,11 +6,13 @@
 // — not inference.
 //
 // #365 Slice 2: the Apply MECHANISM is exercised on a fused SphereMesh, not the
-// retired fused BoxMesh. Apply on a split cube (an Object) is the still-open #376 gap
-// — dispatchApplyTransform gates on `SphereMesh` (:196), so an Object is rejected
-// until a bake path for a posed Object+BoxData lands. A radius-0.5 sphere has a
-// 1×1×1 bbox, so scale=[2,1,1] still bakes to bounds 2×1×1 — the numeric assertions
-// are unchanged. The split-cube rejection is pinned as its own #376 sentinel below.
+// retired fused BoxMesh. A radius-0.5 sphere has a 1×1×1 bbox, so scale=[2,1,1] bakes
+// to bounds 2×1×1 — the numeric assertions carry over from the retired box verbatim.
+//
+// #376: a split cube (an Object posed over a BoxData) now bakes too, through the SAME
+// mechanism — the gate admits `Object` alongside `SphereMesh`, and the pair retires
+// together. The split-cube case below asserts the SAME numbers as SC-1, so it pins the
+// mechanism rather than merely that the call stopped failing.
 //
 // SC-1  Sphere scale=[2,1,1] → BakedMesh, transform.scale==[1,1,1], world bounds 2×1×1.
 // SC-2  boundary-pair (H40): rendered world bounds == resolver geometry bounds.
@@ -18,7 +20,7 @@
 // SC-5  Apply → Cmd+Z → original SphereMesh id+type+scale+edges restored.
 // SC-8  keyframe position → Apply menu disabled + message.
 // H45   two same-size Spheres, bake one → the other unchanged.
-// #376  a split cube (Object) is NOT bakeable — Apply is rejected, no BakedMesh.
+// #376  a split cube (Object) bakes → BakedMesh identity, bounds 2×1×1, the PAIR retired.
 //
 // REF: PLAN.md Wave 2 Task 6; hetvabhasa H40/H45; vyapti V1/V20; CONTEXT D-04; #376.
 
@@ -103,8 +105,9 @@ async function applyTransform(page: import('@playwright/test').Page, id: string,
 }
 
 /** Inject a fused SphereMesh (radius 0.5 → 1×1×1 bbox) wired into the scene and
- *  wait for it to render. The Apply MECHANISM runs on this working producer; a split
- *  cube (Object) is the #376 gap, pinned separately. Returns the node id. */
+ *  wait for it to render. The Apply MECHANISM runs on this working producer; the split
+ *  cube bakes through the SAME mechanism and is covered by its own case below (#376).
+ *  Returns the node id. */
 async function seedApplySphere(page: import('@playwright/test').Page, id: string) {
   await page.evaluate((nodeId) => {
     const w = window as unknown as BasherWindow;
