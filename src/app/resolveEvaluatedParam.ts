@@ -130,7 +130,16 @@ export function resolveEvaluatedParam(
     const paramRoot = paramPath.split('.')[0] ?? paramPath;
     const ownerId = resolveDataParamOwner(state, requestedNodeId, paramRoot);
     if (ownerId !== null && ownerId !== requestedNodeId) {
-      return resolveEvaluatedParam(state, ownerId, paramPath, ctx, cache);
+      // Recurse first so the data node's OWN channels/transients win (the #398 overlay).
+      const viaOwner = resolveEvaluatedParam(state, ownerId, paramPath, ctx, cache);
+      if (viaOwner !== null) return viaOwner;
+      // #399 — the BASE-read twin of #398. When the data node has no overlay either,
+      // reach through the split for its base VALUE instead of returning null: a caller
+      // naming the Object (`n_box`) would otherwise fall back to `n_box.params.material`,
+      // which the Object doesn't own, and surface the fallback grey. Read the base off
+      // the true owner (the BoxData) so the base colour/size is the cube's real one.
+      const base = readBaseParam(state.nodes[ownerId], paramPath);
+      return base === undefined ? null : { value: base };
     }
     return null;
   }

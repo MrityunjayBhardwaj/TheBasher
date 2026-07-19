@@ -135,6 +135,29 @@ describe('resolveEvaluatedParam (C2 — generic non-transform resolver)', () => 
     expect(viaData?.value).toBeCloseTo(0.5, 5);
   });
 
+  // #399 — the BASE-read twin of the #398 channel reach. With NO channel on the material,
+  // reading the base colour on the OBJECT must still reach through the split to the BoxData's
+  // real base value — not return null (which lets a caller fall back to the Object's absent
+  // `material` and surface the fallback grey #808080).
+  it('reaches through the split for the BASE value: an un-animated data param resolves on the Object', () => {
+    const state = buildDefaultDagState();
+    const dataId = Object.keys(state.nodes).find((k) => state.nodes[k].type === 'BoxData');
+    expect(dataId, 'seed should be split (Object + BoxData)').toBeTruthy();
+    const dataMat = (state.nodes[dataId!].params as { material: { base: { color: string } } })
+      .material;
+    const trueColor = dataMat.base.color;
+    expect(trueColor).not.toBe('#808080'); // the seed cube has a real (green) default
+
+    // Asked on the OBJECT, un-animated — reaches the BoxData's base, not null/grey.
+    const viaObject = resolveEvaluatedParam(state, BOX_ID, 'material.base.color', ctxAt(0));
+    expect(viaObject).not.toBeNull();
+    expect(viaObject?.value).toBe(trueColor);
+
+    // The size base reaches through too (the other data param).
+    const size = resolveEvaluatedParam(state, BOX_ID, 'size', ctxAt(0));
+    expect(size?.value).toEqual((state.nodes[dataId!].params as { size: unknown }).size);
+  });
+
   // The reach is a FALLBACK, not a redirect: a channel authored against the Object with a
   // data paramPath must keep resolving. Both conventions exist and an up-front redirect
   // silently breaks this one (it did — 20 driver/param tests went red).
