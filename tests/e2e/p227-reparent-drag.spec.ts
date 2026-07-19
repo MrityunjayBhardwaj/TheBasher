@@ -8,6 +8,7 @@
 // DataTransfer so the dragstart's setData survives to the drop handler.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 import type { Page, JSHandle } from '@playwright/test';
 
 interface ReparentWindow {
@@ -178,28 +179,26 @@ test('a Group cannot be dropped into its own descendant (cycle guard)', async ({
 });
 
 test('same-parent sibling drag still REORDERS (regression)', async ({ page }) => {
-  await page.evaluate(() => {
-    const w = window as unknown as ReparentWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_box_b',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_box_b', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-      ],
-      'user',
-      'add second box',
-    );
-  });
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as ReparentWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_box_b', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'user',
+        'add second box',
+      );
+    },
+    { ops: splitCubeOps({ objectId: 'n_box_b', position: [3, 0, 0] }) },
+  );
   // Order is [n_box, n_box_b]. Drag n_box_b onto n_box → swap to [n_box_b, n_box].
   expect(await childIds(page, '__scene__')).toEqual(['n_box', 'n_box_b']);
   await dragRowOnto(page, 'n_box_b', 'n_box');

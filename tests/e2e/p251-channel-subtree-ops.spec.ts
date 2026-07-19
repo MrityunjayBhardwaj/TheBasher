@@ -10,6 +10,7 @@
 // calls buildDeleteNodesOps / buildDuplicateNodeOps).
 
 import { test, expect } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 import type { Page } from '@playwright/test';
 
 interface W {
@@ -42,25 +43,17 @@ function channels(page: Page) {
 function boxes(page: Page) {
   return page.evaluate(() => {
     const st = (window as unknown as W).__basher_dag!.getState().state;
-    return Object.keys(st.nodes).filter((id) => st.nodes[id].type === 'BoxMesh');
+    // The Object half of each split cube — that is the scene child a delete or
+    // duplicate acts on, and what the position channels target.
+    return Object.keys(st.nodes).filter((id) => st.nodes[id].type === 'Object');
   });
 }
 
 async function addKeyframedBox(page: Page, boxId: string, chId: string) {
   await page.evaluate(
-    ({ boxId, chId }) => {
+    ({ boxId, chId, cubeOps }) => {
       const d = (op: unknown) => (window as unknown as W).__basher_dag!.getState().dispatch(op);
-      d({
-        type: 'addNode',
-        nodeId: boxId,
-        nodeType: 'BoxMesh',
-        params: {
-          size: [1, 1, 1],
-          position: [0, 0, 0],
-          rotation: [0, 0, 0],
-          material: { name: 'default', base: { color: '#88f' } },
-        },
-      });
+      for (const op of cubeOps as unknown[]) d(op);
       d({
         type: 'connect',
         from: { node: boxId, socket: 'out' },
@@ -81,7 +74,7 @@ async function addKeyframedBox(page: Page, boxId: string, chId: string) {
         },
       });
     },
-    { boxId, chId },
+    { boxId, chId, cubeOps: splitCubeOps({ objectId: boxId, color: '#88f' }) },
   );
   await page.waitForTimeout(150);
 }

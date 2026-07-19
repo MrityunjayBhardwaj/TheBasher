@@ -17,6 +17,7 @@
 //      CONTEXT D-01..D-07; boot.ts:508 (__basher_evaluated_transform seam).
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -90,50 +91,43 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
   // probe time DEPENDS on where the t=2 key sits. The channel targets the
   // box DIRECTLY (target = box dagId); NO AnimationLayer wraps it, the box
   // stays its own scene child. `overlayChannels` overlays the sampled value.
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag!.getState();
-    if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
-      dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
-    }
-    const sceneId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Scene')?.[0];
-    if (!sceneId) throw new Error('p7.1-seed: no Scene node');
-    const ops: unknown[] = [
-      {
-        type: 'addNode',
-        nodeId: 'sun',
-        nodeType: 'BoxMesh',
-        params: {
-          size: [1, 1, 1],
-          position: [0, 0, 0],
-          rotation: [0, 0, 0],
-          material: { name: 'default', color: '#ff0000' },
+  await page.evaluate(
+    ({ cubeOps }) => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag!.getState();
+      if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
+        dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
+      }
+      const sceneId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Scene')?.[0];
+      if (!sceneId) throw new Error('p7.1-seed: no Scene node');
+      const ops: unknown[] = [
+        ...(cubeOps as unknown[]),
+        // V57: the box IS its own scene child (no AnimationLayer wrapper to slot
+        // between it and the scene) — wire it directly into scene.children.
+        {
+          type: 'connect',
+          from: { node: 'sun', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
         },
-      },
-      // V57: the box IS its own scene child (no AnimationLayer wrapper to slot
-      // between it and the scene) — wire it directly into scene.children.
-      {
-        type: 'connect',
-        from: { node: 'sun', socket: 'out' },
-        to: { node: sceneId, socket: 'children' },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'ch',
-        nodeType: 'KeyframeChannelVec3',
-        params: {
-          name: 'rotation',
-          target: 'sun',
-          paramPath: 'rotation',
-          keyframes: [
-            { time: 0, value: [0, 0, 0], easing: 'linear' },
-            { time: 2, value: [0, 10, 0], easing: 'linear' },
-          ],
+        {
+          type: 'addNode',
+          nodeId: 'ch',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'rotation',
+            target: 'sun',
+            paramPath: 'rotation',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [0, 10, 0], easing: 'linear' },
+            ],
+          },
         },
-      },
-    ];
-    dag.dispatchAtomic(ops, 'user', 'p7.1-seed');
-  });
+      ];
+      dag.dispatchAtomic(ops, 'user', 'p7.1-seed');
+    },
+    { cubeOps: splitCubeOps({ objectId: 'sun', color: '#ff0000' }) },
+  );
 
   await page.getByTestId('floating-toolbar-timeline').click();
   const host = page.getByTestId('timeline-canvas');

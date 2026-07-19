@@ -4,6 +4,7 @@
 // clones, not shared). One atomic → one undo.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 import type { Page } from '@playwright/test';
 
 interface DupWindow {
@@ -57,40 +58,43 @@ test('context-menu Duplicate clones a leaf as a sibling and selects the copy; un
 test('Shift-D deep-copies a Group subtree (the copy owns CLONED children, not shared)', async ({
   page,
 }) => {
-  await page.evaluate(() => {
-    const w = window as unknown as DupWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_grp',
-          nodeType: 'Group',
-          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'n_child',
-          nodeType: 'BoxMesh',
-          params: { size: [2, 2, 2], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_grp', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_child', socket: 'out' },
-          to: { node: 'n_grp', socket: 'children' },
-        },
-      ],
-      'user',
-      'group',
-    );
-    w.__basher_selection.getState().select('n_grp');
-  });
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as DupWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'n_grp',
+            nodeType: 'Group',
+            params: {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              pivot: [0, 0, 0],
+            },
+          },
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_grp', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'n_child', socket: 'out' },
+            to: { node: 'n_grp', socket: 'children' },
+          },
+        ],
+        'user',
+        'group',
+      );
+      w.__basher_selection.getState().select('n_grp');
+    },
+    { ops: splitCubeOps({ objectId: 'n_child', size: [2, 2, 2] }) },
+  );
 
   await page.keyboard.press('Shift+D');
 

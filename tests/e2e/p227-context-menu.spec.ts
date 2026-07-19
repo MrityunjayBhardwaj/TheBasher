@@ -5,6 +5,7 @@
 // reuses the SAME op-builder as the Delete key (one authority).
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 import type { Page } from '@playwright/test';
 
 interface CtxWindow {
@@ -33,39 +34,42 @@ const selection = (page: Page) =>
   });
 
 async function addGroupWithChild(page: Page) {
-  await page.evaluate(() => {
-    const w = window as unknown as CtxWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_grp',
-          nodeType: 'Group',
-          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'n_child',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_grp', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_child', socket: 'out' },
-          to: { node: 'n_grp', socket: 'children' },
-        },
-      ],
-      'user',
-      'group',
-    );
-  });
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as CtxWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'n_grp',
+            nodeType: 'Group',
+            params: {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              pivot: [0, 0, 0],
+            },
+          },
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_grp', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'n_child', socket: 'out' },
+            to: { node: 'n_grp', socket: 'children' },
+          },
+        ],
+        'user',
+        'group',
+      );
+    },
+    { ops: splitCubeOps({ objectId: 'n_child' }) },
+  );
 }
 
 test.beforeEach(async ({ page }) => {

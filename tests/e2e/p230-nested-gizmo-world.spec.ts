@@ -9,6 +9,7 @@
 // child's LOCAL [0,0,0] while it rendered at world [5,1,0].
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_dag: {
@@ -107,29 +108,27 @@ test('gizmo on a Group-nested child anchors in WORLD space and writes LOCAL para
 });
 
 test('top-level child stays byte-identical (world == local, no conversion)', async ({ page }) => {
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'n_box_top',
-          nodeType: 'BoxMesh',
-          params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_box_top', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-      ],
-      'user',
-      'top box',
-    );
-    w.__basher_selection.getState().select('n_box_top');
-  });
+  await page.evaluate(
+    ({ ops }) => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          ...ops,
+          {
+            type: 'connect',
+            from: { node: 'n_box_top', socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'user',
+        'top box',
+      );
+      w.__basher_selection.getState().select('n_box_top');
+    },
+    { ops: splitCubeOps({ objectId: 'n_box_top' }) },
+  );
   await page.waitForTimeout(500);
 
   await page.evaluate(() =>
