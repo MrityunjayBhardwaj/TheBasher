@@ -378,13 +378,14 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(Array.from(posAfter)).toEqual(Array.from(posBefore));
   });
 
-  it('a split cube (Object) rejects Apply — the documented Slice-2 gap (no bake path yet)', async () => {
-    // #365 Phase 5a (Slice 2): a cube is an Object → BoxData split, NOT a bakeable fused
-    // primitive. Apply on it must reject cleanly and leave the DAG byte-unchanged until an
-    // Object+BoxData bake path lands (a tracked follow-up).
+  it('a split cube (Object) bakes its pose, retiring the Object AND its BoxData (#376)', async () => {
+    // The Slice-2 gap is closed: a posed Object over a BoxData bakes through the same
+    // mechanism as the fused sphere. The PAIR retires — leaving the BoxData behind would
+    // orphan it in the graph (no consumer, still saved).
     let state = buildFusedSphereState();
     const cube = makeSplitCube(state, {
       objectId: 'n_cube',
+      position: [2, 0, 0],
       connectTo: { node: state.outputs.scene!.node, socket: 'children' },
     });
     state = cube.state;
@@ -399,8 +400,76 @@ describe('dispatchApplyTransform (primitives)', () => {
       dispatchAtomic: fn,
       setSelection: () => {},
     });
-    expect(result.ok).toBe(false); // not a bakeable mesh
-    expect(calls).toHaveLength(0); // DAG byte-unchanged
+
+    expect(result.ok).toBe(true);
+    const next = stateRef.current;
+    // Both halves of the pair are gone; a BakedMesh took the scene-child slot.
+    expect(next.nodes[cube.objectId]).toBeUndefined();
+    expect(next.nodes[cube.dataId]).toBeUndefined();
+    const bakedId = (result as { ok: true; bakedId: string }).bakedId;
+    expect(next.nodes[bakedId]?.type).toBe('BakedMesh');
+
+    // The pose baked INTO the geometry: the BakedMesh sits at identity, and the geometry's
+    // bbox carries the Object's +2 x-offset (bake-what-renders, not a re-posed node).
+    expect(next.nodes[bakedId].params.position).toEqual([0, 0, 0]);
+    const ref = next.nodes[bakedId].params.geometry as {
+      descriptor: { hash: string; vertexCount: number };
+    };
+    const geom = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
+    geom.computeBoundingBox();
+    expect(geom.boundingBox!.min.x).toBeCloseTo(1.5, 5);
+    expect(geom.boundingBox!.max.x).toBeCloseTo(2.5, 5);
+    expect(calls).toHaveLength(1); // ONE atomic composite = one Cmd+Z
+  });
+
+  it('a SHARED BoxData survives the bake — only the baking Object retires (#376 fan-out)', async () => {
+    // Two Objects posing ONE BoxData. Baking the first must not consume the data node, or
+    // the sibling Object renders empty. The exclusivity guard is what makes fan-out (#391)
+    // safe to expose later.
+    let state = buildFusedSphereState();
+    const sceneId = state.outputs.scene!.node;
+    const first = makeSplitCube(state, {
+      objectId: 'n_cube_a',
+      dataId: 'n_shared_data',
+      position: [2, 0, 0],
+      connectTo: { node: sceneId, socket: 'children' },
+    });
+    state = first.state;
+    // A second Object bound to the SAME data node.
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_cube_b',
+      nodeType: 'Object',
+      params: { position: [-2, 0, 0] },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_shared_data', socket: 'out' },
+      to: { node: 'n_cube_b', socket: 'data' },
+    }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_cube_b', socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    }).next;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_cube_a', 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+
+    expect(result.ok).toBe(true);
+    const next = stateRef.current;
+    expect(next.nodes['n_cube_a']).toBeUndefined(); // the baked Object retired
+    expect(next.nodes['n_shared_data']).toBeDefined(); // the SHARED data survived
+    expect(next.nodes['n_cube_b']).toBeDefined(); // …and the sibling still poses it
+    expect(next.nodes['n_cube_b'].inputs.data).toEqual({ node: 'n_shared_data', socket: 'out' });
   });
 });
 

@@ -324,24 +324,56 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     }
   });
 
-  test('#376 sentinel: Apply on a split cube (Object) is rejected — no bake path yet', async ({
+  test('#376: Apply on a split cube (Object) bakes — BakedMesh identity, bounds 2×1×1, pair retired', async ({
     page,
   }) => {
-    // The default cube is a split Object. dispatchApplyTransform gates on SphereMesh
-    // (:196), so an Object is refused with ok:false and NO BakedMesh is created — the
-    // documented #376 gap. When a posed Object+BoxData bake path lands, this flips RED
-    // and the mechanism tests above should also cover a split cube.
+    // The #376 gap is CLOSED: the default cube is a split Object over a BoxData, and it
+    // now bakes through the same mechanism as the fused sphere (SC-1). Asserted on the
+    // SAME numbers as SC-1 — the unit cube scaled on X bakes to world bounds 2×1×1 — so
+    // this pins the split-cube MECHANISM, not merely that the call stopped failing.
     await setScale(page, 'n_box', [2, 1, 1]);
-    const result = await applyTransform(page, 'n_box', 'all');
-    expect(result.ok).toBe(false);
-    const state = await page.evaluate(() => {
+    const dataId = await page.evaluate(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      return {
-        cubeStillThere: Boolean(nodes['n_box']),
-        hasBaked: Object.values(nodes).some((n) => n.type === 'BakedMesh'),
-      };
+      return (nodes['n_box'] as unknown as { inputs: Record<string, { node: string }> }).inputs.data
+        .node;
     });
-    expect(state.cubeStillThere).toBe(true);
-    expect(state.hasBaked).toBe(false);
+
+    const result = await applyTransform(page, 'n_box', 'all');
+    expect(result.ok).toBe(true);
+
+    const state = await page.evaluate(
+      ([boxId, dId]) => {
+        const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+        const baked = Object.entries(nodes).find(([, n]) => n.type === 'BakedMesh');
+        return {
+          objectGone: !nodes[boxId!],
+          dataGone: !nodes[dId!],
+          bakedId: baked?.[0] ?? null,
+          bakedScale: baked?.[1].params.scale,
+          bakedPosition: baked?.[1].params.position,
+        };
+      },
+      ['n_box', dataId],
+    );
+
+    // The PAIR retired — leaving the BoxData would orphan it in the saved graph.
+    expect(state.objectGone).toBe(true);
+    expect(state.dataGone).toBe(true);
+    // The pose went INTO the geometry, so the baked node sits at identity…
+    expect(state.bakedId).not.toBeNull();
+    expect(state.bakedScale).toEqual([1, 1, 1]);
+    expect(state.bakedPosition).toEqual([0, 0, 0]);
+    // …and the RENDERED bounds still carry the scale (observation, not inference).
+    await page.waitForFunction(
+      (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id) !== null,
+      state.bakedId!,
+    );
+    const bounds = await page.evaluate(
+      (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id),
+      state.bakedId!,
+    );
+    expect(bounds![0]).toBeCloseTo(2, 3);
+    expect(bounds![1]).toBeCloseTo(1, 3);
+    expect(bounds![2]).toBeCloseTo(1, 3);
   });
 });

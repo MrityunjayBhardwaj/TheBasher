@@ -3051,10 +3051,12 @@ export function NPanel() {
                             ))}
                       {/* Phase 151 — Apply control in the transform card for a
                           selected primitive. Bakes TRS → BakedMesh via the same
-                          helper the Object ▸ Apply menu uses (one undo). #365
-                          Slice 2: a cube is a split Object (Apply on it awaits an
-                          Object+BoxData bake path), so only SphereMesh shows it. */}
-                      {sectionId === 'transform' && node.type === 'SphereMesh' ? (
+                          helper the Object ▸ Apply menu uses (one undo). #376: a
+                          split `Object` bakes too, so both it and the still-fused
+                          SphereMesh show the control (same pair the dispatcher
+                          admits — a non-mesh Object is rejected at resolve). */}
+                      {sectionId === 'transform' &&
+                      (node.type === 'SphereMesh' || node.type === 'Object') ? (
                         <ApplyTransformControl nodeId={node.id} />
                       ) : null}
                       {/* #228 Slice D — Set Origin to Geometry for a Group (its

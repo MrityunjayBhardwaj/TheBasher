@@ -449,9 +449,10 @@ export function MenuBar() {
   );
   const currentFrame = useTimeStore((s) => s.frame);
   const selectedNode = selectedId ? dag.nodes[selectedId] : undefined;
-  // #365 Phase 5a (Slice 2): a cube is a split Object, not a bakeable primitive here (Apply on
-  // a cube awaits an Object+BoxData bake path). SphereMesh remains the primitive that bakes.
-  const isPrimitive = selectedNode?.type === 'SphereMesh';
+  // #376: a split `Object` bakes alongside the still-fused `SphereMesh` — the same two types
+  // the dispatcher admits. An Object whose data is not a mesh (an Empty) is rejected by the
+  // dispatcher's resolve step; enabling the item for it costs a no-op click, not a bad bake.
+  const isPrimitive = selectedNode?.type === 'SphereMesh' || selectedNode?.type === 'Object';
   const applyAnimated = Boolean(
     selectedId && isPrimitive && isTransformAnimated(dag, selectedId, currentFrame),
   );
