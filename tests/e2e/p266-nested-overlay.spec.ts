@@ -12,6 +12,7 @@
 //      Falsify: at t=0 vs t=2 the world position differs.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface W {
   __basher_dag?: { getState: () => { dispatch: (op: unknown) => void } };
@@ -45,17 +46,15 @@ test.describe('#266/#267 nested overlays (constraint + channel) under a rotated 
       return Boolean(w.__basher_dag && w.__basher_time && w.__basher_mesh_world_quaternion);
     });
     await page.evaluate(
-      ({ tf, box }) => {
+      ({ tf, box, boxOps }) => {
         const w = window as unknown as W;
         const d = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
         w.__basher_time!.getState().pause();
         w.__basher_time!.getState().setTime(0);
-        d({
-          type: 'addNode',
-          nodeId: box,
-          nodeType: 'BoxMesh',
-          params: { position: [0, 0, 0], size: [1, 1, 1] },
-        });
+        // #365 Slice 2: the nested box is a split cube (Object → BoxData); the Object
+        // keeps `box`, so the Transform.target wiring, the Track-To (target: box) and
+        // the world reads are unchanged — a nested Object is posable + constrainable.
+        for (const op of boxOps) d(op);
         d({
           type: 'addNode',
           nodeId: tf,
@@ -87,7 +86,7 @@ test.describe('#266/#267 nested overlays (constraint + channel) under a rotated 
           },
         });
       },
-      { tf: TF, box: BOX },
+      { tf: TF, box: BOX, boxOps: splitCubeOps({ objectId: BOX, position: [0, 0, 0] }) },
     );
     await page.waitForTimeout(400);
 
@@ -127,17 +126,14 @@ test.describe('#266/#267 nested overlays (constraint + channel) under a rotated 
       return Boolean(w.__basher_dag && w.__basher_time && w.__basher_mesh_world_position);
     });
     await page.evaluate(
-      ({ tf, box }) => {
+      ({ tf, box, boxOps }) => {
         const w = window as unknown as W;
         const d = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
         w.__basher_time!.getState().pause();
         w.__basher_time!.getState().setTime(0);
-        d({
-          type: 'addNode',
-          nodeId: box,
-          nodeType: 'BoxMesh',
-          params: { position: [0, 0, 0], size: [1, 1, 1] },
-        });
+        // #365 Slice 2: the nested box is a split cube; the Object keeps `box`, so the
+        // nested position channel (target: box) drives the Object's own pose.
+        for (const op of boxOps) d(op);
         d({
           type: 'addNode',
           nodeId: tf,
@@ -170,7 +166,7 @@ test.describe('#266/#267 nested overlays (constraint + channel) under a rotated 
           },
         });
       },
-      { tf: TF, box: BOX },
+      { tf: TF, box: BOX, boxOps: splitCubeOps({ objectId: BOX, position: [0, 0, 0] }) },
     );
     await page.waitForTimeout(400);
 

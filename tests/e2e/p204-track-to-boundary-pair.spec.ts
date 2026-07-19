@@ -12,6 +12,7 @@
 //   derived Euler the read resolver returns) → same -Z direction.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -75,17 +76,14 @@ async function buildBoxTrackingMovingTarget(page: import('@playwright/test').Pag
     return Boolean(w.__basher_dag && w.__basher_time);
   });
   await page.evaluate(
-    ({ boxId, targetId }) => {
+    ({ boxId, targetId, targetOps }) => {
       const w = window as unknown as BasherWindow;
       const dispatch = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
       // Box at origin (default). Add a target box that animates +X → +Z.
       dispatch({ type: 'setParam', nodeId: boxId, paramPath: 'position', value: [0, 0, 0] });
-      dispatch({
-        type: 'addNode',
-        nodeId: targetId,
-        nodeType: 'BoxMesh',
-        params: { position: [10, 0, 0], size: [1, 1, 1] },
-      });
+      // #365 Slice 2: the aim target is a split cube (Object → BoxData); the Object
+      // keeps targetId, so the position channel + Track-To aimNode are unchanged.
+      for (const op of targetOps) dispatch(op);
       dispatch({
         type: 'connect',
         from: { node: targetId, socket: 'out' },
@@ -120,7 +118,11 @@ async function buildBoxTrackingMovingTarget(page: import('@playwright/test').Pag
         },
       });
     },
-    { boxId: BOX_ID, targetId: TARGET_ID },
+    {
+      boxId: BOX_ID,
+      targetId: TARGET_ID,
+      targetOps: splitCubeOps({ objectId: TARGET_ID, position: [10, 0, 0] }),
+    },
   );
 }
 

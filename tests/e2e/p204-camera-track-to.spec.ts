@@ -8,6 +8,7 @@
 // (origin) and the forward no longer tracks the target.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_view_camera?: () => {
@@ -74,12 +75,11 @@ test.describe('#204 camera Track-To (look-through)', () => {
   }) => {
     await waitReady(page);
     // A target box that animates +X → +Z over [0,2], and a Track-To on the camera.
-    await dispatch(page, {
-      type: 'addNode',
-      nodeId: TARGET_ID,
-      nodeType: 'BoxMesh',
-      params: { position: [10, 0, 0], size: [1, 1, 1] },
-    });
+    // #365 Slice 2: the aim target is a split cube (Object → BoxData); the Object
+    // keeps TARGET_ID, so the position channel + Track-To aimNode are unchanged.
+    for (const op of splitCubeOps({ objectId: TARGET_ID, position: [10, 0, 0] })) {
+      await dispatch(page, op);
+    }
     await dispatch(page, {
       type: 'connect',
       from: { node: TARGET_ID, socket: 'out' },

@@ -6,6 +6,7 @@
 // this spec proves it end-to-end. No product code — a capability made explicit.
 
 import { test, expect } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -77,13 +78,12 @@ test('NLA 3A — one Action drives two objects, render==read independently, mute
     return Object.entries(nodes).find(([, n]) => n.type === 'Scene')?.[0] ?? null;
   });
   expect(sceneId).not.toBeNull();
-  await dispatch({
-    type: 'addNode',
-    nodeId: 'n_box2',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1] },
-    inputs: {},
-  });
+  // #365 Slice 2: the second scene object is a split cube (Object → BoxData). The
+  // Object keeps `n_box2`, so the NLA Strip retarget (paramPath: position) and the
+  // world-position read below are unchanged — position lives on the Object.
+  for (const op of splitCubeOps({ objectId: 'n_box2' })) {
+    await dispatch(op as Record<string, unknown>);
+  }
   await dispatch({
     type: 'connect',
     from: { node: 'n_box2', socket: 'out' },

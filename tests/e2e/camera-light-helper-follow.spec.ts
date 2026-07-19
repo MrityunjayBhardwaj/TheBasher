@@ -11,6 +11,7 @@
 // from the frame-0 value (x≈3 / x≈5) — a frozen helper makes them RED.
 
 import { expect, test } from './_fixtures';
+import { splitCubeOps } from './_splitCube';
 
 interface W {
   __basher_dag: {
@@ -169,22 +170,21 @@ test('#242 GAP 1 — a camera frustum follows an ANIMATED ANCESTOR Group (its ow
   // ancestor's frame-0 world. A nested MESH follows for free (the Group's
   // DirectChannelsR re-renders its whole subtree), so it is the control here.
   // FALSIFIABLE: a frozen frustum stays at x=3; the fix makes it x=13 (base 3 + Δ10).
-  await page.evaluate(() => {
+  // #365 Slice 2: the nested control mesh is a split cube (Object → BoxData); the
+  // Object keeps the id `anc_box`, so the `out → anc_grp children` connect and the
+  // world-position read are unchanged.
+  const ancBoxOps = splitCubeOps({
+    objectId: 'anc_box',
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    color: '#88f',
+  });
+  await page.evaluate((boxOps) => {
     const dag = (window as unknown as W).__basher_dag.getState();
     const scene = dag.state.outputs.scene!.node;
     dag.dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: 'anc_box',
-          nodeType: 'BoxMesh',
-          params: {
-            size: [1, 1, 1],
-            position: [0, 0, 0],
-            rotation: [0, 0, 0],
-            material: { name: 'default', base: { color: '#88f' } },
-          },
-        },
+        ...boxOps,
         {
           type: 'addNode',
           nodeId: 'anc_grp',
@@ -225,7 +225,7 @@ test('#242 GAP 1 — a camera frustum follows an ANIMATED ANCESTOR Group (its ow
       'e2e',
       'camera under animated group',
     );
-  });
+  }, ancBoxOps);
 
   await setTime(page, 0);
   const read = async () =>
@@ -260,22 +260,19 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
   // target. The fix re-resolves the SAME Track-To aim at `seconds` in the follower.
   // FALSIFIABLE: a frozen helper keeps lookAt = authored [0,0,0]; the fix makes it
   // track the target ([5,0,0] -> [-5,0,0]).
-  await page.evaluate(() => {
+  // #365 Slice 2: the Track-To aim target is a split cube; the Object keeps `tt_aim`.
+  const ttAimOps = splitCubeOps({
+    objectId: 'tt_aim',
+    position: [5, 0, 0],
+    rotation: [0, 0, 0],
+    color: '#f80',
+  });
+  await page.evaluate((boxOps) => {
     const dag = (window as unknown as W).__basher_dag.getState();
     const scene = dag.state.outputs.scene!.node;
     dag.dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: 'tt_aim',
-          nodeType: 'BoxMesh',
-          params: {
-            size: [1, 1, 1],
-            position: [5, 0, 0],
-            rotation: [0, 0, 0],
-            material: { name: 'default', base: { color: '#f80' } },
-          },
-        },
+        ...boxOps,
         {
           type: 'connect',
           from: { node: 'tt_aim', socket: 'out' },
@@ -323,7 +320,7 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
       'e2e',
       'area light track-to animated target',
     );
-  });
+  }, ttAimOps);
 
   await setTime(page, 0);
   const at0 = await page.evaluate(
