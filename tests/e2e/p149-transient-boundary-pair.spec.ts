@@ -236,4 +236,32 @@ test.describe('#149 transient boundary-pair (H40, PAUSED)', () => {
     expect(String(withTransient.sideA).toLowerCase()).toBe('#ff0000');
     expect(String(withTransient.sideB).toLowerCase()).toBe('#ff0000');
   });
+
+  // #399 — the BASE-read twin. With NO channel/transient on the material, reading the
+  // seed split cube's base colour on the OBJECT (`n_box`) must reach through the split to
+  // the BoxData's real default — not the fallback grey #808080 (which is what a null
+  // resolve + Object-params fallback surfaces, since the Object owns no `material`).
+  test('C4-base: an un-animated split cube resolves its REAL base material colour, not grey (#399)', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const w = window as unknown as BasherWindow;
+      return Boolean(w.__basher_dag && w.__basher_evaluated_param);
+    });
+    const read = await page.evaluate(() => {
+      const w = window as unknown as BasherWindow;
+      const nodes = w.__basher_dag!.getState().state.nodes;
+      const dataId = Object.keys(nodes).find((k) => nodes[k].type === 'BoxData')!;
+      const trueColor = (nodes[dataId].params as { material: { base: { color: string } } }).material
+        .base.color;
+      const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
+      const resolved =
+        w.__basher_evaluated_param!('n_box', 'material.base.color', ctx)?.value ?? null;
+      return { trueColor, resolved };
+    });
+    console.log(`[p149 C4-base #399] true=${read.trueColor} resolved=${read.resolved}`);
+    expect(read.trueColor.toLowerCase()).not.toBe('#808080');
+    expect(String(read.resolved).toLowerCase()).toBe(read.trueColor.toLowerCase());
+  });
 });
