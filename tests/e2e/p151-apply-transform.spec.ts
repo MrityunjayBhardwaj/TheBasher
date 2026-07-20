@@ -299,6 +299,61 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     await expect(page.getByTestId('menu-object-apply-all')).toBeDisabled();
   });
 
+  test('#411: a keyframed SIZE on a split cube → Object ▸ Apply disabled + message', async ({
+    page,
+  }) => {
+    // The gap this closes: `size` lives on the cube's DATA node, not on the Object
+    // the user selects, so the old TRS-band guard asked the wrong node, found
+    // nothing, and offered a bake that silently froze the animation at frame 0.
+    await page.evaluate(() => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag!.getState();
+      const sceneId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Scene')![0];
+      dag.dispatchAtomic([
+        { type: 'addNode', nodeId: 'n411_data', nodeType: 'BoxData', params: { size: [1, 1, 1] } },
+        { type: 'addNode', nodeId: 'n411_obj', nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: 'n411_data', socket: 'out' },
+          to: { node: 'n411_obj', socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n411_obj', socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'kf_size',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'size',
+            target: 'n411_data', // the DATA node — this is the reach under test
+            paramPath: 'size',
+            keyframes: [
+              { time: 0, value: [1, 1, 1], easing: 'linear' },
+              { time: 1, value: [3, 1, 1], easing: 'linear' },
+            ],
+          },
+        },
+      ]);
+    });
+    await page.waitForFunction(
+      () => (window as unknown as BasherWindow).__basher_mesh_world_bounds!('n411_obj') !== null,
+    );
+    // Select the OBJECT — what a user actually clicks; the animated param is one
+    // edge away on its data node.
+    await page.evaluate(async () => {
+      const m = await import('/src/app/stores/selectionStore.ts');
+      m.useSelectionStore.getState().select('n411_obj');
+    });
+
+    await page.getByTestId('menu-object-button').click();
+    await page.getByTestId('menu-object-apply').hover();
+    await expect(page.getByTestId('menu-object-apply-animated-msg')).toBeVisible();
+    await expect(page.getByTestId('menu-object-apply-all')).toBeDisabled();
+  });
+
   test('H45 isolation: bake one of two same-size Spheres → the other is unchanged', async ({
     page,
   }) => {

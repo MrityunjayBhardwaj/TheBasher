@@ -23,7 +23,11 @@ import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
-import { dispatchApplyTransform, canApplyTransform } from './dispatchApplyTransform';
+import {
+  dispatchApplyTransform,
+  canApplyTransform,
+  isApplySourceAnimated,
+} from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
 
 const PRIM_ID = 'n_prim';
@@ -521,6 +525,126 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(back.nodes[cube.objectId]).toBeDefined();
     expect(back.nodes[cube.dataId]).toBeDefined();
     expect(back.nodes[cube.objectId].inputs.data).toEqual({ node: cube.dataId, socket: 'out' });
+  });
+});
+
+describe('#411 — the animated guard covers every param the bake consumes', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+    geometryRegistry.clear();
+  });
+
+  /** A channel of `type` driving `paramPath` on `target`. */
+  function withChannel(
+    state: DagState,
+    type: string,
+    target: string,
+    paramPath: string,
+    keyframes: unknown[],
+  ): DagState {
+    return applyOp(state, {
+      type: 'addNode',
+      nodeId: `kf_${paramPath}`,
+      nodeType: type,
+      params: { name: paramPath, target, paramPath, keyframes },
+    }).next;
+  }
+
+  it('rejects a FUSED sphere whose radius is animated (pre-existing, not split-specific)', async () => {
+    // The bake resolves geometry from `radius`, so freezing it at the current frame
+    // destroys the animation exactly as freezing a TRS band would. The old guard
+    // enumerated position/rotation/scale and never saw this.
+    let state = buildFusedSphereState();
+    state = withChannel(state, 'KeyframeChannelNumber', PRIM_ID, 'radius', [
+      { time: 0, value: 0.5, easing: 'linear' },
+      { time: 1, value: 2, easing: 'linear' },
+    ]);
+
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    let dispatched = 0;
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage,
+      currentFrame: 30,
+      dispatchAtomic: () => {
+        dispatched++;
+        return [];
+      },
+      setSelection: () => {},
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('animated');
+    expect(dispatched).toBe(0);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a SPLIT cube whose size is animated — the channel targets the DATA node', async () => {
+    // The reach is the whole point: `size` lives on the BoxData, so asking only the
+    // selected Object returns the honest answer "nothing animated here" and the bake
+    // proceeds. Observed on `main` as ok:true with the animation silently gone.
+    let state = emptyDagState();
+    const cube = makeSplitCube(state, { objectId: 'n_cube', size: [1, 1, 1] });
+    state = withChannel(cube.state, 'KeyframeChannelVec3', cube.dataId, 'size', [
+      { time: 0, value: [1, 1, 1], easing: 'linear' },
+      { time: 1, value: [3, 1, 1], easing: 'linear' },
+    ]);
+
+    // The guard must be asked about the OBJECT (what the user selects) and still
+    // find the data node's channel.
+    expect(isApplySourceAnimated(state, cube.objectId, 30)).toBe(true);
+
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    let dispatched = 0;
+    const result = await dispatchApplyTransform(cube.objectId, 'all', {
+      state,
+      storage,
+      currentFrame: 30,
+      dispatchAtomic: () => {
+        dispatched++;
+        return [];
+      },
+      setSelection: () => {},
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain('animated');
+    expect(dispatched).toBe(0);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects an animated MATERIAL on the data node — the bake captures material too', () => {
+    let state = emptyDagState();
+    const cube = makeSplitCube(state, { objectId: 'n_cube', size: [1, 1, 1] });
+    state = withChannel(cube.state, 'KeyframeChannelColor', cube.dataId, 'material.base.color', [
+      { time: 0, value: '#ff0000', easing: 'linear' },
+      { time: 1, value: '#00ff00', easing: 'linear' },
+    ]);
+    expect(isApplySourceAnimated(state, cube.objectId, 30)).toBe(true);
+  });
+
+  it('leaves a STATIC split cube offerable — the guard did not become blanket-true', () => {
+    const cube = makeSplitCube(emptyDagState(), { objectId: 'n_cube', size: [1, 1, 1] });
+    expect(isApplySourceAnimated(cube.state, cube.objectId, 30)).toBe(false);
+    expect(canApplyTransform(cube.state, cube.objectId)).toBe(true);
+  });
+
+  it('ignores a channel targeting an UNRELATED node', () => {
+    let state = emptyDagState();
+    const cube = makeSplitCube(state, { objectId: 'n_cube', size: [1, 1, 1] });
+    const other = makeSplitCube(cube.state, { objectId: 'n_other', size: [1, 1, 1] });
+    state = withChannel(other.state, 'KeyframeChannelVec3', other.dataId, 'size', [
+      { time: 0, value: [1, 1, 1], easing: 'linear' },
+      { time: 1, value: [3, 1, 1], easing: 'linear' },
+    ]);
+    // The neighbour's animation must not block this cube's bake.
+    expect(isApplySourceAnimated(state, cube.objectId, 30)).toBe(false);
+    expect(isApplySourceAnimated(state, other.objectId, 30)).toBe(true);
   });
 });
 

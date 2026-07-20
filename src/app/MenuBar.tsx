@@ -27,7 +27,7 @@ import type { ProjectMetadata } from '../core/project/io';
 import {
   dispatchApplyTransform,
   canApplyTransform,
-  isTransformAnimated,
+  isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
 import { useTimeStore } from './stores/timeStore';
@@ -455,7 +455,7 @@ export function MenuBar() {
   // construction.
   const isPrimitive = Boolean(selectedId && canApplyTransform(dag, selectedId));
   const applyAnimated = Boolean(
-    selectedId && isPrimitive && isTransformAnimated(dag, selectedId, currentFrame),
+    selectedId && isPrimitive && isApplySourceAnimated(dag, selectedId, currentFrame),
   );
   const applyDisabled = !selectedId || !isPrimitive || applyAnimated;
 
