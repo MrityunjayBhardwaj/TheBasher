@@ -14,8 +14,12 @@
 //      mesh sharing the key). Recompute normals when rotation/scale was baked.
 //   3. OPFS write(async, AWAITED) — writeBakedGeometry. The await guarantees the
 //      bytes exist before the node referencing them is committed (reload-safe).
-//   4. Op composite(sync) — addNode BakedMesh; for each consumer edge,
-//      connect-before-disconnect (preserves sibling order); removeNode original.
+//   4. Op composite(sync) — the BakedMesh INHERITS the applied node's id (#412), so
+//      everything keyed by node id rather than by edge (a constraint/driver target, an
+//      NLA strip) survives the bake. Ordered: disconnect every consumer edge → removeNode
+//      original (+ its exclusive data node) → addNode BakedMesh at the SAME id → replay
+//      the edges in ascending list index (preserves sibling order). The glTF-child path
+//      still mints a fresh id — see nextBakedId.
 //
 // Animated guard (D-04): if ANYTHING the bake consumes is keyframed, reject — the
 // dispatch-side belt (the UI also disables, through the same predicate). #411
@@ -43,6 +47,7 @@ import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationStat
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { useSelectionStore } from '../stores/selectionStore';
+import { useTransientEditStore } from '../stores/transientEditStore';
 import { getGltfClone } from '../asset/gltfCloneRegistry';
 import { captureBakedMaterial } from './captureBakedMaterial';
 import { evaluate, createEvaluatorCache } from '../../core/dag/evaluator';
@@ -59,6 +64,8 @@ export interface ApplyDeps {
   currentFrame: number;
   dispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown;
   setSelection: (id: string) => void;
+  /** Drop every held (un-keyed) edit for a node — see the call site in step 5. */
+  clearTransients: (nodeId: string) => void;
   /** glTF-child path only — the live render clone (tests inject a fake Group;
    *  production reads it from the live-clone registry by assetRef). */
   gltfClone: THREE.Group;
@@ -93,8 +100,10 @@ const ANIMATED_MSG = 'Apply unavailable — the object or its geometry is animat
  * This ALSO closes the orphaned-channel half of #411: the bake removes the data
  * node, which would leave a `size`/`material` channel targeting a dead id. Since
  * any such channel now blocks the bake outright, the orphan can no longer be
- * created here. (A constraint target or saved selection naming the applied node
- * still dangles — that is the separate id-inheritance question, #412.)
+ * created here. (The constraint/driver/NLA targets that this guard does NOT reach
+ * are handled structurally instead: since #412 the baked node inherits the applied
+ * node's id, so an id-keyed reference has nothing to dangle from. Selection was
+ * never at risk — it is runtime UI state, and Apply moves it explicitly.)
  *
  * KNOWN GAP: a param driven by a driver rather than a keyframe channel is still
  * invisible to this guard. Drivers are resolved by paramPath and would need the
@@ -223,6 +232,12 @@ function consumerEdgesOf(state: DagState, nodeId: string): ConsumerEdge[] {
 }
 
 let bakedCounter = 0;
+/**
+ * A fresh baked id. Since #412 this is the glTF-CHILD path only — the primitive/`Object`
+ * path inherits the applied node's id instead. A GltfChild id is an import artifact on an
+ * edge-less satellite node, so handing it to a standalone BakedMesh would risk colliding
+ * with the same child on a later re-import; that path keeps minting deliberately.
+ */
 function nextBakedId(state: DagState): string {
   // Deterministic-enough fresh id; loop until unused (collisions are vanishing).
   let id: string;
@@ -267,7 +282,9 @@ export function canApplyTransform(state: DagState, nodeId: string): boolean {
 
 /**
  * Apply the (masked) transform of a Box/Sphere into baked geometry, swapping the
- * node for a BakedMesh in one atomic, undoable composite. Returns the new id.
+ * node for a BakedMesh in one atomic, undoable composite. Returns the baked id —
+ * since #412 that is the SAME id the applied node had (see step 4), so callers that
+ * held the id keep a valid handle and every id-keyed reference to it still resolves.
  *
  * The `deps` arg is optional: production omits it and the live stores +
  * getStorage() + timeStore + selectionStore are used; tests inject mocks.
@@ -337,33 +354,73 @@ export async function dispatchApplyTransform(
   const bakedRef = await writeBakedGeometry(storage, baked);
   baked.dispose(); // the cloned CPU buffer is now in OPFS + (on load) the registry
 
-  // 4 — atomic Op composite (Q1): addNode → connect-before-disconnect → removeNode.
-  const bakedId = nextBakedId(state);
+  // 4 — atomic Op composite (Q1). The BakedMesh INHERITS the applied node's id (#412):
+  // vacate the id, then re-occupy it. Everything keyed by node id therefore survives the
+  // bake for free — a constraint `target`/`aimNode`, a driver `target`, an NLA `Strip`,
+  // and every id-keyed field added later. The rejected alternative was a re-target sweep
+  // over each of those params, which is a hand-maintained list of cases: the shape that
+  // has silently stopped covering the world every time we have relied on it (#411 was one).
+  // This is also the rule the object↔data split already chose — the load migration has the
+  // Object inherit the fused node's id for exactly this reason (§5 id-stability).
+  const bakedId = selectedId;
   const spec = bakedSpecFromMeshMaterial(mesh.material);
-  const ops: Op[] = [
-    {
-      type: 'addNode',
-      nodeId: bakedId,
-      nodeType: 'BakedMesh',
-      params: {
-        geometry: bakedRef,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        material: spec,
-      },
+
+  // ASCENDING by list index: the edges are replayed after the node is re-added, and
+  // `connect` splice-INSERTS at min(index, len). Removing our bindings shifts the
+  // surviving siblings down, so re-inserting at the original indices in ascending order
+  // lands every sibling back where it started. Out of order, the later insert would be
+  // clamped short and sibling order would silently change (#259/H140 — the same property
+  // the old connect-before-disconnect pass existed to protect, preserved by replay
+  // ordering now that the id is inherited rather than fresh).
+  const consumerEdges = consumerEdgesOf(state, selectedId).sort(
+    (a, b) => (a.index ?? 0) - (b.index ?? 0),
+  );
+
+  // 4a — VACATE the id. `addNode` refuses an id that already exists and `removeNode`
+  // refuses a still-consumed node, so inheritance forces disconnect-before-remove — the
+  // INVERSE of the old ordering. Per-op validation only (no whole-graph invariant runs
+  // mid-composite), so the transiently-unbound socket between 4a and 4b is legal.
+  const ops: Op[] = [];
+  for (const edge of consumerEdges) {
+    ops.push({
+      type: 'disconnect',
+      from: { node: selectedId, socket: 'out' },
+      to: { node: edge.consumer, socket: edge.socket },
+    });
+  }
+  ops.push({ type: 'removeNode', nodeId: selectedId });
+  // #376 — retire the PAIR. The pose baked into the geometry, so the Object goes; its
+  // data node has to go with it or it is left orphaned in the graph (no consumer, still
+  // saved). Guarded by exclusivity: a SHARED data node is posed by another Object too,
+  // and removing it would empty that sibling. Ordered AFTER the Object's removeNode so
+  // the `data` edge is already gone when the data node is dropped.
+  const retiredDataId = node.type === 'Object' ? exclusiveDataNodeOf(state, selectedId) : null;
+  if (retiredDataId) ops.push({ type: 'removeNode', nodeId: retiredDataId });
+  // 4b — RE-OCCUPY it with the baked node, then replay the consumer edges onto it.
+  ops.push({
+    type: 'addNode',
+    nodeId: bakedId,
+    nodeType: 'BakedMesh',
+    params: {
+      geometry: bakedRef,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      material: spec,
     },
-  ];
-  for (const edge of consumerEdgesOf(state, selectedId)) {
-    // Rewire depends on the consumer socket's CARDINALITY (#259/H140):
-    //   - LIST socket (e.g. Scene.children): both bindings coexist, so
-    //     connect-before-disconnect inserts the baked node at the SAME index
-    //     (sibling order preserved), THEN removes the original edge.
-    //   - SINGLE socket (e.g. a modifier's `target`): the socket holds exactly
-    //     one binding, so `connect` REPLACES the original in place — a following
-    //     `disconnect original.out` would find `baked.out` bound and throw
-    //     ("bound producer is <baked>, not <original>"), rolling back the whole
-    //     atomic composite. Emit ONLY the connect; the replace is the disconnect.
+  });
+  // Carry the user's NAME across. `meta` lives on the node, so removeNode drops it and
+  // the fresh BakedMesh would fall back to `node.id` as its label — an object named "Hero"
+  // would show up as a raw id after a bake. That was survivable while the bake minted a
+  // new node ("it is a different node"), but the id is inherited now: the same identity
+  // keeping its constraints and edges while silently losing its name is incoherent, and
+  // meta is identity data by the op's own account. BakedMesh has no `name` param, so the
+  // meta override is the only place this can live.
+  const inheritedName = node.meta?.name;
+  if (inheritedName !== undefined) {
+    ops.push({ type: 'setMeta', nodeId: bakedId, name: inheritedName });
+  }
+  for (const edge of consumerEdges) {
     const consumerType = state.nodes[edge.consumer].type;
     const isList = requireNodeType(consumerType).inputs[edge.socket]?.cardinality === 'list';
     ops.push({
@@ -372,23 +429,6 @@ export async function dispatchApplyTransform(
       to: { node: edge.consumer, socket: edge.socket },
       ...(isList && edge.index !== undefined ? { index: edge.index } : {}),
     });
-    if (isList) {
-      ops.push({
-        type: 'disconnect',
-        from: { node: selectedId, socket: 'out' },
-        to: { node: edge.consumer, socket: edge.socket },
-      });
-    }
-  }
-  ops.push({ type: 'removeNode', nodeId: selectedId });
-  // #376 — retire the PAIR. The pose baked into the geometry, so the Object goes; its
-  // data node has to go with it or it is left orphaned in the graph (no consumer, still
-  // saved). Guarded by exclusivity: a SHARED data node is posed by another Object too,
-  // and removing it would empty that sibling. Ordered AFTER the Object's removeNode so
-  // the `data` edge is already gone when the data node is dropped.
-  if (node.type === 'Object') {
-    const dataId = exclusiveDataNodeOf(state, selectedId);
-    if (dataId) ops.push({ type: 'removeNode', nodeId: dataId });
   }
 
   const dispatchAtomic = deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore);
@@ -397,6 +437,23 @@ export async function dispatchApplyTransform(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+
+  // 5 — drop any HELD (un-keyed) edit on the retired nodes. A transient is keyed by
+  // `${nodeId}|${paramPath}` in a module-level store that ONLY a frame change clears —
+  // not selection, not undo. While the bake minted a fresh id this was unreachable: the
+  // stale key named a removed node, so every lookup missed. With the id inherited the
+  // key now HITS, and `resolveEvaluatedParam` gives a transient unconditional priority
+  // with no type check — so the inspector, the gizmo and the world-transform read would
+  // report a pre-bake offset while the viewport draws the baked mesh at the origin. That
+  // is precisely the render/read divergence the transient band exists to prevent.
+  //
+  // Reachable because the transient OUTLIVES the animation that allowed it: hold an edit
+  // on an animated node, undo the channel (undo does not touch the frame, so the edit
+  // survives), and the node is now static enough for the animated guard to admit it.
+  const clearTransients =
+    deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id));
+  clearTransients(selectedId);
+  if (retiredDataId) clearTransients(retiredDataId);
 
   // Move selection to the new baked node.
   const setSelection =

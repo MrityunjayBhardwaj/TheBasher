@@ -21,6 +21,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
 import {
@@ -163,9 +164,15 @@ describe('dispatchApplyTransform (primitives)', () => {
     // ONE atomic composite (one Cmd+Z).
     expect(calls).toHaveLength(1);
 
-    // The original Box is gone; exactly one BakedMesh exists.
+    // #412 — the id is RETAINED: the BakedMesh takes the Box's place AT THE SAME id, so
+    // everything keyed by that id (a constraint/driver target, an NLA strip) still
+    // resolves. What changes is the node's TYPE, not its identity.
     const next = stateRef.current;
-    expect(next.nodes[PRIM_ID]).toBeUndefined();
+    expect(result.bakedId).toBe(PRIM_ID);
+    expect(next.nodes[PRIM_ID].type).toBe('BakedMesh');
+    // ...and the Box is gone as a TYPE — exactly one BakedMesh, no primitive left.
+    expect(Object.values(next.nodes).filter((n) => n.type === 'BakedMesh')).toHaveLength(1);
+    expect(Object.values(next.nodes).some((n) => n.type === 'Box')).toBe(false);
     const baked = next.nodes[result.bakedId];
     expect(baked).toBeDefined();
     expect(baked.type).toBe('BakedMesh');
@@ -186,7 +193,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(size.z).toBeCloseTo(1, 5);
   });
 
-  it('rewires the consumer edge: the BakedMesh feeds the Scene where the Box did', async () => {
+  it('preserves the consumer edge: the BakedMesh feeds the Scene at the id the Box held', async () => {
     const state = buildFusedSphereState();
     const storage = new MemoryStorage();
     const stateRef = { current: state };
@@ -203,19 +210,112 @@ describe('dispatchApplyTransform (primitives)', () => {
     if (!result.ok) return;
 
     const next = stateRef.current;
-    // The Scene's children no longer reference the Box; they reference the baked id.
-    const refsBox = Object.values(next.nodes).some((n) =>
-      Object.values(n.inputs).some((b) =>
-        (Array.isArray(b) ? b : [b]).some((r) => r.node === PRIM_ID),
-      ),
-    );
-    const refsBaked = Object.values(next.nodes).some((n) =>
-      Object.values(n.inputs).some((b) =>
-        (Array.isArray(b) ? b : [b]).some((r) => r.node === result.bakedId),
-      ),
-    );
-    expect(refsBox).toBe(false);
-    expect(refsBaked).toBe(true);
+    // #412 — the id is inherited, so "did the rewire land?" can no longer be asked as
+    // "old id absent, new id present": those are now the SAME id and the question answers
+    // itself. Ask instead what actually has to hold — the Scene edge SURVIVED the swap,
+    // and the node it lands on is the baked one.
+    const sceneChildren = next.nodes['n_scene'].inputs.children;
+    expect(Array.isArray(sceneChildren)).toBe(true);
+    const childRefs = (Array.isArray(sceneChildren) ? sceneChildren : []).map((r) => r.node);
+    expect(childRefs).toContain(result.bakedId);
+    expect(next.nodes[result.bakedId].type).toBe('BakedMesh');
+    // Nothing points at an id that no longer exists — the real failure this guards.
+    for (const n of Object.values(next.nodes)) {
+      for (const binding of Object.values(n.inputs)) {
+        for (const ref of Array.isArray(binding) ? binding : [binding]) {
+          expect(next.nodes[ref.node]).toBeDefined();
+        }
+      }
+    }
+  });
+
+  it('#412: an id-keyed reference to the applied node still resolves after the bake', async () => {
+    // The POINT of id-inheritance, asserted on the thing it exists to protect. A
+    // constraint is EDGE-LESS — it names its subject by id in `params.target`, so the
+    // consumer-edge rewire is structurally blind to it. Under the old mint the target
+    // pointed at a removed id and the constraint silently stopped firing; a dangling
+    // `aimNode` was worse still, coercing to the origin so the object re-aimed at world
+    // zero. Neither failure is visible in a node count or an edge walk, which is why this
+    // asserts resolution rather than shape.
+    const state = buildFusedSphereState();
+    const withConstraint = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_track',
+      nodeType: 'TrackTo',
+      params: { target: PRIM_ID, aimNode: PRIM_ID, order: 0 },
+    }).next;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: withConstraint };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state: withConstraint,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const next = stateRef.current;
+    const track = next.nodes['n_track'].params as { target: string; aimNode: string };
+    // Both id refs still name a node that EXISTS — and specifically the baked one.
+    expect(next.nodes[track.target]).toBeDefined();
+    expect(next.nodes[track.aimNode]).toBeDefined();
+    expect(track.target).toBe(result.bakedId);
+    expect(next.nodes[track.target].type).toBe('BakedMesh');
+  });
+
+  it('#412: a HELD transient edit on the applied node does not survive onto the baked one', async () => {
+    // The one hazard id-inheritance INTRODUCES rather than fixes. A transient is keyed by
+    // `${nodeId}|${paramPath}` in a module-level store that only a frame change clears —
+    // not selection, not undo. Under the old fresh id the stale key named a removed node
+    // and every lookup missed; under inheritance it HITS, and resolveEvaluatedParam gives
+    // a transient unconditional priority with no type check. The read surfaces would then
+    // report a pre-bake offset while the viewport draws the baked mesh at the origin.
+    const state = buildFusedSphereState();
+    useTransientEditStore.getState().set(PRIM_ID, 'position', [9, 9, 9]);
+    expect(useTransientEditStore.getState().get(PRIM_ID, 'position')).toBeDefined();
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      // NOT stubbed — the live store is the thing under test here.
+    });
+    expect(result.ok).toBe(true);
+
+    expect(useTransientEditStore.getState().get(PRIM_ID, 'position')).toBeUndefined();
+  });
+
+  it("#412: the baked node keeps the user's name, not just the id", async () => {
+    // `meta` lives on the node, so removeNode drops it. With the id inherited, an object
+    // that keeps its constraints and its edges but loses its label reads as a different
+    // object to the only observer who matters. The outliner falls back to `node.id` and
+    // BakedMesh has no `name` param, so without this the row shows a raw id.
+    const state = buildFusedSphereState();
+    const named = applyOp(state, { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero' }).next;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: named };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state: named,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(stateRef.current.nodes[result.bakedId].meta?.name).toBe('Hero');
   });
 
   it('#259/H140: rewires a SINGLE-cardinality consumer socket (a modifier target) without rolling back', async () => {
@@ -261,7 +361,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(calls).toHaveLength(1); // still ONE atomic composite
 
     const next = stateRef.current;
-    expect(next.nodes[PRIM_ID]).toBeUndefined(); // box baked away
+    expect(next.nodes[PRIM_ID].type).toBe('BakedMesh'); // baked away as a TYPE, id kept (#412)
     // the modifier's single `target` now points at the baked node (still a bare
     // ref, not promoted to a list), and Scene.children too.
     const modTarget = next.nodes['n_mod'].inputs.target;
@@ -280,7 +380,10 @@ describe('dispatchApplyTransform (primitives)', () => {
     }
     let back = fwd;
     for (let i = inverses.length - 1; i >= 0; i--) back = applyOp(back, inverses[i]).next;
-    expect(back.nodes[PRIM_ID]).toBeDefined();
+    // Under id-inheritance the id is present either way, so "toBeDefined" would pass
+    // without undo running at all. Assert the TYPE came back — that is what undo restores.
+    expect(back.nodes[PRIM_ID].type).toBe(state.nodes[PRIM_ID].type);
+    expect(back.nodes[PRIM_ID].type).not.toBe('BakedMesh');
     expect((back.nodes['n_mod'].inputs.target as { node: string }).node).toBe(PRIM_ID);
   });
 
@@ -411,11 +514,14 @@ describe('dispatchApplyTransform (primitives)', () => {
 
     expect(result.ok).toBe(true);
     const next = stateRef.current;
-    // Both halves of the pair are gone; a BakedMesh took the scene-child slot.
-    expect(next.nodes[cube.objectId]).toBeUndefined();
-    expect(next.nodes[cube.dataId]).toBeUndefined();
+    // Both halves of the pair are retired as NODES — but the OBJECT's id is inherited by
+    // the BakedMesh (#412), so it survives as an identity while its type changes. Only the
+    // data node's id genuinely disappears (nothing replaces it).
     const bakedId = (result as { ok: true; bakedId: string }).bakedId;
-    expect(next.nodes[bakedId]?.type).toBe('BakedMesh');
+    expect(bakedId).toBe(cube.objectId);
+    expect(next.nodes[cube.objectId].type).toBe('BakedMesh');
+    expect(next.nodes[cube.dataId]).toBeUndefined();
+    expect(Object.values(next.nodes).some((n) => n.type === 'Object')).toBe(false);
 
     // The pose baked INTO the geometry: the BakedMesh sits at identity, and the geometry's
     // bbox carries the Object's +2 x-offset (bake-what-renders, not a re-posed node).
@@ -474,7 +580,7 @@ describe('dispatchApplyTransform (primitives)', () => {
 
     expect(result.ok).toBe(true);
     const next = stateRef.current;
-    expect(next.nodes['n_cube_a']).toBeUndefined(); // the baked Object retired
+    expect(next.nodes['n_cube_a'].type).toBe('BakedMesh'); // the baked Object retired (id kept)
     expect(next.nodes['n_shared_data']).toBeDefined(); // the SHARED data survived
     expect(next.nodes['n_cube_b']).toBeDefined(); // …and the sibling still poses it
     expect(next.nodes['n_cube_b'].inputs.data).toEqual({ node: 'n_shared_data', socket: 'out' });
@@ -504,7 +610,7 @@ describe('dispatchApplyTransform (primitives)', () => {
       setSelection: () => {},
     });
     expect(result.ok).toBe(true);
-    expect(stateRef.current.nodes[cube.objectId]).toBeUndefined();
+    expect(stateRef.current.nodes[cube.objectId].type).toBe('BakedMesh'); // id kept (#412)
     expect(stateRef.current.nodes[cube.dataId]).toBeUndefined();
 
     // Apply each op's inverse in reverse — the same round-trip SC-5 uses.
@@ -522,7 +628,9 @@ describe('dispatchApplyTransform (primitives)', () => {
     // Both halves are back AND re-wired to each other — restoring the nodes without the
     // `data` edge would leave a cube that renders nothing, which is the failure this
     // asserts against rather than merely counting nodes.
-    expect(back.nodes[cube.objectId]).toBeDefined();
+    // The Object's id is present either way (inherited), so assert its TYPE came back —
+    // `toBeDefined` alone would now pass without undo having run.
+    expect(back.nodes[cube.objectId].type).toBe('Object');
     expect(back.nodes[cube.dataId]).toBeDefined();
     expect(back.nodes[cube.objectId].inputs.data).toEqual({ node: cube.dataId, socket: 'out' });
   });

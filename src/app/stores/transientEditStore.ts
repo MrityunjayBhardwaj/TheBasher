@@ -48,6 +48,10 @@ export interface TransientEditStore {
   has(nodeId: string, paramPath: string): boolean;
   /** Release ONE slot (Wave E commit-clear). */
   clear(nodeId: string, paramPath: string): void;
+  /** Release EVERY slot held for one node, whatever the paramPath (#412). For when a
+   *  node stops existing as the thing those edits were held against — the key format is
+   *  this store's business, so the sweep lives here rather than in callers. */
+  clearNode(nodeId: string): void;
   /** Release ALL slots (Wave D frame-change discard, D-149-2). */
   clearAll(): void;
 }
@@ -79,6 +83,18 @@ export const useTransientEditStore = create<TransientEditStore>((set, get) => ({
       if (!s.edits.has(keyOf(nodeId, paramPath))) return s; // no-op → no churn
       const m = new Map(s.edits);
       m.delete(keyOf(nodeId, paramPath));
+      return { edits: m };
+    });
+  },
+
+  clearNode(nodeId) {
+    set((s) => {
+      // Match on the STORED nodeId rather than parsing the composite key — a paramPath
+      // could contain the separator, and the field is right there.
+      const doomed = [...s.edits].filter(([, e]) => e.nodeId === nodeId);
+      if (doomed.length === 0) return s; // no-op → no new ref, no churn
+      const m = new Map(s.edits);
+      for (const [k] of doomed) m.delete(k);
       return { edits: m };
     });
   },
