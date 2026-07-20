@@ -1797,8 +1797,21 @@ function ConstrainedR({
   pickId: string;
   override?: MaterialValue;
 }) {
-  const channels = useLayeredChannels(pickId);
-  const transients = useTransientEditStore((s) => s.edits);
+  // #422 — the SAME two data-half reaches DirectChannelsR carries. A split object's
+  // `size`/`material` live on its linked data node, so both are required to see them.
+  // This road was missed by #398 (channels) and #400 (transients) because it never
+  // mounts alongside DirectChannelsR: OverlayDispatch returns THIS component first for
+  // a constrained node, so the constraint branch is the only road a constrained split
+  // object ever takes. Without them, constraining a cube froze its keyframed colour at
+  // the base value in the viewport while every read surface reported it animating.
+  const ownChannels = useLayeredChannels(pickId);
+  const dataChannels = useDataParamChannels(pickId);
+  const channels = useMemo(
+    () => (dataChannels.length === 0 ? ownChannels : [...ownChannels, ...dataChannels]),
+    [ownChannels, dataChannels],
+  );
+  const rawTransients = useTransientEditStore((s) => s.edits);
+  const transients = useDataParamTransients(pickId, rawTransients);
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
 
   // channels (position) → transient → derived aim rotation (constraint wins on
