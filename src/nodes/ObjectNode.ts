@@ -35,7 +35,15 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   // The posable node — 'transform' implies 'constraint' (a pose can be
   // constrained) implies 'driver'. The data socket carries no pose, so those
   // sections live HERE, once, by construction.
-  inspectorSections: ['transform', 'constraint', 'driver'],
+  //
+  // 'modifier' is here and NOT on the data node (#377), which is the whole answer
+  // to "what does a geometry modifier attach to": the OBJECT owns the stack and it
+  // evaluates over the object's data. That is why two Objects sharing one data node
+  // can carry different stacks — Blender's model (a modifier lives on the Object,
+  // not the mesh datablock) and Houdini's SOP chain have the same shape. It is
+  // appended LAST so `sections[0]` stays 'transform' and no section's
+  // default-collapsed state shifts underneath the existing specs.
+  inspectorSections: ['transform', 'constraint', 'driver', 'modifier'],
   evaluate(params, inputs) {
     return {
       kind: 'Object',

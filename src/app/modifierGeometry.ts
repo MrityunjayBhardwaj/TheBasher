@@ -30,9 +30,11 @@ import type {
   SceneChild,
   Vec3,
 } from '../nodes/types';
+import { isBakedMaterialSpec } from '../nodes/materialSchema';
+import { evaluate } from '../core/dag/evaluator';
+import type { DagState } from '../core/dag/state';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
-const ORIGIN: Vec3 = [0, 0, 0];
 
 /**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
@@ -49,58 +51,126 @@ export function boxGeometryRef(size: Vec3): GeometryRef {
 }
 
 /**
- * Project a resolved mesh VALUE into the source `GeometryRef` a modifier consumes.
- * Box/Sphere build the SAME deterministic key `resolveEvaluatedMesh` builds (so
- * the array key matches on both roads). BakedMesh / ModifiedMesh already carry a
- * handle — pass it through (chained modifiers). Returns null for a non-leaf-mesh
- * value (Transform/Group/glTF/Scatter/Character) — out of v1 scope.
+ * Everything a geometry modifier needs from its source value: the handle to
+ * reshape, the pose to carry forward so the result sits where the source sat, and
+ * the material to inherit. `null` from {@link modifierSource} means "this value is
+ * not a modifiable source" — the modifier passes through unchanged.
  */
-export function sourceGeometryRef(value: SceneChild): GeometryRef | null {
+export interface ModifierSource {
+  readonly geometry: GeometryRef;
+  readonly transform: MeshTransform;
+  readonly material: InlineMaterialSpec | null;
+}
+
+/**
+ * Project a resolved mesh VALUE into the source a modifier consumes — THE ONE
+ * kind-dispatch for "can this be modified, and with what?".
+ *
+ * It was three separate switches over one union (geometry / transform / material),
+ * which is the parallel-list shape [[V101]] warns about: the object↔data split
+ * added an `Object` arm to the read road (`resolveEvaluatedMesh`) and to none of
+ * these, so a modifier on a split cube RESOLVED as an array and RENDERED as a
+ * plain cube — the two roads disagreed with nothing to catch it (#377). One
+ * classifier means a new kind is answered once or not at all, never half.
+ *
+ * The switch is CLOSED BY A `never` ([[V109]]): adding a `SceneChild` kind is a
+ * COMPILE ERROR here, not a silent passthrough. Do NOT reintroduce a `default:` —
+ * the defensive-looking arm is precisely the bug. Stage C puts five more data
+ * kinds behind `Object`, and every one of them must land here deliberately.
+ *
+ * Sphere/Box build the SAME deterministic key `resolveEvaluatedMesh` builds (so
+ * the array key matches on both roads); BakedMesh/ModifiedMesh already carry a
+ * handle (chained modifiers); an `Object` reaches THROUGH its `data` socket for
+ * geometry+material while keeping its OWN TRS — the same reach the read road does,
+ * so read==render by construction.
+ */
+export function modifierSource(value: SceneChild): ModifierSource | null {
   switch (value.kind) {
     case 'SphereMesh':
       return {
-        key: `sphere|${value.radius}|${value.widthSegments}|${value.heightSegments}`,
-        kind: 'sphere',
-        descriptor: {
+        geometry: {
+          key: `sphere|${value.radius}|${value.widthSegments}|${value.heightSegments}`,
           kind: 'sphere',
-          radius: value.radius,
-          widthSegments: value.widthSegments,
-          heightSegments: value.heightSegments,
+          descriptor: {
+            kind: 'sphere',
+            radius: value.radius,
+            widthSegments: value.widthSegments,
+            heightSegments: value.heightSegments,
+          },
         },
+        transform: trsOf(value),
+        material: value.material,
       };
-    case 'BakedMesh':
     case 'ModifiedMesh':
-      return value.geometry;
-    default:
-      return null; // non-leaf-mesh source — out of v1 modifier scope
+      return { geometry: value.geometry, transform: trsOf(value), material: value.material };
+    case 'BakedMesh':
+      // A baked source carries a BakedMaterialSpec, which a ModifiedMesh cannot
+      // hold — so the material is dropped, exactly as before this consolidation.
+      // That drop is the live bug #358; it is preserved verbatim here rather than
+      // fixed in passing, so #377 stays a behaviour-preserving change everywhere
+      // except the Object arm below.
+      return { geometry: value.geometry, transform: trsOf(value), material: null };
+    case 'Object': {
+      // The object↔data split (#377): the Object owns the pose, the data node owns
+      // geometry + material. Reach through `data` — the modifier reshapes the mesh
+      // DATA and inherits the OBJECT's TRS, which is the attachment the design and
+      // both references agree on (Blender: mesh datablock → the Object's modifier
+      // stack → object transform; Houdini: SOP chain in object space → OBJ
+      // transform). Wiring the stack into the data lane itself is the follow-on
+      // increment; it needs every data kind to exist first (Stage C).
+      const data = value.data;
+      if (!data || data.kind !== 'MeshData') return null; // an Empty / non-mesh data
+      return {
+        geometry: data.geometry,
+        transform: trsOf(value),
+        // MeshData holds either spec; a baked one drops, as the BakedMesh arm does.
+        material: isBakedMaterialSpec(data.material) ? null : data.material,
+      };
+    }
+    // Not leaf meshes — a modifier passes through them unchanged (v1 scope).
+    case 'GltfAsset':
+    case 'Transform':
+    case 'Null':
+    case 'Curve':
+    case 'Group':
+    case 'MaterialOverride':
+    case 'Scatter':
+    case 'Character':
+      return null;
+    default: {
+      const exhaustive: never = value;
+      void exhaustive;
+      return null;
+    }
   }
 }
 
 /**
- * The TRS a modifier inherits from its source value so the modified geometry sits
- * exactly where the source mesh was. Box/Sphere/Baked/Modified all carry the full
- * TRS band; a non-leaf source falls back to identity (it won't be modified in v1).
+ * Can a geometry modifier actually reshape the mesh produced by `nodeId`?
+ *
+ * This is the OFFER half of [[V108]]: the UI must gate "+ Add Modifier" on the
+ * SAME condition the modifier's own `evaluate` accepts — literally by evaluating
+ * the source and asking {@link modifierSource}, never by matching a list of node
+ * types. The list it replaces (`SUPPORTED_BASE_TYPES`) had drifted both ways at
+ * once: it still named `BoxMesh`, retired in Slice 2, and had never gained
+ * `Object`, so the banner called a split cube unsupported while a fused relic was
+ * still advertised. A predicate that asks the resolver cannot drift — a kind that
+ * becomes modifiable is offered the day it lands, and one that retires stops being
+ * offered the day it goes.
  */
-export function sourceTransform(value: SceneChild): MeshTransform {
-  switch (value.kind) {
-    case 'SphereMesh':
-    case 'BakedMesh':
-    case 'ModifiedMesh':
-      return {
-        position: value.position,
-        rotation: value.rotation,
-        scale: value.scale ?? IDENTITY_SCALE, // C-1 (V10/H14) hydrate guard
-      };
-    default:
-      return { position: ORIGIN, rotation: ORIGIN, scale: IDENTITY_SCALE };
-  }
+export function canModifyGeometry(state: DagState, nodeId: string): boolean {
+  if (!state.nodes[nodeId]) return false;
+  const value = evaluate(state, nodeId).value as SceneChild | undefined;
+  return value ? modifierSource(value) !== null : false;
 }
 
-/** The inline material a modifier inherits from its source value, or null. */
-export function sourceMaterial(value: SceneChild): InlineMaterialSpec | null {
-  if (value.kind === 'SphereMesh') return value.material;
-  if (value.kind === 'ModifiedMesh') return value.material;
-  return null;
+/** The full TRS band of a value that carries one, with the C-1 (V10/H14) hydrate guard. */
+function trsOf(value: { position: Vec3; rotation: Vec3; scale: Vec3 }): MeshTransform {
+  return {
+    position: value.position,
+    rotation: value.rotation,
+    scale: value.scale ?? IDENTITY_SCALE,
+  };
 }
 
 /**

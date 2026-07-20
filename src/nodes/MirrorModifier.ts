@@ -25,12 +25,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { SceneChild } from './types';
-import {
-  mirrorGeometryRef,
-  sourceGeometryRef,
-  sourceMaterial,
-  sourceTransform,
-} from '../app/modifierGeometry';
+import { mirrorGeometryRef, modifierSource } from '../app/modifierGeometry';
 
 export const MirrorModifierParams = z.object({
   /** The axis to reflect across (the negated component). Default 'x' (the most common). */
@@ -59,17 +54,17 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, SceneChild
     if (!src) return src as unknown as SceneChild;
     // Mute-bypass (V58) — identity passthrough, byte-identical to no modifier.
     if (params.muted) return src;
-    const ref = sourceGeometryRef(src);
-    // Non-leaf-mesh source (glTF / Group / Scatter) — out of v1 scope: pass through.
-    if (!ref) return src;
-    const t = sourceTransform(src);
+    const source = modifierSource(src);
+    // Non-modifiable source (glTF / Group / Scatter / an Empty) — pass through.
+    if (!source) return src;
+    const t = source.transform;
     return {
       kind: 'ModifiedMesh',
-      geometry: mirrorGeometryRef(ref, params.axis, params.offset),
+      geometry: mirrorGeometryRef(source.geometry, params.axis, params.offset),
       position: t.position,
       rotation: t.rotation,
       scale: t.scale,
-      material: sourceMaterial(src),
+      material: source.material,
     };
   },
 };

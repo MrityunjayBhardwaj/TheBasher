@@ -20,7 +20,7 @@
 //      vyapti V10/V32; hetvabhasa H14; issue #178.
 
 import { z } from 'zod';
-import type { InlineMaterialSpec } from './types';
+import type { BakedMaterialSpec, InlineMaterialSpec } from './types';
 
 /** The renderer's current no-override roughness (SceneFromDAG.tsx applyOverride). */
 export const CURRENT_LOOK_ROUGHNESS = 0.5;
@@ -250,4 +250,17 @@ export function hydrateInlineMaterial(raw: unknown, baseColorDefault: string): I
     },
   };
   return m.unsupported ? { ...out, unsupported: m.unsupported } : out;
+}
+
+/**
+ * The ONE discriminator between the two material specs a mesh value can carry.
+ * `BakedMaterialSpec` is the rich captured-from-glTF spec (tagged by its
+ * `materialClass`); `InlineMaterialSpec` is the authored OpenPBR IR, which has no
+ * such tag. Shared so the read road (`resolveEvaluatedMesh`) and the modifier road
+ * (`modifierGeometry`) narrow a `MeshData` material the SAME way — two spellings
+ * of one rule is exactly the drift [[V101]] warns about.
+ */
+export function isBakedMaterialSpec(v: unknown): v is BakedMaterialSpec {
+  if (typeof v !== 'object' || v === null) return false;
+  return typeof (v as { materialClass?: unknown }).materialClass === 'string';
 }

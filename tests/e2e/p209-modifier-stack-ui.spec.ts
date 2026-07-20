@@ -5,13 +5,13 @@
 // ● toggle) bypasses the operator; and that a second add + delete drives the stack
 // — every action through operatorStack's atomic Op builders.
 //
-// #365 Slice 2: the modifier BASE is a fused SphereMesh, not the retired fused
-// BoxMesh. The seed cube is now a split `Object` → `BoxData`, and neither half
-// declares the 'modifier' inspector section (a split Object as a modifier target
-// is the undecided #377 path), so it has no Modifiers UI to drive. A fused
-// SphereMesh declares ['mesh','transform','constraint','driver','material','modifier'],
-// so its stack renders. The arrayed vertex count is asserted as a RATIO against the
-// runtime-derived source count, never a box constant — primitive-agnostic.
+// #377 retargets the BASE back to a CUBE — which is now a split `Object` → `BoxData`.
+// Slice 2 had moved this spec onto a fused SphereMesh because neither half of the
+// split declared the 'modifier' section and the attachment was undecided. It is
+// decided: the stack attaches to the OBJECT and evaluates over its data, so `Object`
+// declares 'modifier' and this drives the shape a user actually has. The arrayed
+// vertex count is asserted as a RATIO against the runtime-derived source count,
+// never a box constant — primitive-agnostic, so the retarget changes no numbers.
 //
 // REF: src/app/ModifierStackControls.tsx; src/app/operatorStack.ts;
 //      src/app/NPanel.tsx (the 'modifier' section); vyapti V58.
@@ -41,22 +41,49 @@ interface ThreeObjLike {
   geometry?: { attributes?: { position?: { count: number } } };
 }
 
-const SPHERE = 'p209ui_sphere';
+/** The cube's own vertex count, derived live in beforeEach — never a box constant. */
+let cubeVerts = 0;
 
-/** The largest position-attribute vertex count among live scene meshes. A default
- *  sphere (425 verts) dwarfs the seed cube (24), so before any modifier this is the
- *  sphere's own count; after "+ Array" it is the merged array (COUNT × source). */
-function maxMeshVerts(page: import('@playwright/test').Page): Promise<number> {
-  return page.evaluate(() => {
+const CUBE = 'p209ui_cube';
+const CUBE_DATA = 'p209ui_cube_data';
+
+/** The position-attribute vertex count of the meshes under the scene child named
+ *  `nodeId` — `SceneFromDAG` names each child's wrapper `<group name={pickId}>`,
+ *  so this measures ONE object's geometry and nothing else.
+ *
+ *  It replaces a scene-wide MAX, which worked only because a default sphere (425
+ *  verts) dwarfed everything else. A cube is 24 verts and the starter scene carries
+ *  thousands, so neither a max NOR a sum-minus-baseline can see it: the scene's
+ *  meshes mount asynchronously, so any whole-scene baseline is a race that silently
+ *  poisons every ratio derived from it. Measuring the subtree is exact and needs no
+ *  baseline at all. Still primitive-agnostic — the assertions are ratios against the
+ *  source's own runtime count, never a box constant. */
+function vertsUnder(page: import('@playwright/test').Page, nodeId: string): Promise<number> {
+  return page.evaluate((id) => {
     const w = window as unknown as UiWindow;
     const scene = w.__basher_three.getState().scene;
-    let max = 0;
+    let root: ThreeObjLike | null = null;
     scene?.traverse((o) => {
-      const g = (o as ThreeObjLike).geometry?.attributes?.position;
-      if ((o as ThreeObjLike).type === 'Mesh' && g && g.count > max) max = g.count;
+      if ((o as unknown as { name?: string }).name === id && !root) root = o;
     });
-    return max;
-  });
+    if (!root) return -1;
+    let total = 0;
+    (root as unknown as ThreeSceneLike).traverse((o) => {
+      const g = (o as ThreeObjLike).geometry?.attributes?.position;
+      if ((o as ThreeObjLike).type === 'Mesh' && g) total += g.count;
+    });
+    return total;
+  }, nodeId);
+}
+
+/** The node id of the single modifier row in the stack (`modifier-row-<id>`) — the
+ *  scene child once the modifier is spliced in ahead of the base. */
+async function soleModifierId(page: import('@playwright/test').Page): Promise<string> {
+  const testId = await page
+    .locator('[data-testid^="modifier-row-"]')
+    .first()
+    .getAttribute('data-testid');
+  return testId!.replace('modifier-row-', '');
 }
 
 test.beforeEach(async ({ page }) => {
@@ -78,36 +105,50 @@ test.beforeEach(async ({ page }) => {
       w.__basher_dag.getState().state.outputs.scene,
     );
   });
-  // A fresh fused SphereMesh, wired into the scene — the modifier BASE the UI drives.
-  await page.evaluate((sphere) => {
-    const w = window as unknown as UiWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene!.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: sphere,
-          nodeType: 'SphereMesh',
-          params: { radius: 0.5, position: [4, 0, 0] },
-        },
-        {
-          type: 'connect',
-          from: { node: sphere, socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-      ],
-      'e2e',
-      'modifier-base sphere',
-    );
-  }, SPHERE);
-  // Select the sphere and reveal its Modifiers section (last in its section list, so
+  // A fresh split cube — an `Object` (the pose + the modifier stack) over a `BoxData`
+  // (the geometry the stack reshapes), wired into the scene. This is exactly what
+  // Add ▸ Mesh ▸ Cube builds, so the spec drives the real user-facing shape.
+  await page.evaluate(
+    ({ cube, data }) => {
+      const w = window as unknown as UiWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          { type: 'addNode', nodeId: data, nodeType: 'BoxData', params: { size: [1, 1, 1] } },
+          {
+            type: 'addNode',
+            nodeId: cube,
+            nodeType: 'Object',
+            params: { position: [4, 0, 0] },
+          },
+          {
+            type: 'connect',
+            from: { node: data, socket: 'out' },
+            to: { node: cube, socket: 'data' },
+          },
+          {
+            type: 'connect',
+            from: { node: cube, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'e2e',
+        'modifier-base split cube',
+      );
+    },
+    { cube: CUBE, data: CUBE_DATA },
+  );
+  // Select the Object and reveal its Modifiers section (last in its section list, so
   // default-collapsed — open idempotently).
   await page.evaluate(
-    (sphere) => (window as unknown as UiWindow).__basher_selection.getState().select(sphere),
-    SPHERE,
+    (cube) => (window as unknown as UiWindow).__basher_selection.getState().select(cube),
+    CUBE,
   );
   await openInspectorSection(page, 'modifier');
+  // The cube's own vertex count, once its mesh has actually mounted.
+  await expect.poll(() => vertsUnder(page, CUBE)).toBeGreaterThan(0);
+  cubeVerts = await vertsUnder(page, CUBE);
 });
 
 test('#209 — "+ Array" adds a modifier and the viewport renders the merged array', async ({
@@ -117,28 +158,30 @@ test('#209 — "+ Array" adds a modifier and the viewport renders the merged arr
   await expect(stack).toBeVisible();
   await expect(stack.getByText('No modifiers.')).toBeVisible();
 
-  // The bare source count (sphere) before any modifier — derived, never hardcoded.
-  const base = await maxMeshVerts(page);
-  expect(base).toBeGreaterThan(0);
+  expect(cubeVerts).toBeGreaterThan(0);
 
   await page.getByTestId('modifier-add-ArrayModifier').click();
 
   // A modifier row appears in the stack...
   await expect(stack.locator('[data-testid^="modifier-row-"]')).toHaveCount(1);
-  // ...and the live viewport now renders a merged array: an integer multiple of the
-  // source (COUNT × base), so strictly larger than the bare source.
-  await expect.poll(() => maxMeshVerts(page), { timeout: 10_000 }).toBeGreaterThan(base);
-  const arrayed = await maxMeshVerts(page);
-  expect(arrayed % base).toBe(0); // genuinely COUNT copies of the source
+  const modifierId = await soleModifierId(page);
+
+  // ...and the live viewport now renders a merged array under the modifier: an
+  // integer multiple of the source, strictly more than the bare cube.
+  await expect
+    .poll(() => vertsUnder(page, modifierId), { timeout: 10_000 })
+    .toBeGreaterThan(cubeVerts);
+  const arrayed = await vertsUnder(page, modifierId);
+  expect(arrayed % cubeVerts).toBe(0); // genuinely COUNT copies of the source
 
   // Mute the modifier (the row's ● toggle) → the operator is bypassed, the merged
   // array collapses back to the bare source.
   await stack.locator('[data-testid^="modifier-mute-"]').first().click();
-  await expect.poll(() => maxMeshVerts(page), { timeout: 10_000 }).toBe(base);
+  await expect.poll(() => vertsUnder(page, modifierId), { timeout: 10_000 }).toBe(cubeVerts);
 
   // Un-mute → the array comes back.
   await stack.locator('[data-testid^="modifier-mute-"]').first().click();
-  await expect.poll(() => maxMeshVerts(page), { timeout: 10_000 }).toBe(arrayed);
+  await expect.poll(() => vertsUnder(page, modifierId), { timeout: 10_000 }).toBe(arrayed);
 });
 
 test('#209 — a second add stacks, and delete removes a modifier', async ({ page }) => {

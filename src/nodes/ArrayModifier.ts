@@ -23,12 +23,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { SceneChild } from './types';
-import {
-  arrayGeometryRef,
-  sourceGeometryRef,
-  sourceMaterial,
-  sourceTransform,
-} from '../app/modifierGeometry';
+import { arrayGeometryRef, modifierSource } from '../app/modifierGeometry';
 
 export const ArrayModifierParams = z.object({
   /** Number of copies (the source counts as copy 0). ≥1; default 3 for a clear proof. */
@@ -55,17 +50,17 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, SceneChild> 
     if (!src) return src as unknown as SceneChild;
     // Mute-bypass (V58) — identity passthrough, byte-identical to no modifier.
     if (params.muted) return src;
-    const ref = sourceGeometryRef(src);
-    // Non-leaf-mesh source (glTF / Group / Scatter) — out of v1 scope: pass through.
-    if (!ref) return src;
-    const t = sourceTransform(src);
+    const source = modifierSource(src);
+    // Non-modifiable source (glTF / Group / Scatter / an Empty) — pass through.
+    if (!source) return src;
+    const t = source.transform;
     return {
       kind: 'ModifiedMesh',
-      geometry: arrayGeometryRef(ref, params.count, params.offset),
+      geometry: arrayGeometryRef(source.geometry, params.count, params.offset),
       position: t.position,
       rotation: t.rotation,
       scale: t.scale,
-      material: sourceMaterial(src),
+      material: source.material,
     };
   },
 };
