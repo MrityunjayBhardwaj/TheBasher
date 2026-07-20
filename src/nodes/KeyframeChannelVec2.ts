@@ -164,6 +164,10 @@ export const KeyframeChannelVec2Node: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelVec2Params,
+  // #421 — the channel is OWNED BY its target: a bound animation curve is
+  // meaningless once the object it drives is gone (the long-standing H136 sweep,
+  // now declared instead of hardcoded at the delete site).
+  idRefs: [{ path: 'target', shape: 'id', role: 'subject' }],
   // D-04: no `time` input — time enters via value.sample(seconds).
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },

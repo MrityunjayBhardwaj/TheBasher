@@ -53,6 +53,15 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   pure: true,
   cost: 'cheap',
   paramSchema: TrackToParams,
+  // #421 — `target` is the CONSTRAINED object: this constraint lives on it
+  // (Blender keeps a constraint on its owner), so it dies with it. `aimNode` is
+  // a separate object this merely AIMS AT — usually shared by several
+  // constraints — so deleting the aim target must not delete the constraint.
+  // Clearing it falls back to `aimPoint`, an already-supported inert state.
+  idRefs: [
+    { path: 'target', shape: 'id', role: 'subject' },
+    { path: 'aimNode', shape: 'id', role: 'argument' },
+  ],
   // Edge-less (enumerated + scene-layer resolved, like a direct channel). The
   // `out` socket exists for introspection/future stack wiring; nothing consumes it.
   inputs: {},

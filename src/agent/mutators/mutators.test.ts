@@ -1525,6 +1525,32 @@ describe('deleteNode mutator', () => {
     }
   });
 
+  // #424 — the agent path used to be a SECOND implementation of delete that swept
+  // nothing, so asking the agent to delete a cube left its channel behind while
+  // deleting the same cube in the outliner was clean. It now delegates to the one
+  // shared builder. This asserts the sweep survives the five gates: the swept channel
+  // is edge-less, so without the 'id-ref' closure kind gate 3 rejects the mutator's
+  // OWN ops as out-of-scope.
+  it('sweeps an edge-less channel with its target, and the plan still validates', () => {
+    const state = buildScene();
+    (state.nodes as Record<string, unknown>).chSweep = {
+      id: 'chSweep',
+      type: 'KeyframeChannelVec3',
+      version: 1,
+      params: { target: 'box', paramPath: 'position', keyframes: [] },
+      inputs: {},
+    };
+    const result = validatePlan(deleteNodeMutator, { targetSelectors: ['box'] }, state, 'del');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const removed = result.ops
+        .filter((o) => o.type === 'removeNode')
+        .map((o) => (o as { nodeId: string }).nodeId);
+      expect(removed).toContain('box');
+      expect(removed).toContain('chSweep');
+    }
+  });
+
   it('refuses to delete an output anchor', () => {
     const state = buildScene();
     const result = validatePlan(

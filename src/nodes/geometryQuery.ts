@@ -55,6 +55,13 @@ export const SampleGeometryNode: NodeDefinition<SampleGeometryParams, Vec3 | num
   pure: true,
   cost: 'cheap',
   paramSchema: SampleGeometryParams,
+  // #421 — both refs point at independent scene objects (the terrain sampled,
+  // the node queried at). Shared, so clear rather than delete. Both are already
+  // `.optional()`, so absent is the natural empty.
+  idRefs: [
+    { path: 'sourceGeometry', shape: 'ref', role: 'argument' },
+    { path: 'at', shape: 'ref', role: 'argument' },
+  ],
   inputs: {},
   // Two output faces (Houdini Ray SOP parity: hit position + hit normal):
   //   `out`    — the world ground POINT under the query (drives a position).

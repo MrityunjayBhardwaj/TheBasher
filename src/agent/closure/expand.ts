@@ -24,6 +24,7 @@
 import type { DagState } from '../../core/dag/state';
 import type { NodeId } from '../../core/dag/types';
 import type { ClosureEdge, ClosureSet, ClosureSpec, EdgeKind } from './types';
+import { buildIdRefIndex, idRefsOutOf } from '../../core/dag/idRefSweep';
 
 const DEFAULT_MAX_DEPTH = 256;
 
@@ -66,6 +67,9 @@ export function expandClosure(spec: ClosureSpec, state: DagState): ClosureSet {
   // Pre-build an inverse index: which consumers reference each producer?
   // This makes 'parent' walks O(1) per step instead of O(nodes).
   const consumersOf = buildConsumerIndex(state);
+  // #421 — the inverse index of the id-reference universe, built once for the same
+  // reason as `consumersOf`: an "who names me?" step must not be O(nodes).
+  const idRefsInto = buildIdRefIndex(state.nodes);
 
   // Seed visited with every reachable root before any BFS — so a root
   // shows up in the closure even when no edge kind is declared.
@@ -77,7 +81,7 @@ export function expandClosure(spec: ClosureSpec, state: DagState): ClosureSet {
   // `visited` set for membership but uses a kind-local frontier so a
   // 'children' descendant is never followed via 'parent'.
   for (const kind of spec.followedEdges) {
-    walkKind(spec.rootSelectors, kind, maxDepth, state, consumersOf, visited, edges);
+    walkKind(spec.rootSelectors, kind, maxDepth, state, consumersOf, idRefsInto, visited, edges);
   }
 
   return {
@@ -93,6 +97,7 @@ function walkKind(
   maxDepth: number,
   state: DagState,
   consumersOf: Map<NodeId, Array<{ consumer: NodeId; socket: string }>>,
+  idRefsInto: Map<NodeId, NodeId[]>,
   visited: Set<NodeId>,
   edges: ClosureEdge[],
 ): void {
@@ -119,13 +124,26 @@ function walkKind(
   while (head < frontier.length) {
     const { id, depth } = frontier[head++];
     if (depth >= maxDepth) continue;
-    visitEdge(state, consumersOf, id, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    visitEdge(
+      state,
+      consumersOf,
+      idRefsInto,
+      id,
+      kind,
+      depth,
+      seenInKind,
+      seenEdges,
+      visited,
+      frontier,
+      edges,
+    );
   }
 }
 
 function visitEdge(
   state: DagState,
   consumersOf: Map<NodeId, Array<{ consumer: NodeId; socket: string }>>,
+  idRefsInto: Map<NodeId, NodeId[]>,
   from: NodeId,
   kind: EdgeKind,
   depth: number,
@@ -140,6 +158,22 @@ function visitEdge(
     if (!consumers) return;
     for (const { consumer } of consumers) {
       enqueue(consumer, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    }
+    return;
+  }
+
+  if (kind === 'id-ref') {
+    // Both directions: whoever names `from`, and whoever `from` names. A delete
+    // sweep needs the first (the channels/constraints owned by a doomed node) and
+    // the second (the strips a doomed Track owns).
+    for (const referrer of idRefsInto.get(from) ?? []) {
+      enqueue(referrer, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    }
+    const self = state.nodes[from];
+    if (self) {
+      for (const named of idRefsOutOf(self)) {
+        enqueue(named, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+      }
     }
     return;
   }

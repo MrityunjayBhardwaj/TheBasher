@@ -9,7 +9,8 @@ import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
-import type { Op, NodeId } from '../../../core/dag/types';
+import type { Op } from '../../../core/dag/types';
+import { buildDeleteNodesOps } from '../../../app/sceneNodeActions';
 
 const DeleteNodeSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
@@ -32,11 +33,16 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     ],
   },
   buildClosureSpec(spec): ClosureSpec {
-    // parent edge so consumers (whose inputs we'll disconnect) are
-    // inside the closure — gate 3 needs them there.
+    // 'parent'   — consumers whose inputs we disconnect.
+    // 'children' — a Group OWNS its children and takes them with it (#431).
+    // 'data'     — a split Object OWNS its data node (#365).
+    // 'id-ref'   — the edge-less half: the channels/constraints/drivers/strips
+    //              swept with their subject, and the survivors whose refs we clear
+    //              (#421). No edge kind can reach these, so without it gate 3
+    //              rejects this mutator's OWN ops.
     return {
       rootSelectors: spec.targetSelectors,
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'children', 'data', 'id-ref'],
     };
   },
   preconditions(spec, _closure, state) {
@@ -61,29 +67,14 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const targets = new Set<NodeId>(spec.targetSelectors);
-    const ops: Op[] = [];
-
-    // Disconnects: every consumer edge into a target.
-    for (const consumer of Object.values(state.nodes)) {
-      for (const [socket, binding] of Object.entries(consumer.inputs)) {
-        const refs = Array.isArray(binding) ? binding : [binding];
-        for (const ref of refs) {
-          if (!targets.has(ref.node)) continue;
-          ops.push({
-            type: 'disconnect',
-            from: { node: ref.node, socket: ref.socket },
-            to: { node: consumer.id, socket },
-          });
-        }
-      }
-    }
-
-    // Then removeNode for each target.
-    for (const id of spec.targetSelectors) {
-      ops.push({ type: 'removeNode', nodeId: id });
-    }
-
-    return ops;
+    // #424 — DELEGATE to the one shared authority instead of reimplementing.
+    // This builder used to be a second, independent answer to "delete a node": it
+    // emitted disconnects + removeNode and nothing else, so deleting a cube through
+    // the agent left its data half and its channels behind, while deleting the SAME
+    // cube through the outliner was clean. Two builders answering one question drift
+    // by construction — that divergence was the actual bug, more than any single
+    // orphan it produced. The outliner and the Delete key already share this builder
+    // (#227); the agent now makes three callers, one implementation.
+    return buildDeleteNodesOps(state, spec.targetSelectors);
   },
 };

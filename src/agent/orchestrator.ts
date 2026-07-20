@@ -933,6 +933,10 @@ const KNOWN_EDGE_KINDS_LIST = [
   // #365 Phase 5a — the object↔data split's `data` edge (Object → its geometry/material node),
   // followed by the material/size mutators so the data node is in their closure.
   'data',
+  // #421/#424 — the edge-less id-reference universe (channels, constraints, drivers,
+  // NLA strips naming their subject by id in params). Followed by the delete sweep so
+  // the nodes it removes or repoints are inside its own closure.
+  'id-ref',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

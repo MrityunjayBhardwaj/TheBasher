@@ -57,6 +57,10 @@ export const KeyframeChannelTextNode: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: KeyframeChannelTextParams,
+  // #421 — the channel is OWNED BY its target: a bound animation curve is
+  // meaningless once the object it drives is gone (the long-standing H136 sweep,
+  // now declared instead of hardcoded at the delete site).
+  idRefs: [{ path: 'target', shape: 'id', role: 'subject' }],
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],

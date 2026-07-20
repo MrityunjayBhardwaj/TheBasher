@@ -198,6 +198,18 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
   pure: true,
   cost: 'cheap',
   paramSchema: ParamDriverParams,
+  // #421 — `target` is the DRIVEN node: the driver lives on its param, so it
+  // dies with it. The three source roads all point at a CONTROLLER, which is a
+  // shared object (one Null commonly drives many params) — clear, never delete.
+  // `sourceSpare`/`sourceTransform` clear the NESTED id, not the whole object:
+  // dropping the object would lose the sibling `key`/`channel` and silently
+  // switch the driver back to the wired `in` road.
+  idRefs: [
+    { path: 'target', shape: 'id', role: 'subject' },
+    { path: 'sourceSpare.node', shape: 'nested', role: 'argument' },
+    { path: 'sourceTransform.node', shape: 'nested', role: 'argument' },
+    { path: 'sourceTransformVec', shape: 'ref', role: 'argument' },
+  ],
   // #316 — selecting a driver row in the Drivers panel must keep that panel on screen
   // (the panel resolves a selected driver back to its `target`), exactly as selecting a
   // Track-To keeps the Constraints panel. Without this the stack would vanish the moment
