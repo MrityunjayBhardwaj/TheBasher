@@ -17,9 +17,12 @@
 //   4. Op composite(sync) — addNode BakedMesh; for each consumer edge,
 //      connect-before-disconnect (preserves sibling order); removeNode original.
 //
-// Animated guard (D-04): if any TRS band is keyframed, reject — the dispatch-side
-// belt (the UI also disables). Apply available iff position/rotation/scale all
-// read 'none' from paramAnimationState.
+// Animated guard (D-04): if ANYTHING the bake consumes is keyframed, reject — the
+// dispatch-side belt (the UI also disables, through the same predicate). #411
+// widened this from an enumerated TRS list to "is this node animated at all",
+// reaching through the split's `data` edge, because the bake consumes geometry and
+// material as well as the transform: a keyframed `size`/`radius` was invisible to
+// the old guard and got silently frozen at the current frame.
 //
 // REF: PLAN.md Wave 2 Task 5; RESEARCH §Q1/§M6; hetvabhasa H45; vyapti V1/V20;
 //      bakedGeometryStore.ts (writeBakedGeometry); dispatchMutator.ts (atomic pattern).
@@ -49,8 +52,10 @@ export type ApplyMask = 'all' | 'location' | 'rotation' | 'scale';
 
 export type DispatchResult = { ok: true; bakedId: string } | { ok: false; reason: string };
 
-/** The TRS bands present in the project (the animated-guard checks these). */
-const TRS_BANDS = ['position', 'rotation', 'scale'] as const;
+/** Node types that carry keyframes. A channel names its subject by id in
+ *  `params.target`, so "is anything about this node animated?" is a scan for
+ *  channels pointing AT it — no list of param names anywhere. */
+const CHANNEL_TYPE_PREFIX = 'KeyframeChannel';
 
 /** Injectable dependencies — production wires the live stores; tests inject mocks. */
 export interface ApplyDeps {
@@ -64,20 +69,65 @@ export interface ApplyDeps {
   gltfClone: THREE.Group;
 }
 
-const ANIMATED_MSG = 'Apply unavailable — transform is animated (#153/#149)';
+const ANIMATED_MSG = 'Apply unavailable — the object or its geometry is animated (#153/#149)';
 
 /**
- * True when the node has a keyframe channel driving ANY TRS band (D-04). Apply is
- * available iff this returns false for all of position/rotation/scale.
+ * True when ANYTHING the bake consumes is animated — the guard that makes Apply
+ * refuse rather than silently freeze an animation at the current frame (D-04).
+ *
+ * #411 — this used to be `TRS_BANDS.some(...)`, an enumerated list of
+ * position/rotation/scale. But the bake does not only consume the transform: it
+ * resolves geometry and material too and writes them into the BakedMesh. A
+ * keyframed `size` on a cube or `radius` on a sphere was therefore invisible to
+ * the guard, and Apply baked frame 0 and threw the animation away with nothing
+ * warning — observed on both the split and fused shapes, so it was never a
+ * split-specific bug.
+ *
+ * THE RULE IS NOW "IS THIS NODE ANIMATED AT ALL", NOT A LIST OF BANDS. A channel
+ * names its subject by id, so the question is answered by scanning for channels
+ * that point at the node — there is no param-name list to forget to extend when a
+ * new bakeable param appears. That is the same move #377/#378 made on the
+ * capability gates: ask, don't enumerate.
+ *
+ * IT REACHES THROUGH THE SPLIT. Geometry and material live on the DATA node, so a
+ * `size` channel targets the BoxData, not the Object the user selected. Without
+ * the `linkedDataNodeId` reach the guard would ask the wrong node and get the
+ * honest answer "nothing animated here" — the exact shape of the reach bugs the
+ * split has produced repeatedly.
+ *
+ * This ALSO closes the orphaned-channel half of #411: the bake removes the data
+ * node, which would leave a `size`/`material` channel targeting a dead id. Since
+ * any such channel now blocks the bake outright, the orphan can no longer be
+ * created here. (A constraint target or saved selection naming the applied node
+ * still dangles — that is the separate id-inheritance question, #412.)
+ *
+ * KNOWN GAP: a param driven by a driver rather than a keyframe channel is still
+ * invisible to this guard. Drivers are resolved by paramPath and would need the
+ * same reach; no bake path exercises one today, so it is recorded rather than
+ * guessed at.
  */
-export function isTransformAnimated(
+export function isApplySourceAnimated(
   state: DagState,
   nodeId: string,
   currentFrame: number,
 ): boolean {
-  return TRS_BANDS.some(
-    (band) => paramAnimationState(state, nodeId, band, currentFrame) !== 'none',
+  // The Object owns the pose; the data node it points at owns geometry+material.
+  // Both are consumed by the bake, so both are asked. A fused node has no `data`
+  // edge and answers for itself alone.
+  const subjects = [nodeId, linkedDataNodeId(state, nodeId)].filter(
+    (id): id is string => id !== null,
   );
+  return Object.values(state.nodes).some((node) => {
+    if (!node.type.startsWith(CHANNEL_TYPE_PREFIX)) return false;
+    const p = (node.params ?? {}) as { target?: unknown; paramPath?: unknown };
+    if (typeof p.target !== 'string' || !subjects.includes(p.target)) return false;
+    // Defer to the shared reader for what counts as animated, so this guard and
+    // the inspector's diamonds never disagree about the same channel.
+    return (
+      typeof p.paramPath === 'string' &&
+      paramAnimationState(state, p.target, p.paramPath, currentFrame) !== 'none'
+    );
+  });
 }
 
 /** Compose a 4×4 from the resolved TRS, including ONLY the masked band(s). */
@@ -266,7 +316,7 @@ export async function dispatchApplyTransform(
   }
 
   // Animated guard (D-04) — the dispatch-side belt.
-  if (isTransformAnimated(state, selectedId, currentFrame)) {
+  if (isApplySourceAnimated(state, selectedId, currentFrame)) {
     return { ok: false, reason: ANIMATED_MSG };
   }
 
@@ -425,7 +475,7 @@ async function dispatchApplyGltfChild(
   // for this child on the owning asset. Either means the transform is animated;
   // baking a single static pose would freeze it.
   if (
-    isTransformAnimated(state, selectedId, currentFrame) ||
+    isApplySourceAnimated(state, selectedId, currentFrame) ||
     isGltfChildClipDriven(state, assetRef, childName, seconds)
   ) {
     return { ok: false, reason: ANIMATED_MSG };

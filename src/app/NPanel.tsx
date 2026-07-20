@@ -59,7 +59,7 @@ import { useTimeStore } from './stores/timeStore';
 import {
   dispatchApplyTransform,
   canApplyTransform,
-  isTransformAnimated,
+  isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
@@ -2073,7 +2073,7 @@ function ParamRow({
 function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   const state = useDagStore((s) => s.state);
   const currentFrame = useTimeStore((s) => s.frame);
-  const animated = isTransformAnimated(state, nodeId, currentFrame);
+  const animated = isApplySourceAnimated(state, nodeId, currentFrame);
   const onApply = (mask: ApplyMask) => {
     void dispatchApplyTransform(nodeId, mask);
   };
