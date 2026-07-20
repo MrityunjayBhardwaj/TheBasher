@@ -39,7 +39,7 @@ import * as geometryRegistry from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
-import { paramAnimationState } from './paramAnimationState';
+import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { useSelectionStore } from '../stores/selectionStore';
@@ -51,11 +51,6 @@ import type { GltfAssetValue } from '../../nodes/types';
 export type ApplyMask = 'all' | 'location' | 'rotation' | 'scale';
 
 export type DispatchResult = { ok: true; bakedId: string } | { ok: false; reason: string };
-
-/** Node types that carry keyframes. A channel names its subject by id in
- *  `params.target`, so "is anything about this node animated?" is a scan for
- *  channels pointing AT it — no list of param names anywhere. */
-const CHANNEL_TYPE_PREFIX = 'KeyframeChannel';
 
 /** Injectable dependencies — production wires the live stores; tests inject mocks. */
 export interface ApplyDeps {
@@ -118,7 +113,7 @@ export function isApplySourceAnimated(
     (id): id is string => id !== null,
   );
   return Object.values(state.nodes).some((node) => {
-    if (!node.type.startsWith(CHANNEL_TYPE_PREFIX)) return false;
+    if (!isKeyframeChannelNode(node)) return false;
     const p = (node.params ?? {}) as { target?: unknown; paramPath?: unknown };
     if (typeof p.target !== 'string' || !subjects.includes(p.target)) return false;
     // Defer to the shared reader for what counts as animated, so this guard and

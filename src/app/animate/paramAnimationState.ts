@@ -60,6 +60,19 @@ interface ChannelParams {
  * @param paramPath     the param path on the target (e.g. 'rotation')
  * @param currentFrame  the playhead frame int (useTimeStore.frame)
  */
+/**
+ * Is `node` a keyframe channel? The canonical spelling of the question.
+ *
+ * `type.startsWith('KeyframeChannel')` is currently written out at ~16 call sites
+ * (nodeChannels, resolveEvaluatedParam, activeCamera, KeyboardShortcuts, the agent
+ * mutators, CurveEditor, …). This is the one home for it — new callers use this,
+ * and the existing literals are tracked for migration rather than being copied a
+ * seventeenth time ([[V101]] — one projection, not a parallel list).
+ */
+export function isKeyframeChannelNode(node: { type: string } | undefined): boolean {
+  return !!node && node.type.startsWith('KeyframeChannel');
+}
+
 export function paramAnimationState(
   state: DagState,
   nodeId: string,
@@ -69,7 +82,7 @@ export function paramAnimationState(
   // 1 — find the KeyframeChannel* node whose target/paramPath match.
   let keyframes: ChannelKeyframe[] | null = null;
   for (const node of Object.values(state.nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(node)) continue;
     const p = (node.params ?? {}) as ChannelParams;
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
     keyframes = Array.isArray(p.keyframes) ? (p.keyframes as ChannelKeyframe[]) : [];
