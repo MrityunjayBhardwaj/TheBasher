@@ -223,6 +223,12 @@ function consumerEdgesOf(state: DagState, nodeId: string): ConsumerEdge[] {
 }
 
 let bakedCounter = 0;
+/**
+ * A fresh baked id. Since #412 this is the glTF-CHILD path only — the primitive/`Object`
+ * path inherits the applied node's id instead. A GltfChild id is an import artifact on an
+ * edge-less satellite node, so handing it to a standalone BakedMesh would risk colliding
+ * with the same child on a later re-import; that path keeps minting deliberately.
+ */
 function nextBakedId(state: DagState): string {
   // Deterministic-enough fresh id; loop until unused (collisions are vanishing).
   let id: string;
@@ -267,7 +273,9 @@ export function canApplyTransform(state: DagState, nodeId: string): boolean {
 
 /**
  * Apply the (masked) transform of a Box/Sphere into baked geometry, swapping the
- * node for a BakedMesh in one atomic, undoable composite. Returns the new id.
+ * node for a BakedMesh in one atomic, undoable composite. Returns the baked id —
+ * since #412 that is the SAME id the applied node had (see step 4), so callers that
+ * held the id keep a valid handle and every id-keyed reference to it still resolves.
  *
  * The `deps` arg is optional: production omits it and the live stores +
  * getStorage() + timeStore + selectionStore are used; tests inject mocks.
@@ -337,48 +345,39 @@ export async function dispatchApplyTransform(
   const bakedRef = await writeBakedGeometry(storage, baked);
   baked.dispose(); // the cloned CPU buffer is now in OPFS + (on load) the registry
 
-  // 4 — atomic Op composite (Q1): addNode → connect-before-disconnect → removeNode.
-  const bakedId = nextBakedId(state);
+  // 4 — atomic Op composite (Q1). The BakedMesh INHERITS the applied node's id (#412):
+  // vacate the id, then re-occupy it. Everything keyed by node id therefore survives the
+  // bake for free — a constraint `target`/`aimNode`, a driver `target`, an NLA `Strip`,
+  // and every id-keyed field added later. The rejected alternative was a re-target sweep
+  // over each of those params, which is a hand-maintained list of cases: the shape that
+  // has silently stopped covering the world every time we have relied on it (#411 was one).
+  // This is also the rule the object↔data split already chose — the load migration has the
+  // Object inherit the fused node's id for exactly this reason (§5 id-stability).
+  const bakedId = selectedId;
   const spec = bakedSpecFromMeshMaterial(mesh.material);
-  const ops: Op[] = [
-    {
-      type: 'addNode',
-      nodeId: bakedId,
-      nodeType: 'BakedMesh',
-      params: {
-        geometry: bakedRef,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        material: spec,
-      },
-    },
-  ];
-  for (const edge of consumerEdgesOf(state, selectedId)) {
-    // Rewire depends on the consumer socket's CARDINALITY (#259/H140):
-    //   - LIST socket (e.g. Scene.children): both bindings coexist, so
-    //     connect-before-disconnect inserts the baked node at the SAME index
-    //     (sibling order preserved), THEN removes the original edge.
-    //   - SINGLE socket (e.g. a modifier's `target`): the socket holds exactly
-    //     one binding, so `connect` REPLACES the original in place — a following
-    //     `disconnect original.out` would find `baked.out` bound and throw
-    //     ("bound producer is <baked>, not <original>"), rolling back the whole
-    //     atomic composite. Emit ONLY the connect; the replace is the disconnect.
-    const consumerType = state.nodes[edge.consumer].type;
-    const isList = requireNodeType(consumerType).inputs[edge.socket]?.cardinality === 'list';
+
+  // ASCENDING by list index: the edges are replayed after the node is re-added, and
+  // `connect` splice-INSERTS at min(index, len). Removing our bindings shifts the
+  // surviving siblings down, so re-inserting at the original indices in ascending order
+  // lands every sibling back where it started. Out of order, the later insert would be
+  // clamped short and sibling order would silently change (#259/H140 — the same property
+  // the old connect-before-disconnect pass existed to protect, preserved by replay
+  // ordering now that the id is inherited rather than fresh).
+  const consumerEdges = consumerEdgesOf(state, selectedId).sort(
+    (a, b) => (a.index ?? 0) - (b.index ?? 0),
+  );
+
+  // 4a — VACATE the id. `addNode` refuses an id that already exists and `removeNode`
+  // refuses a still-consumed node, so inheritance forces disconnect-before-remove — the
+  // INVERSE of the old ordering. Per-op validation only (no whole-graph invariant runs
+  // mid-composite), so the transiently-unbound socket between 4a and 4b is legal.
+  const ops: Op[] = [];
+  for (const edge of consumerEdges) {
     ops.push({
-      type: 'connect',
-      from: { node: bakedId, socket: 'out' },
+      type: 'disconnect',
+      from: { node: selectedId, socket: 'out' },
       to: { node: edge.consumer, socket: edge.socket },
-      ...(isList && edge.index !== undefined ? { index: edge.index } : {}),
     });
-    if (isList) {
-      ops.push({
-        type: 'disconnect',
-        from: { node: selectedId, socket: 'out' },
-        to: { node: edge.consumer, socket: edge.socket },
-      });
-    }
   }
   ops.push({ type: 'removeNode', nodeId: selectedId });
   // #376 — retire the PAIR. The pose baked into the geometry, so the Object goes; its
@@ -389,6 +388,29 @@ export async function dispatchApplyTransform(
   if (node.type === 'Object') {
     const dataId = exclusiveDataNodeOf(state, selectedId);
     if (dataId) ops.push({ type: 'removeNode', nodeId: dataId });
+  }
+  // 4b — RE-OCCUPY it with the baked node, then replay the consumer edges onto it.
+  ops.push({
+    type: 'addNode',
+    nodeId: bakedId,
+    nodeType: 'BakedMesh',
+    params: {
+      geometry: bakedRef,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      material: spec,
+    },
+  });
+  for (const edge of consumerEdges) {
+    const consumerType = state.nodes[edge.consumer].type;
+    const isList = requireNodeType(consumerType).inputs[edge.socket]?.cardinality === 'list';
+    ops.push({
+      type: 'connect',
+      from: { node: bakedId, socket: 'out' },
+      to: { node: edge.consumer, socket: edge.socket },
+      ...(isList && edge.index !== undefined ? { index: edge.index } : {}),
+    });
   }
 
   const dispatchAtomic = deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore);
