@@ -35,7 +35,6 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
-  BakedMaterialSpec,
   EvaluatedMesh,
   GeometryRef,
   InlineMaterialSpec,
@@ -44,7 +43,7 @@ import type {
   ObjectValue,
   Vec3,
 } from '../nodes/types';
-import { hydrateInlineMaterial } from '../nodes/materialSchema';
+import { hydrateInlineMaterial, isBakedMaterialSpec } from '../nodes/materialSchema';
 import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
@@ -337,10 +336,4 @@ function isBakedGeometryRef(v: unknown): v is GeometryRef {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as { kind?: unknown; key?: unknown; descriptor?: { kind?: unknown } };
   return r.kind === 'baked' && typeof r.key === 'string' && r.descriptor?.kind === 'baked';
-}
-
-/** The rich baked material spec — discriminated by `materialClass`. */
-function isBakedMaterialSpec(v: unknown): v is BakedMaterialSpec {
-  if (typeof v !== 'object' || v === null) return false;
-  return typeof (v as { materialClass?: unknown }).materialClass === 'string';
 }
