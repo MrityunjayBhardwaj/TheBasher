@@ -160,8 +160,17 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
  */
 export function canModifyGeometry(state: DagState, nodeId: string): boolean {
   if (!state.nodes[nodeId]) return false;
-  const value = evaluate(state, nodeId).value as SceneChild | undefined;
-  return value ? modifierSource(value) !== null : false;
+  try {
+    const value = evaluate(state, nodeId).value as SceneChild | undefined;
+    return value ? modifierSource(value) !== null : false;
+  } catch {
+    // `evaluate` THROWS on a cycle, a dangling input ref, or the depth limit — and
+    // this predicate runs during a React render, where the type-set lookup it
+    // replaced could not throw at all. An un-evaluable source is not modifiable,
+    // which is the honest answer AND the safe one: the banner explains itself
+    // instead of the inspector panel unmounting mid-edit.
+    return false;
+  }
 }
 
 /** The full TRS band of a value that carries one, with the C-1 (V10/H14) hydrate guard. */

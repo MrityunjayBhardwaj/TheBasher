@@ -130,6 +130,22 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
     expect((evaluate(s, 'n_arr').value as SceneChild).kind).toBe('Group');
   });
 
+  it('reports not-modifiable rather than throwing when the source cannot evaluate', () => {
+    // `evaluate` throws on a dangling input ref, and this predicate runs inside a
+    // React render — the type-set lookup it replaced could not throw at all. An
+    // un-evaluable source must degrade to the banner, never unmount the panel.
+    const seeded = makeSplitCube(emptyDagState(), { objectId: 'n_box', size: [1, 1, 1] });
+    // Delete the data node out from under the Object, leaving a dangling `data` ref.
+    const broken: DagState = {
+      ...seeded.state,
+      nodes: Object.fromEntries(
+        Object.entries(seeded.state.nodes).filter(([id]) => id !== seeded.dataId),
+      ),
+    };
+    expect(() => canModifyGeometry(broken, seeded.objectId)).not.toThrow();
+    expect(canModifyGeometry(broken, seeded.objectId)).toBe(false);
+  });
+
   it('a muted modifier is still an identity passthrough on a split source (V58)', () => {
     const seeded = splitCubeWithArray();
     const s = applyOp(seeded.state, {
