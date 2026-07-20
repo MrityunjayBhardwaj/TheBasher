@@ -388,6 +388,31 @@ Cameras and lights become Objects ⇒ they become **scene children** ⇒ the mes
 
 ---
 
+### 3.5 How the split SURFACES — editing separates, managing aggregates (grounded, LOCKED 2026-07-20)
+
+The split gives one user-visible object **two node ids**. Every UI surface therefore has to answer: does it show the halves separately, or as one thing? Answering it per-panel is how we got a driver you cannot delete, a solo that covers half an object, and dopesheet rows labelled with an id the user can never see (#425).
+
+**The rule — and it is not a coin-flip, the reference draws the line in a specific place:**
+
+> **A surface that EDITS a value separates the halves. A surface that MANAGES animation, drivers or lifetime aggregates them under the Object.**
+
+**Grounded on Blender**, the one reference that ships this exact split (bundled manual; documentation, not live observation):
+
+- **Editing separates.** The Properties editor has two distinct tab groups — _Object_ (Object, Modifiers, Particles, Physics, Object Constraints) and _Object Data_ (Mesh, Curve, Surface, Text, Armature…), where _"the Object Data tab name remains constant, but its icon changes depending on the object type."_ The data half genuinely owns its own properties UI. **Our `LinkedDataSections` already IS the Object Data tab — this half needs no change.**
+- **Managing aggregates.** The Dope Sheet, Graph Editor and Drivers Editor share ONE Channels region, explicitly _"a **tree** of items (objects, bones...) and their animated properties"_, with data-blocks as first-class **nested** rows (row colours distinguish `objects` from `actions, shape keys etc.`; there is a `Sort Data-Blocks` option). **Shape keys are the exact analogue of our case** — they live on the mesh data-block and appear in that tree under the object. The Drivers Editor is _"largely the same as that of the Graph Editor"_ — not a separate paradigm.
+
+⇒ **Do NOT give a data node its own driver stack, its own strip lane, or its own top-level animation surface.** The management panels reach.
+
+**The corollary that makes the worst symptom cheap.** Blender does not remove a driver from a stack panel at all — it removes it **from the property**: `Context menu → Delete Driver(s)` / `Delete Single Driver` (`Ctrl-Alt-D`), _"Removes driver(s) associated with the property."_ We already render the data node's property rows, so putting delete/mute on the row's context menu fixes the unmanageable driver **without** building a second stack. Do that before the panel reach.
+
+**The honest caveat (do not over-promise the aggregation).** Blender's own selection filter has a documented exception at exactly this boundary: _"If this option is enabled, the Dope Sheet may **not show all material keyframes** of the selected objects."_ Even the reference does not achieve perfect "everything this object owns, under one row" once material enters. So solo/filter scoping needs a **stated rule**, not an assumption that it falls out.
+
+**A related contract this locks (#423).** Blender treats a channel aimed at a property its target does not own as a first-class **error**, with a filter to find them: _"Only Show Errors — Only show channels that have errors (for example, because they try to animate a property that doesn't exist on the object)."_ That is the correct frame for our silent no-op: an Object-targeted `material.*` channel is **not a second supported convention**, it is an erroring channel and must look like one. Re-targeting operations (this migration, Apply, delete) all create that condition, and we currently offer no way to see or sweep for it.
+
+**Not verified:** Maya and Houdini were not checked for this question — no Maya material exists in the project reference area, and Houdini puts parameters on the node itself, a poor analogue for an object/data-block split. **One grounded reference, not three.**
+
+---
+
 ## 4. ⚠️ Shared-vs-fresh — the landmine, and a required deliverable
 
 **This outranks every other risk in this doc.**
