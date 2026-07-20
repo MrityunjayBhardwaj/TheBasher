@@ -266,6 +266,30 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(next.nodes[track.target].type).toBe('BakedMesh');
   });
 
+  it("#412: the baked node keeps the user's name, not just the id", async () => {
+    // `meta` lives on the node, so removeNode drops it. With the id inherited, an object
+    // that keeps its constraints and its edges but loses its label reads as a different
+    // object to the only observer who matters. The outliner falls back to `node.id` and
+    // BakedMesh has no `name` param, so without this the row shows a raw id.
+    const state = buildFusedSphereState();
+    const named = applyOp(state, { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero' }).next;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: named };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state: named,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(stateRef.current.nodes[result.bakedId].meta?.name).toBe('Hero');
+  });
+
   it('#259/H140: rewires a SINGLE-cardinality consumer socket (a modifier target) without rolling back', async () => {
     // The box feeds TWO consumers of different cardinality at once: Scene.children
     // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single

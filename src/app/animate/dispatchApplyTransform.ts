@@ -408,6 +408,17 @@ export async function dispatchApplyTransform(
       material: spec,
     },
   });
+  // Carry the user's NAME across. `meta` lives on the node, so removeNode drops it and
+  // the fresh BakedMesh would fall back to `node.id` as its label — an object named "Hero"
+  // would show up as a raw id after a bake. That was survivable while the bake minted a
+  // new node ("it is a different node"), but the id is inherited now: the same identity
+  // keeping its constraints and edges while silently losing its name is incoherent, and
+  // meta is identity data by the op's own account. BakedMesh has no `name` param, so the
+  // meta override is the only place this can live.
+  const inheritedName = node.meta?.name;
+  if (inheritedName !== undefined) {
+    ops.push({ type: 'setMeta', nodeId: bakedId, name: inheritedName });
+  }
   for (const edge of consumerEdges) {
     const consumerType = state.nodes[edge.consumer].type;
     const isList = requireNodeType(consumerType).inputs[edge.socket]?.cardinality === 'list';
