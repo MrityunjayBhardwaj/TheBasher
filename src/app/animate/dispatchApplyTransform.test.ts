@@ -21,6 +21,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
 import {
@@ -264,6 +265,33 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(next.nodes[track.aimNode]).toBeDefined();
     expect(track.target).toBe(result.bakedId);
     expect(next.nodes[track.target].type).toBe('BakedMesh');
+  });
+
+  it('#412: a HELD transient edit on the applied node does not survive onto the baked one', async () => {
+    // The one hazard id-inheritance INTRODUCES rather than fixes. A transient is keyed by
+    // `${nodeId}|${paramPath}` in a module-level store that only a frame change clears —
+    // not selection, not undo. Under the old fresh id the stale key named a removed node
+    // and every lookup missed; under inheritance it HITS, and resolveEvaluatedParam gives
+    // a transient unconditional priority with no type check. The read surfaces would then
+    // report a pre-bake offset while the viewport draws the baked mesh at the origin.
+    const state = buildFusedSphereState();
+    useTransientEditStore.getState().set(PRIM_ID, 'position', [9, 9, 9]);
+    expect(useTransientEditStore.getState().get(PRIM_ID, 'position')).toBeDefined();
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      // NOT stubbed — the live store is the thing under test here.
+    });
+    expect(result.ok).toBe(true);
+
+    expect(useTransientEditStore.getState().get(PRIM_ID, 'position')).toBeUndefined();
   });
 
   it("#412: the baked node keeps the user's name, not just the id", async () => {

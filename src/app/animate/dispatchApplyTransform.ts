@@ -47,6 +47,7 @@ import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationStat
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { useSelectionStore } from '../stores/selectionStore';
+import { useTransientEditStore } from '../stores/transientEditStore';
 import { getGltfClone } from '../asset/gltfCloneRegistry';
 import { captureBakedMaterial } from './captureBakedMaterial';
 import { evaluate, createEvaluatorCache } from '../../core/dag/evaluator';
@@ -63,6 +64,8 @@ export interface ApplyDeps {
   currentFrame: number;
   dispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown;
   setSelection: (id: string) => void;
+  /** Drop every held (un-keyed) edit for a node — see the call site in step 5. */
+  clearTransients: (nodeId: string) => void;
   /** glTF-child path only — the live render clone (tests inject a fake Group;
    *  production reads it from the live-clone registry by assetRef). */
   gltfClone: THREE.Group;
@@ -391,10 +394,8 @@ export async function dispatchApplyTransform(
   // saved). Guarded by exclusivity: a SHARED data node is posed by another Object too,
   // and removing it would empty that sibling. Ordered AFTER the Object's removeNode so
   // the `data` edge is already gone when the data node is dropped.
-  if (node.type === 'Object') {
-    const dataId = exclusiveDataNodeOf(state, selectedId);
-    if (dataId) ops.push({ type: 'removeNode', nodeId: dataId });
-  }
+  const retiredDataId = node.type === 'Object' ? exclusiveDataNodeOf(state, selectedId) : null;
+  if (retiredDataId) ops.push({ type: 'removeNode', nodeId: retiredDataId });
   // 4b — RE-OCCUPY it with the baked node, then replay the consumer edges onto it.
   ops.push({
     type: 'addNode',
@@ -436,6 +437,23 @@ export async function dispatchApplyTransform(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+
+  // 5 — drop any HELD (un-keyed) edit on the retired nodes. A transient is keyed by
+  // `${nodeId}|${paramPath}` in a module-level store that ONLY a frame change clears —
+  // not selection, not undo. While the bake minted a fresh id this was unreachable: the
+  // stale key named a removed node, so every lookup missed. With the id inherited the
+  // key now HITS, and `resolveEvaluatedParam` gives a transient unconditional priority
+  // with no type check — so the inspector, the gizmo and the world-transform read would
+  // report a pre-bake offset while the viewport draws the baked mesh at the origin. That
+  // is precisely the render/read divergence the transient band exists to prevent.
+  //
+  // Reachable because the transient OUTLIVES the animation that allowed it: hold an edit
+  // on an animated node, undo the channel (undo does not touch the frame, so the edit
+  // survives), and the node is now static enough for the animated guard to admit it.
+  const clearTransients =
+    deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id));
+  clearTransients(selectedId);
+  if (retiredDataId) clearTransients(retiredDataId);
 
   // Move selection to the new baked node.
   const setSelection =
