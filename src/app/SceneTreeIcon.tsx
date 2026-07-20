@@ -3,13 +3,24 @@
 // this maps the DAG node type to a small inline SVG drawn in `currentColor`
 // so it inherits the row's text color (selected = accent, idle = fg-dim).
 //
-// Pure presentation — keyed only off `nodeType` (the projection's type label).
-// No DAG read, no state. New node types fall back to the generic dot, so an
-// unmapped type degrades gracefully rather than crashing.
+// Pure presentation — the component takes an already-resolved `IconKind` and
+// draws it. No DAG read, no state, no type matching. Deciding WHICH kind a row
+// is belongs to `iconKindForNode` below, which is the only part that needs the
+// graph.
 //
-// REF: docs/UI-SPEC.md §5.5 (LeftSidebar outliner); THESIS.md §12 (projection).
+// #414 — that split exists because "what kind of thing is this row?" stopped
+// being answerable from the node type alone. A cube is an `Object` pointing at a
+// `BoxData`: the Object carries the pose, the data node carries what it IS. The
+// old code matched `nodeType` against a list of mesh types, `'Object'` matched
+// none of them, and every cube in the outliner fell through to the generic dot —
+// silently, because a dot is a real icon and nothing errors.
+//
+// REF: docs/UI-SPEC.md §5.5 (LeftSidebar outliner); THESIS.md §12 (projection);
+//      src/app/resolveDataParamOwner.ts (the one place the `data` reach lives).
 
 import type { ReactNode } from 'react';
+import type { DagState } from '../core/dag/state';
+import { linkedDataNodeId } from './resolveDataParamOwner';
 
 const SIZE = 13;
 
@@ -45,17 +56,45 @@ type IconKind =
   | 'curve'
   | 'dot';
 
-// Map a DAG node type to a visual icon family. Suffix matches (…Light /
-// …Camera) absorb the five light kinds + two camera kinds without enumerating
-// each. Unknown types → 'dot'.
+// Map a DAG node type to a visual icon family. Suffix matches (…Light / …Camera
+// / …Data) absorb the five light kinds, two camera kinds and the split's data
+// nodes without enumerating each. Unknown types → 'dot'.
+//
+// `'Object'` is deliberately ABSENT: an Object is a pose pointing at data, so its
+// type says nothing about what it is. `iconKindForNode` resolves it through the
+// `data` edge instead — see there.
+/** The mesh-data kinds — the stems that carry geometry rather than a light or a
+ *  lens. Everything else ending in `Data` is answered by its stem instead. */
+const MESH_DATA_STEMS: ReadonlySet<string> = new Set([
+  'Box',
+  'Sphere',
+  'Baked',
+  'Modified',
+  'Gltf',
+]);
+
 function kindForNodeType(nodeType: string): IconKind {
   if (nodeType === 'Scene') return 'scene';
   if (nodeType === 'Group') return 'group';
   if (nodeType === 'Transform') return 'transform';
   if (nodeType === 'MaterialOverride') return 'material';
-  if (nodeType === 'Scatter') return 'scatter';
   if (nodeType === 'Curve') return 'curve';
+  if (nodeType === 'Scatter') return 'scatter';
   if (nodeType === 'GltfSkeleton') return 'skeleton';
+
+  // A data node is iconed by ITS STEM, not by the fact that it is data. A blanket
+  // `endsWith('Data') → mesh` was the first shape of this fix and it was wrong in
+  // the same way the bug it replaced was wrong: `LightData` and `CameraData` (the
+  // per-kind rollout) end in `Data` and would have drawn a CUBE. That mistake is
+  // worse than the dot, because a wrong-but-plausible icon reads as correct — and
+  // the registry guard could not catch it, since it only asks "not a dot".
+  // Strip the suffix and re-ask: LightData → light, CameraData → camera,
+  // CurveData → curve, BoxData/SphereData → mesh.
+  if (nodeType.endsWith('Data')) {
+    const stem = nodeType.slice(0, -'Data'.length);
+    return MESH_DATA_STEMS.has(stem) ? 'mesh' : kindForNodeType(stem);
+  }
+
   if (nodeType.endsWith('Light')) return 'light';
   if (nodeType.endsWith('Camera')) return 'camera';
   if (
@@ -68,6 +107,34 @@ function kindForNodeType(nodeType: string): IconKind {
     return 'mesh';
   }
   return 'dot';
+}
+
+/**
+ * The icon family for the scene-tree row produced by `nodeId` — the ONE place
+ * that decides, and the only part of this module that reads the graph.
+ *
+ * An `Object` carries a pose, not an identity: what it IS lives on the node its
+ * `data` edge points at. So an Object DELEGATES — the same reach
+ * `resolveDataParamOwner` already owns for material and size, rather than a
+ * second spelling of it here (V101). A cube resolves Object → BoxData → 'mesh'.
+ *
+ * An Object with no data is an Empty — a pure transform with nothing hanging off
+ * it — which is what the transform glyph already means. That is a deliberate
+ * choice, not a fallthrough: it must NOT land on 'dot', because 'dot' is the
+ * "I don't know what this is" answer and we know exactly what an Empty is.
+ *
+ * NOTE ON THE GUARD: node types are strings, not a closed union, so the compiler
+ * cannot force a new data kind to be answered here the way an exhaustive switch
+ * would. `SceneTreeIcon.test.ts` substitutes for that by walking the REGISTRY:
+ * every registered node type that can sit on an Object's `data` socket must
+ * resolve to a non-'dot' icon. Stage C's SphereData / CurveData / LightData /
+ * CameraData will redden that test the moment they register without an arm.
+ */
+export function iconKindForNode(state: DagState, nodeId: string, nodeType: string): IconKind {
+  if (nodeType !== 'Object') return kindForNodeType(nodeType);
+  const dataId = linkedDataNodeId(state, nodeId);
+  if (!dataId) return 'transform'; // an Empty — a pose with no data
+  return kindForNodeType(state.nodes[dataId]?.type ?? '');
 }
 
 const GLYPHS: Record<IconKind, ReactNode> = {
@@ -153,6 +220,8 @@ const GLYPHS: Record<IconKind, ReactNode> = {
   ),
 };
 
-export function SceneTreeIcon({ nodeType }: { nodeType: string }): ReactNode {
-  return <Svg>{GLYPHS[kindForNodeType(nodeType)]}</Svg>;
+/** Draws an already-resolved icon kind. Callers resolve with {@link iconKindForNode},
+ *  which is the only thing that reads the graph — this stays pure presentation. */
+export function SceneTreeIcon({ kind }: { kind: IconKind }): ReactNode {
+  return <Svg>{GLYPHS[kind]}</Svg>;
 }

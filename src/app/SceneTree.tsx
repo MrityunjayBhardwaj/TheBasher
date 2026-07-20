@@ -23,7 +23,7 @@ import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
-import { SceneTreeIcon } from './SceneTreeIcon';
+import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
@@ -777,7 +777,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   </button>
                 ) : null}
                 <span className={`flex shrink-0 ${hidden ? 'opacity-40' : ''}`}>
-                  <SceneTreeIcon nodeType={row.nodeType} />
+                  <SceneTreeIcon kind={iconKindForNode(state, row.nodeId, row.nodeType)} />
                 </span>
                 {renaming?.scope === 'outliner' && renaming.nodeId === row.nodeId ? (
                   <RenameInput
