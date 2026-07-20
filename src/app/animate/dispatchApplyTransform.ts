@@ -14,8 +14,12 @@
 //      mesh sharing the key). Recompute normals when rotation/scale was baked.
 //   3. OPFS write(async, AWAITED) — writeBakedGeometry. The await guarantees the
 //      bytes exist before the node referencing them is committed (reload-safe).
-//   4. Op composite(sync) — addNode BakedMesh; for each consumer edge,
-//      connect-before-disconnect (preserves sibling order); removeNode original.
+//   4. Op composite(sync) — the BakedMesh INHERITS the applied node's id (#412), so
+//      everything keyed by node id rather than by edge (a constraint/driver target, an
+//      NLA strip) survives the bake. Ordered: disconnect every consumer edge → removeNode
+//      original (+ its exclusive data node) → addNode BakedMesh at the SAME id → replay
+//      the edges in ascending list index (preserves sibling order). The glTF-child path
+//      still mints a fresh id — see nextBakedId.
 //
 // Animated guard (D-04): if ANYTHING the bake consumes is keyframed, reject — the
 // dispatch-side belt (the UI also disables, through the same predicate). #411
@@ -93,8 +97,10 @@ const ANIMATED_MSG = 'Apply unavailable — the object or its geometry is animat
  * This ALSO closes the orphaned-channel half of #411: the bake removes the data
  * node, which would leave a `size`/`material` channel targeting a dead id. Since
  * any such channel now blocks the bake outright, the orphan can no longer be
- * created here. (A constraint target or saved selection naming the applied node
- * still dangles — that is the separate id-inheritance question, #412.)
+ * created here. (The constraint/driver/NLA targets that this guard does NOT reach
+ * are handled structurally instead: since #412 the baked node inherits the applied
+ * node's id, so an id-keyed reference has nothing to dangle from. Selection was
+ * never at risk — it is runtime UI state, and Apply moves it explicitly.)
  *
  * KNOWN GAP: a param driven by a driver rather than a keyframe channel is still
  * invisible to this guard. Drivers are resolved by paramPath and would need the

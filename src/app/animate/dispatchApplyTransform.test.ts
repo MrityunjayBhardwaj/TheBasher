@@ -228,6 +228,44 @@ describe('dispatchApplyTransform (primitives)', () => {
     }
   });
 
+  it('#412: an id-keyed reference to the applied node still resolves after the bake', async () => {
+    // The POINT of id-inheritance, asserted on the thing it exists to protect. A
+    // constraint is EDGE-LESS — it names its subject by id in `params.target`, so the
+    // consumer-edge rewire is structurally blind to it. Under the old mint the target
+    // pointed at a removed id and the constraint silently stopped firing; a dangling
+    // `aimNode` was worse still, coercing to the origin so the object re-aimed at world
+    // zero. Neither failure is visible in a node count or an edge walk, which is why this
+    // asserts resolution rather than shape.
+    const state = buildFusedSphereState();
+    const withConstraint = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_track',
+      nodeType: 'TrackTo',
+      params: { target: PRIM_ID, aimNode: PRIM_ID, order: 0 },
+    }).next;
+
+    const storage = new MemoryStorage();
+    const stateRef = { current: withConstraint };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state: withConstraint,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const next = stateRef.current;
+    const track = next.nodes['n_track'].params as { target: string; aimNode: string };
+    // Both id refs still name a node that EXISTS — and specifically the baked one.
+    expect(next.nodes[track.target]).toBeDefined();
+    expect(next.nodes[track.aimNode]).toBeDefined();
+    expect(track.target).toBe(result.bakedId);
+    expect(next.nodes[track.target].type).toBe('BakedMesh');
+  });
+
   it('#259/H140: rewires a SINGLE-cardinality consumer socket (a modifier target) without rolling back', async () => {
     // The box feeds TWO consumers of different cardinality at once: Scene.children
     // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single

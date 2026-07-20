@@ -150,7 +150,9 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     // The original Sphere is gone; a BakedMesh exists with identity transform.
     await page.waitForFunction(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      return !nodes['n_apply'] && Object.values(nodes).some((n) => n.type === 'BakedMesh');
+      // #412 — the baked node INHERITS the applied id, so the bake landed when the id
+      // is still there and its TYPE has become BakedMesh (it used to be "id gone").
+      return nodes['n_apply']?.type === 'BakedMesh';
     });
     const baked = await nodeOfType(page, 'BakedMesh');
     expect(baked).not.toBeNull();
@@ -241,7 +243,9 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     await applyTransform(page, 'n_apply', 'all');
     await page.waitForFunction(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      return !nodes['n_apply'] && Object.values(nodes).some((n) => n.type === 'BakedMesh');
+      // #412 — the baked node INHERITS the applied id, so the bake landed when the id
+      // is still there and its TYPE has become BakedMesh (it used to be "id gone").
+      return nodes['n_apply']?.type === 'BakedMesh';
     });
 
     await page.evaluate(() => (window as unknown as BasherWindow).__basher_dag!.getState().undo());
@@ -404,7 +408,9 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
         const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
         const baked = Object.entries(nodes).find(([, n]) => n.type === 'BakedMesh');
         return {
-          objectGone: !nodes[boxId!],
+          // #412 — the Object's id is inherited by the BakedMesh, so "retired" means its
+          // TYPE changed. Only the data node's id genuinely disappears.
+          objectBakedInPlace: nodes[boxId!]?.type === 'BakedMesh',
           dataGone: !nodes[dId!],
           bakedId: baked?.[0] ?? null,
           bakedScale: baked?.[1].params.scale,
@@ -415,7 +421,7 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     );
 
     // The PAIR retired — leaving the BoxData would orphan it in the saved graph.
-    expect(state.objectGone).toBe(true);
+    expect(state.objectBakedInPlace).toBe(true);
     expect(state.dataGone).toBe(true);
     // The pose went INTO the geometry, so the baked node sits at identity…
     expect(state.bakedId).not.toBeNull();
