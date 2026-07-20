@@ -63,14 +63,38 @@ type IconKind =
 // `'Object'` is deliberately ABSENT: an Object is a pose pointing at data, so its
 // type says nothing about what it is. `iconKindForNode` resolves it through the
 // `data` edge instead — see there.
+/** The mesh-data kinds — the stems that carry geometry rather than a light or a
+ *  lens. Everything else ending in `Data` is answered by its stem instead. */
+const MESH_DATA_STEMS: ReadonlySet<string> = new Set([
+  'Box',
+  'Sphere',
+  'Baked',
+  'Modified',
+  'Gltf',
+]);
+
 function kindForNodeType(nodeType: string): IconKind {
   if (nodeType === 'Scene') return 'scene';
   if (nodeType === 'Group') return 'group';
   if (nodeType === 'Transform') return 'transform';
   if (nodeType === 'MaterialOverride') return 'material';
+  if (nodeType === 'Curve') return 'curve';
   if (nodeType === 'Scatter') return 'scatter';
-  if (nodeType === 'Curve' || nodeType === 'CurveData') return 'curve';
   if (nodeType === 'GltfSkeleton') return 'skeleton';
+
+  // A data node is iconed by ITS STEM, not by the fact that it is data. A blanket
+  // `endsWith('Data') → mesh` was the first shape of this fix and it was wrong in
+  // the same way the bug it replaced was wrong: `LightData` and `CameraData` (the
+  // per-kind rollout) end in `Data` and would have drawn a CUBE. That mistake is
+  // worse than the dot, because a wrong-but-plausible icon reads as correct — and
+  // the registry guard could not catch it, since it only asks "not a dot".
+  // Strip the suffix and re-ask: LightData → light, CameraData → camera,
+  // CurveData → curve, BoxData/SphereData → mesh.
+  if (nodeType.endsWith('Data')) {
+    const stem = nodeType.slice(0, -'Data'.length);
+    return MESH_DATA_STEMS.has(stem) ? 'mesh' : kindForNodeType(stem);
+  }
+
   if (nodeType.endsWith('Light')) return 'light';
   if (nodeType.endsWith('Camera')) return 'camera';
   if (
@@ -78,11 +102,7 @@ function kindForNodeType(nodeType: string): IconKind {
     nodeType === 'BakedMesh' ||
     nodeType === 'GltfAsset' ||
     nodeType === 'GltfChild' ||
-    nodeType.endsWith('Mesh') ||
-    // The split's mesh-data nodes (BoxData today; SphereData and the baked/
-    // modified data kinds as the per-kind rollout lands). An Object delegates
-    // here through its `data` edge, so this arm is what a cube actually hits.
-    nodeType.endsWith('Data')
+    nodeType.endsWith('Mesh')
   ) {
     return 'mesh';
   }

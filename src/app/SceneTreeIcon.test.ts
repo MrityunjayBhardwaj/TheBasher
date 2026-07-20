@@ -66,6 +66,21 @@ describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries
     expect(iconKindForNode(emptyDagState(), 'x', 'NotARealNodeType')).toBe('dot');
   });
 
+  // Locked BEFORE these types exist, on purpose. The first shape of this fix mapped
+  // `endsWith('Data')` straight to 'mesh', which would have drawn a CUBE for a light
+  // and a camera the moment the per-kind rollout registered them. That is worse than
+  // the dot it replaced — a wrong-but-plausible icon reads as correct — and the
+  // registry sweep below could not have caught it, because that sweep only asks
+  // "not a dot". A data node is iconed by its STEM; these pin what each stem means.
+  it('a data node is iconed by its stem, so the rollout cannot draw a cube for a light', () => {
+    const s = emptyDagState();
+    expect(iconKindForNode(s, 'x', 'BoxData')).toBe('mesh');
+    expect(iconKindForNode(s, 'x', 'SphereData')).toBe('mesh');
+    expect(iconKindForNode(s, 'x', 'LightData')).toBe('light');
+    expect(iconKindForNode(s, 'x', 'CameraData')).toBe('camera');
+    expect(iconKindForNode(s, 'x', 'CurveData')).toBe('curve');
+  });
+
   // THE STRUCTURAL GUARD — see the file header.
   //
   // No nodes are constructed here on purpose: a data type is resolved by type alone
