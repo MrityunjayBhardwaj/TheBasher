@@ -6,8 +6,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
-import { idRefSweep } from '../core/dag/idRefSweep';
-import { channelNodesTargeting } from './nodeChannels';
+import { idRefSweep, subjectReferrersInto, remapIdRefs } from '../core/dag/idRefSweep';
 
 /**
  * Ops to delete `ids` in one atomic batch (→ one undo). `removeNode` refuses to
@@ -223,19 +222,61 @@ export function buildDuplicateNodeOps(
     index: parent.index + 1,
   });
 
-  // 7. [[H136]] free-floating KeyframeChannels target subtree nodes via
-  //    `params.target` (NOT an edge), so the hierarchy walk above missed them.
-  //    Clone each channel targeting a cloned node, re-pointing `target` to the
-  //    matching clone — so the duplicate animates like its source instead of
-  //    silently static. Channels are inputs to nothing, so addNode is the whole
-  //    op (no edges to wire); undo-safe by construction.
-  for (const ch of channelNodesTargeting(state.nodes, seen)) {
-    const target = (ch.params as { target?: string }).target;
-    const cloneTarget = target ? idMap.get(target) : undefined;
-    if (!cloneTarget) continue;
-    const params = structuredClone(ch.params) as { target?: string };
-    params.target = cloneTarget;
-    ops.push({ type: 'addNode', nodeId: freshId(ch.id, taken), nodeType: ch.type, params });
+  // 7. The id-reference universe (#434). A node OWNED BY a cloned node names its
+  //    subject in params ([[H136]]), NOT via an edge, so the hierarchy walk above
+  //    missed all of it — a keyframe channel, a Track-To / Follow-Path constraint, a
+  //    param driver, an NLA strip. This was CHANNELS-ONLY before #434, so the copy of
+  //    a constrained object silently lost its constraint. Now it clones every SUBJECT
+  //    referrer and remaps every id it holds through `idMap`: the subject ref lands on
+  //    the clone, while an argument ref (an aim target, a followed curve, a played
+  //    Action) stays shared with the original unless that target was itself cloned —
+  //    the exact rule step 5 applies to wired edges.
+  //
+  //    Fresh ids for ALL referrers first, so remap is order-independent and a strip's
+  //    Track-membership pass below can find the clone.
+  const referrers = subjectReferrersInto(state.nodes, seen);
+  for (const r of referrers) idMap.set(r.id, freshId(r.id, taken));
+  for (const r of referrers) {
+    const cloneId = idMap.get(r.id)!;
+    ops.push({
+      type: 'addNode',
+      nodeId: cloneId,
+      nodeType: r.type,
+      params: remapIdRefs(r, (id) => idMap.get(id) ?? id),
+    });
+    // A ParamDriver carries a WIRED source edge (`in` / `inVec`); rewire it like any
+    // other input — shared with the original unless it fell inside the clone. The
+    // pure-sidecar referrers (channels, constraints, strips) have `inputs: {}`, so
+    // this loop is empty for them.
+    for (const [socket, binding] of Object.entries(r.inputs)) {
+      for (const ref of refsOf(binding)) {
+        if (!ref?.node) continue;
+        ops.push({
+          type: 'connect',
+          from: { node: idMap.get(ref.node) ?? ref.node, socket: ref.socket },
+          to: { node: cloneId, socket },
+        });
+      }
+    }
+  }
+
+  // 8. A Strip is only active through its Track's `strips` list (the resolver reaches
+  //    strips only via tracks — Track.strips is the single route to a Strip). A cloned
+  //    strip that no track lists is inert debris, so append each to every track that
+  //    listed its original — the duplicate plays in the same NLA arrangement as its
+  //    source. Whole-array replace (Track.strips is one value-typed param), matching
+  //    how addStrip appends.
+  for (const [id, node] of Object.entries(state.nodes)) {
+    if (node.type !== 'Track') continue;
+    const strips = ((node.params as { strips?: string[] }).strips ?? []) as string[];
+    const additions = strips.filter((s) => idMap.has(s)).map((s) => idMap.get(s)!);
+    if (additions.length === 0) continue;
+    ops.push({
+      type: 'setParam',
+      nodeId: id,
+      paramPath: 'strips',
+      value: [...strips, ...additions],
+    });
   }
 
   return { ops, newRootId: idMap.get(rootId)! };
