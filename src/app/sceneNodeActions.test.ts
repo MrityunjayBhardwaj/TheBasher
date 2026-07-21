@@ -313,4 +313,142 @@ describe('buildDuplicateNodeOps', () => {
     addOp.params.size[0] = 99;
     expect((state.nodes.box.params as { size: number[] }).size[0]).toBe(1);
   });
+
+  // ── #434: duplicate now clones the WHOLE id-reference universe, not just channels ──
+
+  const addNodeOf = (ops: ReturnType<typeof buildDuplicateNodeOps>, nodeType: string) =>
+    (ops as { ops: unknown[] }).ops.find(
+      (o) =>
+        (o as { type: string; nodeType?: string }).type === 'addNode' &&
+        (o as { nodeType?: string }).nodeType === nodeType,
+    ) as { nodeId: string; params: Record<string, unknown> } | undefined;
+
+  it('clones a Track-To constraint, re-pointing target to the clone and sharing the aim', () => {
+    // aimNode is an argument ref → the copy must aim at the SAME external null, not a
+    // clone of it. target is subject → it must follow to the duplicate.
+    const state = fakeState();
+    (state.nodes as Record<string, unknown>).aimNull = {
+      id: 'aimNull',
+      type: 'Null',
+      params: { position: [9, 9, 9] },
+      inputs: {},
+    };
+    (state.nodes as Record<string, unknown>).tt = {
+      id: 'tt',
+      type: 'TrackTo',
+      params: { target: 'box', aimNode: 'aimNull', up: [0, 1, 0] },
+      inputs: {},
+    };
+    const res = buildDuplicateNodeOps(state, 'box')!;
+    const clone = addNodeOf(res, 'TrackTo');
+    expect(clone).toBeDefined();
+    expect(clone!.nodeId).not.toBe('tt');
+    expect(clone!.params.target).toBe('box_copy'); // subject → clone
+    expect(clone!.params.aimNode).toBe('aimNull'); // argument → shared original
+  });
+
+  it('clones a ParamDriver, re-pointing target and rewiring its wired source shared', () => {
+    const state = fakeState();
+    (state.nodes as Record<string, unknown>).cmp = {
+      id: 'cmp',
+      type: 'Math',
+      params: {},
+      inputs: {},
+    };
+    (state.nodes as Record<string, unknown>).drv = {
+      id: 'drv',
+      type: 'ParamDriver',
+      params: { target: 'box', paramPath: 'position' },
+      inputs: { in: { node: 'cmp', socket: 'out' } },
+    };
+    const res = buildDuplicateNodeOps(state, 'box')!;
+    const clone = addNodeOf(res, 'ParamDriver');
+    expect(clone).toBeDefined();
+    expect(clone!.params.target).toBe('box_copy');
+    // its wired compute source stays shared with the original (not cloned).
+    const wire = res.ops.find(
+      (o) =>
+        o.type === 'connect' &&
+        (o as { to: { node: string; socket: string } }).to.node === clone!.nodeId &&
+        (o as { to: { socket: string } }).to.socket === 'in',
+    ) as { from: { node: string } } | undefined;
+    expect(wire?.from.node).toBe('cmp');
+  });
+
+  it('clears the nested source id only, preserving the sibling channel', () => {
+    // sourceTransform is {node, channel}; remap must keep `channel` when it lands on
+    // the shared controller (the H177-shaped trap: don't clobber siblings).
+    const state = fakeState();
+    (state.nodes as Record<string, unknown>).ctrl = {
+      id: 'ctrl',
+      type: 'Null',
+      params: { position: [3, 3, 3] },
+      inputs: {},
+    };
+    (state.nodes as Record<string, unknown>).drv = {
+      id: 'drv',
+      type: 'ParamDriver',
+      params: {
+        target: 'box',
+        paramPath: 'intensity',
+        sourceTransform: { node: 'ctrl', channel: 'ty' },
+      },
+      inputs: {},
+    };
+    const res = buildDuplicateNodeOps(state, 'box')!;
+    const clone = addNodeOf(res, 'ParamDriver');
+    expect(clone!.params.sourceTransform as { node: string; channel: string }).toEqual({
+      node: 'ctrl', // shared controller (argument), not cloned
+      channel: 'ty', // sibling survived the remap
+    });
+  });
+
+  it('clones an NLA strip and appends the clone to the same track', () => {
+    // A strip is inert unless a Track lists it — the clone must join the original's
+    // track, sharing the (reusable) Action.
+    const state = fakeState();
+    (state.nodes as Record<string, unknown>).act = {
+      id: 'act',
+      type: 'Action',
+      params: { name: 'wave', channels: [] },
+      inputs: {},
+    };
+    (state.nodes as Record<string, unknown>).strip = {
+      id: 'strip',
+      type: 'Strip',
+      params: { target: 'box', action: 'act', start: 7 },
+      inputs: {},
+    };
+    (state.nodes as Record<string, unknown>).trk = {
+      id: 'trk',
+      type: 'Track',
+      params: { strips: ['strip'], order: 0 },
+      inputs: {},
+    };
+    const res = buildDuplicateNodeOps(state, 'box')!;
+    const clone = addNodeOf(res, 'Strip');
+    expect(clone!.params.target).toBe('box_copy'); // subject → clone
+    expect(clone!.params.action).toBe('act'); // shared Action (argument), not cloned
+    // the track now lists both the original strip and the clone.
+    const setStrips = res.ops.find(
+      (o) => o.type === 'setParam' && (o as { nodeId: string }).nodeId === 'trk',
+    ) as { value: string[] } | undefined;
+    expect(setStrips?.value).toEqual(['strip', clone!.nodeId]);
+    // and the shared Action is NOT cloned.
+    expect(addNodeOf(res, 'Action')).toBeUndefined();
+  });
+
+  it('does NOT clone a constraint that merely AIMS AT the duplicated object', () => {
+    // argument-only referrer: a TrackTo on some OTHER object aiming at `box`. The
+    // constraint belongs to that other object; duplicating box must leave it alone.
+    const state = fakeState();
+    (state.nodes as Record<string, unknown>).tt = {
+      id: 'tt',
+      type: 'TrackTo',
+      params: { target: 'inner', aimNode: 'box', up: [0, 1, 0] },
+      inputs: {},
+    };
+    const res = buildDuplicateNodeOps(state, 'box')!;
+    expect(addNodeOf(res, 'TrackTo')).toBeUndefined();
+  });
 });

@@ -171,3 +171,66 @@ export function idRefsOutOf(node: NodeLike): string[] {
   }
   return out;
 }
+
+/**
+ * The nodes OWNED BY any node in `ids` through a SUBJECT idRef — a keyframe channel
+ * whose target is being duplicated, a constraint on it, a driver of it, a strip
+ * placed on it (#434). This is the copy-direction twin of the delete sweep's upward
+ * walk: the exact set delete REMOVES when a subject's referent goes, reused to decide
+ * what a duplicate must CLONE alongside its subtree. Argument-only referrers are
+ * excluded — a constraint that merely AIMS AT a duplicated object belongs to a
+ * different object and is not copied.
+ */
+export function subjectReferrersInto<T extends NodeLike>(
+  nodes: Readonly<Record<string, T>>,
+  ids: ReadonlySet<string>,
+): T[] {
+  const out: T[] = [];
+  for (const node of Object.values(nodes)) {
+    if (ids.has(node.id)) continue; // a subtree node is cloned by the main walk, not here
+    const refs = getNodeType(node.type)?.idRefs;
+    if (!refs) continue;
+    const owned = refs.some(
+      (r) => r.role === 'subject' && refIdsAt(node.params, r.path, r.shape).some((t) => ids.has(t)),
+    );
+    if (owned) out.push(node);
+  }
+  return out;
+}
+
+function setAtPath(obj: unknown, path: string, value: unknown): void {
+  const segs = path.split('.');
+  let cur = obj as Record<string, unknown>;
+  for (let i = 0; i < segs.length - 1; i++) cur = cur[segs[i]] as Record<string, unknown>;
+  cur[segs[segs.length - 1]] = value;
+}
+
+/**
+ * A deep copy of `node`'s params with every declared id rewritten by `remap`. The
+ * copy-direction counterpart to the sweep's clear: where the sweep empties a dangling
+ * ref, this REPOINTS it. Callers pass `id => idMap.get(id) ?? id`, so a subject ref
+ * into the cloned subtree lands on the clone while an argument ref to a SHARED node (a
+ * followed curve, a played Action) is left pointing at the original — the exact rule
+ * the edge rewire applies to wired inputs. Only refs that currently hold a value are
+ * touched, and a nested id is rewritten in place so its siblings (`sourceTransform`'s
+ * `channel`, `sourceSpare`'s `key`) survive.
+ */
+export function remapIdRefs(node: NodeLike, remap: (id: string) => string): unknown {
+  const params = structuredClone(node.params);
+  const refs = getNodeType(node.type)?.idRefs;
+  if (!refs) return params;
+  for (const ref of refs) {
+    const cur = refIdsAt(params, ref.path, ref.shape);
+    if (cur.length === 0) continue;
+    if (ref.shape === 'idList') {
+      setAtPath(params, ref.path, cur.map(remap));
+    } else if (ref.shape === 'ref') {
+      // `<path>` is the `{ node }` object; rewrite `.node` so any siblings survive.
+      setAtPath(params, `${ref.path}.node`, remap(cur[0]));
+    } else {
+      // 'id' — a plain string at `path`; 'nested' — a string already ending in `.node`.
+      setAtPath(params, ref.path, remap(cur[0]));
+    }
+  }
+  return params;
+}
