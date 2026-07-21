@@ -4,7 +4,7 @@
 // from a value colliding with a fallback (a trap that has bitten here before): an
 // argument ref cleared to '' must be distinguishable from one that was ALREADY ''.
 import { describe, it, expect } from 'vitest';
-import { idRefSweep } from './idRefSweep';
+import { idRefSweep, findDanglingIdRef } from './idRefSweep';
 import { getNodeType, listNodeTypes } from './registry';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { Op } from './types';
@@ -156,6 +156,31 @@ describe('idRefSweep — ownership in the downward direction', () => {
     expect([...s.remove].sort()).toEqual(['cube', 's1']);
     // The surviving strip keeps its place; only the removed one is dropped.
     expect(clearOf(s.ops, 'trk', 'strips')?.value).toEqual(['sKeep']);
+  });
+});
+
+describe('findDanglingIdRef — the #435 final-state detector', () => {
+  it('is null when every id-reference resolves', () => {
+    expect(
+      findDanglingIdRef(
+        nodes(
+          ['cube', 'BoxMesh', {}],
+          ['ch', 'KeyframeChannelVec3', { target: 'cube', paramPath: 'position' }],
+        ),
+      ),
+    ).toBeNull();
+  });
+
+  it('names the referrer and the missing id when a target is absent', () => {
+    // The state a raw removeNode leaves behind: the channel survives, its target is gone.
+    const d = findDanglingIdRef(
+      nodes(['ch', 'KeyframeChannelVec3', { target: 'cube', paramPath: 'position' }]),
+    );
+    expect(d).toEqual({ node: 'ch', missing: 'cube' });
+  });
+
+  it('ignores an empty ref (an unbound constraint is not dangling)', () => {
+    expect(findDanglingIdRef(nodes(['tt', 'TrackTo', { target: '', aimNode: '' }]))).toBeNull();
   });
 });
 

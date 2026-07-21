@@ -77,7 +77,11 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
 
   // Clearing the surviving 'argument' refs (an aim target, a followed curve, a
   // controller) comes FIRST: those nodes outlive this delete, and the clear is what
-  // keeps them from pointing at a missing id.
+  // keeps them from pointing at a missing id. Then, per node: disconnect its surviving
+  // consumer edges, then removeNode. The id-reference universe needs no removeNode
+  // ordering here — the batch's FINAL state is whole (every referrer was swept or
+  // cleared above), and #435's dangle guard is a final-state check at the commit
+  // chokepoint, not a per-op one (see `findDanglingIdRef`).
   const ops: Op[] = [...sweep.ops];
   for (const nodeId of allIds) {
     for (const [consumerId, consumer] of Object.entries(state.nodes)) {

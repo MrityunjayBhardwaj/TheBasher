@@ -12,6 +12,7 @@
 
 import { create } from 'zustand';
 import { applyOp, validateOp } from './ops';
+import { findDanglingIdRef } from './idRefSweep';
 import type { DagState } from './state';
 import { emptyDagState } from './state';
 import type { Diff, InverseOp, Op } from './types';
@@ -200,6 +201,24 @@ export const useDagStore = create<DagStore>((set, get) => ({
         op: validated,
         description,
       });
+    }
+    // #435 — "does not silently dangle", in its FINAL-STATE form. `removeNode`'s per-op
+    // guard covers edges (always explicitly torn down); an id-reference is a param that
+    // can legitimately outlive a removeNode mid-batch (Apply-Transform re-adds the baked
+    // node under the SAME id, #412), so the invariant is about the COMMITTED state, not a
+    // transient. Only a removeNode can turn a live ref into a dangling one, so the scan
+    // runs only then — leaving every other dispatch (drags, param edits) untouched. This
+    // closes the raw-`dag.exec` road no per-caller sweep can reach: an agent removing a
+    // referenced node fails loudly here instead of committing silent orphan bloat. Throws
+    // BEFORE `set()`, so a rejected batch leaves the store unmutated.
+    if (ops.some((o) => o.type === 'removeNode')) {
+      const dangling = findDanglingIdRef(working.nodes);
+      if (dangling) {
+        throw new Error(
+          `dispatchAtomic: node "${dangling.node}" would be left referencing removed node ` +
+            `"${dangling.missing}". Clear or remove the referrer in the same batch.`,
+        );
+      }
     }
     // Inside a drag transaction: append the ops FLAT to the buffer (not as a nested
     // group) so the whole gesture stays ONE flat undo entry.
