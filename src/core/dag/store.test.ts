@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { useDagStore } from './store';
 import { seedTestRegistry } from './__fixtures__/testNodes';
+import { registerNodeType } from './registry';
 import type { Op } from './types';
 
 beforeEach(() => {
@@ -218,5 +220,107 @@ describe('DagStore', () => {
   it('rejects invalid op shape via zod (V7 spirit, P0 today)', () => {
     const store = useDagStore.getState();
     expect(() => store.dispatch({ type: 'nope', nodeId: 'x' } as unknown as Op)).toThrow();
+  });
+});
+
+// #435 — the id-reference dangle guard (final-state form) at the commit chokepoint.
+// A minimal node type that DECLARES a subject id-ref, registered on top of the test
+// registry so the guard has something to consult (getNodeType reads `idRefs`).
+function seedRefNode(): void {
+  registerNodeType<{ target: string }, number>({
+    type: 'TestRefNode',
+    version: 1,
+    pure: true,
+    cost: 'cheap',
+    paramSchema: z.object({ target: z.string().default('') }),
+    inputs: {},
+    outputs: { out: { type: 'Number', cardinality: 'single' } },
+    evaluate: () => 0,
+    idRefs: [{ path: 'target', shape: 'id', role: 'subject' }],
+  });
+}
+
+describe('DagStore — #435 id-reference dangle guard', () => {
+  beforeEach(() => {
+    seedTestRegistry();
+    seedRefNode();
+    useDagStore.getState().reset();
+  });
+
+  function seedRefScene(): void {
+    const store = useDagStore.getState();
+    store.dispatchAtomic(
+      [
+        { type: 'addNode', nodeId: 'subject', nodeType: 'TestNumber', params: { value: 1 } },
+        { type: 'addNode', nodeId: 'ref', nodeType: 'TestRefNode', params: { target: 'subject' } },
+      ],
+      'user',
+      'seed',
+    );
+  }
+
+  it('REJECTS a raw removeNode that leaves a referrer dangling — and does not mutate', () => {
+    seedRefScene();
+    const store = useDagStore.getState();
+    const before = store.state.nodes;
+    // The raw-dag.exec road: remove the referenced node with no sweep of the referrer.
+    expect(() =>
+      store.dispatchAtomic([{ type: 'removeNode', nodeId: 'subject' }], 'agent', 'raw'),
+    ).toThrow(/still referencing removed node|referencing removed|referrer/i);
+    // Throw came BEFORE set() — the store is untouched, subject still present.
+    expect(useDagStore.getState().state.nodes).toBe(before);
+    expect(useDagStore.getState().state.nodes.subject).toBeDefined();
+  });
+
+  it('ALLOWS remove + re-add of the SAME id in one batch (the Apply-Transform pattern)', () => {
+    seedRefScene();
+    const store = useDagStore.getState();
+    // #412 id inheritance: the subject is removed and re-created under the same id, so the
+    // referrer is momentarily dangling mid-batch yet whole once committed. A per-op guard
+    // would (wrongly) reject this; the final-state guard accepts it.
+    expect(() =>
+      store.dispatchAtomic(
+        [
+          { type: 'removeNode', nodeId: 'subject' },
+          { type: 'addNode', nodeId: 'subject', nodeType: 'TestNumber', params: { value: 2 } },
+        ],
+        'user',
+        'rebake',
+      ),
+    ).not.toThrow();
+    expect(useDagStore.getState().state.nodes.subject).toBeDefined();
+    expect((useDagStore.getState().state.nodes.ref.params as { target: string }).target).toBe(
+      'subject',
+    );
+  });
+
+  it('guards the single-dispatch road too, not only dispatchAtomic', () => {
+    seedRefScene();
+    const store = useDagStore.getState();
+    // Defense-in-depth: a bare removeNode via dispatch() (a road no production caller
+    // uses today) is guarded by the same shared check, so a future caller can't reopen
+    // the hole.
+    expect(() => store.dispatch({ type: 'removeNode', nodeId: 'subject' }, 'agent')).toThrow(
+      /referencing removed node|referrer/i,
+    );
+    expect(useDagStore.getState().state.nodes.subject).toBeDefined();
+  });
+
+  it('ALLOWS removing the referrer and its subject together', () => {
+    seedRefScene();
+    const store = useDagStore.getState();
+    // Both gone → nothing survives pointing at a missing id → whole final state.
+    expect(() =>
+      store.dispatchAtomic(
+        [
+          { type: 'removeNode', nodeId: 'ref' },
+          { type: 'removeNode', nodeId: 'subject' },
+        ],
+        'user',
+        'delete both',
+      ),
+    ).not.toThrow();
+    expect(useDagStore.getState().state.nodes.subject).toBeUndefined();
+    expect(useDagStore.getState().state.nodes.ref).toBeUndefined();
   });
 });
