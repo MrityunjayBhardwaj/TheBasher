@@ -1,30 +1,39 @@
 // duplicate Mutator — clone a target into the same scene aggregator.
 //
-// Multi-root closure (P-2 mitigation): the source node + its consumer
-// chain (so the gate accepts a connect to scene). The new node id is
-// fresh and propagates to subsequent ops via the introducedIds tracker
-// in validate.ts gate 3.
+// #437 — DELEGATE to the one shared authority (`buildDuplicateNodeOps`) instead
+// of reimplementing, exactly as `deleteNodeMutator` now delegates to
+// `buildDeleteNodesOps` (#424). This builder used to be a SECOND, independent
+// answer to "duplicate a node", and the more broken of the two: it cloned only
+// the single target (a duplicated Group came out with no children wired), shared
+// its animation channels outright (`lossy: animation` — the clone's keyframes
+// moved the ORIGINAL), and ignored constraints, drivers, and NLA strips entirely.
+// #433/#434 had already taught the outliner path to clone the whole id-reference
+// universe (channels, Track-To / Follow-Path constraints, param drivers, strips);
+// leaving the agent on the old channels-blind walker just re-opened the #424
+// two-authorities divergence in the duplicate direction. Now three callers
+// (outliner, Duplicate key, agent) share one implementation.
 //
-// Preserves: rotation + scale + material (clones params verbatim).
-// Lossy: pose/animation references are NOT deep-cloned — the dup will
-// share the source's animation channels (acceptable for v0.5; Wave D
-// can revisit when KeyframeChannel lands in P3).
-//
-// #365 Phase 5a (object↔data split) — a split Object owns only its TRS and
-// points at a data node (BoxData: geometry + material) through its `data`
-// input. Cloning ONLY the Object leaves the clone's `data` unwired → the
-// dup renders as an empty. So a clone whose source carries a `data` input
-// deep-copies that data node too (fresh id, deep-copied params) and wires
-// clone.data → the new data node. This is Blender's Shift+D: the two cubes
-// are fully independent — recolour one, the other stands (NOT a shared
-// fan-out). Only the `data`-owned node is deep-copied; any other refs the
-// source carries follow the existing (shallow) wiring below.
+// Not a drop-in — the delegate is single-root and offset-free, so `build`
+// reconciles four things the shared builder doesn't do itself:
+//   1. offset       — the shared builder copies position verbatim; the agent
+//                     applies `spec.offset` (default [1,0,0]) via a post-hoc
+//                     setParam on the returned newRootId.
+//   2. multi-target — the mutator takes targetSelectors[]; the builder is
+//                     single-root and mints fresh _copy ids from state.nodes
+//                     alone, so two targets could collide. A shared `reserved`
+//                     id-space is threaded across the calls.
+//   3. closure      — the delegated ops touch the edge-less sidecars, so the
+//                     closure follows ['parent','children','data','id-ref'] (the
+//                     deleteNode set) or gate 3 rejects this mutator's own ops.
+//   4. contract     — animation channels are now deep-cloned, so `animation`
+//                     moves from lossy to preserves.
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
-import type { Op, NodeId, NodeRef } from '../../../core/dag/types';
+import type { Op, NodeId } from '../../../core/dag/types';
+import { buildDuplicateNodeOps } from '../../../app/sceneNodeActions';
 
 const DuplicateSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
@@ -36,129 +45,78 @@ export type DuplicateSpec = z.infer<typeof DuplicateSpec>;
 export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
   name: 'mutator.duplicate',
   description:
-    'Duplicate one or more nodes. Each clone gets a fresh id and is wired ' +
-    'into the same consumer (typically scene.children) as its source. ' +
-    'Position is offset by `offset` (default [1,0,0]). Preserves rotation, ' +
-    'scale, material; a split Object also gets an independent deep copy of ' +
-    'its linked data node (geometry + material); does NOT deep-clone ' +
-    'animation channels.',
+    'Duplicate one or more nodes (Blender Shift+D). Each clone gets a fresh id ' +
+    'and is wired in as a sibling right after its source. Deep-copies the owned ' +
+    'subtree (a Group takes its children, a split Object its geometry/material ' +
+    'data node) AND the animation that belongs to the source — keyframe ' +
+    'channels, constraints, drivers, and NLA strips are cloned and re-pointed at ' +
+    'the clone, so editing the copy never moves the original. Shared assets (an ' +
+    'aim target, a followed curve, a reusable Action) stay shared. Position is ' +
+    'offset by `offset` (default [1,0,0]).',
   spec: DuplicateSpec,
   specExample: { targetSelectors: ['node_id'], offset: [1, 0, 0] },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],
-    preserves: ['rotation', 'scale', 'material'],
-    lossy: [
-      {
-        kind: 'animation',
-        reason: 'Animation channels are shared with the source, not deep-cloned.',
-      },
-    ],
+    // #437 — animation is now deep-cloned (moved out of lossy). rotation/scale/
+    // material ride along in the verbatim param copy as before.
+    preserves: ['rotation', 'scale', 'material', 'animation'],
+    lossy: [],
   },
   buildClosureSpec(spec): ClosureSpec {
-    // Source + its consumer chain. We need consumers in scope so the
-    // connect ops to wire the clone into scene.children pass gate 3.
+    // #437 — the delegated ops clone the whole id-reference universe, so the
+    // closure must reach it the same way deleteNode's does:
+    //   'parent'   — the consumer we clone the new root beside.
+    //   'children' — a Group OWNS its children and they clone with it.
+    //   'data'     — a split Object OWNS its data node.
+    //   'id-ref'   — the edge-less half: channels/constraints/drivers/strips
+    //                swept with their subject, plus the Track a cloned strip is
+    //                appended to. No edge kind reaches these, so without it gate 3
+    //                rejects this mutator's OWN ops (the #424 lesson).
     return {
       rootSelectors: spec.targetSelectors,
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'children', 'data', 'id-ref'],
     };
   },
   preconditions(spec, _closure, state) {
     for (const id of spec.targetSelectors) {
-      const node = state.nodes[id];
-      if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
+      if (!state.nodes[id]) return { ok: false, reason: `Target "${id}" not in DAG.` };
     }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const ops: Op[] = [];
-    const usedIds = new Set<NodeId>(Object.keys(state.nodes));
+    // One id-space shared across every target so back-to-back clones of the same
+    // base can't mint colliding _copy ids (#437 reconcile #2).
+    const reserved = new Set<NodeId>();
 
     for (const sourceId of spec.targetSelectors) {
-      const source = state.nodes[sourceId];
-      const cloneId = nextFreshId(sourceId, usedIds);
-      usedIds.add(cloneId);
+      const res = buildDuplicateNodeOps(state, sourceId, reserved);
+      // null == the target is not a wired scene child (nothing to duplicate as a
+      // sibling). The outliner and Duplicate key no-op here too; the agent matches
+      // rather than forking its own answer.
+      if (!res) continue;
+      ops.push(...res.ops);
 
-      // Clone params with optional position offset.
-      const sourceParams = (source.params ?? {}) as Record<string, unknown>;
-      const clonedParams = JSON.parse(JSON.stringify(sourceParams)) as Record<string, unknown>;
-      const sourcePos = sourceParams.position;
+      // #437 reconcile #1 — offset. The shared builder copies position verbatim;
+      // the agent nudges the clone by `spec.offset` so it's visibly distinct.
+      // Only when the source actually carries a 3-vector position (a data-only or
+      // positionless node has none — setParam of an absent field is silently
+      // dropped, so guard rather than emit a dead op).
+      const sourcePos = (state.nodes[sourceId]?.params as { position?: unknown }).position;
       if (Array.isArray(sourcePos) && sourcePos.length === 3) {
-        clonedParams.position = [
-          (sourcePos[0] as number) + spec.offset[0],
-          (sourcePos[1] as number) + spec.offset[1],
-          (sourcePos[2] as number) + spec.offset[2],
-        ];
-      }
-
-      ops.push({
-        type: 'addNode',
-        nodeId: cloneId,
-        nodeType: source.type,
-        params: clonedParams,
-      });
-
-      // #365 Phase 5a — deep-copy the linked data node (Blender Shift+D). A split
-      // Object's geometry + material live on the node it points at via `data`;
-      // cloning only the Object leaves the clone's `data` unwired → it renders as
-      // an empty. Emit a fresh data node (deep-copied params) and wire it to the
-      // clone's `data` socket, BEFORE that connect so the op layer's from-node
-      // check (applyConnect) sees it exist. The two objects are now independent.
-      const dataRef = firstRef(source.inputs?.data);
-      if (dataRef) {
-        const dataNode = state.nodes[dataRef.node];
-        if (dataNode) {
-          const dataCloneId = nextFreshId(dataRef.node, usedIds);
-          usedIds.add(dataCloneId);
-          const dataParams = JSON.parse(JSON.stringify(dataNode.params ?? {})) as Record<
-            string,
-            unknown
-          >;
-          ops.push({
-            type: 'addNode',
-            nodeId: dataCloneId,
-            nodeType: dataNode.type,
-            params: dataParams,
-          });
-          ops.push({
-            type: 'connect',
-            from: { node: dataCloneId, socket: dataRef.socket },
-            to: { node: cloneId, socket: 'data' },
-          });
-        }
-      }
-
-      // Wire the clone into every consumer the source already feeds.
-      // Closure (parent edge) ensures every such consumer is in scope —
-      // gate 3 accepts these connect ops.
-      for (const consumer of Object.values(state.nodes)) {
-        for (const [socket, binding] of Object.entries(consumer.inputs)) {
-          const refs = Array.isArray(binding) ? binding : [binding];
-          for (const ref of refs) {
-            if (ref.node !== sourceId) continue;
-            ops.push({
-              type: 'connect',
-              from: { node: cloneId, socket: ref.socket },
-              to: { node: consumer.id, socket },
-            });
-          }
-        }
+        ops.push({
+          type: 'setParam',
+          nodeId: res.newRootId,
+          paramPath: 'position',
+          value: [
+            (sourcePos[0] as number) + spec.offset[0],
+            (sourcePos[1] as number) + spec.offset[1],
+            (sourcePos[2] as number) + spec.offset[2],
+          ],
+        });
       }
     }
     return ops;
   },
 };
-
-/** The first NodeRef of an input binding (single ref or array), or undefined. */
-function firstRef(binding: NodeRef | NodeRef[] | undefined): NodeRef | undefined {
-  if (!binding) return undefined;
-  return Array.isArray(binding) ? binding[0] : binding;
-}
-
-function nextFreshId(base: NodeId, used: Set<NodeId>): NodeId {
-  let n = 1;
-  // Strip any prior `_copyN` suffix so chained dups don't pile suffixes.
-  const root = base.replace(/_copy\d+$/, '');
-  while (used.has(`${root}_copy${n}`)) n++;
-  return `${root}_copy${n}`;
-}

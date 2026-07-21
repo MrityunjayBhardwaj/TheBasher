@@ -151,6 +151,16 @@ function refsOf(binding: unknown): { node: string; socket: string }[] {
 export function buildDuplicateNodeOps(
   state: DagState,
   rootId: NodeId,
+  /**
+   * Optional id-space to reserve across calls. `buildDuplicateNodeOps` is
+   * single-root and mints fresh `_copy` ids from `state.nodes` alone, so two
+   * back-to-back calls against the SAME state (e.g. the agent duplicating
+   * `['a','b']` at once) can independently pick the same `_copy` id and
+   * collide. Pass one shared Set across the batch: every id this call mints is
+   * added to it, and every id already in it is treated as taken. UI callers
+   * (one root per Shift-D) omit it and are unaffected.
+   */
+  reserved?: Set<NodeId>,
 ): { ops: Op[]; newRootId: NodeId } | null {
   if (!state.nodes[rootId]) return null;
 
@@ -183,8 +193,10 @@ export function buildDuplicateNodeOps(
   };
   visit(rootId);
 
-  // 3. Fresh ids for every clone.
-  const taken = new Set(Object.keys(state.nodes));
+  // 3. Fresh ids for every clone. Seed with any ids a prior call in this batch
+  //    already reserved so a multi-target duplicate can't mint colliding _copy ids.
+  const taken = new Set<NodeId>(Object.keys(state.nodes));
+  if (reserved) for (const id of reserved) taken.add(id);
   const idMap = new Map<NodeId, NodeId>();
   for (const id of subtree) idMap.set(id, freshId(id, taken));
 
@@ -282,6 +294,10 @@ export function buildDuplicateNodeOps(
       value: [...strips, ...additions],
     });
   }
+
+  // Publish every id this call minted (subtree clones + referrer clones, all in
+  // idMap's values) so a subsequent call in the same batch won't reuse them.
+  if (reserved) for (const cloneId of idMap.values()) reserved.add(cloneId);
 
   return { ops, newRootId: idMap.get(rootId)! };
 }
