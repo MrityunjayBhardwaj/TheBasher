@@ -130,8 +130,17 @@ function GhostCamera({ value }: { value: CameraValue | null }) {
 }
 
 function GhostLight({ value }: { value: LightValue }) {
+  // #355 — the ghost must mark the light WHERE THE PROPOSAL PUTS IT, not the origin.
+  // Directional/Point/Spot/Area carry a `position`; AmbientLight is a GLOBAL light with
+  // none, so its marker stays at the origin (it has no location to depict). `'position'
+  // in value` narrows the union — a bare `value.position` would not typecheck on the
+  // ambient arm. The followed-light case (a light posed by a constraint, like #354 does
+  // for meshes) is a separate road: GhostLight is mapped by index over `scene.lights`
+  // and carries no node id to resolve a band from — tracked with #355's follow-on note.
+  const position: [number, number, number] =
+    'position' in value ? (value.position as [number, number, number]) : [0, 0, 0];
   return (
-    <group>
+    <group position={position}>
       <mesh>
         <sphereGeometry args={[0.15, 8, 8]} />
         <meshBasicMaterial
