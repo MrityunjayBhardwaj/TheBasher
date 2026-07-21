@@ -23,6 +23,7 @@
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §5 / §2.2; vyapti V58.
 
 import type {
+  BakedMaterialSpec,
   GeometryRef,
   InlineMaterialSpec,
   MeshTransform,
@@ -30,7 +31,6 @@ import type {
   SceneChild,
   Vec3,
 } from '../nodes/types';
-import { isBakedMaterialSpec } from '../nodes/materialSchema';
 import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 
@@ -59,7 +59,7 @@ export function boxGeometryRef(size: Vec3): GeometryRef {
 export interface ModifierSource {
   readonly geometry: GeometryRef;
   readonly transform: MeshTransform;
-  readonly material: InlineMaterialSpec | null;
+  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
 }
 
 /**
@@ -104,12 +104,13 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
     case 'ModifiedMesh':
       return { geometry: value.geometry, transform: trsOf(value), material: value.material };
     case 'BakedMesh':
-      // A baked source carries a BakedMaterialSpec, which a ModifiedMesh cannot
-      // hold — so the material is dropped, exactly as before this consolidation.
-      // That drop is the live bug #358; it is preserved verbatim here rather than
-      // fixed in passing, so #377 stays a behaviour-preserving change everywhere
-      // except the Object arm below.
-      return { geometry: value.geometry, transform: trsOf(value), material: null };
+      // A baked source carries its captured BakedMaterialSpec (scalars + maps).
+      // ModifiedMeshValue.material was widened to that union (#358), so the material
+      // now rides through verbatim instead of dropping to null. RENDERING a baked
+      // material on a modifier is the deferred baked-sourced-modifier follow-up (the
+      // array geometry over a baked ref is not sync-buildable either); ModifiedMeshR
+      // narrows a baked spec to its fallback exactly as ObjectR does.
+      return { geometry: value.geometry, transform: trsOf(value), material: value.material };
     case 'Object': {
       // The object↔data split (#377): the Object owns the pose, the data node owns
       // geometry + material. Reach through `data` — the modifier reshapes the mesh
@@ -123,8 +124,9 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
       return {
         geometry: data.geometry,
         transform: trsOf(value),
-        // MeshData holds either spec; a baked one drops, as the BakedMesh arm does.
-        material: isBakedMaterialSpec(data.material) ? null : data.material,
+        // MeshData holds either spec; carry it verbatim (#358). ObjectR narrows a
+        // baked data material to its fallback, so widening here is render-safe.
+        material: data.material,
       };
     }
     // Not leaf meshes — a modifier passes through them unchanged (v1 scope).

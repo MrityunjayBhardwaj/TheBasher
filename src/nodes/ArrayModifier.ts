@@ -13,8 +13,9 @@
 // bypasses the operator: evaluate returns the source UNCHANGED (the stack's
 // mute-bypass, V58), so a muted modifier is byte-identical to no modifier.
 //
-// v1 scope: box/sphere sources (sync registry build). A glTF/baked source passes
-// THROUGH unchanged for now (its geometry is async — a clean follow-up).
+// v1 scope: box/sphere sources build sync. A baked source produces a real
+// ModifiedMesh that INHERITS the baked material (#358), but its array geometry is
+// not sync-buildable yet (a follow-up); glTF/Group/etc. still pass THROUGH unchanged.
 //
 // REF: src/app/modifierGeometry.ts (the shared projection + array-wrap);
 //      src/app/geometryRegistry.ts (build 'array'); src/nodes/Transform.ts (the

@@ -536,8 +536,13 @@ export interface ModifiedMeshValue {
   readonly position: Vec3;
   readonly rotation: Vec3;
   readonly scale: Vec3;
-  /** Inherited from the source mesh (box/sphere inline material in v1; null otherwise). */
-  readonly material: InlineMaterialSpec | null;
+  /**
+   * Inherited from the source mesh: an inline OpenPBR IR (box/sphere/inline-data
+   * source) or the rich baked spec a BakedMesh / baked-data source carries (#358).
+   * Widened to the same union the read side (`EvaluatedMesh.material`) already uses,
+   * so the evaluate road no longer silently drops a baked source's material.
+   */
+  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
 }
 
 /**

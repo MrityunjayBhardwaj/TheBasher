@@ -2077,12 +2077,15 @@ function ModifiedMeshR({
 }) {
   const shading = useViewportStore((s) => s.shading);
   // Hook first (rules-of-hooks) — material builds unconditionally; the geom guard
-  // below is a plain branch with no hooks after it.
-  const material = usePrimitiveMaterial(
-    value.material ?? MODIFIED_FALLBACK_MATERIAL,
-    override,
-    shading,
-  );
+  // below is a plain branch with no hooks after it. The source's material now rides
+  // through the modifier (#358), but ModifiedMeshR renders only the INLINE OpenPBR
+  // path: narrow a baked spec (a baked-sourced modifier) to the fallback exactly as
+  // ObjectR does — `base` distinguishes an inline IR from a BakedMaterialSpec. A
+  // baked source's array geometry is not sync-buildable anyway, so it renders
+  // nothing (surfaced below); drawing the baked material is the deferred follow-up.
+  const mat = value.material;
+  const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
+  const material = usePrimitiveMaterial(inlineMat, override, shading);
   const geom = geometryRegistry.get(value.geometry);
   // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
   // the modifier's source could not be built synchronously — reachable when the
