@@ -294,6 +294,18 @@ describe('DagStore — #435 id-reference dangle guard', () => {
     );
   });
 
+  it('guards the single-dispatch road too, not only dispatchAtomic', () => {
+    seedRefScene();
+    const store = useDagStore.getState();
+    // Defense-in-depth: a bare removeNode via dispatch() (a road no production caller
+    // uses today) is guarded by the same shared check, so a future caller can't reopen
+    // the hole.
+    expect(() => store.dispatch({ type: 'removeNode', nodeId: 'subject' }, 'agent')).toThrow(
+      /referencing removed node|referrer/i,
+    );
+    expect(useDagStore.getState().state.nodes.subject).toBeDefined();
+  });
+
   it('ALLOWS removing the referrer and its subject together', () => {
     seedRefScene();
     const store = useDagStore.getState();

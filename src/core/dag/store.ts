@@ -102,6 +102,26 @@ export function __setTimeNowForTests(fn: () => number): void {
   timeNow = fn;
 }
 
+// #435 — "does not silently dangle", in its FINAL-STATE form, on EVERY commit road.
+// `removeNode`'s per-op guard covers edges (always explicitly torn down); an id-
+// reference is a param that can legitimately outlive a removeNode mid-batch (Apply-
+// Transform re-adds the baked node under the SAME id, #412), so the invariant is about
+// the COMMITTED state, not a transient. Only a removeNode can turn a live ref into a
+// dangling one, so the scan runs ONLY then — leaving every drag / param edit untouched.
+// Called by all three commit paths (dispatch / dispatchBatch / dispatchAtomic) before
+// their `set()`, so a rejected batch never mutates the store and no future commit road
+// can reopen the raw-removeNode hole. Closes the dag.exec road no per-caller sweep reaches.
+function assertNoDanglingIdRef(ops: readonly Op[], nextState: DagState): void {
+  if (!ops.some((o) => o.type === 'removeNode')) return;
+  const dangling = findDanglingIdRef(nextState.nodes);
+  if (dangling) {
+    throw new Error(
+      `dispatch: node "${dangling.node}" would be left referencing removed node ` +
+        `"${dangling.missing}". Clear or remove the referrer in the same batch.`,
+    );
+  }
+}
+
 // Module-scoped open interaction (a drag transaction). Not in the zustand state
 // because per-move dispatches read/append it synchronously many times per second;
 // keeping it out of the reactive state avoids needless subscriber churn. Flushed by
@@ -118,6 +138,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
   dispatch(op, source = 'user', description) {
     const validated = validateOp(op);
     const { next, inverse } = applyOp(get().state, validated);
+    assertNoDanglingIdRef([validated], next); // #435
     const inv: InverseOp = { forward: validated, inverse };
     // Inside a drag transaction: mutate state, buffer the undo/activity record.
     if (interaction) {
@@ -163,6 +184,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
         description,
       });
     }
+    assertNoDanglingIdRef(ops, working); // #435
     // Inside a drag transaction: mutate state, buffer the records (flat).
     if (interaction) {
       if (interaction.entries.length === 0) {
@@ -202,24 +224,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
         description,
       });
     }
-    // #435 — "does not silently dangle", in its FINAL-STATE form. `removeNode`'s per-op
-    // guard covers edges (always explicitly torn down); an id-reference is a param that
-    // can legitimately outlive a removeNode mid-batch (Apply-Transform re-adds the baked
-    // node under the SAME id, #412), so the invariant is about the COMMITTED state, not a
-    // transient. Only a removeNode can turn a live ref into a dangling one, so the scan
-    // runs only then — leaving every other dispatch (drags, param edits) untouched. This
-    // closes the raw-`dag.exec` road no per-caller sweep can reach: an agent removing a
-    // referenced node fails loudly here instead of committing silent orphan bloat. Throws
-    // BEFORE `set()`, so a rejected batch leaves the store unmutated.
-    if (ops.some((o) => o.type === 'removeNode')) {
-      const dangling = findDanglingIdRef(working.nodes);
-      if (dangling) {
-        throw new Error(
-          `dispatchAtomic: node "${dangling.node}" would be left referencing removed node ` +
-            `"${dangling.missing}". Clear or remove the referrer in the same batch.`,
-        );
-      }
-    }
+    assertNoDanglingIdRef(ops, working); // #435 — throw before set(); store stays whole
     // Inside a drag transaction: append the ops FLAT to the buffer (not as a nested
     // group) so the whole gesture stays ONE flat undo entry.
     if (interaction) {
