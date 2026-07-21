@@ -31,7 +31,7 @@ import { addStripMutator } from './builders/addStrip';
 import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
-import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
+import { buildAddModifierOps, enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { proposePlanTool, listMutatorsTool } from './tool';
@@ -1745,6 +1745,35 @@ describe('deleteNode mutator', () => {
       expect(result.gate).toBe(4);
       expect(result.reason).toMatch(/output/);
     }
+  });
+
+  it('#432 deleting a WRAPPER via the agent splices the subject out — gate 3 accepts', () => {
+    // The agent delegates to buildDeleteNodesOps, which now emits a splice `connect`
+    // reconnecting the wrapped mesh to the modifier's consumer. That connect's
+    // subject (`from.node`) is reached via `target`, which is NOT in the deleteNode
+    // closure — but gate 3 (closure_preservation) validates a connect by its
+    // `to.node` (the consumer, in closure via 'parent'), so the plan is accepted.
+    // Without the splice the mesh would strand; a rejected plan would mean the agent
+    // can't delete a modifier at all. Both failure modes are pinned here.
+    let state = buildScene();
+    const add = buildAddModifierOps(state, 'box', 'ArrayModifier', { count: 2, offset: [1, 0, 0] });
+    expect(add).not.toBeNull();
+    state = add!.ops.reduce((s, op) => applyOp(s, op).next, state);
+    // scene → modifier → box. Delete the modifier through the agent mutator.
+    const result = validatePlan(
+      deleteNodeMutator,
+      { targetSelectors: [add!.modifierId] },
+      state,
+      'del mod',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Fold the accepted plan and confirm the box is a direct scene child again.
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    expect(s.nodes[add!.modifierId]).toBeUndefined();
+    expect(s.nodes.box).toBeDefined();
+    expect(findConsumer(s, 'box')?.socket).toBe('children');
   });
 });
 
