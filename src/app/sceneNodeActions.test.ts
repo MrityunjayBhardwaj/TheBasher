@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
+import { registerAllNodes } from '../nodes/registerAll';
 import type { DagState } from '../core/dag/state';
+
+// #421 — the delete sweep now reads what each node type DECLARES (`idRefs`), so it
+// needs the registry populated. Production gets this at boot (boot.ts:162); a unit
+// test has to ask. Without it the sweep silently finds nothing — the same class of
+// quiet failure this whole change is about.
+registerAllNodes();
 
 // Minimal fake DAG — the builders read only node.type / params / inputs and emit
 // ops; they don't validate schema, so a plain object suffices for unit coverage.

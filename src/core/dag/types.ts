@@ -201,6 +201,60 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   inspectorSections?: readonly string[];
   /**
+   * #421/#424 — the ID-REFERENCE UNIVERSE: every param on this node type that
+   * holds ANOTHER node's id. This is the half of the graph that does NOT travel
+   * on edges (V57 edge-less sidecars: channels, constraints, drivers, strips),
+   * so the edge walk — and `removeNode`'s "still consumed by" guard
+   * (`ops.ts:143`) — is blind to it. Declaring it here gives whole-node ops ONE
+   * index to consult instead of each site hand-maintaining a list that goes
+   * stale at the next node kind (the trap #421 calls out).
+   *
+   * DELIBERATELY SEPARATE FROM `refParams` below. That field is an AUTHORING
+   * surface: every entry renders an Inspector picker and removes the raw row
+   * (NPanel.tsx:2881-2896/2903). "This param holds a node id" and "the user should
+   * pick it from a dropdown" are different questions that only coincide on 6 of
+   * the 23 id-holding params. Folding them would (a) inject pickers nobody asked
+   * for, (b) break `sourceTransform` — NodeRefField writes `{node}` wholesale
+   * (NPanel.tsx:707), dropping the required `channel` — and (c) still not express
+   * `Track.strips`, an ARRAY. Two concerns, two declarations.
+   *
+   * `path` is the param path, dot-notation for one level of nesting
+   * (`sourceTransform.node`).
+   *
+   * `shape` is how the id is STORED:
+   *   • 'id'     — a plain string param (`target`, `aimNode`, `curve`).
+   *   • 'nested' — a string at `path` inside an object param (`sourceSpare.node`).
+   *   • 'ref'    — a whole `{ node }` object param (`sourceTransformVec`).
+   *   • 'idList' — an array of plain string ids (`Track.strips`).
+   *
+   * `role` is what the reference MEANS, which decides what a delete does to it:
+   *   • 'subject'  — this node is OWNED BY the referent and is meaningless without
+   *                  it (a channel's `target`, a constraint's constrained object).
+   *                  Delete the referent → delete THIS node.
+   *   • 'argument' — this node merely POINTS AT the referent, which exists
+   *                  independently and is usually shared (the curve a Follow-Path
+   *                  follows, the Action a Strip plays, a controller Null).
+   *                  Delete the referent → CLEAR the ref; this node survives, inert.
+   *
+   * Getting `role` wrong is destructive in one direction: marking a shared
+   * referent 'subject' means deleting ONE library asset cascade-deletes every node
+   * that used it. When unsure, 'argument' is the recoverable answer.
+   *
+   * `owns` is the OTHER DIRECTION. `role` answers "the referent was deleted — what
+   * happens to me?"; `owns` answers "I was deleted — what happens to the referent?".
+   * A param can need both: `Track.strips` drops a member when that Strip is deleted
+   * (role: 'argument') AND takes its strips with it when the Track itself is deleted
+   * (owns: true), because `Track.strips` is the only route to a Strip anywhere
+   * (layeredChannels.ts:174). Absent = deleting this node leaves the referent alone,
+   * which is right for every shared referent (a curve, an Action, a controller).
+   */
+  idRefs?: readonly {
+    path: string;
+    shape: 'id' | 'nested' | 'ref' | 'idList';
+    role: 'subject' | 'argument';
+    owns?: true;
+  }[];
+  /**
    * Node-reference params — the general "pick a node" authoring surface (the
    * Blender object-picker / Houdini node-path-param idiom). Each entry names a
    * param that holds a reference to another node (e.g. a SampleGeometry's terrain,

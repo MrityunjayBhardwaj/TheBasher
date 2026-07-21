@@ -35,6 +35,13 @@ export const TrackNode: NodeDefinition<TrackParams, TrackValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: TrackParams,
+  // #421 — this param carries BOTH directions. Deleting a Strip drops it FROM the
+  // list (role 'argument'): a track outliving one of its strips is normal. Deleting
+  // the TRACK takes its strips with it (`owns`), because `Track.strips` is the only
+  // route to a Strip anywhere (layeredChannels.ts:174) — leave them and they are
+  // unreachable debris still carrying their authored placement (start, timeScale,
+  // blendIn, influence).
+  idRefs: [{ path: 'strips', shape: 'idList', role: 'argument', owns: true }],
   inputs: {},
   outputs: { out: { type: 'Track', cardinality: 'single' } },
   inspectorSections: ['layout'],

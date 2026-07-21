@@ -31,7 +31,14 @@ export type EdgeKind =
   // #365 Phase 5a — the object↔data split: an Object points at its geometry/material data node
   // through the `data` socket. A mutator that edits a data param (material/size) follows this
   // so the data node is in its closure and the edit is not rejected as out-of-scope.
-  | 'data';
+  | 'data'
+  // #421/#424 — the ID-REFERENCE universe. The V57 edge-less sidecars (keyframe
+  // channels, constraints, drivers, NLA strips) name their subject by id in params,
+  // not by wire, so NO edge kind above can reach them. A mutator that sweeps or
+  // repoints them needs them inside its closure or gate 3 rejects its own ops.
+  // Walks BOTH directions of what a node type declares in `NodeDefinition.idRefs`:
+  // nodes naming this one, and nodes this one names.
+  | 'id-ref';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */

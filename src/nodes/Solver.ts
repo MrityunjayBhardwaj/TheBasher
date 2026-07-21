@@ -154,6 +154,12 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   stateful: true,
   cost: 'medium',
   paramSchema: SolverParams,
+  // #421 — both source roads point at a shared controller node; clear, never
+  // delete. `sourceTransform` clears the nested id so `channel` survives.
+  idRefs: [
+    { path: 'sourceTransform.node', shape: 'nested', role: 'argument' },
+    { path: 'sourceTransformVec', shape: 'ref', role: 'argument' },
+  ],
   // The live controller (a spring's rest target) is authored through the general node-ref
   // picker in the inspector — the same control SampleGeometry uses, not a bespoke road.
   refParams: { sourceTransformVec: { label: 'controller', kind: 'transformable' } },

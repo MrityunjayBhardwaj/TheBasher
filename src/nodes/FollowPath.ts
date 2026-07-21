@@ -75,6 +75,13 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   pure: true,
   cost: 'cheap',
   paramSchema: FollowPathParams,
+  // #421 — `target` is the constrained object (owner → subject). `curve` is a
+  // shared path several objects may follow, so deleting the curve leaves the
+  // constraint in place with an empty path rather than destroying it.
+  idRefs: [
+    { path: 'target', shape: 'id', role: 'subject' },
+    { path: 'curve', shape: 'id', role: 'argument' },
+  ],
   // Edge-less (enumerated + seam-resolved, like TrackTo and a direct channel). The `out`
   // socket exists for introspection; nothing consumes it.
   inputs: {},

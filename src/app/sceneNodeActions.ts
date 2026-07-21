@@ -6,6 +6,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
+import { idRefSweep } from '../core/dag/idRefSweep';
 import { channelNodesTargeting } from './nodeChannels';
 
 /**
@@ -16,54 +17,69 @@ import { channelNodesTargeting } from './nodeChannels';
  * now shared so the context menu can't drift from it.
  */
 export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op[] {
-  // [[H136]] a free-floating KeyframeChannel references its target via
-  // `params.target`, NOT an edge — the consumer walk below is blind to it. Delete
-  // the channels targeting any removed node too, else they orphan (they survive
-  // pointing at a missing id → invisible save bloat). The id-reference universe
-  // consulted alongside the edge universe (one shared `channelNodesTargeting`).
   const idSet = new Set<NodeId>(ids);
   const allIds = [...idSet];
 
-  // #365 — a split Object OWNS its BoxData through `data`. Deleting the Object
-  // orphans that data node (unrendered, but persisted → save bloat), so
-  // garbage-collect it too — but ONLY when every surviving consumer is also being
-  // deleted. A shared data node (fan-out: another Object still points at it) stays,
-  // and removeNode would refuse it anyway. Blender's orphan-data purge on the owned
-  // leaf. A KeyframeChannel targets a data param via `params.target` (not an edge),
-  // so it is NOT a "consumer" here — an animated size/material node is still an
-  // orphan once its Object is gone. This runs BEFORE the channel sweep below so the
-  // channels targeting a GC'd BoxData are swept with it; appended AFTER the Objects
-  // so each data node's removeNode runs once its consuming Object is gone (removeNode
-  // refuses while an output is still consumed).
-  for (const nodeId of ids) {
-    const dataId = refsOf(state.nodes[nodeId]?.inputs?.data)[0]?.node;
-    if (!dataId || idSet.has(dataId) || !state.nodes[dataId]) continue;
-    const hasSurvivingConsumer = Object.entries(state.nodes).some(
-      ([cid, c]) =>
-        !idSet.has(cid) &&
-        Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === dataId)),
-    );
-    if (!hasSurvivingConsumer) {
-      idSet.add(dataId);
-      allIds.push(dataId);
+  // ── Direction 1: what the deleted nodes OWN, through edges. ──────────────────
+  // #365 — a split Object OWNS its BoxData through `data`. #431 — a Group OWNS its
+  // `children`: delete means delete, and getting objects OUT of a group is a
+  // different verb (drag-reparent, SceneTree.tsx:512). Left behind, either one
+  // survives in the file while unreachable from `scene` — invisible, unrenderable,
+  // unrecoverable through the UI, and growing the save every time.
+  //
+  // `target` is deliberately NOT owned here even though OWNED_SOCKETS below lists
+  // it for duplicate: that socket is the WRAPPER road (Transform/MaterialOverride/
+  // modifiers), where deleting the wrapper must not delete the mesh it wraps — it
+  // needs a splice-out instead. Tracked as #432; duplicate and delete genuinely
+  // differ on it, exactly as Blender's Shift+D and X differ.
+  //
+  // Both are guarded on EXCLUSIVITY: a shared node (another surviving consumer
+  // still points at it) stays, and removeNode would refuse it anyway. Walked to a
+  // fixpoint so a group inside a group goes all the way down, and appended
+  // PARENT-BEFORE-CHILD so each removeNode runs once its consumer is gone
+  // (removeNode refuses while an output is still consumed).
+  const OWNED_ON_DELETE = ['children', 'data'] as const;
+  for (let i = 0; i < allIds.length; i++) {
+    const owner = state.nodes[allIds[i]];
+    if (!owner) continue;
+    for (const socket of OWNED_ON_DELETE) {
+      for (const ref of refsOf(owner.inputs?.[socket])) {
+        const ownedId = ref?.node;
+        if (!ownedId || idSet.has(ownedId) || !state.nodes[ownedId]) continue;
+        const hasSurvivingConsumer = Object.entries(state.nodes).some(
+          ([cid, c]) =>
+            !idSet.has(cid) &&
+            Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
+        );
+        if (!hasSurvivingConsumer) {
+          idSet.add(ownedId);
+          allIds.push(ownedId); // appended → this loop keeps walking into it
+        }
+      }
     }
   }
 
-  // [[H136]] a free-floating KeyframeChannel references its target via
-  // `params.target`, NOT an edge — the consumer walk below is blind to it. Delete
-  // the channels targeting any removed node too (the Object OR its GC'd BoxData),
-  // else they orphan (they survive pointing at a missing id → invisible save bloat).
-  // The id-reference universe consulted alongside the edge universe (one shared
-  // `channelNodesTargeting`); runs after the data-node GC so a data-param channel is
-  // caught.
-  for (const ch of channelNodesTargeting(state.nodes, idSet)) {
-    if (!idSet.has(ch.id)) {
-      idSet.add(ch.id);
-      allIds.push(ch.id);
+  // ── Direction 2: the id-reference universe (params, not edges). ──────────────
+  // [[H136]] a free-floating KeyframeChannel names its target via `params.target`,
+  // NOT an edge, so the consumer walk below is blind to it — and so is removeNode's
+  // "still consumed by" guard (ops.ts:143). Channels were only ever the FIRST of
+  // that family; constraints, drivers and NLA strips ride the same edge-less road
+  // (#421). One shared walker over what each node type DECLARES (`idRefs`), so the
+  // next node kind is covered by declaring a field rather than by remembering to
+  // edit this site. Runs AFTER the owned GC above so a channel bound to a GC'd
+  // BoxData — or to a group's deleted child — is caught too.
+  const sweep = idRefSweep(state.nodes, allIds);
+  for (const sweptId of sweep.remove) {
+    if (!idSet.has(sweptId)) {
+      idSet.add(sweptId);
+      allIds.push(sweptId);
     }
   }
 
-  const ops: Op[] = [];
+  // Clearing the surviving 'argument' refs (an aim target, a followed curve, a
+  // controller) comes FIRST: those nodes outlive this delete, and the clear is what
+  // keeps them from pointing at a missing id.
+  const ops: Op[] = [...sweep.ops];
   for (const nodeId of allIds) {
     for (const [consumerId, consumer] of Object.entries(state.nodes)) {
       if (idSet.has(consumerId)) continue; // being deleted too — its removeNode covers it

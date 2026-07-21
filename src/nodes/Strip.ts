@@ -59,6 +59,17 @@ export const StripNode: NodeDefinition<StripParams, StripValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: StripParams,
+  // #421 — `target` is the object this placement drives: the strip belongs to
+  // that object's animation stack, so it dies with it. `action` is the OPPOSITE
+  // despite looking the same: an Action is a reusable, target-less performance
+  // that many strips place (addStrip.ts:40 requires a pre-existing one and never
+  // mints it), so treating it as owned would make deleting ONE Action
+  // cascade-delete every placement of it across the file. Clearing leaves the
+  // strip inert — a state layeredChannels.ts:180 already handles.
+  idRefs: [
+    { path: 'target', shape: 'id', role: 'subject' },
+    { path: 'action', shape: 'id', role: 'argument' },
+  ],
   inputs: {},
   outputs: { out: { type: 'Strip', cardinality: 'single' } },
   inspectorSections: ['layout'],

@@ -54,6 +54,9 @@ export const LagNode: NodeDefinition<LagParams, number> = {
   stateful: true,
   cost: 'cheap',
   paramSchema: LagParams,
+  // #421 — the controller is a shared object; clear the nested id (keeping
+  // `channel`) rather than deleting the Lag node.
+  idRefs: [{ path: 'sourceTransform.node', shape: 'nested', role: 'argument' }],
   inputs: { in: { type: 'Number', cardinality: 'single' } },
   outputs: { out: { type: 'Number', cardinality: 'single' } },
   // Passthrough of the input — the degenerate un-lagged value. The integrated value
