@@ -111,12 +111,32 @@ describe('ArrayModifier.evaluate', () => {
       position: [0, 0, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
-      material: { name: 'baked', materialClass: 'standard', base: { color: '#888888' } },
+      material: {
+        materialClass: 'standard',
+        color: '#ff8800',
+        roughness: 0.4,
+        metalness: 0.1,
+        opacity: 1,
+        transparent: false,
+        emissive: '#000000',
+        emissiveIntensity: 0,
+        map: null,
+        normalMap: null,
+        roughnessMap: null,
+        metalnessMap: null,
+        aoMap: null,
+        emissiveMap: null,
+      },
     };
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, baked) as ModifiedMeshValue;
     expect(out.kind).toBe('ModifiedMesh'); // a real modified mesh (not a passthrough)
     expect(out.geometry.kind).toBe('array');
+    // #358 — the baked material rides through the modifier verbatim (it was silently
+    // dropped to null before: a ModifiedMesh could not hold a BakedMaterialSpec).
+    expect(out.material).toBe(baked.material);
     // The array wraps the unprimed baked ref → the registry cannot build it sync.
+    // (Rendering a baked-sourced modifier — geometry AND material — is the deferred
+    // follow-up; this test locks the VALUE-level material fix independent of that.)
     expect(geometryRegistry.get(out.geometry)).toBeNull();
   });
 });
