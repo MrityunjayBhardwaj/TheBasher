@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { registerAllNodes } from '../nodes/registerAll';
+import { applyOp } from '../core/dag';
+import { buildAddModifierOps, findConsumer } from './operatorStack';
+import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
+import type { Op } from '../core/dag/types';
 
 // #421 — the delete sweep now reads what each node type DECLARES (`idRefs`), so it
 // needs the registry populated. Production gets this at boot (boot.ts:162); a unit
@@ -181,6 +185,153 @@ describe('buildDeleteNodesOps', () => {
         .filter((o) => o.type === 'disconnect')
         .some((o) => (o as { from: { node: string } }).from.node === 'ch'),
     ).toBe(false);
+  });
+});
+
+// ── #432 — splice deleted WRAPPER nodes out (scene → wrapper → subject). ────────
+// A wrapper consumes its subject through a `target` edge and re-exposes it via
+// `out`. Deleting one plainly strands the subject (invisible, in-file). The subject
+// must survive and reconnect to whatever consumed the wrapper. Sibling of
+// operatorStack's buildRemoveOperatorOps (the modifier-stack ✕); this is the generic
+// delete path (outliner / agent / raw exec).
+describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
+  // A single wrapper on the edge chain: scene → tr → box.
+  const wrappedState = (wrapperType: string): DagState =>
+    ({
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'tr', socket: 'out' }] },
+        },
+        tr: {
+          id: 'tr',
+          type: wrapperType,
+          params: {},
+          inputs: { target: { node: 'box', socket: 'out' } },
+        },
+        box: { id: 'box', type: 'BoxMesh', params: { size: [1, 1, 1] }, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    }) as unknown as DagState;
+
+  it('reconnects the wrapped subject to the wrapper’s consumer, and does NOT delete it', () => {
+    const ops = buildDeleteNodesOps(wrappedState('Transform'), ['tr']);
+    // the subject re-enters the scene where the wrapper was.
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    });
+    expect(ops).toContainEqual({ type: 'removeNode', nodeId: 'tr' });
+    // the wrapped mesh survives — deleting a modifier keeps the object (Blender X).
+    expect(ops.some((o) => o.type === 'removeNode' && o.nodeId === 'box')).toBe(false);
+  });
+
+  it('applies to every wrapper type (schema-derived, not a hardcoded list)', () => {
+    // MaterialOverride / modifiers share the target→out shape; each must splice.
+    for (const t of ['MaterialOverride', 'ArrayModifier', 'MirrorModifier']) {
+      const ops = buildDeleteNodesOps(wrappedState(t), ['tr']);
+      expect(ops, `${t} should splice its subject back to the consumer`).toContainEqual({
+        type: 'connect',
+        from: { node: 'box', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      });
+    }
+  });
+
+  // scene → mir → arr → box.
+  const stackState = (): DagState =>
+    ({
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'mir', socket: 'out' }] },
+        },
+        mir: {
+          id: 'mir',
+          type: 'MirrorModifier',
+          params: {},
+          inputs: { target: { node: 'arr', socket: 'out' } },
+        },
+        arr: {
+          id: 'arr',
+          type: 'ArrayModifier',
+          params: {},
+          inputs: { target: { node: 'box', socket: 'out' } },
+        },
+        box: { id: 'box', type: 'BoxMesh', params: { size: [1, 1, 1] }, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    }) as unknown as DagState;
+
+  it('deleting the MIDDLE of a stack splices the base up to the surviving wrapper', () => {
+    const ops = buildDeleteNodesOps(stackState(), ['arr']);
+    // box takes arr's place in mir's target slot.
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'mir', socket: 'target' },
+    });
+    expect(ops.some((o) => o.type === 'removeNode' && o.nodeId === 'box')).toBe(false);
+  });
+
+  it('deleting the WHOLE stack walks up past the deleted wrappers to the surviving consumer', () => {
+    const ops = buildDeleteNodesOps(stackState(), ['mir', 'arr']);
+    // survivingConsumerAbove hops arr→mir(deleted)→scene: box reconnects to the scene.
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    });
+    // both wrappers gone, the base survives.
+    const removed = ops
+      .filter((o) => o.type === 'removeNode')
+      .map((o) => (o as { nodeId: string }).nodeId);
+    expect(removed).toContain('mir');
+    expect(removed).toContain('arr');
+    expect(removed).not.toContain('box');
+  });
+
+  it('emits NO splice when the subject is being deleted too', () => {
+    // delete both the wrapper and the mesh it wraps → nothing to keep alive.
+    const ops = buildDeleteNodesOps(wrappedState('Transform'), ['tr', 'box']);
+    expect(ops.some((o) => o.type === 'connect')).toBe(false);
+    const removed = ops
+      .filter((o) => o.type === 'removeNode')
+      .map((o) => (o as { nodeId: string }).nodeId);
+    expect(removed).toContain('tr');
+    expect(removed).toContain('box');
+  });
+
+  it('a non-wrapper delete emits no splice connect (control)', () => {
+    // box is a plain mesh (no `target` input) → isTargetWrapperNode is false.
+    const ops = buildDeleteNodesOps(wrappedState('Transform'), ['box']);
+    // deleting the leaf strands the wrapper above, but that is NOT a splice case —
+    // the wrapper is not being deleted, so no spurious reconnect is emitted.
+    expect(ops.some((o) => o.type === 'connect')).toBe(false);
+  });
+
+  it('OBSERVED end-to-end: removing a real modifier keeps the mesh in the scene', () => {
+    // Schema-valid, folded through the real op layer (fake fixtures skip schema).
+    // The default box is the split-native Object `n_box` (posed over a BoxData).
+    const base = buildDefaultDagState();
+    const boxId = 'n_box';
+    expect(base.nodes[boxId]).toBeDefined();
+    const add = buildAddModifierOps(base, boxId, 'ArrayModifier', { count: 3, offset: [2, 0, 0] });
+    expect(add).not.toBeNull();
+    let s = (add!.ops as Op[]).reduce((acc, op) => applyOp(acc, op).next, base);
+    // Now scene → modifier → box. Delete the modifier through the generic path.
+    const delOps = buildDeleteNodesOps(s, [add!.modifierId]);
+    s = delOps.reduce((acc, op) => applyOp(acc, op).next, s);
+    // The modifier is gone AND the box is back to being a direct scene child.
+    expect(s.nodes[add!.modifierId]).toBeUndefined();
+    expect(s.nodes[boxId]).toBeDefined();
+    const consumer = findConsumer(s, boxId);
+    expect(consumer?.socket).toBe('children'); // renderable again, not stranded
   });
 });
 

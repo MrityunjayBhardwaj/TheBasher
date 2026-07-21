@@ -31,7 +31,7 @@ import { addStripMutator } from './builders/addStrip';
 import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
-import { enumerateModifierStack, findConsumer } from '../../app/operatorStack';
+import { buildAddModifierOps, enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { proposePlanTool, listMutatorsTool } from './tool';
@@ -1293,6 +1293,11 @@ describe('randomize mutator', () => {
 
 describe('duplicate mutator', () => {
   it('emits addNode + connect chain into the same consumer', () => {
+    // #437 — the agent now delegates to the shared buildDuplicateNodeOps, so the
+    // clone id follows the outliner's `_copy` scheme (not the old agent-only
+    // `_copy1`) and the offset lands in a POST-HOC setParam rather than baked into
+    // addNode.params (the shared builder copies params verbatim). box sits at
+    // [0,0,0]; offset [2,0,0] → the offset setParam value is [2,0,0].
     const state = buildScene();
     const result = validatePlan(
       duplicateMutator,
@@ -1307,33 +1312,59 @@ describe('duplicate mutator', () => {
       expect(addNode).toBeDefined();
       expect(connect).toBeDefined();
       if (addNode && addNode.type === 'addNode') {
-        expect(addNode.nodeId).toBe('box_copy1');
+        expect(addNode.nodeId).toBe('box_copy');
+        // params copied verbatim — position is still the source's until offset.
         const params = addNode.params as { position: [number, number, number] };
-        expect(params.position).toEqual([2, 0, 0]);
+        expect(params.position).toEqual([0, 0, 0]);
+      }
+      // The offset is applied as a setParam on the new root's position.
+      const offsetOp = result.ops.find(
+        (o) => o.type === 'setParam' && o.nodeId === 'box_copy' && o.paramPath === 'position',
+      );
+      expect(offsetOp).toBeDefined();
+      if (offsetOp && offsetOp.type === 'setParam') {
+        expect(offsetOp.value).toEqual([2, 0, 0]);
       }
     }
   });
 
-  it('chained duplication does not pile suffix', () => {
+  it('chained duplication: the clone of a clone is a wired sibling (unified _copy suffix)', () => {
+    // #437 — after delegating to the shared builder, the agent inherits the
+    // outliner's Blender Shift+D id scheme: box → box_copy → box_copy_copy.
+    // (The old agent-only stripping to box_copy1/box_copy2 is gone; Blender's
+    // `.001` renumbering is a documented non-goal in either path.)
+    //
+    // The chained node MUST be wired into the scene first — an unparented node
+    // has no consumer, so buildDuplicateNodeOps returns null and there is nothing
+    // to assert. The prior version of this test skipped its assertion silently
+    // because it never wired box_copy1 (H180: a test that asserts nothing).
     let state = buildScene();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'box_copy1',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [2, 0, 0], rotation: [0, 0, 0] },
-    }).next;
+    // First duplication: box → box_copy, folded into state so the clone is real
+    // and wired (buildDuplicateNodeOps sibling-connects it under scene.children).
+    const first = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['box'], offset: [1, 0, 0] },
+      state,
+      'dup once',
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    for (const op of first.ops) state = applyOp(state, op).next;
+    expect(state.nodes['box_copy']).toBeDefined();
+
+    // Second duplication of the clone.
     const result = validatePlan(
       duplicateMutator,
-      { targetSelectors: ['box_copy1'], offset: [1, 0, 0] },
+      { targetSelectors: ['box_copy'], offset: [1, 0, 0] },
       state,
       'dup again',
     );
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      const addNode = result.ops.find((o) => o.type === 'addNode');
-      if (addNode && addNode.type === 'addNode') {
-        expect(addNode.nodeId).toBe('box_copy2');
-      }
+    if (!result.ok) return;
+    const addNode = result.ops.find((o) => o.type === 'addNode');
+    expect(addNode).toBeDefined();
+    if (addNode && addNode.type === 'addNode') {
+      expect(addNode.nodeId).toBe('box_copy_copy');
     }
   });
 
@@ -1419,7 +1450,7 @@ describe('duplicate mutator', () => {
 
       const addNodeIdx = result.ops.findIndex((o) => o.type === 'addNode');
       const cloneId = (result.ops[addNodeIdx] as { type: 'addNode'; nodeId: string }).nodeId;
-      expect(cloneId).toBe('box_copy1');
+      expect(cloneId).toBe('box_copy');
 
       // Every connect whose `from.node` is the clone must appear AFTER
       // the addNode. Asserting on each connect (not just the first) so a
@@ -1503,8 +1534,158 @@ describe('duplicate mutator', () => {
         for (const op of reordered) {
           next = applyOp(next, op).next;
         }
-      }).toThrow(/box_copy1/);
+      }).toThrow(/box_copy/);
     });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // #437 — the delegation payoff. The agent used to be a SECOND, channels-blind
+  // duplicate authority: it declared `lossy: animation` and shared the source's
+  // channels outright (the copy's keyframes moved the ORIGINAL), never recursed
+  // into a Group's children, and ignored constraints / drivers / strips. Now it
+  // delegates to buildDuplicateNodeOps — the outliner's builder, taught by
+  // #433/#434 to clone the whole id-reference universe. These tests pin the
+  // reconciliations the delegation crosses at the AGENT boundary; the deep
+  // per-family id-ref correctness is the shared builder's own tests
+  // (sceneNodeActions.test.ts).
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('#437 — delegates to the shared builder (animation cloned, not shared)', () => {
+    function animatedScene(): DagState {
+      // box @ [0,0,0] wired into scene.children, with a free-floating channel
+      // targeting it. Schema-valid (built via applyOp), so the produced ops can be
+      // folded back through the REAL op layer — a fake fixture would skip schema.
+      let s = buildScene();
+      s = applyOp(s, {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+        },
+      }).next;
+      return s;
+    }
+
+    it('the channel clone re-points at the duplicate (was shared → moved the original)', () => {
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['box'], offset: [1, 0, 0] },
+        animatedScene(),
+        'dup animated',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const chClone = result.ops.find(
+        (o) => o.type === 'addNode' && o.nodeType === 'KeyframeChannelVec3',
+      ) as { nodeId: string; params: { target: string } } | undefined;
+      expect(chClone).toBeDefined();
+      expect(chClone!.params.target).toBe('box_copy'); // subject ref follows to the clone
+      expect(chClone!.nodeId).not.toBe('ch'); // fresh id, not the source channel
+    });
+
+    it('folds through applyOp into TWO independent channels (source keeps its own)', () => {
+      const state = animatedScene();
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['box'], offset: [1, 0, 0] },
+        state,
+        'dup animated',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Real op layer, not a fake fixture — a schema violation would throw here.
+      let s = state;
+      for (const op of result.ops) s = applyOp(s, op).next;
+      const channels = Object.values(s.nodes).filter((n) => n.type === 'KeyframeChannelVec3');
+      expect(channels).toHaveLength(2); // was 1 shared channel before #437
+      const targets = channels.map((c) => (c.params as { target: string }).target).sort();
+      expect(targets).toEqual(['box', 'box_copy']);
+      // The source channel still targets the ORIGINAL — the copy did not steal it.
+      expect((s.nodes.ch.params as { target: string }).target).toBe('box');
+    });
+
+    it('closure follows id-ref: a Track setParam on an EXISTING node is accepted', () => {
+      // The load-bearing proof for the closure reconciliation. Cloning a strip is a
+      // fresh addNode (gate 3 accepts it regardless), but appending that clone to its
+      // Track is a setParam on an EXISTING node — accepted only if the Track is in
+      // closure, which needs 'id-ref' in buildClosureSpec. Drop 'id-ref' and gate 3
+      // rejects this op → result.ok === false. (Hand-authored state: validatePlan is
+      // pure over state structure; this test observes the gate, not the op layer.)
+      const state = {
+        nodes: {
+          scene: {
+            id: 'scene',
+            type: 'Scene',
+            params: {},
+            inputs: { children: [{ node: 'box', socket: 'out' }] },
+          },
+          box: {
+            id: 'box',
+            type: 'BoxMesh',
+            params: { size: [1, 1, 1], position: [0, 0, 0] },
+            inputs: {},
+          },
+          strip: {
+            id: 'strip',
+            type: 'Strip',
+            params: { target: 'box', action: 'act', start: 7 },
+            inputs: {},
+          },
+          trk: { id: 'trk', type: 'Track', params: { strips: ['strip'], order: 0 }, inputs: {} },
+          act: { id: 'act', type: 'Action', params: { channels: [] }, inputs: {} },
+        },
+        outputs: { scene: { node: 'scene' } },
+      } as unknown as DagState;
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['box'], offset: [1, 0, 0] },
+        state,
+        'dup strip',
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const setStrips = result.ops.find(
+        (o) => o.type === 'setParam' && o.nodeId === 'trk' && o.paramPath === 'strips',
+      ) as { value: string[] } | undefined;
+      expect(setStrips).toBeDefined();
+      // original strip kept, clone appended.
+      expect(setStrips!.value[0]).toBe('strip');
+      expect(setStrips!.value).toHaveLength(2);
+    });
+
+    it('contract: animation moved from lossy to preserves', () => {
+      expect(duplicateMutator.contract.preserves).toContain('animation');
+      expect(duplicateMutator.contract.lossy ?? []).toHaveLength(0);
+    });
+  });
+
+  it('multi-target: duplicating the same node twice mints distinct ids (threaded id-space)', () => {
+    // #437 reconcile #2 — the shared builder mints _copy ids from state.nodes alone,
+    // so two back-to-back calls in one build() would both pick `box_copy` and collide
+    // at applyOp ("node already exists"). A shared `reserved` set threads the id-space
+    // across the loop. Falsify by dropping the `reserved` arg → both mint box_copy →
+    // the fold throws.
+    const state = buildScene();
+    const result = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['box', 'box'], offset: [1, 0, 0] },
+      state,
+      'dup twice',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const cloneIds = result.ops
+      .filter((o) => o.type === 'addNode')
+      .map((o) => (o as { nodeId: string }).nodeId);
+    expect(cloneIds).toEqual(['box_copy', 'box_copy2']);
+    expect(new Set(cloneIds).size).toBe(cloneIds.length); // no collision
+    // A collision would throw at the second addNode.
+    let s = state;
+    expect(() => {
+      for (const op of result.ops) s = applyOp(s, op).next;
+    }).not.toThrow();
   });
 });
 
@@ -1564,6 +1745,35 @@ describe('deleteNode mutator', () => {
       expect(result.gate).toBe(4);
       expect(result.reason).toMatch(/output/);
     }
+  });
+
+  it('#432 deleting a WRAPPER via the agent splices the subject out — gate 3 accepts', () => {
+    // The agent delegates to buildDeleteNodesOps, which now emits a splice `connect`
+    // reconnecting the wrapped mesh to the modifier's consumer. That connect's
+    // subject (`from.node`) is reached via `target`, which is NOT in the deleteNode
+    // closure — but gate 3 (closure_preservation) validates a connect by its
+    // `to.node` (the consumer, in closure via 'parent'), so the plan is accepted.
+    // Without the splice the mesh would strand; a rejected plan would mean the agent
+    // can't delete a modifier at all. Both failure modes are pinned here.
+    let state = buildScene();
+    const add = buildAddModifierOps(state, 'box', 'ArrayModifier', { count: 2, offset: [1, 0, 0] });
+    expect(add).not.toBeNull();
+    state = add!.ops.reduce((s, op) => applyOp(s, op).next, state);
+    // scene → modifier → box. Delete the modifier through the agent mutator.
+    const result = validatePlan(
+      deleteNodeMutator,
+      { targetSelectors: [add!.modifierId] },
+      state,
+      'del mod',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Fold the accepted plan and confirm the box is a direct scene child again.
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    expect(s.nodes[add!.modifierId]).toBeUndefined();
+    expect(s.nodes.box).toBeDefined();
+    expect(findConsumer(s, 'box')?.socket).toBe('children');
   });
 });
 

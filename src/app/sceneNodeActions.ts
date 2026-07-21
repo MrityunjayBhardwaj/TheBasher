@@ -5,8 +5,57 @@
 // function of (state, ids) → Op[]; the caller dispatches + manages selection.
 
 import type { DagState } from '../core/dag/state';
-import type { NodeId, Op } from '../core/dag/types';
+import type { Node, NodeId, Op } from '../core/dag/types';
+import { getNodeType } from '../core/dag/registry';
 import { idRefSweep, subjectReferrersInto, remapIdRefs } from '../core/dag/idRefSweep';
+
+/**
+ * #432 — a WRAPPER node consumes its subject through a `target` EDGE and re-exposes
+ * it via `out`: Transform, MaterialOverride, ArrayModifier, MirrorModifier,
+ * ColorCorrect. Derived from the registry (declares BOTH a `target` input and an
+ * `out` output), NOT a hardcoded type list — a new wrapper is covered by declaring
+ * those sockets, and the id-reference nodes (KeyframeChannel / TrackTo / … name their
+ * target in `params.target`, no edge) plus any future edge-`target` constraint (no
+ * `out`) are correctly excluded.
+ */
+function isTargetWrapperNode(node: Node | undefined): boolean {
+  if (!node) return false;
+  const def = getNodeType(node.type);
+  return !!def && 'target' in def.inputs && 'out' in def.outputs;
+}
+
+/** First node+input-socket consuming `(producerId, 'out')`, or null. Linear-chain
+ *  model — a wrapper has one `out` consumer (fan-out is outside v1 scope). */
+function outConsumer(state: DagState, producerId: NodeId): { node: string; socket: string } | null {
+  for (const [cid, c] of Object.entries(state.nodes)) {
+    for (const [socket, binding] of Object.entries(c.inputs)) {
+      for (const ref of refsOf(binding)) {
+        if (ref?.node === producerId && ref?.socket === 'out') return { node: cid, socket };
+      }
+    }
+  }
+  return null;
+}
+
+/** The nearest SURVIVING consumer above `wrapperId`, hopping over any wrappers that
+ *  are themselves being deleted — so deleting a whole stack (scene → Mirror → Array →
+ *  mesh) still splices the surviving base back to the surviving consumer (scene). */
+function survivingConsumerAbove(
+  state: DagState,
+  wrapperId: NodeId,
+  idSet: Set<NodeId>,
+): { node: string; socket: string } | null {
+  let cursor: NodeId = wrapperId;
+  const guard = new Set<NodeId>();
+  while (!guard.has(cursor)) {
+    guard.add(cursor);
+    const c = outConsumer(state, cursor);
+    if (!c) return null;
+    if (!idSet.has(c.node)) return c;
+    cursor = c.node; // consumer is also being deleted — hop over it
+  }
+  return null;
+}
 
 /**
  * Ops to delete `ids` in one atomic batch (→ one undo). `removeNode` refuses to
@@ -101,6 +150,37 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
     }
     ops.push({ type: 'removeNode', nodeId });
   }
+
+  // ── Direction 3: splice deleted WRAPPERS out (#432). ─────────────────────────
+  // A wrapper (Transform / MaterialOverride / Array / Mirror modifier / ColorCorrect)
+  // sits ON the edge chain — `scene → wrapper → subject` — so plain-removing it above
+  // strands the subject: nothing consumes it, and it vanishes from `scene` while
+  // staying in the file (the #431 strand, but for the WRAPPED node not a child).
+  // `target` is deliberately not OWNED (deleting a mirror must not delete the mesh —
+  // Blender keeps the object when a modifier is removed); the right move is to
+  // reconnect the subject to whatever consumed the wrapper. Sibling of
+  // `buildRemoveOperatorOps` (operatorStack.ts), which splices ONE wrapper for the
+  // modifier-stack ✕; this covers the generic delete path and a whole stack deleted
+  // at once (survivingConsumerAbove hops over the other deleted wrappers).
+  //
+  // Emitted AFTER every disconnect+removeNode above, so: (a) the wrapper's own
+  // `target` edge is already gone, and (b) when the surviving consumer is another
+  // wrapper's single-cardinality `target`, that socket is free before we bind the
+  // subject — disconnect-before-connect, matching buildRemoveOperatorOps.
+  for (const nodeId of allIds) {
+    const node = state.nodes[nodeId];
+    if (!isTargetWrapperNode(node)) continue;
+    const subject = refsOf(node!.inputs?.target)[0];
+    // Subject also being deleted → nothing to keep alive.
+    if (!subject?.node || idSet.has(subject.node)) continue;
+    const consumer = survivingConsumerAbove(state, nodeId, idSet);
+    if (!consumer) continue;
+    ops.push({
+      type: 'connect',
+      from: { node: subject.node, socket: subject.socket },
+      to: { node: consumer.node, socket: consumer.socket },
+    });
+  }
   return ops;
 }
 
@@ -151,6 +231,16 @@ function refsOf(binding: unknown): { node: string; socket: string }[] {
 export function buildDuplicateNodeOps(
   state: DagState,
   rootId: NodeId,
+  /**
+   * Optional id-space to reserve across calls. `buildDuplicateNodeOps` is
+   * single-root and mints fresh `_copy` ids from `state.nodes` alone, so two
+   * back-to-back calls against the SAME state (e.g. the agent duplicating
+   * `['a','b']` at once) can independently pick the same `_copy` id and
+   * collide. Pass one shared Set across the batch: every id this call mints is
+   * added to it, and every id already in it is treated as taken. UI callers
+   * (one root per Shift-D) omit it and are unaffected.
+   */
+  reserved?: Set<NodeId>,
 ): { ops: Op[]; newRootId: NodeId } | null {
   if (!state.nodes[rootId]) return null;
 
@@ -183,8 +273,10 @@ export function buildDuplicateNodeOps(
   };
   visit(rootId);
 
-  // 3. Fresh ids for every clone.
-  const taken = new Set(Object.keys(state.nodes));
+  // 3. Fresh ids for every clone. Seed with any ids a prior call in this batch
+  //    already reserved so a multi-target duplicate can't mint colliding _copy ids.
+  const taken = new Set<NodeId>(Object.keys(state.nodes));
+  if (reserved) for (const id of reserved) taken.add(id);
   const idMap = new Map<NodeId, NodeId>();
   for (const id of subtree) idMap.set(id, freshId(id, taken));
 
@@ -282,6 +374,10 @@ export function buildDuplicateNodeOps(
       value: [...strips, ...additions],
     });
   }
+
+  // Publish every id this call minted (subtree clones + referrer clones, all in
+  // idMap's values) so a subsequent call in the same batch won't reuse them.
+  if (reserved) for (const cloneId of idMap.values()) reserved.add(cloneId);
 
   return { ops, newRootId: idMap.get(rootId)! };
 }
