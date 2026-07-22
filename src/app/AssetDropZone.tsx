@@ -17,6 +17,9 @@ import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
 import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
 import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
+import { useNotificationStore } from './stores/notificationStore';
+import type { DagState } from '../core/dag/state';
+import type { Op } from '../core/dag/types';
 
 /** Lowercased-extension test for the four importable formats (D-04). */
 function isImportableEntry(p: string): boolean {
@@ -33,6 +36,31 @@ function isImportableEntry(p: string): boolean {
 function isMotionEntry(p: string): boolean {
   const lower = p.toLowerCase();
   return lower.endsWith('.bvh') || lower.endsWith('.fbx');
+}
+
+/** The warn toast shown when a library asset is dropped but the project has no
+ *  scene to add it into. Exported so the test asserts the exact surfaced text. */
+export const NO_SCENE_DROP_MESSAGE = 'Can’t add asset — this project has no scene to add it to.';
+
+/** What a dropped catalog (library) asset resolves to. */
+export type CatalogDropPlan =
+  | { kind: 'import'; path: string } // an importable file (.glb/.gltf/.bvh/.fbx) → routeImportByExtension
+  | { kind: 'ops'; ops: Op[] } // a plain library asset → catalog drop ops into the scene
+  | { kind: 'no-scene' }; // nothing to drop into — must be surfaced, never swallowed
+
+/**
+ * Decide what a dropped catalog asset should do — the pure core of `onDrop`'s
+ * library-asset branch, lifted out so the "no scene to drop into" case is a
+ * TESTABLE outcome rather than a silent `console.warn`. A drop that lands
+ * nowhere must tell the user why (V38 — never silently swallow; the [[H70]]
+ * void'd-fallible-action trap), and that can only be checked if the decision is
+ * separable from the DOM event handler.
+ */
+export function planCatalogAssetDrop(state: DagState, path: string): CatalogDropPlan {
+  const sceneRef = state.outputs.scene;
+  if (!sceneRef) return { kind: 'no-scene' };
+  if (isImportableEntry(path)) return { kind: 'import', path };
+  return { kind: 'ops', ops: buildAssetDropOps({ assetRef: path, sceneNodeId: sceneRef.node }) };
 }
 
 interface Props {
@@ -138,10 +166,15 @@ export function AssetDropZone({ children }: Props) {
       setOver(false);
       const path = e.dataTransfer.getData(DRAG_MIME);
       if (!path) return;
-      const state = useDagStore.getState().state;
-      const sceneRef = state.outputs.scene;
-      if (!sceneRef) {
-        console.warn('AssetDropZone: project has no `scene` output; drop ignored');
+      const plan = planCatalogAssetDrop(useDagStore.getState().state, path);
+      if (plan.kind === 'no-scene') {
+        // V38 — a drop that lands nowhere must be surfaced, never swallowed. A
+        // TRANSIENT toast, NOT assetErrorStore (whose banner mounts in a slot the
+        // compositor can cover, and whose lifecycle would entangle with a
+        // fire-and-forget message). notify() dedups on (severity, message).
+        useNotificationStore
+          .getState()
+          .notify({ severity: 'warn', message: NO_SCENE_DROP_MESSAGE });
         return;
       }
 
@@ -150,13 +183,12 @@ export function AssetDropZone({ children }: Props) {
       // shared extension dispatcher `routeImportByExtension` (B12 chokepoint:
       // the sole importer call site in `src/app/`). Non-importable library
       // drops fall through to the catalog `buildAssetDropOps` path unchanged.
-      if (isImportableEntry(path)) {
-        void routeImportByExtension(path);
+      if (plan.kind === 'import') {
+        void routeImportByExtension(plan.path);
         return;
       }
 
-      const ops = buildAssetDropOps({ assetRef: path, sceneNodeId: sceneRef.node });
-      dispatchAtomic(ops, 'user', `import asset: ${path}`);
+      dispatchAtomic(plan.ops, 'user', `import asset: ${path}`);
       return;
     }
 
