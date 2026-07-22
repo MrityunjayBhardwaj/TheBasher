@@ -10,17 +10,24 @@
 //
 // One channel = one (target, paramPath, valueType) triple; valueType picks the
 // concrete node type (KeyframeChannelNumber / Vec3 / Quat / Color). The channel
-// id is deterministic — `${target}_${safePath(paramPath)}_channel`, matching
+// id is deterministic — `${spec.target}_${safePath(paramPath)}_channel`, matching
 // dispatchDirectFirstKey — so the LLM (and the inspector diamond) can reference
 // it from a follow-up `mutator.timeline.keyframe` call without a dag.inspect
 // round. The channel reaches its target purely by the resolver's target scan; it
 // is an edge-less satellite (no connect op, no closure membership beyond itself).
+//
+// #450: `params.target` is the node that OWNS the param, resolved through the
+// object↔data split (a data param lives on the linked data node, not the Object
+// the caller named). The id stays keyed to `spec.target`, so for a split object's
+// data param the id and the target differ — harmless, because every lookup is a
+// (target, paramPath) scan, never an id compare. See build() for the full why.
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
+import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
 
 const ValueType = z.enum(['number', 'vec3', 'quat', 'color']);
 type ValueType = z.infer<typeof ValueType>;
@@ -61,6 +68,12 @@ function safePath(paramPath: string): string {
 /** The deterministic channel id for a (target, paramPath), unless caller-supplied. */
 function channelIdFor(spec: AddChannelSpec): NodeId {
   return spec.channelId ?? `${spec.target}_${safePath(spec.paramPath)}_channel`;
+}
+
+/** The top-level param key of a path: 'material.base.color' → 'material'. */
+function paramRoot(paramPath: string): string {
+  const dot = paramPath.indexOf('.');
+  return dot === -1 ? paramPath : paramPath.slice(0, dot);
 }
 
 function shapeOk(valueType: ValueType, value: unknown): boolean {
@@ -134,9 +147,21 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
     }
     return { ok: true };
   },
-  build(spec, _closure: ClosureSet, _state: DagState): Op[] {
+  build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const channelId = channelIdFor(spec);
     const nodeType = NODE_TYPE_BY_VALUE[spec.valueType];
+    // The channel's `target` must be the node that actually OWNS the param, not
+    // whatever the caller named. On a split object a data param (material/size)
+    // lives on the linked data node, and the render overlay only collects
+    // channels whose target is that data node (SceneFromDAG useDataParamChannels);
+    // a channel left targeting the Object animates in the inspector read but
+    // never paints. Resolve the owner the same way the material/size mutators do
+    // — a transform param (position) resolves to the Object itself, unchanged.
+    // The channel *id* stays keyed to spec.target (channelIdFor) so it matches
+    // buildClosureSpec, which has no state to resolve the owner; harmless because
+    // every channel lookup is a (target, paramPath) scan, never an id compare.
+    const target =
+      resolveDataParamOwner(state, spec.target, paramRoot(spec.paramPath)) ?? spec.target;
     // ONE addNode op; NO connect (the channel is free-floating — reached by the
     // resolver's `params.target` scan, V57).
     return [
@@ -146,7 +171,7 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
         nodeType,
         params: {
           name: spec.channelName ?? spec.paramPath,
-          target: spec.target,
+          target,
           paramPath: spec.paramPath,
           keyframes: spec.initialKeyframe
             ? [
