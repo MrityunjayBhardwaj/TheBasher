@@ -20,6 +20,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
+import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
 
 const SimplifyChannelSpec = z.object({
   channelId: z.string().min(1),
@@ -73,7 +74,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     if (!channel) {
       return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
     }
-    if (!channel.type.startsWith('KeyframeChannel')) {
+    if (!isKeyframeChannelNode(channel)) {
       return {
         ok: false,
         reason: `channelId "${spec.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,

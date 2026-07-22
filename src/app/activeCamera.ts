@@ -35,6 +35,7 @@ import {
   type ChannelExtrapolate,
 } from '../nodes/keyframeInterp';
 import type { FChannelModifier } from '../nodes/channelModifiers';
+import { isKeyframeChannelNode } from './animate/paramAnimationState';
 
 /** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
  *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
@@ -291,7 +292,7 @@ export function resolveCameraPoseAt(
   // (an empty sampler returns 0/[0,0,0] — never let that clobber the base).
   let pose: CameraPose | null = null; // clone lazily, only when a channel hits
   for (const ch of Object.values(state.nodes)) {
-    if (!ch.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(ch)) continue;
     const p = ch.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
     if (p.target !== node.id) continue;
     const path = p.paramPath;

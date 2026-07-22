@@ -31,6 +31,7 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import { readBaseParam } from './readBaseParam';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { isKeyframeChannelNode } from './animate/paramAnimationState';
 
 interface ChannelParams {
   target?: unknown;
@@ -76,7 +77,7 @@ export function resolveEvaluatedParam(
   // nothing is solo'd. Strips/drivers (2b/2c) are appended after — un-gated, matching
   // the render side (they aren't collected through `channelValuesFromNodes` either).
   const targetSoloActive = Object.values(state.nodes).some((node) => {
-    if (!node.type.startsWith('KeyframeChannel')) return false;
+    if (!isKeyframeChannelNode(node)) return false;
     return (
       (node.params as ChannelParams & { solo?: boolean })?.solo === true &&
       (node.params as ChannelParams)?.target === nodeId
@@ -85,7 +86,7 @@ export function resolveEvaluatedParam(
 
   const matches: KeyframeChannelValue[] = [];
   for (const node of Object.values(state.nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(node)) continue;
     const p = (node.params ?? {}) as ChannelParams & { solo?: boolean };
     if (p.target !== nodeId || p.paramPath !== paramPath) continue;
     if (targetSoloActive && p.solo !== true) continue; // soloed out → contributes nothing

@@ -22,7 +22,7 @@
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMutator';
-import { paramAnimationState } from './paramAnimationState';
+import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 
@@ -111,7 +111,7 @@ export function resolveChannel(
   currentFrame: number,
 ): { channelId: string; onKeySeconds: number | null } | null {
   for (const node of Object.values(nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(node)) continue;
     const p = (node.params ?? {}) as {
       target?: unknown;
       paramPath?: unknown;

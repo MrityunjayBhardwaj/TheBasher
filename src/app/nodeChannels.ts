@@ -22,6 +22,7 @@
 
 import { getNodeType } from '../core/dag/registry';
 import type { KeyframeChannelValue } from '../nodes/types';
+import { isKeyframeChannelNode } from './animate/paramAnimationState';
 
 /** Minimal node shape this enumerator reads (a DagState node subset). */
 interface NodeLike {
@@ -44,7 +45,7 @@ export function directChannelNodesForTarget<T extends NodeLike & { id: string }>
   if (!targetId) return [];
   const out: T[] = [];
   for (const node of Object.values(nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(node)) continue;
     const p = node.params as { target?: unknown; keyframes?: unknown };
     if (p.target !== targetId) continue;
     if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue; // empty → no overlay
@@ -68,7 +69,7 @@ export function channelNodesTargeting<T extends NodeLike & { id: string }>(
   if (ids.size === 0) return [];
   const out: T[] = [];
   for (const node of Object.values(nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(node)) continue;
     const p = node.params as { target?: unknown };
     if (typeof p.target === 'string' && ids.has(p.target)) out.push(node);
   }
@@ -86,7 +87,7 @@ export function directChannelTargetSet(
 ): Set<string> {
   const targets = new Set<string>();
   for (const node of Object.values(nodes)) {
-    if (!node.type.startsWith('KeyframeChannel')) continue;
+    if (!isKeyframeChannelNode(node)) continue;
     const p = node.params as { target?: unknown; keyframes?: unknown };
     if (typeof p.target !== 'string' || !p.target) continue;
     if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue;
