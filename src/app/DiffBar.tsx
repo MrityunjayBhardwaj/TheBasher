@@ -41,6 +41,8 @@ import { countBySource, extractTimeRange, formatTimeRange, hasMetaToShow } from 
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { CENTER_SURFACE_TOP, centerSurfaceWidthCss } from './layoutIslands';
 import { useChromeStore } from './stores/chromeStore';
+import { badgeLabel } from './badges';
+import type { Reportable } from '../core/dag/ops';
 
 export function DiffBar() {
   const status = useDiffStore((s) => s.status);
@@ -65,6 +67,12 @@ export function DiffBar() {
   const closureNodeCount = pendingDiff.closure?.nodes.size ?? 0;
   const closureRoots = pendingDiff.closure?.spec.rootSelectors ?? [];
   const warnings = pendingDiff.warnings ?? [];
+  // #423 — per-op REPORTABLE no-ops (a write the target's schema stripped).
+  // Rendered via the centralised badge registry so the label/tone live in one
+  // place a future per-op badge or scene-tree filter can share.
+  const reportableLines = (pendingDiff.reportable ?? [])
+    .filter((r): r is Reportable => r !== null)
+    .map((r) => badgeLabel(r.badge, r));
   // Wave D — time-range indicator. Animation Mutators emit ops that carry
   // explicit time values (keyframes / Shot bounds). Surfacing the range
   // lets the user see at a glance "this diff lands keyframes between
@@ -81,12 +89,13 @@ export function DiffBar() {
     }
   };
 
-  const hasMeta = hasMetaToShow({
-    sourceCounts,
-    closureNodeCount,
-    warningsCount: warnings.length,
-    timeRange,
-  });
+  const hasMeta =
+    hasMetaToShow({
+      sourceCounts,
+      closureNodeCount,
+      warningsCount: warnings.length,
+      timeRange,
+    }) || reportableLines.length > 0;
 
   return (
     <div
@@ -196,6 +205,11 @@ export function DiffBar() {
           {warnings.length > 0 && (
             <span data-testid="diffbar-warnings" style={{ color: '#d4a554' }}>
               ⚠ {warnings.join(' · ')}
+            </span>
+          )}
+          {reportableLines.length > 0 && (
+            <span data-testid="diffbar-reportable" style={{ color: '#d4a554' }}>
+              ⚠ {reportableLines.join(' · ')}
             </span>
           )}
         </div>

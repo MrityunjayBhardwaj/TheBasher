@@ -9,13 +9,19 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op, InverseOp } from '../../core/dag/types';
-import { applyOp, validateOp } from '../../core/dag/ops';
+import { applyOp, validateOp, type Reportable } from '../../core/dag/ops';
 
 export interface ForkResult {
   /** The forked DAG state after applying all ops. */
   fork: DagState;
   /** Inverse ops that can revert the fork back to pre-op state. */
   inverseOps: InverseOp[];
+  /**
+   * Per-op REPORTABLE no-op signal (#423), aligned index-for-index with the
+   * input `ops`: a `Reportable` where the op was accepted but changed nothing
+   * (a wrong-half write the schema stripped), `null` where the op did real work.
+   */
+  reportable: (Reportable | null)[];
 }
 
 /**
@@ -31,10 +37,11 @@ export interface ForkResult {
  */
 export function createFork(state: DagState, ops: Op[]): ForkResult {
   if (ops.length === 0) {
-    return { fork: { ...state, nodes: { ...state.nodes } }, inverseOps: [] };
+    return { fork: { ...state, nodes: { ...state.nodes } }, inverseOps: [], reportable: [] };
   }
 
   const inverseOps: InverseOp[] = [];
+  const reportable: (Reportable | null)[] = [];
   let fork: DagState = { ...state, nodes: { ...state.nodes } };
 
   for (let i = 0; i < ops.length; i++) {
@@ -43,9 +50,10 @@ export function createFork(state: DagState, ops: Op[]): ForkResult {
     const result = applyOp(fork, validated);
     fork = result.next;
     inverseOps.push({ forward: validated, inverse: result.inverse });
+    reportable.push(result.reportable ?? null);
   }
 
-  return { fork, inverseOps };
+  return { fork, inverseOps, reportable };
 }
 
 /**

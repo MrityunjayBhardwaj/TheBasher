@@ -13,6 +13,7 @@
 import { create } from 'zustand';
 import type { DagState } from '../../core/dag/state';
 import type { InverseOp, Op } from '../../core/dag/types';
+import type { Reportable } from '../../core/dag/ops';
 import type { OpSource } from '../../core/dag/store';
 import { cloneState, createFork } from './forkedDag';
 import {
@@ -57,6 +58,13 @@ export interface PendingDiff {
    * accepting. Empty / undefined when no Mutator dispatched.
    */
   warnings?: string[];
+  /**
+   * Per-op REPORTABLE no-op signal (#423), aligned with `ops`: a `Reportable`
+   * where a proposed op was accepted but changed nothing (a wrong-half write the
+   * schema stripped), `null` otherwise. Surfaced by DiffBar so the user sees the
+   * op-vs-subject mismatch BEFORE accepting. Undefined when no op was flagged.
+   */
+  reportable?: (Reportable | null)[];
   /** Timestamp of creation. */
   createdAt: number;
 }
@@ -107,7 +115,7 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
     // closure roots on mesh_xyz). Without applying ops first, the closure
     // expander can't see the new id and walks an empty subgraph —
     // every connect-to-scene op then fails the gate.
-    const { fork, inverseOps } = createFork(state, ops);
+    const { fork, inverseOps, reportable } = createFork(state, ops);
 
     // V13 closure-preservation gate. Runs after the fork is built but
     // BEFORE we set state — rejection still leaves zero real changes.
@@ -159,6 +167,7 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
       description,
       selected: ops.map(() => true),
       warnings: warnings && warnings.length > 0 ? warnings : undefined,
+      reportable: reportable.some(Boolean) ? reportable : undefined,
       createdAt: Date.now(),
     };
     set({ status: 'pending', pendingDiff: diff });
