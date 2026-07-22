@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildDefaultDagState } from '../core/project';
 import { useDagStore } from '../core/dag/store';
+import { historyUndo, historyRedo } from './history';
 import { useProjectStore } from '../core/project/store';
 import {
   createNewProject,
@@ -575,7 +576,7 @@ export function MenuBar() {
           shortcut={`${cmdKeyLabel}+Z`}
           disabled={undoLen === 0}
           onSelect={() => {
-            useDagStore.getState().undo();
+            historyUndo();
           }}
           testId="menu-edit-undo"
         />
@@ -584,7 +585,7 @@ export function MenuBar() {
           shortcut={`${cmdKeyLabel}+Shift+Z`}
           disabled={redoLen === 0}
           onSelect={() => {
-            useDagStore.getState().redo();
+            historyRedo();
           }}
           testId="menu-edit-redo"
         />
