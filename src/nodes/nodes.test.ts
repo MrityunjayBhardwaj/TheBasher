@@ -118,6 +118,7 @@ const ALL_TYPES = [
   'Solver',
   'SolverInput',
   'SolverInputVec',
+  'SphereData',
   'SphereMesh',
   'SpotLight',
   'Strip',

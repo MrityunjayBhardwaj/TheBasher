@@ -44,6 +44,32 @@ describe('C2 — inspectorSections declarations', () => {
     }
   });
 
+  // #427 — the REACHABILITY guard for the object↔data split (Stage C). A data node
+  // (`ObjectData` output) whose params live behind a nested Object row ships its
+  // geometry+material UNREACHABLE if it declares an EMPTY inspectorSections — every
+  // other test stays green (the SceneTreeIcon sweep only asserts "has an icon", not
+  // "has reachable params"). That is the exact hole the box split had to patch by
+  // hand. Sweep every registered `ObjectData`-output node and assert its sections
+  // are non-empty, so a new data kind cannot register with unreachable params.
+  it('every ObjectData-output node declares non-empty inspectorSections (params are reachable)', () => {
+    const snap = snapshotRegistry();
+    const dataKinds = Object.entries(snap).filter(
+      ([, def]) => def.outputs?.out?.type === 'ObjectData',
+    );
+    // Guard the guard: if the filter ever finds nothing, the walk has drifted and the
+    // test would pass vacuously for every future data kind.
+    expect(
+      dataKinds.length,
+      'no ObjectData-output nodes found — the filter drifted',
+    ).toBeGreaterThan(0);
+    for (const [type, def] of dataKinds) {
+      expect(
+        def.inspectorSections?.length ?? 0,
+        `${type} outputs ObjectData → must declare non-empty inspectorSections or its params are unreachable`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
   it('render-primary nodes lead with section "render"', () => {
     const snap = snapshotRegistry();
     const renderPrimary = [

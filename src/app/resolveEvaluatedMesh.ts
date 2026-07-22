@@ -44,7 +44,7 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { hydrateInlineMaterial, isBakedMaterialSpec } from '../nodes/materialSchema';
-import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
+import { arrayGeometryRef, mirrorGeometryRef, sphereGeometryRef } from './modifierGeometry';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { get as getRegistryGeometry } from './geometryRegistry';
@@ -144,16 +144,7 @@ export function resolveEvaluatedMesh(
     ) {
       return null;
     }
-    const geometry: GeometryRef = {
-      key: `sphere|${p.radius}|${p.widthSegments}|${p.heightSegments}`,
-      kind: 'sphere',
-      descriptor: {
-        kind: 'sphere',
-        radius: p.radius,
-        widthSegments: p.widthSegments,
-        heightSegments: p.heightSegments,
-      },
-    };
+    const geometry = sphereGeometryRef(p.radius, p.widthSegments, p.heightSegments);
     const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
       position: p.position,
       rotation: p.rotation,

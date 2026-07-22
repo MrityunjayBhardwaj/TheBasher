@@ -51,6 +51,27 @@ export function boxGeometryRef(size: Vec3): GeometryRef {
 }
 
 /**
+ * The ONE place a sphere's `radius`/`widthSegments`/`heightSegments` become a
+ * `GeometryRef` (deterministic key + descriptor). Parallel to {@link boxGeometryRef}:
+ * shared by the fused `SphereMesh` source projection (below) + the read road
+ * (`resolveEvaluatedMesh`) AND the `SphereData` node of the object↔data split (#384),
+ * so every road hands the registry the identical key → one cached build,
+ * byte-identical geometry (H40, no drift). Coexists with `SphereMesh` until the
+ * fused value kind retires; then only `SphereData` calls it.
+ */
+export function sphereGeometryRef(
+  radius: number,
+  widthSegments: number,
+  heightSegments: number,
+): GeometryRef {
+  return {
+    key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
+    kind: 'sphere',
+    descriptor: { kind: 'sphere', radius, widthSegments, heightSegments },
+  };
+}
+
+/**
  * Everything a geometry modifier needs from its source value: the handle to
  * reshape, the pose to carry forward so the result sits where the source sat, and
  * the material to inherit. `null` from {@link modifierSource} means "this value is
@@ -88,16 +109,7 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
   switch (value.kind) {
     case 'SphereMesh':
       return {
-        geometry: {
-          key: `sphere|${value.radius}|${value.widthSegments}|${value.heightSegments}`,
-          kind: 'sphere',
-          descriptor: {
-            kind: 'sphere',
-            radius: value.radius,
-            widthSegments: value.widthSegments,
-            heightSegments: value.heightSegments,
-          },
-        },
+        geometry: sphereGeometryRef(value.radius, value.widthSegments, value.heightSegments),
         transform: trsOf(value),
         material: value.material,
       };
