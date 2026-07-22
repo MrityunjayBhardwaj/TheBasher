@@ -5,9 +5,18 @@
 // conversion is exercised in isolation, no store, no React (D-W9-4
 // pure-geometry discipline).
 
-import { describe, expect, it } from 'vitest';
-import { paramAnimationState } from './paramAnimationState';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import type { DagState } from '../../core/dag/state';
+import { listNodeTypes } from '../../core/dag/registry';
+import { registerAllNodes } from '../../nodes/registerAll';
+import { KeyframeChannelNumberNode } from '../../nodes/KeyframeChannelNumber';
+import { KeyframeChannelVec2Node } from '../../nodes/KeyframeChannelVec2';
+import { KeyframeChannelVec3Node } from '../../nodes/KeyframeChannelVec3';
+import { KeyframeChannelQuatNode } from '../../nodes/KeyframeChannelQuat';
+import { KeyframeChannelColorNode } from '../../nodes/KeyframeChannelColor';
+import { KeyframeChannelTextNode } from '../../nodes/KeyframeChannelText';
+import { KeyframeChannelImageNode } from '../../nodes/KeyframeChannelImage';
 
 function stateWith(channel?: {
   target: string;
@@ -144,5 +153,64 @@ describe('paramAnimationState', () => {
     it("frame 78 (1.3s, Δ≈0.0333 > ½-frame) → 'animated' (other side)", () => {
       expect(paramAnimationState(s, 'n_box', 'rotation', 78)).toBe('animated');
     });
+  });
+});
+
+// isKeyframeChannelNode — the ONE home for "is this a channel node?" (#419).
+// The prefix match is load-bearing: it is correct ONLY if every authored channel
+// type is named KeyframeChannel* AND no OTHER registered type shares that prefix.
+// That naming assumption used to be un-testable (written out at ~16 call sites);
+// consolidated here, it is checkable in one place by walking the whole registry.
+describe('isKeyframeChannelNode (#419)', () => {
+  beforeAll(() => {
+    registerAllNodes();
+  });
+
+  // The canonical authored-channel set, built INDEPENDENTLY of the prefix match:
+  // the seven KeyframeChannel*Node definitions registered in registerAll. Membership
+  // below is by exact string equality (a Set), not a prefix — so the soundness sweep
+  // is a genuine cross-check, not a tautology of the implementation.
+  const CHANNEL_TYPES = [
+    KeyframeChannelNumberNode,
+    KeyframeChannelVec2Node,
+    KeyframeChannelVec3Node,
+    KeyframeChannelQuatNode,
+    KeyframeChannelColorNode,
+    KeyframeChannelTextNode,
+    KeyframeChannelImageNode,
+  ].map((d) => d.type);
+
+  it('classifies every authored channel node as a channel (completeness)', () => {
+    for (const type of CHANNEL_TYPES) {
+      expect(isKeyframeChannelNode({ type })).toBe(true);
+    }
+    // Guards against a channel type being added without updating this list — the
+    // soundness sweep below would then flag it (helper true, set membership false).
+    expect(CHANNEL_TYPES).toHaveLength(7);
+  });
+
+  it('classifies no other registered node as a channel (soundness — the naming assumption)', () => {
+    const channelSet = new Set(CHANNEL_TYPES);
+    // Registry-walking ([[V109]] pattern): for EVERY registered type the helper's
+    // verdict must equal exact membership in the authored set. A non-channel named
+    // KeyframeChannel* → helper true, set false → red. A channel renamed off-prefix →
+    // helper false, set true → red.
+    for (const type of listNodeTypes()) {
+      expect(isKeyframeChannelNode({ type })).toBe(channelSet.has(type));
+    }
+  });
+
+  it('CONTROL — a ParamDriver yields a channel VALUE but is NOT a channel NODE', () => {
+    // ParamDriver.evaluate returns a kind:'KeyframeChannel' value, yet its type is
+    // 'ParamDriver' (no prefix) — drivers ride a SEPARATE fold path. The helper is
+    // NAME-scoped, not value-scoped. If this flips, the helper's contract silently
+    // changed (and every one of the ~16 sites would start counting drivers).
+    expect(isKeyframeChannelNode({ type: 'ParamDriver' })).toBe(false);
+    // And a plainly non-channel node stays false.
+    expect(isKeyframeChannelNode({ type: 'BoxMesh' })).toBe(false);
+  });
+
+  it('is false for an absent node (undefined)', () => {
+    expect(isKeyframeChannelNode(undefined)).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimelineSelection } from './timelineSelection';
 import { resolveClipRow } from './clipChannelRows';
+import { isKeyframeChannelNode } from '../app/animate/paramAnimationState';
 import { EditableCurve } from './EditableCurve';
 
 const TRACK_COLORS = ['#ef4444', '#22c55e', '#3b82f6']; // x / y / z
@@ -42,7 +43,7 @@ export function CurveEditor({ duration }: { duration: number }) {
     if (activeChannelId != null) return activeChannelId;
     let firstAny: string | null = null;
     for (const [id, n] of Object.entries(nodes)) {
-      if (!n.type.startsWith('KeyframeChannel')) continue;
+      if (!isKeyframeChannelNode(n)) continue;
       if (firstAny == null) firstAny = id;
       const target = (n.params as { target?: string } | undefined)?.target;
       if (selectedId && target === selectedId) return id; // prefer the selection's channel

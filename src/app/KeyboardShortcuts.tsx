@@ -61,6 +61,7 @@ import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { getActiveCurvePoint } from './curvePointSelection';
 import { deleteCurvePoint, extrudeCurvePoint, toggleCurveClosed } from './curvePointCommands';
@@ -101,7 +102,7 @@ function buildKeyframeInsertOp(): Op | null {
   if (!channelId) return null;
   const dagState = useDagStore.getState().state;
   const channel = dagState.nodes[channelId];
-  if (!channel || !channel.type.startsWith('KeyframeChannel')) return null;
+  if (!channel || !isKeyframeChannelNode(channel)) return null;
 
   const cParams = (channel.params ?? {}) as {
     target?: string;
@@ -134,7 +135,7 @@ function buildKeyframeDeleteOp(): Op | null {
   if (!ref) return null;
   const dagState = useDagStore.getState().state;
   const channel = dagState.nodes[ref.channelId];
-  if (!channel || !channel.type.startsWith('KeyframeChannel')) return null;
+  if (!channel || !isKeyframeChannelNode(channel)) return null;
   const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
   const existing = cParams.keyframes ?? [];
   const next = existing.filter((k) => k.time !== ref.time);
@@ -154,7 +155,7 @@ function findAdjacentKeyframeTime(direction: 'prev' | 'next'): number | null {
   const channelId = useTimelineSelection.getState().activeChannelId;
   if (!channelId) return null;
   const channel = useDagStore.getState().state.nodes[channelId];
-  if (!channel || !channel.type.startsWith('KeyframeChannel')) return null;
+  if (!channel || !isKeyframeChannelNode(channel)) return null;
   const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
   const times = (cParams.keyframes ?? []).map((k) => k.time).sort((a, b) => a - b);
   if (times.length === 0) return null;
