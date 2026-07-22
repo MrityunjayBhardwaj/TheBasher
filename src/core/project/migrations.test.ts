@@ -20,6 +20,8 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
+import { sphereGeometryRef } from '../../app/modifierGeometry';
+import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materialSchema';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
 import type { InlineMaterialSpec } from '../../nodes/types';
 import {
@@ -80,8 +82,8 @@ function ctxAt(seconds: number) {
 describe('v1 box → normalize + split to Object + BoxData (byte-identical render gate)', () => {
   it('normalizes a v1 box through BoxMesh’s OWN ladder, THEN splits (Object gets scale=identity)', () => {
     const migrated = loadFromBytes(V1_BOX_PROJECT);
-    // formatVersion 1 → 2 (AnimationLayer) → 3 (split). The box node keeps its id
-    // but is now an Object; the v1→v4 normalization ran first (scale=identity).
+    // formatVersion 1 → 2 (AnimationLayer) → 3 (box split) → 4 (sphere split). The box
+    // node keeps its id but is now an Object; the v1→v4 normalization ran first (scale=identity).
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
     expect((obj.params as { scale?: unknown }).scale).toEqual([1, 1, 1]);
@@ -142,7 +144,7 @@ describe('v1 box → normalize + split to Object + BoxData (byte-identical rende
   it('is idempotent — re-loading a split project is a stable no-op', () => {
     const once = loadFromBytes(V1_BOX_PROJECT);
     // Re-serialize the migrated (split) project and load again — the round-trip
-    // the user hits on every subsequent save/load. formatVersion is now 3, so no
+    // the user hits on every subsequent save/load. formatVersion is now 4, so no
     // format migration runs; the Object + BoxData pair is stable.
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_box).toEqual(once.state.nodes.n_box);
@@ -272,7 +274,8 @@ function splitDataNode(project: Project, boxId: string) {
 describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#365)', () => {
   it('splits the box: n_box becomes an Object (id inherited) + a wired BoxData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxJson());
-    expect(migrated.formatVersion).toBe(3);
+    // 2 → 3 (box split) → 4 (sphere split pass, no spheres here — stamps 4).
+    expect(migrated.formatVersion).toBe(4);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -331,6 +334,257 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_box).toEqual(once.state.nodes.n_box);
     expect(splitDataNode(twice, 'n_box')).toEqual(splitDataNode(once, 'n_box'));
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'BoxMesh')).toBe(false);
+  });
+});
+
+// ── object↔data split (#384 Stage C · C1): fused SphereMesh → Object + SphereData ──
+// The per-kind repeat of the box split above, one format version later (v3 → v4). A
+// formatVersion-2 project that carries BOTH a fused box and a fused sphere migrates in
+// two sequential steps on load: 2→3 splits the box, 3→4 splits the sphere. The gate is
+// the same — resolveEvaluatedMesh('<sphere id>') is byte-identical to the canonical
+// split sphere, a `radius` channel re-targets to the fresh SphereData while a `position`
+// channel stays on the inherited-id Object, and a fused box in the SAME fixture still
+// splits correctly through the coexisting 2→3 pass (the CONTROL). Non-default geometry
+// (radius 1.3, 32×20 segments) so a dropped param can't pass vacuously (H180).
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
+
+const SPHERE_MIG_DEFAULT_COLOR = '#88aaff';
+const SPHERE_MIG_RADIUS = 1.3;
+const SPHERE_MIG_WS = 32;
+const SPHERE_MIG_HS = 20;
+
+/** A genuinely FUSED scene — a fused SphereMesh (n_sphere) AND a fused BoxMesh (n_box,
+ *  the control) wired into a Scene, camera + render attached. Both primitives are built
+ *  by hand at their current node version so the split is the ONLY transformation under
+ *  test. */
+function buildFusedBoxSphereDagState(): DagState {
+  let s = emptyDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_sphere',
+    nodeType: 'SphereMesh',
+    params: {
+      radius: SPHERE_MIG_RADIUS,
+      widthSegments: SPHERE_MIG_WS,
+      heightSegments: SPHERE_MIG_HS,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_box',
+    nodeType: 'BoxMesh',
+    params: {
+      size: [1, 1, 1],
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      material: { name: 'default', base: { color: '#5af07a' } },
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_camera',
+    nodeType: 'PerspectiveCamera',
+    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
+  });
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'addNode',
+    nodeId: 'n_render',
+    nodeType: 'RenderOutput',
+    params: { postFx: { tonemap: 'ACES', smaa: true } },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_sphere', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_box', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_camera', socket: 'out' },
+    to: { node: 'n_scene', socket: 'camera' },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_scene', socket: 'out' },
+    to: { node: 'n_render', socket: 'scene' },
+  });
+  return {
+    ...s,
+    outputs: {
+      scene: { node: 'n_scene', socket: 'out' },
+      render: { node: 'n_render', socket: 'out' },
+    },
+  };
+}
+
+/** A serialized formatVersion-2 project: the fused box+sphere scene + a `radius` channel
+ *  and a `position` channel targeting the sphere + a `size` channel targeting the box
+ *  (the control), then stamped formatVersion 2. */
+function buildV2FusedBoxSphereJson() {
+  let s = buildFusedBoxSphereDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_radius',
+    nodeType: 'KeyframeChannelNumber',
+    params: {
+      name: 'radius',
+      target: 'n_sphere',
+      paramPath: 'radius',
+      keyframes: [
+        { time: 0, value: SPHERE_MIG_RADIUS, easing: 'linear' },
+        { time: 1, value: 2.6, easing: 'linear' },
+      ],
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_pos',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_sphere',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [0, 0, 0], easing: 'linear' },
+        { time: 1, value: [0, 6, 0], easing: 'linear' },
+      ],
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_size',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'size',
+      target: 'n_box',
+      paramPath: 'size',
+      keyframes: [
+        { time: 0, value: [1, 1, 1], easing: 'linear' },
+        { time: 1, value: [2, 2, 2], easing: 'linear' },
+      ],
+    },
+  }).next;
+  const nodes = JSON.parse(JSON.stringify(s.nodes));
+  return {
+    formatVersion: 2,
+    id: 'p384-sphere-split',
+    name: 'pre-split box+sphere',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {
+      SphereMesh: nodes.n_sphere.version,
+      BoxMesh: nodes.n_box.version,
+      KeyframeChannelNumber: nodes.n_radius.version,
+      KeyframeChannelVec3: nodes.n_pos.version,
+    },
+    state: { nodes, outputs: s.outputs },
+  };
+}
+
+/** The SphereData node a split produced from the sphere `sphereId`. */
+function splitSphereDataNode(project: Project, sphereId: string) {
+  return Object.values(project.state.nodes).find(
+    (n) => n.type === 'SphereData' && n.id.startsWith(`${sphereId}__data`),
+  );
+}
+
+describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereData (#384)', () => {
+  it('splits the sphere: n_sphere becomes an Object (id inherited) + a wired SphereData', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
+    // 2 → 3 (box split) → 4 (sphere split).
+    expect(migrated.formatVersion).toBe(4);
+    // The sphere node keeps its id but is now an Object owning only the transform.
+    const obj = migrated.state.nodes.n_sphere;
+    expect(obj.type).toBe('Object');
+    const op = obj.params as Record<string, unknown>;
+    expect(op.position).toEqual([0, 0, 0]);
+    expect(op.scale).toEqual([1, 1, 1]);
+    expect(op.radius).toBeUndefined(); // geometry left the Object
+    expect(op.material).toBeUndefined(); // material left the Object
+    // A fresh SphereData owns the geometry + material and nothing else.
+    const data = splitSphereDataNode(migrated, 'n_sphere');
+    expect(data).toBeDefined();
+    const dp = data!.params as Record<string, unknown>;
+    expect(dp.radius).toBe(SPHERE_MIG_RADIUS);
+    expect(dp.widthSegments).toBe(SPHERE_MIG_WS);
+    expect(dp.heightSegments).toBe(SPHERE_MIG_HS);
+    expect(dp.material).toBeDefined();
+    // The Object points at the data node through `data`.
+    const dataRef = (obj.inputs as Record<string, { node: string }>).data;
+    expect(dataRef.node).toBe(data!.id);
+  });
+
+  it('renders byte-identically to the canonical split sphere (the split is invisible)', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
+    const split = resolveEvaluatedMesh(migrated.state, 'n_sphere', ctxAt(0));
+    expect(split).not.toBeNull();
+    // The geometry handle the renderer builds from is the canonical sphere handle —
+    // Slice-4-durable: it compares against sphereGeometryRef, not a live fused resolve.
+    const canonical = sphereGeometryRef(SPHERE_MIG_RADIUS, SPHERE_MIG_WS, SPHERE_MIG_HS);
+    expect(split!.geometry.descriptor).toEqual(canonical.descriptor);
+    // The material is the canonical hydrated OpenPBR default.
+    const expectedMaterial = hydrateInlineMaterial(
+      openpbrMaterialSchema(SPHERE_MIG_DEFAULT_COLOR).parse(undefined),
+      SPHERE_MIG_DEFAULT_COLOR,
+    );
+    expect(split!.material).toEqual(expectedMaterial);
+    expect(split!.transform.position).toEqual([0, 0, 0]);
+    expect(split!.transform.scale).toEqual([1, 1, 1]);
+  });
+
+  it('the Object inherits the id, so a position channel still animates it', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
+    // The position channel still targets n_sphere (now the Object) — unchanged.
+    expect((migrated.state.nodes.n_pos.params as { target: string }).target).toBe('n_sphere');
+    const p0 = resolveEvaluatedTransform(migrated.state, 'n_sphere', ctxAt(0))!.position;
+    const p1 = resolveEvaluatedTransform(migrated.state, 'n_sphere', ctxAt(1))!.position;
+    expect(p0[1]).toBe(0);
+    expect(p1[1]).toBe(6); // the channel drives the Object's position
+  });
+
+  it('routes channels by paramPath: radius → the SphereData, position → the Object', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
+    const data = splitSphereDataNode(migrated, 'n_sphere')!;
+    // A `radius` channel addresses a param that now lives on the data node, so it
+    // re-targets there — NOT orphaned onto the transform-only Object. The §5/§9 no-orphan
+    // crux, and the specific arm this slice added to isDataParamPath.
+    expect((migrated.state.nodes.n_radius.params as { target: string }).target).toBe(data.id);
+    expect('radius' in (data.params as object)).toBe(true); // the target actually owns `radius`
+    // A `position` channel addresses the transform → it stays on the inherited-id Object.
+    expect((migrated.state.nodes.n_pos.params as { target: string }).target).toBe('n_sphere');
+  });
+
+  it('CONTROL: a fused box in the same fixture still splits through the coexisting 2→3 pass', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
+    // The box also became an Object + BoxData (proves the v2→v3 arm is untouched).
+    const boxObj = migrated.state.nodes.n_box;
+    expect(boxObj.type).toBe('Object');
+    const boxData = Object.values(migrated.state.nodes).find(
+      (n) => n.type === 'BoxData' && n.id.startsWith('n_box__data'),
+    );
+    expect(boxData).toBeDefined();
+    // Its `size` channel re-targeted to the BoxData (box arm of isDataParamPath intact).
+    expect((migrated.state.nodes.n_size.params as { target: string }).target).toBe(boxData!.id);
+  });
+
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
+    const once = loadFromBytes(buildV2FusedBoxSphereJson());
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_sphere).toEqual(once.state.nodes.n_sphere);
+    expect(splitSphereDataNode(twice, 'n_sphere')).toEqual(splitSphereDataNode(once, 'n_sphere'));
+    // No fused primitive of either kind survives.
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'SphereMesh')).toBe(false);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'BoxMesh')).toBe(false);
   });
 });
@@ -490,7 +744,7 @@ function childRefNodes(state: DagState): string[] {
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
-    expect(migrated.formatVersion).toBe(3); // 1→2 (layer retire) → 3 (box split)
+    expect(migrated.formatVersion).toBe(4); // 1→2 (layer retire) → 3 (box split) → 4 (sphere split)
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
