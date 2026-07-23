@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { SpotLightValue } from './types';
 
 export const SpotLightParams = z.object({
   intensity: z.number().min(0).max(100).default(1),
@@ -27,7 +26,7 @@ export const SpotLightParams = z.object({
 });
 export type SpotLightParams = z.infer<typeof SpotLightParams>;
 
-export const SpotLightNode: NodeDefinition<SpotLightParams, SpotLightValue> = {
+export const SpotLightNode: NodeDefinition<SpotLightParams, never> = {
   type: 'SpotLight',
   version: 1,
   pure: true,
@@ -36,21 +35,10 @@ export const SpotLightNode: NodeDefinition<SpotLightParams, SpotLightValue> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
-  evaluate(params) {
-    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
-    const scale = params.scale ?? ([1, 1, 1] as [number, number, number]);
-    return {
-      kind: 'SpotLight',
-      intensity: params.intensity,
-      position: params.position,
-      target: params.target,
-      rotation,
-      scale,
-      color: params.color,
-      angle: params.angle,
-      penumbra: params.penumbra,
-      distance: params.distance,
-      decay: params.decay,
-    };
+  // Retired (#386 S4): a SpotLight is now an Object → LightData. Registered SOLELY for the
+  // load-migration's version-ladder normalization; never evaluates. The SpotLightValue
+  // interface stays in types.ts as the recomposition target.
+  evaluate(): never {
+    throw new Error('SpotLight is retired; projects migrate to Object+LightData on load (#386)');
   },
 };

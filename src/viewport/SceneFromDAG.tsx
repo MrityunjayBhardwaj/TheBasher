@@ -910,6 +910,57 @@ function useDataParamTransients(
   }, [dataId, edits, targetId]);
 }
 
+/** #386 R2 — the FLAT twin of useDataParamChannels for the light path. A split light's
+ *  animated shading channels live on its linked LightData, but the recomposed LightValue is
+ *  FLAT (intensity/color/position are all top-level), so they must be concatenated onto the
+ *  Object's own channels WITHOUT the `data.` rebase the mesh path uses (`ObjectR` reads
+ *  `value.data.geometry`; the light renderer reads `value.intensity`). Copying
+ *  useDataParamChannels' rebase would write `value.data.intensity`, which the light renderer
+ *  never reads → the animated intensity FREEZES with green unit tests. Returns the Object's
+ *  channels unchanged when there is no linked data (fused/ambient), keeping a stable ref (H48). */
+function useLightShadingChannels(
+  targetId: string,
+  objChannels: KeyframeChannelValue[],
+): KeyframeChannelValue[] {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  const dataChannels = useLayeredChannels(dataId ?? '');
+  return useMemo(
+    () => (dataId === null ? objChannels : [...objChannels, ...dataChannels]),
+    [dataId, objChannels, dataChannels],
+  );
+}
+
+/** #386 R2 — the FLAT twin of useDataParamTransients for the light path. A split light's HELD
+ *  (un-keyed) shading edits live on its LightData, but overlayTransients keys by the Object
+ *  (`nodeId`), so they must be re-keyed to the Object with their paramPath UN-rebased (flat
+ *  LightValue). Copying useDataParamTransients' `data.` rebase reproduces the same freeze R2
+ *  warns about. Returns the ORIGINAL map ref for a fused light / no held data edit (H48). */
+function useLightShadingTransients(
+  targetId: string,
+  edits: Map<string, TransientEdit>,
+): Map<string, TransientEdit> {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  return useMemo(() => {
+    if (dataId === null) return edits;
+    let hasDataEdit = false;
+    for (const e of edits.values()) {
+      if (e.nodeId === dataId) {
+        hasDataEdit = true;
+        break;
+      }
+    }
+    if (!hasDataEdit) return edits;
+    const merged = new Map(edits);
+    for (const e of edits.values()) {
+      if (e.nodeId !== dataId) continue;
+      // UN-rebased: the flat LightValue reads `value.intensity`, not `value.data.intensity`.
+      const paramPath = e.paramPath;
+      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
+    }
+    return merged;
+  }, [dataId, edits, targetId]);
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -921,8 +972,10 @@ function DirectChannelsLightR({
   constrained: boolean;
   followsPath: boolean;
 }) {
-  const channels = useLayeredChannels(nodeId);
-  const transients = useTransientEditStore((s) => s.edits);
+  const objChannels = useLayeredChannels(nodeId);
+  const channels = useLightShadingChannels(nodeId, objChannels);
+  const rawTransients = useTransientEditStore((s) => s.edits);
+  const transients = useLightShadingTransients(nodeId, rawTransients);
   // #343 — the position band resolves through the shared evaluator; a stable cache HITS
   // across frames while the curve/target are unchanged (the H48 / ConstrainedR pattern).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);

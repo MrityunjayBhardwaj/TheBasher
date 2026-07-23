@@ -205,3 +205,37 @@ describe('writeAt — the one shared path-writer (H40, re-exported from Animatio
     expect((obj.arr as { v: number }[])[0].v).toBe(2);
   });
 });
+
+// #386 R2 — the FLAT-overlay contract for the split light. A recomposed LightValue is FLAT
+// (intensity is top-level), so a LightData shading channel must be overlaid UN-rebased
+// ('intensity'), NOT under 'data.' the way the mesh path rebases geometry channels. This pins
+// WHY DirectChannelsLightR must not copy useDataParamChannels: a rebased 'data.intensity'
+// channel writes a field the flat light renderer never reads → the animated intensity FREEZES.
+describe('overlayChannels — flat light value (R2, #386)', () => {
+  const makeLight = () =>
+    ({
+      kind: 'PointLight',
+      intensity: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: '#ffffff',
+      distance: 0,
+      decay: 2,
+    }) as unknown as SceneChild;
+
+  it('an UN-rebased intensity channel drives the flat top-level intensity', () => {
+    const out = overlayChannels(makeLight(), [numCh('intensity', 9)], 1, 0) as unknown as {
+      intensity: number;
+    };
+    expect(out.intensity).toBe(9);
+  });
+
+  it('a REBASED data.intensity channel leaves top-level intensity FROZEN (the R2 anti-pattern)', () => {
+    const out = overlayChannels(makeLight(), [numCh('data.intensity', 9)], 1, 0) as unknown as {
+      intensity: number;
+    };
+    // The flat light renderer reads value.intensity, which the rebased channel never touched.
+    expect(out.intensity).toBe(1);
+  });
+});

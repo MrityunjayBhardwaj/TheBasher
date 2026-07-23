@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { PointLightValue } from './types';
 
 export const PointLightParams = z.object({
   intensity: z.number().min(0).max(100).default(1),
@@ -20,7 +19,7 @@ export const PointLightParams = z.object({
 });
 export type PointLightParams = z.infer<typeof PointLightParams>;
 
-export const PointLightNode: NodeDefinition<PointLightParams, PointLightValue> = {
+export const PointLightNode: NodeDefinition<PointLightParams, never> = {
   type: 'PointLight',
   version: 1,
   pure: true,
@@ -29,19 +28,10 @@ export const PointLightNode: NodeDefinition<PointLightParams, PointLightValue> =
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
-  evaluate(params) {
-    // Defensive default for rotation — see DirectionalLight for the why.
-    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
-    const scale = params.scale ?? ([1, 1, 1] as [number, number, number]);
-    return {
-      kind: 'PointLight',
-      intensity: params.intensity,
-      position: params.position,
-      rotation,
-      scale,
-      color: params.color,
-      distance: params.distance,
-      decay: params.decay,
-    };
+  // Retired (#386 S4): a PointLight is now an Object → LightData. Registered SOLELY for the
+  // load-migration's version-ladder normalization; never evaluates. The PointLightValue
+  // interface stays in types.ts as the recomposition target.
+  evaluate(): never {
+    throw new Error('PointLight is retired; projects migrate to Object+LightData on load (#386)');
   },
 };
