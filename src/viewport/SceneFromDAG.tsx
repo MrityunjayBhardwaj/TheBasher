@@ -75,7 +75,7 @@ import {
 } from '../app/nodeConstraints';
 import { childEdges } from '../app/resolveWorldTransform';
 import { NullGlyphR } from './NullGlyph';
-import { CurveLineR, CurveLineChrome } from './CurveLine';
+import { CurveLineChrome } from './CurveLine';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -1500,11 +1500,6 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
       // (editorChrome, render-excluded). Selection comes from the enclosing
       // SceneChildNode band, so the glyph carries no onClick.
       return <NullGlyphR value={value} />;
-    case 'Curve':
-      // #321 — a path: the baked polyline + its control points, drawn as editor chrome (a
-      // curve is FOLLOWED, not rendered — Blender's curve likewise renders nothing without
-      // a bevel). Selection comes from the enclosing SceneChildNode band.
-      return <CurveLineR value={value} />;
     case 'Group':
       return <GroupR value={value} override={override} nodeId={nodeId} />;
     case 'MaterialOverride':

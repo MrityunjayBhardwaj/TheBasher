@@ -123,8 +123,8 @@ const ALL: NodeDefinition[] = [
   // #321 — a Curve: a transformable PATH scene object (control points + Catmull-Rom).
   CurveNode as unknown as NodeDefinition,
   // #385 (Stage C · C2) — the curve's data half (points/closed/resolution, no
-  // transform). The FIRST non-mesh ObjectData. Coexists with the fused Curve
-  // above; the split retires the fused CurveValue kind in a later slice.
+  // transform). The FIRST non-mesh ObjectData. The fused Curve above is now a
+  // retired migration relic (its CurveValue kind is unrepresentable at runtime).
   CurveDataNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,

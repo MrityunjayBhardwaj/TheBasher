@@ -1,7 +1,9 @@
 // CurveLine — the viewport representation of a Curve path (#321). Draws the baked polyline
-// (`value.samples`, LOCAL space — the enclosing group applies the curve's TRS, exactly as a
-// mesh child is posed) plus a small dot at every control point so the authored points read
-// as handles even before #322 makes them grabbable.
+// (`samples`, LOCAL space — the enclosing group applies the curve's TRS, exactly as a mesh
+// child is posed) plus a small dot at every control point so the authored points read as
+// handles even before #322 makes them grabbable. Post-#385 a curve is an Object → CurveData,
+// so `ObjectR`'s curve arm (SceneFromDAG) mounts this with the Object's TRS + the CurveData's
+// samples; the fused-value renderer is gone.
 //
 // `userData.editorChrome` — a curve is a PATH, not render geometry: it exists to be
 // FOLLOWED, not seen. (Blender's curve likewise renders nothing until it has a bevel.) The
@@ -12,23 +14,22 @@
 // onClick here, mirroring NullGlyph. The line itself is thin and hard to hit, so an
 // invisible pick-boost sphere sits at the origin (the light-helper/NullGlyph pattern).
 //
-// REF: src/nodes/types.ts (CurveValue); src/nodes/curveMath.ts (the sampler that produced
+// REF: src/nodes/types.ts (CurveDataValue); src/nodes/curveMath.ts (the sampler that produced
 //      `samples`); src/viewport/NullGlyph.tsx (the chrome + pick-boost pattern this
-//      mirrors); src/render/renderToImage.ts (the editorChrome hide-pass); issue #321.
+//      mirrors); src/render/renderToImage.ts (the editorChrome hide-pass); issue #321/#385.
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad } from './rotation';
-import type { CurveValue, Vec3 } from '../nodes/types';
+import type { Vec3 } from '../nodes/types';
 
 const LINE_COLOR = '#d98a2b';
 const POINT_COLOR = '#f0b357';
 const POINT_RADIUS = 0.07;
 
-// The drawing, decoupled from the value shape so BOTH roads render the identical
-// line: the fused `CurveValue` (CurveLineR below, retired in #385 S4) and the
-// split `Object → CurveData` path (ObjectR's curve arm, SceneFromDAG). TRS is the
-// owner's; `samples`/`points` are LOCAL (the enclosing group applies the TRS).
+// The drawing, decoupled from the value shape. Mounted by ObjectR's curve arm
+// (SceneFromDAG) with the Object's TRS + the CurveData's samples/points (#385).
+// TRS is the owner's; `samples`/`points` are LOCAL (the enclosing group applies it).
 export function CurveLineChrome({
   position,
   rotation,
@@ -80,21 +81,5 @@ export function CurveLineChrome({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>
-  );
-}
-
-// The fused-value wrapper (the #321 road). Pulls TRS + geometry off a single
-// `CurveValue` and hands them to CurveLineChrome. Retired in #385 S4 once the
-// fused `CurveValue` kind is unrepresentable; until then a fused Curve and a
-// split `Object → CurveData` draw byte-identically through the same Chrome.
-export function CurveLineR({ value }: { value: CurveValue }) {
-  return (
-    <CurveLineChrome
-      position={(value.position ?? [0, 0, 0]) as [number, number, number]}
-      rotation={(value.rotation ?? [0, 0, 0]) as [number, number, number]}
-      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-      samples={value.samples ?? []}
-      points={value.points ?? []}
-    />
   );
 }

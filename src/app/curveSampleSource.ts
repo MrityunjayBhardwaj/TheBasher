@@ -38,20 +38,18 @@ import type { EvaluatorCache } from '../core/dag/evaluator';
 import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import type { CurveValue, ObjectValue, Vec3 } from '../nodes/types';
+import type { ObjectValue, Vec3 } from '../nodes/types';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 
-/** The baked LOCAL polyline + closure of a curve, from EITHER the fused `Curve` value or the
- *  split `Object → CurveData` (#385). The seam is otherwise unchanged — samples stay LOCAL and
- *  are measured in world below exactly as before, so #349 (which world the points live in) is
- *  untouched by the split (parity first). */
+/** The baked LOCAL polyline + closure of a curve — the `Object → CurveData` pair (#385; the
+ *  fused `Curve` value kind is retired). The seam is otherwise unchanged — samples stay LOCAL
+ *  and are measured in world below exactly as before, so #349 (which world the points live in)
+ *  is untouched by the split (parity first). */
 function curveGeometryOf(
-  value: CurveValue | ObjectValue | undefined,
+  value: ObjectValue | undefined,
 ): { samples: readonly Vec3[]; closed: boolean } | null {
-  if (!value) return null;
-  if (value.kind === 'Curve') return { samples: value.samples, closed: value.closed === true };
-  if (value.kind === 'Object' && value.data?.kind === 'CurveData') {
+  if (value?.kind === 'Object' && value.data?.kind === 'CurveData') {
     return { samples: value.data.samples, closed: value.data.closed === true };
   }
   return null;
@@ -147,10 +145,7 @@ export function curveSamplerFor(
   // node WITHOUT a full evaluate (nodeRefCandidates probes many nodes through here).
   if (!node || resolveDataParamOwner(state, curveId, 'points') === null) return null;
 
-  const value = evaluate(state, curveId, { ctx, cache }).value as
-    | CurveValue
-    | ObjectValue
-    | undefined;
+  const value = evaluate(state, curveId, { ctx, cache }).value as ObjectValue | undefined;
   const geom = curveGeometryOf(value);
   const samples = geom?.samples;
   if (!geom || !samples || samples.length === 0) return null;

@@ -229,30 +229,10 @@ function GhostChild({ value }: { value: SceneObject }) {
           />
         </mesh>
       );
-    // #324 — the two objects the agent can now CREATE must also be PREVIEWABLE. Without a
-    // ghost they fell to the default below and the diff bar offered the director "add a
-    // curve — accept?" over an unchanged viewport: nothing to approve but a sentence. An
-    // agent proposal you cannot SEE is a proposal you cannot judge.
-    case 'Curve':
-      return (
-        <group
-          position={value.position as [number, number, number]}
-          rotation={degVec3ToRad(value.rotation as [number, number, number])}
-          scale={value.scale as [number, number, number]}
-        >
-          {/* The baked polyline — the same `samples` the real CurveLine draws, so the ghost
-              is the SHAPE the director will get, not a stand-in box for it. */}
-          <line>
-            <bufferGeometry>
-              <bufferAttribute
-                attach="attributes-position"
-                args={[new Float32Array((value.samples ?? []).flat()), 3]}
-              />
-            </bufferGeometry>
-            <lineBasicMaterial transparent opacity={0.6} color="#d98a2b" depthWrite={false} />
-          </line>
-        </group>
-      );
+    // #324 — an object the agent can CREATE must also be PREVIEWABLE. Without a ghost it falls
+    // to the default below and the diff bar offers the director "add a null — accept?" over an
+    // unchanged viewport: nothing to approve but a sentence. (The curve's ghost moved onto the
+    // Object case with the #385 split — a curve is now an Object → CurveData.)
     case 'Null':
       return (
         <mesh position={value.position as [number, number, number]}>
@@ -273,6 +253,28 @@ function GhostChild({ value }: { value: SceneObject }) {
       // gltf/baked/array/mirror handle needs the loaded asset, so those ghost
       // nothing (the same contract GltfAsset has in GHOSTLESS_KINDS above).
       const data = value.data;
+      // #385 — a curve Object ghosts its baked polyline (the same `samples` CurveLineChrome
+      // draws), at the Object's TRS. Carried over from the retired fused-Curve ghost so an
+      // agent's "add/change a curve" proposal is still SEEN, not just described.
+      if (data?.kind === 'CurveData') {
+        return (
+          <group
+            position={value.position as [number, number, number]}
+            rotation={degVec3ToRad(value.rotation as [number, number, number])}
+            scale={value.scale as [number, number, number]}
+          >
+            <line>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  args={[new Float32Array((data.samples ?? []).flat()), 3]}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial transparent opacity={0.6} color="#d98a2b" depthWrite={false} />
+            </line>
+          </group>
+        );
+      }
       if (!data || data.kind !== 'MeshData') return null;
       const desc = data.geometry.descriptor;
       const color = data.material && 'base' in data.material ? data.material.base.color : '#ffffff';

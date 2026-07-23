@@ -23,8 +23,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { mintId } from '../app/identifiedArray';
-import { sampleCurve } from './curveMath';
-import type { CurveValue, Vec3 } from './types';
+import type { Vec3 } from './types';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -39,7 +38,7 @@ export const MIN_CURVE_POINTS = 2;
  *  (`mintId(_, 'cp')`). */
 export const CurvePointSchema = z.object({ id: z.string(), co: Vec3Schema });
 /** The TS view uses `Vec3` (readonly) for `co` so it lines up with the rest of the curve code
- *  (`curveMath`, the builders, `CurveValue`); the schema still validates a plain 3-tuple. */
+ *  (`curveMath`, the builders, `CurveDataValue`); the schema still validates a plain 3-tuple. */
 export type CurvePoint = { id: string; co: Vec3 };
 
 export const CurveParams = z.object({
@@ -64,7 +63,7 @@ export const CurveParams = z.object({
 });
 export type CurveParams = z.infer<typeof CurveParams>;
 
-export const CurveNode: NodeDefinition<CurveParams, CurveValue> = {
+export const CurveNode: NodeDefinition<CurveParams, never> = {
   type: 'Curve',
   version: 2,
   pure: true,
@@ -98,21 +97,11 @@ export const CurveNode: NodeDefinition<CurveParams, CurveValue> = {
   // with 'mesh' and a camera with 'camera'. Leading with 'transform' would open a Curve on
   // its TRS and hide the path itself.
   inspectorSections: ['curve', 'transform', 'constraint', 'driver'],
-  evaluate(params) {
-    // The ONE {id,co}[] → co[] boundary: the sampler, the world seam (curveSampleSource) and
-    // the renderer (CurveLine) stay coordinate-only, and CurveValue.points stays Vec3[].
-    const entries = (params.points ?? []) as CurvePoint[];
-    const points = entries.map((e) => e.co);
-    const closed = params.closed ?? false;
-    const resolution = params.resolution ?? 16;
-    return {
-      kind: 'Curve',
-      position: (params.position ?? [0, 0, 0]) as Vec3,
-      rotation: (params.rotation ?? [0, 0, 0]) as Vec3,
-      scale: (params.scale ?? [1, 1, 1]) as Vec3,
-      points,
-      closed,
-      samples: sampleCurve(points, closed, resolution),
-    };
+  // Retired (#385 S4): a Curve is now an Object → CurveData, so no value kind carries the fused
+  // curve any longer — it is unrepresentable at runtime. This node stays registered SOLELY so
+  // the load-migration (migrateFusedCurveToSplit) can normalize an old fused curve through its
+  // OWN version ladder (v1 bare Vec3 points → v2 {id,co}) before splitting it. It never evaluates.
+  evaluate(): never {
+    throw new Error('Curve is retired; projects migrate to Object+CurveData on load (#385)');
   },
 };

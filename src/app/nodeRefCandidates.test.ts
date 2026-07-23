@@ -11,6 +11,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { makeSplitCurve } from '../test-utils/splitCurve';
 import { nodeRefCandidates } from './nodeRefCandidates';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -41,10 +42,12 @@ function buildScene(): DagState {
       to: { node: 'n_scene', socket: 'children' },
     },
     { type: 'addNode', nodeId: 'geo_sample', nodeType: 'SampleGeometry', params: {} },
-    // A Curve (seeds a valid 2-point path by default → curveSamplerFor resolves).
-    { type: 'addNode', nodeId: 'geo_curve', nodeType: 'Curve', params: {} },
   ];
   for (const op of ops) state = applyOp(state, op).next;
+  // #385 — a curve is an Object → CurveData (default 4-point path → curveSamplerFor resolves the
+  // Object). The CurveData leaf evaluates to kind 'CurveData', not 'Object', so it is NOT a curve
+  // candidate — only 'geo_curve' (the Object) qualifies.
+  state = makeSplitCurve(state, { objectId: 'geo_curve' }).state;
   return state;
 }
 
