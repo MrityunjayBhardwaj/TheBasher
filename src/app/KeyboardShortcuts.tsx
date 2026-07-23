@@ -61,6 +61,7 @@ import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { historyUndo, historyRedo } from './history';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { getActiveCurvePoint } from './curvePointSelection';
@@ -293,9 +294,10 @@ export function KeyboardShortcuts() {
         if (mod && (isZ || isY)) {
           if (isNativeUndoTarget(e.target)) return; // let the browser do text undo
           e.preventDefault();
-          // Shift+Z or Y → redo; plain Z → undo.
-          if ((isZ && e.shiftKey) || isY) useDagStore.getState().redo();
-          else useDagStore.getState().undo();
+          // Shift+Z or Y → redo; plain Z → undo. Routed through the history seam
+          // so a move also drops any position-addressed sub-selection (#326).
+          if ((isZ && e.shiftKey) || isY) historyRedo();
+          else historyUndo();
           return;
         }
       }
