@@ -16,6 +16,7 @@ import { useDiffStore, acceptSelectedOps, rejectDiff } from './store';
 import { ClosurePreservationError } from '../closure/expand';
 import type { ClosureSpec } from '../closure/types';
 import type { Op } from '../../core/dag/types';
+import { makeSplitCube } from '../../test-utils/splitCube';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -440,5 +441,40 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
     expect(diff.ops).toHaveLength(3);
     expect(diff.closure?.nodes.has(newSphereId)).toBe(true);
     expect(diff.closure?.nodes.has('scene')).toBe(true);
+  });
+});
+
+describe('#423 — propose surfaces a REPORTABLE wrong-half write', () => {
+  it('flags a data-param write aimed at the Object half; leaves a correct write unflagged', () => {
+    const { state, objectId, dataId } = makeSplitCube(emptyDagState(), { objectId: 'n_cube' });
+
+    // Wrong half: material lives on the BoxData, not the Object.
+    const wrong = useDiffStore.getState().propose(
+      state,
+      [
+        {
+          type: 'setParam',
+          nodeId: objectId,
+          paramPath: 'material.base.color',
+          value: '#ff0000',
+        },
+      ],
+      'recolor',
+    );
+    expect(wrong.reportable).toBeDefined();
+    expect(wrong.reportable?.[0]?.badge).toBe('stripped-write');
+    expect(wrong.reportable?.[0]?.nodeId).toBe(objectId);
+
+    useDiffStore.getState().reset();
+
+    // Correct half: same write on the owning BoxData carries no reportable.
+    const right = useDiffStore
+      .getState()
+      .propose(
+        state,
+        [{ type: 'setParam', nodeId: dataId, paramPath: 'material.base.color', value: '#ff0000' }],
+        'recolor',
+      );
+    expect(right.reportable).toBeUndefined();
   });
 });

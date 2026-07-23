@@ -78,6 +78,14 @@ function setAtPath(obj: unknown, path: string, value: unknown): unknown {
   return root;
 }
 
+// Root key of a param path, matching splitPath's dot-only resolution:
+// 'material.base.color' → 'material', 'position' → 'position'. Used by
+// applySetParam to detect a wrong-half write (#423).
+function paramRootKey(path: string): string {
+  const dot = path.indexOf('.');
+  return dot === -1 ? path : path.slice(0, dot);
+}
+
 // ---------------------------------------------------------------------------
 // Op apply
 // ---------------------------------------------------------------------------
@@ -85,6 +93,27 @@ function setAtPath(obj: unknown, path: string, value: unknown): unknown {
 export interface ApplyResult {
   next: DagState;
   inverse: Op;
+  /**
+   * A surfaced no-op signal (#423). Set when an op was ACCEPTED (it applied and
+   * has an inverse) but changed nothing because its target did not own the
+   * written param — a non-strict schema stripped the key, so `safeParse`
+   * succeeded and the write silently no-op'd. Accepted, not rejected
+   * (REPORTABLE policy): the diff surface renders it so the user sees the
+   * op-vs-subject mismatch before committing. Absent when the op did real work.
+   */
+  reportable?: Reportable;
+}
+
+/**
+ * A surfaced no-op. `badge` is a kind id in the centralised badge registry
+ * (`src/app/badges.ts`); core emits the opaque id and the app layer renders it
+ * (label/tone/filtering live there — core stays UI-free).
+ */
+export interface Reportable {
+  badge: string;
+  nodeId: string;
+  paramPath: string;
+  reason: string;
 }
 
 export function applyOp(state: DagState, op: Op): ApplyResult {
@@ -294,6 +323,29 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
     paramPath: op.paramPath,
     value: prior,
   };
+  // #423 — wrong-half write. `setAtPath` happily creates a root key this node's
+  // schema does not own; a non-strict schema then STRIPS it, so `safeParse`
+  // succeeds and the write silently no-op'd. Detect the strip (root key present
+  // pre-parse, gone post-parse) and mark the op REPORTABLE — accepted, but
+  // surfaced instead of silent. A legitimate same-value write keeps its key
+  // through the parse and is never flagged.
+  const rootKey = paramRootKey(op.paramPath);
+  if (
+    rootKey !== '' &&
+    Object.prototype.hasOwnProperty.call(nextParams as object, rootKey) &&
+    !Object.prototype.hasOwnProperty.call(parsed.data as object, rootKey)
+  ) {
+    return {
+      next,
+      inverse,
+      reportable: {
+        badge: 'stripped-write',
+        nodeId: op.nodeId,
+        paramPath: op.paramPath,
+        reason: `'${rootKey}' is not a parameter of ${node.type}`,
+      },
+    };
+  }
   return { next, inverse };
 }
 
