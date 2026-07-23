@@ -2718,9 +2718,18 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
           sectionId={sectionId}
           declaredSections={declared}
         >
-          {(grouped.get(sectionId) ?? []).map(([key, value]) => (
-            <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
-          ))}
+          {/* #385 — a data node with a CUSTOM section control (CurveData's 'curve' →
+              CurvePointRows) must render it HERE too, not only in the main-node block below.
+              Curve is the first such data node — box/sphere's data sections (mesh/material)
+              render fine through ParamRow (material via its own special-case), so this parity
+              gap was invisible until now. `points` has no generic row, so it is filtered out
+              of the raw rows to avoid a broken double-render; closed/resolution stay as rows. */}
+          {sectionId === 'curve' ? <CurvePointRows nodeId={dataNode.id} /> : null}
+          {(grouped.get(sectionId) ?? [])
+            .filter(([key]) => !(sectionId === 'curve' && key === 'points'))
+            .map(([key, value]) => (
+              <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
+            ))}
         </SectionCard>
       ))}
     </div>

@@ -19,6 +19,7 @@
 // a test that reaches past the affordance cannot test the affordance (#327).
 
 import { expect, test } from './_fixtures';
+import { splitCurveOps } from './_splitCurve';
 
 interface CurveSample {
   point: [number, number, number];
@@ -56,28 +57,25 @@ async function boot(page: import('@playwright/test').Page) {
 /** A curve wired into the scene, posed so the two compositions have something to disagree
  *  about: an offset, a rotation, and a NON-UNIFORM scale. */
 async function addPosedCurve(page: import('@playwright/test').Page): Promise<string> {
-  await page.evaluate(() => {
+  const ops = splitCurveOps({
+    objectId: 'n_path',
+    points: [
+      [0, 0, 0],
+      [10, 0, 0],
+      [11, 0, 0],
+      [12, 0, 0],
+    ],
+    closed: false,
+    resolution: 32,
+    position: [1, 2, -3],
+    rotation: [0, 35, 0],
+    scale: [2, 1, 0.5],
+  });
+  await page.evaluate((ops) => {
     const dag = (window as unknown as UiWindow).__basher_dag.getState();
     dag.dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: 'n_path',
-          nodeType: 'Curve',
-          params: {
-            points: [
-              [0, 0, 0],
-              [10, 0, 0],
-              [11, 0, 0],
-              [12, 0, 0],
-            ],
-            closed: false,
-            resolution: 32,
-            position: [1, 2, -3],
-            rotation: [0, 35, 0],
-            scale: [2, 1, 0.5],
-          },
-        },
+        ...ops,
         {
           type: 'connect',
           from: { node: 'n_path', socket: 'out' },
@@ -87,7 +85,7 @@ async function addPosedCurve(page: import('@playwright/test').Page): Promise<str
       'user',
       'add a posed path',
     );
-  });
+  }, ops);
   await page.waitForTimeout(300);
   return 'n_path';
 }

@@ -18,6 +18,7 @@
 // two followed cases go red and the static control stays green.
 
 import { expect, test } from './_fixtures';
+import { splitCurveOps } from './_splitCurve';
 
 type V3 = [number, number, number];
 
@@ -60,27 +61,24 @@ async function boot(page: import('@playwright/test').Page) {
 /** Put n_box on a curve that is offset + rotated + NON-UNIFORMLY scaled, so the followed world
  *  point can only be right if the whole world compose is right (the V100 pair). */
 async function followPosedPath(page: import('@playwright/test').Page) {
-  await page.evaluate(() => {
+  const curveOps = splitCurveOps({
+    objectId: 'n_path',
+    points: [
+      [0, 0, 0],
+      [10, 0, 0],
+      [11, 0, 0],
+      [12, 0, 0],
+    ],
+    closed: false,
+    resolution: 32,
+    position: [1, 2, -3],
+    rotation: [0, 35, 0],
+    scale: [2, 1, 0.5],
+  });
+  await page.evaluate((curveOps) => {
     (window as unknown as UiWindow).__basher_dag.getState().dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: 'n_path',
-          nodeType: 'Curve',
-          params: {
-            points: [
-              [0, 0, 0],
-              [10, 0, 0],
-              [11, 0, 0],
-              [12, 0, 0],
-            ],
-            closed: false,
-            resolution: 32,
-            position: [1, 2, -3],
-            rotation: [0, 35, 0],
-            scale: [2, 1, 0.5],
-          },
-        },
+        ...curveOps,
         {
           type: 'connect',
           from: { node: 'n_path', socket: 'out' },
@@ -96,7 +94,7 @@ async function followPosedPath(page: import('@playwright/test').Page) {
       'user',
       'follow a posed path',
     );
-  });
+  }, curveOps);
   await page.waitForTimeout(400);
 }
 

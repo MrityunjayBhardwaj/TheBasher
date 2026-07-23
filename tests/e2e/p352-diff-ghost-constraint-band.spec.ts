@@ -34,6 +34,7 @@
 
 import { expect, test, type Page } from './_fixtures';
 import { splitCubeOps } from './_splitCube';
+import { splitCurveOps } from './_splitCurve';
 
 const FOLLOWER_SIZE = 0.37; // unique in the scene → picks this subject's ghost, only it
 const CONTROL_SIZE = 0.53; // the static control: proposed-alongside, constrained by nothing
@@ -84,28 +85,11 @@ async function seedScene(page: Page) {
   // ghost discriminator) live on each BoxData; the Object keeps the id, so the
   // Follow-Path proposal, the scene connect and the ghost signature are unchanged.
   await page.evaluate(
-    ({ followerOps, controlOps }) => {
+    ({ pathOps, followerOps, controlOps }) => {
       const dag = (window as unknown as GhostWin).__basher_dag.getState();
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: 'n_p352_path',
-            nodeType: 'Curve',
-            params: {
-              points: [
-                [0, 0, 0],
-                [10, 0, 0],
-                [11, 0, 0],
-                [12, 0, 0],
-              ],
-              closed: false,
-              resolution: 32,
-              position: [1, 2, -3],
-              rotation: [0, 35, 0],
-              scale: [2, 1, 0.5],
-            },
-          },
+          ...pathOps,
           {
             type: 'connect',
             from: { node: 'n_p352_path', socket: 'out' },
@@ -129,6 +113,20 @@ async function seedScene(page: Page) {
       );
     },
     {
+      pathOps: splitCurveOps({
+        objectId: 'n_p352_path',
+        points: [
+          [0, 0, 0],
+          [10, 0, 0],
+          [11, 0, 0],
+          [12, 0, 0],
+        ],
+        closed: false,
+        resolution: 32,
+        position: [1, 2, -3],
+        rotation: [0, 35, 0],
+        scale: [2, 1, 0.5],
+      }),
       followerOps: splitCubeOps({
         objectId: 'n_p352_box',
         position: [0, 0, 0],

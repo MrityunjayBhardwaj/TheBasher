@@ -27,7 +27,16 @@ interface ThreeObjLike {
 interface BasherWin {
   __basher_dag: {
     getState(): {
-      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params: Record<string, unknown>;
+            inputs?: Record<string, { node?: string }>;
+          }
+        >;
+      };
       dispatchAtomic: (ops: unknown[], src: string, d: string) => void;
     };
   };
@@ -48,7 +57,13 @@ async function addCurve(page: import('@playwright/test').Page): Promise<string> 
 
   return page.evaluate(() => {
     const s = (window as unknown as BasherWin).__basher_dag.getState().state;
-    return Object.keys(s.nodes).find((k) => s.nodes[k].type === 'Curve')!;
+    return Object.keys(s.nodes).find((k) => {
+      // #385 — a curve is an Object (the pose) posing a CurveData (the points); it is what
+      // selection/sampling name. The fused 'Curve' node type is retired.
+      const n = s.nodes[k];
+      const d = n.inputs?.data?.node;
+      return n.type === 'Object' && !!d && s.nodes[d]?.type === 'CurveData';
+    })!;
   });
 }
 
@@ -70,7 +85,13 @@ test('a Curve is added from the menu, wired into the scene, and renders its path
   const drawn = await page.evaluate(() => {
     const w = window as unknown as BasherWin;
     const s = w.__basher_dag.getState().state;
-    const curveId = Object.keys(s.nodes).find((k) => s.nodes[k].type === 'Curve')!;
+    const curveId = Object.keys(s.nodes).find((k) => {
+      // #385 — a curve is an Object (the pose) posing a CurveData (the points); it is what
+      // selection/sampling name. The fused 'Curve' node type is retired.
+      const n = s.nodes[k];
+      const d = n.inputs?.data?.node;
+      return n.type === 'Object' && !!d && s.nodes[d]?.type === 'CurveData';
+    })!;
     const scene = Object.values(s.nodes).find((n) => n.type === 'Scene');
     return {
       wired: JSON.stringify((scene as { inputs?: unknown }).inputs ?? {}).includes(`"${curveId}"`),
@@ -192,8 +213,10 @@ test('editing a point moves the path — the panel, the render and the seam all 
 
   // The authored param changed …
   const points = await page.evaluate((curveId) => {
+    // #385 — the points live on the CurveData reached through the Object's `data` socket.
     const s = (window as unknown as BasherWin).__basher_dag.getState().state;
-    return (s.nodes[curveId].params.points as { id: string; co: number[] }[]).map((e) => e.co);
+    const dataId = s.nodes[curveId].inputs?.data?.node ?? curveId;
+    return (s.nodes[dataId].params.points as { id: string; co: number[] }[]).map((e) => e.co);
   }, id);
   expect(points[1][1]).toBe(6);
 
