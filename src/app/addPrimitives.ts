@@ -163,6 +163,49 @@ export function buildAddPrimitiveOps(
     };
   }
 
+  // #384 Stage C (C1 Slice 3) — a Sphere is the object↔data split, exactly like the Cube: an
+  // Object (the pose) wired to a SphereData (geometry + material), then into the scene. Selection
+  // + chained mutators land on the Object (the posable half); the SphereData owns radius/segments
+  // + material. This makes new spheres split-native — the same pair the load-migration produces
+  // for old fused SphereMesh saves (K23) — so "Sphere" and the migration converge on one shape.
+  if (kind === 'Sphere') {
+    const dataId = newId('data');
+    const objId = newId('obj');
+    return {
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: dataId,
+          nodeType: 'SphereData',
+          params: {
+            radius: 0.5,
+            widthSegments: 24,
+            heightSegments: 16,
+            material: { name: 'default', color: '#88aaff' },
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: objId,
+          nodeType: 'Object',
+          params: paramsFor('Sphere', position),
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: objId, socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: objId, socket: 'out' },
+          to: { node: sceneRef.node, socket: 'children' },
+        },
+      ],
+      description: `Add ${humanLabel('Sphere')}`,
+      newNodeId: objId,
+    };
+  }
+
   const id = newId(prefixFor(kind));
   const ops: Op[] = [];
   const params = paramsFor(kind, position);
@@ -176,7 +219,7 @@ export function buildAddPrimitiveOps(
   // Wire into the scene where applicable. Meshes go under .children,
   // lights under .lights. Cameras + empties stay floating (the user
   // wires them deliberately).
-  if (isMesh(kind) || kind === 'Null' || kind === 'Curve') {
+  if (kind === 'Null' || kind === 'Curve') {
     ops.push({
       type: 'connect',
       from: { node: id, socket: 'out' },
@@ -198,7 +241,6 @@ export function buildAddPrimitiveOps(
 }
 
 function prefixFor(kind: PrimitiveKind): string {
-  if (isMesh(kind)) return 'mesh';
   if (isLight(kind)) return 'light';
   if (isCamera(kind)) return 'cam';
   if (isCompute(kind)) return 'num';
@@ -238,22 +280,17 @@ function isSolverKind(kind: PrimitiveKind): boolean {
  *  scene object ends up creatable but un-referrable (#324). */
 export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
-    // #365 Phase 5a (Slice 1b) — a Cube is now the split; the node the director selects and
-    // refers to is the Object (the BoxData is its data leaf, not a scene object).
+    // #365 Phase 5a / #384 Stage C — a Cube and a Sphere are both the object↔data split; the
+    // node the director selects and refers to is the Object (the BoxData/SphereData is its data
+    // leaf, not a scene object). Both mint the split via the early-return branches above; this
+    // mapping only feeds identify's ALL_PRIMITIVE_TYPES, so both resolve to their real 'Object'
+    // node type rather than a fused kind.
     case 'Cube':
-      return 'Object';
     case 'Sphere':
-      return 'SphereMesh';
+      return 'Object';
     default:
       return kind; // DirectionalLight, PointLight, etc. — direct mapping
   }
-}
-
-/** Fused mesh primitives (still geometry+transform in one node). Cube is NO LONGER here —
- *  it builds the Object+BoxData split via the early-return branch above (#365 Phase 5a).
- *  Sphere stays fused until a SphereData node exists. */
-function isMesh(kind: PrimitiveKind): boolean {
-  return kind === 'Sphere';
 }
 
 function isLight(kind: PrimitiveKind): boolean {
@@ -333,20 +370,12 @@ function humanLabel(kind: PrimitiveKind): string {
  *  else accepts the spawn point. */
 function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown> {
   switch (kind) {
-    // #365 Phase 5a (Slice 1b) — Cube's params are the OBJECT half's TRS only (the BoxData it
-    // points at owns the geometry + material). The split branch above wires the pair; this
-    // supplies the Object node's params.
+    // #365 Phase 5a / #384 Stage C — Cube's and Sphere's params are the OBJECT half's TRS only
+    // (the BoxData/SphereData they point at owns the geometry + material). The split branches
+    // above wire the pair; this supplies the Object node's params.
     case 'Cube':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Sphere':
-      return {
-        radius: 0.5,
-        widthSegments: 24,
-        heightSegments: 16,
-        position,
-        rotation: [0, 0, 0],
-        material: { name: 'default', color: '#88aaff' },
-      };
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'DirectionalLight':
       return { intensity: 1.0, position, color: '#ffffff' };
     case 'PointLight':

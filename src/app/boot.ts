@@ -710,35 +710,57 @@ export function boot(): Promise<void> {
         const side = Math.max(1, Math.ceil(Math.cbrt(n)));
         const spacing = 0.9;
         const offset = ((side - 1) * spacing) / 2;
+        // #384 Stage C — a sphere is the Object+SphereData split; the fused 'SphereMesh' value
+        // kind retires in Slice 4, so the seed mints the split pair (an Object posing a
+        // SphereData) to survive the type-lever. `ids` holds the Object ids (the scene children,
+        // what callers select/read); `dataIds` holds their SphereData leaves (torn down alongside
+        // in __basher_perf_clear).
         const ids: string[] = [];
+        const dataIds: string[] = [];
         const ops: Op[] = [];
         for (let i = 0; i < n; i++) {
-          const id = `perfstress_${i}`;
-          ids.push(id);
+          const objId = `perfstress_${i}`;
+          const dataId = `perfstress_data_${i}`;
+          ids.push(objId);
+          dataIds.push(dataId);
           const gx = i % side;
           const gy = Math.floor(i / side) % side;
           const gz = Math.floor(i / (side * side));
           ops.push({
             type: 'addNode',
-            nodeId: id,
-            nodeType: 'SphereMesh',
+            nodeId: dataId,
+            nodeType: 'SphereData',
             params: {
               radius: 0.3,
               widthSegments: segments,
               heightSegments: segments,
-              position: [gx * spacing - offset, gy * spacing - offset, gz * spacing - offset],
-              rotation: [0, 0, 0],
               material: { name: 'default', color: '#88aaff' },
             },
           });
           ops.push({
+            type: 'addNode',
+            nodeId: objId,
+            nodeType: 'Object',
+            params: {
+              position: [gx * spacing - offset, gy * spacing - offset, gz * spacing - offset],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+            },
+          });
+          ops.push({
             type: 'connect',
-            from: { node: id, socket: 'out' },
+            from: { node: dataId, socket: 'out' },
+            to: { node: objId, socket: 'data' },
+          });
+          ops.push({
+            type: 'connect',
+            from: { node: objId, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           });
         }
         dag.dispatchAtomic(ops, 'user', `perf-stress: ${n} spheres @ ${segments}seg`);
         w.__basher_perf_stress_ids = ids;
+        w.__basher_perf_stress_data_ids = dataIds;
         return { meshCount: n, segments, sceneId, firstMeshId: ids[0] ?? null };
       };
       // Remove the seeded stress meshes, restoring a clean scene between
@@ -749,10 +771,15 @@ export function boot(): Promise<void> {
       w.__basher_perf_clear = () => {
         const dag = useDagStore.getState();
         const ids = (w.__basher_perf_stress_ids as string[] | undefined) ?? [];
+        const dataIds = (w.__basher_perf_stress_data_ids as string[] | undefined) ?? [];
         if (ids.length === 0) return 0;
         const sceneRef = dag.state.outputs.scene;
         const sceneId = sceneRef?.node;
         const ops: Op[] = [];
+        // Tear down the split pair (#384 Stage C): disconnect each Object from the scene AND its
+        // SphereData leaf from the Object's `data` socket, so neither is still consumed when
+        // removed (applyRemoveNode throws while a node's output is still wired). Disconnects
+        // first, then removes, all in ONE dispatchAtomic (= one undo).
         if (sceneId) {
           for (const id of ids) {
             ops.push({
@@ -762,9 +789,18 @@ export function boot(): Promise<void> {
             });
           }
         }
+        for (let i = 0; i < dataIds.length; i++) {
+          ops.push({
+            type: 'disconnect',
+            from: { node: dataIds[i], socket: 'out' },
+            to: { node: ids[i], socket: 'data' },
+          });
+        }
         for (const id of ids) ops.push({ type: 'removeNode', nodeId: id });
+        for (const id of dataIds) ops.push({ type: 'removeNode', nodeId: id });
         dag.dispatchAtomic(ops, 'user', `perf-stress clear: ${ids.length}`);
         w.__basher_perf_stress_ids = [];
+        w.__basher_perf_stress_data_ids = [];
         return ids.length;
       };
     }

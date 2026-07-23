@@ -51,12 +51,29 @@ describe('buildAddPrimitiveOps', () => {
     expect(r.newNodeId).toBe(r.ops[1].nodeId);
   });
 
-  it('Sphere: emits addNode(SphereMesh) with default radius/segments + connect', () => {
-    const r = buildAddPrimitiveOps(seedSceneState(), 'Sphere', [0, 0, 0])!;
-    if (r.ops[0].type !== 'addNode') throw new Error();
-    expect(r.ops[0].nodeType).toBe('SphereMesh');
+  it('Sphere: emits the object↔data split — SphereData + Object + wire + connect to scene.children', () => {
+    // #384 Stage C — a Sphere is the split-native pair now (mirroring Cube): a SphereData
+    // (geometry radius/segments + material) and an Object (pose) wired data→object, the Object
+    // into scene.children. Selection lands on the Object, so newNodeId is the Object's id.
+    const r = buildAddPrimitiveOps(seedSceneState(), 'Sphere', [1, 2, 3])!;
+    expect(r.ops).toHaveLength(4);
+    if (r.ops[0].type !== 'addNode' || r.ops[1].type !== 'addNode') throw new Error();
+    expect(r.ops[0].nodeType).toBe('SphereData');
     expect((r.ops[0].params as { radius: number }).radius).toBe(0.5);
-    expect(r.ops[1]).toMatchObject({ to: { socket: 'children' } });
+    expect(r.ops[1].nodeType).toBe('Object');
+    expect((r.ops[1].params as { position: number[] }).position).toEqual([1, 2, 3]);
+    // SphereData → Object.data, then Object → scene.children.
+    expect(r.ops[2]).toMatchObject({
+      type: 'connect',
+      from: { node: r.ops[0].nodeId },
+      to: { node: r.ops[1].nodeId, socket: 'data' },
+    });
+    expect(r.ops[3]).toMatchObject({
+      type: 'connect',
+      from: { node: r.ops[1].nodeId },
+      to: { node: 'n_scene', socket: 'children' },
+    });
+    expect(r.newNodeId).toBe(r.ops[1].nodeId);
   });
 
   it('lights connect to scene.lights, not children', () => {

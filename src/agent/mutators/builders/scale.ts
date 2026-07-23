@@ -43,12 +43,12 @@ export const scaleMutator: MutatorDefinition<ScaleSpec> = {
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
       if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
-      // #365 Phase 5a — a split Object's geometry `size` lives on the BoxData it points at, so
-      // resolve the true size owner (self for a fused mesh, the data node for a split Object).
+      // #365 Phase 5a / #384 Stage C — a split Object's geometry `size`/`radius` lives on the
+      // BoxData/SphereData it points at, so resolve the true owner (self for a fused mesh, the
+      // data node for a split Object).
       const sizeOwner = resolveDataParamOwner(state, id, 'size');
-      const hasRadius =
-        typeof (node.params as Record<string, unknown> | undefined)?.radius === 'number';
-      if (!sizeOwner && !hasRadius) {
+      const radiusOwner = resolveDataParamOwner(state, id, 'radius');
+      if (!sizeOwner && !radiusOwner) {
         return {
           ok: false,
           reason: `Target "${id}" (${node.type}) has no scalable size/radius param.`,
@@ -66,8 +66,8 @@ export const scaleMutator: MutatorDefinition<ScaleSpec> = {
       typeof spec.factor === 'number' ? spec.factor : (factor[0] + factor[1] + factor[2]) / 3;
 
     for (const id of spec.targetSelectors) {
-      const node = state.nodes[id];
-      // Size → the resolved owner (the BoxData for a split Object); Sphere `radius` → self.
+      // Size/radius → the resolved owner (the BoxData/SphereData for a split Object, or self for a
+      // fused mesh). A split Object owns neither param directly, so both reach through `data`.
       const sizeOwner = resolveDataParamOwner(state, id, 'size');
       if (sizeOwner) {
         const size = (state.nodes[sizeOwner].params as Record<string, unknown>).size as [
@@ -81,12 +81,17 @@ export const scaleMutator: MutatorDefinition<ScaleSpec> = {
           paramPath: 'size',
           value: [size[0] * factor[0], size[1] * factor[1], size[2] * factor[2]],
         });
-      } else if (typeof (node.params as Record<string, unknown>).radius === 'number') {
+        continue;
+      }
+      const radiusOwner = resolveDataParamOwner(state, id, 'radius');
+      if (radiusOwner) {
+        const radius = (state.nodes[radiusOwner].params as Record<string, unknown>)
+          .radius as number;
         ops.push({
           type: 'setParam',
-          nodeId: id,
+          nodeId: radiusOwner,
           paramPath: 'radius',
-          value: ((node.params as Record<string, unknown>).radius as number) * uniformFactor,
+          value: radius * uniformFactor,
         });
       }
     }
