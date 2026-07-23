@@ -25,6 +25,7 @@ import type { EvaluatorCache } from '../core/dag/evaluator';
 import { trackToForTarget, resolveTrackToTarget } from './nodeConstraints';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
+import { isAreaLightNode, lightParamsOf } from './lightNode';
 
 type Vec3 = [number, number, number];
 
@@ -50,14 +51,20 @@ function isVec3(v: unknown): v is Vec3 {
 export function enumerateStudioLights(nodes: Readonly<Record<string, Node>>): StudioLightEntry[] {
   const out: StudioLightEntry[] = [];
   for (const [nodeId, node] of Object.entries(nodes)) {
-    if (node.type !== 'AreaLight') continue;
+    // #386 C3 — a rig light is now an Object posing an Area LightData (or, until its project
+    // migrates, a still-fused AreaLight). Recognise both through `data`; the Track-To targets
+    // the Object id (inherited), so the aim check is unchanged.
+    if (!isAreaLightNode(nodes, nodeId)) continue;
     if (!trackToForTarget(nodes, nodeId)) continue; // panel = rig-aimed lights only
-    const p = node.params as { position?: unknown; tex?: unknown };
+    // The WORLD position stays on the Object (it owns the TRS); only `tex` moved to the
+    // LightData, so read it through `data` via lightParamsOf.
+    const p = node.params as { position?: unknown };
+    const tex = lightParamsOf(nodes, nodeId)?.tex;
     out.push({
       nodeId,
       position: isVec3(p.position) ? p.position : [0, 0, 0],
       name: nodeDisplayName(node),
-      tex: typeof p.tex === 'string' ? p.tex : undefined,
+      tex: typeof tex === 'string' ? tex : undefined,
     });
   }
   return out;
@@ -71,7 +78,7 @@ export function enumerateStudioLights(nodes: Readonly<Record<string, Node>>): St
  */
 export function resolveRigTarget(state: DagState, ctx: EvalCtx, cache?: EvaluatorCache): Vec3 {
   for (const nodeId of Object.keys(state.nodes)) {
-    if (state.nodes[nodeId]?.type !== 'AreaLight') continue;
+    if (!isAreaLightNode(state.nodes, nodeId)) continue;
     const aim = resolveTrackToTarget(state, nodeId, ctx, cache);
     if (aim) return aim;
   }
@@ -82,13 +89,15 @@ export function resolveRigTarget(state: DagState, ctx: EvalCtx, cache?: Evaluato
  *  position — rig lights are top-level). */
 function entryFor(nodes: Readonly<Record<string, Node>>, nodeId: string): StudioLightEntry | null {
   const node = nodes[nodeId];
-  if (!node || node.type !== 'AreaLight') return null;
-  const p = node.params as { position?: unknown; tex?: unknown };
+  if (!node || !isAreaLightNode(nodes, nodeId)) return null;
+  // Position stays on the Object (the pose); tex moved to the LightData (read via `data`).
+  const p = node.params as { position?: unknown };
+  const tex = lightParamsOf(nodes, nodeId)?.tex;
   return {
     nodeId,
     position: isVec3(p.position) ? p.position : [0, 0, 0],
     name: nodeDisplayName(node),
-    tex: typeof p.tex === 'string' ? p.tex : undefined,
+    tex: typeof tex === 'string' ? tex : undefined,
   };
 }
 

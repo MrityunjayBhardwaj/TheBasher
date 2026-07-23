@@ -19,6 +19,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useDagStore } from '../core/dag/store';
+import { isLightNode } from './lightNode';
 import type { NodeId, Op } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
@@ -491,22 +492,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     );
   }
 
-  // #231 Inc 2a — a light's "home list" on the Scene is `lights` (the rich
-  // top-level band: helpers, direct channels, Track-To), a mesh's is `children`.
-  // A Group only has `children`, so a light dropped into a Group goes there.
-  const LIGHT_NODE_TYPES = new Set([
-    'DirectionalLight',
-    'PointLight',
-    'SpotLight',
-    'AreaLight',
-    'AmbientLight',
-  ]);
-
   // #227 Slice 1 — the list socket a row can RECEIVE the dragged node into
   // (reparent target): a Group's `children`, or one of the Scene root's lists.
   // #231 Inc 2a — the Scene-root target is kind-aware: a light rejoins
   // `scene.lights`, everything else `scene.children` (so unparenting a grouped
   // light returns it to the rich light band, not the generic children band).
+  // #386 C3 — a posable light's row type is now 'Object' (it poses a LightData), so the
+  // "is this a light?" question must reach through `data` (isLightNode), NOT test the row's
+  // node type against a fixed set — otherwise every unparented split light lands in
+  // `children` and loses the rich band (a cube-Object still correctly goes to `children`).
   // Returns null for rows that can't hold children (leaves, Transform/Material
   // wrappers — single `target` socket, glTF children).
   function reparentSocket(
@@ -515,7 +509,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   ): { node: NodeId; socket: string } | null {
     if (dstRow.nodeType === 'Group') return { node: dstRow.nodeId, socket: 'children' };
     if (dstRow.depth === 0) {
-      const socket = LIGHT_NODE_TYPES.has(srcRow.nodeType) ? 'lights' : 'children';
+      const socket = isLightNode(state.nodes, srcRow.nodeId) ? 'lights' : 'children';
       return { node: dstRow.nodeId, socket }; // Scene root
     }
     return null;

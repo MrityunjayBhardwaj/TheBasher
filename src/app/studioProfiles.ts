@@ -23,6 +23,7 @@ import type { Op } from '../core/dag/types';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveActiveRigNode } from './resolveRigLightSources';
 import { constraintStackForTarget, relationalPoseStackForTarget } from './nodeConstraints';
+import { isAreaLightNode } from './lightNode';
 
 type Vec3 = [number, number, number];
 
@@ -93,8 +94,10 @@ function legacyStudioLightsOnScene(state: DagState): string[] {
   const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
   const out: string[] = [];
   for (const ref of refs) {
-    const n = state.nodes[ref.node];
-    if (n?.type !== 'AreaLight') continue;
+    // #386 C3 — a legacy studio light is now an Object posing an Area LightData (or a
+    // still-fused AreaLight until its project migrates). Recognise both through `data`, or
+    // the light this function exists to rescue vanishes from the first profile.
+    if (!isAreaLightNode(state.nodes, ref.node)) continue;
     // AIMED by a Track-To → it's a rig light (studioLightRig discipline).
     // #317 — asked through the SHARED stack enumeration rather than a raw
     // `type === 'TrackTo'` scan. Muted members count: a bypassed aim still marks the

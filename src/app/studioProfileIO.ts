@@ -22,6 +22,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { activeProfileSelect, enumerateProfiles, uniqueProfileName } from './studioProfiles';
 import { nextConstraintOrder } from './nodeConstraints';
+import { isAreaLightNode, lightParamsOf } from './lightNode';
 
 type Vec3 = [number, number, number];
 
@@ -75,17 +76,24 @@ export function composeProfile(state: DagState, rigId: string): ProfileJson | nu
   const lights: ProfileLightJson[] = [];
   for (const ref of refs) {
     const ln = state.nodes[ref.node];
-    if (ln?.type !== 'AreaLight') continue;
+    // #386 C3 — a rig light is now an Object posing an Area LightData. The POSE
+    // (position/rotation/scale) is on the Object; the SHADING
+    // (intensity/color/width/height/tex) is on the LightData. Relaxing only the type gate
+    // is NOT enough — the shading reads must reach through `data` (via lightParamsOf) or the
+    // export silently emits the fallback constants (5 / #ffffff / 2×2), a silent data loss on
+    // round-trip. A still-fused AreaLight resolves both to its own params (coexistence).
+    if (!ln || !isAreaLightNode(state.nodes, ref.node)) continue;
     const p = ln.params as Record<string, unknown>;
+    const s = lightParamsOf(state.nodes, ref.node) ?? {};
     const light: ProfileLightJson = {
       position: vec3(p.position, [0, 0, 0]),
-      intensity: typeof p.intensity === 'number' ? p.intensity : 5,
-      color: typeof p.color === 'string' ? p.color : '#ffffff',
-      width: typeof p.width === 'number' ? p.width : 2,
-      height: typeof p.height === 'number' ? p.height : 2,
+      intensity: typeof s.intensity === 'number' ? s.intensity : 5,
+      color: typeof s.color === 'string' ? s.color : '#ffffff',
+      width: typeof s.width === 'number' ? s.width : 2,
+      height: typeof s.height === 'number' ? s.height : 2,
       rotation: vec3(p.rotation, [0, 0, 0]),
       scale: vec3(p.scale, [1, 1, 1]),
-      ...(typeof p.tex === 'string' && p.tex ? { tex: p.tex } : {}),
+      ...(typeof s.tex === 'string' && s.tex ? { tex: s.tex } : {}),
     };
     lights.push(light);
   }
@@ -190,23 +198,41 @@ export function buildImportProfilesOps(
 
     for (const light of profile.lights) {
       const lightId = newId('light');
+      const dataId = newId('data');
       const ttId = newId('tt');
+      // #386 Stage C (C3) — an imported studio light is split-native: a LightData (the Area
+      // shading + `lookAt` aim) and an Object (pose) that inherits `lightId`, so the rig
+      // `lights` wire, the Track-To target, and the panel's `data`-aware enumeration all
+      // resolve exactly as before the split.
       ops.push(
         {
           type: 'addNode',
-          nodeId: lightId,
-          nodeType: 'AreaLight',
+          nodeId: dataId,
+          nodeType: 'LightData',
           params: {
+            lightKind: 'Area',
             intensity: light.intensity,
-            position: light.position,
             color: light.color,
             width: light.width,
             height: light.height,
-            rotation: light.rotation,
-            scale: light.scale,
             lookAt: profile.center,
             ...(light.tex ? { tex: light.tex } : {}),
           },
+        },
+        {
+          type: 'addNode',
+          nodeId: lightId,
+          nodeType: 'Object',
+          params: {
+            position: light.position,
+            rotation: light.rotation,
+            scale: light.scale,
+          },
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: lightId, socket: 'data' },
         },
         {
           type: 'connect',
