@@ -20,22 +20,33 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { MIN_CURVE_POINTS } from '../nodes/Curve';
+import { MIN_CURVE_POINTS, type CurvePoint } from '../nodes/Curve';
 import type { Vec3 } from '../nodes/types';
+import { mintId } from './identifiedArray';
 
-/** The curve's authored control points (LOCAL space), or null when `nodeId` is not a
- *  Curve. Every builder below reads through this — one accessor, one truth. */
-export function curvePointsOf(state: DagState, nodeId: string): Vec3[] | null {
+/** The curve's control-point ENTRIES ({id,co}[]), or null when `nodeId` is not a Curve. The
+ *  builders read through this so a write can PRESERVE each point's id across a topology edit —
+ *  one accessor, one truth. The coordinate-only `curvePointsOf` is derived from it. */
+export function curvePointEntriesOf(state: DagState, nodeId: string): CurvePoint[] | null {
   const node = state.nodes[nodeId];
   if (!node || node.type !== 'Curve') return null;
   const pts = (node.params as { points?: unknown }).points;
   if (!Array.isArray(pts)) return null;
-  return pts as Vec3[];
+  return pts as CurvePoint[];
+}
+
+/** The curve's authored control points as bare coordinates (LOCAL space), or null when
+ *  `nodeId` is not a Curve. The render/sample consumers (the sampler, the handles' geometry,
+ *  the rows) stay coordinate-only; ids live on the entries (`curvePointEntriesOf`). */
+export function curvePointsOf(state: DagState, nodeId: string): Vec3[] | null {
+  const entries = curvePointEntriesOf(state, nodeId);
+  return entries ? entries.map((e) => e.co) : null;
 }
 
 /** The one write. Every builder funnels here so there is exactly one place that knows the
- *  param is called `points` and that the array is written whole. */
-function writePoints(nodeId: string, points: readonly Vec3[]): Op[] {
+ *  param is called `points` and that the whole `{id,co}[]` array is written at once (the id is
+ *  a reference key, never a `setParam` path — setParam refuses to descend into arrays). */
+function writePoints(nodeId: string, points: readonly CurvePoint[]): Op[] {
   return [{ type: 'setParam', nodeId, paramPath: 'points', value: points }];
 }
 
@@ -81,11 +92,11 @@ export function buildSetCurvePointOps(
   index: number,
   value: Vec3,
 ): Op[] | null {
-  const points = curvePointsOf(state, nodeId);
-  if (!points || index < 0 || index >= points.length) return null;
+  const entries = curvePointEntriesOf(state, nodeId);
+  if (!entries || index < 0 || index >= entries.length) return null;
   return writePoints(
     nodeId,
-    points.map((p, i) => (i === index ? value : p)),
+    entries.map((e, i) => (i === index ? { ...e, co: value } : e)),
   );
 }
 
@@ -101,11 +112,13 @@ export function buildInsertCurvePointOps(
   state: DagState,
   nodeId: string,
   index: number,
+  newPointId?: string,
 ): Op[] | null {
-  const points = curvePointsOf(state, nodeId);
-  if (!points || index < 0 || index >= points.length) return null;
+  const entries = curvePointEntriesOf(state, nodeId);
+  if (!entries || index < 0 || index >= entries.length) return null;
   const node = state.nodes[nodeId];
   const closed = (node?.params as { closed?: unknown })?.closed === true;
+  const points = entries.map((e) => e.co);
 
   const a = points[index];
   const isLast = index === points.length - 1;
@@ -123,8 +136,16 @@ export function buildInsertCurvePointOps(
     next = len > 1e-6 ? [a[0] + d[0], a[1] + d[1], a[2] + d[2]] : [a[0] + 1, a[1], a[2]];
   }
 
-  const out = points.slice();
-  out.splice(index + 1, 0, next);
+  // Caller mints the id (locked decision 3); the internal fallback keeps this task's existing
+  // 3-arg caller compiling — Task 2 tightens the caller to always pass a minted id.
+  const id =
+    newPointId ??
+    mintId(
+      entries.map((e) => e.id),
+      'cp',
+    );
+  const out = entries.slice();
+  out.splice(index + 1, 0, { id, co: next });
   return writePoints(nodeId, out);
 }
 
@@ -135,12 +156,12 @@ export function buildDeleteCurvePointOps(
   nodeId: string,
   index: number,
 ): Op[] | null {
-  const points = curvePointsOf(state, nodeId);
-  if (!points || index < 0 || index >= points.length) return null;
-  if (points.length <= MIN_CURVE_POINTS) return null;
+  const entries = curvePointEntriesOf(state, nodeId);
+  if (!entries || index < 0 || index >= entries.length) return null;
+  if (entries.length <= MIN_CURVE_POINTS) return null;
   return writePoints(
     nodeId,
-    points.filter((_, i) => i !== index),
+    entries.filter((_, i) => i !== index),
   );
 }
 

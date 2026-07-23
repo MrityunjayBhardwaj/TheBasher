@@ -7,6 +7,7 @@ import { CurveNode, CurveParams, MIN_CURVE_POINTS } from './Curve';
 import { isDefaultCollapsed } from '../app/inspectorSections';
 import { registerAllNodes } from './registerAll';
 import type { CurveValue, Vec3 } from './types';
+import { withIds } from '../test-utils/curvePoints';
 
 const SQUARE: Vec3[] = [
   [0, 0, 0],
@@ -72,7 +73,7 @@ describe('sampleCurve — centripetal Catmull-Rom', () => {
 
 describe('Curve node', () => {
   it('bakes its samples in evaluate, and is a SceneObject', () => {
-    const params = CurveParams.parse({ points: SQUARE, resolution: 8 });
+    const params = CurveParams.parse({ points: withIds(SQUARE), resolution: 8 });
     const value = CurveNode.evaluate(params, {}, {} as never) as CurveValue;
     expect(value.kind).toBe('Curve');
     expect(value.samples).toHaveLength(3 * 8 + 1);
@@ -98,7 +99,7 @@ describe('Curve node', () => {
   });
 
   it('refuses fewer than two points — a path needs a span', () => {
-    expect(() => CurveParams.parse({ points: [[0, 0, 0]] })).toThrow();
+    expect(() => CurveParams.parse({ points: withIds([[0, 0, 0]]) })).toThrow();
     expect(MIN_CURVE_POINTS).toBe(2);
   });
 

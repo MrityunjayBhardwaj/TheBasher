@@ -38,6 +38,7 @@ import {
   resolveConstraintRotation,
 } from './nodeConstraints';
 import { resolveCameraPoseAt } from './activeCamera';
+import { withIds } from '../test-utils/curvePoints';
 
 type Vec3 = [number, number, number];
 
@@ -78,7 +79,7 @@ function addCurve(state: DagState, id = CURVE_ID, params: Record<string, unknown
     type: 'addNode',
     nodeId: id,
     nodeType: 'Curve',
-    params: { points: LOPSIDED, closed: false, resolution: 32, ...params },
+    params: { points: withIds(LOPSIDED), closed: false, resolution: 32, ...params },
   }).next;
   s = applyOp(s, {
     type: 'connect',

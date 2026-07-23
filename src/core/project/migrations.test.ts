@@ -953,3 +953,91 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
     expect(twice.state.nodes.n_ch.version).toBe(2);
   });
 });
+
+describe('Curve v1 → v2: control points gain stable ids (#453/#454)', () => {
+  // NON-default coordinates on purpose: a dropped `co` would otherwise read the schema
+  // default and the golden would pass vacuously.
+  const V1_CURVE_PROJECT = {
+    formatVersion: 4,
+    id: 'p454-curve-ids',
+    name: 'pre-id curve',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: { Curve: 1 },
+    state: {
+      nodes: {
+        n_curve: {
+          id: 'n_curve',
+          type: 'Curve',
+          version: 1,
+          params: {
+            position: [1, 0, -1],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            points: [
+              [1.3, 0.4, -0.7],
+              [-0.9, 1.1, 2.2],
+              [3.1, -0.5, 0.8],
+            ],
+            closed: false,
+            resolution: 8,
+          },
+          inputs: {},
+        },
+        // CONTROL: a curve already at v2 with CUSTOM ids — migrateOneNode's version gate
+        // skips it, so its ids are preserved untouched (never re-minted to cp0..).
+        n_curve2: {
+          id: 'n_curve2',
+          type: 'Curve',
+          version: 2,
+          params: {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            points: [
+              { id: 'kept-a', co: [5, 5, 5] },
+              { id: 'kept-b', co: [6, 6, 6] },
+            ],
+            closed: false,
+            resolution: 16,
+          },
+          inputs: {},
+        },
+      },
+      outputs: {},
+    },
+  };
+
+  it('migrates bare Vec3[] to {id,co}[] byte-identically, minting cp0..cpN in array order', () => {
+    const migrated = loadFromBytes(V1_CURVE_PROJECT);
+    const curve = migrated.state.nodes.n_curve;
+    expect(curve.version).toBe(2);
+    expect((curve.params as { points: unknown }).points).toEqual([
+      { id: 'cp0', co: [1.3, 0.4, -0.7] },
+      { id: 'cp1', co: [-0.9, 1.1, 2.2] },
+      { id: 'cp2', co: [3.1, -0.5, 0.8] },
+    ]);
+    // Every other param survives untouched.
+    const p = curve.params as Record<string, unknown>;
+    expect(p.position).toEqual([1, 0, -1]);
+    expect(p.resolution).toBe(8);
+    expect(p.closed).toBe(false);
+  });
+
+  it('is idempotent — re-loading the migrated project is a stable no-op', () => {
+    const once = loadFromBytes(V1_CURVE_PROJECT);
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_curve).toEqual(once.state.nodes.n_curve);
+    expect(twice.state.nodes.n_curve.version).toBe(2);
+  });
+
+  it('control: an already-v2 curve is skipped, its custom ids preserved (not re-minted)', () => {
+    const migrated = loadFromBytes(V1_CURVE_PROJECT);
+    const ctrl = migrated.state.nodes.n_curve2;
+    expect(ctrl.version).toBe(2);
+    expect((ctrl.params as { points: unknown }).points).toEqual([
+      { id: 'kept-a', co: [5, 5, 5] },
+      { id: 'kept-b', co: [6, 6, 6] },
+    ]);
+  });
+});

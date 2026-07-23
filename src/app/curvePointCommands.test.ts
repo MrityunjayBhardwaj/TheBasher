@@ -14,6 +14,7 @@ import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { Vec3 } from '../nodes/types';
+import { withIds } from '../test-utils/curvePoints';
 import { curvePointsOf, resolveCurvePointSelection } from './curvePoints';
 import {
   deleteCurvePoint,
@@ -37,7 +38,7 @@ function seedCurve(points: Vec3[] = LINE, closed = false): DagState {
     type: 'addNode',
     nodeId: 'c1',
     nodeType: 'Curve',
-    params: { points, closed },
+    params: { points: withIds(points), closed },
   }).next;
   useDagStore.setState({ state } as never);
   return state;
@@ -129,7 +130,7 @@ describe('curvePointCommands — the sub-selection bookkeeping', () => {
       type: 'addNode',
       nodeId: 'c2',
       nodeType: 'Curve',
-      params: { points: LINE },
+      params: { points: withIds(LINE) },
     }).next;
     useDagStore.setState({ state: two } as never);
     useCurveSelectionStore.getState().selectPoint('c1', 2);
