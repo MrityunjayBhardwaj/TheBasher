@@ -19,18 +19,31 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad } from './rotation';
-import type { CurveValue } from '../nodes/types';
+import type { CurveValue, Vec3 } from '../nodes/types';
 
 const LINE_COLOR = '#d98a2b';
 const POINT_COLOR = '#f0b357';
 const POINT_RADIUS = 0.07;
 
-export function CurveLineR({ value }: { value: CurveValue }) {
-  const position = (value.position ?? [0, 0, 0]) as [number, number, number];
-  const rotation = degVec3ToRad((value.rotation ?? [0, 0, 0]) as [number, number, number]);
-  const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
-  const samples = value.samples ?? [];
-  const points = value.points ?? [];
+// The drawing, decoupled from the value shape so BOTH roads render the identical
+// line: the fused `CurveValue` (CurveLineR below, retired in #385 S4) and the
+// split `Object → CurveData` path (ObjectR's curve arm, SceneFromDAG). TRS is the
+// owner's; `samples`/`points` are LOCAL (the enclosing group applies the TRS).
+export function CurveLineChrome({
+  position,
+  rotation,
+  scale,
+  samples,
+  points,
+}: {
+  position: readonly [number, number, number];
+  /** Euler degrees (converted to radians here). */
+  rotation: readonly [number, number, number];
+  scale: readonly [number, number, number];
+  samples: readonly Vec3[];
+  points: readonly Vec3[];
+}) {
+  const rot = degVec3ToRad(rotation as [number, number, number]);
 
   // A flat [x,y,z, …] strip through the baked samples. Closed curves already repeat their
   // first point as the last (curveMath.sampleCurve), so the strip closes itself — no
@@ -44,7 +57,12 @@ export function CurveLineR({ value }: { value: CurveValue }) {
   }, [samples]);
 
   return (
-    <group position={position} rotation={rotation} scale={scale} userData={{ editorChrome: true }}>
+    <group
+      position={position as [number, number, number]}
+      rotation={rot}
+      scale={scale as [number, number, number]}
+      userData={{ editorChrome: true }}
+    >
       <line>
         <primitive object={geom} attach="geometry" />
         <lineBasicMaterial color={LINE_COLOR} />
@@ -62,5 +80,21 @@ export function CurveLineR({ value }: { value: CurveValue }) {
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>
+  );
+}
+
+// The fused-value wrapper (the #321 road). Pulls TRS + geometry off a single
+// `CurveValue` and hands them to CurveLineChrome. Retired in #385 S4 once the
+// fused `CurveValue` kind is unrepresentable; until then a fused Curve and a
+// split `Object → CurveData` draw byte-identically through the same Chrome.
+export function CurveLineR({ value }: { value: CurveValue }) {
+  return (
+    <CurveLineChrome
+      position={(value.position ?? [0, 0, 0]) as [number, number, number]}
+      rotation={(value.rotation ?? [0, 0, 0]) as [number, number, number]}
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+      samples={value.samples ?? []}
+      points={value.points ?? []}
+    />
   );
 }

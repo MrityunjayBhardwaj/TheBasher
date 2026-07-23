@@ -67,6 +67,7 @@ const ALL_TYPES = [
   'ComfyUIWorkflow',
   'Composition',
   'Curve',
+  'CurveData',
   'CurveRemap',
   'Cut',
   'DepthPass',

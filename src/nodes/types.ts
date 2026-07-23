@@ -946,11 +946,36 @@ export interface MeshDataValue {
 }
 
 /**
- * The value union flowing through the 'ObjectData' socket. Phase 1 seeds it with
- * MeshData; CameraData / LightData join in later phases (the same "one socket,
- * discriminate on value.kind" discipline V78 uses for 'SceneObject').
+ * The curve's data half — control points, closure, and the baked LOCAL-space
+ * polyline (`samples`), and DELIBERATELY no transform (the Object owns the TRS).
+ *
+ * The FIRST non-mesh member of `ObjectData` (#385, Stage C · C2). Unlike
+ * MeshData a curve is NOT render geometry — no `GeometryRef`, no material: it is
+ * editor chrome the viewport draws as a line and the render hide-pass excludes
+ * (V37). It carries exactly the fields the fused `CurveValue` did MINUS the TRS,
+ * so an `Object → CurveData` pair draws byte-identically to the fused Curve.
+ * `#349` (which world a followed curve's points live in) is unchanged: `samples`
+ * stay LOCAL and the world arc-length table lives in the seam (curveSampleSource).
  */
-export type ObjectData = MeshDataValue;
+export interface CurveDataValue {
+  readonly kind: 'CurveData';
+  /** The authored control points, LOCAL to the owning Object's TRS. */
+  readonly points: readonly Vec3[];
+  readonly closed: boolean;
+  /** The baked local-space polyline (curveMath.sampleCurve); closed curves repeat
+   *  the first point as the last, so consumers walk a flat strip with no wrap. */
+  readonly samples: readonly Vec3[];
+}
+
+/**
+ * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
+ * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
+ * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
+ * gains a curve arm; the `data.kind !== 'MeshData'` guards absorb it elsewhere).
+ * CameraData / LightData join in later phases (the same "one socket, discriminate
+ * on value.kind" discipline V78 uses for 'SceneObject').
+ */
+export type ObjectData = MeshDataValue | CurveDataValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`

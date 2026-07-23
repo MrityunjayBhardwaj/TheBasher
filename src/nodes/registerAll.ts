@@ -81,6 +81,7 @@ import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
 import { NullNode } from './Null';
 import { CurveNode } from './Curve';
+import { CurveDataNode } from './CurveData';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 
@@ -121,6 +122,10 @@ const ALL: NodeDefinition[] = [
   NullNode as unknown as NodeDefinition,
   // #321 — a Curve: a transformable PATH scene object (control points + Catmull-Rom).
   CurveNode as unknown as NodeDefinition,
+  // #385 (Stage C · C2) — the curve's data half (points/closed/resolution, no
+  // transform). The FIRST non-mesh ObjectData. Coexists with the fused Curve
+  // above; the split retires the fused CurveValue kind in a later slice.
+  CurveDataNode as unknown as NodeDefinition,
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,
   ScatterNode as unknown as NodeDefinition,
