@@ -44,7 +44,7 @@ import * as THREE from 'three';
 import { useDagStore } from '../core/dag/store';
 import { moveCurvePoint } from './curvePointCommands';
 import { useActiveCurvePoint } from './curvePointSelection';
-import { curvePointsOf } from './curvePoints';
+import { curvePointEntriesOf } from './curvePoints';
 import { endGizmoDrag, startGizmoDrag } from './Gizmo';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
@@ -156,13 +156,15 @@ export function CurvePointHandles() {
   // Handles show for the Curve that is SELECTED (Blender shows a curve's points once you
   // are editing it, not for every curve in the scene).
   const curveId = primaryId && state.nodes[primaryId]?.type === 'Curve' ? primaryId : null;
-  const points = curveId ? curvePointsOf(state, curveId) : null;
+  // The ENTRIES ({id,co}[]) — each handle needs its point's stable id to pick by it. The
+  // world geometry below still reads coordinate-only (co's); the id rides alongside.
+  const entries = curveId ? curvePointEntriesOf(state, curveId) : null;
 
   // The world matrix + the handles' world positions. Recomputed on any DAG or time change,
   // so handles follow a scrubbing/animated curve exactly as the drawn line does.
   const { worldMatrix, worldPoints } = useMemo(() => {
     const m = new THREE.Matrix4();
-    if (!curveId || !points) return { worldMatrix: m, worldPoints: [] as Vec3[] };
+    if (!curveId || !entries) return { worldMatrix: m, worldPoints: [] as Vec3[] };
     // The ONE world resolver — never a parallel walk. Null (curve not reachable as a scene
     // child) ⇒ identity, which is exactly what the sampling seam falls back to, so the
     // handles and the sampled path agree even in that degenerate case.
@@ -171,12 +173,12 @@ export function CurvePointHandles() {
     });
     if (wt) m.fromArray(wt.matrix);
     const v = new THREE.Vector3();
-    const out = points.map((p) => {
-      v.set(p[0], p[1], p[2]).applyMatrix4(m);
+    const out = entries.map((e) => {
+      v.set(e.co[0], e.co[1], e.co[2]).applyMatrix4(m);
       return [v.x, v.y, v.z] as Vec3;
     });
     return { worldMatrix: m, worldPoints: out };
-  }, [state, curveId, points, frame, seconds, normalized]);
+  }, [state, curveId, entries, frame, seconds, normalized]);
 
   // Seed the point gizmo's proxy at the selected point's WORLD position, and capture the
   // matrix the drag will invert. Re-runs on scrub/param change so the gizmo display-follows
@@ -184,15 +186,15 @@ export function CurvePointHandles() {
   useEffect(() => {
     worldRef.current = worldMatrix;
     if (!proxy || !active) return;
-    const w = worldPoints[active.pointIndex];
+    const w = worldPoints[active.index];
     if (!w) return;
     proxy.position.set(w[0], w[1], w[2]);
     proxy.rotation.set(0, 0, 0);
     proxy.scale.set(1, 1, 1);
   }, [proxy, active, worldPoints, worldMatrix]);
 
-  const pick = useCallback((nodeId: string, index: number) => {
-    useCurveSelectionStore.getState().selectPoint(nodeId, index);
+  const pick = useCallback((nodeId: string, pointId: string) => {
+    useCurveSelectionStore.getState().selectPoint(nodeId, pointId);
   }, []);
 
   /** The drag write. The proxy is in WORLD space; the param is LOCAL — invert the curve's
@@ -204,7 +206,7 @@ export function CurvePointHandles() {
     const local = _v
       .set(proxy.position.x, proxy.position.y, proxy.position.z)
       .applyMatrix4(worldRef.current.clone().invert());
-    moveCurvePoint(a.nodeId, a.pointIndex, maybeSnapVec3([local.x, local.y, local.z]));
+    moveCurvePoint(a.nodeId, a.index, maybeSnapVec3([local.x, local.y, local.z]));
   }, [proxy, active]);
 
   // *** Dev-only observation seams — NOT user chrome (the __basher_gizmo_grab shape). ***
@@ -217,12 +219,21 @@ export function CurvePointHandles() {
     const w = window as unknown as Record<string, unknown>;
     w.__basher_curve_handles = () => ({
       curveId,
-      selectedIndex: active?.pointIndex ?? null,
+      // The current slot (for the e2e that still checks a position) AND the stable id (the
+      // #453/#326 proof: the SAME id must survive insert/delete/reorder/undo).
+      selectedIndex: active?.index ?? null,
+      selectedId: active?.pointId ?? null,
       // The WORLD positions the handles are actually mounted at — the observable side of
       // the handle/renderer boundary.
       world: worldPoints,
     });
-    w.__basher_curve_select_point = (nodeId: string, index: number) => pick(nodeId, index);
+    // Kept INDEX-addressed for e2e ergonomics (a spec knows a point by its slot, not its
+    // minted id) — it resolves the slot to the point's stable id and picks by that, so the
+    // selection the seam creates is the same id-addressed selection a real handle click makes.
+    w.__basher_curve_select_point = (nodeId: string, index: number) => {
+      const id = entries?.[index]?.id;
+      if (id) pick(nodeId, id);
+    };
     w.__basher_curve_clear_point = () => useCurveSelectionStore.getState().clear();
     w.__basher_curve_point_grab = (target: [number, number, number]) => {
       if (!proxy || !active) return;
@@ -233,16 +244,16 @@ export function CurvePointHandles() {
     };
   }
 
-  if (!curveId || !points) return null;
+  if (!curveId || !entries) return null;
 
   return (
     <>
       {worldPoints.map((w, i) => (
         <PointHandle
-          key={i}
+          key={entries[i].id}
           world={w}
-          selected={active?.pointIndex === i}
-          onPick={() => pick(curveId, i)}
+          selected={active?.index === i}
+          onPick={() => pick(curveId, entries[i].id)}
         />
       ))}
       {/* The element gizmo. Translate only: a point has a position and nothing else — there

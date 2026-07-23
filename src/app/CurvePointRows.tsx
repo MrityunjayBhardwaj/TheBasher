@@ -1,28 +1,28 @@
 // CurvePointRows — the numeric control-point editor in the Curve inspector section (#321).
 //
 // NOT OperatorStackRows. The rows LOOK similar, and that similarity is a trap: a stack row
-// is a NODE (it has an id, a mute flag, an order field, and clicking it selects that node).
-// A curve point is none of those — it is an element of an array param, with no identity of
-// its own beyond its index. Sharing the stack component here would mean inventing a mute
-// and an id a point doesn't have. The shared thing across the two is a flexbox row, which
+// is a NODE (it has a mute flag, an order field, and clicking it selects that node). A curve
+// point carries a stable id now (#453), but none of the rest: no mute, no order, and clicking
+// it selects a POINT, not a node. Sharing the stack component here would mean inventing a mute
+// and an order a point doesn't have. The shared thing across the two is a flexbox row, which
 // is not an abstraction worth a component.
 //
 // Every edit goes through curvePointCommands.ts — the SAME commit layer the viewport handles
 // (#322) use — so typing a coordinate and dragging the point in 3D produce identical ops AND
-// the same sub-selection bookkeeping (an insert or delete re-indexes the points after it; if
-// the panel skipped that, deleting a row would silently slide the viewport's point selection
-// onto a different point). One dispatchAtomic per edit = one undo entry.
+// the same id-addressed selection rule. A point's selection is keyed by its stable id, so an
+// insert or delete elsewhere never slides the viewport's selection onto a different point (the
+// old index re-index dance is gone, #453). One dispatchAtomic per edit = one undo entry.
 //
-// A row also SELECTS its point (#322): the row and the viewport handle are two views of one
-// thing, so clicking either highlights the handle and mounts the point gizmo on it — the
-// panel and the viewport can't disagree about which point you are editing.
+// A row also SELECTS its point (#322), by its id: the row and the viewport handle are two
+// views of one thing, so clicking either highlights the handle and mounts the point gizmo on
+// it — the panel and the viewport can't disagree about which point you are editing.
 //
 // REF: src/app/curvePointCommands.ts (the commit layer) + src/app/curvePoints.ts (the pure
 //      op-builders); src/app/CurvePointHandles.tsx (the viewport twin); src/nodes/Curve.ts
 //      (MIN_CURVE_POINTS); issues #321, #322.
 
 import { useDagStore } from '../core/dag/store';
-import { curvePointsOf } from './curvePoints';
+import { curvePointEntriesOf } from './curvePoints';
 import { deleteCurvePoint, insertCurvePoint, moveCurvePoint } from './curvePointCommands';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
 import { MIN_CURVE_POINTS } from '../nodes/Curve';
@@ -36,9 +36,11 @@ const AXES = ['x', 'y', 'z'] as const;
 export function CurvePointRows({ nodeId }: { nodeId: string }) {
   const state = useDagStore((s) => s.state);
   const selectedCurve = useCurveSelectionStore((s) => s.nodeId);
-  const selectedIndex = useCurveSelectionStore((s) => s.pointIndex);
-  const points = curvePointsOf(state, nodeId);
-  if (!points) return null;
+  const selectedPointId = useCurveSelectionStore((s) => s.pointId);
+  const entries = curvePointEntriesOf(state, nodeId);
+  if (!entries) return null;
+  // Rows render by array position (co's); the SELECT is by the point's stable id (#453).
+  const points = entries.map((e) => e.co);
 
   const atLimit = points.length <= MIN_CURVE_POINTS;
 
@@ -52,14 +54,15 @@ export function CurvePointRows({ nodeId }: { nodeId: string }) {
 
   return (
     <div data-testid="curve-points" className="flex flex-col gap-1 text-xs">
-      {points.map((p, i) => {
-        const selected = selectedCurve === nodeId && selectedIndex === i;
+      {entries.map((entry, i) => {
+        const p = entry.co;
+        const selected = selectedCurve === nodeId && selectedPointId === entry.id;
         return (
           <div
-            key={i}
+            key={entry.id}
             data-testid={`curve-point-row-${i}`}
             data-selected={selected ? 'true' : undefined}
-            onPointerDown={() => useCurveSelectionStore.getState().selectPoint(nodeId, i)}
+            onPointerDown={() => useCurveSelectionStore.getState().selectPoint(nodeId, entry.id)}
             className={`flex items-center gap-1 rounded border px-1 py-0.5 ${
               selected ? 'border-accent' : 'border-border'
             }`}

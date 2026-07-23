@@ -88,12 +88,12 @@ async function poseCurve(page: import('@playwright/test').Page, id: string) {
 }
 
 const readPoints = (page: import('@playwright/test').Page, id: string) =>
-  page.evaluate(
-    (curveId) =>
-      (window as unknown as BasherWin).__basher_dag.getState().state.nodes[curveId]
-        .params as unknown as { points: Vec3[]; closed: boolean },
-    id,
-  );
+  page.evaluate((curveId) => {
+    // points are now {id,co}[]; return the bare co's so the coordinate assertions stay meaningful.
+    const p = (window as unknown as BasherWin).__basher_dag.getState().state.nodes[curveId]
+      .params as unknown as { points: { id: string; co: Vec3 }[]; closed: boolean };
+    return { points: p.points.map((e) => e.co), closed: p.closed };
+  }, id);
 
 test('the handles sit ON the path the viewport draws — under a non-trivial world transform', async ({
   page,
@@ -312,8 +312,8 @@ test('the two-point floor is REFUSED and announced — Delete never eats the cur
           nodeId: curveId,
           paramPath: 'points',
           value: [
-            [0, 0, 0],
-            [2, 0, 0],
+            { id: 'cp0', co: [0, 0, 0] },
+            { id: 'cp1', co: [2, 0, 0] },
           ],
         },
       ],

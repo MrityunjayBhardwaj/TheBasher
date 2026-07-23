@@ -18,6 +18,7 @@ import { applyOp } from '../core/dag/ops';
 import { registerAllNodes } from '../nodes/registerAll';
 import { sampleCurve } from '../nodes/curveMath';
 import type { Vec3 } from '../nodes/types';
+import { withIds } from '../test-utils/curvePoints';
 import { curveSamplerFor, readCurveSampleAt } from './curveSampleSource';
 
 const CTX = { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -43,7 +44,7 @@ function addCurve(state: DagState, id: string, params: Record<string, unknown>):
     type: 'addNode',
     nodeId: id,
     nodeType: 'Curve',
-    params: { points: LOPSIDED, closed: false, resolution: 32, ...params },
+    params: { points: withIds(LOPSIDED), closed: false, resolution: 32, ...params },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -101,12 +102,12 @@ describe('curveSampleSource — arc-length parameterization', () => {
     // world arc length, so a table built in LOCAL space would lurch. The seam builds it
     // in world, so it doesn't.
     const state = addCurve(buildDefaultDagState(), 'c1', {
-      points: [
+      points: withIds([
         [0, 0, 0],
         [4, 0, 0],
         [4, 0, 4],
         [0, 0, 4],
-      ],
+      ]),
       scale: [5, 1, 0.2],
     });
     const sampler = curveSamplerFor(state, 'c1', CTX)!;
@@ -136,12 +137,12 @@ describe('curveSampleSource — arc-length parameterization', () => {
       nodeId: 'c1',
       nodeType: 'Curve',
       params: {
-        points: [
+        points: withIds([
           [0, 0, 0],
           [1, 0, 0],
           [1, 0, 1],
           [0, 0, 1],
-        ],
+        ]),
         resolution: 32,
       },
     }).next;
@@ -203,11 +204,11 @@ describe('curveSampleSource — arc-length parameterization', () => {
 
   it('the tangent points along the direction of travel', () => {
     const state = addCurve(buildDefaultDagState(), 'c1', {
-      points: [
+      points: withIds([
         [0, 0, 0],
         [5, 0, 0],
         [10, 0, 0],
-      ],
+      ]),
     });
     const { tangent } = readCurveSampleAt(state, 'c1', 0.5, CTX)!;
     expect(tangent[0]).toBeCloseTo(1, 3); // travelling +X
@@ -216,10 +217,10 @@ describe('curveSampleSource — arc-length parameterization', () => {
 
   it('a degenerate (zero-length) curve yields a finite point and tangent, never NaN', () => {
     const state = addCurve(buildDefaultDagState(), 'c1', {
-      points: [
+      points: withIds([
         [2, 2, 2],
         [2, 2, 2],
-      ],
+      ]),
     });
     const s = readCurveSampleAt(state, 'c1', 0.5, CTX)!;
     expect(s.length).toBe(0);

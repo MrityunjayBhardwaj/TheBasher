@@ -431,7 +431,7 @@ export function KeyboardShortcuts() {
         // Extrude: a new point after this one, which becomes the selection — grab it and
         // the path grows. (Refused for nothing: an insert always succeeds.)
         e.preventDefault();
-        extrudeCurvePoint(activePoint.nodeId, activePoint.pointIndex);
+        extrudeCurvePoint(activePoint.nodeId, activePoint.index);
         return;
       }
       if (activePoint && (e.key === 'c' || e.key === 'C')) {
@@ -569,7 +569,7 @@ export function KeyboardShortcuts() {
           // the worst possible reading of the gesture.
           if (activePoint) {
             e.preventDefault();
-            deleteCurvePoint(activePoint.nodeId, activePoint.pointIndex);
+            deleteCurvePoint(activePoint.nodeId, activePoint.index);
             return;
           }
           // Remove all selected nodes (Blender's X/Delete). V1 clean:

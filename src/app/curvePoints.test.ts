@@ -8,11 +8,13 @@ import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { Vec3 } from '../nodes/types';
+import { withIds } from '../test-utils/curvePoints';
 import {
   buildDeleteCurvePointOps,
   buildInsertCurvePointOps,
   buildSetCurvePointOps,
   buildToggleCurveClosedOp,
+  curvePointEntriesOf,
   curvePointsOf,
 } from './curvePoints';
 
@@ -27,7 +29,7 @@ function withCurve(points: Vec3[] = LINE, closed = false): DagState {
     type: 'addNode',
     nodeId: 'c1',
     nodeType: 'Curve',
-    params: { points, closed },
+    params: { points: withIds(points), closed },
   }).next;
 }
 
@@ -116,5 +118,41 @@ describe('curvePoints — whole-array edits', () => {
     expect(buildSetCurvePointOps(state, 'n_box', 0, [0, 0, 0])).toBeNull();
     expect(buildSetCurvePointOps(state, 'c1', 9, [0, 0, 0])).toBeNull();
     expect(buildDeleteCurvePointOps(state, 'c1', -1)).toBeNull();
+  });
+});
+
+describe('curvePoints — stable ids (#453)', () => {
+  it('preserves the moved point’s id (a move changes co, not identity)', () => {
+    const state = withCurve(); // cp0, cp1, cp2
+    const before = curvePointEntriesOf(state, 'c1')!;
+    const next = apply(state, buildSetCurvePointOps(state, 'c1', 1, [2, 5, 0]));
+    const after = curvePointEntriesOf(next, 'c1')!;
+    expect(after.map((e) => e.id)).toEqual(before.map((e) => e.id));
+    expect(after[1]).toEqual({ id: before[1].id, co: [2, 5, 0] });
+  });
+
+  it('preserves survivor ids across a delete (identity is not re-indexed)', () => {
+    const state = withCurve();
+    const next = apply(state, buildDeleteCurvePointOps(state, 'c1', 1)); // drop cp1
+    expect(curvePointEntriesOf(next, 'c1')!.map((e) => e.id)).toEqual(['cp0', 'cp2']);
+  });
+
+  it('stamps the caller-minted id on an inserted point', () => {
+    const state = withCurve();
+    const next = apply(state, buildInsertCurvePointOps(state, 'c1', 0, 'mine'));
+    expect(curvePointEntriesOf(next, 'c1')!.map((e) => e.id)).toEqual([
+      'cp0',
+      'mine',
+      'cp1',
+      'cp2',
+    ]);
+  });
+
+  it('falls back to a fresh unique id when the caller passes none', () => {
+    const state = withCurve();
+    const next = apply(state, buildInsertCurvePointOps(state, 'c1', 0));
+    const ids = curvePointEntriesOf(next, 'c1')!.map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length); // no collision
+    expect(ids).toContain('cp3'); // cp0..cp2 taken → mints cp3
   });
 });
