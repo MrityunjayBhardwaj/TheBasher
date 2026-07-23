@@ -13,6 +13,7 @@
 //   Group.children and composes the group's transform onto the light's local.
 
 import { expect, test } from './_fixtures';
+import { splitLightOps } from './_splitLight';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -38,9 +39,18 @@ test.describe('#231 Inc 2a — grouped light boundary-pair', () => {
       return Boolean(w.__basher_dag && w.__basher_light_world_positions);
     });
 
-    // Build: scene.children → Group(pos [5,0,0]) → children:[DirectionalLight(local [1,0,0])].
+    // Build: scene.children → Group(pos [5,0,0]) → children:[split DirectionalLight(local
+    // [1,0,0])]. #386 C3 — the nested light is an Object(TRS) posing a LightData; LIGHT_ID is
+    // the Object. The R3 render road: MeshChild 'Object' → ObjectR's LightData arm recomposes
+    // and renders it through LightKindR (the same band the fused nested case used).
+    const lightOps = splitLightOps({
+      objectId: LIGHT_ID,
+      lightKind: 'Directional',
+      position: [LIGHT_LOCAL_X, 0, 0],
+      shading: { intensity: 1, color: '#ffffff' },
+    });
     await page.evaluate(
-      ({ grpId, lightId, groupX, lightX }) => {
+      ({ grpId, lightId, groupX, ops }) => {
         const w = window as unknown as BasherWindow;
         const dispatch = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
         dispatch({
@@ -49,12 +59,7 @@ test.describe('#231 Inc 2a — grouped light boundary-pair', () => {
           nodeType: 'Group',
           params: { position: [groupX, 0, 0] },
         });
-        dispatch({
-          type: 'addNode',
-          nodeId: lightId,
-          nodeType: 'DirectionalLight',
-          params: { intensity: 1, position: [lightX, 0, 0], color: '#ffffff' },
-        });
+        for (const op of ops) dispatch(op);
         dispatch({
           type: 'connect',
           from: { node: lightId, socket: 'out' },
@@ -66,7 +71,7 @@ test.describe('#231 Inc 2a — grouped light boundary-pair', () => {
           to: { node: 'n_scene', socket: 'children' },
         });
       },
-      { grpId: GRP_ID, lightId: LIGHT_ID, groupX: GROUP_X, lightX: LIGHT_LOCAL_X },
+      { grpId: GRP_ID, lightId: LIGHT_ID, groupX: GROUP_X, ops: lightOps },
     );
 
     // Side A — wait for the render to mount the nested light at the composed world.
