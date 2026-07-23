@@ -157,12 +157,14 @@ describe('default project', () => {
   it('builds the THESIS App. C DAG with the canonical n_time clock', () => {
     const state = buildDefaultDagState();
     // #365 Phase 5a (Slice 1b) — the box is the object↔data split: n_box (the Object/pose) +
-    // n_box_data (the BoxData/geometry).
+    // n_box_data (the BoxData/geometry). #386 C3 — the key light is split too: n_light (the
+    // Object/pose, id inherited) + n_light_data (the LightData/shading).
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
       'n_box_data',
       'n_camera',
       'n_light',
+      'n_light_data',
       'n_render',
       'n_scene',
       'n_time',

@@ -23,11 +23,26 @@ const DEFAULT_OPS: Op[] = [
     nodeType: 'PerspectiveCamera',
     params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
   },
+  // #386 Stage C (C3) — the key light is split-native: a LightData (kind + shading) and an
+  // Object (pose) that points at it via `data`. The Object keeps the id `n_light`, so the
+  // scene.lights edge below is unchanged — the same pair the load-migration produces for old
+  // fused saves (K23). A new project is split-native, so it needs no migration on boot.
+  {
+    type: 'addNode',
+    nodeId: 'n_light_data',
+    nodeType: 'LightData',
+    params: { lightKind: 'Directional', intensity: 1.1, color: '#ffffff' },
+  },
   {
     type: 'addNode',
     nodeId: 'n_light',
-    nodeType: 'DirectionalLight',
-    params: { intensity: 1.1, position: [5, 5, 3], color: '#ffffff' },
+    nodeType: 'Object',
+    params: { position: [5, 5, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  },
+  {
+    type: 'connect',
+    from: { node: 'n_light_data', socket: 'out' },
+    to: { node: 'n_light', socket: 'data' },
   },
   // #365 Phase 5a (Slice 1b) — the box is split-native: a BoxData (geometry + material) and
   // an Object (pose) that points at it via `data`. The Object keeps the id `n_box`, so the

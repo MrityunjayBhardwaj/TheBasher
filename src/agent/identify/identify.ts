@@ -154,6 +154,21 @@ export function identify(
     });
   }
 
+  // #386 C3 (fork-1) — a light noun ("point light", "light") infers 'Object', but every
+  // posable light poses a 'LightData', so the data TYPE can't tell a point from a spot.
+  // Narrow the Object matches by the posed lightKind (reached through `data`, mirroring the
+  // geometry + colour reaches). An AmbientLight is a light too but poses no LightData, so it
+  // passes through unfiltered (it matched by its own type in inferNodeTypes).
+  const lightKinds = typeFilter ? null : lightKindsFor(q);
+  if (lightKinds && typeMatched.length > 0) {
+    typeMatched = typeMatched.filter((c) => {
+      const node = state.nodes[c.id];
+      if (node?.type === 'AmbientLight') return true;
+      const lk = nodeLightKind(state, node);
+      return lk !== null && lightKinds.has(lk);
+    });
+  }
+
   // 4. Color-match — narrow type-matched (or all nodes if no type) by
   //    a color word in the query.
   const colorHex = inferColor(q);
@@ -329,19 +344,40 @@ function geometryDataTypesFor(q: string): string[] | null {
   return null;
 }
 
+// #386 C3 (fork-1) — which posable lightKinds a query names. A single discriminated LightData
+// collapses "which posable kind" into a param, so a light noun can't be narrowed by data TYPE
+// (all four pose 'LightData'); this returns the lightKind set to match instead. Null when the
+// query names no light noun; the specific set for a specific noun; all four for generic "light".
+// AmbientLight is intentionally absent — it poses no LightData and is matched by its own type.
+function lightKindsFor(q: string): Set<string> | null {
+  const kinds = new Set<string>();
+  if (/\b(directional\s+light|sun)\b/.test(q)) kinds.add('Directional');
+  if (/\b(point\s+light)\b/.test(q)) kinds.add('Point');
+  if (/\b(spot\s+light)\b/.test(q)) kinds.add('Spot');
+  if (/\b(area\s+light)\b/.test(q)) kinds.add('Area');
+  if (kinds.size > 0) return kinds;
+  if (/\blight(s)?\b/.test(q)) return new Set(['Directional', 'Point', 'Spot', 'Area']);
+  return null;
+}
+
 function inferNodeTypes(q: string): NodeTypeId[] | null {
   const matches: NodeTypeId[] = [];
-  // Specific lights first — checked before the generic "light" rule.
-  if (/\b(directional\s+light|sun)\b/.test(q)) matches.push('DirectionalLight');
-  if (/\b(point\s+light)\b/.test(q)) matches.push('PointLight');
-  if (/\b(spot\s+light)\b/.test(q)) matches.push('SpotLight');
-  if (/\b(area\s+light)\b/.test(q)) matches.push('AreaLight');
+  // Specific lights first — checked before the generic "light" rule. #386 C3 — the four
+  // posable lights are the Object+LightData split, so they resolve to 'Object' (the node
+  // the director selects); lightKindsFor narrows those Objects to the posed lightKind
+  // (all posable lights pose 'LightData', so the data TYPE alone can't tell a point from a
+  // spot). AmbientLight stays fused → its own type.
+  if (/\b(directional\s+light|sun)\b/.test(q)) matches.push('Object');
+  if (/\b(point\s+light)\b/.test(q)) matches.push('Object');
+  if (/\b(spot\s+light)\b/.test(q)) matches.push('Object');
+  if (/\b(area\s+light)\b/.test(q)) matches.push('Object');
   if (/\b(ambient\s+light)\b/.test(q)) matches.push('AmbientLight');
   if (matches.length > 0) return matches;
 
-  // Generic "light" — all light types.
+  // Generic "light" — the posable Objects (narrowed by lightKindsFor to the ones posing a
+  // LightData, so a cube-Object is NOT swept in) plus the still-fused AmbientLight.
   if (/\blight(s)?\b/.test(q)) {
-    return ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight', 'AmbientLight'];
+    return ['Object', 'AmbientLight'];
   }
 
   // #365 Phase 5a — a cube is the Object+BoxData split (nodeType 'Object'). Slice 2 retired
@@ -567,6 +603,24 @@ function nodeGeometryType(state: DagState, node: Node | undefined): string | nul
     if (dataNode) return dataNode.type;
   }
   return node.type;
+}
+
+// #386 C3 (fork-1) — the posed light's kind, reaching through `data` to the LightData's
+// `lightKind` param. This is what lets a light noun separate "point light" from "spot light"
+// once both pose through a shared 'Object' node type. Null when the node poses no LightData.
+function nodeLightKind(state: DagState, node: Node | undefined): string | null {
+  if (!node) return null;
+  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+    | { node?: string }
+    | undefined;
+  if (dataRef?.node) {
+    const dataNode = state.nodes[dataRef.node];
+    if (dataNode?.type === 'LightData') {
+      const lk = (dataNode.params as Record<string, unknown> | undefined)?.lightKind;
+      return typeof lk === 'string' ? lk : null;
+    }
+  }
+  return null;
 }
 
 function toCandidate(state: DagState, node: Node): Candidate {

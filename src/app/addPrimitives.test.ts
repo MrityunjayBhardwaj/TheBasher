@@ -87,9 +87,11 @@ describe('buildAddPrimitiveOps', () => {
     const state = seedSceneState();
     for (const k of lights) {
       const r = buildAddPrimitiveOps(state, k, [5, 5, 5])!;
-      const connectOp = r.ops.find((o) => o.type === 'connect');
-      if (connectOp?.type !== 'connect') throw new Error();
-      expect(connectOp.to.socket).toBe('lights');
+      // #386 C3 — a posable light is now the Object+LightData pair, so it has TWO connects
+      // (data→object.data, then object→scene.lights). AmbientLight stays a single fused node
+      // wired straight to scene.lights. Assert SOME connect wires to scene.lights either way.
+      const sceneConnect = r.ops.find((o) => o.type === 'connect' && o.to.socket === 'lights');
+      expect(sceneConnect, `${k} should wire into scene.lights`).toBeDefined();
     }
   });
 
