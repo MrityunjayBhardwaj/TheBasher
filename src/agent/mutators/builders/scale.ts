@@ -25,7 +25,8 @@ export const scaleMutator: MutatorDefinition<ScaleSpec> = {
   name: 'mutator.scale',
   description:
     'Scale one or more nodes by a uniform factor or per-axis [x,y,z]. ' +
-    'Multiplies BoxMesh.size or SphereMesh.radius. Preserves position, rotation, material.',
+    "Multiplies a mesh's geometry — a cube's size or a sphere's radius. " +
+    'Preserves position, rotation, material.',
   spec: ScaleSpec,
   specExample: { targetSelectors: ['node_id'], factor: 2 },
   contract: {

@@ -107,12 +107,6 @@ export interface ModifierSource {
  */
 export function modifierSource(value: SceneChild): ModifierSource | null {
   switch (value.kind) {
-    case 'SphereMesh':
-      return {
-        geometry: sphereGeometryRef(value.radius, value.widthSegments, value.heightSegments),
-        transform: trsOf(value),
-        material: value.material,
-      };
     case 'ModifiedMesh':
       return { geometry: value.geometry, transform: trsOf(value), material: value.material };
     case 'BakedMesh':

@@ -72,7 +72,7 @@ Basher v0.5 ships PBR-only materials (V9 — materials = data, not code).
 Shader authoring (TSL/OSL) is deferred to P4.
 
 ## Mesh inline material
-Most meshes (BoxMesh, SphereMesh) carry a \`material\` block:
+Most meshes (cubes, spheres) carry a \`material\` block:
 \`{ name: "default", color: "#5af07a" }\`. Only \`color\` is exposed in v0.5.
 
 ## MaterialOverride node

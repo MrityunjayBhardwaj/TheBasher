@@ -15,26 +15,31 @@ import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
+import { sphereGeometryRef } from '../app/modifierGeometry';
 import { hydrateInlineMaterial } from './materialSchema';
+import { makeSplitSphere } from '../test-utils/splitSphere';
 import { MirrorModifierNode } from './MirrorModifier';
-import type { SphereMeshValue, ModifiedMeshValue, SceneChild, TransformValue } from './types';
+import type { ObjectValue, ModifiedMeshValue, SceneChild, TransformValue } from './types';
 
 const MOD_ID = 'n_mirror';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
-// #365 Phase 5a (Slice 2): the fused box value kind retired; SphereMesh is the still-fused
-// leaf-mesh source the modifier consumes. The mirror's assertions are geometry-kind-agnostic.
-function sphereValue(position: [number, number, number]): SphereMeshValue {
+// #384 Stage C (C1): the fused sphere value kind retired too. A sphere is now an `Object` (owning
+// the TRS) pointing at a `MeshData` (geometry + material) — the value the split Object evaluates
+// to, which `modifierSource` reaches through (`Object` arm → `data`). The mirror's assertions are
+// geometry-kind-agnostic.
+function splitSphereValue(position: [number, number, number]): ObjectValue {
   return {
-    kind: 'SphereMesh',
-    radius: 1,
-    widthSegments: 8,
-    heightSegments: 6,
+    kind: 'Object',
     position,
     rotation: [0, 0, 0],
     scale: [1, 1, 1],
-    material: hydrateInlineMaterial(null, '#888888'),
+    data: {
+      kind: 'MeshData',
+      geometry: sphereGeometryRef(1, 8, 6),
+      material: hydrateInlineMaterial(null, '#888888'),
+    },
   };
 }
 
@@ -56,18 +61,19 @@ beforeEach(() => {
 
 describe('MirrorModifier.evaluate', () => {
   it('a sphere source → a ModifiedMesh with a mirror geometry handle + inherited TRS/material', () => {
-    const src = sphereValue([3, 0, 0]);
+    const src = splitSphereValue([3, 0, 0]);
     const out = evalMod({ axis: 'x', muted: false }, src) as ModifiedMeshValue;
     expect(out.kind).toBe('ModifiedMesh');
     expect(out.geometry.kind).toBe('mirror');
     expect(out.geometry.descriptor).toMatchObject({ kind: 'mirror', axis: 'x' });
-    // INHERITED — the mirrored result sits where the source box was.
+    // INHERITED — the mirrored result sits where the source Object was (its TRS).
     expect(out.position).toEqual([3, 0, 0]);
-    expect(out.material).toBe(src.material);
+    // INHERITED — the material rides through from the source's data half.
+    expect(out.material).toBe(src.data!.material);
   });
 
   it('the axis param feeds the descriptor + key (distinct axes → distinct keys)', () => {
-    const src = sphereValue([0, 0, 0]);
+    const src = splitSphereValue([0, 0, 0]);
     const x = evalMod({ axis: 'x', muted: false }, src) as ModifiedMeshValue;
     const y = evalMod({ axis: 'y', muted: false }, src) as ModifiedMeshValue;
     expect(y.geometry.descriptor).toMatchObject({ kind: 'mirror', axis: 'y' });
@@ -75,7 +81,7 @@ describe('MirrorModifier.evaluate', () => {
   });
 
   it('muted → identity passthrough (byte-identical to no modifier — the stack mute-bypass)', () => {
-    const src = sphereValue([0, 0, 0]);
+    const src = splitSphereValue([0, 0, 0]);
     const out = evalMod({ axis: 'x', muted: true }, src);
     expect(out).toBe(src); // same reference — no ModifiedMesh produced
   });
@@ -98,19 +104,18 @@ describe('MirrorModifier.evaluate', () => {
 });
 
 describe('MirrorModifier — read-side parity (boundary-pair)', () => {
-  // #365 Phase 5a (Slice 2): the source is a still-fused SphereMesh (the box value kind
-  // retired; a modifier on a split Object is the deferred modifier-move follow-up). The
-  // evaluate↔read byte-identity is pinned on the primitive that still has a fused value.
+  // #384 Stage C (C1): the source is now a split sphere — an `Object` (SPHERE_ID) pointing at a
+  // `SphereData`. The read road (`resolveEvaluatedMesh`) reaches through the Object's `data`
+  // socket for geometry, and the evaluate road builds the same sphere handle from the same
+  // params → the mirror key must be byte-identical on both roads.
   const SPHERE_ID = 'n_sphere';
   function withSphere() {
-    let state = buildDefaultDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: SPHERE_ID,
-      nodeType: 'SphereMesh',
-      params: { radius: 1, widthSegments: 8, heightSegments: 6 },
-    }).next;
-    return state;
+    return makeSplitSphere(buildDefaultDagState(), {
+      objectId: SPHERE_ID,
+      radius: 1,
+      widthSegments: 8,
+      heightSegments: 6,
+    }).state;
   }
 
   it('resolveEvaluatedMesh derives the SAME mirror geometry key the evaluate path emits', () => {
@@ -135,7 +140,10 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
     expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
 
     // The evaluate path projects the SAME sphere with the same axis.
-    const evald = evalMod({ axis: 'z', muted: false }, sphereValue([0, 0, 0])) as ModifiedMeshValue;
+    const evald = evalMod(
+      { axis: 'z', muted: false },
+      splitSphereValue([0, 0, 0]),
+    ) as ModifiedMeshValue;
     expect(resolved!.geometry.key).toBe(evald.geometry.key); // byte-identical → no drift
   });
 

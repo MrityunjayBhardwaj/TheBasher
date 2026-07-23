@@ -24,7 +24,7 @@ export type SetMaterialColorSpec = z.infer<typeof SetMaterialColorSpec>;
 export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = {
   name: 'mutator.setMaterialColor',
   description:
-    'Set the color of one or more nodes. For meshes (BoxMesh, SphereMesh) ' +
+    'Set the color of one or more nodes. For meshes (cubes, spheres) ' +
     'this writes material.color. For lights (DirectionalLight, PointLight, etc.) ' +
     'this writes color directly. Preserves all other material/light properties.',
   spec: SetMaterialColorSpec,

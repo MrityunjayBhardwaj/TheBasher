@@ -316,13 +316,13 @@ const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
   ...(SCENE_OBJECT_KINDS.map(nodeTypeFor) as NodeTypeId[]),
 ];
 
-// The data-node types a geometry noun matches, post object↔data split: "cube" is any Object
-// posing a BoxData (or a fused BoxMesh, pre-retirement); "sphere" a SphereData (or SphereMesh).
-// Returns null when the query names no geometry noun, so lights/cameras/empties aren't narrowed.
-// Kept in lockstep with the cube/sphere aliases in inferNodeTypes (both parse the same nouns).
+// The data-node type a geometry noun matches, post object↔data split: "cube" is any Object posing
+// a BoxData; "sphere" a SphereData (the fused BoxMesh/SphereMesh value kinds are retired, so no
+// live node carries them). Returns null when the query names no geometry noun, so lights/cameras/
+// empties aren't narrowed. Kept in lockstep with the cube/sphere aliases in inferNodeTypes.
 function geometryDataTypesFor(q: string): string[] | null {
-  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxData', 'BoxMesh'];
-  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereData', 'SphereMesh'];
+  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxData'];
+  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereData'];
   return null;
 }
 

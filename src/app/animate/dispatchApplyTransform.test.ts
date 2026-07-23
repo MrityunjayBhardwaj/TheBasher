@@ -1,7 +1,7 @@
 // dispatchApplyTransform (primitives) — Phase 151 Wave 2 Task 5 (issue #151).
 //
-// Pins the primitive Apply contract (the fused box was retired in #365 Slice 2 — the
-// mechanism now runs on a fused SphereMesh and on a split Object, see below):
+// Pins the primitive Apply contract. Both fused value kinds are retired (box #365 Slice 2,
+// sphere #384 Stage C), so the mechanism now runs entirely on the split Object → data road:
 //   - SC-1: Apply scale=[2,1,1] → the BakedMesh geometry bbox is 2×1×1 of the unit
 //     1×1×1 bbox; the new node's transform is identity.
 //   - the original node is removed, ONE BakedMesh added, edges rewired.
@@ -30,19 +30,19 @@ import {
   isApplySourceAnimated,
 } from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { makeSplitSphere } from '../../test-utils/splitSphere';
 
 const PRIM_ID = 'n_prim';
+// The SphereData half of the split sphere `buildSplitSphereState` mints (makeSplitSphere's
+// default `${objectId}_data`). Geometry params (radius/segments) + material live here.
+const PRIM_DATA_ID = `${PRIM_ID}_data`;
 
-// #365 Phase 5a (Slice 2) — the fused box value kind is retired, so the last FUSED primitive
-// that still bakes is the SphereMesh. These tests exercise the fused-primitive → BakedMesh
-// Apply MECHANISM (bbox bake, consumer rewire, OPFS ordering, animated-reject) on a sphere of
-// radius 0.5 — whose bounding box is 1×1×1, identical to the old unit box, so the bbox
-// assertions are unchanged.
-//
-// #376 — a split cube (Object + BoxData) bakes through the same mechanism. Its cases below
-// cover what the split makes newly true: the PAIR retires, a SHARED data node survives, one
-// undo restores both halves, and the offer-side predicate matches what the dispatcher accepts.
-function buildFusedSphereState(): DagState {
+// #384 Stage C (C1) — the fused SphereMesh value kind is now retired too, so EVERY primitive
+// bakes through the split Object → data road. `buildSceneScaffold` is the camera/light/scene/
+// render frame with NO mesh child; a test then adds its own subject (a split sphere at PRIM_ID
+// via `buildSplitSphereState`, or a split cube via makeSplitCube) so the "no Object remains
+// after the bake" assertions see ONLY the subject under test, never an incidental primitive.
+function buildSceneScaffold(): DagState {
   let s = emptyDagState();
   const add = (op: Op) => {
     s = applyOp(s, op).next;
@@ -58,21 +58,6 @@ function buildFusedSphereState(): DagState {
     nodeId: 'n_light',
     nodeType: 'DirectionalLight',
     params: { intensity: 1.1, position: [5, 5, 3], color: '#ffffff' },
-  });
-  add({
-    type: 'addNode',
-    nodeId: PRIM_ID,
-    nodeType: 'SphereMesh',
-    // radius 0.5 → a 1×1×1 bounding box, identical to the retired unit box, so the bbox-bake
-    // assertions carry over verbatim.
-    params: {
-      radius: 0.5,
-      widthSegments: 16,
-      heightSegments: 16,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', base: { color: '#5af07a' } },
-    },
   });
   add({ type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} });
   add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
@@ -94,11 +79,6 @@ function buildFusedSphereState(): DagState {
   });
   add({
     type: 'connect',
-    from: { node: PRIM_ID, socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
-  add({
-    type: 'connect',
     from: { node: 'n_scene', socket: 'out' },
     to: { node: 'n_render', socket: 'scene' },
   });
@@ -109,6 +89,22 @@ function buildFusedSphereState(): DagState {
       render: { node: 'n_render', socket: 'out' },
     },
   };
+}
+
+// A scaffold with a split sphere at PRIM_ID wired into Scene.children. The Object owns the TRS;
+// the SphereData (PRIM_DATA_ID) owns radius/segments + material. radius 0.5 → a 1×1×1 bounding
+// box, identical to the retired unit box, so every bbox-bake assertion carries over verbatim.
+// This is the road the whole primitive Apply MECHANISM (bbox bake, consumer rewire, OPFS
+// ordering, animated-reject) now runs on — the same road makeSplitCube exercises for #376.
+function buildSplitSphereState(): DagState {
+  return makeSplitSphere(buildSceneScaffold(), {
+    objectId: PRIM_ID,
+    radius: 0.5,
+    widthSegments: 16,
+    heightSegments: 16,
+    color: '#5af07a',
+    connectTo: { node: 'n_scene', socket: 'children' },
+  }).state;
 }
 
 beforeEach(() => {
@@ -137,7 +133,7 @@ function makeDispatch(stateRef: { current: DagState }) {
 
 describe('dispatchApplyTransform (primitives)', () => {
   it('SC-1: Apply scale=[2,1,1] → BakedMesh bbox 2×1×1, transform identity', async () => {
-    let state = buildFusedSphereState();
+    let state = buildSplitSphereState();
     state = applyOp(state, {
       type: 'setParam',
       nodeId: PRIM_ID,
@@ -170,9 +166,11 @@ describe('dispatchApplyTransform (primitives)', () => {
     const next = stateRef.current;
     expect(result.bakedId).toBe(PRIM_ID);
     expect(next.nodes[PRIM_ID].type).toBe('BakedMesh');
-    // ...and the Box is gone as a TYPE — exactly one BakedMesh, no primitive left.
+    // ...and the split sphere is gone: exactly one BakedMesh, the SphereData half retired,
+    // and no Object survives — no primitive left.
     expect(Object.values(next.nodes).filter((n) => n.type === 'BakedMesh')).toHaveLength(1);
-    expect(Object.values(next.nodes).some((n) => n.type === 'Box')).toBe(false);
+    expect(next.nodes[PRIM_DATA_ID]).toBeUndefined();
+    expect(Object.values(next.nodes).some((n) => n.type === 'Object')).toBe(false);
     const baked = next.nodes[result.bakedId];
     expect(baked).toBeDefined();
     expect(baked.type).toBe('BakedMesh');
@@ -194,7 +192,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('preserves the consumer edge: the BakedMesh feeds the Scene at the id the Box held', async () => {
-    const state = buildFusedSphereState();
+    const state = buildSplitSphereState();
     const storage = new MemoryStorage();
     const stateRef = { current: state };
     const { fn } = makeDispatch(stateRef);
@@ -237,7 +235,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // `aimNode` was worse still, coercing to the origin so the object re-aimed at world
     // zero. Neither failure is visible in a node count or an edge walk, which is why this
     // asserts resolution rather than shape.
-    const state = buildFusedSphereState();
+    const state = buildSplitSphereState();
     const withConstraint = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_track',
@@ -274,7 +272,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // and every lookup missed; under inheritance it HITS, and resolveEvaluatedParam gives
     // a transient unconditional priority with no type check. The read surfaces would then
     // report a pre-bake offset while the viewport draws the baked mesh at the origin.
-    const state = buildFusedSphereState();
+    const state = buildSplitSphereState();
     useTransientEditStore.getState().set(PRIM_ID, 'position', [9, 9, 9]);
     expect(useTransientEditStore.getState().get(PRIM_ID, 'position')).toBeDefined();
 
@@ -299,7 +297,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // that keeps its constraints and its edges but loses its label reads as a different
     // object to the only observer who matters. The outliner falls back to `node.id` and
     // BakedMesh has no `name` param, so without this the row shows a raw id.
-    const state = buildFusedSphereState();
+    const state = buildSplitSphereState();
     const named = applyOp(state, { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero' }).next;
 
     const storage = new MemoryStorage();
@@ -323,7 +321,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single
     // socket's connect-before-disconnect threw ("bound producer is <baked>, not
     // n_box") and rolled back the whole atomic composite → Apply silently no-op'd.
-    let state = buildFusedSphereState();
+    let state = buildSplitSphereState();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_mod',
@@ -388,7 +386,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('awaits the OPFS write BEFORE the Op composite (reload-safe ordering)', async () => {
-    const state = buildFusedSphereState();
+    const state = buildSplitSphereState();
     const storage = new MemoryStorage();
     const writeSpy = vi.spyOn(storage, 'write');
     const stateRef = { current: state };
@@ -413,7 +411,7 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('SC-8: rejects when a TRS band is animated (D-04), DAG byte-unchanged', async () => {
-    let state = buildFusedSphereState();
+    let state = buildSplitSphereState();
     // Add a KeyframeChannelVec3 targeting the box position → animated.
     state = applyOp(state, {
       type: 'addNode',
@@ -450,14 +448,15 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it('H45: baking one primitive does NOT corrupt the shared registry geometry', async () => {
-    let state = buildFusedSphereState();
-    // A second sphere with the SAME params shares the registry geometry key with PRIM_ID.
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_sphere2',
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 16, heightSegments: 16 },
-    }).next;
+    // A second split sphere with the SAME geometry params shares the registry key
+    // `sphere|0.5|16|16` with PRIM_ID — the sibling that must still resolve to the unit
+    // geometry after PRIM_ID bakes (proving the bake cloned first, not mutated in place).
+    const state = makeSplitSphere(buildSplitSphereState(), {
+      objectId: 'n_sphere2',
+      radius: 0.5,
+      widthSegments: 16,
+      heightSegments: 16,
+    }).state;
 
     // Prime the shared geometry by resolving + getting it before the bake.
     const sharedRef = {
@@ -493,7 +492,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // The Slice-2 gap is closed: a posed Object over a BoxData bakes through the same
     // mechanism as the fused sphere. The PAIR retires — leaving the BoxData behind would
     // orphan it in the graph (no consumer, still saved).
-    let state = buildFusedSphereState();
+    let state = buildSceneScaffold();
     const cube = makeSplitCube(state, {
       objectId: 'n_cube',
       position: [2, 0, 0],
@@ -540,7 +539,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // Two Objects posing ONE BoxData. Baking the first must not consume the data node, or
     // the sibling Object renders empty. The exclusivity guard is what makes fan-out (#391)
     // safe to expose later.
-    let state = buildFusedSphereState();
+    let state = buildSceneScaffold();
     const sceneId = state.outputs.scene!.node;
     const first = makeSplitCube(state, {
       objectId: 'n_cube_a',
@@ -591,7 +590,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // sphere's undo round-trip (SC-5) only ever exercised a ONE-node retirement, so this
     // is genuinely new ground rather than a re-assertion — the second removeNode is the
     // part that could have had no inverse.
-    let state = buildFusedSphereState();
+    let state = buildSceneScaffold();
     const cube = makeSplitCube(state, {
       objectId: 'n_cube',
       position: [2, 0, 0],
@@ -659,15 +658,21 @@ describe('#411 — the animated guard covers every param the bake consumes', () 
     }).next;
   }
 
-  it('rejects a FUSED sphere whose radius is animated (pre-existing, not split-specific)', async () => {
-    // The bake resolves geometry from `radius`, so freezing it at the current frame
-    // destroys the animation exactly as freezing a TRS band would. The old guard
-    // enumerated position/rotation/scale and never saw this.
-    let state = buildFusedSphereState();
-    state = withChannel(state, 'KeyframeChannelNumber', PRIM_ID, 'radius', [
+  it('rejects a split sphere whose radius is animated — the channel targets the DATA node', async () => {
+    // The bake resolves geometry from `radius`, so freezing it at the current frame destroys
+    // the animation exactly as freezing a TRS band would. `radius` lives on the SphereData now,
+    // so the guard must reach through the selected Object's `data` edge to see the channel —
+    // the same reach the split-cube `size` case below exercises. The old guard enumerated
+    // position/rotation/scale and never saw geometry params at all.
+    let state = buildSplitSphereState();
+    state = withChannel(state, 'KeyframeChannelNumber', PRIM_DATA_ID, 'radius', [
       { time: 0, value: 0.5, easing: 'linear' },
       { time: 1, value: 2, easing: 'linear' },
     ]);
+
+    // The guard is asked about the OBJECT (what the user selects) and still finds the data
+    // node's channel.
+    expect(isApplySourceAnimated(state, PRIM_ID, 30)).toBe(true);
 
     const storage = new MemoryStorage();
     const writeSpy = vi.spyOn(storage, 'write');
@@ -762,7 +767,7 @@ describe('canApplyTransform — the offer side of the boundary-pair (#376)', () 
     // `Object` by type alone left Apply enabled for an Empty, which then failed with an
     // internal-sounding "could not resolve mesh" — an affordance that promises something
     // the dispatcher will refuse.
-    let state = buildFusedSphereState();
+    let state = buildSplitSphereState();
     const cube = makeSplitCube(state, { objectId: 'n_cube' });
     state = cube.state;
     state = applyOp(state, {
@@ -774,7 +779,7 @@ describe('canApplyTransform — the offer side of the boundary-pair (#376)', () 
 
     expect(canApplyTransform(state, cube.objectId)).toBe(true);
     expect(canApplyTransform(state, 'n_empty')).toBe(false);
-    expect(canApplyTransform(state, PRIM_ID)).toBe(true); // the still-fused sphere
+    expect(canApplyTransform(state, PRIM_ID)).toBe(true); // the split sphere (Object + data)
     expect(canApplyTransform(state, 'no_such_node')).toBe(false);
   });
 
@@ -782,7 +787,7 @@ describe('canApplyTransform — the offer side of the boundary-pair (#376)', () 
     // The property that makes this a boundary-pair rather than a second list: for an
     // Empty, the predicate says no AND the dispatcher rejects. If these ever diverge the
     // UI is lying about what will happen.
-    let state = buildFusedSphereState();
+    let state = buildSceneScaffold();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_empty',
@@ -822,7 +827,7 @@ const CHILD_NAME = 'Cube';
 
 /** A state with a GltfAsset (→Scene.children) + one GltfChild proxy at scale 2. */
 function gltfChildState() {
-  let state = buildFusedSphereState();
+  let state = buildSceneScaffold();
   const sceneId = state.outputs.scene!.node;
   state = applyOp(state, {
     type: 'addNode',
