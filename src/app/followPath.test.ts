@@ -75,11 +75,25 @@ function minusZ(euler: Vec3): THREE.Vector3 {
 /** A curve WIRED INTO THE SCENE — the seam resolves its pose through the shared scene-tree
  *  walk, so a floating node has no world transform (curveSampleSource.test.ts's note). */
 function addCurve(state: DagState, id = CURVE_ID, params: Record<string, unknown> = {}): DagState {
+  // #385 — a curve is an Object (id `id`, what FollowPath's `curve` ref names) → a CurveData.
+  // Split params: position/rotation/scale pose the Object; the rest are curve geometry.
+  const { position, rotation, scale, ...data } = params;
+  const dataId = `${id}_data`;
   let s = applyOp(state, {
     type: 'addNode',
-    nodeId: id,
-    nodeType: 'Curve',
-    params: { points: withIds(LOPSIDED), closed: false, resolution: 32, ...params },
+    nodeId: dataId,
+    nodeType: 'CurveData',
+    params: { points: withIds(LOPSIDED), closed: false, resolution: 32, ...data },
+  }).next;
+  const objParams: Record<string, unknown> = {};
+  if (position !== undefined) objParams.position = position;
+  if (rotation !== undefined) objParams.rotation = rotation;
+  if (scale !== undefined) objParams.scale = scale;
+  s = applyOp(s, { type: 'addNode', nodeId: id, nodeType: 'Object', params: objParams }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: dataId, socket: 'out' },
+    to: { node: id, socket: 'data' },
   }).next;
   s = applyOp(s, {
     type: 'connect',

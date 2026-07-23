@@ -23,16 +23,37 @@ import type { Op } from '../core/dag/types';
 import { MIN_CURVE_POINTS, type CurvePoint } from '../nodes/Curve';
 import type { Vec3 } from '../nodes/types';
 import { findById, mintId } from './identifiedArray';
+import { resolveDataParamOwner } from './resolveDataParamOwner';
+
+/** The node that OWNS a curve's point data — the CurveData reached through an Object's `data`
+ *  socket (#385, the object↔data split), or the node itself for a fused Curve or a CurveData
+ *  addressed directly. `points` is a curve-exclusive param, so its presence is a sound probe.
+ *  EVERY read and write below funnels through this, so the editor works whether the caller
+ *  hands us the selected Object (what the outliner/gizmo select) or the data node. Null ⇒ not
+ *  a curve. This is what keeps the (nodeId,pointId) selection (#453) valid across the split:
+ *  the selection still names the Object, and it retargets to the CurveData here. */
+function curvePointsOwner(state: DagState, nodeId: string): string | null {
+  return resolveDataParamOwner(state, nodeId, 'points');
+}
+
+/** The point-owner id + its live entries in one resolve — so a builder writes to the SAME node
+ *  it read from (the CurveData, not the selected Object). Null ⇒ not a curve / no points. */
+function ownerEntries(
+  state: DagState,
+  nodeId: string,
+): { owner: string; entries: CurvePoint[] } | null {
+  const owner = curvePointsOwner(state, nodeId);
+  if (!owner) return null;
+  const pts = (state.nodes[owner].params as { points?: unknown }).points;
+  if (!Array.isArray(pts)) return null;
+  return { owner, entries: pts as CurvePoint[] };
+}
 
 /** The curve's control-point ENTRIES ({id,co}[]), or null when `nodeId` is not a Curve. The
  *  builders read through this so a write can PRESERVE each point's id across a topology edit —
  *  one accessor, one truth. The coordinate-only `curvePointsOf` is derived from it. */
 export function curvePointEntriesOf(state: DagState, nodeId: string): CurvePoint[] | null {
-  const node = state.nodes[nodeId];
-  if (!node || node.type !== 'Curve') return null;
-  const pts = (node.params as { points?: unknown }).points;
-  if (!Array.isArray(pts)) return null;
-  return pts as CurvePoint[];
+  return ownerEntries(state, nodeId)?.entries ?? null;
 }
 
 /** The curve's authored control points as bare coordinates (LOCAL space), or null when
@@ -45,9 +66,10 @@ export function curvePointsOf(state: DagState, nodeId: string): Vec3[] | null {
 
 /** The one write. Every builder funnels here so there is exactly one place that knows the
  *  param is called `points` and that the whole `{id,co}[]` array is written at once (the id is
- *  a reference key, never a `setParam` path — setParam refuses to descend into arrays). */
-function writePoints(nodeId: string, points: readonly CurvePoint[]): Op[] {
-  return [{ type: 'setParam', nodeId, paramPath: 'points', value: points }];
+ *  a reference key, never a `setParam` path — setParam refuses to descend into arrays). The
+ *  target is the point-OWNER (the CurveData after the split), resolved by the caller. */
+function writePoints(ownerId: string, points: readonly CurvePoint[]): Op[] {
+  return [{ type: 'setParam', nodeId: ownerId, paramPath: 'points', value: points }];
 }
 
 /** A resolved control-point selection: the point the viewport handles, the point gizmo and
@@ -99,11 +121,11 @@ export function buildSetCurvePointOps(
   index: number,
   value: Vec3,
 ): Op[] | null {
-  const entries = curvePointEntriesOf(state, nodeId);
-  if (!entries || index < 0 || index >= entries.length) return null;
+  const oe = ownerEntries(state, nodeId);
+  if (!oe || index < 0 || index >= oe.entries.length) return null;
   return writePoints(
-    nodeId,
-    entries.map((e, i) => (i === index ? { ...e, co: value } : e)),
+    oe.owner,
+    oe.entries.map((e, i) => (i === index ? { ...e, co: value } : e)),
   );
 }
 
@@ -121,10 +143,10 @@ export function buildInsertCurvePointOps(
   index: number,
   newPointId?: string,
 ): Op[] | null {
-  const entries = curvePointEntriesOf(state, nodeId);
-  if (!entries || index < 0 || index >= entries.length) return null;
-  const node = state.nodes[nodeId];
-  const closed = (node?.params as { closed?: unknown })?.closed === true;
+  const oe = ownerEntries(state, nodeId);
+  if (!oe || index < 0 || index >= oe.entries.length) return null;
+  const { owner, entries } = oe;
+  const closed = (state.nodes[owner].params as { closed?: unknown }).closed === true;
   const points = entries.map((e) => e.co);
 
   const a = points[index];
@@ -153,7 +175,7 @@ export function buildInsertCurvePointOps(
     );
   const out = entries.slice();
   out.splice(index + 1, 0, { id, co: next });
-  return writePoints(nodeId, out);
+  return writePoints(owner, out);
 }
 
 /** Remove a control point. Null (a refused edit, not a silent no-op) when the curve is
@@ -163,20 +185,20 @@ export function buildDeleteCurvePointOps(
   nodeId: string,
   index: number,
 ): Op[] | null {
-  const entries = curvePointEntriesOf(state, nodeId);
-  if (!entries || index < 0 || index >= entries.length) return null;
-  if (entries.length <= MIN_CURVE_POINTS) return null;
+  const oe = ownerEntries(state, nodeId);
+  if (!oe || index < 0 || index >= oe.entries.length) return null;
+  if (oe.entries.length <= MIN_CURVE_POINTS) return null;
   return writePoints(
-    nodeId,
-    entries.filter((_, i) => i !== index),
+    oe.owner,
+    oe.entries.filter((_, i) => i !== index),
   );
 }
 
 /** Open ⇄ closed. A closed curve loops (and a Follow-Path over it wraps rather than
  *  clamping — curveSampleSource.ts). */
 export function buildToggleCurveClosedOp(state: DagState, nodeId: string): Op[] | null {
-  const node = state.nodes[nodeId];
-  if (!node || node.type !== 'Curve') return null;
-  const closed = (node.params as { closed?: unknown }).closed === true;
-  return [{ type: 'setParam', nodeId, paramPath: 'closed', value: !closed }];
+  const owner = curvePointsOwner(state, nodeId);
+  if (!owner) return null;
+  const closed = (state.nodes[owner].params as { closed?: unknown }).closed === true;
+  return [{ type: 'setParam', nodeId: owner, paramPath: 'closed', value: !closed }];
 }

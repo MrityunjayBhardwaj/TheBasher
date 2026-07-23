@@ -139,7 +139,6 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
     case 'GltfAsset':
     case 'Transform':
     case 'Null':
-    case 'Curve':
     case 'Group':
     case 'MaterialOverride':
     case 'Scatter':

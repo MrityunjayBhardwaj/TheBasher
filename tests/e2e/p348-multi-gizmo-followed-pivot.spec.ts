@@ -14,6 +14,7 @@
 
 import { expect, test } from './_fixtures';
 import { splitCubeOps } from './_splitCube';
+import { splitCurveOps } from './_splitCurve';
 
 type V3 = [number, number, number];
 
@@ -49,8 +50,23 @@ async function boot(page: import('@playwright/test').Page) {
 
 /** Add a static second box. With `follow`, also put n_box on an offset+rotated+scaled curve. */
 async function scene(page: import('@playwright/test').Page, follow: boolean) {
+  const curveOps = follow
+    ? splitCurveOps({
+        objectId: 'n_path',
+        points: [
+          [0, 0, 0],
+          [8, 0, 0],
+          [12, 0, 4],
+        ],
+        closed: false,
+        resolution: 32,
+        position: [1, 3, -2],
+        rotation: [0, 25, 0],
+        scale: [2, 1, 0.5],
+      })
+    : [];
   await page.evaluate(
-    ({ follow, cubeOps }) => {
+    ({ follow, cubeOps, curveOps }) => {
       const ops: unknown[] = [
         ...cubeOps,
         {
@@ -61,23 +77,7 @@ async function scene(page: import('@playwright/test').Page, follow: boolean) {
       ];
       if (follow) {
         ops.push(
-          {
-            type: 'addNode',
-            nodeId: 'n_path',
-            nodeType: 'Curve',
-            params: {
-              points: [
-                [0, 0, 0],
-                [8, 0, 0],
-                [12, 0, 4],
-              ],
-              closed: false,
-              resolution: 32,
-              position: [1, 3, -2],
-              rotation: [0, 25, 0],
-              scale: [2, 1, 0.5],
-            },
-          },
+          ...curveOps,
           {
             type: 'connect',
             from: { node: 'n_path', socket: 'out' },
@@ -95,7 +95,7 @@ async function scene(page: import('@playwright/test').Page, follow: boolean) {
         .getState()
         .dispatchAtomic(ops, 'user', 'p348 scene');
     },
-    { follow, cubeOps: splitCubeOps({ objectId: 'n_box_b', position: STATIC_BOX }) },
+    { follow, cubeOps: splitCubeOps({ objectId: 'n_box_b', position: STATIC_BOX }), curveOps },
   );
   await page.waitForTimeout(500);
   await page.evaluate(() =>

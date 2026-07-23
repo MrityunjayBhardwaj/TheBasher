@@ -38,7 +38,16 @@ interface ThreeObjLike {
 interface BasherWin {
   __basher_dag: {
     getState(): {
-      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params: Record<string, unknown>;
+            inputs?: Record<string, { node?: string }>;
+          }
+        >;
+      };
       dispatchAtomic: (ops: unknown[], src: string, d: string) => void;
     };
   };
@@ -66,7 +75,13 @@ async function addCurve(page: import('@playwright/test').Page): Promise<string> 
   await expect(page.getByTestId('add-menu')).toHaveCount(0);
   return page.evaluate(() => {
     const s = (window as unknown as BasherWin).__basher_dag.getState().state;
-    return Object.keys(s.nodes).find((k) => s.nodes[k].type === 'Curve')!;
+    return Object.keys(s.nodes).find((k) => {
+      // #385 — a curve is an Object (the pose) posing a CurveData (the points); the fused
+      // 'Curve' node type is retired.
+      const n = s.nodes[k];
+      const d = n.inputs?.data?.node;
+      return n.type === 'Object' && !!d && s.nodes[d]?.type === 'CurveData';
+    })!;
   });
 }
 
@@ -89,9 +104,14 @@ async function poseCurve(page: import('@playwright/test').Page, id: string) {
 
 const readPoints = (page: import('@playwright/test').Page, id: string) =>
   page.evaluate((curveId) => {
-    // points are now {id,co}[]; return the bare co's so the coordinate assertions stay meaningful.
-    const p = (window as unknown as BasherWin).__basher_dag.getState().state.nodes[curveId]
-      .params as unknown as { points: { id: string; co: Vec3 }[]; closed: boolean };
+    // #385 — points/closed live on the CurveData reached through the Object's `data` socket.
+    // points are {id,co}[]; return the bare co's so the coordinate assertions stay meaningful.
+    const s = (window as unknown as BasherWin).__basher_dag.getState().state;
+    const dataId = s.nodes[curveId].inputs?.data?.node ?? curveId;
+    const p = s.nodes[dataId].params as unknown as {
+      points: { id: string; co: Vec3 }[];
+      closed: boolean;
+    };
     return { points: p.points.map((e) => e.co), closed: p.closed };
   }, id);
 
@@ -302,14 +322,17 @@ test('the two-point floor is REFUSED and announced — Delete never eats the cur
   await page.goto('/');
   await page.waitForSelector('canvas');
   const id = await addCurve(page);
-  // Down to the floor: 4 points → 2.
+  // Down to the floor: 4 points → 2. #385 — the raw setParam must target the CurveData that
+  // OWNS `points` (aimed at the Object it would be a silently-stripped wrong-half write).
   await page.evaluate((curveId) => {
     const w = window as unknown as BasherWin;
+    const s = w.__basher_dag.getState().state;
+    const dataId = s.nodes[curveId].inputs?.data?.node ?? curveId;
     w.__basher_dag.getState().dispatchAtomic(
       [
         {
           type: 'setParam',
-          nodeId: curveId,
+          nodeId: dataId,
           paramPath: 'points',
           value: [
             { id: 'cp0', co: [0, 0, 0] },
@@ -332,8 +355,11 @@ test('the two-point floor is REFUSED and announced — Delete never eats the cur
   // And the CURVE NODE is still there: falling through to node-delete would destroy the
   // object because the director asked to remove one of its points.
   const stillThere = await page.evaluate((curveId) => {
+    // #385 — the curve is the Object posing a CurveData; both must survive the refused delete.
     const s = (window as unknown as BasherWin).__basher_dag.getState().state;
-    return s.nodes[curveId]?.type === 'Curve';
+    const n = s.nodes[curveId];
+    const d = n?.inputs?.data?.node;
+    return n?.type === 'Object' && !!d && s.nodes[d]?.type === 'CurveData';
   }, id);
   expect(stillThere).toBe(true);
   // The refusal ANNOUNCES itself — a key with no disabled state must never no-op silently.

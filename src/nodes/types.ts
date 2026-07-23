@@ -691,29 +691,13 @@ export interface NullValue {
   readonly scale: Vec3;
 }
 
-// #321 (Phase 3, the camera rig) — a Curve is a PATH: a transformable scene object whose
-// control points define a spline other operators travel along (Follow-Path, Phase 4). It
-// carries a TRS like any object, plus the authored `points` and the dense `samples` its
-// evaluate bakes from them (centripetal Catmull-Rom — curveMath.ts).
-//
-// `samples` are LOCAL-space, and deliberately carry no arc-length table: arc length must
-// be measured in WORLD space (a non-uniform scale on the curve or its parent makes local
-// distance disproportionate to world distance), and `evaluate` is pure — it has no
-// `state` and cannot see `resolveWorldTransform`. The table therefore lives in the seam,
-// `src/app/curveSampleSource.ts`. A path is not render geometry in v1 (Blender's curve
-// only renders once it has a bevel), so the renderer draws it as editor chrome.
-export interface CurveValue {
-  readonly kind: 'Curve';
-  readonly position: Vec3;
-  readonly rotation: Vec3;
-  readonly scale: Vec3;
-  /** The authored control points, LOCAL to the curve's TRS. The spline passes through them. */
-  readonly points: readonly Vec3[];
-  readonly closed: boolean;
-  /** The baked local-space polyline (see curveMath.sampleCurve). Closed curves repeat
-   *  the first point as the last, so consumers walk a flat strip with no wrap case. */
-  readonly samples: readonly Vec3[];
-}
+// #321 (Phase 3, the camera rig) — a Curve was a PATH scene object (TRS + control points +
+// baked samples). RETIRED (#385 S4, Stage C · C2): a curve is now an `Object` (the pose)
+// pointing at a `CurveData` (the points), exactly as a box/sphere became Object + BoxData/
+// SphereData. No value kind carries the fused curve any longer, making it unrepresentable at
+// runtime. The `samples`/`closed` it once held live on `CurveDataValue` above; the world
+// arc-length seam (curveSampleSource.ts) still measures those LOCAL samples in world (#349
+// unchanged). Old saves split on load (migrateFusedCurveToSplit).
 
 export interface GroupValue {
   readonly kind: 'Group';
@@ -946,11 +930,36 @@ export interface MeshDataValue {
 }
 
 /**
- * The value union flowing through the 'ObjectData' socket. Phase 1 seeds it with
- * MeshData; CameraData / LightData join in later phases (the same "one socket,
- * discriminate on value.kind" discipline V78 uses for 'SceneObject').
+ * The curve's data half — control points, closure, and the baked LOCAL-space
+ * polyline (`samples`), and DELIBERATELY no transform (the Object owns the TRS).
+ *
+ * The FIRST non-mesh member of `ObjectData` (#385, Stage C · C2). Unlike
+ * MeshData a curve is NOT render geometry — no `GeometryRef`, no material: it is
+ * editor chrome the viewport draws as a line and the render hide-pass excludes
+ * (V37). It carries exactly the fields the fused `CurveValue` did MINUS the TRS,
+ * so an `Object → CurveData` pair draws byte-identically to the fused Curve.
+ * `#349` (which world a followed curve's points live in) is unchanged: `samples`
+ * stay LOCAL and the world arc-length table lives in the seam (curveSampleSource).
  */
-export type ObjectData = MeshDataValue;
+export interface CurveDataValue {
+  readonly kind: 'CurveData';
+  /** The authored control points, LOCAL to the owning Object's TRS. */
+  readonly points: readonly Vec3[];
+  readonly closed: boolean;
+  /** The baked local-space polyline (curveMath.sampleCurve); closed curves repeat
+   *  the first point as the last, so consumers walk a flat strip with no wrap. */
+  readonly samples: readonly Vec3[];
+}
+
+/**
+ * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
+ * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
+ * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
+ * gains a curve arm; the `data.kind !== 'MeshData'` guards absorb it elsewhere).
+ * CameraData / LightData join in later phases (the same "one socket, discriminate
+ * on value.kind" discipline V78 uses for 'SceneObject').
+ */
+export type ObjectData = MeshDataValue | CurveDataValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`
@@ -972,7 +981,6 @@ export type SceneChild =
   | GltfAssetValue
   | TransformValue
   | NullValue
-  | CurveValue
   | GroupValue
   | MaterialOverrideValue
   | ScatterValue

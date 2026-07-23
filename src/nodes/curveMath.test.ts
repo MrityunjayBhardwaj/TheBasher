@@ -3,10 +3,11 @@
 
 import { describe, expect, it, beforeAll } from 'vitest';
 import { sampleCurve } from './curveMath';
-import { CurveNode, CurveParams, MIN_CURVE_POINTS } from './Curve';
+import { CurveNode, MIN_CURVE_POINTS } from './Curve';
+import { CurveDataNode, CurveDataParams } from './CurveData';
 import { isDefaultCollapsed } from '../app/inspectorSections';
 import { registerAllNodes } from './registerAll';
-import type { CurveValue, Vec3 } from './types';
+import type { CurveDataValue, Vec3 } from './types';
 import { withIds } from '../test-utils/curvePoints';
 
 const SQUARE: Vec3[] = [
@@ -71,43 +72,45 @@ describe('sampleCurve — centripetal Catmull-Rom', () => {
   });
 });
 
-describe('Curve node', () => {
-  it('bakes its samples in evaluate, and is a SceneObject', () => {
-    const params = CurveParams.parse({ points: withIds(SQUARE), resolution: 8 });
-    const value = CurveNode.evaluate(params, {}, {} as never) as CurveValue;
-    expect(value.kind).toBe('Curve');
+// #385 S4 — the live curve is the CurveData half (points/closed/resolution → ObjectData); the
+// Object owns the pose. The fused Curve node is a retired migration relic (evaluate throws).
+describe('CurveData node (the live curve data half)', () => {
+  it('bakes its samples in evaluate and outputs ObjectData', () => {
+    const params = CurveDataParams.parse({ points: withIds(SQUARE), resolution: 8 });
+    const value = CurveDataNode.evaluate(params, {}, {} as never) as CurveDataValue;
+    expect(value.kind).toBe('CurveData');
     expect(value.samples).toHaveLength(3 * 8 + 1);
     expect(value.points).toEqual(SQUARE);
-    expect(CurveNode.outputs.out.type).toBe('SceneObject');
-    expect(CurveNode.pure).toBe(true);
+    expect(CurveDataNode.outputs.out.type).toBe('ObjectData');
+    expect(CurveDataNode.pure).toBe(true);
   });
 
-  it('declares the sections the registry invariants require (posable ⟺ constrainable ⟹ drivable)', () => {
-    expect(CurveNode.inspectorSections).toContain('transform');
-    expect(CurveNode.inspectorSections).toContain('constraint');
-    expect(CurveNode.inspectorSections).toContain('driver');
-    expect(CurveNode.inspectorSections).toContain('curve');
+  it('declares only the `curve` section — the pose sections live on the Object (#385)', () => {
+    expect(CurveDataNode.inspectorSections).toEqual(['curve']);
   });
 
   it('leads with `curve` — the DEFINING section, since only the first opens by default', () => {
-    // Observed on :5180: leading with 'transform' opened a new Curve on its TRS with the
-    // control points COLLAPSED out of sight. The convention is the object's substance
-    // first (BoxMesh → 'mesh', PerspectiveCamera → 'camera'), and isDefaultCollapsed
-    // expands only sections[0].
-    expect(CurveNode.inspectorSections![0]).toBe('curve');
-    expect(isDefaultCollapsed(CurveNode.inspectorSections!, 'curve')).toBe(false);
+    // The object's substance first (BoxData → 'mesh', CurveData → 'curve'); isDefaultCollapsed
+    // expands only sections[0], so the control points open rather than hiding behind the pose.
+    expect(CurveDataNode.inspectorSections![0]).toBe('curve');
+    expect(isDefaultCollapsed(CurveDataNode.inspectorSections!, 'curve')).toBe(false);
   });
 
   it('refuses fewer than two points — a path needs a span', () => {
-    expect(() => CurveParams.parse({ points: withIds([[0, 0, 0]]) })).toThrow();
+    expect(() => CurveDataParams.parse({ points: withIds([[0, 0, 0]]) })).toThrow();
     expect(MIN_CURVE_POINTS).toBe(2);
   });
 
   it('hydrates a bare param bag through zod defaults (H14)', () => {
-    const params = CurveParams.parse({});
-    expect(params.position).toEqual([0, 0, 0]);
-    expect(params.scale).toEqual([1, 1, 1]);
+    const params = CurveDataParams.parse({});
     expect(params.closed).toBe(false);
+    expect(params.resolution).toBeGreaterThanOrEqual(1);
     expect(params.points.length).toBeGreaterThanOrEqual(MIN_CURVE_POINTS);
+  });
+
+  it('the fused Curve node is a retired relic — evaluate throws, migration data kept', () => {
+    expect(() => CurveNode.evaluate({} as never, {}, {} as never)).toThrow(/retired/);
+    expect(CurveNode.type).toBe('Curve'); // still registered so the load-migration can normalize
+    expect(CurveNode.migrations?.[1]).toBeTypeOf('function');
   });
 });

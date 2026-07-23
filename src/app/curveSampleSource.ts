@@ -38,8 +38,22 @@ import type { EvaluatorCache } from '../core/dag/evaluator';
 import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import type { CurveValue, Vec3 } from '../nodes/types';
+import type { ObjectValue, Vec3 } from '../nodes/types';
 import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveDataParamOwner } from './resolveDataParamOwner';
+
+/** The baked LOCAL polyline + closure of a curve — the `Object → CurveData` pair (#385; the
+ *  fused `Curve` value kind is retired). The seam is otherwise unchanged — samples stay LOCAL
+ *  and are measured in world below exactly as before, so #349 (which world the points live in)
+ *  is untouched by the split (parity first). */
+function curveGeometryOf(
+  value: ObjectValue | undefined,
+): { samples: readonly Vec3[]; closed: boolean } | null {
+  if (value?.kind === 'Object' && value.data?.kind === 'CurveData') {
+    return { samples: value.data.samples, closed: value.data.closed === true };
+  }
+  return null;
+}
 
 const IDENTITY16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
@@ -126,11 +140,15 @@ export function curveSamplerFor(
   cache?: EvaluatorCache,
 ): CurveSampler | null {
   const node = state.nodes[curveId];
-  if (!node || node.type !== 'Curve') return null;
+  // Accept a fused Curve OR a split Object whose data is a CurveData (#385). `points` is a
+  // curve-exclusive param, so a non-null owner is a cheap pre-gate that rejects every other
+  // node WITHOUT a full evaluate (nodeRefCandidates probes many nodes through here).
+  if (!node || resolveDataParamOwner(state, curveId, 'points') === null) return null;
 
-  const value = evaluate(state, curveId, { ctx, cache }).value as CurveValue | undefined;
-  const samples = value?.samples;
-  if (!samples || samples.length === 0) return null;
+  const value = evaluate(state, curveId, { ctx, cache }).value as ObjectValue | undefined;
+  const geom = curveGeometryOf(value);
+  const samples = geom?.samples;
+  if (!geom || !samples || samples.length === 0) return null;
 
   const matrix = resolveWorldTransform(state, curveId, ctx, cache)?.matrix ?? IDENTITY16;
   const matrixKey = Array.prototype.join.call(matrix, ',');
@@ -145,7 +163,7 @@ export function curveSamplerFor(
     tableCache.set(key, { matrixKey, table });
   }
 
-  const closed = value?.closed === true;
+  const closed = geom.closed;
 
   /** u → a distance along the path. A closed path WRAPS (a Follow-Path past the end loops
    *  round); an open one CLAMPS (it stops at the end rather than teleporting home) — the

@@ -1,7 +1,9 @@
 // CurveLine — the viewport representation of a Curve path (#321). Draws the baked polyline
-// (`value.samples`, LOCAL space — the enclosing group applies the curve's TRS, exactly as a
-// mesh child is posed) plus a small dot at every control point so the authored points read
-// as handles even before #322 makes them grabbable.
+// (`samples`, LOCAL space — the enclosing group applies the curve's TRS, exactly as a mesh
+// child is posed) plus a small dot at every control point so the authored points read as
+// handles even before #322 makes them grabbable. Post-#385 a curve is an Object → CurveData,
+// so `ObjectR`'s curve arm (SceneFromDAG) mounts this with the Object's TRS + the CurveData's
+// samples; the fused-value renderer is gone.
 //
 // `userData.editorChrome` — a curve is a PATH, not render geometry: it exists to be
 // FOLLOWED, not seen. (Blender's curve likewise renders nothing until it has a bevel.) The
@@ -12,25 +14,37 @@
 // onClick here, mirroring NullGlyph. The line itself is thin and hard to hit, so an
 // invisible pick-boost sphere sits at the origin (the light-helper/NullGlyph pattern).
 //
-// REF: src/nodes/types.ts (CurveValue); src/nodes/curveMath.ts (the sampler that produced
+// REF: src/nodes/types.ts (CurveDataValue); src/nodes/curveMath.ts (the sampler that produced
 //      `samples`); src/viewport/NullGlyph.tsx (the chrome + pick-boost pattern this
-//      mirrors); src/render/renderToImage.ts (the editorChrome hide-pass); issue #321.
+//      mirrors); src/render/renderToImage.ts (the editorChrome hide-pass); issue #321/#385.
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad } from './rotation';
-import type { CurveValue } from '../nodes/types';
+import type { Vec3 } from '../nodes/types';
 
 const LINE_COLOR = '#d98a2b';
 const POINT_COLOR = '#f0b357';
 const POINT_RADIUS = 0.07;
 
-export function CurveLineR({ value }: { value: CurveValue }) {
-  const position = (value.position ?? [0, 0, 0]) as [number, number, number];
-  const rotation = degVec3ToRad((value.rotation ?? [0, 0, 0]) as [number, number, number]);
-  const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
-  const samples = value.samples ?? [];
-  const points = value.points ?? [];
+// The drawing, decoupled from the value shape. Mounted by ObjectR's curve arm
+// (SceneFromDAG) with the Object's TRS + the CurveData's samples/points (#385).
+// TRS is the owner's; `samples`/`points` are LOCAL (the enclosing group applies it).
+export function CurveLineChrome({
+  position,
+  rotation,
+  scale,
+  samples,
+  points,
+}: {
+  position: readonly [number, number, number];
+  /** Euler degrees (converted to radians here). */
+  rotation: readonly [number, number, number];
+  scale: readonly [number, number, number];
+  samples: readonly Vec3[];
+  points: readonly Vec3[];
+}) {
+  const rot = degVec3ToRad(rotation as [number, number, number]);
 
   // A flat [x,y,z, …] strip through the baked samples. Closed curves already repeat their
   // first point as the last (curveMath.sampleCurve), so the strip closes itself — no
@@ -44,7 +58,12 @@ export function CurveLineR({ value }: { value: CurveValue }) {
   }, [samples]);
 
   return (
-    <group position={position} rotation={rotation} scale={scale} userData={{ editorChrome: true }}>
+    <group
+      position={position as [number, number, number]}
+      rotation={rot}
+      scale={scale as [number, number, number]}
+      userData={{ editorChrome: true }}
+    >
       <line>
         <primitive object={geom} attach="geometry" />
         <lineBasicMaterial color={LINE_COLOR} />

@@ -28,6 +28,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // sphere would never split — a silent, permanent data loss for exactly the projects
   // most likely to exist.
   3: migrateFusedSphereToSplit,
+  // v4 → v5 (#385 Stage C · C2): split each fused Curve into Object + CurveData.
+  // Its OWN format version for the same reason as the sphere's: a project saved at
+  // v4 (post-sphere-split) carrying a fused curve would never re-run an earlier pass.
+  4: migrateFusedCurveToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -159,7 +163,15 @@ function isDataParamPath(paramPath: unknown): boolean {
     paramPath === 'radius' ||
     paramPath === 'widthSegments' ||
     paramPath === 'heightSegments' ||
-    // Material — shared by both primitives (the data half owns the look).
+    // Curve geometry (the v4→v5 pass, #385) — the control points, closure, and
+    // sampling resolution all live on the CurveData half now.
+    paramPath === 'points' ||
+    paramPath.startsWith('points.') ||
+    paramPath.startsWith('points[') ||
+    paramPath === 'closed' ||
+    paramPath === 'resolution' ||
+    // Material — shared by both mesh primitives (the data half owns the look).
+    // A curve has no material, so a curve target never reaches this arm.
     paramPath.startsWith('material')
   );
 }
@@ -334,6 +346,98 @@ export function migrateFusedSphereToSplit(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 4 };
+}
+
+// ── v4 → v5: fused Curve → Object + CurveData (object↔data split, #385) ──
+// The per-kind mirror of the box/sphere splits, for the FIRST non-mesh data. Splits
+// each fused `Curve` C into an `Object` O (owns the transform) + a fresh `CurveData`
+// D (owns the control points + closed + resolution). O INHERITS C's id, so every
+// consumer edge, channel `target`, constraint `target`, FollowPath `curve` ref and
+// saved curve-point selection (nodeId,pointId) that named C still resolves — only
+// points/closed/resolution channels re-target to D. Each curve is first normalized
+// through Curve's OWN version ladder (v1 bare-Vec3 points → v2 {id,co}), so an old
+// node-version curve reaches the id'd-points shape BEFORE the split — keeping the
+// stable point ids (epic #453) that the selection and #326 undo fix depend on.
+// #349 (which world the points live in) is unchanged: samples stay LOCAL, the world
+// seam is untouched. Runs on RAW JSON before the schema parses.
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; K23; issue #385.
+export function migrateFusedCurveToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 5 };
+
+  const curveDef = getNodeType('Curve');
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const curveDataVersion = getNodeType('CurveData')?.version ?? 1;
+
+  // curveId → its split-off data node id (used to re-target data-half channels).
+  const dataIdByCurve = new Map<string, string>();
+
+  for (const curve of Object.values(nodes)) {
+    if (curve?.type !== 'Curve' || !curve.id) continue;
+
+    // Normalize the curve through Curve's OWN migration ladder first (reuse, not a
+    // parallel copy), so a v1 bare-Vec3 curve reaches the v2 {id,co} shape — minting
+    // the stable point ids — BEFORE it is split.
+    let params: Record<string, unknown> = { ...(curve.params ?? {}) };
+    if (curveDef) {
+      let v = typeof curve.version === 'number' ? curve.version : curveDef.version;
+      let safety = 64;
+      while (v < curveDef.version && safety-- > 0) {
+        const step = curveDef.migrations?.[v];
+        if (!step) break;
+        params = step(params) as Record<string, unknown>;
+        v++;
+      }
+    }
+
+    const dataId = freshDataId(nodes, curve.id);
+    dataIdByCurve.set(curve.id, dataId);
+
+    // The DATA half — points + closed + resolution, no transform, no inputs. A curve
+    // has no material (it is not render geometry).
+    nodes[dataId] = {
+      id: dataId,
+      type: 'CurveData',
+      version: curveDataVersion,
+      params: {
+        points: params.points,
+        closed: params.closed,
+        resolution: params.resolution,
+      },
+      inputs: {},
+    };
+
+    // The OBJECT half — C converted IN PLACE (inherits the id). Owns the transform,
+    // points at the data node through `data`; any pre-existing inputs are kept.
+    curve.type = 'Object';
+    curve.version = objectVersion;
+    curve.params = {
+      position: params.position,
+      rotation: params.rotation,
+      scale: params.scale,
+    };
+    curve.inputs = { ...(curve.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-target the channels that address the DATA half. A channel names its subject by
+  // `params.target` (node id) + `params.paramPath`; position/rotation/scale channels
+  // keep target = the curve id (now the Object) and need no change.
+  if (dataIdByCurve.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const dataId = dataIdByCurve.get(target);
+      if (dataId && n.params && isDataParamPath(n.params.paramPath)) {
+        n.params.target = dataId;
+      }
+    }
+  }
+
+  return { ...proj, formatVersion: 5 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {

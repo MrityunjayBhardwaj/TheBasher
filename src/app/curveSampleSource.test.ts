@@ -40,11 +40,26 @@ const LOPSIDED: Vec3[] = [
  *  does not just read `params.position`: a curve may be nested under a Group, and only
  *  the tree walk knows that.) */
 function addCurve(state: DagState, id: string, params: Record<string, unknown>): DagState {
+  // #385 — a curve is now an Object (id `id`, what the sampler is asked for) → a CurveData
+  // (points/closed/resolution). The seam resolves `id` through `data` to the CurveData. Split
+  // params: position/rotation/scale pose the Object; the rest are curve geometry.
+  const { position, rotation, scale, ...data } = params;
+  const dataId = `${id}_data`;
   let s = applyOp(state, {
     type: 'addNode',
-    nodeId: id,
-    nodeType: 'Curve',
-    params: { points: withIds(LOPSIDED), closed: false, resolution: 32, ...params },
+    nodeId: dataId,
+    nodeType: 'CurveData',
+    params: { points: withIds(LOPSIDED), closed: false, resolution: 32, ...data },
+  }).next;
+  const objParams: Record<string, unknown> = {};
+  if (position !== undefined) objParams.position = position;
+  if (rotation !== undefined) objParams.rotation = rotation;
+  if (scale !== undefined) objParams.scale = scale;
+  s = applyOp(s, { type: 'addNode', nodeId: id, nodeType: 'Object', params: objParams }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: dataId, socket: 'out' },
+    to: { node: id, socket: 'data' },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -132,10 +147,11 @@ describe('curveSampleSource — arc-length parameterization', () => {
       nodeType: 'Group',
       params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [6, 1, 1] },
     }).next;
+    // #385 — a curve is an Object → CurveData; nest the Object under the Group.
     state = applyOp(state, {
       type: 'addNode',
-      nodeId: 'c1',
-      nodeType: 'Curve',
+      nodeId: 'c1_data',
+      nodeType: 'CurveData',
       params: {
         points: withIds([
           [0, 0, 0],
@@ -145,6 +161,12 @@ describe('curveSampleSource — arc-length parameterization', () => {
         ]),
         resolution: 32,
       },
+    }).next;
+    state = applyOp(state, { type: 'addNode', nodeId: 'c1', nodeType: 'Object', params: {} }).next;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'c1_data', socket: 'out' },
+      to: { node: 'c1', socket: 'data' },
     }).next;
     state = applyOp(state, {
       type: 'connect',

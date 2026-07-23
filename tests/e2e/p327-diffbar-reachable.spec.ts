@@ -23,6 +23,7 @@
 // were re-bounded for this same reason; the DiffBar predates the islands).
 
 import { expect, test, type Page } from './_fixtures';
+import { splitCurveOps } from './_splitCurve';
 
 interface DiffWin {
   __basher_dag: {
@@ -40,30 +41,24 @@ interface DiffWin {
   };
 }
 
-/** Stage the exact proposal the real LLM makes for "add a curve". */
+/** Stage the exact proposal the real LLM makes for "add a curve" — a split Object↔CurveData
+ *  pair (the fused `Curve` node is a retired migration relic post-#385). */
 async function proposeCurve(page: Page): Promise<void> {
   await page.waitForFunction(() => Boolean((window as unknown as Partial<DiffWin>).__basher_diff));
-  await page.evaluate(() => {
+  const ops = splitCurveOps({
+    objectId: 'p327_curve',
+    points: [
+      [0, 0, 0],
+      [2, 0, 0],
+      [4, 0, 2],
+    ],
+  });
+  await page.evaluate((ops) => {
     const w = window as unknown as DiffWin;
-    const ops = [
-      {
-        type: 'addNode',
-        nodeId: 'p327_curve',
-        nodeType: 'Curve',
-        params: {
-          name: 'Path',
-          points: [
-            [0, 0, 0],
-            [2, 0, 0],
-            [4, 0, 2],
-          ],
-        },
-      },
-    ];
     w.__basher_diff
       .getState()
       .propose(w.__basher_dag.getState().state, ops, 'add a curve', ['agent:mesh.add']);
-  });
+  }, ops);
   await expect(page.getByTestId('diffbar')).toBeVisible();
 }
 
@@ -124,7 +119,7 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
     const landed = await page.evaluate(
       () => (window as unknown as DiffWin).__basher_dag.getState().state.nodes['p327_curve']?.type,
     );
-    expect(landed, 'the proposed Curve is in the DAG after clicking Apply').toBe('Curve');
+    expect(landed, "the proposed curve's Object is in the DAG after clicking Apply").toBe('Object');
   });
 
   test('still reachable when the Inspector is COLLAPSED (the reserve tracks the live flags)', async ({

@@ -156,3 +156,73 @@ describe('curvePoints — stable ids (#453)', () => {
     expect(ids).toContain('cp3'); // cp0..cp2 taken → mints cp3
   });
 });
+
+// #385 C2 — after the object↔data split the SELECTION names the Object, but the points live on
+// the CurveData reached through `data`. Every builder must resolve Object → CurveData and write
+// THERE, so the (nodeId,pointId) selection (#453) and the whole editor keep working unchanged.
+describe('curvePoints — the object↔data split: edits resolve the Object → CurveData', () => {
+  /** An Object (pose) → CurveData (points), as addPrimitives / the load-migration produce. */
+  function withSplitCurve(points: Vec3[] = LINE, closed = false): DagState {
+    let s = applyOp(buildDefaultDagState(), {
+      type: 'addNode',
+      nodeId: 'cd1',
+      nodeType: 'CurveData',
+      params: { points: withIds(points), closed },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'obj1',
+      nodeType: 'Object',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cd1', socket: 'out' },
+      to: { node: 'obj1', socket: 'data' },
+    }).next;
+    return s;
+  }
+
+  it('reads the points through the Object half (the selection names the Object)', () => {
+    expect(curvePointsOf(withSplitCurve(), 'obj1')).toEqual(LINE);
+  });
+
+  it('a move op targets the CurveData id, NOT the selected Object, and still applies', () => {
+    const state = withSplitCurve();
+    const ops = buildSetCurvePointOps(state, 'obj1', 1, [2, 5, 0])!;
+    // The write lands on the point-owner (the CurveData), never the transform-only Object.
+    expect(ops[0]).toMatchObject({ type: 'setParam', nodeId: 'cd1', paramPath: 'points' });
+    const next = apply(state, ops);
+    expect(curvePointsOf(next, 'obj1')).toEqual([
+      [0, 0, 0],
+      [2, 5, 0],
+      [4, 0, 0],
+    ]);
+  });
+
+  it('insert and toggle-closed also target the CurveData', () => {
+    const state = withSplitCurve(LINE, false);
+    expect(buildInsertCurvePointOps(state, 'obj1', 0)![0]).toMatchObject({
+      nodeId: 'cd1',
+      paramPath: 'points',
+    });
+    expect(buildToggleCurveClosedOp(state, 'obj1')![0]).toMatchObject({
+      type: 'setParam',
+      nodeId: 'cd1',
+      paramPath: 'closed',
+      value: true,
+    });
+  });
+
+  it('a bare Object with no curve data yields null — not an over-broad match', () => {
+    const state = applyOp(buildDefaultDagState(), {
+      type: 'addNode',
+      nodeId: 'empty1',
+      nodeType: 'Object',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    expect(curvePointEntriesOf(state, 'empty1')).toBeNull();
+    expect(buildSetCurvePointOps(state, 'empty1', 0, [1, 1, 1])).toBeNull();
+    expect(buildToggleCurveClosedOp(state, 'empty1')).toBeNull();
+  });
+});

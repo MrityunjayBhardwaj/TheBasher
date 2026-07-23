@@ -16,6 +16,7 @@
 // would fold nothing and break silently, with the picker looking bound.
 
 import { expect, test } from './_fixtures';
+import { splitCurveOps } from './_splitCurve';
 
 interface CurveSample {
   point: [number, number, number];
@@ -49,27 +50,24 @@ async function boot(page: import('@playwright/test').Page) {
 /** A curve wired into the scene, offset + rotated + non-uniformly scaled (so binding it
  *  visibly moves the object away from its authored spot). Named `n_path`. */
 async function addPosedCurve(page: import('@playwright/test').Page): Promise<string> {
-  await page.evaluate(() => {
+  const ops = splitCurveOps({
+    objectId: 'n_path',
+    points: [
+      [0, 0, 0],
+      [10, 0, 0],
+      [11, 0, 0],
+      [12, 0, 0],
+    ],
+    closed: false,
+    resolution: 32,
+    position: [1, 2, -3],
+    rotation: [0, 35, 0],
+    scale: [2, 1, 0.5],
+  });
+  await page.evaluate((ops) => {
     (window as unknown as UiWindow).__basher_dag.getState().dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: 'n_path',
-          nodeType: 'Curve',
-          params: {
-            points: [
-              [0, 0, 0],
-              [10, 0, 0],
-              [11, 0, 0],
-              [12, 0, 0],
-            ],
-            closed: false,
-            resolution: 32,
-            position: [1, 2, -3],
-            rotation: [0, 35, 0],
-            scale: [2, 1, 0.5],
-          },
-        },
+        ...ops,
         {
           type: 'connect',
           from: { node: 'n_path', socket: 'out' },
@@ -79,7 +77,7 @@ async function addPosedCurve(page: import('@playwright/test').Page): Promise<str
       'user',
       'add a posed path',
     );
-  });
+  }, ops);
   await page.waitForTimeout(300);
   return 'n_path';
 }

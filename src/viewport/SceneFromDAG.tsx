@@ -75,7 +75,7 @@ import {
 } from '../app/nodeConstraints';
 import { childEdges } from '../app/resolveWorldTransform';
 import { NullGlyphR } from './NullGlyph';
-import { CurveLineR } from './CurveLine';
+import { CurveLineChrome } from './CurveLine';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -126,6 +126,7 @@ import type {
   MaterialOverrideValue,
   InlineMaterialSpec,
   MaterialValue,
+  MeshDataValue,
   ModifiedMeshValue,
   ObjectValue,
   PointLightValue,
@@ -1499,11 +1500,6 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
       // (editorChrome, render-excluded). Selection comes from the enclosing
       // SceneChildNode band, so the glyph carries no onClick.
       return <NullGlyphR value={value} />;
-    case 'Curve':
-      // #321 — a path: the baked polyline + its control points, drawn as editor chrome (a
-      // curve is FOLLOWED, not rendered — Blender's curve likewise renders nothing without
-      // a bevel). Selection comes from the enclosing SceneChildNode band.
-      return <CurveLineR value={value} />;
     case 'Group':
       return <GroupR value={value} override={override} nodeId={nodeId} />;
     case 'MaterialOverride':
@@ -2111,16 +2107,53 @@ function ModifiedMeshR({
 // an `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band,
 // no parallel render logic). `data: null` = an Empty → renders nothing. Selection
 // /onClick come from the enclosing SceneChildNode band, like the other leaf Rs.
+// The Object render DISPATCHER — no hooks, so it may branch before delegating.
+// #385: an Object's data is no longer always a mesh. A curve Object draws its
+// path as editor chrome at its OWN TRS (the same line the fused Curve drew), NOT
+// a <mesh>; a mesh Object (box/sphere/…) renders through ObjectMeshR. Dispatching
+// here — not inside ObjectMeshR — keeps the hook order stable per branch
+// (rules-of-hooks) and is the arm the compiler forces once ObjectData widens.
 function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
+  const data = value.data;
+  if (data?.kind === 'CurveData') {
+    // TRS is the Object's; samples/points are LOCAL (CurveLineChrome's enclosing
+    // <group> applies the TRS). Byte-identical to the fused Curve's CurveLineR.
+    return (
+      <CurveLineChrome
+        position={value.position as [number, number, number]}
+        rotation={value.rotation as [number, number, number]}
+        scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+        samples={data.samples}
+        points={data.points}
+      />
+    );
+  }
+  return <ObjectMeshR value={value} data={data} override={override} />;
+}
+
+// The mesh half of an Object: draws `data.geometry` (a shared GeometryRef handle)
+// at the Object's TRS with the data's inline material — the SAME
+// `geometryRegistry.get` + `usePrimitiveMaterial` path ModifiedMeshR uses, so an
+// `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band, no
+// parallel render logic). `data: null` = an Empty → renders nothing.
+function ObjectMeshR({
+  value,
+  data,
+  override,
+}: {
+  value: ObjectValue;
+  data: MeshDataValue | null;
+  override?: MaterialValue;
+}) {
   const shading = useViewportStore((s) => s.shading);
   // Hooks run unconditionally (rules-of-hooks): the material builds even for an
   // Empty; the geom guard below is a plain branch with no hooks after it. Narrow
   // to the inline material (`base` distinguishes it from a BakedMaterialSpec);
   // Phase 1's BoxData only ever emits inline, baked data is a later phase.
-  const mat = value.data?.material ?? null;
+  const mat = data?.material ?? null;
   const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
   const material = usePrimitiveMaterial(inlineMat, override, shading);
-  const geom = value.data ? geometryRegistry.get(value.data.geometry) : null;
+  const geom = data ? geometryRegistry.get(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
   return (
     <mesh
