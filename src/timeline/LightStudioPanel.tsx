@@ -53,6 +53,7 @@ import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { panelXYToFraction, fractionToPanelXY } from './studioPanelGeometry';
 import { ParamDiamond } from '../app/ParamDiamond';
 import { useAnimatableField } from '../app/animate/useAnimatableField';
+import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { useColorPickerInteraction } from '../app/useColorPickerInteraction';
 
 type Vec3 = [number, number, number];
@@ -493,7 +494,16 @@ const BTN =
  *  saves/undoes and is animatable from the dopesheet for free (V57). */
 function StudioLightControls({ light }: { light: StudioLightEntry }) {
   const nodeId = light.nodeId;
-  const params = useDagStore((s) => s.state.nodes[nodeId]?.params) as
+  // #386 C3 — post-split `nodeId` is the Object (the pose); the SHADING it edits
+  // (intensity/color/width/height/tex) lives on the LightData it poses. Resolve the owning
+  // node and route EVERY shading read, write, and animatable binding to it — an unrouted
+  // read shows the default (below), an unrouted write is a REPORTABLE no-op (#423), and an
+  // unrouted diamond authors a DEAD channel. `linkedDataNodeId` returns null for a still-
+  // fused light, so `?? nodeId` keeps one code path for both (coexistence). testids stay
+  // keyed to `nodeId` (the row id) for e2e stability; only the TARGET moves.
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, nodeId));
+  const shadingId = dataId ?? nodeId;
+  const params = useDagStore((s) => s.state.nodes[shadingId]?.params) as
     | { intensity?: number; color?: string; width?: number; height?: number; tex?: string }
     | undefined;
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -507,23 +517,23 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
   const setParam = (paramPath: string, value: unknown, label: string) =>
     useDagStore
       .getState()
-      .dispatchAtomic([{ type: 'setParam', nodeId, paramPath, value }], 'user', label);
+      .dispatchAtomic([{ type: 'setParam', nodeId: shadingId, paramPath, value }], 'user', label);
 
   // Animatable-field spines (diamond + Auto-Key + evaluated read — the H104
   // affordance the inspector material rows use), so a director keyframes a light's
   // emission straight from the Light Studio. These RENDER via seam A
   // (DirectChannelsLightR overlays the light's channels per frame). The diamond is
   // rendered per field below; the hook owns the read-side + edit routing.
-  const intensityField = useAnimatableField(nodeId, 'intensity', intensity, (v) =>
+  const intensityField = useAnimatableField(shadingId, 'intensity', intensity, (v) =>
     setParam('intensity', v, 'set light intensity'),
   );
-  const widthField = useAnimatableField(nodeId, 'width', width, (v) =>
+  const widthField = useAnimatableField(shadingId, 'width', width, (v) =>
     setParam('width', v, 'set light width'),
   );
-  const heightField = useAnimatableField(nodeId, 'height', height, (v) =>
+  const heightField = useAnimatableField(shadingId, 'height', height, (v) =>
     setParam('height', v, 'set light height'),
   );
-  const colorField = useAnimatableField(nodeId, 'color', color, (v) =>
+  const colorField = useAnimatableField(shadingId, 'color', color, (v) =>
     setParam('color', v, 'set light color'),
   );
   // Coalesce a colour-picker drag into ONE undo entry (V84/H131) — same machinery
@@ -554,7 +564,7 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
       <label className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1">
           <ParamDiamond
-            nodeId={nodeId}
+            nodeId={shadingId}
             paramPath="intensity"
             value={intensity}
             testid={`studio-diamond-${nodeId}-intensity`}
@@ -576,7 +586,7 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
       <label className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1">
           <ParamDiamond
-            nodeId={nodeId}
+            nodeId={shadingId}
             paramPath="color"
             value={color}
             testid={`studio-diamond-${nodeId}-color`}
@@ -598,7 +608,7 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
       <label className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1">
           <ParamDiamond
-            nodeId={nodeId}
+            nodeId={shadingId}
             paramPath="width"
             value={width}
             testid={`studio-diamond-${nodeId}-width`}
@@ -620,7 +630,7 @@ function StudioLightControls({ light }: { light: StudioLightEntry }) {
       <label className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1">
           <ParamDiamond
-            nodeId={nodeId}
+            nodeId={shadingId}
             paramPath="height"
             value={height}
             testid={`studio-diamond-${nodeId}-height`}
