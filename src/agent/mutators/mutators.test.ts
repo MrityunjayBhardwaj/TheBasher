@@ -962,6 +962,85 @@ describe('split-Object data-param mutators reach the BoxData (#365)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// object↔data split for the SPHERE (#384 Stage C · C1) — the geometry mutators
+// reach through an Object's `data` edge to the SphereData that owns `radius`, so
+// "double the sphere" targets the data node, not the pose. Mirrors the BoxData
+// block above; the split-cube tests are the CONTROL that the untouched `size`
+// road still lands on the BoxData.
+// ---------------------------------------------------------------------------
+
+/** An Object (pose) wired to a SphereData (geometry + material) and into a Scene.
+ *  radius is 1.3 — deliberately NOT the 0.5 default, so a dropped/mis-targeted
+ *  param cannot read back as the fallback and pass vacuously. */
+function buildSplitSphereScene(): DagState {
+  let s = emptyDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'sdata',
+    nodeType: 'SphereData',
+    params: {
+      radius: 1.3,
+      widthSegments: 24,
+      heightSegments: 16,
+      material: { name: 'default', base: { color: '#88aaff' } },
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'sobj',
+    nodeType: 'Object',
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'sdata', socket: 'out' },
+    to: { node: 'sobj', socket: 'data' },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'sobj', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  return { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+}
+
+describe('split-Object radius mutators reach the SphereData (#384)', () => {
+  it('scale multiplies radius on the DATA node, not the Object', () => {
+    const state = buildSplitSphereScene();
+    const result = validatePlan(scaleMutator, { targetSelectors: ['sobj'], factor: 2 }, state, 's');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const op = result.ops.find((o) => o.type === 'setParam');
+    if (op?.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('sdata');
+    expect(op.paramPath).toBe('radius');
+    expect(op.value).toBeCloseTo(2.6); // 1.3 × 2
+  });
+
+  it('randomize scale targets radius on the DATA node', () => {
+    const state = buildSplitSphereScene();
+    const result = validatePlan(
+      randomizeMutator,
+      {
+        targetSelectors: ['sobj'],
+        properties: ['scale'],
+        ranges: { scale: { factor: [1.5, 1.5] } },
+        seed: 9,
+      },
+      state,
+      'r',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const op = result.ops.find((o) => o.type === 'setParam');
+    if (op?.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('sdata');
+    expect(op.paramPath).toBe('radius');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // randomize mutator — P7.2 / issue #26 path B
 //
 // Per-target randomization across {color, rotation, scale}. ONE call emits

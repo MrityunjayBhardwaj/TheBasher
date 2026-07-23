@@ -1,18 +1,12 @@
-// SphereMesh — primitive UV sphere. Pure node; given (params) the
-// evaluator returns a deterministic POJO that the viewport renders via
-// THREE's SphereGeometry.
-//
-// Parallels BoxMesh's shape: position + rotation are local-space
-// transforms (the geometry IS the visual; no Transform wrapping is
-// required to place it). Scale falls back to params.size only for box
-// — sphere ships with explicit `radius` instead, so the gizmo's scale
-// mode binds to `radius` directly via the gizmo's getManipulable
-// generalization (radius is a scalar, so scale-mode coerces to translate
-// for now; uniform scale via gizmo is a future enhancement).
+// SphereMesh — RETIRED as a live node (#384 Stage C). A sphere is now an Object → SphereData
+// split; this node type stays REGISTERED solely so the load-migration (migrateFusedSphereToSplit)
+// can normalize an old fused sphere through its version ladder before splitting it. Nothing
+// constructs or evaluates a SphereMesh at runtime any more — `evaluate` is a retired sentinel, and
+// there is no value kind carrying it (the `SphereMeshValue` interface is deleted, so the type is
+// `never`). The params schema + migrations{1,2,3} are kept because the migration ladder calls them.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { SphereMeshValue } from './types';
 import {
   hydrateInlineMaterial,
   migrateInlineMaterialV2toV3,
@@ -36,7 +30,7 @@ export const SphereMeshParams = z.object({
 });
 export type SphereMeshParams = z.infer<typeof SphereMeshParams>;
 
-export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> = {
+export const SphereMeshNode: NodeDefinition<SphereMeshParams, never> = {
   type: 'SphereMesh',
   version: 4,
   pure: true,
@@ -66,18 +60,9 @@ export const SphereMeshNode: NodeDefinition<SphereMeshParams, SphereMeshValue> =
       ),
     }),
   },
-  evaluate(params) {
-    return {
-      kind: 'SphereMesh',
-      radius: params.radius,
-      widthSegments: params.widthSegments,
-      heightSegments: params.heightSegments,
-      position: params.position,
-      rotation: params.rotation,
-      // C-1 (V10/H14 two-layer guard) — default identity at the evaluator too.
-      scale: params.scale ?? [1, 1, 1],
-      // v0.6 #2 (#178) layer 3 — hydrate the inline material with `?? default`.
-      material: hydrateInlineMaterial(params.material, SPHERE_DEFAULT_COLOR),
-    };
+  // Retired sentinel: every fused sphere is migrated to Object+SphereData on load, so no live
+  // SphereMesh node ever reaches evaluate. It is kept only as a migration relic (the ladder above).
+  evaluate(): never {
+    throw new Error('SphereMesh is retired; projects migrate to Object+SphereData on load');
   },
 };

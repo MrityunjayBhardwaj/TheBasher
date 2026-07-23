@@ -15,11 +15,13 @@ import { __reseedAllNodesForTests } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
 import * as geometryRegistry from '../app/geometryRegistry';
+import { sphereGeometryRef } from '../app/modifierGeometry';
 import { hydrateInlineMaterial } from './materialSchema';
+import { makeSplitSphere } from '../test-utils/splitSphere';
 import { ArrayModifierNode } from './ArrayModifier';
 import type {
   BakedMeshValue,
-  SphereMeshValue,
+  ObjectValue,
   ModifiedMeshValue,
   SceneChild,
   TransformValue,
@@ -29,19 +31,22 @@ const MOD_ID = 'n_array';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
-// #365 Phase 5a (Slice 2): the fused box value kind retired; SphereMesh is the still-fused
-// leaf-mesh source that sourceGeometryRef/sourceTransform/sourceMaterial consume. The array's
-// assertions (array descriptor, inherited TRS, material ref) are geometry-kind-agnostic.
-function sphereValue(position: [number, number, number]): SphereMeshValue {
+// #384 Stage C (C1): the fused sphere value kind retired too. A sphere is now an `Object`
+// (owning the TRS) pointing at a `MeshData` (owning geometry + material) — the exact value the
+// split Object evaluates to, and the source `modifierSource` reaches through (`Object` arm →
+// `data`, src/app/modifierGeometry.ts). The array's assertions (array descriptor, inherited TRS,
+// material ref) are geometry-kind-agnostic.
+function splitSphereValue(position: [number, number, number]): ObjectValue {
   return {
-    kind: 'SphereMesh',
-    radius: 1,
-    widthSegments: 8,
-    heightSegments: 6,
+    kind: 'Object',
     position,
     rotation: [0, 0, 0],
     scale: [1, 1, 1],
-    material: hydrateInlineMaterial(null, '#888888'),
+    data: {
+      kind: 'MeshData',
+      geometry: sphereGeometryRef(1, 8, 6),
+      material: hydrateInlineMaterial(null, '#888888'),
+    },
   };
 }
 
@@ -59,18 +64,19 @@ beforeEach(() => {
 
 describe('ArrayModifier.evaluate', () => {
   it('a sphere source → a ModifiedMesh with an array geometry handle + inherited TRS/material', () => {
-    const src = sphereValue([3, 0, 0]);
+    const src = splitSphereValue([3, 0, 0]);
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src) as ModifiedMeshValue;
     expect(out.kind).toBe('ModifiedMesh');
     expect(out.geometry.kind).toBe('array');
     expect(out.geometry.descriptor).toMatchObject({ kind: 'array', count: 3, offset: [2, 0, 0] });
-    // INHERITED — the arrayed cluster sits where the source box was.
+    // INHERITED — the arrayed cluster sits where the source Object was (its TRS).
     expect(out.position).toEqual([3, 0, 0]);
-    expect(out.material).toBe(src.material);
+    // INHERITED — the material rides through from the source's data half.
+    expect(out.material).toBe(src.data!.material);
   });
 
   it('muted → identity passthrough (byte-identical to no modifier — the stack mute-bypass)', () => {
-    const src = sphereValue([0, 0, 0]);
+    const src = splitSphereValue([0, 0, 0]);
     const out = evalMod({ count: 5, offset: [2, 0, 0], muted: true }, src);
     expect(out).toBe(src); // same reference — no ModifiedMesh produced
   });
@@ -142,20 +148,18 @@ describe('ArrayModifier.evaluate', () => {
 });
 
 describe('ArrayModifier — read-side parity (boundary-pair)', () => {
-  // #365 Phase 5a (Slice 2): the source is a still-fused SphereMesh (the box value kind
-  // retired). A modifier consuming a split Object is the deferred modifier-move — a follow-up —
-  // so the evaluate↔read byte-identity property is pinned here on the primitive that still
-  // has a fused value on BOTH sides of the boundary.
+  // #384 Stage C (C1): the source is now a split sphere — an `Object` (SPHERE_ID) pointing at a
+  // `SphereData`. The read road (`resolveEvaluatedMesh`) reaches through the Object's `data`
+  // socket for geometry (`modifierSource`'s Object arm), and the evaluate road builds the same
+  // sphere handle from the same params → the array key must be byte-identical on both roads.
   const SPHERE_ID = 'n_sphere';
   function withSphere() {
-    let state = buildDefaultDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: SPHERE_ID,
-      nodeType: 'SphereMesh',
-      params: { radius: 1, widthSegments: 8, heightSegments: 6 },
-    }).next;
-    return state;
+    return makeSplitSphere(buildDefaultDagState(), {
+      objectId: SPHERE_ID,
+      radius: 1,
+      widthSegments: 8,
+      heightSegments: 6,
+    }).state;
   }
 
   it('resolveEvaluatedMesh derives the SAME array geometry key the evaluate path emits', () => {
@@ -184,7 +188,7 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     // The evaluate path projects the SAME sphere with the same params.
     const evald = evalMod(
       { count: 4, offset: [3, 0, 0], muted: false },
-      sphereValue([0, 0, 0]),
+      splitSphereValue([0, 0, 0]),
     ) as ModifiedMeshValue;
     expect(resolved!.geometry.key).toBe(evald.geometry.key); // byte-identical → no drift
   });

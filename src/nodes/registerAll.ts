@@ -16,6 +16,7 @@ import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { BoxDataNode } from './BoxData';
+import { SphereDataNode } from './SphereData';
 import { ObjectNode } from './ObjectNode';
 import { CameraSelectNode } from './CameraSelect';
 import { CharacterNode } from './Character';
@@ -102,6 +103,9 @@ const ALL: NodeDefinition[] = [
   // the fused nodes; nothing migrates yet.
   ObjectNode as unknown as NodeDefinition,
   BoxDataNode as unknown as NodeDefinition,
+  // #384 (Stage C · C1) — the sphere's data half. Coexists with the fused
+  // SphereMesh below; the split retires the fused value kind in a later slice.
+  SphereDataNode as unknown as NodeDefinition,
   SphereMeshNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
   // P7.7 — addressable proxy per glTF scene child (issue #91). Inputless,

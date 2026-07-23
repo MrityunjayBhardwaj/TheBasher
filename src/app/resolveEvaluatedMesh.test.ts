@@ -7,12 +7,12 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag';
-import type { DagState } from '../core/dag/state';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
+import { makeSplitSphere } from '../test-utils/splitSphere';
 
 const BOX_ID = 'n_box';
 const SPHERE_ID = 'n_sphere';
@@ -67,15 +67,17 @@ describe('resolveEvaluatedMesh', () => {
     expect(after).toContain('2,3,4');
   });
 
-  it('projects a SphereMesh: sphere geometry ref + transform', () => {
-    let state = buildDefaultDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: SPHERE_ID,
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 24, heightSegments: 16 },
-    }).next;
-    const mesh = resolveEvaluatedMesh(state, SPHERE_ID, ctxAt(0));
+  it('projects a split sphere (Object → SphereData): sphere geometry ref + transform', () => {
+    // #384 Stage C (C1): a sphere is now an Object owning the TRS, wired to a SphereData owning
+    // geometry. The resolver reaches through the Object's `data` edge (read from the Object id,
+    // the node the user selects) — same geometry ref, same C-1 identity-scale guard.
+    const { state, objectId } = makeSplitSphere(buildDefaultDagState(), {
+      objectId: SPHERE_ID,
+      radius: 0.5,
+      widthSegments: 24,
+      heightSegments: 16,
+    });
+    const mesh = resolveEvaluatedMesh(state, objectId, ctxAt(0));
     expect(mesh).not.toBeNull();
     expect(mesh!.geometry.kind).toBe('sphere');
     expect(mesh!.geometry.descriptor).toEqual({

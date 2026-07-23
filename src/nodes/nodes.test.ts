@@ -12,6 +12,7 @@ import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { makeSplitSphere } from '../test-utils/splitSphere';
 // P7.12 D-04 — node defs for the inputs:{} purity assertion.
 import { KeyframeChannelNumberNode } from './KeyframeChannelNumber';
 import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
@@ -118,6 +119,7 @@ const ALL_TYPES = [
   'Solver',
   'SolverInput',
   'SolverInputVec',
+  'SphereData',
   'SphereMesh',
   'SpotLight',
   'Strip',
@@ -301,13 +303,15 @@ describe('P1 new node types — pure twice-eval', () => {
 
 describe('ScatterNode determinism (V2)', () => {
   function buildScatterState(density: number, seed: number) {
-    let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'asset',
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
-    }).next;
+    // #384 Stage C (C1): the scattered asset is now a split sphere (Object → SphereData).
+    // Scatter treats its assets as opaque SceneChild values (indexes into them by PRNG,
+    // never inspects kind), so the deterministic instance list is asset-kind-agnostic.
+    let state = makeSplitSphere(emptyDagState(), {
+      objectId: 'asset',
+      radius: 0.5,
+      widthSegments: 8,
+      heightSegments: 6,
+    }).state;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'scatter',
@@ -351,13 +355,12 @@ describe('ScatterNode determinism (V2)', () => {
   });
 
   it('rejects density above SCATTER_MAX (V0.5 cap, THESIS.md §53)', () => {
-    let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'asset',
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
-    }).next;
+    const state = makeSplitSphere(emptyDagState(), {
+      objectId: 'asset',
+      radius: 0.5,
+      widthSegments: 8,
+      heightSegments: 6,
+    }).state;
     expect(() =>
       applyOp(state, {
         type: 'addNode',
@@ -388,13 +391,13 @@ describe('ScatterNode determinism (V2)', () => {
 
 describe('SceneChild recursion', () => {
   it('Transform wraps a child mesh', () => {
-    let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'box',
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
-    }).next;
+    // #384 Stage C (C1): the wrapped mesh is now a split sphere → the child is an `Object`.
+    let state = makeSplitSphere(emptyDagState(), {
+      objectId: 'box',
+      radius: 0.5,
+      widthSegments: 8,
+      heightSegments: 6,
+    }).state;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'tx',
@@ -409,18 +412,19 @@ describe('SceneChild recursion', () => {
     const v = evaluate(state, 'tx').value as TransformValue;
     expect(v.kind).toBe('Transform');
     expect(v.position).toEqual([2, 0, 0]);
-    expect(v.child?.kind).toBe('SphereMesh');
+    expect(v.child?.kind).toBe('Object');
   });
 
   it('Group flattens a child list', () => {
+    // #384 Stage C (C1): each grouped mesh is now a split sphere → the children are `Object`s.
     let state = emptyDagState();
     for (const id of ['a', 'b']) {
-      state = applyOp(state, {
-        type: 'addNode',
-        nodeId: id,
-        nodeType: 'SphereMesh',
-        params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
-      }).next;
+      state = makeSplitSphere(state, {
+        objectId: id,
+        radius: 0.5,
+        widthSegments: 8,
+        heightSegments: 6,
+      }).state;
     }
     state = applyOp(state, {
       type: 'addNode',
@@ -441,17 +445,17 @@ describe('SceneChild recursion', () => {
     const v = evaluate(state, 'g').value as GroupValue;
     expect(v.kind).toBe('Group');
     expect(v.children).toHaveLength(2);
-    expect(v.children.every((c) => c.kind === 'SphereMesh')).toBe(true);
+    expect(v.children.every((c) => c.kind === 'Object')).toBe(true);
   });
 
   it('MaterialOverride wraps a child', () => {
-    let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'box',
-      nodeType: 'SphereMesh',
-      params: { radius: 0.5, widthSegments: 8, heightSegments: 6 },
-    }).next;
+    // #384 Stage C (C1): the wrapped mesh is now a split sphere → the child is an `Object`.
+    let state = makeSplitSphere(emptyDagState(), {
+      objectId: 'box',
+      radius: 0.5,
+      widthSegments: 8,
+      heightSegments: 6,
+    }).state;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'mat',
@@ -467,7 +471,7 @@ describe('SceneChild recursion', () => {
     expect(v.kind).toBe('MaterialOverride');
     expect(v.material.color).toBe('#ff0000');
     expect(v.material.roughness).toBeCloseTo(0.2);
-    expect(v.child?.kind).toBe('SphereMesh');
+    expect(v.child?.kind).toBe('Object');
   });
 });
 

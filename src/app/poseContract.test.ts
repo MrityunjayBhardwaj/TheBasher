@@ -48,15 +48,27 @@ function isVec3(v: unknown): v is [number, number, number] {
 /** True iff the node carries a pose the engine can move. Value-level when the node
  *  spawns from schema defaults (the value is what gets posed); schema-level when a
  *  domain-required param blocks default construction (the `position` param is the
- *  same pose, one layer up — every posable node emits `position: params.position`). */
+ *  same pose, one layer up — every posable node emits `position: params.position`).
+ *
+ *  A retired value-kind relic (SphereMesh, #384) parses from defaults yet THROWS a
+ *  sentinel from `evaluate` — its value can no longer be constructed. It still
+ *  declares `position` in its schema (the migration ladder needs the shape), so the
+ *  same schema-level witness answers it: catch the throw and fall through. BoxMesh
+ *  dodged this by its required `size` routing it to the schema path; SphereMesh's
+ *  all-defaulted params reach the value path and hit the sentinel.  */
 function carriesPose(def: {
   paramSchema: ZodObject<ZodRawShape>;
   evaluate: (p: unknown, i: unknown) => unknown;
 }): boolean {
   const parsed = def.paramSchema.safeParse({});
   if (parsed.success) {
-    const value = def.evaluate(parsed.data, {}) as { position?: unknown };
-    return isVec3(value?.position);
+    try {
+      const value = def.evaluate(parsed.data, {}) as { position?: unknown };
+      return isVec3(value?.position);
+    } catch {
+      // Unconstructable relic — the schema-level `position` is the same pose, one layer up.
+      return 'position' in def.paramSchema.shape;
+    }
   }
   return 'position' in def.paramSchema.shape;
 }

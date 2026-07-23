@@ -22,6 +22,12 @@ const formatMigrations: Record<number, FormatMigration> = {
   1: migrateAnimationLayers,
   // v2 → v3 (#365 Phase 5a): split each fused BoxMesh into Object + BoxData.
   2: migrateFusedBoxToSplit,
+  // v3 → v4 (#384 Stage C · C1): split each fused SphereMesh into Object + SphereData.
+  // A DISTINCT format version, NOT folded into the box's 2→3: a project already saved
+  // at v3 (post-box-split) with a fused sphere would never re-run a 2→3 pass, so its
+  // sphere would never split — a silent, permanent data loss for exactly the projects
+  // most likely to exist.
+  3: migrateFusedSphereToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -145,9 +151,15 @@ export function migrateAnimationLayers(raw: unknown): unknown {
 function isDataParamPath(paramPath: unknown): boolean {
   if (typeof paramPath !== 'string') return false;
   return (
+    // Box geometry (the v2→v3 pass — coexisting saves still migrate through it).
     paramPath === 'size' ||
     paramPath.startsWith('size.') ||
     paramPath.startsWith('size[') ||
+    // Sphere geometry (the v3→v4 pass, #384) — scalar params, no sub-paths.
+    paramPath === 'radius' ||
+    paramPath === 'widthSegments' ||
+    paramPath === 'heightSegments' ||
+    // Material — shared by both primitives (the data half owns the look).
     paramPath.startsWith('material')
   );
 }
@@ -232,6 +244,96 @@ export function migrateFusedBoxToSplit(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 3 };
+}
+
+// ── v3 → v4: fused SphereMesh → Object + SphereData (object↔data split, #384) ──
+// The exact mirror of the box split above, per-kind. Splits each fused `SphereMesh`
+// S into an `Object` O (owns the transform) + a fresh `SphereData` D (owns geometry
+// radius/widthSegments/heightSegments + material). O INHERITS S's id, so every
+// consumer edge, channel `target`, constraint `target` and saved selection that named
+// S still resolves — only radius/ws/hs/material channels re-target to D (the §5
+// id-stability crux; getting it backwards silently orphans every geometry channel).
+// Each sphere is first normalized through SphereMesh's OWN version ladder, so an old
+// node-version sphere reaches the current v4 shape BEFORE the split — its inline
+// material keeps its byte-identical migrated look. Runs on RAW JSON before the schema
+// parses. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
+export function migrateFusedSphereToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 4 };
+
+  const sphereDef = getNodeType('SphereMesh');
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const sphereDataVersion = getNodeType('SphereData')?.version ?? 1;
+
+  // sphereId → its split-off data node id (used to re-target data-half channels).
+  const dataIdBySphere = new Map<string, string>();
+
+  for (const sphere of Object.values(nodes)) {
+    if (sphere?.type !== 'SphereMesh' || !sphere.id) continue;
+
+    // Normalize the sphere through SphereMesh's OWN migration ladder first (reuse, not
+    // a parallel copy), so an old-node-version sphere reaches the v4 shape — keeping
+    // its material's byte-identical migrated look — BEFORE it is split.
+    let params: Record<string, unknown> = { ...(sphere.params ?? {}) };
+    if (sphereDef) {
+      let v = typeof sphere.version === 'number' ? sphere.version : sphereDef.version;
+      let safety = 64;
+      while (v < sphereDef.version && safety-- > 0) {
+        const step = sphereDef.migrations?.[v];
+        if (!step) break;
+        params = step(params) as Record<string, unknown>;
+        v++;
+      }
+    }
+
+    const dataId = freshDataId(nodes, sphere.id);
+    dataIdBySphere.set(sphere.id, dataId);
+
+    // The DATA half — geometry (radius/ws/hs) + material, no transform, no inputs.
+    nodes[dataId] = {
+      id: dataId,
+      type: 'SphereData',
+      version: sphereDataVersion,
+      params: {
+        radius: params.radius,
+        widthSegments: params.widthSegments,
+        heightSegments: params.heightSegments,
+        material: params.material,
+      },
+      inputs: {},
+    };
+
+    // The OBJECT half — S converted IN PLACE (inherits the id). Owns the transform,
+    // points at the data node through `data`; any pre-existing inputs are kept.
+    sphere.type = 'Object';
+    sphere.version = objectVersion;
+    sphere.params = {
+      position: params.position,
+      rotation: params.rotation,
+      scale: params.scale,
+    };
+    sphere.inputs = { ...(sphere.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-target the channels that address the DATA half. A channel names its subject by
+  // `params.target` (node id) + `params.paramPath`; position/rotation/scale channels
+  // keep target = the sphere id (now the Object) and need no change.
+  if (dataIdBySphere.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const dataId = dataIdBySphere.get(target);
+      if (dataId && n.params && isDataParamPath(n.params.paramPath)) {
+        n.params.target = dataId;
+      }
+    }
+  }
+
+  return { ...proj, formatVersion: 4 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {

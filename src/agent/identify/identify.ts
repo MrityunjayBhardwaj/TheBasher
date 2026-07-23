@@ -141,6 +141,19 @@ export function identify(
       .map((n) => toCandidate(state, n));
   }
 
+  // Post object↔data split, a cube-Object and a sphere-Object share nodeType 'Object', so a
+  // geometry noun ("cube"/"sphere") can't disambiguate by node type alone. Narrow the Object
+  // matches by the geometry each POSES, reached through `data` to the BoxData/SphereData —
+  // exactly as the color match reaches through `data` (V107). Skipped when the caller passed an
+  // explicit filter.types (an explicit type request wins over a parsed noun).
+  const geomTypes = typeFilter ? null : geometryDataTypesFor(q);
+  if (geomTypes && typeMatched.length > 0) {
+    typeMatched = typeMatched.filter((c) => {
+      const gt = nodeGeometryType(state, state.nodes[c.id]);
+      return gt !== null && geomTypes.includes(gt);
+    });
+  }
+
   // 4. Color-match — narrow type-matched (or all nodes if no type) by
   //    a color word in the query.
   const colorHex = inferColor(q);
@@ -303,6 +316,16 @@ const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
   ...(SCENE_OBJECT_KINDS.map(nodeTypeFor) as NodeTypeId[]),
 ];
 
+// The data-node type a geometry noun matches, post object↔data split: "cube" is any Object posing
+// a BoxData; "sphere" a SphereData (the fused BoxMesh/SphereMesh value kinds are retired, so no
+// live node carries them). Returns null when the query names no geometry noun, so lights/cameras/
+// empties aren't narrowed. Kept in lockstep with the cube/sphere aliases in inferNodeTypes.
+function geometryDataTypesFor(q: string): string[] | null {
+  if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxData'];
+  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereData'];
+  return null;
+}
+
 function inferNodeTypes(q: string): NodeTypeId[] | null {
   const matches: NodeTypeId[] = [];
   // Specific lights first — checked before the generic "light" rule.
@@ -321,7 +344,9 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
   // #365 Phase 5a — a cube is the Object+BoxData split (nodeType 'Object'). Slice 2 retired
   // the fused 'BoxMesh' value kind (old saves split on load), so "cube" resolves to 'Object'.
   if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['Object'];
-  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereMesh'];
+  // #384 Stage C — a sphere is the Object+SphereData split (nodeType 'Object'). Slice 4 retires
+  // the fused 'SphereMesh' value kind (old saves split on load), so "sphere" resolves to 'Object'.
+  if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['Object'];
   // Specific cameras before the generic "camera" rule (parallels lights).
   if (/\bperspective\s+camera\b/.test(q)) return ['PerspectiveCamera'];
   if (/\borthographic\s+camera\b/.test(q)) return ['OrthographicCamera'];
@@ -519,6 +544,23 @@ function nodeColorHex(state: DagState, node: Node | undefined): string | null {
     return colorFromParams(dataNode?.params as Record<string, unknown> | undefined);
   }
   return null;
+}
+
+// The geometry-defining type of a scene object, reaching through the object↔data split: a split
+// cube/sphere's geometry lives on the BoxData/SphereData its Object points at via `data`; a fused
+// mesh (or a directly-named data node) carries it on its own type. Mirrors nodeColorHex's reach —
+// this is what lets a geometry noun separate "cube" (BoxData) from "sphere" (SphereData) once both
+// pose through a shared `Object` node type.
+function nodeGeometryType(state: DagState, node: Node | undefined): string | null {
+  if (!node) return null;
+  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+    | { node?: string }
+    | undefined;
+  if (dataRef?.node) {
+    const dataNode = state.nodes[dataRef.node];
+    if (dataNode) return dataNode.type;
+  }
+  return node.type;
 }
 
 function toCandidate(state: DagState, node: Node): Candidate {

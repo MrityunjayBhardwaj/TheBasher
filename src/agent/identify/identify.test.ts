@@ -12,6 +12,7 @@ import { identify } from './identify';
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
 import { shouldRunIdentifyRound } from '../orchestrator';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { makeSplitSphere } from '../../test-utils/splitSphere';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -19,10 +20,12 @@ beforeEach(() => {
 });
 
 function buildScene(): DagState {
-  // Three split cubes (red, green, blue) + one sphere + scene aggregator.
-  // #365 Phase 5a: a cube is an Object (pose) → BoxData (geometry+material). The color a
-  // query like "the red cube" matches lives on the BoxData; identify reaches through `data`
-  // to find it (V107). The Object is the scene child the type-filter matches on.
+  // Three split cubes (red, green, blue) + one split sphere + scene aggregator.
+  // #365 Phase 5a / #384 Stage C: a cube/sphere is an Object (pose) → BoxData/SphereData
+  // (geometry+material). Both the color a query like "the red cube" matches AND the geometry a
+  // noun like "sphere" matches live on the data node; identify reaches through `data` to find
+  // them (V107). The Object is the scene child the type-filter matches on; the linked data
+  // node's type is what separates "cube" (BoxData) from "sphere" (SphereData) post-split.
   let s = emptyDagState();
   const cubes: { id: string; color: string; pos: [number, number, number] }[] = [
     { id: 'redCube', color: '#ff0000', pos: [0, 0, 0] },
@@ -32,12 +35,7 @@ function buildScene(): DagState {
   for (const c of cubes) {
     s = makeSplitCube(s, { objectId: c.id, color: c.color, position: c.pos }).state;
   }
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'sphere1',
-    nodeType: 'SphereMesh',
-    params: { radius: 1, position: [0, 2, 0] },
-  }).next;
+  s = makeSplitSphere(s, { objectId: 'sphere1', radius: 1, position: [0, 2, 0] }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   return s;
 }
@@ -153,12 +151,26 @@ describe('identify — match strategies', () => {
     }
   });
 
-  it('"sphere" with one SphereMesh → match', () => {
+  it('"sphere" → the split sphere-Object only, NOT the cube-Objects that share nodeType "Object"', () => {
+    // #384 Stage C: post-split, cube and sphere are both nodeType 'Object'. "sphere" narrows the
+    // Object matches by reaching through `data` to the SphereData, so the 3 cube-Objects (BoxData)
+    // are excluded. Without that reach this would match all 4 Objects → ambiguous.
     const state = buildScene();
     const r = identify({ query: 'sphere' }, state);
     expect(r.type).toBe('match');
     if (r.type === 'match') {
       expect(r.selectors).toEqual(['sphere1']);
+    }
+  });
+
+  it('"cube" (control) → the 3 cube-Objects only, NOT the split sphere-Object', () => {
+    // The mirror control: the same shared-'Object'-type disambiguation, the other geometry noun.
+    // "the cube" over 3 cubes is ambiguous (n=3); assert the candidate SET excludes sphere1.
+    const state = buildScene();
+    const r = identify({ query: 'cube', hint: 'multiple-allowed' }, state);
+    expect(r.type).toBe('match');
+    if (r.type === 'match') {
+      expect(new Set(r.selectors)).toEqual(new Set(['redCube', 'greenCube', 'blueCube']));
     }
   });
 

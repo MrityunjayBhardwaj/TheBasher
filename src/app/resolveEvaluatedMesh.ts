@@ -37,13 +37,12 @@ import type { EvalCtx } from '../core/dag/types';
 import type {
   EvaluatedMesh,
   GeometryRef,
-  InlineMaterialSpec,
   MeshTransform,
   MirrorAxis,
   ObjectValue,
   Vec3,
 } from '../nodes/types';
-import { hydrateInlineMaterial, isBakedMaterialSpec } from '../nodes/materialSchema';
+import { isBakedMaterialSpec } from '../nodes/materialSchema';
 import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
@@ -52,12 +51,6 @@ import { extractUVIslands } from './uvIslands';
 import type { EvaluatedUVs } from '../nodes/types';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
-
-// Last-resort fallback color for a MALFORMED inline material (one carrying
-// neither base.color NOR a legacy top-level color). Real materials always carry
-// base.color via the zod default / migration / hydrate seam, so this only guards
-// a broken in-memory surgery object — it renders gray instead of crashing.
-const FALLBACK_MATERIAL_COLOR = '#808080';
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
@@ -72,17 +65,6 @@ function isVec3(v: unknown): v is Vec3 {
 function resolveRegistryUVs(geometry: GeometryRef): EvaluatedUVs | null {
   const g = getRegistryGeometry(geometry);
   return g ? extractUVIslands(g) : null;
-}
-
-// v0.6 #2 (#178) CAVEAT-1 — DUAL-ACCEPT guard. The widened IR moves `color` to
-// `base.color`; a mid-migration in-memory object may still carry a legacy
-// top-level `color`. Accept EITHER, or the material silently drops to null
-// (resolveEvaluatedMesh returns material:null → mesh renders unlit, no error —
-// the [[V10]]/[[H14]] stale-read class). Junk (no color either way) fails.
-function isMaterialSpec(v: unknown): v is InlineMaterialSpec {
-  if (typeof v !== 'object' || v === null) return false;
-  const m = v as { base?: { color?: unknown }; color?: unknown };
-  return typeof m.base?.color === 'string' || typeof m.color === 'string';
 }
 
 /**
@@ -122,52 +104,9 @@ export function resolveEvaluatedMesh(
   const node = state.nodes[selectedId];
   if (!node) return null;
 
-  // #365 Phase 5a (Slice 2): the fused `BoxMesh` branch is gone — a box is a split Object,
-  // resolved by the `node.type === 'Object'` branch below (reach through `data` to the BoxData).
-
-  if (node.type === 'SphereMesh') {
-    const p = node.params as {
-      radius?: unknown;
-      widthSegments?: unknown;
-      heightSegments?: unknown;
-      position?: unknown;
-      rotation?: unknown;
-      scale?: unknown;
-      material?: unknown;
-    };
-    if (
-      typeof p.radius !== 'number' ||
-      typeof p.widthSegments !== 'number' ||
-      typeof p.heightSegments !== 'number' ||
-      !isVec3(p.position) ||
-      !isVec3(p.rotation)
-    ) {
-      return null;
-    }
-    const geometry: GeometryRef = {
-      key: `sphere|${p.radius}|${p.widthSegments}|${p.heightSegments}`,
-      kind: 'sphere',
-      descriptor: {
-        kind: 'sphere',
-        radius: p.radius,
-        widthSegments: p.widthSegments,
-        heightSegments: p.heightSegments,
-      },
-    };
-    const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
-      position: p.position,
-      rotation: p.rotation,
-      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard (fallback base)
-    });
-    return {
-      geometry,
-      uvs: resolveRegistryUVs(geometry), // v0.6 #3 — real sphere UV islands (sync)
-      material: isMaterialSpec(p.material)
-        ? hydrateInlineMaterial(p.material, FALLBACK_MATERIAL_COLOR)
-        : null,
-      transform,
-    };
-  }
+  // #365 Phase 5a / #384 Stage C: the fused `BoxMesh` AND `SphereMesh` branches are gone — a
+  // box/sphere is a split Object, resolved by the `node.type === 'Object'` branch below (reach
+  // through `data` to the BoxData/SphereData).
 
   if (node.type === 'GltfChild') {
     const p = node.params as {

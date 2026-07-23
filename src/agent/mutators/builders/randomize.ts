@@ -207,8 +207,7 @@ function canRotation(params: Record<string, unknown> | undefined): boolean {
 
 function canScale(state: DagState, id: string): boolean {
   const hasSize = resolveDataParamOwner(state, id, 'size') !== null;
-  const hasRadius =
-    typeof (state.nodes[id]?.params as Record<string, unknown> | undefined)?.radius === 'number';
+  const hasRadius = resolveDataParamOwner(state, id, 'radius') !== null;
   return hasSize || hasRadius;
 }
 
@@ -368,13 +367,20 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
               paramPath: 'size',
               value: [size[0] * factor, size[1] * factor, size[2] * factor],
             });
-          } else if (typeof params.radius === 'number') {
-            ops.push({
-              type: 'setParam',
-              nodeId: id,
-              paramPath: 'radius',
-              value: params.radius * factor,
-            });
+          } else {
+            // #384 Stage C — a split Object's `radius` lives on the SphereData it points at, so
+            // resolve the owner (self for a fused sphere, the data node for a split Object).
+            const radiusOwner = resolveDataParamOwner(state, id, 'radius');
+            if (radiusOwner) {
+              const radius = (state.nodes[radiusOwner].params as Record<string, unknown>)
+                .radius as number;
+              ops.push({
+                type: 'setParam',
+                nodeId: radiusOwner,
+                paramPath: 'radius',
+                value: radius * factor,
+              });
+            }
           }
         }
       }

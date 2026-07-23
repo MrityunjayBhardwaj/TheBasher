@@ -480,17 +480,11 @@ export interface EvaluatedMesh {
 // saves are split on load by the migration (the `BoxMesh` node type stays a migration-only
 // relic). No value kind carries the fused box any longer, making it unrepresentable.
 
-export interface SphereMeshValue {
-  readonly kind: 'SphereMesh';
-  readonly radius: number;
-  readonly widthSegments: number;
-  readonly heightSegments: number;
-  readonly position: Vec3;
-  readonly rotation: Vec3;
-  /** v0.6 #1 (D-01) — the non-destructive TRS scale band, distinct from `radius`. */
-  readonly scale: Vec3;
-  readonly material: InlineMaterialSpec;
-}
+// #384 Stage C: the fused `SphereMeshValue` is RETIRED — a sphere is now an `Object`
+// (transform) pointing at a `SphereData` (geometry + material) through its `data` socket, exactly
+// like the box. Old saves are split on load by the migration (the `SphereMesh` node type stays a
+// migration-only relic). No value kind carries the fused sphere any longer, making it
+// unrepresentable at runtime.
 
 /**
  * BakedMesh (Phase 151 Apply-Transform, issue #151) — the product of Apply.
@@ -973,7 +967,6 @@ export interface ObjectValue {
 }
 
 export type SceneChild =
-  | SphereMeshValue
   | BakedMeshValue
   | ModifiedMeshValue
   | GltfAssetValue

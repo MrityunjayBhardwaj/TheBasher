@@ -254,7 +254,9 @@ function nextBakedId(state: DagState): string {
  * than each spelling the types out (the drift that #377/#406 are about).
  */
 function isBakeableWrapperType(type: string): boolean {
-  return type === 'SphereMesh' || type === 'Object';
+  // #384 Stage C — the fused SphereMesh disjunct is gone; a sphere is a split Object now, so
+  // Apply-Transform admits only `Object` and bakes through the Object+data path (#376/#377).
+  return type === 'Object';
 }
 
 /** Whether a node IS a mesh does not vary with time, so a zero ctx is exact for the

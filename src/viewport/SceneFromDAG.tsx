@@ -134,7 +134,6 @@ import type {
   SceneChild,
   SceneObject,
   SpotLightValue,
-  SphereMeshValue,
   TransformValue,
   Vec3,
 } from '../nodes/types';
@@ -1459,8 +1458,6 @@ interface MeshChildProps {
 
 const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
-    case 'SphereMesh':
-      return <SphereMeshR value={value} override={override} />;
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
     case 'ModifiedMesh':
@@ -2037,24 +2034,8 @@ function usePrimitiveMaterial(
   return material;
 }
 
-// #365 Phase 5a (Slice 2): BoxMeshR is RETIRED — a box renders through <ObjectR> (the split's
-// Object → BoxData road, byte-identical). SphereMeshR keeps rendering the still-fused sphere.
-function SphereMeshR({ value, override }: { value: SphereMeshValue; override?: MaterialValue }) {
-  const shading = useViewportStore((s) => s.shading);
-  const material = usePrimitiveMaterial(value.material, override, shading);
-  return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // v0.6 #1 (D-01) — uniform TRS scale band (see BoxMeshR). `radius`/segments
-      // stay the parametric capability; scale is the transform band. C-1 guard.
-      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-    >
-      <sphereGeometry args={[value.radius, value.widthSegments, value.heightSegments]} />
-      <primitive object={material} attach="material" />
-    </mesh>
-  );
-}
+// #365 Phase 5a / #384 Stage C: BoxMeshR and SphereMeshR are RETIRED — a box/sphere renders
+// through <ObjectR> (the split's Object → BoxData/SphereData road, byte-identical).
 
 // ModifiedMeshR (epic #201 / #209) — the renderer for a geometry MODIFIER's
 // output (the SOP half of V58). Reads the modified geometry from the registry
