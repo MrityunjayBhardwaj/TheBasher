@@ -9,7 +9,7 @@ param**: a curve's control points, a channel's keyframes, a glTF material's slot
 addressed by its **position** in that array — `(nodeId, index)`, `(channelId, time)`,
 `materials.<slot>...`. Position is not identity. Insert a point ahead of the selected one, reorder a
 material slot, undo across a topology change, and the reference silently names a **different**
-element. The app already carries scar tissue for this: `history.ts` *drops* every position-addressed
+element. The app already carries scar tissue for this: `history.ts` _drops_ every position-addressed
 sub-selection on undo/redo because it cannot trust the index to still mean the same thing (#326), and
 a glTF material channel targeting `materials.2...` will mis-target if slot 2 moves.
 
@@ -19,6 +19,7 @@ delete, reorder and restore, and to address them by `(nodeId, id)` instead of by
 ## What the reference tools do (grounding)
 
 **Blender — interactive geometry is index-based; stable ids live only in the procedural layer.**
+
 - A legacy `Curve` control point (`bpy.types.SplinePoint` / `BezierSplinePoint`) carries `co`,
   `radius`, `tilt`, handles, and its **selection as a boolean on the point** — but **no id and no
   index field**. Identity is its position in `Spline.points`. The RNA/animation path is
@@ -27,7 +28,7 @@ delete, reorder and restore, and to address them by `(nodeId, id)` instead of by
 - A `MeshVertex` has `.index` (readonly) + `.co` + `.select`. Delete → everything reindexes. No
   persistent vertex/edge/face id.
 - Stable identity appears only in the **newer procedural geometry** (`bpy.types.Curves`,
-  `PointCloud`) via the **attribute/domain model**: geometry stores data as *attributes* on *domains*
+  `PointCloud`) via the **attribute/domain model**: geometry stores data as _attributes_ on _domains_
   (points/edges/faces/corners); `position` is just a required attribute; storage is an index-addressed
   array. A stable per-element **`id` is an optional attribute on the point domain**, maintained by
   geometry-nodes / simulation for cross-frame tracking — one attribute among many, never used for
@@ -41,7 +42,7 @@ attribute interpolation, attribute promotion).
 
 **The convergence:** in both tools, **stable identity is an `id` attribute on a domain array —
 opt-in, maintained by the ops that need it — not intrinsic structure.** The full attribute-domain
-substrate is the north star, but it has *no surface to land on in Basher yet* (see below), so we
+substrate is the north star, but it has _no surface to land on in Basher yet_ (see below), so we
 realize the same idea minimally now: a stable `id` field on the array elements that actually exist.
 
 ## Basher reality (why the scope is what it is)
@@ -54,10 +55,10 @@ Two facts from a full codebase sweep shape the scope:
    `vertices`/`faces` param, no topology mutation anywhere. **"vertex/edge/face ids" apply to zero
    surfaces today.** Curve control points are the only sub-element-addressable geometry.
 2. **Nothing sub-element is animatable today — except glTF material slots.** Two path-writers exist
-   with opposite array behaviour: the persistent `setParam` is dot-only and *refuses* to descend into
+   with opposite array behaviour: the persistent `setParam` is dot-only and _refuses_ to descend into
    arrays by design (`core/dag/ops.ts` `setAtPath`), so a curve point is only ever edited via a
-   whole-array replace; the animation writer `overlayChannels.writeAt` *does* index arrays by numeric
-   key, and the one thing riding it is a glTF **material slot** (`materials.<slot>...`) — a *persisted*
+   whole-array replace; the animation writer `overlayChannels.writeAt` _does_ index arrays by numeric
+   key, and the one thing riding it is a glTF **material slot** (`materials.<slot>...`) — a _persisted_
    channel/driver target addressed positionally. So curve points and keyframes have **zero** existing
    sub-element animation to migrate; the material slot is the lone positional-index precedent, and it
    is the one with a latent reorder bug.
@@ -66,11 +67,11 @@ The complete set of id-less positional sub-elements is exactly **three**. Everyt
 (modifiers, effects, constraints, drivers) already has real node-id identity — those are the
 precedent the curve-point files cite, and are out of scope.
 
-| Sub-element | Address today | Store / site | Stakes |
-|---|---|---|---|
-| Curve control point | `(nodeId, pointIndex)` | `curveSelectionStore` | UI selection; #326 undo-drop |
-| Timeline keyframe | `(channelId, time)` | `timelineSelection` | UI selection; same #326 seam |
-| glTF material slot | `materials.<slot>...` | channel/driver `paramPath` | **persisted animation target** — reorder mis-targets |
+| Sub-element         | Address today          | Store / site               | Stakes                                               |
+| ------------------- | ---------------------- | -------------------------- | ---------------------------------------------------- |
+| Curve control point | `(nodeId, pointIndex)` | `curveSelectionStore`      | UI selection; #326 undo-drop                         |
+| Timeline keyframe   | `(channelId, time)`    | `timelineSelection`        | UI selection; same #326 seam                         |
+| glTF material slot  | `materials.<slot>...`  | channel/driver `paramPath` | **persisted animation target** — reorder mis-targets |
 
 ## The mechanism — "identified arrays"
 
@@ -79,6 +80,7 @@ sub-element is referenced by `(nodeId, id)` and resolved to an index **only** wh
 structurally required (the eval-time array write).
 
 Shared core:
+
 - A small `identifiedArray` helper: `findById(arr, id) → index | null`, plus id-preserving
   `insert` / `remove` / `reorder`.
 - One **id minter usable inside pure op-builders** — the caller/UI mints the id and threads it into
@@ -89,9 +91,10 @@ Shared core:
   `writeAt`** — the writer never learns about ids.
 
 Two properties fall out for free (the test that the abstraction earns its span):
-- **#326 is fixed properly.** An id-addressed selection *survives* the undo restore, because the
+
+- **#326 is fixed properly.** An id-addressed selection _survives_ the undo restore, because the
   element with that id is restored with the array. The `history.ts` drop-seam
-  (`clearPositionAddressedSubSelections`) is *removed* for id-addressed selections, not papered over.
+  (`clearPositionAddressedSubSelections`) is _removed_ for id-addressed selections, not papered over.
 - **The material-slot reorder bug is fixed.** A persisted channel targeting `materials.<id>...`
   survives a slot reorder.
 
@@ -110,10 +113,10 @@ Two properties fall out for free (the test that the abstraction earns its span):
   `(nodeId, id)`. Clean per-node `Curve` migration (`version` 1→2, `[x,y,z]` → `{id, co:[x,y,z]}`);
   no existing sub-element animation to migrate.
 - **Timeline keyframes** — each keyframe object gains `id`; `timelineSelection` keys `(channelId,
-  id)` instead of `(channelId, time)`. Fixes #326 for keyframes too.
+id)` instead of `(channelId, time)`. Fixes #326 for keyframes too.
 - **glTF material slots** — each slot gains `id`; channel/driver `paramPath` `materials.<slot>...` →
   `materials.<id>...`, resolved id→index at overlay application. **The one heavy piece:** rewriting
-  `<index>` → `<id>` inside *existing persisted* channel/driver paths is a **graph-wide format
+  `<index>` → `<id>` inside _existing persisted_ channel/driver paths is a **graph-wide format
   migration** touching real animation targets — its own carefully byte-identity-tested slice.
 
 ## Phasing
