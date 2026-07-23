@@ -101,10 +101,28 @@ describe('every scene object the agent can add, it can refer to afterwards', () 
 
   // The words a director actually says. Nobody asks for "a Curve node" — they ask for the
   // path the camera flies along, or the target the actor looks at.
+  //
+  // #385 C2 — a curve is now the Object+CurveData split, so "the curve" resolves to an
+  // Object like a cube/sphere do. `type === 'Object'` alone would be VACUOUS here (the scene
+  // also holds a cube-Object and sphere-Object), so assert the resolved Object poses a
+  // CurveData — the geometryDataTypesFor narrowing that stops "the curve" grabbing every
+  // Object (the over-broad enumeration hazard).
+  it.each([['the curve'], ['the path'], ['the spline']])(
+    '"%s" resolves to a curve Object posing a CurveData, not any other Object',
+    (query) => {
+      const state = sceneOfEverything();
+      const ids = resolvedIds(identify({ query }, state));
+      expect(ids.length, `"${query}" resolved to nothing`).toBeGreaterThan(0);
+      for (const id of ids) {
+        const node = state.nodes[id];
+        expect(node.type).toBe('Object');
+        const dataId = (node.inputs as { data?: { node?: string } } | undefined)?.data?.node;
+        expect(dataId ? state.nodes[dataId]?.type : null).toBe('CurveData');
+      }
+    },
+  );
+
   it.each([
-    ['the curve', 'Curve'],
-    ['the path', 'Curve'],
-    ['the spline', 'Curve'],
     ['the null', 'Null'],
     ['the empty', 'Null'],
     ['the controller', 'Null'],

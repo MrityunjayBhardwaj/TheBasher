@@ -154,8 +154,11 @@ export function CurvePointHandles() {
   const worldRef = useRef<THREE.Matrix4>(new THREE.Matrix4());
 
   // Handles show for the Curve that is SELECTED (Blender shows a curve's points once you
-  // are editing it, not for every curve in the scene).
-  const curveId = primaryId && state.nodes[primaryId]?.type === 'Curve' ? primaryId : null;
+  // are editing it, not for every curve in the scene). #385: the selection is the Object half
+  // of a split curve, so gate on curvePointEntriesOf (which resolves the point-owner through
+  // `data`) — a box/sphere Object has no points → null → no handles. The id stays the Object,
+  // whose world transform poses the LOCAL points below.
+  const curveId = primaryId && curvePointEntriesOf(state, primaryId) !== null ? primaryId : null;
   // The ENTRIES ({id,co}[]) — each handle needs its point's stable id to pick by it. The
   // world geometry below still reads coordinate-only (co's); the id rides alongside.
   const entries = curveId ? curvePointEntriesOf(state, curveId) : null;

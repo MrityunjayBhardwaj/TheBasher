@@ -323,6 +323,9 @@ const ALL_PRIMITIVE_TYPES: NodeTypeId[] = [
 function geometryDataTypesFor(q: string): string[] | null {
   if (/\b(cubes?|box(es)?|boxmesh)\b/.test(q)) return ['BoxData'];
   if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['SphereData'];
+  // #385 C2 — a curve Object poses a CurveData. Without this arm "the curve" (which infers
+  // 'Object') would match every box/sphere Object too (the over-broad enumeration hazard).
+  if (/\b(curve(s)?|path(s)?|spline(s)?)\b/.test(q)) return ['CurveData'];
   return null;
 }
 
@@ -356,7 +359,10 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
   // ever called by its type name in a sentence: nobody says "add a Curve node", they say
   // "make a path for the camera to fly along" or "put a target where she's looking".
   // Checked BEFORE 'group'/'transform' so "empty" can't be captured by a looser rule later.
-  if (/\b(curve(s)?|path(s)?|spline(s)?)\b/.test(q)) return ['Curve'];
+  // #385 C2 — a curve is the Object+CurveData split (nodeType 'Object'). The fused 'Curve'
+  // value kind retires on load (old saves split, so "curve"/"path"/"spline" resolves to
+  // 'Object'); geometryDataTypesFor narrows those Objects to the ones posing a CurveData.
+  if (/\b(curve(s)?|path(s)?|spline(s)?)\b/.test(q)) return ['Object'];
   if (/\b(null(s)?|empty|empties|controller(s)?|target(s)?)\b/.test(q)) return ['Null'];
   if (/\bgroup(s)?\b/.test(q)) return ['Group'];
   if (/\btransform(s)?\b/.test(q)) return ['Transform'];

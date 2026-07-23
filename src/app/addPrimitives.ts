@@ -206,6 +206,39 @@ export function buildAddPrimitiveOps(
     };
   }
 
+  // #385 Stage C (C2 Slice 3) — a Curve is the object↔data split too, but the FIRST non-mesh
+  // one: an Object (the pose) wired to a CurveData (control points/closed/resolution, no
+  // material), then into the scene. Selection + the curve-point editor land on the Object
+  // (curvePointEntriesOf resolves points through `data`); the CurveData's zod defaults supply
+  // the seed 4-point path. Split-native, so "Curve" and the load-migration converge on one shape.
+  if (kind === 'Curve') {
+    const dataId = newId('data');
+    const objId = newId('obj');
+    return {
+      ops: [
+        { type: 'addNode', nodeId: dataId, nodeType: 'CurveData', params: {} },
+        {
+          type: 'addNode',
+          nodeId: objId,
+          nodeType: 'Object',
+          params: paramsFor('Curve', position),
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: objId, socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: objId, socket: 'out' },
+          to: { node: sceneRef.node, socket: 'children' },
+        },
+      ],
+      description: `Add ${humanLabel('Curve')}`,
+      newNodeId: objId,
+    };
+  }
+
   const id = newId(prefixFor(kind));
   const ops: Op[] = [];
   const params = paramsFor(kind, position);
@@ -219,7 +252,7 @@ export function buildAddPrimitiveOps(
   // Wire into the scene where applicable. Meshes go under .children,
   // lights under .lights. Cameras + empties stay floating (the user
   // wires them deliberately).
-  if (kind === 'Null' || kind === 'Curve') {
+  if (kind === 'Null') {
     ops.push({
       type: 'connect',
       from: { node: id, socket: 'out' },
@@ -280,13 +313,14 @@ function isSolverKind(kind: PrimitiveKind): boolean {
  *  scene object ends up creatable but un-referrable (#324). */
 export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
-    // #365 Phase 5a / #384 Stage C — a Cube and a Sphere are both the object↔data split; the
-    // node the director selects and refers to is the Object (the BoxData/SphereData is its data
-    // leaf, not a scene object). Both mint the split via the early-return branches above; this
-    // mapping only feeds identify's ALL_PRIMITIVE_TYPES, so both resolve to their real 'Object'
-    // node type rather than a fused kind.
+    // #365 Ph5a / #384 C1 / #385 C2 — a Cube, Sphere AND Curve are all the object↔data split; the
+    // node the director selects and refers to is the Object (the BoxData/SphereData/CurveData is
+    // its data leaf, not a scene object). Each mints the split via the early-return branches
+    // above; this mapping only feeds identify's ALL_PRIMITIVE_TYPES, so all resolve to their real
+    // 'Object' node type rather than a fused kind.
     case 'Cube':
     case 'Sphere':
+    case 'Curve':
       return 'Object';
     default:
       return kind; // DirectionalLight, PointLight, etc. — direct mapping
@@ -370,11 +404,13 @@ function humanLabel(kind: PrimitiveKind): string {
  *  else accepts the spawn point. */
 function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown> {
   switch (kind) {
-    // #365 Phase 5a / #384 Stage C — Cube's and Sphere's params are the OBJECT half's TRS only
-    // (the BoxData/SphereData they point at owns the geometry + material). The split branches
-    // above wire the pair; this supplies the Object node's params.
+    // #365 Ph5a / #384 C1 / #385 C2 — Cube, Sphere AND Curve are all the object↔data split; their
+    // params are the OBJECT half's TRS only (the BoxData/SphereData/CurveData they point at owns
+    // the geometry/points). The split branches above wire each pair; this supplies the Object's
+    // params. Curve's control points come from the CurveData's zod defaults, not here.
     case 'Cube':
     case 'Sphere':
+    case 'Curve':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'DirectionalLight':
       return { intensity: 1.0, position, color: '#ffffff' };
@@ -411,10 +447,6 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Transform':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Null':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
-    // #321 — the seed path. Points are LOCAL to the curve's origin (so the TRS gizmo moves
-    // the whole path), and the zod default supplies them; we only place the origin.
-    case 'Curve':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     // Compute nodes have full zod defaults on every param (computeNodes.ts) and no
     // position — an empty object lets the addNode parse fill the defaults.
