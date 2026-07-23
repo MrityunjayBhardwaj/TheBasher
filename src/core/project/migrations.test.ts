@@ -23,7 +23,9 @@ import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
 import { sphereGeometryRef } from '../../app/modifierGeometry';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materialSchema';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
-import type { InlineMaterialSpec } from '../../nodes/types';
+import { evaluate } from '../dag/evaluator';
+import { sampleCurve } from '../../nodes/curveMath';
+import type { CurveDataValue, InlineMaterialSpec, Vec3 } from '../../nodes/types';
 import {
   KeyframeChannelNumberNode,
   type KeyframeChannelNumberParams,
@@ -144,7 +146,7 @@ describe('v1 box → normalize + split to Object + BoxData (byte-identical rende
   it('is idempotent — re-loading a split project is a stable no-op', () => {
     const once = loadFromBytes(V1_BOX_PROJECT);
     // Re-serialize the migrated (split) project and load again — the round-trip
-    // the user hits on every subsequent save/load. formatVersion is now 4, so no
+    // the user hits on every subsequent save/load. formatVersion is now 5, so no
     // format migration runs; the Object + BoxData pair is stable.
     const twice = loadFromBytes(once);
     expect(twice.state.nodes.n_box).toEqual(once.state.nodes.n_box);
@@ -274,8 +276,8 @@ function splitDataNode(project: Project, boxId: string) {
 describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#365)', () => {
   it('splits the box: n_box becomes an Object (id inherited) + a wired BoxData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxJson());
-    // 2 → 3 (box split) → 4 (sphere split pass, no spheres here — stamps 4).
-    expect(migrated.formatVersion).toBe(4);
+    // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves).
+    expect(migrated.formatVersion).toBe(5);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -502,8 +504,8 @@ function splitSphereDataNode(project: Project, sphereId: string) {
 describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereData (#384)', () => {
   it('splits the sphere: n_sphere becomes an Object (id inherited) + a wired SphereData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
-    // 2 → 3 (box split) → 4 (sphere split).
-    expect(migrated.formatVersion).toBe(4);
+    // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass, no curves here).
+    expect(migrated.formatVersion).toBe(5);
     // The sphere node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_sphere;
     expect(obj.type).toBe('Object');
@@ -584,6 +586,229 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
     expect(twice.state.nodes.n_sphere).toEqual(once.state.nodes.n_sphere);
     expect(splitSphereDataNode(twice, 'n_sphere')).toEqual(splitSphereDataNode(once, 'n_sphere'));
     // No fused primitive of either kind survives.
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'SphereMesh')).toBe(false);
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'BoxMesh')).toBe(false);
+  });
+});
+
+// ── object↔data split (#385 Stage C · C2): fused Curve → Object + CurveData ──
+// The per-kind repeat for the FIRST non-mesh data, one format version later (v4→v5).
+// The SAME combined fused scene (box + sphere) is the live CONTROL: a v2 project
+// carrying a fused box, sphere AND curve migrates in FOUR sequential steps on load
+// (2→3 box, 3→4 sphere, 4→5 curve). The gate: the split curve's evaluated CurveData
+// draws the CANONICAL sampleCurve polyline (Slice-4-durable — compared against
+// sampleCurve, not a live fused resolve), a `resolution` channel re-targets to the
+// fresh CurveData while a `position` channel stays on the inherited-id Object, the
+// box + sphere in the SAME fixture still split (the CONTROLS), and a v1 bare-Vec3
+// curve is normalized through Curve's node ladder to {id,co} BEFORE the split (the
+// stable point ids the selection + #326 fix depend on). Non-default points +
+// resolution 8 so a dropped param can't pass vacuously (H180/H177).
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; K23; issue #385.
+
+const CURVE_MIG_ENTRIES = [
+  { id: 'cp0', co: [1.3, 0.4, -0.7] as Vec3 },
+  { id: 'cp1', co: [-0.9, 1.1, 2.2] as Vec3 },
+  { id: 'cp2', co: [3.1, -0.5, 0.8] as Vec3 },
+];
+const CURVE_MIG_COS: Vec3[] = CURVE_MIG_ENTRIES.map((e) => e.co);
+const CURVE_MIG_RESOLUTION = 8;
+
+/** The fused box+sphere scene (both CONTROLS) + a fused Curve (non-default points +
+ *  resolution) + a `resolution` channel (data-param) and a `position` channel
+ *  (transform) targeting the curve, then stamped formatVersion 2. The curve is built
+ *  at its current node version (v2, id'd points) so applyOp validates it; the v1→v2
+ *  node normalize inside the split is proven separately below. */
+function buildV2FusedBoxSphereCurveJson() {
+  let s = buildFusedBoxSphereDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_curve',
+    nodeType: 'Curve',
+    params: {
+      position: [2, 0, -1],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      points: CURVE_MIG_ENTRIES,
+      closed: false,
+      resolution: CURVE_MIG_RESOLUTION,
+    },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_curve', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_res',
+    nodeType: 'KeyframeChannelNumber',
+    params: {
+      name: 'resolution',
+      target: 'n_curve',
+      paramPath: 'resolution',
+      keyframes: [
+        { time: 0, value: CURVE_MIG_RESOLUTION, easing: 'linear' },
+        { time: 1, value: 24, easing: 'linear' },
+      ],
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_cpos',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_curve',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [2, 0, -1], easing: 'linear' },
+        { time: 1, value: [2, 5, -1], easing: 'linear' },
+      ],
+    },
+  });
+  const nodes = JSON.parse(JSON.stringify(s.nodes));
+  return {
+    formatVersion: 2,
+    id: 'p385-curve-split',
+    name: 'pre-split box+sphere+curve',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {
+      Curve: nodes.n_curve.version,
+      SphereMesh: nodes.n_sphere.version,
+      BoxMesh: nodes.n_box.version,
+    },
+    state: { nodes, outputs: s.outputs },
+  };
+}
+
+/** The CurveData node a split produced from the curve `curveId`. */
+function splitCurveDataNode(project: Project, curveId: string) {
+  return Object.values(project.state.nodes).find(
+    (n) => n.type === 'CurveData' && n.id.startsWith(`${curveId}__data`),
+  );
+}
+
+describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#385)', () => {
+  it('splits the curve: n_curve becomes an Object (id inherited) + a wired CurveData', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
+    // 2 → 3 (box) → 4 (sphere) → 5 (curve).
+    expect(migrated.formatVersion).toBe(5);
+    const obj = migrated.state.nodes.n_curve;
+    expect(obj.type).toBe('Object');
+    const op = obj.params as Record<string, unknown>;
+    expect(op.position).toEqual([2, 0, -1]);
+    expect(op.scale).toEqual([1, 1, 1]);
+    expect(op.points).toBeUndefined(); // geometry left the Object
+    expect(op.resolution).toBeUndefined();
+    expect(op.closed).toBeUndefined();
+    // A fresh CurveData owns points/closed/resolution and nothing else (no material —
+    // a curve is not render geometry).
+    const data = splitCurveDataNode(migrated, 'n_curve')!;
+    expect(data).toBeDefined();
+    const dp = data.params as Record<string, unknown>;
+    expect(dp.points).toEqual(CURVE_MIG_ENTRIES);
+    expect(dp.resolution).toBe(CURVE_MIG_RESOLUTION);
+    expect(dp.closed).toBe(false);
+    expect('material' in dp).toBe(false);
+    // The Object points at the data node through `data`.
+    const dataRef = (obj.inputs as Record<string, { node: string }>).data;
+    expect(dataRef.node).toBe(data.id);
+  });
+
+  it('draws the CANONICAL sampleCurve polyline (the split is invisible)', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
+    const data = splitCurveDataNode(migrated, 'n_curve')!;
+    const value = evaluate(migrated.state, data.id).value as CurveDataValue;
+    expect(value.kind).toBe('CurveData');
+    // The polyline the renderer draws is the canonical sampler over the migrated
+    // points — compared against sampleCurve, NOT a live fused resolve (Slice-4-durable).
+    expect(value.points).toEqual(CURVE_MIG_COS);
+    expect(value.closed).toBe(false);
+    expect(value.samples).toEqual(sampleCurve(CURVE_MIG_COS, false, CURVE_MIG_RESOLUTION));
+  });
+
+  it('the Object inherits the id, so a position channel still animates it', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
+    // The position channel still targets n_curve (now the Object) — unchanged.
+    expect((migrated.state.nodes.n_cpos.params as { target: string }).target).toBe('n_curve');
+    const p0 = resolveEvaluatedTransform(migrated.state, 'n_curve', ctxAt(0))!.position;
+    const p1 = resolveEvaluatedTransform(migrated.state, 'n_curve', ctxAt(1))!.position;
+    expect(p0[1]).toBe(0);
+    expect(p1[1]).toBe(5); // the channel drives the Object's position
+  });
+
+  it('routes channels by paramPath: resolution → the CurveData, position → the Object', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
+    const data = splitCurveDataNode(migrated, 'n_curve')!;
+    // A `resolution` channel addresses a param that now lives on the data node, so it
+    // re-targets there — NOT orphaned onto the transform-only Object (the arm this
+    // slice added to isDataParamPath).
+    expect((migrated.state.nodes.n_res.params as { target: string }).target).toBe(data.id);
+    expect('resolution' in (data.params as object)).toBe(true);
+    // A `position` channel addresses the transform → it stays on the inherited-id Object.
+    expect((migrated.state.nodes.n_cpos.params as { target: string }).target).toBe('n_curve');
+  });
+
+  it('CONTROLS: the box AND sphere in the same fixture still split (2→3, 3→4 intact)', () => {
+    const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
+    expect(migrated.state.nodes.n_box.type).toBe('Object');
+    expect(migrated.state.nodes.n_sphere.type).toBe('Object');
+    expect(Object.values(migrated.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
+    expect(Object.values(migrated.state.nodes).some((n) => n.type === 'SphereData')).toBe(true);
+  });
+
+  it('normalizes a v1 bare-Vec3 curve through the node ladder BEFORE splitting', () => {
+    // A hand-written formatVersion-2 project with a version-1 Curve carrying BARE Vec3
+    // points (the pre-#453 shape applyOp would reject). The split must run Curve's own
+    // v1→v2 migration first, so the CurveData ends with {id,co} points (cp0..).
+    const v1Curve = {
+      formatVersion: 2,
+      id: 'p385-v1-curve-normalize',
+      name: 'pre-id fused curve',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { Curve: 1 },
+      state: {
+        nodes: {
+          n_curve: {
+            id: 'n_curve',
+            type: 'Curve',
+            version: 1,
+            params: {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              points: [
+                [1.3, 0.4, -0.7],
+                [-0.9, 1.1, 2.2],
+                [3.1, -0.5, 0.8],
+              ],
+              closed: false,
+              resolution: CURVE_MIG_RESOLUTION,
+            },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    const migrated = loadFromBytes(v1Curve);
+    expect(migrated.state.nodes.n_curve.type).toBe('Object');
+    const data = splitCurveDataNode(migrated, 'n_curve')!;
+    expect((data.params as { points: unknown }).points).toEqual(CURVE_MIG_ENTRIES);
+  });
+
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
+    const once = loadFromBytes(buildV2FusedBoxSphereCurveJson());
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_curve).toEqual(once.state.nodes.n_curve);
+    expect(splitCurveDataNode(twice, 'n_curve')).toEqual(splitCurveDataNode(once, 'n_curve'));
+    // No fused primitive of any kind survives.
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'Curve')).toBe(false);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'SphereMesh')).toBe(false);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'BoxMesh')).toBe(false);
   });
@@ -744,7 +969,7 @@ function childRefNodes(state: DagState): string[] {
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
-    expect(migrated.formatVersion).toBe(4); // 1→2 (layer retire) → 3 (box split) → 4 (sphere split)
+    expect(migrated.formatVersion).toBe(5); // 1→2 layer retire → 3 box → 4 sphere → 5 curve
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
@@ -957,8 +1182,13 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
 describe('Curve v1 → v2: control points gain stable ids (#453/#454)', () => {
   // NON-default coordinates on purpose: a dropped `co` would otherwise read the schema
   // default and the golden would pass vacuously.
+  // formatVersion 5 (current): isolates the Curve NODE ladder (v1→v2 points get ids)
+  // from the v4→v5 FORMAT split. The two are orthogonal — the split's normalize step
+  // reuses this same node ladder — so stamping the current format keeps this a pure
+  // node-migration test (a v4 stamp would trip the 4→5 split and turn n_curve into an
+  // Object, hiding the very migration under test).
   const V1_CURVE_PROJECT = {
-    formatVersion: 4,
+    formatVersion: 5,
     id: 'p454-curve-ids',
     name: 'pre-id curve',
     createdAt: 0,

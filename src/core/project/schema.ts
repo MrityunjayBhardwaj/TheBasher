@@ -29,7 +29,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 
 // v4 (#384 Stage C · C1): split each fused SphereMesh into Object + SphereData —
 // the per-kind repeat of the v3 box split. See migrations.ts formatMigrations[3].
-export const PROJECT_FORMAT_VERSION = 4;
+// v5 (#385 Stage C · C2): split each fused Curve into Object + CurveData (the FIRST
+// non-mesh data). See migrations.ts formatMigrations[4].
+export const PROJECT_FORMAT_VERSION = 5;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
