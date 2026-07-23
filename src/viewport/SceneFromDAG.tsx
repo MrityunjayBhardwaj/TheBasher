@@ -79,6 +79,7 @@ import { CurveLineChrome } from './CurveLine';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
+import { recomposeLightObject } from '../nodes/lightRecompose';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -2127,6 +2128,19 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
         points={data.points}
       />
     );
+  }
+  if (data?.kind === 'LightData') {
+    // #386 — a light nested in a Group flows through `children` (NOT `scene.lights`):
+    // MeshChild 'Object' (:1513) → here. Recompose the Object+LightData into the flat
+    // LightValue and render it through the SAME LightKindR the fused nested-light cases
+    // use (:1472-1477, #231 Inc 2). STATIC (nodeId=null/constrained=false): the nested
+    // light inherits the group's world transform from GroupR's <group>; no direct
+    // channels / Track-To aim (the same known-limit as the fused nested light). This is
+    // the arm the compiler forces once ObjectData widens (R1's TS2322) — closing it here
+    // by RECOMPOSING, never by casting `data` to MeshDataValue (that darkens the light).
+    const light = recomposeLightObject(value);
+    if (!light) return null;
+    return <LightKindR value={light} nodeId={null} constrained={false} />;
   }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }

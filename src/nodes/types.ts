@@ -952,14 +952,46 @@ export interface CurveDataValue {
 }
 
 /**
+ * The light's data half — the SHADING (kind + intensity/colour/falloff/aim), and
+ * DELIBERATELY no transform (the Object owns the TRS). Post-split the node wired
+ * into a light socket is an `Object` posing a `LightData`; `recomposeLightObject`
+ * (lightRecompose.ts) reconstitutes the flat `LightValue` the renderer's light band
+ * consumes, at BOTH gathers (Scene + LightRig) and at ObjectR's nested-light arm.
+ *
+ * ONE discriminated node, not four (#386, Stage C · C3): `light` is the kind enum
+ * that collapses the four fused light NODES into one Light datablock, Blender-style.
+ * The per-kind shading fields are all present (the schema defaults them) but a given
+ * kind reads only the subset it owns. AmbientLight is NOT here — ambient is a World
+ * datablock (only 4 light OBJECT types split), so it stays a bare fused node.
+ */
+export interface LightDataValue {
+  readonly kind: 'LightData';
+  readonly light: 'Directional' | 'Point' | 'Spot' | 'Area';
+  readonly intensity: number;
+  readonly color: string;
+  readonly distance: number;
+  readonly decay: number;
+  readonly angle: number;
+  readonly penumbra: number;
+  readonly width: number;
+  readonly height: number;
+  readonly target: Vec3;
+  readonly lookAt: Vec3;
+  /** #205 — optional HDR/EXR emitter texture (env-hdri assetRef) for a studio area light. */
+  readonly tex?: string;
+}
+
+/**
  * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
  * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
  * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
  * gains a curve arm; the `data.kind !== 'MeshData'` guards absorb it elsewhere).
- * CameraData / LightData join in later phases (the same "one socket, discriminate
- * on value.kind" discipline V78 uses for 'SceneObject').
+ * #386 adds LightData — the second non-mesh member; ObjectR gains a light arm that
+ * recomposes it into a LightValue and renders it through the shared light band.
+ * CameraData joins in a later phase (the same "one socket, discriminate on
+ * value.kind" discipline V78 uses for 'SceneObject').
  */
-export type ObjectData = MeshDataValue | CurveDataValue;
+export type ObjectData = MeshDataValue | CurveDataValue | LightDataValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`

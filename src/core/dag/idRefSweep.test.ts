@@ -195,6 +195,7 @@ describe('idRefs registry — drift guard', () => {
   // Each entry needs a reason, so the list cannot become a silent dumping ground.
   const NOT_A_NODE_ID: Record<string, string> = {
     'SpotLight.target': 'a vec3 aim POINT, not a node id',
+    'LightData.target': 'a vec3 spot aim POINT (#386 split of SpotLight.target), not a node id',
     'TransformClip.target': 'a sanitised glTF scene-child key, not a DAG node id',
   };
 

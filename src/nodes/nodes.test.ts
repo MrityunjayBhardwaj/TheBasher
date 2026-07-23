@@ -88,6 +88,7 @@ const ALL_TYPES = [
   'KeyframeChannelVec3',
   'Lag',
   'Layer',
+  'LightData',
   'LightProfileSelect',
   'LightRig',
   'LocomotionState',
