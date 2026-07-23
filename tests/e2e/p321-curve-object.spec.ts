@@ -193,7 +193,7 @@ test('editing a point moves the path — the panel, the render and the seam all 
   // The authored param changed …
   const points = await page.evaluate((curveId) => {
     const s = (window as unknown as BasherWin).__basher_dag.getState().state;
-    return s.nodes[curveId].params.points as number[][];
+    return (s.nodes[curveId].params.points as { id: string; co: number[] }[]).map((e) => e.co);
   }, id);
   expect(points[1][1]).toBe(6);
 

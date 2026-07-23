@@ -227,7 +227,13 @@ export function CurvePointHandles() {
       // the handle/renderer boundary.
       world: worldPoints,
     });
-    w.__basher_curve_select_point = (nodeId: string, pointId: string) => pick(nodeId, pointId);
+    // Kept INDEX-addressed for e2e ergonomics (a spec knows a point by its slot, not its
+    // minted id) — it resolves the slot to the point's stable id and picks by that, so the
+    // selection the seam creates is the same id-addressed selection a real handle click makes.
+    w.__basher_curve_select_point = (nodeId: string, index: number) => {
+      const id = entries?.[index]?.id;
+      if (id) pick(nodeId, id);
+    };
     w.__basher_curve_clear_point = () => useCurveSelectionStore.getState().clear();
     w.__basher_curve_point_grab = (target: [number, number, number]) => {
       if (!proxy || !active) return;
