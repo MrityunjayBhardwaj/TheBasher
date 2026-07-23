@@ -288,13 +288,16 @@ describe('bundleToProject', () => {
     expect(project.name).toBe('Orig');
     expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(project.createdAt).toBe(9999);
-    // The DAG survives the round-trip. #365 Phase 5a (Slice 1b): the default project is now
-    // split-native (its box is already an Object + BoxData), so the format migration's
-    // BoxMesh→split pass finds no fused box to split — no node is added or lost.
+    // The DAG survives the round-trip with NOTHING lost. #365 Phase 5a: the default's box
+    // is already split-native (Object + BoxData), so the BoxMesh→split pass adds nothing.
+    // #386 Stage C · C3: the default's light is split by the v5→v6 pass — the only thing
+    // the migration may ADD is a LightData half (and once the default seed itself becomes
+    // split-native, `added` is empty and this stays green).
     const migratedIds = Object.keys(project.state.nodes);
     const srcIds = Object.keys(src.state.nodes);
-    for (const id of srcIds) expect(migratedIds).toContain(id);
-    expect(migratedIds.length).toBe(srcIds.length);
+    for (const id of srcIds) expect(migratedIds).toContain(id); // nothing lost
+    const added = migratedIds.filter((id) => !srcIds.includes(id));
+    expect(added.every((id) => project.state.nodes[id].type === 'LightData')).toBe(true);
     expect(project.state.outputs).toEqual(src.state.outputs);
   });
 

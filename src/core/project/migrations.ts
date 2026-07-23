@@ -32,6 +32,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // Its OWN format version for the same reason as the sphere's: a project saved at
   // v4 (post-sphere-split) carrying a fused curve would never re-run an earlier pass.
   4: migrateFusedCurveToSplit,
+  // v5 → v6 (#386 Stage C · C3): split the four posable lights into Object + LightData
+  // (AmbientLight stays fused). Its OWN format version for the same reason: a project
+  // saved at v5 (post-curve-split) carrying a fused light would never re-run an earlier
+  // pass, so its light would never split — a silent, permanent data loss.
+  5: migrateFusedLightToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -170,6 +175,24 @@ function isDataParamPath(paramPath: unknown): boolean {
     paramPath.startsWith('points[') ||
     paramPath === 'closed' ||
     paramPath === 'resolution' ||
+    // Light shading (the v5→v6 pass, #386) — a posable light's kind + intensity/
+    // colour/falloff/aim all live on the LightData half now. Bare `color`/`intensity`
+    // are LIGHT-only here (a mesh material's colour is `material.base.color`, covered
+    // by the `startsWith('material')` arm below); and this arm only ever fires for a
+    // channel whose `target` is a FORMER LIGHT id (the caller gates on the light map),
+    // so a MaterialOverride's own bare `color` channel is never mis-retargeted.
+    paramPath === 'lightKind' ||
+    paramPath === 'intensity' ||
+    paramPath === 'color' ||
+    paramPath === 'distance' ||
+    paramPath === 'decay' ||
+    paramPath === 'angle' ||
+    paramPath === 'penumbra' ||
+    paramPath === 'width' ||
+    paramPath === 'height' ||
+    paramPath === 'target' ||
+    paramPath === 'lookAt' ||
+    paramPath === 'tex' ||
     // Material — shared by both mesh primitives (the data half owns the look).
     // A curve has no material, so a curve target never reaches this arm.
     paramPath.startsWith('material')
@@ -438,6 +461,157 @@ export function migrateFusedCurveToSplit(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 5 };
+}
+
+// ── v5 → v6: fused posable lights → Object + LightData (object↔data split, #386) ──
+// The per-kind mirror of the box/sphere/curve splits, for the SECOND non-mesh data and
+// the FIRST PARTIAL retirement: only the FOUR posable kinds split (Directional / Point /
+// Spot / Area) → an `Object` O (owns the transform) + a fresh `LightData` D (owns the
+// shading — kind + intensity/colour/falloff/aim). AmbientLight is SKIPPED (ambient = a
+// World datablock, only four light OBJECT types exist). O INHERITS the light's id, so
+// every consumer edge, channel `target`, Track-To target, rig index-correspondence and
+// saved selection still resolves — only shading channels re-target to D.
+//
+// One collapsed LightData schema cannot carry four different per-kind defaults, so each
+// shading field is hydrated from the SOURCE KIND'S OWN zod default (Area intensity 5,
+// Spot penumbra 0.1, …), NOT LightData's collapsed default — otherwise a migrated area
+// light saved without an intensity would silently drop from 5 to 1 (a 5× lighting shift
+// that still "looks like a light"). Ranges on LightData are the SUPERSET across kinds
+// (intensity max(100)), so an existing `intensity:50` area light re-parses on load.
+//
+// Runs on RAW JSON before the schema parses. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5;
+// issue #386.
+
+/** Fused light node TYPE → the LightData `lightKind` discriminator. AmbientLight is
+ *  intentionally absent — it does not split. */
+const LIGHT_KIND_OF: Record<string, 'Directional' | 'Point' | 'Spot' | 'Area'> = {
+  DirectionalLight: 'Directional',
+  PointLight: 'Point',
+  SpotLight: 'Spot',
+  AreaLight: 'Area',
+};
+
+/** Build a posable light's LightData param bag from its fused params, hydrating each
+ *  shading field from the SOURCE KIND'S own zod default (per the file-head note).
+ *  Only the kind's own subset is written; LightData's schema defaults the rest. */
+function lightDataParamsFor(
+  kind: 'Directional' | 'Point' | 'Spot' | 'Area',
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const color = params.color ?? '#ffffff';
+  switch (kind) {
+    case 'Directional':
+      // DirectionalLight.intensity has NO zod default (a required param) — a saved
+      // project always carries it; fall back to 1 if somehow absent.
+      return { lightKind: 'Directional', intensity: params.intensity ?? 1, color };
+    case 'Point':
+      return {
+        lightKind: 'Point',
+        intensity: params.intensity ?? 1,
+        color,
+        distance: params.distance ?? 0,
+        decay: params.decay ?? 2,
+      };
+    case 'Spot':
+      return {
+        lightKind: 'Spot',
+        intensity: params.intensity ?? 1,
+        color,
+        target: params.target ?? [0, 0, 0],
+        angle: params.angle ?? Math.PI / 6,
+        penumbra: params.penumbra ?? 0.1,
+        distance: params.distance ?? 0,
+        decay: params.decay ?? 2,
+      };
+    case 'Area':
+      return {
+        lightKind: 'Area',
+        intensity: params.intensity ?? 5,
+        color,
+        width: params.width ?? 2,
+        height: params.height ?? 2,
+        lookAt: params.lookAt ?? [0, 0, 0],
+        ...(params.tex !== undefined ? { tex: params.tex } : {}),
+      };
+  }
+}
+
+export function migrateFusedLightToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 6 };
+
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const lightDataVersion = getNodeType('LightData')?.version ?? 1;
+
+  // lightId → its split-off data node id (used to re-target shading channels).
+  const dataIdByLight = new Map<string, string>();
+
+  for (const light of Object.values(nodes)) {
+    const kind = light?.type ? LIGHT_KIND_OF[light.type] : undefined;
+    // AmbientLight (and every non-light node) is skipped — it never enters the loop.
+    if (!kind || !light.id) continue;
+
+    // Normalize the light through its OWN migration ladder first (reuse, not a parallel
+    // copy). All four posable kinds are v1 with no ladder steps today, but keep the
+    // pattern so a future light-node version migrates BEFORE the split.
+    let params: Record<string, unknown> = { ...(light.params ?? {}) };
+    const def = getNodeType(light.type!);
+    if (def) {
+      let v = typeof light.version === 'number' ? light.version : def.version;
+      let safety = 64;
+      while (v < def.version && safety-- > 0) {
+        const step = def.migrations?.[v];
+        if (!step) break;
+        params = step(params) as Record<string, unknown>;
+        v++;
+      }
+    }
+
+    const dataId = freshDataId(nodes, light.id);
+    dataIdByLight.set(light.id, dataId);
+
+    // The DATA half — the shading, no transform, no inputs. Per-kind hydrate.
+    nodes[dataId] = {
+      id: dataId,
+      type: 'LightData',
+      version: lightDataVersion,
+      params: lightDataParamsFor(kind, params),
+      inputs: {},
+    };
+
+    // The OBJECT half — the light converted IN PLACE (inherits the id). Owns the
+    // transform, points at the data node through `data`; any pre-existing inputs are
+    // kept (constraint targets, rig membership, etc. all keyed on the inherited id).
+    light.type = 'Object';
+    light.version = objectVersion;
+    light.params = {
+      position: params.position,
+      rotation: params.rotation,
+      scale: params.scale,
+    };
+    light.inputs = { ...(light.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-target the channels that address the DATA half. A channel names its subject by
+  // `params.target` (a node-id STRING) + `params.paramPath`; a LightData's own `target`
+  // is a Vec3 ARRAY, so it is skipped by the `typeof === 'string'` guard (no collision).
+  // position/rotation/scale channels keep target = the light id (now the Object).
+  if (dataIdByLight.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const dataId = dataIdByLight.get(target);
+      if (dataId && n.params && isDataParamPath(n.params.paramPath)) {
+        n.params.target = dataId;
+      }
+    }
+  }
+
+  return { ...proj, formatVersion: 6 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {
