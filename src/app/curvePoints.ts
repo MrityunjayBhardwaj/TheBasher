@@ -22,7 +22,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { MIN_CURVE_POINTS, type CurvePoint } from '../nodes/Curve';
 import type { Vec3 } from '../nodes/types';
-import { mintId } from './identifiedArray';
+import { findById, mintId } from './identifiedArray';
 
 /** The curve's control-point ENTRIES ({id,co}[]), or null when `nodeId` is not a Curve. The
  *  builders read through this so a write can PRESERVE each point's id across a topology edit —
@@ -51,12 +51,17 @@ function writePoints(nodeId: string, points: readonly CurvePoint[]): Op[] {
 }
 
 /** A resolved control-point selection: the point the viewport handles, the point gizmo and
- *  the keyboard are all talking about. */
+ *  the keyboard are all talking about. Carries BOTH the stable id (persist / compare across
+ *  topology edits) and the CURRENT index (mount the gizmo, address the index-based builders)
+ *  — the id is the identity, the index is where it lives right now. */
 export interface CurvePointSelection {
   nodeId: string;
-  pointIndex: number;
+  /** The stable id — survives insert/delete/reorder; the thing the store holds and compares. */
+  pointId: string;
+  /** The point's current position in the `points` array — resolved from the id via findById. */
+  index: number;
   /** The point's authored (LOCAL) coordinates. */
-  point: Vec3;
+  co: Vec3;
 }
 
 /**
@@ -76,13 +81,15 @@ export interface CurvePointSelection {
  */
 export function resolveCurvePointSelection(
   state: DagState,
-  selection: { nodeId: string | null; pointIndex: number | null },
+  selection: { nodeId: string | null; pointId: string | null },
 ): CurvePointSelection | null {
-  const { nodeId, pointIndex } = selection;
-  if (!nodeId || pointIndex === null || !Number.isInteger(pointIndex)) return null;
-  const points = curvePointsOf(state, nodeId);
-  if (!points || pointIndex < 0 || pointIndex >= points.length) return null;
-  return { nodeId, pointIndex, point: points[pointIndex] };
+  const { nodeId, pointId } = selection;
+  if (!nodeId || !pointId) return null;
+  const entries = curvePointEntriesOf(state, nodeId);
+  if (!entries) return null;
+  const index = findById(entries, pointId);
+  if (index === null) return null;
+  return { nodeId, pointId, index, co: entries[index].co };
 }
 
 /** Move one control point. */

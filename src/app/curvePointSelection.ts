@@ -31,7 +31,7 @@ import type { DagState } from '../core/dag/state';
 function activeCurvePoint(
   state: DagState,
   primaryNodeId: string | null,
-  selection: { nodeId: string | null; pointIndex: number | null },
+  selection: { nodeId: string | null; pointId: string | null },
 ): CurvePointSelection | null {
   if (!primaryNodeId || selection.nodeId !== primaryNodeId) return null;
   return resolveCurvePointSelection(state, selection);
@@ -43,7 +43,7 @@ export function getActiveCurvePoint(): CurvePointSelection | null {
   return activeCurvePoint(
     useDagStore.getState().state,
     useSelectionStore.getState().primaryNodeId,
-    { nodeId: sel.nodeId, pointIndex: sel.pointIndex },
+    { nodeId: sel.nodeId, pointId: sel.pointId },
   );
 }
 
@@ -52,8 +52,8 @@ export function useActiveCurvePoint(): CurvePointSelection | null {
   const state = useDagStore((s) => s.state);
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const nodeId = useCurveSelectionStore((s) => s.nodeId);
-  const pointIndex = useCurveSelectionStore((s) => s.pointIndex);
-  return activeCurvePoint(state, primaryNodeId, { nodeId, pointIndex });
+  const pointId = useCurveSelectionStore((s) => s.pointId);
+  return activeCurvePoint(state, primaryNodeId, { nodeId, pointId });
 }
 
 export { activeCurvePoint };

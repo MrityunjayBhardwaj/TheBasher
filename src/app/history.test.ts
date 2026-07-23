@@ -12,13 +12,13 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 
 /** Seed both sub-selection stores with a live-looking reference. */
 function selectSubElements(): void {
-  useCurveSelectionStore.getState().selectPoint('n_curve', 2);
+  useCurveSelectionStore.getState().selectPoint('n_curve', 'cp2');
   useTimelineSelection.getState().setActiveKeyframe({ channelId: 'n_chan', time: 1 });
 }
 
 function subSelectionsCleared(): boolean {
   return (
-    useCurveSelectionStore.getState().pointIndex === null &&
+    useCurveSelectionStore.getState().pointId === null &&
     useTimelineSelection.getState().activeKeyframeId === null
   );
 }
@@ -79,7 +79,7 @@ describe('history seam (#326)', () => {
 
     historyUndo();
 
-    expect(useCurveSelectionStore.getState().pointIndex).toBe(2);
+    expect(useCurveSelectionStore.getState().pointId).toBe('cp2');
     expect(useTimelineSelection.getState().activeKeyframeId).toEqual({
       channelId: 'n_chan',
       time: 1,
