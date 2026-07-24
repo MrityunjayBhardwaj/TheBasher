@@ -116,11 +116,12 @@ test.beforeEach(async ({ page }) => {
   });
   // Seed a free-floating Number channel (V57) with 3 keyframes so all W6
   // features have something to operate on — no AnimationLayer wrapper, the
-  // channel targets the DirectionalLight directly by dagId. Channel targets a
-  // DirectionalLight's `intensity` param — DirectionalLight has intensity as a
-  // native number in its paramSchema, so K-insert can read it back at press
-  // time without tripping setParam schema validation (BoxMesh has no
-  // intensity field; targeting box.intensity would fail silently).
+  // channel targets its subject directly by dagId. The subject is a `LightData`
+  // (#386 C3 moved a light's shading onto the data half): it has `intensity` as a
+  // native number in its paramSchema, so K-insert can read it back at press time
+  // without tripping setParam schema validation (BoxMesh has no intensity field;
+  // targeting box.intensity would fail silently). The channel is all this spec
+  // needs, so there is no Object half and nothing is wired into the scene.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
@@ -134,14 +135,8 @@ test.beforeEach(async ({ page }) => {
         {
           type: 'addNode',
           nodeId: 'sun',
-          nodeType: 'DirectionalLight',
-          params: {
-            intensity: 7,
-            position: [5, 5, 5],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            color: '#ffffff',
-          },
+          nodeType: 'LightData',
+          params: { lightKind: 'Directional', intensity: 7, color: '#ffffff' },
         },
         {
           type: 'addNode',

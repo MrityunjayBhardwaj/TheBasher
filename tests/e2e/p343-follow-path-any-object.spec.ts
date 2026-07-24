@@ -15,6 +15,7 @@
 
 import { expect, test } from './_fixtures';
 import { splitCurveOps } from './_splitCurve';
+import { splitLightOps } from './_splitLight';
 
 type V3 = [number, number, number];
 interface CurveSample {
@@ -180,15 +181,17 @@ test('a followed LIGHT illuminates from the path (the 4th road, #343)', async ({
   await boot(page);
   await addPosedCurve(page);
   const seam = await seamPoint(page);
+  // #386 C3: the spot is split — the Follow-Path drives the OBJECT (the pose half),
+  // which is also the node wired into scene.lights.
   await follow(
     page,
     [
-      {
-        type: 'addNode',
-        nodeId: 'n_spot',
-        nodeType: 'SpotLight',
-        params: { position: [0, 0, 0], intensity: 1 },
-      },
+      ...splitLightOps({
+        objectId: 'n_spot',
+        lightKind: 'Spot',
+        position: [0, 0, 0],
+        shading: { intensity: 1 },
+      }),
       {
         type: 'connect',
         from: { node: 'n_spot', socket: 'out' },

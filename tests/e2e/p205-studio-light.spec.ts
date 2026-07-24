@@ -21,6 +21,7 @@
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §1.5 / §7.1; vyapti V47/V37/V58.
 
 import { expect, test } from './_fixtures';
+import { splitLightDataId, splitLightOps } from './_splitLight';
 
 interface Op {
   type: string;
@@ -146,41 +147,46 @@ test('#205 — a textured AreaLight renders the §1.5 pair; the light is tinted 
 }) => {
   const before = await readStudioParts(page);
 
-  // Add a textured AreaLight (the studio light) wired into scene.lights.
-  await page.evaluate(async () => {
-    const w = window as unknown as StudioWindow;
-    const bytes = new Uint8Array(
-      await fetch('/fixtures/env/test.hdr').then((r) => r.arrayBuffer()),
-    );
-    const assetRef = await w.__basher_importEnvHdri!(bytes, 'test.hdr');
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene!.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'studio_light_e2e',
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: [3, 4, 3],
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: [0, 0, 0],
-            tex: assetRef,
+  // Add a textured SPLIT area light (Object + LightData, #386 C3) wired into scene.lights.
+  // The `tex` assetRef is only known inside the page (the import runs there), so it is set
+  // in the same atomic batch — onto the DATA half, which owns every shading param.
+  const lightOps = splitLightOps({
+    objectId: 'studio_light_e2e',
+    lightKind: 'Area',
+    position: [3, 4, 3],
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+  }) as Op[];
+  const studioDataId = splitLightDataId('studio_light_e2e');
+  await page.evaluate(
+    async ({ lightOps, studioDataId }) => {
+      const w = window as unknown as StudioWindow;
+      const bytes = new Uint8Array(
+        await fetch('/fixtures/env/test.hdr').then((r) => r.arrayBuffer()),
+      );
+      const assetRef = await w.__basher_importEnvHdri!(bytes, 'test.hdr');
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          ...lightOps,
+          {
+            type: 'setParam',
+            nodeId: studioDataId,
+            paramPath: 'tex',
+            value: assetRef,
           },
-        },
-        {
-          type: 'connect',
-          from: { node: 'studio_light_e2e', socket: 'out' },
-          to: { node: sceneId, socket: 'lights' },
-        },
-      ],
-      'e2e',
-      'add studio light',
-    );
-  });
+          {
+            type: 'connect',
+            from: { node: 'studio_light_e2e', socket: 'out' },
+            to: { node: sceneId, socket: 'lights' },
+          },
+        ],
+        'e2e',
+        'add studio light',
+      );
+    },
+    { lightOps, studioDataId },
+  );
 
   // The emissive card APPEARS (suspends on the OPFS read + decode first).
   await page.waitForFunction(
@@ -232,26 +238,22 @@ test('#205 — a Track-To aims the area light at the constraint target (the rig,
   const AIM: [number, number, number] = [5, 0, -5];
   const AUTHORED: [number, number, number] = [0, 0, 0];
 
+  // The Track-To targets the OBJECT half — the constraint poses the light, and the pose
+  // stayed on the Object when #386 split the fused AreaLight.
+  const rigLightOps = splitLightOps({
+    objectId: 'rig_light_e2e',
+    lightKind: 'Area',
+    position: POS,
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: AUTHORED },
+  }) as Op[];
   await page.evaluate(
-    ({ pos, aim, authored }) => {
+    ({ aim, rigLightOps }) => {
       const w = window as unknown as StudioWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: 'rig_light_e2e',
-            nodeType: 'AreaLight',
-            params: {
-              intensity: 5,
-              position: pos,
-              color: '#ffffff',
-              width: 2,
-              height: 2,
-              lookAt: authored,
-            },
-          },
+          ...rigLightOps,
           {
             type: 'connect',
             from: { node: 'rig_light_e2e', socket: 'out' },
@@ -269,7 +271,7 @@ test('#205 — a Track-To aims the area light at the constraint target (the rig,
         'add rig light + track-to',
       );
     },
-    { pos: POS, aim: AIM, authored: AUTHORED },
+    { aim: AIM, rigLightOps },
   );
 
   // Forward (toward the aim) = light's local -Z in world. Wait until it points at
@@ -321,35 +323,32 @@ test('#205 — a plain AreaLight (no tex) renders NO emissive card (falsificatio
   page,
 }) => {
   const before = await readStudioParts(page);
-  await page.evaluate(() => {
-    const w = window as unknown as StudioWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene!.node;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'plain_area_e2e',
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: [3, 4, 3],
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: [0, 0, 0],
+  const plainLightOps = splitLightOps({
+    objectId: 'plain_area_e2e',
+    lightKind: 'Area',
+    position: [3, 4, 3],
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+  }) as Op[];
+  await page.evaluate(
+    ({ plainLightOps }) => {
+      const w = window as unknown as StudioWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          ...plainLightOps,
+          {
+            type: 'connect',
+            from: { node: 'plain_area_e2e', socket: 'out' },
+            to: { node: sceneId, socket: 'lights' },
           },
-        },
-        {
-          type: 'connect',
-          from: { node: 'plain_area_e2e', socket: 'out' },
-          to: { node: sceneId, socket: 'lights' },
-        },
-      ],
-      'e2e',
-      'add plain area light',
-    );
-  });
+        ],
+        'e2e',
+        'add plain area light',
+      );
+    },
+    { plainLightOps },
+  );
 
   // The RectAreaLight mounts; NO new card appears (poll then assert stability).
   await page.waitForFunction(

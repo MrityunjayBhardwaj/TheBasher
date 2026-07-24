@@ -33,7 +33,16 @@ import { test, expect } from './_fixtures';
 interface BasherWindow {
   __basher_dag?: {
     getState: () => {
-      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params: Record<string, unknown>;
+            inputs?: { data?: { node?: string } };
+          }
+        >;
+      };
     };
   };
   __basher_time?: { getState: () => { setTime: (s: number) => void } };
@@ -70,13 +79,31 @@ async function setTime(page: Page, seconds: number) {
   }, seconds);
 }
 
+/** The Objects posing an Area LightData — #386 C3 split the fused `AreaLight` node into an
+ *  `Object` (pose) + a `LightData` (shading), so "the light" is the Object whose `data` input
+ *  reaches an area LightData, not a node whose `type` is `'AreaLight'`. */
 async function areaLightIds(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
     return Object.entries(nodes)
-      .filter(([, n]) => n.type === 'AreaLight')
+      .filter(([, n]) => {
+        if (n.type !== 'Object') return false;
+        const d = n.inputs?.data?.node;
+        const dn = d ? nodes[d] : undefined;
+        return dn?.type === 'LightData' && dn.params.lightKind === 'Area';
+      })
       .map(([id]) => id);
   });
+}
+
+/** The LightData half of a split light — the node that owns intensity/colour, and so the
+ *  node the inspector keys its shading rows to (LinkedDataSections renders the Object Data
+ *  tab keyed by the DATA node's id) and the node a shading channel targets. */
+async function shadingId(page: Page, objectId: string): Promise<string> {
+  return page.evaluate((id) => {
+    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    return nodes[id]?.inputs?.data?.node ?? id;
+  }, objectId);
 }
 
 async function channelCount(page: Page) {
@@ -156,7 +183,9 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
 
     const after = await areaLightIds(page);
     const lid = after.find((id) => !before.includes(id));
-    expect(lid, 'a new AreaLight was created by "+ Light"').toBeTruthy();
+    expect(lid, 'a new split area light was created by "+ Light"').toBeTruthy();
+    const sid = await shadingId(page, lid!);
+    expect(sid, 'the new light is split — it has a LightData half').not.toBe(lid);
 
     const lightPos = await page.evaluate((id) => {
       const n = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[id];
@@ -168,9 +197,12 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
     // ── 2. Author intensity on the light via the REAL inspector affordance ─
     // The added light is selected → its inspector renders. intensity is a scalar
     // NumericField with a keyframe diamond.
+    // H189 GATE: selecting the split light's OBJECT must still surface its shading rows —
+    // the inspector renders the LightData's `light` section through LinkedDataSections,
+    // keyed by the DATA node's id. No row here = the split light is uneditable.
     await expect(page.getByTestId('inspector')).toBeVisible();
     await setTime(page, 0);
-    const diamond = page.getByTestId(`inspector-diamond-${lid}-intensity`);
+    const diamond = page.getByTestId(`inspector-diamond-${sid}-intensity`);
     await expect(diamond).toBeVisible();
     await expect(diamond).toHaveAttribute('data-anim-state', 'none');
     await diamond.click();
@@ -186,7 +218,7 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
     });
     await expect(page.getByTestId('timebar')).toHaveAttribute('data-autokey', 'on');
     await setTime(page, 2);
-    const input = page.getByTestId(`inspector-input-${lid}-intensity`);
+    const input = page.getByTestId(`inspector-input-${sid}-intensity`);
     await expect(input).toBeVisible();
     await input.fill('50');
     await input.press('Tab');
@@ -201,8 +233,8 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
           (n.params as { paramPath?: string }).paramPath === 'intensity',
       );
       return c ? ((c.params as { keyframes?: unknown[] }).keyframes ?? []).length : 0;
-    }, lid!);
-    expect(ch, 'intensity channel has 2 keys').toBe(2);
+    }, sid);
+    expect(ch, 'intensity channel has 2 keys, on the LightData').toBe(2);
 
     // ── 4. OBSERVE the resolver (B) AND the live rendered light (A) ────────
     const rows: { t: number; resolved: number | null; live: number | null }[] = [];

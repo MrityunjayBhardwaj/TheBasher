@@ -23,7 +23,16 @@ import { test, expect } from './_fixtures';
 interface BasherWindow {
   __basher_dag?: {
     getState: () => {
-      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params: Record<string, unknown>;
+            inputs?: { data?: { node?: string } };
+          }
+        >;
+      };
     };
   };
   __basher_time?: { getState: () => { setTime: (s: number) => void } };
@@ -59,13 +68,30 @@ async function setTime(page: Page, seconds: number) {
   }, seconds);
 }
 
+/** The Objects posing an Area LightData — #386 C3 split the fused `AreaLight` node into an
+ *  `Object` (pose) + a `LightData` (shading), so "the light" is no longer a node whose
+ *  `type` is `'AreaLight'`; it is the Object whose `data` input reaches an area LightData. */
 async function areaLightIds(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
     return Object.entries(nodes)
-      .filter(([, n]) => n.type === 'AreaLight')
+      .filter(([, n]) => {
+        if (n.type !== 'Object') return false;
+        const d = n.inputs?.data?.node;
+        const dn = d ? nodes[d] : undefined;
+        return dn?.type === 'LightData' && dn.params.lightKind === 'Area';
+      })
       .map(([id]) => id);
   });
+}
+
+/** The LightData id behind a split light Object — the half that owns intensity/colour, and
+ *  so the half a shading channel targets (the Light Studio panel routes its edits there). */
+async function shadingId(page: Page, objectId: string): Promise<string> {
+  return page.evaluate((id) => {
+    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    return nodes[id]?.inputs?.data?.node ?? id;
+  }, objectId);
 }
 
 async function resolvedIntensity(page: Page, lid: string, seconds: number): Promise<number | null> {
@@ -135,7 +161,10 @@ test.describe('#212 — keyframing a light from the Light Studio panel', () => {
     await expect(page.locator('[data-testid^="light-studio-controls-"]')).toBeVisible();
     const after = await areaLightIds(page);
     const lid = after.find((id) => !before.includes(id))!;
-    expect(lid, 'a new AreaLight was created').toBeTruthy();
+    expect(lid, 'a new split area light was created').toBeTruthy();
+    // The panel keys its testids to the OBJECT but writes/keys to the LightData (S3c).
+    const sid = await shadingId(page, lid);
+    expect(sid, 'the new light is split — it has a LightData half').not.toBe(lid);
 
     const lightPos = await page.evaluate((id) => {
       const n = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[id];
@@ -162,6 +191,8 @@ test.describe('#212 — keyframing a light from the Light Studio panel', () => {
     await input.press('Tab');
 
     // the panel intensity channel now carries two keys (5 → 40)
+    // The channel lands on the LIGHTDATA (the shading half), not the Object — a channel
+    // aimed at the Object would animate a param it does not own and never render.
     const keys = await page.evaluate((id) => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
       const c = Object.values(nodes).find(
@@ -171,8 +202,8 @@ test.describe('#212 — keyframing a light from the Light Studio panel', () => {
           (n.params as { paramPath?: string }).paramPath === 'intensity',
       );
       return c ? ((c.params as { keyframes?: unknown[] }).keyframes ?? []).length : 0;
-    }, lid);
-    expect(keys, 'panel diamond authored a 2-key intensity channel').toBe(2);
+    }, sid);
+    expect(keys, 'panel diamond authored a 2-key intensity channel on the LightData').toBe(2);
 
     // OBSERVE resolver AND live render track across time
     const rows: { t: number; resolved: number | null; live: number | null }[] = [];

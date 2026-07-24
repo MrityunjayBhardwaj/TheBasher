@@ -13,6 +13,7 @@
 // REF: issue #210; src/app/resolveWorldTransform.ts; vyapti V37/V58; H40.
 
 import { test, expect } from './_fixtures';
+import { splitLightOps } from './_splitLight';
 
 interface Op {
   type: string;
@@ -67,26 +68,22 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
   page,
 }) => {
   const pos: [number, number, number] = [3, 4, 5];
-  const lid = await page.evaluate((p) => {
+  // #386 C3: a light is a split Object + LightData. The world transform is asked of the
+  // OBJECT — the half that owns the pose — which is also the id wired into scene.lights.
+  const lightOps = splitLightOps({
+    objectId: 'p210_light',
+    lightKind: 'Area',
+    position: pos,
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+  });
+  const lid = await page.evaluate((lightOps) => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
     const sceneId = dag.state.outputs.scene!.node;
     const id = 'p210_light';
     dag.dispatchAtomic(
       [
-        {
-          type: 'addNode',
-          nodeId: id,
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: p,
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: [0, 0, 0],
-          },
-        },
+        ...lightOps,
         {
           type: 'connect',
           from: { node: id, socket: 'out' },
@@ -97,7 +94,7 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
       'p210 add light',
     );
     return id;
-  }, pos);
+  }, lightOps);
 
   // Side B (seam) — resolveWorldTransform now resolves a light (was null).
   const world = await page.evaluate(

@@ -12,6 +12,7 @@
 
 import { expect, test } from './_fixtures';
 import { splitCubeOps } from './_splitCube';
+import { splitLightOps } from './_splitLight';
 
 interface W {
   __basher_dag: {
@@ -267,6 +268,17 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
     rotation: [0, 0, 0],
     color: '#f80',
   });
+  // #386 C3: the aimed light is split too — `tt_area` names the OBJECT, so the Track-To
+  // target and the helper's subject id are the same ids they were when the light was fused.
+  const ttSetupOps = [
+    ...ttAimOps,
+    ...splitLightOps({
+      objectId: 'tt_area',
+      lightKind: 'Area',
+      position: [0, 4, 0],
+      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    }),
+  ];
   await page.evaluate((boxOps) => {
     const dag = (window as unknown as W).__basher_dag.getState();
     const scene = dag.state.outputs.scene!.node;
@@ -293,19 +305,6 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
           },
         },
         {
-          type: 'addNode',
-          nodeId: 'tt_area',
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: [0, 4, 0],
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: [0, 0, 0],
-          },
-        },
-        {
           type: 'connect',
           from: { node: 'tt_area', socket: 'out' },
           to: { node: scene, socket: 'lights' },
@@ -320,7 +319,7 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
       'e2e',
       'area light track-to animated target',
     );
-  }, ttAimOps);
+  }, ttSetupOps);
 
   await setTime(page, 0);
   const at0 = await page.evaluate(
