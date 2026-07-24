@@ -181,6 +181,18 @@ function isDataParamPath(paramPath: unknown): boolean {
     // by the `startsWith('material')` arm below); and this arm only ever fires for a
     // channel whose `target` is a FORMER LIGHT id (the caller gates on the light map),
     // so a MaterialOverride's own bare `color` channel is never mis-retargeted.
+    //
+    // ⚠️ THIS PREDICATE IS SHARED BY ALL FOUR SPLIT PASSES (box v2→v3, sphere v3→v4,
+    // curve v4→v5, light v5→v6). Each pass gates on its OWN id map, so a name added
+    // for one kind can still fire for an EARLIER kind's node if that kind happens to
+    // own a param of the same name — and it would move a channel that should have
+    // stayed on the Object, silently. Checked for this pass: none of BoxMesh (size),
+    // SphereMesh (radius/widthSegments/heightSegments) or Curve (points/closed/
+    // resolution) owns any name above (`widthSegments` ≠ `width` — these are exact
+    // matches, not prefixes). The combined box+sphere+curve+light migration fixture
+    // runs the earlier kinds' channels THROUGH this pass as live controls. When #387
+    // adds the camera's names here, re-run that check — a collision has no compiler
+    // and no runtime error, only a channel that quietly stops rendering.
     paramPath === 'lightKind' ||
     paramPath === 'intensity' ||
     paramPath === 'color' ||

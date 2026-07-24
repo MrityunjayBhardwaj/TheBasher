@@ -25,6 +25,7 @@ import type { Node, NodeId, NodeTypeId } from '../../core/dag/types';
 import type { Candidate, IdentifyArgs, IdentifyResult, IdentifyStrategy } from './types';
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
 import { SCENE_OBJECT_KINDS, nodeTypeFor } from '../../app/addPrimitives';
+import { lightKindOf } from '../../app/lightNode';
 
 // ---------------------------------------------------------------------------
 // Schema (zod) — boundary validation per V7 / H5.
@@ -162,9 +163,8 @@ export function identify(
   const lightKinds = typeFilter ? null : lightKindsFor(q);
   if (lightKinds && typeMatched.length > 0) {
     typeMatched = typeMatched.filter((c) => {
-      const node = state.nodes[c.id];
-      if (node?.type === 'AmbientLight') return true;
-      const lk = nodeLightKind(state, node);
+      if (state.nodes[c.id]?.type === 'AmbientLight') return true;
+      const lk = lightKindOf(state.nodes, c.id);
       return lk !== null && lightKinds.has(lk);
     });
   }
@@ -603,24 +603,6 @@ function nodeGeometryType(state: DagState, node: Node | undefined): string | nul
     if (dataNode) return dataNode.type;
   }
   return node.type;
-}
-
-// #386 C3 (fork-1) — the posed light's kind, reaching through `data` to the LightData's
-// `lightKind` param. This is what lets a light noun separate "point light" from "spot light"
-// once both pose through a shared 'Object' node type. Null when the node poses no LightData.
-function nodeLightKind(state: DagState, node: Node | undefined): string | null {
-  if (!node) return null;
-  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
-    | { node?: string }
-    | undefined;
-  if (dataRef?.node) {
-    const dataNode = state.nodes[dataRef.node];
-    if (dataNode?.type === 'LightData') {
-      const lk = (dataNode.params as Record<string, unknown> | undefined)?.lightKind;
-      return typeof lk === 'string' ? lk : null;
-    }
-  }
-  return null;
 }
 
 function toCandidate(state: DagState, node: Node): Candidate {

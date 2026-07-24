@@ -1523,6 +1523,13 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
     // animation or Track-To aim — those stay on the top-level scene.lights band
     // (known-limit; follow-up). The per-kind projection is the SAME LightKindR the
     // top-level band uses, so render == resolver (H40).
+    //
+    // #386 S4 — of these, only `AmbientLight` still arrives here: the four POSABLE
+    // kinds are split, so a nested posable light is an `Object` posing a `LightData`
+    // and reaches LightKindR through ObjectR's LightData arm instead (same nodeId=null
+    // static contract, so the limit above is unchanged). Their arms stay because the
+    // four value kinds remain the RECOMPOSITION TARGET the `scene.lights` band
+    // consumes, and dropping them would leave this switch non-exhaustive.
     case 'DirectionalLight':
     case 'PointLight':
     case 'SpotLight':
