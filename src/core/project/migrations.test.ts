@@ -276,8 +276,9 @@ function splitDataNode(project: Project, boxId: string) {
 describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#365)', () => {
   it('splits the box: n_box becomes an Object (id inherited) + a wired BoxData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxJson());
-    // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves).
-    expect(migrated.formatVersion).toBe(5);
+    // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves)
+    // → 6 (light pass, no lights).
+    expect(migrated.formatVersion).toBe(6);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -504,8 +505,8 @@ function splitSphereDataNode(project: Project, sphereId: string) {
 describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereData (#384)', () => {
   it('splits the sphere: n_sphere becomes an Object (id inherited) + a wired SphereData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
-    // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass, no curves here).
-    expect(migrated.formatVersion).toBe(5);
+    // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass) → 6 (light pass, no lights).
+    expect(migrated.formatVersion).toBe(6);
     // The sphere node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_sphere;
     expect(obj.type).toBe('Object');
@@ -695,8 +696,8 @@ function splitCurveDataNode(project: Project, curveId: string) {
 describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#385)', () => {
   it('splits the curve: n_curve becomes an Object (id inherited) + a wired CurveData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
-    // 2 → 3 (box) → 4 (sphere) → 5 (curve).
-    expect(migrated.formatVersion).toBe(5);
+    // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights).
+    expect(migrated.formatVersion).toBe(6);
     const obj = migrated.state.nodes.n_curve;
     expect(obj.type).toBe('Object');
     const op = obj.params as Record<string, unknown>;
@@ -811,6 +812,337 @@ describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#38
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'Curve')).toBe(false);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'SphereMesh')).toBe(false);
     expect(Object.values(twice.state.nodes).some((n) => n.type === 'BoxMesh')).toBe(false);
+  });
+});
+
+// ── v5 → v6: fused posable lights → Object + LightData (#386) ──────────────────
+// The per-kind mirror of the box/sphere/curve splits, for the SECOND non-mesh data
+// and the FIRST PARTIAL retirement (AmbientLight stays fused). Proves per-kind
+// byte-identity against the canonical split shape, per-kind hydrate from the SOURCE
+// schema defaults, the SUPERSET range (an intensity:50 area light survives), the
+// ambient-skip, shading-channel re-targeting, and coexistence with the earlier passes.
+// NON-DEFAULT shading on purpose (H177): a dropped field would otherwise read the
+// schema default and the golden would pass vacuously.
+
+/** The fused posable lights (non-default shading), an AmbientLight (skip control), and
+ *  an intensity + a position channel on the point light, stamped formatVersion 5 so
+ *  ONLY the light pass runs (the box/sphere/curve controls live in the mixed fixture). */
+function buildFusedLightsJson() {
+  let s = emptyDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_dir',
+    nodeType: 'DirectionalLight',
+    params: { intensity: 3.7, color: '#ffee00', position: [1, 2, 3], rotation: [0.1, 0, 0] },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_point',
+    nodeType: 'PointLight',
+    params: {
+      intensity: 4.2,
+      color: '#00ff88',
+      position: [4, 5, 6],
+      distance: 12,
+      decay: 1.5,
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_spot',
+    nodeType: 'SpotLight',
+    params: {
+      intensity: 5.5,
+      color: '#ff00aa',
+      position: [7, 8, 9],
+      target: [1, 1, 1],
+      angle: 0.5,
+      penumbra: 0.45,
+      distance: 8,
+      decay: 3,
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_area',
+    nodeType: 'AreaLight',
+    params: {
+      intensity: 6.5,
+      color: '#0088ff',
+      position: [1, 0, 1],
+      width: 3.25,
+      height: 4.75,
+      lookAt: [2, 2, 2],
+      tex: 'assets/hdri.exr',
+    },
+  });
+  add({ type: 'addNode', nodeId: 'n_amb', nodeType: 'AmbientLight', params: { intensity: 0.7 } });
+  add({
+    type: 'addNode',
+    nodeId: 'n_lint',
+    nodeType: 'KeyframeChannelNumber',
+    params: {
+      name: 'intensity',
+      target: 'n_point',
+      paramPath: 'intensity',
+      keyframes: [
+        { time: 0, value: 4.2, easing: 'linear' },
+        { time: 1, value: 9.9, easing: 'linear' },
+      ],
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_lpos',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_point',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: [4, 5, 6], easing: 'linear' },
+        { time: 1, value: [4, 9, 6], easing: 'linear' },
+      ],
+    },
+  });
+  const nodes = JSON.parse(JSON.stringify(s.nodes));
+  return {
+    formatVersion: 5,
+    id: 'p386-light-split',
+    name: 'pre-split posable lights',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {
+      DirectionalLight: nodes.n_dir.version,
+      PointLight: nodes.n_point.version,
+      SpotLight: nodes.n_spot.version,
+      AreaLight: nodes.n_area.version,
+      AmbientLight: nodes.n_amb.version,
+    },
+    state: { nodes, outputs: s.outputs },
+  };
+}
+
+/** The LightData node a split produced from the light `lightId`. */
+function splitLightDataNode(project: Project, lightId: string) {
+  return Object.values(project.state.nodes).find(
+    (n) => n.type === 'LightData' && n.id.startsWith(`${lightId}__data`),
+  );
+}
+
+describe('object↔data split v5 → v6: fused posable lights → Object + LightData (#386)', () => {
+  it('splits each posable kind byte-identically: the Object inherits the id, the LightData owns the shading', () => {
+    const m = loadFromBytes(buildFusedLightsJson());
+    // 5 → 6 (light pass only, this fixture has no box/sphere/curve).
+    expect(m.formatVersion).toBe(6);
+
+    // Directional → Object(pose) + LightData{lightKind, intensity, color}.
+    const dir = m.state.nodes.n_dir;
+    expect(dir.type).toBe('Object');
+    expect(dir.params).toEqual({ position: [1, 2, 3], rotation: [0.1, 0, 0], scale: [1, 1, 1] });
+    const dirData = splitLightDataNode(m, 'n_dir')!;
+    expect(dirData.params).toEqual({ lightKind: 'Directional', intensity: 3.7, color: '#ffee00' });
+    expect((dir.inputs as Record<string, { node: string }>).data.node).toBe(dirData.id);
+
+    // Point → +distance, decay.
+    const pointData = splitLightDataNode(m, 'n_point')!;
+    expect(pointData.params).toEqual({
+      lightKind: 'Point',
+      intensity: 4.2,
+      color: '#00ff88',
+      distance: 12,
+      decay: 1.5,
+    });
+
+    // Spot → +target, angle, penumbra, distance, decay (the cone).
+    const spotData = splitLightDataNode(m, 'n_spot')!;
+    expect(spotData.params).toEqual({
+      lightKind: 'Spot',
+      intensity: 5.5,
+      color: '#ff00aa',
+      target: [1, 1, 1],
+      angle: 0.5,
+      penumbra: 0.45,
+      distance: 8,
+      decay: 3,
+    });
+
+    // Area → +width, height, lookAt, tex.
+    const areaData = splitLightDataNode(m, 'n_area')!;
+    expect(areaData.params).toEqual({
+      lightKind: 'Area',
+      intensity: 6.5,
+      color: '#0088ff',
+      width: 3.25,
+      height: 4.75,
+      lookAt: [2, 2, 2],
+      tex: 'assets/hdri.exr',
+    });
+  });
+
+  it('AmbientLight is SKIPPED — it stays fused with no Object and no data input (partial retirement)', () => {
+    const m = loadFromBytes(buildFusedLightsJson());
+    const amb = m.state.nodes.n_amb;
+    expect(amb.type).toBe('AmbientLight');
+    expect('data' in (amb.inputs ?? {})).toBe(false);
+    // No LightData was minted from the ambient (only the four posable kinds split).
+    expect(splitLightDataNode(m, 'n_amb')).toBeUndefined();
+  });
+
+  it('routes channels by paramPath: intensity → the LightData, position → the inherited-id Object', () => {
+    const m = loadFromBytes(buildFusedLightsJson());
+    const data = splitLightDataNode(m, 'n_point')!;
+    // A shading (`intensity`) channel re-targets to the fresh LightData.
+    expect((m.state.nodes.n_lint.params as { target: string }).target).toBe(data.id);
+    // A `position` channel addresses the transform → stays on the inherited-id Object.
+    expect((m.state.nodes.n_lpos.params as { target: string }).target).toBe('n_point');
+  });
+
+  it('hydrates a missing shading field from the SOURCE kind default (area intensity → 5, not LightData 1)', () => {
+    // A hand-written area light with NO stored intensity. The migration must carry
+    // AreaLight's OWN default (5), NOT LightData's collapsed default (1).
+    const noIntensity = {
+      formatVersion: 5,
+      id: 'p386-area-hydrate',
+      name: 'area light without intensity',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { AreaLight: 1 },
+      state: {
+        nodes: {
+          n_area: {
+            id: 'n_area',
+            type: 'AreaLight',
+            version: 1,
+            params: { position: [0, 5, 0], width: 2, height: 2 },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    const m = loadFromBytes(noIntensity);
+    const data = splitLightDataNode(m, 'n_area')!;
+    expect((data.params as { intensity: number }).intensity).toBe(5);
+  });
+
+  it('SUPERSET range: an intensity:50 area light migrates AND re-parses (a collapsed max(20) would reject it)', () => {
+    const hot = {
+      formatVersion: 5,
+      id: 'p386-area-hot',
+      name: 'intensity 50 area light',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { AreaLight: 1 },
+      state: {
+        nodes: {
+          n_area: {
+            id: 'n_area',
+            type: 'AreaLight',
+            version: 1,
+            params: { intensity: 50, position: [0, 5, 0], width: 2, height: 2 },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    // loadFromBytes runs ProjectSchema.parse — a value above the collapsed range would
+    // throw here (silent node loss). It survives because LightData.intensity is max(100).
+    const m = loadFromBytes(hot);
+    const data = splitLightDataNode(m, 'n_area')!;
+    expect((data.params as { intensity: number }).intensity).toBe(50);
+  });
+
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
+    const once = loadFromBytes(buildFusedLightsJson());
+    const twice = loadFromBytes(once);
+    for (const id of ['n_dir', 'n_point', 'n_spot', 'n_area', 'n_amb']) {
+      expect(twice.state.nodes[id]).toEqual(once.state.nodes[id]);
+    }
+    expect(splitLightDataNode(twice, 'n_point')).toEqual(splitLightDataNode(once, 'n_point'));
+    // No fused POSABLE light survives; the ambient does.
+    for (const t of ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight']) {
+      expect(Object.values(twice.state.nodes).some((n) => n.type === t)).toBe(false);
+    }
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'AmbientLight')).toBe(true);
+  });
+
+  it('CONTROLS: a fused CURVE still splits (v4→v5) and a mesh material colour channel still re-targets (v2→v3) alongside the light pass', () => {
+    // A mixed formatVersion-2 scene: a box with a material-colour channel (control b),
+    // a curve (control a), and a point light — proving all four passes coexist.
+    let s = emptyDagState();
+    const add = (op: Parameters<typeof applyOp>[1]) => {
+      s = applyOp(s, op).next;
+    };
+    add({
+      type: 'addNode',
+      nodeId: 'n_box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_curve',
+      nodeType: 'Curve',
+      params: {
+        points: [
+          { id: 'cp0', co: [0, 0, 0] },
+          { id: 'cp1', co: [1, 1, 1] },
+        ],
+      },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_point',
+      nodeType: 'PointLight',
+      params: { intensity: 2.2, position: [0, 3, 0] },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_col',
+      nodeType: 'KeyframeChannelColor',
+      params: {
+        name: 'color',
+        target: 'n_box',
+        paramPath: 'material.base.color',
+        keyframes: [
+          { time: 0, value: '#123456', easing: 'linear' },
+          { time: 1, value: '#654321', easing: 'linear' },
+        ],
+      },
+    });
+    const nodes = JSON.parse(JSON.stringify(s.nodes));
+    const mixed = {
+      formatVersion: 2,
+      id: 'p386-mixed',
+      name: 'box+curve+light',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: {
+        BoxMesh: nodes.n_box.version,
+        Curve: nodes.n_curve.version,
+        PointLight: nodes.n_point.version,
+      },
+      state: { nodes, outputs: s.outputs },
+    };
+    const m = loadFromBytes(mixed);
+    expect(m.formatVersion).toBe(6);
+    // Control a — the curve split.
+    expect(m.state.nodes.n_curve.type).toBe('Object');
+    expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
+    // Control b — the box split AND its material colour channel re-targeted to the BoxData.
+    expect(m.state.nodes.n_box.type).toBe('Object');
+    const boxData = Object.values(m.state.nodes).find(
+      (n) => n.type === 'BoxData' && n.id.startsWith('n_box__data'),
+    )!;
+    expect((m.state.nodes.n_col.params as { target: string }).target).toBe(boxData.id);
+    // And the light split alongside them.
+    expect(m.state.nodes.n_point.type).toBe('Object');
+    expect(splitLightDataNode(m, 'n_point')).toBeDefined();
   });
 });
 
@@ -969,7 +1301,7 @@ function childRefNodes(state: DagState): string[] {
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
-    expect(migrated.formatVersion).toBe(5); // 1→2 layer retire → 3 box → 4 sphere → 5 curve
+    expect(migrated.formatVersion).toBe(6); // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
@@ -1182,13 +1514,13 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
 describe('Curve v1 → v2: control points gain stable ids (#453/#454)', () => {
   // NON-default coordinates on purpose: a dropped `co` would otherwise read the schema
   // default and the golden would pass vacuously.
-  // formatVersion 5 (current): isolates the Curve NODE ladder (v1→v2 points get ids)
+  // formatVersion 6 (current): isolates the Curve NODE ladder (v1→v2 points get ids)
   // from the v4→v5 FORMAT split. The two are orthogonal — the split's normalize step
   // reuses this same node ladder — so stamping the current format keeps this a pure
   // node-migration test (a v4 stamp would trip the 4→5 split and turn n_curve into an
   // Object, hiding the very migration under test).
   const V1_CURVE_PROJECT = {
-    formatVersion: 5,
+    formatVersion: 6,
     id: 'p454-curve-ids',
     name: 'pre-id curve',
     createdAt: 0,

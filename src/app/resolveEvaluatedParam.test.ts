@@ -51,6 +51,95 @@ beforeEach(() => {
   useTransientEditStore.getState().clearAll();
 });
 
+describe('#386 — the INVERSE (data → poser) reach and the null contract it must not break', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+  });
+
+  /** A split light: an Object posing a LightData, the #386 C3 shape. */
+  function buildSplitLight(): DagState {
+    let s = buildState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt_data',
+      nodeType: 'LightData',
+      params: { lightKind: 'Point', intensity: 5 },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt',
+      nodeType: 'Object',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'lt_data', socket: 'out' },
+      to: { node: 'lt', socket: 'data' },
+    }).next;
+    return s;
+  }
+
+  const ctx = (seconds: number) => ({
+    time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
+  });
+
+  // THE CONTRACT GUARD. null means "nothing overrides this — caller uses base", and surfaces
+  // gate on it (NPanel goes read-only while playing only when resolved !== null). The inverse
+  // reach recurses into the poser, whose OWN forward reach would happily fall back to the data
+  // node's base value — returning that would mark every un-animated data param as animated.
+  it('an un-animated data param still resolves NULL (the base-fallback must not leak up the inverse reach)', () => {
+    const s = buildSplitLight();
+    expect(resolveEvaluatedParam(s, 'lt_data', 'intensity', ctx(0))).toBeNull();
+  });
+
+  // A channel authored on the POSER with a data paramPath — the shape a push-down leaves
+  // behind (the Strip targets the Object; V112 aggregates animation under it). The inspector
+  // renders the LightData's rows against the DATA id, so this read must reach UP or the row
+  // reports the static base while the viewport animates (H40).
+  it('a channel on the POSER resolves when the DATA node is asked (read == render)', () => {
+    let s = buildSplitLight();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt_ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'intensity',
+        target: 'lt',
+        paramPath: 'intensity',
+        keyframes: [
+          { time: 0, value: 5, easing: 'linear' },
+          { time: 2, value: 40, easing: 'linear' },
+        ],
+      },
+    }).next;
+    expect(resolveEvaluatedParam(s, 'lt_data', 'intensity', ctx(0))?.value).toBe(5);
+    expect(resolveEvaluatedParam(s, 'lt_data', 'intensity', ctx(2))?.value).toBe(40);
+  });
+
+  // The data node's OWN channel still wins — the forward road is untouched.
+  it("the data node's own channel is unaffected by the inverse reach", () => {
+    let s = buildSplitLight();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt_ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'intensity',
+        target: 'lt_data',
+        paramPath: 'intensity',
+        keyframes: [
+          { time: 0, value: 9, easing: 'linear' },
+          { time: 2, value: 90, easing: 'linear' },
+        ],
+      },
+    }).next;
+    expect(resolveEvaluatedParam(s, 'lt_data', 'intensity', ctx(2))?.value).toBe(90);
+    // …and asking the OBJECT still reaches DOWN to it (the forward road, #398).
+    expect(resolveEvaluatedParam(s, 'lt', 'intensity', ctx(2))?.value).toBe(90);
+  });
+});
+
 describe('resolveEvaluatedParam (C2 — generic non-transform resolver)', () => {
   it('channel path returns channel.sample() at the ctx time (render-identical)', () => {
     const state = buildState();

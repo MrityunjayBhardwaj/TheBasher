@@ -8,6 +8,7 @@ import { applyOp, evaluate, createEvaluatorCache } from '../core/dag';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitLight } from '../test-utils/splitLight';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import type { LightRigValue, RenderOutputValue } from '../nodes/types';
@@ -31,12 +32,25 @@ describe('resolveRigLightSources (#208)', () => {
     const rigId = 'rig1';
     const l1 = 'la1';
     const l2 = 'la2';
-    const state = apply(base, [
-      { type: 'addNode', nodeId: l1, nodeType: 'AreaLight', params: { intensity: 5 } },
-      { type: 'addNode', nodeId: l2, nodeType: 'AreaLight', params: { intensity: 9 } },
+    // #386 S4 — a rig light is now a split Object(TRS) + LightData(shading); l1/l2 are the
+    // Objects (they carry the rig's `lights` edge, in order). The rig is added first so the
+    // Object→rig.lights connect resolves.
+    let state = apply(base, [
       { type: 'addNode', nodeId: rigId, nodeType: 'LightRig', params: { name: 'Key setup' } },
-      { type: 'connect', from: { node: l1, socket: 'out' }, to: { node: rigId, socket: 'lights' } },
-      { type: 'connect', from: { node: l2, socket: 'out' }, to: { node: rigId, socket: 'lights' } },
+    ]);
+    state = makeSplitLight(state, {
+      objectId: l1,
+      lightKind: 'Area',
+      shading: { intensity: 5 },
+      connectTo: { node: rigId, socket: 'lights' },
+    }).state;
+    state = makeSplitLight(state, {
+      objectId: l2,
+      lightKind: 'Area',
+      shading: { intensity: 9 },
+      connectTo: { node: rigId, socket: 'lights' },
+    }).state;
+    state = apply(state, [
       {
         type: 'connect',
         from: { node: rigId, socket: 'out' },

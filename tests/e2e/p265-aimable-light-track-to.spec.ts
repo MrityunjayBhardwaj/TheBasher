@@ -9,6 +9,7 @@
 // light's world position + direction; each light is matched by its position.
 
 import { expect, test } from './_fixtures';
+import { splitLightOps } from './_splitLight';
 
 interface BasherWindow {
   __basher_dag?: { getState: () => { dispatch: (op: unknown) => void } };
@@ -44,20 +45,29 @@ async function seed(page: import('@playwright/test').Page) {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_time && w.__basher_light_world_aims);
   });
+  // #386 C3: both lights are split — Object (pose) + LightData (shading, incl. the
+  // authored `target`/aim). The Track-To targets the OBJECT, the half that owns the pose.
+  const spotOps = splitLightOps({
+    objectId: 'n265_spot',
+    lightKind: 'Spot',
+    position: SPOT_POS,
+    shading: { target: [SPOT_POS[0], SPOT_POS[1], SPOT_POS[2] - 1] },
+  });
+  const sunOps = splitLightOps({
+    objectId: 'n265_sun',
+    lightKind: 'Directional',
+    position: SUN_POS,
+    shading: { intensity: 1 },
+  });
   await page.evaluate(
-    ({ spotPos, spotAim, sunPos, sunAim }) => {
+    ({ spotAim, sunAim, spotOps, sunOps }) => {
       const w = window as unknown as BasherWindow;
       const d = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
       w.__basher_time!.getState().pause();
       w.__basher_time!.getState().setTime(0);
       // SpotLight authored to aim -Z (target = pos + (0,0,-1)), so an ignored
       // constraint would read [0,0,-1] — DISTINCT from the aim toward the origin.
-      d({
-        type: 'addNode',
-        nodeId: 'n265_spot',
-        nodeType: 'SpotLight',
-        params: { position: spotPos, target: [spotPos[0], spotPos[1], spotPos[2] - 1] },
-      });
+      for (const op of spotOps) d(op);
       d({
         type: 'connect',
         from: { node: 'n265_spot', socket: 'out' },
@@ -78,12 +88,7 @@ async function seed(page: import('@playwright/test').Page) {
       });
       // DirectionalLight (rotation 0 → authored aim is toward the origin). Track-To
       // aims it at [4,0,0], a DISTINCT direction from "toward origin".
-      d({
-        type: 'addNode',
-        nodeId: 'n265_sun',
-        nodeType: 'DirectionalLight',
-        params: { position: sunPos, intensity: 1 },
-      });
+      for (const op of sunOps) d(op);
       d({
         type: 'connect',
         from: { node: 'n265_sun', socket: 'out' },
@@ -103,7 +108,7 @@ async function seed(page: import('@playwright/test').Page) {
         },
       });
     },
-    { spotPos: SPOT_POS, spotAim: SPOT_AIM, sunPos: SUN_POS, sunAim: SUN_AIM },
+    { spotAim: SPOT_AIM, sunAim: SUN_AIM, spotOps, sunOps },
   );
   // Let the per-frame useLightTargetAim settle.
   await page.waitForTimeout(300);

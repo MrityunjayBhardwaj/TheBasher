@@ -15,6 +15,7 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitLight } from '../test-utils/splitLight';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 
 const BOX_ID = 'n_box';
@@ -284,28 +285,18 @@ describe('resolveWorldTransform', () => {
     rot?: [number, number, number];
     scale?: [number, number, number];
   }): DagState {
-    let state = buildDefaultDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: LIGHT_ID,
-      nodeType: 'AreaLight',
-      params: {
-        intensity: 5,
-        position: opts.pos ?? [0, 0, 0],
-        rotation: opts.rot ?? [0, 0, 0],
-        scale: opts.scale ?? [1, 1, 1],
-        color: '#ffffff',
-        width: 2,
-        height: 2,
-        lookAt: [0, 0, 0],
-      },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: LIGHT_ID, socket: 'out' },
-      to: { node: 'n_scene', socket: 'lights' },
-    }).next;
-    return state;
+    // #386 S4 — a posable light is now an Object(TRS) + LightData(shading). The Object owns
+    // position/rotation/scale (what resolveWorldTransform reads); it keeps LIGHT_ID so the
+    // scene.lights wire and the position channel target are unchanged.
+    return makeSplitLight(buildDefaultDagState(), {
+      objectId: LIGHT_ID,
+      lightKind: 'Area',
+      position: opts.pos ?? [0, 0, 0],
+      rotation: opts.rot ?? [0, 0, 0],
+      scale: opts.scale ?? [1, 1, 1],
+      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+      connectTo: { node: 'n_scene', socket: 'lights' },
+    }).state;
   }
 
   it('a flat AreaLight resolves world == its own position/scale (uniform with meshes)', () => {
@@ -464,26 +455,26 @@ function buildGroupedLightState(
   lightPos: [number, number, number],
 ): DagState {
   let state = buildDefaultDagState();
-  const ops: Op[] = [
-    { type: 'addNode', nodeId: LGRP_ID, nodeType: 'Group', params: { position: groupPos } },
-    {
-      type: 'addNode',
-      nodeId: LIT_ID,
-      nodeType: 'DirectionalLight',
-      params: { intensity: 1, position: lightPos, color: '#ffffff' },
-    },
-    {
-      type: 'connect',
-      from: { node: LIT_ID, socket: 'out' },
-      to: { node: LGRP_ID, socket: 'children' },
-    },
-    {
-      type: 'connect',
-      from: { node: LGRP_ID, socket: 'out' },
-      to: { node: 'n_scene', socket: 'children' },
-    },
-  ];
-  for (const op of ops) state = applyOp(state, op).next;
+  state = applyOp(state, {
+    type: 'addNode',
+    nodeId: LGRP_ID,
+    nodeType: 'Group',
+    params: { position: groupPos },
+  }).next;
+  // #386 S4 — the nested light is a split Object(TRS) + LightData; LIT_ID is the Object (it
+  // owns the local position). Wire it into the Group's children, and the Group into the scene.
+  state = makeSplitLight(state, {
+    objectId: LIT_ID,
+    lightKind: 'Directional',
+    position: lightPos,
+    shading: { intensity: 1, color: '#ffffff' },
+    connectTo: { node: LGRP_ID, socket: 'children' },
+  }).state;
+  state = applyOp(state, {
+    type: 'connect',
+    from: { node: LGRP_ID, socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  }).next;
   return state;
 }
 

@@ -559,9 +559,13 @@ describe('mesh.add tool', () => {
     const types2 = result2.ops.map((o) => o.type);
     expect(types2).toEqual(types1);
 
-    // PointLight is a light so it gets connected to scene.lights
-    expect(result1.ops).toHaveLength(2);
-    expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('PointLight');
+    // #386 C3 — a PointLight is now the Object+LightData split: LightData + Object + two
+    // connects (data→object.data, object→scene.lights). The director still selects the Object.
+    expect(result1.ops).toHaveLength(4);
+    expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('LightData');
+    expect((result1.ops[1] as { nodeType: string }).nodeType).toBe('Object');
+    const sceneConnect = result1.ops.find((o) => o.type === 'connect' && o.to.socket === 'lights');
+    expect(sceneConnect).toBeDefined();
   });
 
   it('returns a single Op for cameras and empties', () => {

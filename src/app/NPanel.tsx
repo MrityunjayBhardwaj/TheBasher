@@ -2698,10 +2698,18 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
   if (declared.length === 0) return null;
 
   const grouped = new Map<SectionId, [string, unknown][]>();
+  // #386 — the main-block inspector renders un-sectioned params via an `unrouted`
+  // bucket (:2942-2943); the linked-data block historically DROPPED them (the H189
+  // parity gap). Mirror the bucket here as defense-in-depth so a data param that
+  // routes to no declared section renders as a raw row instead of vanishing.
+  const unrouted: [string, unknown][] = [];
   for (const [key, value] of Object.entries((dataNode.params ?? {}) as Record<string, unknown>)) {
     if (isInputBinding(value)) continue;
     const section = paramToSection(key, declared);
-    if (section === null) continue;
+    if (section === null) {
+      unrouted.push([key, value]);
+      continue;
+    }
     if (!grouped.has(section)) grouped.set(section, []);
     grouped.get(section)!.push([key, value]);
   }
@@ -2731,6 +2739,12 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
               <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
             ))}
         </SectionCard>
+      ))}
+      {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
+          after the declared sections so a future data kind's un-routed param never
+          silently vanishes (the H189 class). */}
+      {unrouted.map(([key, value]) => (
+        <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
       ))}
     </div>
   );

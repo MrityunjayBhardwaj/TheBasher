@@ -22,6 +22,7 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { LightRigValue, LightValue } from './types';
+import { recomposeLightObject } from './lightRecompose';
 
 export const LightRigParams = z.object({
   name: z.string().default('Light Rig'),
@@ -45,11 +46,15 @@ export const LightRigNode: NodeDefinition<LightRigParams, LightRigValue> = {
   inspectorSections: ['layout'],
   evaluate(params, inputs: ResolvedInputs): LightRigValue {
     const raw = inputs.lights;
-    const lights: LightValue[] = Array.isArray(raw)
-      ? (raw as LightValue[]).filter((l): l is LightValue => l != null)
-      : raw
-        ? [raw as LightValue]
-        : [];
+    // #386 — a posable rig light is now an `Object` posing a `LightData`. Recompose
+    // each entry back into the flat `LightValue` via the ONE shared helper (also used
+    // at Scene.evaluate + ObjectR — V117: two roads gather lights, both recompose
+    // here). Miss this and rig lights render at origin with default shading. A fused
+    // AmbientLightValue returns null → passes through unchanged.
+    const gathered: unknown[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const lights: LightValue[] = gathered
+      .filter((l): l is object => l != null)
+      .map((l) => recomposeLightObject(l) ?? (l as LightValue));
     return {
       kind: 'LightRig',
       name: params.name,

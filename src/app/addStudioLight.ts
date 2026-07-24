@@ -54,6 +54,7 @@ export function buildAddStudioLightOps(
   if (!sceneRef) return null;
 
   const lightId = newId('light');
+  const dataId = newId('data');
   const ttId = newId('tt');
   const { position } = resolveStudioLightTransform(SPAWN_PANEL_XY, SPAWN_RADIUS, target);
 
@@ -64,12 +65,35 @@ export function buildAddStudioLightOps(
       ? { node: rigId, socket: 'lights' }
       : { node: sceneRef.node, socket: 'lights' };
 
+  // #386 Stage C (C3) — a studio light is split-native: a LightData (the Area shading +
+  // the `lookAt` aim) and an Object (the pose) that inherits `lightId`. The Track-To
+  // targets `lightId` (the Object), the rig/scene `dest` receives the Object, and the
+  // panel's enumeration recognises it through `data` (studioLightRig, #386 S3b) — so the
+  // rig aim + index-correspondence survive the split.
   const ops: Op[] = [
     {
       type: 'addNode',
+      nodeId: dataId,
+      nodeType: 'LightData',
+      params: {
+        lightKind: 'Area',
+        intensity: 5,
+        color: '#ffffff',
+        width: 2,
+        height: 2,
+        lookAt: target,
+      },
+    },
+    {
+      type: 'addNode',
       nodeId: lightId,
-      nodeType: 'AreaLight',
-      params: { intensity: 5, position, color: '#ffffff', width: 2, height: 2, lookAt: target },
+      nodeType: 'Object',
+      params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    },
+    {
+      type: 'connect',
+      from: { node: dataId, socket: 'out' },
+      to: { node: lightId, socket: 'data' },
     },
     {
       type: 'connect',

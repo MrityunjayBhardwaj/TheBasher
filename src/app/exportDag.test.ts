@@ -20,17 +20,17 @@ describe('buildDagExportPayload (#428)', () => {
     expect(payload.formatVersion).not.toBe(1);
   });
 
-  it('stamps v5 after the curve-split bump, and the stamp needs no migration on re-import (#385)', () => {
-    // Pins the v4→v5 bump landmark: an accidental revert of PROJECT_FORMAT_VERSION
+  it('stamps v6 after the light-split bump, and the stamp needs no migration on re-import (#386)', () => {
+    // Pins the v5→v6 bump landmark: an accidental revert of PROJECT_FORMAT_VERSION
     // goes red here even though the constant-tracking test above would still pass.
-    expect(PROJECT_FORMAT_VERSION).toBe(5);
+    expect(PROJECT_FORMAT_VERSION).toBe(6);
     const payload = buildDagExportPayload({ id: 'p1', name: 'Proj' }, emptyDagState(), 0);
-    expect(payload.formatVersion).toBe(5);
+    expect(payload.formatVersion).toBe(6);
     // Round-trip: re-importing a freshly exported file must NOT replay the migration
     // ladder — the stamp is already current, so migrateProjectFormat is a clean no-op
     // (this is the whole point of #428: a stale stamp would re-run every migration).
     const reimported = migrateProjectFormat(JSON.parse(JSON.stringify(payload)));
-    expect((reimported as { formatVersion: number }).formatVersion).toBe(5);
+    expect((reimported as { formatVersion: number }).formatVersion).toBe(6);
   });
 
   it('carries the project identity, the DAG snapshot, and the timestamp through unchanged', () => {

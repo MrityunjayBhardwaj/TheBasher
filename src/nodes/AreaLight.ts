@@ -4,7 +4,6 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { AreaLightValue } from './types';
 
 export const AreaLightParams = z.object({
   intensity: z.number().min(0).max(100).default(5),
@@ -37,7 +36,7 @@ export const AreaLightParams = z.object({
 });
 export type AreaLightParams = z.infer<typeof AreaLightParams>;
 
-export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
+export const AreaLightNode: NodeDefinition<AreaLightParams, never> = {
   type: 'AreaLight',
   version: 1,
   pure: true,
@@ -46,21 +45,10 @@ export const AreaLightNode: NodeDefinition<AreaLightParams, AreaLightValue> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
-  evaluate(params) {
-    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
-    const scale = params.scale ?? ([1, 1, 1] as [number, number, number]);
-    return {
-      kind: 'AreaLight',
-      intensity: params.intensity,
-      position: params.position,
-      rotation,
-      scale,
-      color: params.color,
-      width: params.width,
-      height: params.height,
-      lookAt: params.lookAt,
-      // Pass the emitter texture ref through unchanged. undefined → plain light.
-      ...(params.tex ? { tex: params.tex } : {}),
-    };
+  // Retired (#386 S4): an AreaLight is now an Object → LightData. Registered SOLELY for the
+  // load-migration's version-ladder normalization; never evaluates. The AreaLightValue
+  // interface stays in types.ts as the recomposition target.
+  evaluate(): never {
+    throw new Error('AreaLight is retired; projects migrate to Object+LightData on load (#386)');
   },
 };

@@ -20,6 +20,7 @@ import {
   studioLightPanelXY,
 } from '../../src/app/resolveStudioLightTransform';
 import { panelXYToFraction } from '../../src/timeline/studioPanelGeometry';
+import { splitLightOps } from './_splitLight';
 
 interface Op {
   type: string;
@@ -48,33 +49,34 @@ interface PanelWindow {
   };
 }
 
-/** Add an AreaLight at `pos` wired into scene.lights; when `aimPoint` is given,
- *  add a Track-To aiming it there (making it a RIG light the panel draws). */
+/** Add a SPLIT area light (Object + LightData, #386 C3) at `pos` wired into scene.lights;
+ *  when `aimPoint` is given, add a Track-To aiming it there (making it a RIG light the panel
+ *  draws). `id` names the OBJECT — the half the panel, the Track-To and the outliner address. */
 async function addAreaLight(
   page: import('@playwright/test').Page,
   id: string,
   pos: [number, number, number],
   aimPoint: [number, number, number] | null,
 ): Promise<void> {
+  const lightOps = splitLightOps({
+    objectId: id,
+    lightKind: 'Area',
+    position: pos,
+    shading: {
+      intensity: 5,
+      color: '#ffffff',
+      width: 2,
+      height: 2,
+      lookAt: aimPoint ?? [0, 0, 0],
+    },
+  }) as Op[];
   await page.evaluate(
-    ({ id, pos, aimPoint }) => {
+    ({ id, aimPoint, lightOps }) => {
       const w = window as unknown as PanelWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       const ops: Op[] = [
-        {
-          type: 'addNode',
-          nodeId: id,
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: pos,
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: aimPoint ?? [0, 0, 0],
-          },
-        },
+        ...lightOps,
         {
           type: 'connect',
           from: { node: id, socket: 'out' },
@@ -91,7 +93,7 @@ async function addAreaLight(
       }
       dag.dispatchAtomic(ops, 'e2e', 'add area light');
     },
-    { id, pos, aimPoint },
+    { id, aimPoint, lightOps },
   );
 }
 

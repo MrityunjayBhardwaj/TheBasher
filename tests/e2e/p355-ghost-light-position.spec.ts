@@ -25,6 +25,7 @@
 // REF: #355; #352 / p352-diff-ghost-constraint-band.spec.ts (the census discipline); H171.
 
 import { expect, test, type Page } from './_fixtures';
+import { splitLightOps } from './_splitLight';
 
 const PROPOSED = [3, 4, 5] as const; // where the proposal puts the key light (non-origin)
 const CONTROL = [-4, 1, -6] as const; // a second proposed light, a DIFFERENT non-origin point
@@ -60,43 +61,31 @@ async function boot(page: Page) {
 /** Propose adding two point lights at distinct non-origin positions, each a unique colour.
  *  NOT committed — this is exactly the proposal the director is asked to judge. */
 async function proposeLights(page: Page) {
+  // #386 C3: a proposed point light is a split pair — the Object carries `position` (what
+  // the ghost must honour) and the LightData carries the colour the ghost tints itself by.
+  const keyOps = splitLightOps({
+    objectId: 'p355_key',
+    lightKind: 'Point',
+    position: PROPOSED,
+    shading: { intensity: 1, color: KEY_COLOR, distance: 0, decay: 2 },
+  });
+  const ctlOps = splitLightOps({
+    objectId: 'p355_ctl',
+    lightKind: 'Point',
+    position: CONTROL,
+    shading: { intensity: 1, color: CTL_COLOR, distance: 0, decay: 2 },
+  });
   await page.evaluate(
-    ({ proposed, control, keyColor, ctlColor }) => {
+    ({ keyOps, ctlOps }) => {
       const w = window as unknown as GhostWin;
       const ops = [
-        {
-          type: 'addNode',
-          nodeId: 'p355_key',
-          nodeType: 'PointLight',
-          params: {
-            intensity: 1,
-            position: proposed,
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            color: keyColor,
-            distance: 0,
-            decay: 2,
-          },
-        },
+        ...keyOps,
         {
           type: 'connect',
           from: { node: 'p355_key', socket: 'out' },
           to: { node: 'n_scene', socket: 'lights' },
         },
-        {
-          type: 'addNode',
-          nodeId: 'p355_ctl',
-          nodeType: 'PointLight',
-          params: {
-            intensity: 1,
-            position: control,
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            color: ctlColor,
-            distance: 0,
-            decay: 2,
-          },
-        },
+        ...ctlOps,
         {
           type: 'connect',
           from: { node: 'p355_ctl', socket: 'out' },
@@ -109,7 +98,7 @@ async function proposeLights(page: Page) {
           'agent:mutator.addLight',
         ]);
     },
-    { proposed: PROPOSED, control: CONTROL, keyColor: KEY_COLOR, ctlColor: CTL_COLOR },
+    { keyOps, ctlOps },
   );
   await expect(page.getByTestId('diffbar')).toBeVisible();
   await page.waitForTimeout(200);

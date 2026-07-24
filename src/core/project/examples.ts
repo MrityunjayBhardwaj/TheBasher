@@ -37,11 +37,25 @@ function scaffold(): Op[] {
       nodeType: 'PerspectiveCamera',
       params: { fov: 45, near: 0.01, far: 500, position: [4, 2.5, 4], lookAt: [0, 0.4, 0] },
     },
+    // #386 Stage C (C3) — the key light is split-native (LightData + Object), exactly like
+    // default.ts, so a bundled example stays split-native + orphan-free (#436). The Object
+    // keeps the id `n_light`, so the scene.lights edge below is unchanged.
+    {
+      type: 'addNode',
+      nodeId: 'n_light_data',
+      nodeType: 'LightData',
+      params: { lightKind: 'Directional', intensity: 1.1, color: '#ffffff' },
+    },
     {
       type: 'addNode',
       nodeId: 'n_light',
-      nodeType: 'DirectionalLight',
-      params: { intensity: 1.1, position: [5, 6, 3], color: '#ffffff' },
+      nodeType: 'Object',
+      params: { position: [5, 6, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    },
+    {
+      type: 'connect',
+      from: { node: 'n_light_data', socket: 'out' },
+      to: { node: 'n_light', socket: 'data' },
     },
     { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },
     { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },

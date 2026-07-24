@@ -37,6 +37,33 @@ export function linkedDataNodeId(state: DagState, id: string): string | null {
 }
 
 /**
+ * The INVERSE of {@link linkedDataNodeId}: the id of the Object that poses `dataId` through
+ * its `data` input, or null when nothing poses it (a fused node, or an orphaned data node).
+ *
+ * #386 — needed because animation MANAGEMENT aggregates under the Object (V112, the locked
+ * surfacing rule): a push-down mints ONE Strip targeting the OBJECT even when the channel it
+ * consumed targeted the data half, since a Strip carries one `target`. Read surfaces that
+ * address the DATA node (the inspector renders a data node's rows against its own id) must
+ * therefore be able to look UP to the poser, or the viewport animates while the row reports
+ * the static base — the H40 divergence the forward reach exists to prevent, in the other
+ * direction.
+ *
+ * `data` is an EXCLUSIVE socket (only an ObjectNode has one) and every producer mints a fresh
+ * data node per Object, so the poser is unique in practice; first match wins, which matches
+ * the duplicate-path contract (a shared/fan-out data node cannot be created by any UI today).
+ */
+export function posingObjectId(state: DagState, dataId: string): string | null {
+  if (!dataId || !state.nodes[dataId]) return null;
+  for (const node of Object.values(state.nodes)) {
+    const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
+      | { node?: string }
+      | undefined;
+    if (dataRef?.node === dataId) return node.id;
+  }
+  return null;
+}
+
+/**
  * The id of the node that owns `paramRoot` (a top-level param key, e.g. 'material' or 'size')
  * for the scene object `id`: the node itself if its params carry that key, otherwise the node
  * it points at via its `data` input (the object↔data split). Returns null when neither carries

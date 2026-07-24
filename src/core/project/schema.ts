@@ -31,7 +31,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // the per-kind repeat of the v3 box split. See migrations.ts formatMigrations[3].
 // v5 (#385 Stage C · C2): split each fused Curve into Object + CurveData (the FIRST
 // non-mesh data). See migrations.ts formatMigrations[4].
-export const PROJECT_FORMAT_VERSION = 5;
+// v6 (#386 Stage C · C3): split the four posable lights into Object + LightData (the
+// SECOND non-mesh data; AmbientLight stays fused). See migrations.ts formatMigrations[5].
+export const PROJECT_FORMAT_VERSION = 6;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

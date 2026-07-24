@@ -13,6 +13,7 @@ import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
 import { shouldRunIdentifyRound } from '../orchestrator';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
+import { makeSplitLight } from '../../test-utils/splitLight';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -339,6 +340,41 @@ describe('identify — generic-noun aliases (#25)', () => {
     const r = identify({ query: 'redCube' }, state);
     expect(r.type).toBe('match');
     if (r.type === 'match') expect(r.selectors).toEqual(['redCube']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #386 C3 (fork-1) — a light noun infers 'Object' (the posable-light split), so it
+// must be narrowed by the posed LightData's lightKind. Without the narrower, "point
+// light" would match every posable-light Object AND every cube Object.
+// ---------------------------------------------------------------------------
+
+describe('identify — light kind narrowing (#386 fork-1)', () => {
+  function lightScene(): DagState {
+    let s = emptyDagState();
+    s = makeSplitCube(s, { objectId: 'cube1', position: [0, 0, 0] }).state;
+    s = makeSplitLight(s, { objectId: 'pt', lightKind: 'Point', position: [1, 0, 0] }).state;
+    s = makeSplitLight(s, { objectId: 'sp', lightKind: 'Spot', position: [2, 0, 0] }).state;
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    return s;
+  }
+
+  it('"point light" narrows to the POINT Object only — the spot does NOT leak in', () => {
+    const r = identify({ query: 'the point light' }, lightScene());
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toEqual(['pt']);
+  });
+
+  it('generic "light" matches BOTH posable lights but NOT the cube (over-broad hazard)', () => {
+    const r = identify({ query: 'the lights' }, lightScene());
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(new Set(r.selectors)).toEqual(new Set(['pt', 'sp']));
+  });
+
+  it('CONTROL: "the cube" still narrows to the cube Object, not the lights', () => {
+    const r = identify({ query: 'the cube' }, lightScene());
+    expect(r.type).toBe('match');
+    if (r.type === 'match') expect(r.selectors).toEqual(['cube1']);
   });
 });
 

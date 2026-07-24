@@ -49,7 +49,7 @@ interface BasherWindow {
 /**
  * Seed a realistic animation scene: N free-floating direct channels (V57),
  * each with `kfPerChannel` keyframes spread across [0, span] seconds. No
- * AnimationLayer wrapper — every channel targets the DirectionalLight by
+ * AnimationLayer wrapper — every channel targets the light's LightData by
  * dagId. Returns the total keyframe count so the culling spec can compare.
  */
 async function seedScene(
@@ -71,14 +71,8 @@ async function seedScene(
         {
           type: 'addNode',
           nodeId: 'sun',
-          nodeType: 'DirectionalLight',
-          params: {
-            intensity: 7,
-            position: [5, 5, 5],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            color: '#ffffff',
-          },
+          nodeType: 'LightData',
+          params: { lightKind: 'Directional', intensity: 7, color: '#ffffff' },
         },
       ];
       let total = 0;

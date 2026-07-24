@@ -79,6 +79,7 @@ import { CurveLineChrome } from './CurveLine';
 import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
+import { recomposeLightObject } from '../nodes/lightRecompose';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -909,6 +910,57 @@ function useDataParamTransients(
   }, [dataId, edits, targetId]);
 }
 
+/** #386 R2 — the FLAT twin of useDataParamChannels for the light path. A split light's
+ *  animated shading channels live on its linked LightData, but the recomposed LightValue is
+ *  FLAT (intensity/color/position are all top-level), so they must be concatenated onto the
+ *  Object's own channels WITHOUT the `data.` rebase the mesh path uses (`ObjectR` reads
+ *  `value.data.geometry`; the light renderer reads `value.intensity`). Copying
+ *  useDataParamChannels' rebase would write `value.data.intensity`, which the light renderer
+ *  never reads → the animated intensity FREEZES with green unit tests. Returns the Object's
+ *  channels unchanged when there is no linked data (fused/ambient), keeping a stable ref (H48). */
+function useLightShadingChannels(
+  targetId: string,
+  objChannels: KeyframeChannelValue[],
+): KeyframeChannelValue[] {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  const dataChannels = useLayeredChannels(dataId ?? '');
+  return useMemo(
+    () => (dataId === null ? objChannels : [...objChannels, ...dataChannels]),
+    [dataId, objChannels, dataChannels],
+  );
+}
+
+/** #386 R2 — the FLAT twin of useDataParamTransients for the light path. A split light's HELD
+ *  (un-keyed) shading edits live on its LightData, but overlayTransients keys by the Object
+ *  (`nodeId`), so they must be re-keyed to the Object with their paramPath UN-rebased (flat
+ *  LightValue). Copying useDataParamTransients' `data.` rebase reproduces the same freeze R2
+ *  warns about. Returns the ORIGINAL map ref for a fused light / no held data edit (H48). */
+function useLightShadingTransients(
+  targetId: string,
+  edits: Map<string, TransientEdit>,
+): Map<string, TransientEdit> {
+  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
+  return useMemo(() => {
+    if (dataId === null) return edits;
+    let hasDataEdit = false;
+    for (const e of edits.values()) {
+      if (e.nodeId === dataId) {
+        hasDataEdit = true;
+        break;
+      }
+    }
+    if (!hasDataEdit) return edits;
+    const merged = new Map(edits);
+    for (const e of edits.values()) {
+      if (e.nodeId !== dataId) continue;
+      // UN-rebased: the flat LightValue reads `value.intensity`, not `value.data.intensity`.
+      const paramPath = e.paramPath;
+      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
+    }
+    return merged;
+  }, [dataId, edits, targetId]);
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -920,8 +972,10 @@ function DirectChannelsLightR({
   constrained: boolean;
   followsPath: boolean;
 }) {
-  const channels = useLayeredChannels(nodeId);
-  const transients = useTransientEditStore((s) => s.edits);
+  const objChannels = useLayeredChannels(nodeId);
+  const channels = useLightShadingChannels(nodeId, objChannels);
+  const rawTransients = useTransientEditStore((s) => s.edits);
+  const transients = useLightShadingTransients(nodeId, rawTransients);
   // #343 — the position band resolves through the shared evaluator; a stable cache HITS
   // across frames while the curve/target are unchanged (the H48 / ConstrainedR pattern).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
@@ -1469,6 +1523,13 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
     // animation or Track-To aim — those stay on the top-level scene.lights band
     // (known-limit; follow-up). The per-kind projection is the SAME LightKindR the
     // top-level band uses, so render == resolver (H40).
+    //
+    // #386 S4 — of these, only `AmbientLight` still arrives here: the four POSABLE
+    // kinds are split, so a nested posable light is an `Object` posing a `LightData`
+    // and reaches LightKindR through ObjectR's LightData arm instead (same nodeId=null
+    // static contract, so the limit above is unchanged). Their arms stay because the
+    // four value kinds remain the RECOMPOSITION TARGET the `scene.lights` band
+    // consumes, and dropping them would leave this switch non-exhaustive.
     case 'DirectionalLight':
     case 'PointLight':
     case 'SpotLight':
@@ -2127,6 +2188,19 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
         points={data.points}
       />
     );
+  }
+  if (data?.kind === 'LightData') {
+    // #386 — a light nested in a Group flows through `children` (NOT `scene.lights`):
+    // MeshChild 'Object' (:1513) → here. Recompose the Object+LightData into the flat
+    // LightValue and render it through the SAME LightKindR the fused nested-light cases
+    // use (:1472-1477, #231 Inc 2). STATIC (nodeId=null/constrained=false): the nested
+    // light inherits the group's world transform from GroupR's <group>; no direct
+    // channels / Track-To aim (the same known-limit as the fused nested light). This is
+    // the arm the compiler forces once ObjectData widens (R1's TS2322) — closing it here
+    // by RECOMPOSING, never by casting `data` to MeshDataValue (that darkens the light).
+    const light = recomposeLightObject(value);
+    if (!light) return null;
+    return <LightKindR value={light} nodeId={null} constrained={false} />;
   }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }

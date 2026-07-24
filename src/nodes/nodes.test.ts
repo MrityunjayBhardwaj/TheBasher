@@ -88,6 +88,7 @@ const ALL_TYPES = [
   'KeyframeChannelVec3',
   'Lag',
   'Layer',
+  'LightData',
   'LightProfileSelect',
   'LightRig',
   'LocomotionState',
@@ -156,12 +157,14 @@ describe('default project', () => {
   it('builds the THESIS App. C DAG with the canonical n_time clock', () => {
     const state = buildDefaultDagState();
     // #365 Phase 5a (Slice 1b) — the box is the object↔data split: n_box (the Object/pose) +
-    // n_box_data (the BoxData/geometry).
+    // n_box_data (the BoxData/geometry). #386 C3 — the key light is split too: n_light (the
+    // Object/pose, id inherited) + n_light_data (the LightData/shading).
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
       'n_box_data',
       'n_camera',
       'n_light',
+      'n_light_data',
       'n_render',
       'n_scene',
       'n_time',
@@ -276,12 +279,12 @@ function buildOne(nodeType: string, params: unknown) {
 }
 
 describe('P1 new node types — pure twice-eval', () => {
+  // #386 S4 — the four posable lights (Directional/Point/Spot/Area) are RETIRED: they no
+  // longer evaluate (their evaluate throws), so they are NOT in the twice-eval walk. Only
+  // AmbientLight (which stays fused) remains here; the relics' throw is asserted below.
   it.each([
     ['OrthographicCamera', { zoom: 50, position: [0, 0, 5] }],
     ['AmbientLight', { intensity: 0.4 }],
-    ['PointLight', { intensity: 1, position: [0, 2, 0] }],
-    ['SpotLight', { intensity: 1, position: [0, 5, 0] }],
-    ['AreaLight', { intensity: 5, position: [0, 5, 0], width: 2, height: 2 }],
     ['GltfAsset', { assetRef: 'assets/test.glb' }],
     ['Transform', { position: [1, 0, 0] }],
     ['Group', {}],
@@ -295,6 +298,28 @@ describe('P1 new node types — pure twice-eval', () => {
     const r2 = evaluate(state, 'n');
     expect(r1.hash).toBe(r2.hash);
     expect(r1.value).toEqual(r2.value);
+  });
+});
+
+describe('#386 S4 — the four posable lights are retired migration relics', () => {
+  it.each([
+    ['DirectionalLight', { intensity: 1, position: [5, 5, 3] }],
+    ['PointLight', { intensity: 1, position: [0, 2, 0] }],
+    ['SpotLight', { intensity: 1, position: [0, 5, 0] }],
+    ['AreaLight', { intensity: 5, position: [0, 5, 0], width: 2, height: 2 }],
+  ])(
+    '%s.evaluate throws (retired; projects migrate to Object+LightData on load)',
+    (type, params) => {
+      const state = buildOne(type, params);
+      expect(() => evaluate(state, 'n')).toThrow(/retired/);
+    },
+  );
+
+  it('AmbientLight still evaluates (it does NOT split — ambient = a World datablock)', () => {
+    const state = buildOne('AmbientLight', { intensity: 0.4 });
+    const v = evaluate(state, 'n').value as { kind: string; intensity: number };
+    expect(v.kind).toBe('AmbientLight');
+    expect(v.intensity).toBeCloseTo(0.4);
   });
 });
 

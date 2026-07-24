@@ -8,6 +8,7 @@ import type {
   SceneChild,
   SceneValue,
 } from './types';
+import { recomposeLightObject } from './lightRecompose';
 
 // UX #9 — scene-level environment (HDRI/IBL) source. Discriminated so the
 // editor authors exactly one of: nothing / a drei preset (CDN) / an imported
@@ -57,7 +58,15 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     return {
       kind: 'Scene',
       camera: inputs.camera as CameraValue,
-      lights: (inputs.lights as LightValue[]) ?? [],
+      // #386 — a posable light is now an `Object` posing a `LightData`. Recompose
+      // each gathered entry back into the flat `LightValue` the renderer's light
+      // band consumes (the ONE shared helper, also used at LightRig.evaluate and
+      // ObjectR — V117). A still-fused AmbientLightValue returns null → passes
+      // through unchanged. NEVER recompose at the renderer's scene.lights.map
+      // (that desyncs the read-side — displayed ≠ rendered).
+      lights: ((inputs.lights as unknown[]) ?? []).map(
+        (v) => recomposeLightObject(v) ?? (v as LightValue),
+      ),
       children: (inputs.children as SceneChild[]) ?? [],
       // #208 — the active profile's rig, passed through SEPARATELY (never merged
       // into `lights`). null when nothing is wired (the common case, byte-identical

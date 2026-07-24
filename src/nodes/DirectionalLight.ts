@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { DirectionalLightValue } from './types';
 
 export const DirectionalLightParams = z.object({
   intensity: z.number().min(0).max(20),
@@ -20,7 +19,7 @@ export const DirectionalLightParams = z.object({
 });
 export type DirectionalLightParams = z.infer<typeof DirectionalLightParams>;
 
-export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, DirectionalLightValue> = {
+export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, never> = {
   type: 'DirectionalLight',
   version: 1,
   pure: true,
@@ -29,21 +28,14 @@ export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, Direct
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
-  evaluate(params) {
-    // Defensive default for rotation — projects saved before the
-    // rotation field existed land with `undefined` here because the
-    // hydrate seam bypasses zod's .default() fill. The schema-level
-    // default still works for new addNode ops (zod parses); this guard
-    // covers the load-old-project path.
-    const rotation = params.rotation ?? ([0, 0, 0] as [number, number, number]);
-    const scale = params.scale ?? ([1, 1, 1] as [number, number, number]);
-    return {
-      kind: 'DirectionalLight',
-      intensity: params.intensity,
-      position: params.position,
-      rotation,
-      scale,
-      color: params.color,
-    };
+  // Retired (#386 S4): a DirectionalLight is now an Object → LightData, so no fused value
+  // carries it any longer. This node stays registered SOLELY so the load-migration
+  // (migrateFusedLightToSplit) can normalize an old fused light through its OWN version
+  // ladder before splitting it. It never evaluates. The DirectionalLightValue interface
+  // stays in types.ts — it is the RECOMPOSITION TARGET the renderer still consumes.
+  evaluate(): never {
+    throw new Error(
+      'DirectionalLight is retired; projects migrate to Object+LightData on load (#386)',
+    );
   },
 };

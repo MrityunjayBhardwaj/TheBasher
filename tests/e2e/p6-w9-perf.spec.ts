@@ -88,7 +88,7 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
 
   // Seed a realistic-heavy scene: 10 free-floating channels (V57) × 24
   // keyframes = 240 diamonds (exceeds the ≥8×≥20 floor). No AnimationLayer
-  // wrapper — every channel targets the DirectionalLight directly by dagId.
+  // wrapper — every channel targets the light's LightData directly by dagId.
   await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
@@ -101,14 +101,8 @@ test('P6.W9-perf 240-frame scrub holds 60fps on M1 (p95 ≤ 16.6ms, max ≤ 33ms
       {
         type: 'addNode',
         nodeId: 'sun',
-        nodeType: 'DirectionalLight',
-        params: {
-          intensity: 7,
-          position: [5, 5, 5],
-          rotation: [0, 0, 0],
-          scale: [1, 1, 1],
-          color: '#ffffff',
-        },
+        nodeType: 'LightData',
+        params: { lightKind: 'Directional', intensity: 7, color: '#ffffff' },
       },
     ];
     for (let c = 0; c < 10; c++) {

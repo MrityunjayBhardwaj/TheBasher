@@ -50,6 +50,7 @@ import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelTextNode } from './KeyframeChannelText';
 import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
+import { LightDataNode } from './LightData';
 import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
 import { LocomotionStateNode } from './LocomotionState';
@@ -97,6 +98,12 @@ const ALL: NodeDefinition[] = [
   PointLightNode as unknown as NodeDefinition,
   SpotLightNode as unknown as NodeDefinition,
   AreaLightNode as unknown as NodeDefinition,
+  // #386 (Stage C · C3) — the light's data half (shading: kind + intensity/colour/
+  // falloff/aim, no transform). ONE discriminated node (lightKind enum) covering the
+  // four posable kinds — the SECOND non-mesh ObjectData. Coexists with the fused
+  // Directional/Point/Spot/AreaLight above; the split retires their fused evaluates
+  // in a later slice. AmbientLight stays fused (ambient = a World datablock).
+  LightDataNode as unknown as NodeDefinition,
   // Meshes
   BoxMeshNode as unknown as NodeDefinition,
   // #361 — object↔data split (Phase 1): the Object half (owns TRS, points at

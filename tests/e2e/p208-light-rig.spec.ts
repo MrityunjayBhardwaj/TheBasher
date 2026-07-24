@@ -16,6 +16,7 @@
 //      src/viewport/SceneFromDAG.tsx (the rig render band); vyapti V62/V60/V37.
 
 import { expect, test } from './_fixtures';
+import { splitLightOps } from './_splitLight';
 
 interface Op {
   type: string;
@@ -79,40 +80,31 @@ test('#208 — a LightRig wired to the scene renders its grouped lights; a Track
   const AIM: [number, number, number] = [5, 0, -5];
   const AUTHORED: [number, number, number] = [0, 0, 0];
 
+  // #386 C3: each rig light is split — an Object (pose) + a LightData (shading). The rig
+  // groups the OBJECTS, so `resolveRigLightSources`' index-correspondence and the Track-To
+  // target below both keep addressing the same ids they did when the lights were fused.
+  const rigL1 = splitLightOps({
+    objectId: 'rig_l1',
+    lightKind: 'Area',
+    position: POS,
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: AUTHORED },
+  });
+  const rigL2 = splitLightOps({
+    objectId: 'rig_l2',
+    lightKind: 'Area',
+    position: [-3, 4, 3],
+    shading: { intensity: 3, color: '#ffffff', width: 2, height: 2, lookAt: AUTHORED },
+  });
   await page.evaluate(
-    ({ pos, aim, authored }) => {
+    ({ aim, rigL1, rigL2 }) => {
       const w = window as unknown as RigWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           // Two area lights GROUPED by a rig (not wired to scene.lights directly).
-          {
-            type: 'addNode',
-            nodeId: 'rig_l1',
-            nodeType: 'AreaLight',
-            params: {
-              intensity: 5,
-              position: pos,
-              color: '#ffffff',
-              width: 2,
-              height: 2,
-              lookAt: authored,
-            },
-          },
-          {
-            type: 'addNode',
-            nodeId: 'rig_l2',
-            nodeType: 'AreaLight',
-            params: {
-              intensity: 3,
-              position: [-3, 4, 3],
-              color: '#ffffff',
-              width: 2,
-              height: 2,
-              lookAt: authored,
-            },
-          },
+          ...rigL1,
+          ...rigL2,
           {
             type: 'addNode',
             nodeId: 'rig_node',
@@ -147,7 +139,7 @@ test('#208 — a LightRig wired to the scene renders its grouped lights; a Track
         'add light rig',
       );
     },
-    { pos: POS, aim: AIM, authored: AUTHORED },
+    { aim: AIM, rigL1, rigL2 },
   );
 
   // Both grouped lights render through the rig band.
@@ -221,52 +213,49 @@ test('#208 — a LightProfileSelect switches the live profile by name (one rig a
 
   // Two profiles (rigs) co-resident in the DAG; a LightProfileSelect feeds the
   // scene. "Key" has 2 lights, "Rim" has 1 — so the live count tells us which is on.
-  await page.evaluate(() => {
-    const w = window as unknown as RigWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene!.node;
-    const al = (id: string, x: number) => ({
-      type: 'addNode',
-      nodeId: id,
-      nodeType: 'AreaLight',
-      params: {
-        intensity: 5,
-        position: [x, 4, 3],
-        color: '#ffffff',
-        width: 2,
-        height: 2,
-        lookAt: [0, 0, 0],
-      },
+  // Split area lights (Object + LightData); the rigs group the Objects.
+  const al = (id: string, x: number) =>
+    splitLightOps({
+      objectId: id,
+      lightKind: 'Area',
+      position: [x, 4, 3],
+      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
     });
-    const conn = (from: string, to: string, socket: string) => ({
-      type: 'connect',
-      from: { node: from, socket: 'out' },
-      to: { node: to, socket },
-    });
-    dag.dispatchAtomic(
-      [
-        al('key_a', 3),
-        al('key_b', -3),
-        al('rim_a', 0),
-        { type: 'addNode', nodeId: 'rig_key', nodeType: 'LightRig', params: { name: 'Key' } },
-        { type: 'addNode', nodeId: 'rig_rim', nodeType: 'LightRig', params: { name: 'Rim' } },
-        conn('key_a', 'rig_key', 'lights'),
-        conn('key_b', 'rig_key', 'lights'),
-        conn('rim_a', 'rig_rim', 'lights'),
-        {
-          type: 'addNode',
-          nodeId: 'profile_sel',
-          nodeType: 'LightProfileSelect',
-          params: { selectedProfile: 'Key' },
-        },
-        conn('rig_key', 'profile_sel', 'rigs'),
-        conn('rig_rim', 'profile_sel', 'rigs'),
-        conn('profile_sel', sceneId, 'lightRig'),
-      ],
-      'e2e',
-      'two profiles + select',
-    );
-  });
+  const profileLightOps = [...al('key_a', 3), ...al('key_b', -3), ...al('rim_a', 0)];
+  await page.evaluate(
+    ({ profileLightOps }) => {
+      const w = window as unknown as RigWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      const conn = (from: string, to: string, socket: string) => ({
+        type: 'connect',
+        from: { node: from, socket: 'out' },
+        to: { node: to, socket },
+      });
+      dag.dispatchAtomic(
+        [
+          ...profileLightOps,
+          { type: 'addNode', nodeId: 'rig_key', nodeType: 'LightRig', params: { name: 'Key' } },
+          { type: 'addNode', nodeId: 'rig_rim', nodeType: 'LightRig', params: { name: 'Rim' } },
+          conn('key_a', 'rig_key', 'lights'),
+          conn('key_b', 'rig_key', 'lights'),
+          conn('rim_a', 'rig_rim', 'lights'),
+          {
+            type: 'addNode',
+            nodeId: 'profile_sel',
+            nodeType: 'LightProfileSelect',
+            params: { selectedProfile: 'Key' },
+          },
+          conn('rig_key', 'profile_sel', 'rigs'),
+          conn('rig_rim', 'profile_sel', 'rigs'),
+          conn('profile_sel', sceneId, 'lightRig'),
+        ],
+        'e2e',
+        'two profiles + select',
+      );
+    },
+    { profileLightOps },
+  );
 
   // "Key" is live → 2 rig lights render.
   await page.waitForFunction(
@@ -312,41 +301,38 @@ test('#208 — a LightProfileSelect switches the live profile by name (one rig a
 test('#208 — a rig NOT wired to the scene renders nothing (falsification)', async ({ page }) => {
   const before = await countRectLights(page);
 
-  await page.evaluate(() => {
-    const w = window as unknown as RigWindow;
-    const dag = w.__basher_dag.getState();
-    // Build the rig + lights but DO NOT connect the rig to scene.lightRig.
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'orphan_l1',
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: [3, 4, 3],
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: [0, 0, 0],
-          },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'orphan_rig',
-          nodeType: 'LightRig',
-          params: { name: 'Unwired' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'orphan_l1', socket: 'out' },
-          to: { node: 'orphan_rig', socket: 'lights' },
-        },
-      ],
-      'e2e',
-      'add unwired rig',
-    );
+  const orphanLightOps = splitLightOps({
+    objectId: 'orphan_l1',
+    lightKind: 'Area',
+    position: [3, 4, 3],
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
   });
+  await page.evaluate(
+    ({ orphanLightOps }) => {
+      const w = window as unknown as RigWindow;
+      const dag = w.__basher_dag.getState();
+      // Build the rig + lights but DO NOT connect the rig to scene.lightRig.
+      dag.dispatchAtomic(
+        [
+          ...orphanLightOps,
+          {
+            type: 'addNode',
+            nodeId: 'orphan_rig',
+            nodeType: 'LightRig',
+            params: { name: 'Unwired' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'orphan_l1', socket: 'out' },
+            to: { node: 'orphan_rig', socket: 'lights' },
+          },
+        ],
+        'e2e',
+        'add unwired rig',
+      );
+    },
+    { orphanLightOps },
+  );
 
   // Give the renderer a beat, then assert the count is unchanged — an unwired rig
   // contributes no lights.

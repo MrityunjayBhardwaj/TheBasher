@@ -35,6 +35,41 @@ describe('paramToSection — camera params route to the Camera section', () => {
   });
 });
 
+describe('paramToSection — light shading routes to the Light section (#386, H189 fix)', () => {
+  const light: readonly SectionId[] = ['light'];
+  it('routes every LightData shading param to the light section', () => {
+    for (const p of [
+      'lightKind',
+      'intensity',
+      'color',
+      'distance',
+      'decay',
+      'angle',
+      'penumbra',
+      'width',
+      'height',
+      'target',
+      'lookAt',
+      'tex',
+    ]) {
+      expect(paramToSection(p, light)).toBe('light');
+    }
+  });
+  it('a node that does NOT declare light never claims these params (no spurious routing)', () => {
+    // The H189 mechanism: without the light arm, intensity/color route to null and the
+    // linked-data inspector drops them → empty panel. Proven by the split-light routing
+    // above; here the negative — a transform-only node leaves them unrouted.
+    expect(paramToSection('intensity', ['transform'])).toBeNull();
+    expect(paramToSection('penumbra', ['transform'])).toBeNull();
+  });
+  it('bare light color/intensity never collide with a mesh material colour', () => {
+    // A material node routes bare `color` through 'material'; a light node routes it
+    // through 'light'. They never both declare, so no collision — assert both directions.
+    expect(paramToSection('color', ['material'])).toBe('material');
+    expect(paramToSection('color', ['light'])).toBe('light');
+  });
+});
+
 describe('SECTION_IDS', () => {
   it('contains the documented v0.5 sections from §5.8 plus environment (UX #9) + camera (UX #12)', () => {
     expect(SECTION_IDS).toEqual([
@@ -50,6 +85,8 @@ describe('SECTION_IDS', () => {
       'driver',
       // The path's SHAPE — a Curve's control points / closed / resolution (#321).
       'curve',
+      // The light's SHADING — a LightData's kind + intensity/colour/falloff/aim (#386).
+      'light',
       // Operator substrate — SOP/modifiers (epic #201, #209, V58).
       'modifier',
       // Operator substrate — video effects (epic #235, V58 lift to Image).

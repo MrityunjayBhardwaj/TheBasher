@@ -239,6 +239,51 @@ export function buildAddPrimitiveOps(
     };
   }
 
+  // #386 Stage C (C3) — the four POSABLE lights are the object↔data split too: an Object
+  // (the pose) wired to a LightData (kind + shading, no transform), then into scene.LIGHTS
+  // (NOT children). Selection + the studio panel land on the Object (shading resolves
+  // through `data`); the LightData owns intensity/colour/falloff/aim. Split-native, so
+  // "Add ▸ Point Light" and the load-migration converge on one shape (K23). AmbientLight
+  // is NOT here — it stays a bare fused node (ambient = a World datablock), wired to
+  // scene.lights by the generic tail below.
+  if (
+    kind === 'DirectionalLight' ||
+    kind === 'PointLight' ||
+    kind === 'SpotLight' ||
+    kind === 'AreaLight'
+  ) {
+    const dataId = newId('data');
+    const objId = newId('light');
+    return {
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: dataId,
+          nodeType: 'LightData',
+          params: lightDataParamsFor(kind),
+        },
+        {
+          type: 'addNode',
+          nodeId: objId,
+          nodeType: 'Object',
+          params: paramsFor(kind, position),
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: objId, socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: objId, socket: 'out' },
+          to: { node: sceneRef.node, socket: 'lights' },
+        },
+      ],
+      description: `Add ${humanLabel(kind)}`,
+      newNodeId: objId,
+    };
+  }
+
   const id = newId(prefixFor(kind));
   const ops: Op[] = [];
   const params = paramsFor(kind, position);
@@ -313,17 +358,22 @@ function isSolverKind(kind: PrimitiveKind): boolean {
  *  scene object ends up creatable but un-referrable (#324). */
 export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
-    // #365 Ph5a / #384 C1 / #385 C2 — a Cube, Sphere AND Curve are all the object↔data split; the
-    // node the director selects and refers to is the Object (the BoxData/SphereData/CurveData is
-    // its data leaf, not a scene object). Each mints the split via the early-return branches
-    // above; this mapping only feeds identify's ALL_PRIMITIVE_TYPES, so all resolve to their real
-    // 'Object' node type rather than a fused kind.
+    // #365 Ph5a / #384 C1 / #385 C2 / #386 C3 — a Cube, Sphere, Curve AND the four posable
+    // lights are all the object↔data split; the node the director selects and refers to is the
+    // Object (the BoxData/SphereData/CurveData/LightData is its data leaf, not a scene object).
+    // Each mints the split via the early-return branches above; this mapping only feeds
+    // identify's ALL_PRIMITIVE_TYPES, so all resolve to their real 'Object' node type rather
+    // than a fused kind. (AmbientLight stays fused → the default arm returns its own type.)
     case 'Cube':
     case 'Sphere':
     case 'Curve':
+    case 'DirectionalLight':
+    case 'PointLight':
+    case 'SpotLight':
+    case 'AreaLight':
       return 'Object';
     default:
-      return kind; // DirectionalLight, PointLight, etc. — direct mapping
+      return kind; // AmbientLight (stays fused), cameras, etc. — direct mapping
   }
 }
 
@@ -400,26 +450,22 @@ function humanLabel(kind: PrimitiveKind): string {
   }
 }
 
-/** Default params per kind. AmbientLight has no position; everything
- *  else accepts the spawn point. */
-function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown> {
+/** The LightData half's params for a NEW posable light — the SHADING (kind + intensity/
+ *  colour/falloff/aim), mirroring the pre-split light values byte-for-byte so a fresh
+ *  light looks identical across the split. The Object half gets the TRS (paramsFor).
+ *  (penumbra 0.2 here preserves the pre-split Add ▸ Spot value; it disagrees with
+ *  SpotLight/LightData's zod default 0.1 — a pre-existing in-repo disagreement, kept
+ *  as-is to preserve new-spot parity, #386.) */
+function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
   switch (kind) {
-    // #365 Ph5a / #384 C1 / #385 C2 — Cube, Sphere AND Curve are all the object↔data split; their
-    // params are the OBJECT half's TRS only (the BoxData/SphereData/CurveData they point at owns
-    // the geometry/points). The split branches above wire each pair; this supplies the Object's
-    // params. Curve's control points come from the CurveData's zod defaults, not here.
-    case 'Cube':
-    case 'Sphere':
-    case 'Curve':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'DirectionalLight':
-      return { intensity: 1.0, position, color: '#ffffff' };
+      return { lightKind: 'Directional', intensity: 1.0, color: '#ffffff' };
     case 'PointLight':
-      return { intensity: 1.0, position, color: '#ffffff', distance: 0, decay: 2 };
+      return { lightKind: 'Point', intensity: 1.0, color: '#ffffff', distance: 0, decay: 2 };
     case 'SpotLight':
       return {
+        lightKind: 'Spot',
         intensity: 1.0,
-        position,
         color: '#ffffff',
         target: [0, 0, 0],
         angle: Math.PI / 6,
@@ -429,13 +475,41 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
       };
     case 'AreaLight':
       return {
+        lightKind: 'Area',
         intensity: 1.0,
-        position,
         color: '#ffffff',
         width: 2,
         height: 2,
         lookAt: [0, 0, 0],
       };
+    default:
+      return {};
+  }
+}
+
+/** Default params per kind. AmbientLight has no position; everything
+ *  else accepts the spawn point. */
+function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown> {
+  switch (kind) {
+    // #365 Ph5a / #384 C1 / #385 C2 — Cube, Sphere AND Curve are all the object↔data split; their
+    // params are the OBJECT half's TRS only (the BoxData/SphereData/CurveData they point at owns
+    // the geometry/points). The split branches above wire each pair; this supplies the Object's
+    // params. Curve's control points come from the CurveData's zod defaults, not here.
+    // #365 Ph5a / #384 C1 / #385 C2 / #386 C3 — Cube, Sphere, Curve AND the four posable
+    // lights are all the object↔data split; their params here are the OBJECT half's TRS
+    // only (the data node they point at owns the geometry/points/shading). The split
+    // branches above wire each pair; this supplies the Object's params. A light's shading
+    // comes from lightDataParamsFor (the LightData half), not here.
+    case 'Cube':
+    case 'Sphere':
+    case 'Curve':
+    case 'DirectionalLight':
+    case 'PointLight':
+    case 'SpotLight':
+    case 'AreaLight':
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // AmbientLight stays FUSED (ambient = a World datablock) — its params are shading only
+    // (no pose), minted directly as an AmbientLight node by the generic tail.
     case 'AmbientLight':
       return { intensity: 0.3, color: '#ffffff' };
     case 'PerspectiveCamera':

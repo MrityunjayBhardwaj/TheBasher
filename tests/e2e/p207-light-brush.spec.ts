@@ -13,6 +13,7 @@
 //      src/viewport/SceneFromDAG.tsx (the onClick brush branch); vyapti V60/V37/V62.
 
 import { expect, test } from './_fixtures';
+import { splitLightOps } from './_splitLight';
 
 interface Op {
   type: string;
@@ -58,48 +59,48 @@ interface BrushWindow {
 }
 
 async function addRigLight(page: import('@playwright/test').Page, id: string): Promise<void> {
-  await page.evaluate((id) => {
-    const w = window as unknown as BrushWindow;
-    const dag = w.__basher_dag.getState();
-    const sceneId = dag.state.outputs.scene!.node;
-    dag.dispatchAtomic(
-      [
-        // Move + enlarge the cube into the UPPER viewport — clear of the agent-chat
-        // island (floats over centre) and the camera-helper frustum lines (cross the
-        // origin) — so the projected click lands on solid cube body, not chrome.
-        { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, 4, 0] },
-        // #365 Slice 2: `size` lives on the split cube's BoxData; a setParam aimed at
-        // the Object (`n_box`) is silently rejected, so target `n_box_data`.
-        { type: 'setParam', nodeId: 'n_box_data', paramPath: 'size', value: [3, 3, 3] },
-        {
-          type: 'addNode',
-          nodeId: id,
-          nodeType: 'AreaLight',
-          params: {
-            intensity: 5,
-            position: [6, 0, 0],
-            color: '#ffffff',
-            width: 2,
-            height: 2,
-            lookAt: [0, 0, 0],
+  // #386 C3: the rig light is split — an `Object` (the pose the brush moves) wired to a
+  // `LightData` (the shading). `id` names the Object, so the Track-To target, the selection
+  // and `__basher_mesh_world_position` all keep addressing the same node they did when fused.
+  const lightOps = splitLightOps({
+    objectId: id,
+    lightKind: 'Area',
+    position: [6, 0, 0],
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+  });
+  await page.evaluate(
+    ({ id, lightOps }) => {
+      const w = window as unknown as BrushWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          // Move + enlarge the cube into the UPPER viewport — clear of the agent-chat
+          // island (floats over centre) and the camera-helper frustum lines (cross the
+          // origin) — so the projected click lands on solid cube body, not chrome.
+          { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, 4, 0] },
+          // #365 Slice 2: `size` lives on the split cube's BoxData; a setParam aimed at
+          // the Object (`n_box`) is silently rejected, so target `n_box_data`.
+          { type: 'setParam', nodeId: 'n_box_data', paramPath: 'size', value: [3, 3, 3] },
+          ...lightOps,
+          {
+            type: 'connect',
+            from: { node: id, socket: 'out' },
+            to: { node: sceneId, socket: 'lights' },
           },
-        },
-        {
-          type: 'connect',
-          from: { node: id, socket: 'out' },
-          to: { node: sceneId, socket: 'lights' },
-        },
-        {
-          type: 'addNode',
-          nodeId: `${id}_tt`,
-          nodeType: 'TrackTo',
-          params: { target: id, aimNode: '', aimPoint: [0, 0, 0], up: [0, 1, 0], mute: false },
-        },
-      ],
-      'e2e',
-      'add rig light',
-    );
-  }, id);
+          {
+            type: 'addNode',
+            nodeId: `${id}_tt`,
+            nodeType: 'TrackTo',
+            params: { target: id, aimNode: '', aimPoint: [0, 0, 0], up: [0, 1, 0], mute: false },
+          },
+        ],
+        'e2e',
+        'add rig light',
+      );
+    },
+    { id, lightOps },
+  );
 }
 
 const lightPos = (page: import('@playwright/test').Page, id: string) =>

@@ -25,6 +25,7 @@ export type SectionId =
   | 'constraint'
   | 'driver'
   | 'curve'
+  | 'light'
   | 'modifier'
   | 'effect'
   | 'environment'
@@ -49,6 +50,10 @@ export const SECTION_IDS: readonly SectionId[] = [
   // The path itself (#321) — a Curve's control points, closed flag and resolution. Its TRS
   // stays in 'transform' (a curve is posed like any object); this section owns the SHAPE.
   'curve',
+  // The light's shading (#386) — a LightData's kind + intensity/colour/falloff/aim. Its
+  // pose (position/rotation/scale) stays on the Object's 'transform'; this section owns the
+  // SHADING. The H189 parity the split's linked-data inspector needs.
+  'light',
   // Operator substrate — SOP/modifiers (epic #201, #209, V58). The geometry
   // operator stack (ArrayModifier et al.) declares this section.
   'modifier',
@@ -115,6 +120,30 @@ export function paramToSection(
     (paramPath === 'points' || paramPath === 'closed' || paramPath === 'resolution')
   ) {
     return 'curve';
+  }
+  // Light params (#386) — a LightData's SHADING: kind + intensity/colour/falloff/aim.
+  // The pose (position/rotation/scale) stays on the Object's 'transform'; this section
+  // owns the shading. Gated on the node declaring 'light' (only LightData does), so bare
+  // `color`/`intensity` here never collide with a mesh material's colour (which routes
+  // through 'material', declared by a different node). `lightKind` is the discriminator
+  // row. `target`/`lookAt` are the spot/area aim points — grouped with shading here (the
+  // light doesn't declare 'transform', so the transform arm above skips them).
+  if (
+    declaredSections.includes('light') &&
+    (paramPath === 'lightKind' ||
+      paramPath === 'intensity' ||
+      paramPath === 'color' ||
+      paramPath === 'distance' ||
+      paramPath === 'decay' ||
+      paramPath === 'angle' ||
+      paramPath === 'penumbra' ||
+      paramPath === 'width' ||
+      paramPath === 'height' ||
+      paramPath === 'target' ||
+      paramPath === 'lookAt' ||
+      paramPath === 'tex')
+  ) {
+    return 'light';
   }
   // Mesh params — size / radius / segments / topology hints.
   if (
