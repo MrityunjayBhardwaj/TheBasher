@@ -268,8 +268,9 @@ function runCheck(dirs, opts) {
     // Surfaced because under ⊆ a dead entry is otherwise invisible forever, and
     // a baseline that only ever grows is the disease this script treats.
     console.log(
-      `\n${obsolete.length} baseline entr${obsolete.length === 1 ? 'y names a test' : 'ies name tests'} ` +
-        `that no longer exist — safe to prune now:`,
+      obsolete.length === 1
+        ? `\n1 baseline entry names a test that no longer exists — safe to prune now:`
+        : `\n${obsolete.length} baseline entries name tests that no longer exist — safe to prune now:`,
     );
     for (const k of obsolete) console.log(`  ? ${k}`);
   }
@@ -293,9 +294,18 @@ function main() {
   const opts = { baseline: DEFAULT_BASELINE, minTests: MIN_EXPECTED_TESTS };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--baseline') opts.baseline = argv[++i];
-    else if (argv[i] === '--min-tests') opts.minTests = Number(argv[++i]);
-    else positional.push(argv[i]);
+    if (argv[i] === '--baseline') {
+      opts.baseline = argv[++i];
+      if (!opts.baseline) fail('--baseline needs a path');
+    } else if (argv[i] === '--min-tests') {
+      // Validate rather than coerce: `Number('abc')` is NaN, and `total < NaN`
+      // is false, so a typo here would silently switch the vacuous-run guard
+      // OFF — the one failure mode this option exists to prevent.
+      opts.minTests = Number(argv[++i]);
+      if (!Number.isFinite(opts.minTests) || opts.minTests < 0) {
+        fail(`--min-tests needs a non-negative number, got "${argv[i]}"`);
+      }
+    } else positional.push(argv[i]);
   }
   const [cmd, ...dirs] = positional;
 
