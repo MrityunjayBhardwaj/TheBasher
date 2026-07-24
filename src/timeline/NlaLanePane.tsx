@@ -71,7 +71,8 @@ import { commitNla, commitNlaPushDown, commitNlaSetParam } from './nlaCommit';
 import { NlaAddStripPopover } from './NlaAddStripPopover';
 import { NlaStripInspector } from './NlaStripInspector';
 import { useSelectionStore } from '../app/stores/selectionStore';
-import { directChannelNodesForTarget } from '../app/nodeChannels';
+import { bareChannelNodesForSubject } from '../app/nodeChannels';
+import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import type { TimelineView } from './timelineView';
 
 // ── Strip drag record (the LayerTimeline BarDrag shape): everything the
@@ -162,9 +163,17 @@ export function NlaLanePane() {
   // enumerator the fold's bare seam consumes (directChannelNodesForTarget —
   // layeredChannels.ts:224 wraps this exact predicate). ≥1 enables the button.
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  // #386 — count the data half's bare channels too (bareChannelNodesForSubject), or a split
+  // light whose intensity is keyframed reports zero and the button stays dead while the
+  // viewport visibly animates. Same union the push-down mutator enumerates, so the offer and
+  // the accept cannot drift (V108).
+  const linkedDataId = useDagStore((s) =>
+    primaryNodeId ? linkedDataNodeId(s.state, primaryNodeId) : null,
+  );
   const bareChannelCount = useMemo(
-    () => (primaryNodeId ? directChannelNodesForTarget(nodes, primaryNodeId).length : 0),
-    [nodes, primaryNodeId],
+    () =>
+      primaryNodeId ? bareChannelNodesForSubject(nodes, primaryNodeId, linkedDataId).length : 0,
+    [nodes, primaryNodeId, linkedDataId],
   );
 
   const seconds = useTimeStore((s) => s.seconds);

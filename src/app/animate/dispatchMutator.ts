@@ -39,7 +39,8 @@ import {
   scanBasherControllers,
   type BasherControllerKind,
 } from '../../core/comfy/basherControllers';
-import { directChannelNodesForTarget } from '../nodeChannels';
+import { bareChannelNodesForSubject } from '../nodeChannels';
+import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { ActionChannelSchema, type ActionChannel } from '../../nodes/Action';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
@@ -944,7 +945,11 @@ export function dispatchPushDownToStrip(targetId: string): DispatchResult {
   // 1 — the target's bare channels: the SAME enumerator the fold's bare seam
   //     consumes (layeredChannels.ts:224 → directChannelValuesForTarget wraps
   //     this exact predicate) — one predicate, no drift.
-  const bare = directChannelNodesForTarget(base.nodes, targetId);
+  //     #386 — INCLUDING the data half's. Post-split a light's intensity/colour channel
+  //     targets its LightData while the user selects the Object, so an exact-id scan finds
+  //     nothing and push-down refuses on a visibly animated light. The Strip still targets
+  //     the OBJECT (a Strip carries one `target`, and V112 forbids a data-node strip lane).
+  const bare = bareChannelNodesForSubject(base.nodes, targetId, linkedDataNodeId(base, targetId));
   if (bare.length === 0) {
     return { ok: false, reason: `"${targetId}" has no bare keyframe channels to push down.` };
   }

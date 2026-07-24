@@ -29,7 +29,7 @@ import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { readBaseParam } from './readBaseParam';
-import { resolveDataParamOwner } from './resolveDataParamOwner';
+import { posingObjectId, resolveDataParamOwner } from './resolveDataParamOwner';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 
@@ -57,8 +57,20 @@ export function resolveEvaluatedParam(
   paramPath: string,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
+  /** INTERNAL — nodes already resolved on this reach chain, so the forward (Object→data)
+   *  and inverse (data→poser) reaches below cannot bounce between the two halves forever.
+   *  No external caller passes this. */
+  visited?: ReadonlySet<string>,
+  /** INTERNAL — when true, return null rather than a BASE value if nothing overrides this
+   *  param. The inverse reach uses it so that "the poser has no override either" stays null:
+   *  this function's null IS the contract meaning "no override, caller uses base", and
+   *  surfaces gate on it (NPanel's read-only-while-playing). Returning a base value up the
+   *  inverse reach would mark every un-animated data param as animated. */
+  overridesOnly?: boolean,
 ): { value: unknown } | null {
   const nodeId = requestedNodeId;
+  const seen = new Set(visited ?? []);
+  seen.add(requestedNodeId);
 
   // 1. Transient wins (the held edit — same precedence as render + transform read).
   const transient = useTransientEditStore.getState().get(nodeId, paramPath);
@@ -132,15 +144,28 @@ export function resolveEvaluatedParam(
     const ownerId = resolveDataParamOwner(state, requestedNodeId, paramRoot);
     if (ownerId !== null && ownerId !== requestedNodeId) {
       // Recurse first so the data node's OWN channels/transients win (the #398 overlay).
-      const viaOwner = resolveEvaluatedParam(state, ownerId, paramPath, ctx, cache);
+      const viaOwner = resolveEvaluatedParam(state, ownerId, paramPath, ctx, cache, seen);
       if (viaOwner !== null) return viaOwner;
       // #399 — the BASE-read twin of #398. When the data node has no overlay either,
       // reach through the split for its base VALUE instead of returning null: a caller
       // naming the Object (`n_box`) would otherwise fall back to `n_box.params.material`,
       // which the Object doesn't own, and surface the fallback grey. Read the base off
       // the true owner (the BoxData) so the base colour/size is the cube's real one.
+      if (overridesOnly) return null;
       const base = readBaseParam(state.nodes[ownerId], paramPath);
       return base === undefined ? null : { value: base };
+    }
+    // #386 — the INVERSE reach, and the exact mirror of the rationale above. Animation
+    // MANAGEMENT aggregates under the Object (V112), so a push-down mints ONE Strip
+    // targeting the OBJECT even for a channel that targeted the data half — a Strip carries
+    // one `target`. The render picks that up off the Object (a light's overlay is flat), but
+    // the inspector renders a data node's rows against the DATA id, so without this the
+    // viewport animates while the row reports the static base. `seen` stops the forward and
+    // inverse reaches from bouncing between the two halves.
+    const posingId = posingObjectId(state, requestedNodeId);
+    if (posingId !== null && !seen.has(posingId)) {
+      const viaPoser = resolveEvaluatedParam(state, posingId, paramPath, ctx, cache, seen, true);
+      if (viaPoser !== null) return viaPoser;
     }
     return null;
   }

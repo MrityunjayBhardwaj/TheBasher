@@ -55,6 +55,36 @@ export function directChannelNodesForTarget<T extends NodeLike & { id: string }>
 }
 
 /**
+ * The bare channels an ANIMATION-MANAGEMENT surface should treat as belonging to the
+ * scene object `subjectId`: its own, PLUS those of the data half it poses.
+ *
+ * #386 — the object↔data split puts a light's shading (and a mesh's size/material) on the
+ * data node, so a shading channel's `target` is the DATA id while the user selects, and
+ * every management surface addresses, the OBJECT. An exact-id enumeration therefore reports
+ * "nothing to manage" for an object that is visibly animating — silently, because zero bare
+ * channels is a legitimate answer.
+ *
+ * Aggregating here (rather than giving the data node its own lane) is the LOCKED surfacing
+ * rule (V112, design §3.5, Blender-grounded): a surface that EDITS a value separates the
+ * halves; one that MANAGES animation/drivers/lifetime AGGREGATES under the Object. A Strip
+ * carries ONE `target`, so the strip a push-down mints stays on the Object and the light's
+ * flat overlay applies the shading channel from there.
+ *
+ * `dataId` is the caller's already-resolved `linkedDataNodeId` (this module stays free of the
+ * DagState shape); pass null for a fused node. Order is Object-first, then data — the same
+ * order the render overlay concatenates them in.
+ */
+export function bareChannelNodesForSubject<T extends NodeLike & { id: string }>(
+  nodes: Readonly<Record<string, T>>,
+  subjectId: string,
+  dataId: string | null,
+): T[] {
+  const own = directChannelNodesForTarget(nodes, subjectId);
+  if (!dataId || dataId === subjectId) return own;
+  return [...own, ...directChannelNodesForTarget(nodes, dataId)];
+}
+
+/**
  * The NODE refs of every free-floating KeyframeChannel whose `params.target` is
  * in `ids` — the id-reference universe that lives OUTSIDE the edge graph ([[H136]]).
  * Unlike {@link directChannelNodesForTarget} this does NOT filter empty channels:

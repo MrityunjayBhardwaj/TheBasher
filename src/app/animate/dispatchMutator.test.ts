@@ -21,6 +21,7 @@ import {
   bareChannelToActionChannel,
 } from './dispatchMutator';
 import { layeredChannelValues } from '../layeredChannels';
+import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -592,6 +593,82 @@ describe('5E — dispatchPushDownToStrip (bare channels → Action + Strip, ONE 
     if (!res.ok) expect(res.reason).toContain('no bare keyframe channels');
     expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
     expect(useDagStore.getState().undoStack).toHaveLength(0);
+  });
+
+  // #386 — the object↔data split moved a light's shading onto its LightData, so the
+  // channel a director authors from the Light Studio panel targets the DATA half while the
+  // selection (and every management surface) addresses the OBJECT. An exact-id enumeration
+  // reports zero bare channels and push-down refuses on a visibly animated light — silently,
+  // because "no bare channels" is a legitimate answer. The Strip still targets the OBJECT:
+  // a Strip carries ONE target, and V112 forbids giving a data node its own strip lane.
+  it('SPLIT LIGHT: pushes down a shading channel that targets the DATA half; the Strip stays on the Object', () => {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt_data',
+      nodeType: 'LightData',
+      params: { lightKind: 'Point', intensity: 5 },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt',
+      nodeType: 'Object',
+      params: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'lt_data', socket: 'out' },
+      to: { node: 'lt', socket: 'data' },
+    }).next;
+    // The channel a Light Studio keyframe authors: on the LIGHTDATA, not the Object.
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'lt_intensity_channel',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'intensity',
+        target: 'lt_data',
+        paramPath: 'intensity',
+        keyframes: [
+          { time: 0, value: 5, easing: 'linear' },
+          { time: 2, value: 40, easing: 'linear' },
+        ],
+      },
+    }).next;
+    useDagStore.getState().hydrate(s);
+
+    // Selecting the OBJECT — the only thing a director can select — must find it.
+    const res = dispatchPushDownToStrip('lt');
+    expect(res).toEqual({ ok: true });
+
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodes['lt_intensity_channel'], 'the data half bare channel is consumed').toBeUndefined();
+    const action = nodes['nla_action_1'];
+    const channels = (action.params as { channels: Array<{ paramPath: string }> }).channels;
+    expect(channels).toHaveLength(1);
+    expect(channels[0]).toMatchObject({ valueType: 'number', paramPath: 'intensity' });
+    // The Strip targets the OBJECT (V112 — animation aggregates under the object), and the
+    // light's FLAT overlay reads `value.intensity`, so it drives from there.
+    expect(nodes['nla_strip_1'].params).toMatchObject({ target: 'lt', start: 0 });
+
+    // RENDER side: the strip-synthetic intensity is served on the OBJECT, which is where
+    // the light's flat overlay (useLightShadingChannels → useLayeredChannels(objectId))
+    // picks it up. It samples the same 5 → 40 the consumed bare channel did.
+    const objFold = layeredChannelValues(nodes, 'lt').filter((v) => v.paramPath === 'intensity');
+    expect(objFold).toHaveLength(1);
+    expect([objFold[0].sample(0), objFold[0].sample(2)]).toEqual([5, 40]);
+
+    // READ side (H40): the inspector renders a LightData's rows against the DATA id, and
+    // nothing targets the data node any more — so the read MUST reach up to the poser or it
+    // reports the static base 5 while the viewport animates to 40. The inverse reach in
+    // resolveEvaluatedParam is what closes that; assert the read agrees with the render at
+    // BOTH ends of the ramp (one sample would pass on any value that merely differs).
+    const readAt = (t: number) =>
+      resolveEvaluatedParam(useDagStore.getState().state, 'lt_data', 'intensity', {
+        time: { frame: Math.round(t * 60), seconds: t, normalized: 0 },
+      })?.value;
+    expect(readAt(0), 'read == render at t=0').toBe(5);
+    expect(readAt(2), 'read == render at t=2').toBe(40);
   });
 
   it('unknown target → {ok:false} without mutation', () => {
