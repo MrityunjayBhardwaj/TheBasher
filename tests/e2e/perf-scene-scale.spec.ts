@@ -10,7 +10,7 @@
 //        - CHURN: an edit (setParam) per frame, forcing SceneFromDAG to
 //          re-walk + reconcile every frame (CPU-bound: eval + React).
 //
-// The seam `__basher_perf_stress({ meshes, segments })` seeds N SphereMesh
+// The seam `__basher_perf_stress({ meshes, segments })` seeds N split-sphere
 // nodes; `window.__basher_perf` drives the three-budget collector.
 //
 // IMPORTANT measurement caveats:

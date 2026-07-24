@@ -19,16 +19,27 @@
 // source, then mirrored = 6 × source) — proving the substrate composes ACROSS
 // modifier types, not just Array-of-Array. The recursive registry build is the risky bit.
 //
-// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
-// BoxMesh — a split Object as a modifier target is the undecided #377 path. The
-// source's vert count is whatever the sphere builds; the test asserts the mirror
-// RATIO against a runtime-derived passthrough, so it never names a box constant.
+// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
+// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
+// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
+// the sphere split, so these cases failed rather than testing anything. #377 decided it:
+// the stack attaches to the OBJECT and evaluates over its data — `modifierSource`
+// (src/app/modifierGeometry.ts:120) reaches through the `data` socket for geometry and
+// material while inheriting the Object's TRS — so `object.out → modifier.target` is the
+// shape a user actually has.
+//
+// It stays a SPHERE rather than moving to the split cube because the render-side check
+// locates the mirrored mesh by a vertex COUNT that has to be unique in a starter scene
+// carrying thousands of verts: ~425 × 2 is distinctive, a cube's 24 × 2 is not (H180 —
+// the measurement instrument is part of the fixture). The assertions remain RATIOS
+// against a runtime-derived passthrough, so they never name a primitive constant.
 //
 // REF: src/nodes/MirrorModifier.ts; src/app/modifierGeometry.ts;
 //      src/app/geometryRegistry.ts (build 'mirror' + reverseWinding);
-//      src/viewport/SceneFromDAG.tsx (ModifiedMeshR); vyapti V58/V37; H40/H111.
+//      src/viewport/SceneFromDAG.tsx (ModifiedMeshR); vyapti V58/V37; H40/H111; #462.
 
 import { expect, test } from './_fixtures';
+import { splitSphereOps } from './_splitSphere';
 
 interface Op {
   type: string;
@@ -55,6 +66,11 @@ interface ThreeObjLike {
 
 const MBOX = 'p209m_box';
 const MMIR = 'p209m_mirror';
+
+/** The modifier's source: a split sphere at x=4, well clear of the starter scene. The
+ *  Object (`MBOX`) is what the modifier's `target` socket takes; the SphereData behind it
+ *  carries the geometry the modifier reshapes. */
+const sphereSource = () => splitSphereOps({ objectId: MBOX, position: [4, 0, 0] });
 
 /** Every rendered Mesh's position-attribute vertex count, in the live three scene. */
 function meshVertexCounts(page: import('@playwright/test').Page): Promise<number[]> {
@@ -131,18 +147,13 @@ test('#209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; re
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir }) => {
+    ({ box, mir, ops }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [4, 0, 0] },
-          },
+          ...(ops as Op[]),
           // offset 2 → the reflected half lands across x=2, separated from the source
           // (a geometry-centered primitive mirrored at the origin would just overlap).
           {
@@ -166,7 +177,7 @@ test('#209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; re
         'sphere → mirror → scene',
       );
     },
-    { box: MBOX, mir: MMIR },
+    { box: MBOX, mir: MMIR, ops: sphereSource() },
   );
 
   // Side B (resolver): the registry-built mirror = source + reflection = 2 × source.
@@ -208,18 +219,13 @@ test('#209 — muting the Mirror collapses the output back to the source (falsif
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir }) => {
+    ({ box, mir, ops }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [4, 0, 0] },
-          },
+          ...(ops as Op[]),
           {
             type: 'addNode',
             nodeId: mir,
@@ -241,7 +247,7 @@ test('#209 — muting the Mirror collapses the output back to the source (falsif
         'sphere → mirror → scene',
       );
     },
-    { box: MBOX, mir: MMIR },
+    { box: MBOX, mir: MMIR, ops: sphereSource() },
   );
 
   // Active → 2 × source. Derive the source passthrough by muting.
@@ -260,18 +266,13 @@ test('#209 — a MIXED chain Sphere → Array(3) → Mirror composes (3× → 6�
 }) => {
   const ARR = 'p209m_arr';
   await page.evaluate(
-    ({ box, arr, mir }) => {
+    ({ box, arr, mir, ops }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [4, 0, 0] },
-          },
+          ...(ops as Op[]),
           {
             type: 'addNode',
             nodeId: arr,
@@ -304,7 +305,7 @@ test('#209 — a MIXED chain Sphere → Array(3) → Mirror composes (3× → 6�
         'sphere → array → mirror → scene',
       );
     },
-    { box: MBOX, arr: ARR, mir: MMIR },
+    { box: MBOX, arr: ARR, mir: MMIR, ops: sphereSource() },
   );
 
   // Side B: array (3 × source) then mirror (× 2) at the top of the chain.

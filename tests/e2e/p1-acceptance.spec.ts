@@ -10,6 +10,7 @@
 
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
+import { splitSphereOps } from './_splitSphere';
 
 /**
  * Open the bundled-assets popover (P6 W2.5 replacement for the
@@ -230,45 +231,52 @@ test('P1#3 ScatterNode produces deterministic placement; setParam(density) chang
   // Determinism is tested bit-exact in vitest (src/nodes/nodes.test.ts).
   // The E2E layer only checks that the node type is registered and the
   // store applies setParam through the cache invalidation chain.
-  const result = await page.evaluate(() => {
-    const w = window as unknown as DagWindow;
-    w.__basher_dag!.getState().dispatchAtomic(
-      [
-        {
-          // #365 Slice 2: the scattered asset is a fused SphereMesh, not the retired
-          // fused BoxMesh — a split Object as a Scatter source is the undecided #377
-          // path. This test only checks Scatter determinism + setParam, which is
-          // geometry-agnostic.
-          type: 'addNode',
-          nodeId: 'p1_box',
-          nodeType: 'SphereMesh',
-          params: { radius: 0.15 },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'p1_scat',
-          nodeType: 'Scatter',
-          params: { density: 20, seed: 42, bounds: [3, 0, 3] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p1_box', socket: 'out' },
-          to: { node: 'p1_scat', socket: 'assets' },
-        },
-      ],
-      'user',
-      'p1#3 add scatter',
-    );
-    const before = (w.__basher_dag!.getState().state.nodes['p1_scat'].params as { density: number })
-      .density;
-    w.__basher_dag!.getState().dispatch(
-      { type: 'setParam', nodeId: 'p1_scat', paramPath: 'density', value: 50 },
-      'user',
-    );
-    const after = (w.__basher_dag!.getState().state.nodes['p1_scat'].params as { density: number })
-      .density;
-    return { before, after };
-  });
+  // #462: the scattered asset is a SPLIT sphere — an Object over a SphereData, what
+  // Add ▸ Sphere actually builds. It was a fused `SphereMesh` (put there by #365 Slice 2,
+  // when a split Object as a Scatter source was the undecided #377 path); that node's
+  // `evaluate` has thrown since the sphere split. This case stayed GREEN only because
+  // nothing here ever evaluates the asset — a green spec is no evidence that a retirement
+  // sweep reached it, which is why the sweep goes by grep and not by suite colour.
+  // Scatter's `assets` socket takes `SceneObject`, which is what an Object outputs. The
+  // assertions below are unchanged: Scatter determinism + setParam, both geometry-agnostic.
+  //
+  // The ops are built on the NODE side and passed in — `splitSphereOps` does not exist in
+  // page scope.
+  const result = await page.evaluate(
+    (ops) => {
+      const w = window as unknown as DagWindow;
+      w.__basher_dag!.getState().dispatchAtomic(
+        [
+          ...(ops as { type: string; [k: string]: unknown }[]),
+          {
+            type: 'addNode',
+            nodeId: 'p1_scat',
+            nodeType: 'Scatter',
+            params: { density: 20, seed: 42, bounds: [3, 0, 3] },
+          },
+          {
+            type: 'connect',
+            from: { node: 'p1_box', socket: 'out' },
+            to: { node: 'p1_scat', socket: 'assets' },
+          },
+        ],
+        'user',
+        'p1#3 add scatter',
+      );
+      const before = (
+        w.__basher_dag!.getState().state.nodes['p1_scat'].params as { density: number }
+      ).density;
+      w.__basher_dag!.getState().dispatch(
+        { type: 'setParam', nodeId: 'p1_scat', paramPath: 'density', value: 50 },
+        'user',
+      );
+      const after = (
+        w.__basher_dag!.getState().state.nodes['p1_scat'].params as { density: number }
+      ).density;
+      return { before, after };
+    },
+    splitSphereOps({ objectId: 'p1_box', radius: 0.15 }),
+  );
   expect(result.before).toBe(20);
   expect(result.after).toBe(50);
 });
