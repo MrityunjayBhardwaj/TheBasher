@@ -1,4 +1,5 @@
 import { test, expect } from './_fixtures';
+import { seedCubeObjectId } from './_seedNodes';
 
 interface BasherWindow {
   __basher_dag: {
@@ -53,16 +54,16 @@ test.beforeEach(async ({ page }) => {
 test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation channel', async ({
   page,
 }) => {
-  const observed = await page.evaluate(() => {
+  // The seed cube's Object — the channel below targets `position`, a transform param,
+  // which the Object owns after the object↔data split. Addressed by what it POSES: the
+  // default project now holds several `Object`s, so "the first one" is not the cube (#461).
+  const boxId = await seedCubeObjectId(page);
+
+  const observed = await page.evaluate((boxId) => {
     const w = window as unknown as BasherWindow;
     // H10/H19: never cache state across dispatches.
     const dispatch = (op: unknown) => w.__basher_dag.getState().dispatch(op);
     const nodes = () => w.__basher_dag.getState().state.nodes;
-
-    // The seed cube's Object — the channel below targets `position`, a transform
-    // param, which the Object owns after the object↔data split.
-    const boxId = Object.entries(nodes()).find(([, n]) => n.type === 'Object')?.[0];
-    if (!boxId) throw new Error('no Object');
 
     if (!Object.values(nodes()).some((n) => n.type === 'TimeSource')) {
       dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
@@ -101,7 +102,7 @@ test('OBSERVE: cube position at t=0 vs t=1 differs after wiring an animation cha
       time: { frame: 60, seconds: 1, normalized: 0.1 },
     });
     return { target0: t0?.position, target1: t1?.position };
-  });
+  }, boxId);
 
   console.log('OBSERVED:', JSON.stringify(observed));
   expect(observed.target0).toEqual([0, 0, 0]);

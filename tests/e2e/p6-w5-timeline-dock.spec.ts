@@ -13,6 +13,7 @@
 // D-W5-1..4 (memory/project_p6_w5_context.md); B11 W5 section-inventory.
 
 import { expect, test } from './_fixtures';
+import { seedCubeObjectId } from './_seedNodes';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -148,12 +149,13 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
 }) => {
   // Seed a free-floating direct channel (V57) so the Dopesheet has a row to
   // click — targets the box by dagId, no AnimationLayer wrapper.
-  await page.evaluate(() => {
+  // The seed cube's Object — the pose half of the object↔data split, addressed by what
+  // it POSES: several `Object`s live in the default project now, so the ordinal picker
+  // this used to use would land on the light (#461).
+  const seedBoxId = await seedCubeObjectId(page);
+  await page.evaluate((boxId) => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
-    // The seed cube's Object — the pose half of the object↔data split.
-    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Object')?.[0];
-    if (!boxId) throw new Error('seed box Object not found');
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
     }
@@ -173,7 +175,7 @@ test('P6.W5#5 channel-row click in Dopesheet does NOT auto-switch tab (D-W5-3)',
         ],
       },
     });
-  });
+  }, seedBoxId);
   await page.getByTestId('floating-toolbar-timeline').click();
   await expect(page.getByTestId('timeline-tab-dopesheet')).toHaveAttribute('data-active', 'true');
   // P6 W9: select the channel via the timelineSelection seam (the
