@@ -17,6 +17,7 @@
 //   per-island [0,0,1,1] bounds assertion FAILS (synthetic bounds are sub-regions).
 
 import { test, expect } from './_fixtures';
+import { splitSphereOps } from './_splitSphere';
 
 const ASSET_REF = 'assets/two-material-textured-quad.gltf';
 const FIXTURE_URL = '/assets/two-material-textured-quad.gltf';
@@ -87,29 +88,37 @@ test.describe('v0.6 #3 W1 — real UV display', () => {
     expect(maxV).toBeCloseTo(1, 5);
   });
 
-  test('SphereMesh → exactly 1 connected real island', async ({ page }) => {
+  // #462: the source is a SPLIT sphere (Object → SphereData). It used to be a fused
+  // `SphereMesh`, whose `evaluate` has thrown since the sphere split (C1 Slice 4) — so
+  // this asserted nothing and simply failed. The reach under test is unchanged and is
+  // the POINT of the case: `__basher_uv_islands` is asked for the OBJECT, exactly as the
+  // cube case above asks for `n_box`, and must resolve the geometry through `data`.
+  //
+  // Still non-vacuous against the cube case it sits beside: a UV sphere is ONE island
+  // (the equirectangular wrap is connected), a BoxGeometry is SIX. Neither count is
+  // reachable from the other, nor from the 'none'/0 failure value.
+  test('split sphere (Object → SphereData) → exactly 1 connected real island', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
       return typeof w.__basher_uv_islands === 'function';
     });
 
-    await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      const dag = w.__basher_dag.getState();
-      dag.dispatchAtomic(
-        [
-          {
-            type: 'addNode',
-            nodeId: 'n_uvsphere',
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, widthSegments: 16, heightSegments: 12 },
-          },
-        ],
-        'user',
-        'p06-3 sphere',
-      );
-    });
+    await page.evaluate(
+      ({ ops }) => {
+        const w = window as unknown as BasherWindow;
+        const dag = w.__basher_dag.getState();
+        dag.dispatchAtomic(ops as Op[], 'user', 'p06-3 split sphere');
+      },
+      {
+        ops: splitSphereOps({
+          objectId: 'n_uvsphere',
+          radius: 0.5,
+          widthSegments: 16,
+          heightSegments: 12,
+        }),
+      },
+    );
 
     const uv = await page.evaluate(() => {
       const w = window as unknown as BasherWindow;
