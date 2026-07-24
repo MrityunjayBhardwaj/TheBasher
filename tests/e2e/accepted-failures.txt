@@ -29,9 +29,12 @@
 #   The accepted set is flake-variable: an accepted test sometimes passes. Seed
 #   from a single run in which one of them happened to pass and it is missing
 #   here, so the NEXT run reports it as novel and reds the build for no reason.
-#   These entries are the union observed across three real linux runs
-#   (30093228989 @ 51f6289, 30108254990 @ 9b393e7, 30101452154 @ PR #464),
-#   which independently reproduces the accepted set recorded by hand.
+#   These entries are the union observed across four real linux runs
+#   (30093228989 @ 51f6289, 30108254990 @ 9b393e7, 30101452154 @ PR #464,
+#   30119621205 @ PR #465), which independently reproduces the accepted set
+#   recorded by hand. How real is the effect? In the #465 run, FOUR of the ten
+#   below passed. Seeded from that run alone this file would hold six entries
+#   and the next build would have gone red on the other four.
 
 # ── Accepted headless-linux rendering/environment debt (10) ────────────────────
 # All ten pass on darwin locally. They fail on the CI runner's software GL
@@ -46,27 +49,3 @@ p233-leaf-pick-select.spec.ts › #233 single click selects the GltfChild leaf; 
 p6-w10-ui-review.spec.ts › c-1: zoom readout reflects a camera-zoom change (observed, not inferred)
 p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
 spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)
-
-# ── Orphaned SphereMesh fixtures — REMOVE THIS BLOCK WHEN #462 LANDS (16) ──────
-# These build a fused SphereMesh, whose evaluate() has been a throwing sentinel
-# since the sphere was split in #384. They are genuinely broken, not accepted
-# debt — they are listed only so this gate can be introduced against main as it
-# actually is today. PR #465 retargets all sixteen; once it merges, delete this
-# block. The check will flag them for you (they will report as passed, or as
-# naming tests that no longer exist).
-inspector-enum-param.spec.ts › the inspector enum dropdown authors a string-enum param (axis) through to the live render
-p06-3-uv-display.spec.ts › v0.6 #3 W1 — real UV display › SphereMesh → exactly 1 connected real island
-p151-apply-transform.spec.ts › p151 Wave 2 — Apply a primitive end-to-end › H45 isolation: bake one of two same-size Spheres → the other is unchanged
-p151-apply-transform.spec.ts › p151 Wave 2 — Apply a primitive end-to-end › SC-1 + SC-2: Sphere scale=[2,1,1] Apply → BakedMesh identity, bounds 2×1×1, rendered==resolver
-p151-apply-transform.spec.ts › p151 Wave 2 — Apply a primitive end-to-end › SC-3: reload → the BakedMesh still renders, bounds identical
-p151-apply-transform.spec.ts › p151 Wave 2 — Apply a primitive end-to-end › SC-5: Apply → undo → the original SphereMesh (id+type+scale+edges) is restored
-p151-apply-transform.spec.ts › p151 Wave 2 — Apply a primitive end-to-end › SC-8: a keyframed-position Sphere → Object ▸ Apply submenu disabled + message
-p209-array-modifier.spec.ts › #209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array — recursive build)
-p209-array-modifier.spec.ts › #209 — muting the modifier collapses the output back to the source (falsification)
-p209-array-modifier.spec.ts › #209 — Sphere → ArrayModifier → Scene renders the MERGED array; render verts == resolver verts (H40)
-p209-gizmo-on-modifier.spec.ts › selecting a modifier mounts the gizmo at the BASE transform; a grab moves the base (and the result)
-p209-mirror-modifier.spec.ts › #209 — a MIXED chain Sphere → Array(3) → Mirror composes (3× → 6× — cross-modifier recursive build)
-p209-mirror-modifier.spec.ts › #209 — muting the Mirror collapses the output back to the source (falsification)
-p209-mirror-modifier.spec.ts › #209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; render verts == resolver verts (H40)
-p26-acceptance.spec.ts › P2.6#11 UV editor status reflects SphereMesh selection
-p26-acceptance.spec.ts › P2.6#8 Add menu UV Sphere produces a SphereMesh node
