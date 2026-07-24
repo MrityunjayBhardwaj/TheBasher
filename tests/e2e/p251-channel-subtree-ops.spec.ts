@@ -43,8 +43,12 @@ function channels(page: Page) {
 function boxes(page: Page) {
   return page.evaluate(() => {
     const st = (window as unknown as W).__basher_dag!.getState().state;
-    // The Object half of each split cube — that is the scene child a delete or
-    // duplicate acts on, and what the position channels target.
+    // Every `Object` in the project — the pose half is the scene child a delete or
+    // duplicate acts on, and what the position channels target. NOTE this is not
+    // cube-only: the default project's light is an `Object` too, and the camera will
+    // be one after its split (#461). Safe here because callers only ever ask for
+    // membership or a delta, both of which are unaffected by a constant extra entry.
+    // Anything needing "the seed cube" specifically must use _seedNodes.ts instead.
     return Object.keys(st.nodes).filter((id) => st.nodes[id].type === 'Object');
   });
 }
