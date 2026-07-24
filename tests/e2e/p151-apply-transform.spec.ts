@@ -5,26 +5,30 @@
 // Every assertion observes the REAL state (rendered three.js bounds, real node type)
 // — not inference.
 //
-// #365 Slice 2: the Apply MECHANISM is exercised on a fused SphereMesh, not the
-// retired fused BoxMesh. A radius-0.5 sphere has a 1×1×1 bbox, so scale=[2,1,1] bakes
-// to bounds 2×1×1 — the numeric assertions carry over from the retired box verbatim.
+// #462: the Apply MECHANISM is exercised on a SPLIT sphere — an Object posed over a
+// SphereData. It was a fused `SphereMesh` (retargeted there by #365 Slice 2, when a split
+// Object as an Apply source was the still-undecided #377 path); that node's `evaluate` has
+// thrown since the sphere split, so every case here failed rather than testing anything.
+// A radius-0.5 sphere still has a 1×1×1 bbox, so scale=[2,1,1] still bakes to bounds
+// 2×1×1 — the numeric assertions carry over verbatim, from the retired box through the
+// retired fused sphere to here.
 //
-// #376: a split cube (an Object posed over a BoxData) now bakes too, through the SAME
-// mechanism — the gate admits `Object` alongside `SphereMesh`, and the pair retires
-// together. The split-cube case below asserts the SAME numbers as SC-1, so it pins the
-// mechanism rather than merely that the call stopped failing.
+// The two split cases are NOT redundant: this file's sphere pins the mechanism over a
+// SphereData, the #376 case below pins it over a BoxData, and both assert the same
+// numbers — so a data kind that bakes wrongly shows up as a difference, not as a gap.
 //
 // SC-1  Sphere scale=[2,1,1] → BakedMesh, transform.scale==[1,1,1], world bounds 2×1×1.
 // SC-2  boundary-pair (H40): rendered world bounds == resolver geometry bounds.
 // SC-3  reload → BakedMesh still renders, bounds identical.
-// SC-5  Apply → Cmd+Z → original SphereMesh id+type+scale+edges restored.
+// SC-5  Apply → Cmd+Z → the original Object+SphereData pair (id+type+scale+edges) restored.
 // SC-8  keyframe position → Apply menu disabled + message.
 // H45   two same-size Spheres, bake one → the other unchanged.
 // #376  a split cube (Object) bakes → BakedMesh identity, bounds 2×1×1, the PAIR retired.
 //
-// REF: PLAN.md Wave 2 Task 6; hetvabhasa H40/H45; vyapti V1/V20; CONTEXT D-04; #376.
+// REF: PLAN.md Wave 2 Task 6; hetvabhasa H40/H45; vyapti V1/V20; CONTEXT D-04; #376; #462.
 
 import { test, expect } from './_fixtures';
+import { splitSphereDataId, splitSphereOps } from './_splitSphere';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -104,30 +108,35 @@ async function applyTransform(page: import('@playwright/test').Page, id: string,
   );
 }
 
-/** Inject a fused SphereMesh (radius 0.5 → 1×1×1 bbox) wired into the scene and
- *  wait for it to render. The Apply MECHANISM runs on this working producer; the split
- *  cube bakes through the SAME mechanism and is covered by its own case below (#376).
- *  Returns the node id. */
+/** Inject a SPLIT sphere (an Object posed over a SphereData; radius 0.5 → 1×1×1 bbox)
+ *  wired into the scene, and wait for it to render. `id` is the OBJECT — the half a user
+ *  selects, poses and Applies.
+ *
+ *  #462: this used to build a fused `SphereMesh`, whose `evaluate` has thrown since the
+ *  sphere split (C1 Slice 4) — every case below simply failed. The numbers are unchanged:
+ *  a radius-0.5 sphere still has a 1×1×1 bounding box, so scale=[2,1,1] still bakes to
+ *  world bounds 2×1×1.
+ *
+ *  Returns nothing; the caller already holds the Object id, and the SphereData id is
+ *  `splitSphereDataId(id)`. */
 async function seedApplySphere(page: import('@playwright/test').Page, id: string) {
-  await page.evaluate((nodeId) => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag!.getState();
-    const nodes = dag.state.nodes;
-    const sceneId = Object.entries(nodes).find(([, n]) => n.type === 'Scene')![0];
-    dag.dispatchAtomic([
-      {
-        type: 'addNode',
-        nodeId,
-        nodeType: 'SphereMesh',
-        params: { radius: 0.5, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      },
-      {
-        type: 'connect',
-        from: { node: nodeId, socket: 'out' },
-        to: { node: sceneId, socket: 'children' },
-      },
-    ]);
-  }, id);
+  await page.evaluate(
+    ({ nodeId, ops }) => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag!.getState();
+      const nodes = dag.state.nodes;
+      const sceneId = Object.entries(nodes).find(([, n]) => n.type === 'Scene')![0];
+      dag.dispatchAtomic([
+        ...(ops as unknown[]),
+        {
+          type: 'connect',
+          from: { node: nodeId, socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        },
+      ]);
+    },
+    { nodeId: id, ops: splitSphereOps({ objectId: id, radius: 0.5 }) },
+  );
   await page.waitForFunction(
     (nodeId) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(nodeId) !== null,
     id,
@@ -235,7 +244,7 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     }
   });
 
-  test('SC-5: Apply → undo → the original SphereMesh (id+type+scale+edges) is restored', async ({
+  test('SC-5: Apply → undo → the original split sphere (id+type+scale+data edge) is restored', async ({
     page,
   }) => {
     await seedApplySphere(page, 'n_apply');
@@ -250,21 +259,37 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
 
     await page.evaluate(() => (window as unknown as BasherWindow).__basher_dag!.getState().undo());
 
-    const restored = await page.evaluate(() => {
+    // #462: the undo must restore the WHOLE PAIR. Applying a split Object retires its
+    // data node too (the #376 case below asserts `dataGone`), so an undo that put back
+    // only the Object would leave a posed Object over nothing — rendering an Empty, with
+    // no assertion here able to see it. Check the data node and the `data` edge as well.
+    const dataId = splitSphereDataId('n_apply');
+    const restored = await page.evaluate((dId) => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      const sphere = nodes['n_apply'];
+      const sphere = nodes['n_apply'] as
+        | {
+            type: string;
+            params: Record<string, unknown>;
+            inputs?: Record<string, { node: string }>;
+          }
+        | undefined;
       const hasBaked = Object.values(nodes).some((n) => n.type === 'BakedMesh');
       return {
         sphere: sphere ? { type: sphere.type, scale: sphere.params.scale } : null,
+        dataType: nodes[dId]?.type ?? null,
+        dataEdge: sphere?.inputs?.data?.node ?? null,
         hasBaked,
       };
-    });
+    }, dataId);
     expect(restored.sphere).not.toBeNull();
-    expect(restored.sphere!.type).toBe('SphereMesh');
+    expect(restored.sphere!.type).toBe('Object');
     expect(restored.sphere!.scale).toEqual([2, 1, 1]);
+    // The data half came back too, still wired into the Object's `data` socket.
+    expect(restored.dataType).toBe('SphereData');
+    expect(restored.dataEdge).toBe(dataId);
     // The BakedMesh is gone (the addNode inverse removed it).
     expect(restored.hasBaked).toBe(false);
-    // The original edge is restored — the Sphere renders again.
+    // The original edge is restored — the sphere renders again.
     await page.waitForFunction(
       () => (window as unknown as BasherWindow).__basher_mesh_world_bounds!('n_apply') !== null,
     );

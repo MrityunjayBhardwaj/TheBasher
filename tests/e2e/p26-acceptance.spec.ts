@@ -5,7 +5,7 @@
 // window handles. Pixel-diff would re-fail H13 on every layout shift.
 
 import { expect, test } from './_fixtures';
-import { seedCubeObjectId } from './_seedNodes';
+import { objectPosing, seedCubeObjectId } from './_seedNodes';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -224,21 +224,53 @@ test('P2.6#7 Shift+A opens Add menu; clicking Cube adds an Object+BoxData pair',
 });
 
 // ---------------------------------------------------------------------------
-// P2.6#8 — Add menu picks UV Sphere → SphereMesh node lands in the DAG.
+// P2.6#8 — Add menu picks UV Sphere → an Object+SphereData PAIR lands in the DAG.
 // ---------------------------------------------------------------------------
 
-test('P2.6#8 Add menu UV Sphere produces a SphereMesh node', async ({ page }) => {
+// #462: the claim moved with the product. Add ▸ Sphere stopped producing a fused
+// `SphereMesh` at the sphere split (#384 C1 Slice 3) — it builds the object↔data pair,
+// exactly as Add ▸ Cube does above. The old assertion ("some node is a SphereMesh") was
+// therefore not merely testing the wrong shape: nothing in the DAG could satisfy it.
+//
+// Asserted as a DELTA (+2 nodes, +1 SphereData) rather than as a bare presence check,
+// so it cannot pass on the seed scene alone — the seed project has no sphere at all,
+// which is exactly why a presence check would look convincing and prove nothing.
+test('P2.6#8 Add menu UV Sphere adds an Object+SphereData pair', async ({ page }) => {
+  const before = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    return {
+      count: Object.keys(nodes).length,
+      objects: Object.values(nodes).filter((n) => n.type === 'Object').length,
+      spheres: Object.values(nodes).filter((n) => n.type === 'SphereData').length,
+    };
+  });
   await page.locator('body').click({ position: { x: 5, y: 5 } });
   await page.keyboard.press('Shift+A');
   await page.getByTestId('add-menu-mesh').hover();
   await page.getByTestId('add-menu-item-Sphere').click();
-  const hasSphere = await page.evaluate(() => {
+
+  const after = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    return Object.values(w.__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'SphereMesh',
-    );
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    return {
+      count: Object.keys(nodes).length,
+      objects: Object.values(nodes).filter((n) => n.type === 'Object').length,
+      spheres: Object.values(nodes).filter((n) => n.type === 'SphereData').length,
+      // The pair is WIRED — a SphereData nobody points at renders nothing.
+      wired: Object.values(nodes).some(
+        (n) =>
+          n.type === 'Object' &&
+          nodes[(n as { inputs?: { data?: { node: string } } }).inputs?.data?.node ?? '']?.type ===
+            'SphereData',
+      ),
+    };
   });
-  expect(hasSphere).toBe(true);
+  // One menu click adds TWO nodes: the Object (the pose) and the SphereData it points at.
+  expect(after.count).toBe(before.count + 2);
+  expect(after.objects).toBe(before.objects + 1);
+  expect(after.spheres).toBe(before.spheres + 1);
+  expect(after.wired).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -299,24 +331,45 @@ test('P2.6#10 toolbar wireframe button flips viewportStore.shading to wireframe'
 });
 
 // ---------------------------------------------------------------------------
-// P2.6#11 — UV editor renders SphereMesh equirectangular grid.
+// P2.6#11 — UV editor reads a sphere's real UV layout.
 // ---------------------------------------------------------------------------
 
-test('P2.6#11 UV editor status reflects SphereMesh selection', async ({ page }) => {
-  // Add a sphere first.
+// #462: Add ▸ Sphere builds an Object over a SphereData, so the status line names the
+// selected node's type — `Object`, not the retired `SphereMesh`. The claim this case
+// exists for survives the rename, and the SPHERE-ness has to be asserted somewhere or
+// the case collapses into "a mesh is selected", which P2.6#4 already covers on the cube.
+//
+// The sphere-specific signal is the ISLAND COUNT: a UV sphere's equirectangular wrap is
+// ONE connected island, where the cube P2.6#4 asserts on is SIX. That number is
+// unreachable from the cube's, from the 'no UV layout' failure state, and from the old
+// synthetic unfold — so it discriminates in every direction that matters.
+test('P2.6#11 UV editor status reflects the added sphere (1 island, read-only)', async ({
+  page,
+}) => {
+  // Add a sphere first — an Object + SphereData pair (see P2.6#8).
   await page.locator('body').click({ position: { x: 5, y: 5 } });
   await page.keyboard.press('Shift+A');
   await page.getByTestId('add-menu-mesh').hover();
   await page.getByTestId('add-menu-item-Sphere').click();
 
+  // Select its Object by WHAT IT POSES — Add leaves selection on the new node, but say
+  // so explicitly rather than relying on it, and never by ordinal (#461).
+  const sphereId = await objectPosing(page, 'SphereData');
+  await page.evaluate((nodeId) => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_selection!.getState().select(nodeId);
+  }, sphereId);
+
   // Switch to UV space.
   await page.getByTestId('toolbar-space-uv').click();
-  await expect(page.getByTestId('uv-editor-status')).toContainText('SphereMesh');
-  // v0.6 #3 reworked the UV editor into a read-only island/tri readout (the
-  // old "equirectangular" projection label is gone). Assert the new contract:
-  // the status reflects the selected mesh's UV islands as a read-only display.
-  await expect(page.getByTestId('uv-editor-status')).toContainText('island');
-  await expect(page.getByTestId('uv-editor-status')).toContainText('read-only');
+  const status = page.getByTestId('uv-editor-status');
+  await expect(status).toContainText(sphereId);
+  await expect(status).toContainText('Object');
+  // v0.6 #3 reworked the UV editor into a read-only island/tri readout (the old
+  // "equirectangular" projection label is gone). The sphere's real layout is ONE island
+  // — the singular form, which the 6-island cube cannot produce.
+  await expect(status).toContainText('1 island ');
+  await expect(status).toContainText('read-only');
 });
 
 // ---------------------------------------------------------------------------

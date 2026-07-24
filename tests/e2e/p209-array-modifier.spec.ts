@@ -16,10 +16,20 @@
 // is primitive-agnostic (the source's own vert count is derived at runtime, never
 // hardcoded).
 //
-// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
-// BoxMesh — a split Object as a modifier target is the undecided #377 path. The
-// source's vert count is whatever the sphere builds; the test asserts the array
-// RATIO against a runtime-derived passthrough, so it never names a box constant.
+// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
+// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
+// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
+// the sphere split, so these cases failed rather than testing anything. #377 decided it:
+// the stack attaches to the OBJECT and evaluates over its data — `modifierSource`
+// (src/app/modifierGeometry.ts:120) reaches through the `data` socket for geometry and
+// material while inheriting the Object's TRS — so `object.out → modifier.target` is the
+// shape a user actually has.
+//
+// It stays a SPHERE rather than moving to the split cube because the render-side check
+// locates the arrayed mesh by a vertex COUNT that has to be unique in a starter scene
+// carrying thousands of verts: ~425 × COUNT is distinctive, a cube's 24 × COUNT is not
+// (H180 — the measurement instrument is part of the fixture). The assertions remain
+// RATIOS against a runtime-derived passthrough, so they never name a primitive constant.
 //
 // PARITY (V37): the offscreen render succeeds with the modifier present.
 //
@@ -28,6 +38,7 @@
 //      (ModifiedMeshR); src/app/resolveEvaluatedMesh.ts; vyapti V58/V37; H40.
 
 import { expect, test } from './_fixtures';
+import { splitSphereOps } from './_splitSphere';
 
 interface Op {
   type: string;
@@ -55,6 +66,11 @@ interface ThreeObjLike {
 const MBOX = 'p209_box';
 const MARR = 'p209_array';
 const COUNT = 3; // 3 copies of the source → COUNT × (source verts) merged
+
+/** The modifier's source: a split sphere at x=4, well clear of the starter scene. The
+ *  Object (`MBOX`) is what the modifier's `target` socket takes; the SphereData behind it
+ *  carries the geometry the modifier reshapes. */
+const sphereSource = () => splitSphereOps({ objectId: MBOX, position: [4, 0, 0] });
 
 /** Every rendered Mesh's position-attribute vertex count, in the live three scene. */
 function meshVertexCounts(page: import('@playwright/test').Page): Promise<number[]> {
@@ -133,18 +149,13 @@ test('#209 — Sphere → ArrayModifier → Scene renders the MERGED array; rend
   // A fresh sphere (NOT the default scene box), wired through an ArrayModifier into
   // the scene children. The arrayed mesh is the only one with COUNT× the source.
   await page.evaluate(
-    ({ box, arr, count }) => {
+    ({ box, arr, count, ops }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [4, 0, 0] },
-          },
+          ...(ops as Op[]),
           {
             type: 'addNode',
             nodeId: arr,
@@ -166,7 +177,7 @@ test('#209 — Sphere → ArrayModifier → Scene renders the MERGED array; rend
         'sphere → array → scene',
       );
     },
-    { box: MBOX, arr: MARR, count: COUNT },
+    { box: MBOX, arr: MARR, count: COUNT, ops: sphereSource() },
   );
 
   // Side B (resolver): the registry-built array vertex count = COUNT × (source verts).
@@ -209,18 +220,13 @@ test('#209 — muting the modifier collapses the output back to the source (fals
   page,
 }) => {
   await page.evaluate(
-    ({ box, arr, count }) => {
+    ({ box, arr, count, ops }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [4, 0, 0] },
-          },
+          ...(ops as Op[]),
           {
             type: 'addNode',
             nodeId: arr,
@@ -242,7 +248,7 @@ test('#209 — muting the modifier collapses the output back to the source (fals
         'sphere → array → scene',
       );
     },
-    { box: MBOX, arr: MARR, count: COUNT },
+    { box: MBOX, arr: MARR, count: COUNT, ops: sphereSource() },
   );
 
   // Active → COUNT × source. Derive the source passthrough by muting.
@@ -267,18 +273,13 @@ test('#209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array �
   const A1 = 'p209_a1';
   const A2 = 'p209_a2';
   await page.evaluate(
-    ({ box, a1, a2 }) => {
+    ({ box, a1, a2, ops }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [4, 0, 0] },
-          },
+          ...(ops as Op[]),
           {
             type: 'addNode',
             nodeId: a1,
@@ -311,7 +312,7 @@ test('#209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array �
         'sphere → array → array → scene',
       );
     },
-    { box: MBOX, a1: A1, a2: A2 },
+    { box: MBOX, a1: A1, a2: A2, ops: sphereSource() },
   );
 
   // Side B: the cumulative multipliers hold — inner = 3 × source, outer = 2 × inner.

@@ -9,9 +9,10 @@
 // and (b) a grab writes the BASE node's `position` param (not the modifier's) → the
 // rendered modified mesh moves with it.
 //
-// REF: src/app/Gizmo.tsx (the targetId redirect via resolveStackBase); vyapti V64.
+// REF: src/app/Gizmo.tsx (the targetId redirect via resolveStackBase); vyapti V64; #462.
 
 import { expect, test } from './_fixtures';
+import { splitSphereOps } from './_splitSphere';
 
 interface Op {
   type: string;
@@ -48,11 +49,23 @@ interface ThreeObjLike {
 const BOX = 'giz_box';
 const MIR = 'giz_mirror';
 
-// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
-// BoxMesh — a split Object as a modifier target is the undecided #377 path. The
-// mirror merges 2× the source, whatever the sphere's vert count is; the count is a
+// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
+// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
+// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
+// the sphere split, so this case failed rather than testing anything.
+//
+// The retarget SHARPENS what (b) proves. `position` now lives on the Object, one edge
+// away from the SphereData that owns the geometry, so `resolveStackBase` has to walk
+// modifier → Object and the grab has to land on the pose half. On the fused node both
+// halves were the same node, and a redirect to either would have passed identically.
+//
+// The mirror merges 2× the source, whatever the sphere's vert count is; the count is a
 // rendezvous marker to locate the rendered mesh, so it is derived at runtime rather
 // than hardcoded (the sphere-agnostic form of the old `=== 48`).
+
+/** The modifier's source: a split sphere at x=1 — the BASE transform (a) asserts and (b)
+ *  moves. The Object (`BOX`) is what the modifier's `target` socket takes. */
+const sphereSource = () => splitSphereOps({ objectId: BOX, position: [1, 0, 0] });
 
 /** The world-space x of the rendered mirror mesh (its inherited transform), located
  *  by its runtime-derived merged vertex count. */
@@ -98,18 +111,13 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir }) => {
+    ({ box, mir, ops }) => {
       const w = window as unknown as GizWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [1, 0, 0] },
-          },
+          ...(ops as Op[]),
           {
             type: 'addNode',
             nodeId: mir,
@@ -132,7 +140,7 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
       );
       w.__basher_selection.getState().select(mir); // select the MODIFIER
     },
-    { box: BOX, mir: MIR },
+    { box: BOX, mir: MIR, ops: sphereSource() },
   );
 
   // Wait for the mirror to build, then capture its merged vertex count (2× the

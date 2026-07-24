@@ -13,6 +13,7 @@
 // REF: src/app/NPanel.tsx (EnumField + stringEnumOptions); src/nodes/MirrorModifier.ts.
 
 import { expect, test } from './_fixtures';
+import { splitSphereOps } from './_splitSphere';
 
 interface Op {
   type: string;
@@ -43,11 +44,14 @@ interface ThreeObjLike {
 const BOX = 'enum_box';
 const MIR = 'enum_mirror';
 
-// #365 Slice 2: the modifier SOURCE is a fused SphereMesh, not the retired fused
-// BoxMesh (a split Object as a modifier target is the undecided #377 path). A
-// radius-0.5 sphere shares the box's [-0.5,0.5] bounding box, so the ≈5×≈1 mirror
-// span assertions are geometry-agnostic; only the vert-count marker (2× the source)
-// is derived at runtime rather than hardcoded.
+// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
+// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
+// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
+// the sphere split, so this case failed rather than testing anything. A radius-0.5 sphere
+// still shares the unit box's [-0.5,0.5] bounding box, so the ≈5×≈1 mirror span
+// assertions carry over verbatim; only the vert-count marker (2× the source) is derived
+// at runtime rather than hardcoded, and it stays a sphere so that marker stays unique in
+// a starter scene carrying thousands of verts (H180).
 
 /** The axis-aligned span of the mirror mesh (located by its runtime-derived merged
  *  vertex count), read off the live three scene. */
@@ -103,18 +107,13 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir }) => {
+    ({ box, mir, ops }) => {
       const w = window as unknown as EnumWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
-          {
-            type: 'addNode',
-            nodeId: box,
-            nodeType: 'SphereMesh',
-            params: { radius: 0.5, position: [0, 0, 0] },
-          },
+          ...(ops as { type: string; [k: string]: unknown }[]),
           {
             type: 'addNode',
             nodeId: mir,
@@ -137,7 +136,7 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
       );
       w.__basher_selection.getState().select(mir); // open the modifier's inspector
     },
-    { box: BOX, mir: MIR },
+    { box: BOX, mir: MIR, ops: splitSphereOps({ objectId: BOX, radius: 0.5 }) },
   );
 
   await page.waitForFunction(
