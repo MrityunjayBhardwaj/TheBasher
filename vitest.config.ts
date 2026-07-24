@@ -10,7 +10,9 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     globals: false,
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // `scripts/` is included so the e2e merge gate's own logic (#463) is tested
+    // alongside the script it guards, rather than parked under src/ away from it.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
     exclude: ['tests/**/*', 'node_modules/**/*'],
   },
 });

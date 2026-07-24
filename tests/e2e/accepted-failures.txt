@@ -1,0 +1,51 @@
+# Accepted e2e failures — the baseline the merge gate compares against (#463).
+#
+# This file is READ BY CI. `scripts/e2e-diff.mjs check` fails the e2e job on any
+# failure NOT listed here. That is the whole point: the merge question is "does
+# this branch fail anything main does not?", and it has to be answered by a set
+# difference the machine computes, not by a human recalling a category. The
+# previous arrangement — an accurate list in prose, consulted as a label —
+# absorbed 18 new failures across three merges without anyone noticing.
+#
+# HOW TO READ IT
+#   One key per line: <spec file> › <describe titles…> › <test title>.
+#   Deliberately no line numbers — they shift in any file a branch edits, which
+#   would manufacture phantom diffs on exactly the branches worth reading.
+#   Blank lines and `#` comments are ignored.
+#
+# HOW TO CHANGE IT
+#   Adding a line means "we accept this failure." Say why, in a comment, in the
+#   same PR. Removing one means the test passes again — the check prints which
+#   entries passed and which name tests that no longer exist, so pruning is
+#   mechanical rather than archaeological.
+#
+#   To re-seed from scratch, against a LINUX CI run (linux is what CI runs, so
+#   linux is what the baseline must describe — darwin's smaller accepted set
+#   makes it a fine local instrument via `list`, but not this file's source):
+#     gh run download <run-id> -n playwright-report -D /tmp/rep
+#     node scripts/e2e-diff.mjs list /tmp/rep
+#
+# WHY THESE ENTRIES ARE A UNION, NOT ONE RUN'S SNAPSHOT
+#   The accepted set is flake-variable: an accepted test sometimes passes. Seed
+#   from a single run in which one of them happened to pass and it is missing
+#   here, so the NEXT run reports it as novel and reds the build for no reason.
+#   These entries are the union observed across four real linux runs
+#   (30093228989 @ 51f6289, 30108254990 @ 9b393e7, 30101452154 @ PR #464,
+#   30119621205 @ PR #465), which independently reproduces the accepted set
+#   recorded by hand. How real is the effect? In the #465 run, FOUR of the ten
+#   below passed. Seeded from that run alone this file would hold six entries
+#   and the next build would have gone red on the other four.
+
+# ── Accepted headless-linux rendering/environment debt (10) ────────────────────
+# All ten pass on darwin locally. They fail on the CI runner's software GL
+# (SwiftShader) and its slow OPFS. Long-standing, tracked, not regressions.
+gizmo-autokey-record.spec.ts › Gizmo + Auto-Key — drag-to-record an animation (REPRO: not working) › arm Auto-Key, drag the scale gizmo at two times → records a transform.scale channel that EVALUATES through the AnimationLayer
+menu-import-gltf.spec.ts › picking a multi-file .gltf alone AUTO-ESCALATES to the folder picker
+menu-import-gltf.spec.ts › picking a multi-file .gltf TOGETHER with its siblings imports successfully
+p165-blender-camera.spec.ts › #165 Blender-style camera › boots the editor view framing the scene bounds, not looking through
+p186-frame-all-clip-planes.spec.ts › #186 frame-all clip planes › a large model is framed and the far plane scales past the old 1000
+p191-saved-view-clip-planes.spec.ts › #191 saved-view clip planes › a restored saved view keeps its pose AND derives far from the bounds
+p233-leaf-pick-select.spec.ts › #233 single click selects the GltfChild leaf; Alt+click selects up; Esc clears
+p6-w10-ui-review.spec.ts › c-1: zoom readout reflects a camera-zoom change (observed, not inferred)
+p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
+spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)

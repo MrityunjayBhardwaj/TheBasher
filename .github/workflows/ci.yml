@@ -55,8 +55,19 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build
+      # The suite is red on main and has been for a long time — headless-linux
+      # rendering debt that passes on darwin. So this step's own pass/fail is
+      # not the signal; let it run to completion and hand the verdict to
+      # e2e-diff, which asks the question that actually decides a merge: does
+      # this branch fail anything main does not? (#463 — and see the long
+      # comment in scripts/e2e-diff.mjs for why this is a set difference and
+      # not an allowlist someone reads.)
       - run: npm run test:e2e
-      - if: failure()
+        continue-on-error: true
+      - run: node scripts/e2e-diff.mjs check playwright-report
+      # always(), not failure(): the report is the input to the next baseline
+      # diff, so it has to survive a green run too.
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
