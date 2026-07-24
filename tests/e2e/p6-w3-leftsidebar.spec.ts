@@ -8,6 +8,7 @@
 // REF: docs/UI-SPEC.md §5.1, §5.5, §5.10, §11.
 
 import { expect, test } from './_fixtures';
+import { seedCubeObjectId } from './_seedNodes';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -126,7 +127,12 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
 
   // Dispatch a synthetic param change so the boot dispatcher subscription
   // flips dirty=true. Picks any node from the seed DAG.
-  await page.evaluate(() => {
+  // The seed cube's Object — `position` is a transform param, so it lives on the Object
+  // half of the object↔data split, not on the linked BoxData. Addressed by what it POSES:
+  // several `Object`s live in the default project now, so the ordinal picker this used to
+  // use would land on the light (#461).
+  const seedBoxId = await seedCubeObjectId(page);
+  await page.evaluate((nodeId) => {
     const w = window as unknown as {
       __basher_dag: {
         getState: () => {
@@ -136,17 +142,12 @@ test('P6.W3#5 ProjectTabs unsaved indicator dot appears after a dispatch, clears
       };
     };
     const dag = w.__basher_dag.getState();
-    // Find the seed cube's Object — `position` is a transform param, so it lives
-    // on the Object half of the object↔data split, not on the linked BoxData.
-    const node = Object.values(dag.state.nodes).find((n) => n.type === 'Object');
-    if (!node) throw new Error('seed project missing Object');
-    const nodeId = Object.keys(dag.state.nodes).find((k) => dag.state.nodes[k] === node);
     dag.dispatchAtomic(
       [{ type: 'setParam', nodeId, paramPath: 'position', value: [1, 0, 0] }],
       'user',
       'e2e dirty probe',
     );
-  });
+  }, seedBoxId);
 
   // Dot should now be visible on the active project's tab.
   await expect(page.getByTestId('project-tab-dirty-dot')).toBeVisible();

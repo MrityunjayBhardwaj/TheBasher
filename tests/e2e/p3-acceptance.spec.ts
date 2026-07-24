@@ -5,6 +5,7 @@
 // empty project shows the "no animation channels" hint.
 
 import { test, expect } from './_fixtures';
+import { seedCubeObjectId } from './_seedNodes';
 
 interface BasherWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown> } } };
@@ -72,7 +73,10 @@ test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ pag
   // the seed box by dagId, with two keyframes. No AnimationLayer wrapper, no
   // scene rewire — the box stays its own scene child. Drives the dopesheet to
   // render one channel row.
-  await page.evaluate(async () => {
+  // Addressed by what it POSES: several `Object`s live in the default project now, so
+  // the ordinal picker this used to use would land on the light (#461).
+  const seedBoxId = await seedCubeObjectId(page);
+  await page.evaluate(async (boxId) => {
     const w = window as unknown as BasherWindow & {
       __basher_dag: {
         getState: () => {
@@ -87,10 +91,6 @@ test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ pag
       };
     };
     const dag = w.__basher_dag.getState();
-    // Find the seed box id.
-    // The seed cube's Object — the pose half of the object↔data split.
-    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Object')?.[0];
-    if (!boxId) throw new Error('seed box Object not found');
     // TimeSource (P2 may seed one — fall through if so).
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
@@ -111,7 +111,7 @@ test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ pag
         ],
       },
     });
-  });
+  }, seedBoxId);
   await page.getByTestId('floating-toolbar-timeline').click();
   // P6 W9: the SVG Dopesheet rendered a DOM `channel-row-{id}` group with
   // per-keyframe `keyframe-diamond-*` nodes. TimelineCanvas paints all of
@@ -129,7 +129,9 @@ test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ pag
 test('P3#4 clicking a channel row makes the curve editor render its track', async ({ page }) => {
   // Re-use the substrate from P3#3 — duplicated inline rather than
   // factored to keep each test self-sufficient.
-  await page.evaluate(async () => {
+  // Addressed by what it POSES, for the same reason as P3#3 above (#461).
+  const seedBoxId = await seedCubeObjectId(page);
+  await page.evaluate(async (boxId) => {
     const w = window as unknown as BasherWindow & {
       __basher_dag: {
         getState: () => {
@@ -139,9 +141,6 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
       };
     };
     const dag = w.__basher_dag.getState();
-    // The seed cube's Object — the pose half of the object↔data split.
-    const boxId = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Object')?.[0];
-    if (!boxId) throw new Error('seed box Object not found');
     if (!Object.values(dag.state.nodes).some((n) => n.type === 'TimeSource')) {
       dag.dispatch({ type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} });
     }
@@ -162,7 +161,7 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
         ],
       },
     });
-  });
+  }, seedBoxId);
   await page.getByTestId('floating-toolbar-timeline').click();
   // P6 W5 (D-W5-3): channel selection happens on the dopesheet (default
   // tab); user must explicitly switch to the Curve Editor tab to see

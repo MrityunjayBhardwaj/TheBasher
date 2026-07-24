@@ -5,6 +5,7 @@
 // window handles. Pixel-diff would re-fail H13 on every layout shift.
 
 import { expect, test } from './_fixtures';
+import { seedCubeObjectId } from './_seedNodes';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -149,21 +150,17 @@ test('P2.6#4 UV editor status updates with selection', async ({ page }) => {
   await page.getByTestId('toolbar-space-uv').click();
   await expect(page.getByTestId('uv-editor-status')).toContainText('Select a mesh');
 
-  // Find the seed cube's Object and select it via the projection store.
-  const id = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    for (const [nid, n] of Object.entries(nodes)) if (n.type === 'Object') return nid;
-    return null;
-  });
-  expect(id).not.toBeNull();
+  // Find the seed cube's Object and select it via the projection store. Addressed by
+  // what it POSES — several `Object`s now live in the default project, so the ordinal
+  // picker this used to use lands on the light instead (#461).
+  const id = await seedCubeObjectId(page);
   await page.evaluate((nodeId) => {
     const w = window as unknown as BasherWindow;
-    w.__basher_selection!.getState().select(nodeId!);
+    w.__basher_selection!.getState().select(nodeId);
   }, id);
   // What this pins is the P2.6#4 claim: the status line REFLECTS THE SELECTION
   // (it names the selected node, instead of the "Select a mesh" placeholder).
-  await expect(page.getByTestId('uv-editor-status')).toContainText(id!);
+  await expect(page.getByTestId('uv-editor-status')).toContainText(id);
   await expect(page.getByTestId('uv-editor-status')).toContainText('Object');
   // #378 LANDED: the split cube resolves its real UV layout through the object↔data
   // reach, so the status now reports the island count instead of "no UV layout".
