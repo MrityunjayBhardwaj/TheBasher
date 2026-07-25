@@ -33,6 +33,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 // (SkeletonUtils is already a project dep; retarget.ts imports retargetClip from
 // the same module. This is a NEW `clone` named import.)
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { channelPathForBand } from '../app/objectDataBand';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import * as geometryRegistry from '../app/geometryRegistry';
@@ -861,6 +862,11 @@ function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
  * The fold itself is untouched — this only changes which channels are collected and the path
  * they land on, so a node with no linked data (every fused node, every Empty) returns an empty
  * array and its overlay stays byte-identical.
+ *
+ * The rebase RULE itself lives in `channelPathForBand` (../app/objectDataBand), shared with the
+ * three sibling hooks below. Do not inline it back: it used to exist only as the difference
+ * between which of these four hooks the dispatcher called, which meant nothing named it, no test
+ * could ask it, and a new band inherited whichever branch it was pasted beside.
  */
 function useDataParamChannels(targetId: string): KeyframeChannelValue[] {
   const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
@@ -869,7 +875,10 @@ function useDataParamChannels(targetId: string): KeyframeChannelValue[] {
     () =>
       dataId === null
         ? EMPTY_CHANNELS
-        : dataChannels.map((ch) => ({ ...ch, paramPath: `data.${ch.paramPath}` })),
+        : dataChannels.map((ch) => ({
+            ...ch,
+            paramPath: channelPathForBand('children', ch.paramPath),
+          })),
     [dataId, dataChannels],
   );
 }
@@ -903,7 +912,7 @@ function useDataParamTransients(
     const merged = new Map(edits);
     for (const e of edits.values()) {
       if (e.nodeId !== dataId) continue;
-      const paramPath = `data.${e.paramPath}`;
+      const paramPath = channelPathForBand('children', e.paramPath);
       merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
     }
     return merged;
@@ -924,10 +933,17 @@ function useLightShadingChannels(
 ): KeyframeChannelValue[] {
   const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
   const dataChannels = useLayeredChannels(dataId ?? '');
-  return useMemo(
-    () => (dataId === null ? objChannels : [...objChannels, ...dataChannels]),
-    [dataId, objChannels, dataChannels],
-  );
+  return useMemo(() => {
+    if (dataId === null) return objChannels;
+    // Routed through the SAME rule the mesh band uses, which for this band is the
+    // identity — so nothing is copied here today, and the reason it is not copied is
+    // stated in one place rather than inferred from the absence of a `.map`.
+    const banded = dataChannels.map((ch) => {
+      const paramPath = channelPathForBand('lights', ch.paramPath);
+      return paramPath === ch.paramPath ? ch : { ...ch, paramPath };
+    });
+    return [...objChannels, ...banded];
+  }, [dataId, objChannels, dataChannels]);
 }
 
 /** #386 R2 — the FLAT twin of useDataParamTransients for the light path. A split light's HELD
@@ -954,7 +970,7 @@ function useLightShadingTransients(
     for (const e of edits.values()) {
       if (e.nodeId !== dataId) continue;
       // UN-rebased: the flat LightValue reads `value.intensity`, not `value.data.intensity`.
-      const paramPath = e.paramPath;
+      const paramPath = channelPathForBand('lights', e.paramPath);
       merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
     }
     return merged;
