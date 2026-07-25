@@ -45,6 +45,7 @@ import { channelPathForBand } from '../app/objectDataBand';
 import {
   dataIdFor,
   renderedValueForBand,
+  rowDataParams,
   splitOps,
   SPLIT_KINDS,
   SPLIT_KIND_NAMES,
@@ -52,14 +53,6 @@ import {
 } from './splitKinds';
 
 const CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
-
-/** `('material.base.color', v)` → `{ material: { base: { color: v } } }`. */
-function nest(path: string, value: unknown): Record<string, unknown> {
-  const parts = path.split('.');
-  let out: unknown = value;
-  for (let i = parts.length - 1; i >= 0; i--) out = { [parts[i]]: out };
-  return out as Record<string, unknown>;
-}
 
 /**
  * A minimal channel value carrying `value` at `paramPath`.
@@ -113,13 +106,9 @@ function keyframeValueFor(valueType: 'number' | 'vec3' | 'quat' | 'color'): unkn
 
 /** Build a split pair of `kind` with its base observable value written on the data half. */
 function buildKind(kind: SplitKindName): { state: DagState; objectId: string; dataId: string } {
-  const spec = SPLIT_KINDS[kind];
   const objectId = `n_${kind}`;
   const dataId = dataIdFor(objectId);
-  const dataParams = {
-    ...spec.baseDataParams,
-    ...nest(spec.observableDataParam, spec.distinctValues[0]),
-  };
+  const dataParams = rowDataParams(kind);
   let state = emptyDagState();
   for (const op of splitOps(kind, { objectId }, { data: dataParams })) {
     state = applyOp(state, op as Op).next;
