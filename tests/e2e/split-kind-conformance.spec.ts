@@ -84,12 +84,15 @@ interface BasherWindow {
  * and `splitKinds.ts` is deliberately free of anything browser-shaped — the moment it is
  * not, every spec importing it drags the DAG module graph in.
  *
- * `signature` is whatever quantity the held edit is supposed to move; `expectHeld` says
- * what it must become, given what it rested at. Three kinds can name the value outright.
- * The curve cannot: `closed` reaches the renderer as an extra repeated sample rather than
- * as a value, so its expectation is stated as a RELATION between two observed renders.
- * Deriving the vertex count from `resolution` instead would mean re-implementing the
- * sampler inside the test, which is the drift these roads exist to catch.
+ * `signature` is whatever quantity the held edit is supposed to move; `expectHeld` says what
+ * must become of it, given what it rested at. Three kinds name the value they expect. The
+ * curve records that its render cannot follow at all (#474) — still an answer, still
+ * asserted, never a skip. See `HeldExpectation`.
+ *
+ * Note what none of them do: re-derive the expected value from the param. The curve's
+ * vertex count is a function of `resolution` and `closed`, and computing it here would mean
+ * re-implementing the sampler inside the test — which is precisely the drift between an
+ * instrument and the thing it measures that these roads exist to catch.
  */
 interface RenderProbe {
   /** Read the quantity the held edit moves, from the live scene. Null until mounted. */
