@@ -147,7 +147,14 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   // v0.6 #2 (#178 W6) — the per-submesh slot selector, for a node that
   // addresses a submesh by index. #178 S4 — the glTF material editor / readout.
   material: [
-    { key: 'slotSelector', applies: (c) => c.ownsParam('slotIndex'), placement: 'before' },
+    {
+      key: 'slotSelector',
+      applies: (c) => c.ownsParam('slotIndex'),
+      placement: 'before',
+      // Routes to no section of its own, so without this it would surface as a
+      // raw row in the unrouted bucket beside the selector that renders it.
+      omitRowKeys: ['slotIndex'],
+    },
     { key: 'gltfMaterialEditor', applies: hasCapturedMaterials, placement: 'before' },
     {
       key: 'gltfMaterialReadout',
@@ -213,6 +220,28 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   ],
   layout: [],
 };
+
+/** Every row key a control owns across the sections a node declares.
+ *
+ *  A caller needs this BEFORE grouping params into sections, because a key a
+ *  control owns may route to no section at all (`slotIndex` does), and would
+ *  then surface as a raw row in the unrouted bucket — beside the control that
+ *  already renders it. Reading it off the table keeps "which keys a control
+ *  owns" in one place instead of splitting it between the table and a skip list
+ *  in each caller.
+ */
+export function controlOwnedRowKeys(
+  declaredSections: readonly SectionId[],
+  ctx: SectionCtx,
+): ReadonlySet<string> {
+  const owned = new Set<string>();
+  for (const sectionId of declaredSections) {
+    for (const control of activeControls(sectionId, ctx)) {
+      for (const key of control.omitRowKeys ?? []) owned.add(key);
+    }
+  }
+  return owned;
+}
 
 /** The controls that actually apply to `ctx`, in table order. */
 function activeControls(sectionId: SectionId, ctx: SectionCtx): readonly SectionControl[] {

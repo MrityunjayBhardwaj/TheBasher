@@ -20,6 +20,7 @@ import { SECTION_IDS, paramToSection, type SectionId } from './inspectorSections
 import {
   SECTION_CONTROLS,
   SectionBody,
+  controlOwnedRowKeys,
   makeSectionCtx,
   sectionRendersCustomControl,
   type ControlKey,
@@ -74,14 +75,16 @@ describe('#458 per-section row suppression is equivalent to the global filter it
   // way the inspector asks it.
   const sectionsDeclaring = (id: SectionId): readonly SectionId[] => [id];
 
-  it('routes each suppressed key ONLY to the section that suppresses it', () => {
+  it('never routes a suppressed key into a section OTHER than the one suppressing it', () => {
     for (const sectionId of SECTION_IDS) {
       for (const control of SECTION_CONTROLS[sectionId]) {
         for (const key of control.omitRowKeys ?? []) {
-          // The key routes INTO this section...
-          expect(paramToSection(key, sectionsDeclaring(sectionId))).toBe(sectionId);
-          // ...and into no OTHER section, which is what makes dropping the old
-          // global filter a no-op rather than a behaviour change.
+          // A suppressed key either routes to its own section (and SectionBody
+          // filters it out of the rows there) or routes nowhere at all (and the
+          // caller's pre-grouping skip keeps it out of the unrouted bucket).
+          // What must never happen is it routing into a DIFFERENT section,
+          // where nothing would suppress it and it would render raw.
+          expect([sectionId, null]).toContain(paramToSection(key, sectionsDeclaring(sectionId)));
           for (const other of SECTION_IDS) {
             if (other === sectionId) continue;
             expect(paramToSection(key, sectionsDeclaring(other))).not.toBe(other);
@@ -91,11 +94,27 @@ describe('#458 per-section row suppression is equivalent to the global filter it
     }
   });
 
-  it('suppresses the same keys the global filter did', () => {
+  it('suppresses the four keys the global filter did, plus the one the caller skipped by type', () => {
     const omitted = Object.values(SECTION_CONTROLS)
       .flat()
       .flatMap((c) => c.omitRowKeys ?? []);
-    expect(omitted.sort()).toEqual(['extendAfter', 'extendBefore', 'modifiers', 'points']);
+    expect(omitted.sort()).toEqual([
+      'extendAfter',
+      'extendBefore',
+      'modifiers',
+      'points',
+      // Was a `node.type === 'MaterialOverride'` skip in the caller. It routes
+      // to no section, so only the pre-grouping skip keeps it off screen.
+      'slotIndex',
+    ]);
+  });
+
+  it('reports the slot index as control-owned so it never reaches the unrouted bucket', () => {
+    const ctx = ctxFor('MaterialOverride');
+    expect([...controlOwnedRowKeys(['material'], ctx)]).toEqual(['slotIndex']);
+    // And not for a node that does not own one — the skip must not swallow an
+    // unrelated node's param of the same name.
+    expect([...controlOwnedRowKeys(['material'], ctxFor('BoxData'))]).toEqual([]);
   });
 });
 

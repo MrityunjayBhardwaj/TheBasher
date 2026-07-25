@@ -74,7 +74,12 @@ import {
   sectionsOf,
   type SectionId,
 } from './inspectorSections';
-import { SectionBody, makeSectionCtx, type SectionControlRenderers } from './inspectorSectionBody';
+import {
+  SectionBody,
+  controlOwnedRowKeys,
+  makeSectionCtx,
+  type SectionControlRenderers,
+} from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
@@ -2685,15 +2690,17 @@ function SectionCard({
 function LinkedDataSections({
   dataNodeId,
   objectNodeId,
+  canApply,
 }: {
   dataNodeId: string;
   objectNodeId: string;
+  /** Asked of the OBJECT, which is the half Apply acts on. Passed down rather
+   *  than re-derived: the panel already computed it for this very node, and
+   *  `canApplyTransform` evaluates the node to answer. */
+  canApply: boolean;
 }) {
   const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
   const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
-  // Asked of the OBJECT, which is the half Apply acts on — the same question
-  // the main block asks, so offer and accept cannot disagree across the split.
-  const canApply = useDagStore((s) => canApplyTransform(s.state, objectNodeId));
   if (!dataNode) return null;
   if (declared.length === 0) return null;
 
@@ -2988,6 +2995,10 @@ export function NPanel() {
               // after the declared sections (typed under (complex —
               // Pro mode) or string display — preserves zero param
               // hiding while keeping unrouted params visible).
+              // #458 — this node is not the linked half of anything, so it plays
+              // both roles: it owns the params AND it is the posing object.
+              const sectionCtx = makeSectionCtx(node, node.id, canApply);
+              const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
               const grouped: Map<SectionId, [string, unknown][]> = new Map();
               const unrouted: [string, unknown][] = [];
               for (const [key, value] of Object.entries(
@@ -2995,10 +3006,12 @@ export function NPanel() {
               )) {
                 if (isInputBinding(value)) continue; // socket binding, not param
                 if (refKeys?.has(key)) continue; // ref params render in the block above
-                // v0.6 #2 (#178, W6): slotIndex is the per-submesh addressing
-                // dimension; it renders as the dedicated SlotSelector chrome at
-                // the top of the material section, NOT as a raw numeric row.
-                if (node.type === 'MaterialOverride' && key === 'slotIndex') continue;
+                // A param a custom control renders is never ALSO a row. Asked of
+                // the shared table rather than restated here, and asked before
+                // grouping because such a key need not route to any section at
+                // all — the per-submesh slot index does not, and would otherwise
+                // land in the unrouted bucket beside the selector that owns it.
+                if (ownedRowKeys.has(key)) continue;
                 const section = paramToSection(key, declared);
                 if (section === null) {
                   unrouted.push([key, value]);
@@ -3007,10 +3020,6 @@ export function NPanel() {
                   grouped.get(section)!.push([key, value]);
                 }
               }
-              // #458 — the section bodies dispatch through the ONE shared table.
-              // This node is not the linked half of anything, so it plays both
-              // roles: it owns the params AND it is the posing object.
-              const sectionCtx = makeSectionCtx(node, node.id, canApply);
               return (
                 <>
                   {declared.map((sectionId) => (
@@ -3063,7 +3072,11 @@ export function NPanel() {
               | { node?: string }
               | undefined;
             return dataRef?.node ? (
-              <LinkedDataSections dataNodeId={dataRef.node} objectNodeId={node.id} />
+              <LinkedDataSections
+                dataNodeId={dataRef.node}
+                objectNodeId={node.id}
+                canApply={canApply}
+              />
             ) : null;
           })()}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
