@@ -87,6 +87,15 @@ export interface SplitKindSpec {
    */
   readonly distinctValues: readonly [unknown, unknown];
   /**
+   * The channel value type to author `observableDataParam` with.
+   *
+   * Only the four registered channel types exist, so a param whose type has no channel
+   * (the curve's boolean `closed`) borrows one: the road that uses this asks where a
+   * channel's TARGET is routed, and routing keys off the param's root name, never its
+   * value type. Anything that actually blends by type is asked elsewhere.
+   */
+  readonly channelValueType: 'number' | 'vec3' | 'quat' | 'color';
+  /**
    * Pull the observable off the value the RENDERER consumes (already put in the band's
    * shape by `renderedValueForBand`). The light's extractor has no `.data` precisely
    * because its band flattens — if the flat path ever got the mesh rebase, this is the
@@ -185,6 +194,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     // BoxData's default is '#5af07a' and the missing-material fallback is a grey —
     // neither of these collides with either.
     distinctValues: ['#c81e5a', '#1e9ac8'],
+    channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
     customSections: [],
     primaryWorkflows: ['resize the box', 'recolour the box', 'stack a modifier on the Object'],
@@ -198,6 +208,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     observableDataParam: 'material.base.color',
     // SphereData's default is '#88aaff'.
     distinctValues: ['#c81e5a', '#1e9ac8'],
+    channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
     customSections: [],
     primaryWorkflows: [
@@ -218,6 +229,8 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     // Base is `true` BECAUSE the schema default is `false` — a broken read returns the
     // default and must not accidentally agree with what we assert.
     distinctValues: [true, false],
+    // `closed` is a boolean and no boolean channel type exists — see the field's doc.
+    channelValueType: 'number',
     readRendered: (r) => at(r, 'data', 'closed'),
     customSections: ['curve'],
     primaryWorkflows: ['edit control points', 'follow-path a camera along the curve'],
@@ -234,6 +247,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     observableDataParam: 'intensity',
     // LightData's default intensity is 1.
     distinctValues: [3.5, 7.25],
+    channelValueType: 'number',
     // NO `.data` — the recomposed LightValue is FLAT. This asymmetry against the three
     // mesh-band extractors above is the band difference made visible.
     readRendered: (r) => at(r, 'intensity'),
