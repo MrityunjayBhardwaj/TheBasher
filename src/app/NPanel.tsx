@@ -70,8 +70,8 @@ import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
   isDefaultCollapsed,
-  isSectionId,
   paramToSection,
+  sectionsOf,
   type SectionId,
 } from './inspectorSections';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
@@ -2691,10 +2691,8 @@ function SectionCard({
  */
 function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
   const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
+  const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
   if (!dataNode) return null;
-  const declared: SectionId[] = (getNodeType(dataNode.type)?.inspectorSections ?? []).filter(
-    isSectionId,
-  );
   if (declared.length === 0) return null;
 
   const grouped = new Map<SectionId, [string, unknown][]>();
@@ -2773,10 +2771,10 @@ export function NPanel() {
   const collapsed = useChromeStore((s) => s.inspectorCollapsed);
   const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
 
-  // Resolve the node's declared inspectorSections via the registry
-  // (the source of truth — V14 alignment). Empty array → raw fallback.
-  const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
-  const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
+  // Resolve the node's declared inspectorSections through the ONE read seam
+  // (which resolves via the registry — the source of truth, V14 alignment).
+  // Empty array → raw fallback.
+  const declared = useDagStore((s) => sectionsOf(s.state, selectedId));
 
   // The general node-ref params (SampleGeometry terrain/query, a Solver's controller):
   // rendered as one NodeRefField block below the header (regardless of section mode), and
