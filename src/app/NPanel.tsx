@@ -2682,9 +2682,18 @@ function SectionCard({
  * inspector. Generic over the data node's declared sections, so a future SphereData surfaces
  * the same way.
  */
-function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
+function LinkedDataSections({
+  dataNodeId,
+  objectNodeId,
+}: {
+  dataNodeId: string;
+  objectNodeId: string;
+}) {
   const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
   const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
+  // Asked of the OBJECT, which is the half Apply acts on — the same question
+  // the main block asks, so offer and accept cannot disagree across the split.
+  const canApply = useDagStore((s) => canApplyTransform(s.state, objectNodeId));
   if (!dataNode) return null;
   if (declared.length === 0) return null;
 
@@ -2717,18 +2726,21 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
           sectionId={sectionId}
           declaredSections={declared}
         >
-          {/* #385 — a data node with a CUSTOM section control (CurveData's 'curve' →
-              CurvePointRows) must render it HERE too, not only in the main-node block below.
-              Curve is the first such data node — box/sphere's data sections (mesh/material)
-              render fine through ParamRow (material via its own special-case), so this parity
-              gap was invisible until now. `points` has no generic row, so it is filtered out
-              of the raw rows to avoid a broken double-render; closed/resolution stay as rows. */}
-          {sectionId === 'curve' ? <CurvePointRows nodeId={dataNode.id} /> : null}
-          {(grouped.get(sectionId) ?? [])
-            .filter(([key]) => !(sectionId === 'curve' && key === 'points'))
-            .map(([key, value]) => (
+          {/* #458 — the SAME table the main-node block dispatches through, which
+              is the whole point: a data node's custom section control can no
+              longer exist on one road and silently render nothing on the other.
+              This block used to carry a hand-copied `'curve'` arm, so CurveData
+              worked and every other custom section would have rendered empty.
+              Two ids: the data half owns these params, the Object poses it. */}
+          <SectionBody
+            sectionId={sectionId}
+            ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
+            rows={grouped.get(sectionId) ?? []}
+            renderers={SECTION_CONTROL_RENDERERS}
+            renderRow={(key, value) => (
               <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
-            ))}
+            )}
+          />
         </SectionCard>
       ))}
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
@@ -3050,7 +3062,9 @@ export function NPanel() {
             const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
               | { node?: string }
               | undefined;
-            return dataRef?.node ? <LinkedDataSections dataNodeId={dataRef.node} /> : null;
+            return dataRef?.node ? (
+              <LinkedDataSections dataNodeId={dataRef.node} objectNodeId={node.id} />
+            ) : null;
           })()}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
               edit / remove controller knobs + promote them to the Controllers dock.
