@@ -41,7 +41,7 @@ function stateWithNode(id: string, type: string, params: Record<string, unknown>
 }
 
 function ctxFor(type: string, params: Record<string, unknown> = {}, canApply = false) {
-  return makeSectionCtx(stateWithNode('n', type, params), 'n', 'n', canApply);
+  return makeSectionCtx(stateWithNode('n', type, params).nodes.n, 'n', canApply);
 }
 
 describe('#458 SECTION_CONTROLS — shape', () => {

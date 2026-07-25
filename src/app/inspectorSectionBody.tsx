@@ -42,7 +42,7 @@
 import { Fragment, type ReactNode } from 'react';
 import { z } from 'zod';
 import { getNodeType } from '../core/dag/registry';
-import type { DagState } from '../core/dag/state';
+import type { Node } from '../core/dag/types';
 import type { SectionId } from './inspectorSections';
 
 /** What a section body is rendered against.
@@ -232,18 +232,16 @@ export function sectionRendersCustomControl(sectionId: SectionId, ctx: SectionCt
 }
 
 /** Build the context both call sites dispatch against, so they cannot drift.
- *  `objectNodeId` is the posing Object; pass the same id twice for a node that
+ *  `objectNodeId` is the posing Object; pass the node's own id for a node that
  *  is not the linked half of a split. */
 export function makeSectionCtx(
-  state: DagState,
-  paramsNodeId: string,
+  node: Node | null | undefined,
   objectNodeId: string,
   canApplyTransform: boolean,
 ): SectionCtx {
-  const node = state.nodes[paramsNodeId];
-  const params = ((node?.params ?? {}) as Record<string, unknown>) ?? {};
+  const params = (node?.params ?? {}) as Record<string, unknown>;
   return {
-    paramsNodeId,
+    paramsNodeId: node?.id ?? objectNodeId,
     objectNodeId,
     params,
     ownsParam: (key) => nodeOwnsParam(node?.type, params, key),
