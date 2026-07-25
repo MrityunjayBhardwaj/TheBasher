@@ -234,6 +234,23 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
+  // Hygiene, and NOT optional here: the app autosaves to OPFS on an idle debounce
+  // (boot.ts:213), and these rows add nodes to the project — the management road also mints
+  // an Action, a Strip and a Track. Without this wipe every row would be handed the previous
+  // row's leftovers, and worse, would leave them for whatever spec ran next. It is the same
+  // block ~70 other specs in this suite open with, for the same reason.
+  await page.evaluate(async () => {
+    if (typeof navigator?.storage?.getDirectory === 'function') {
+      const root = await navigator.storage.getDirectory();
+      try {
+        await root.removeEntry('basher', { recursive: true });
+      } catch {
+        /* not present */
+      }
+    }
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('basher.timelineDock.v1');
+  });
+  await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(
     () => {
