@@ -29,6 +29,8 @@
 // (src/app/modifierGeometry.ts:120) reaches through the `data` socket for geometry+material
 // and inherits the Object's TRS. Wire `object.out → modifier.target`.
 
+import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
+
 export interface SplitSphereOpts {
   /** Id for the Object — the pose half, and the node a spec selects / poses / animates. */
   objectId: string;
@@ -52,8 +54,13 @@ export interface SplitSphereOpts {
  */
 export function splitSphereOps(opts: SplitSphereOpts): unknown[] {
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
 
+  // This builder's OWN defaulting, deliberately not shared with the unit helper:
+  // it writes `radius` and all three pose params unconditionally, where
+  // `makeSplitSphere` omits every param the caller did not pass. ~75 consumers across both
+  // tiers depend on the current behaviour, so splitKinds shares the op LIST and
+  // leaves the defaults here. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = { radius: opts.radius ?? 0.5 };
   if (opts.widthSegments !== undefined) dataParams.widthSegments = opts.widthSegments;
   if (opts.heightSegments !== undefined) dataParams.heightSegments = opts.heightSegments;
@@ -65,18 +72,10 @@ export function splitSphereOps(opts: SplitSphereOpts): unknown[] {
     scale: opts.scale ?? [1, 1, 1],
   };
 
-  return [
-    { type: 'addNode', nodeId: dataId, nodeType: 'SphereData', params: dataParams },
-    { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: objParams },
-    {
-      type: 'connect',
-      from: { node: dataId, socket: 'out' },
-      to: { node: objectId, socket: 'data' },
-    },
-  ];
+  return splitOps('sphere', { objectId, dataId }, { data: dataParams, object: objParams });
 }
 
 /** The data-node id `splitSphereOps` will use for a given Object id. */
 export function splitSphereDataId(objectId: string): string {
-  return `${objectId}_data`;
+  return dataIdFor(objectId);
 }

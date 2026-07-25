@@ -20,6 +20,8 @@
 // REF: src/nodes/LightData.ts; src/app/addPrimitives.ts; src/app/resolveDataParamOwner.ts.
 
 import { applyOp, type DagState } from '../core/dag';
+import type { Op } from '../core/dag/types';
+import { dataIdFor, splitOps } from './splitKinds';
 
 /** The four posable light kinds — the LightData `lightKind` discriminator domain.
  *  Ambient is intentionally absent (it never splits). */
@@ -73,8 +75,10 @@ export function makeSplitLight(state: DagState, opts: SplitLightOpts): SplitLigh
     throw new Error('makeSplitLight: AmbientLight does not split (ambient = a World datablock)');
   }
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
 
+  // This helper's OWN defaulting, deliberately not shared: it writes a pose param only
+  // when the caller passed one (the e2e builder always writes all three). See splitKinds.ts.
   const dataParams: Record<string, unknown> = {
     lightKind: opts.lightKind,
     ...(opts.shading ?? {}),
@@ -85,23 +89,14 @@ export function makeSplitLight(state: DagState, opts: SplitLightOpts): SplitLigh
   if (opts.rotation) objParams.rotation = opts.rotation;
   if (opts.scale) objParams.scale = opts.scale;
 
-  let s = applyOp(state, {
-    type: 'addNode',
-    nodeId: dataId,
-    nodeType: 'LightData',
-    params: dataParams,
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: objectId,
-    nodeType: 'Object',
-    params: objParams,
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: dataId, socket: 'out' },
-    to: { node: objectId, socket: 'data' },
-  }).next;
+  let s = state;
+  for (const op of splitOps(
+    'light',
+    { objectId, dataId },
+    { data: dataParams, object: objParams },
+  )) {
+    s = applyOp(s, op as Op).next;
+  }
   if (opts.connectTo) {
     s = applyOp(s, {
       type: 'connect',

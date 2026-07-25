@@ -13,6 +13,8 @@
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md; src/app/addPrimitives.ts; src/app/resolveDataParamOwner.ts.
 
 import { applyOp, type DagState } from '../core/dag';
+import type { Op } from '../core/dag/types';
+import { dataIdFor, splitOps } from './splitKinds';
 
 export interface SplitSphereOpts {
   /** Id for the Object (the pose half — this is the scene child / the node you select). */
@@ -47,8 +49,11 @@ export interface SplitSphere {
  */
 export function makeSplitSphere(state: DagState, opts: SplitSphereOpts): SplitSphere {
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
 
+  // This helper's OWN defaulting, deliberately not shared: it omits every param the
+  // caller did not pass and lets zod fill them in (the e2e builder writes `radius` and
+  // all three pose params unconditionally). See splitKinds.ts.
   const dataParams: Record<string, unknown> = {};
   if (opts.radius !== undefined) dataParams.radius = opts.radius;
   if (opts.widthSegments !== undefined) dataParams.widthSegments = opts.widthSegments;
@@ -60,23 +65,14 @@ export function makeSplitSphere(state: DagState, opts: SplitSphereOpts): SplitSp
   if (opts.rotation) objParams.rotation = opts.rotation;
   if (opts.scale) objParams.scale = opts.scale;
 
-  let s = applyOp(state, {
-    type: 'addNode',
-    nodeId: dataId,
-    nodeType: 'SphereData',
-    params: dataParams,
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: objectId,
-    nodeType: 'Object',
-    params: objParams,
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: dataId, socket: 'out' },
-    to: { node: objectId, socket: 'data' },
-  }).next;
+  let s = state;
+  for (const op of splitOps(
+    'sphere',
+    { objectId, dataId },
+    { data: dataParams, object: objParams },
+  )) {
+    s = applyOp(s, op as Op).next;
+  }
   if (opts.connectTo) {
     s = applyOp(s, {
       type: 'connect',

@@ -27,6 +27,8 @@
 // does not change), so a spec that only checks "no throw" will pass while testing nothing.
 // Assert the resulting value.
 
+import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
+
 export interface SplitCubeOpts {
   /** Id for the Object — the pose half, and the node a spec selects / poses / animates. */
   objectId: string;
@@ -47,8 +49,13 @@ export interface SplitCubeOpts {
  */
 export function splitCubeOps(opts: SplitCubeOpts): unknown[] {
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
 
+  // This builder's OWN defaulting, deliberately not shared with the unit helper: it
+  // writes all three pose params unconditionally, where `makeSplitCube` omits the ones
+  // the caller did not pass. ~75 consumers across both tiers depend on the current
+  // behaviour, and "does this node have that key" is observable — so splitKinds shares
+  // the op LIST and leaves the defaults here. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = { size: opts.size ?? [1, 1, 1] };
   if (opts.color) dataParams.material = { base: { color: opts.color } };
 
@@ -58,18 +65,10 @@ export function splitCubeOps(opts: SplitCubeOpts): unknown[] {
     scale: opts.scale ?? [1, 1, 1],
   };
 
-  return [
-    { type: 'addNode', nodeId: dataId, nodeType: 'BoxData', params: dataParams },
-    { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: objParams },
-    {
-      type: 'connect',
-      from: { node: dataId, socket: 'out' },
-      to: { node: objectId, socket: 'data' },
-    },
-  ];
+  return splitOps('box', { objectId, dataId }, { data: dataParams, object: objParams });
 }
 
 /** The data-node id `splitCubeOps` will use for a given Object id. */
 export function splitCubeDataId(objectId: string): string {
-  return `${objectId}_data`;
+  return dataIdFor(objectId);
 }
