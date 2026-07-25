@@ -14,7 +14,12 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
-import { isSectionId } from './inspectorSections';
+import { isSectionId, paramToSection } from './inspectorSections';
+import {
+  declaredParamKeys,
+  makeSectionCtx,
+  sectionRendersCustomControl,
+} from './inspectorSectionBody';
 import { isRelationalPoseNode } from './nodeConstraints';
 import { registerAllNodes } from '../nodes/registerAll';
 
@@ -68,6 +73,58 @@ describe('C2 — inspectorSections declarations', () => {
         `${type} outputs ObjectData → must declare non-empty inspectorSections or its params are unreachable`,
       ).toBeGreaterThan(0);
     }
+  });
+
+  // #458 — the REACHABILITY guard, one level deeper than #427 above. Declaring a
+  // section is not the same as that section showing anything: a data node whose
+  // params live behind a nested Object row can declare a section that routes no
+  // param to a generic row AND has no custom control in the shared table, and it
+  // ships as a titled, permanently empty card. Typecheck and the unit suite stay
+  // green, because nothing is wrong with the code — the section simply has no
+  // contents. That is what happened to the curve's `points`, and it is what the
+  // camera's `camera` section would have hit next.
+  //
+  // Asks the SAME table the inspector renders from, so this cannot certify
+  // behaviour the UI does not have.
+  it('every section an ObjectData-output node declares renders rows or a control', () => {
+    const snap = snapshotRegistry();
+    const dataKinds = Object.entries(snap).filter(
+      ([, def]) => def.outputs?.out?.type === 'ObjectData',
+    );
+    expect(
+      dataKinds.length,
+      'no ObjectData-output nodes found — the filter drifted',
+    ).toBeGreaterThan(0);
+    let sectionsChecked = 0;
+    for (const [type, def] of dataKinds) {
+      // The params this kind DECLARES, read off its schema rather than off a
+      // parsed instance: not every schema can be defaulted into one (BoxData's
+      // `size` is a required tuple, so parsing `{}` fails), and a sweep that
+      // silently fell back to no params would report every section empty —
+      // measuring its own fixture instead of the registry.
+      const keys = declaredParamKeys(type);
+      const params = Object.fromEntries(keys.map((k) => [k, undefined]));
+      const declared = (def.inspectorSections ?? []).filter(isSectionId);
+      // A data node is the linked half of a split, so the two ids differ — which
+      // is the arrangement the dispatcher has to work under.
+      const ctx = makeSectionCtx(
+        { id: 'data', type, version: def.version, params, inputs: {} },
+        'obj',
+        false,
+      );
+      for (const sectionId of declared) {
+        sectionsChecked++;
+        const routesAParam = keys.some((key) => paramToSection(key, declared) === sectionId);
+        expect(
+          routesAParam || sectionRendersCustomControl(sectionId, ctx),
+          `${type} declares section "${sectionId}" but nothing renders in it: no param routes there and the shared section table has no control for it`,
+        ).toBe(true);
+      }
+    }
+    // Guard the guard: a sweep that checked nothing would pass vacuously.
+    expect(sectionsChecked, 'no sections were checked — the sweep drifted').toBeGreaterThanOrEqual(
+      4,
+    );
   });
 
   it('render-primary nodes lead with section "render"', () => {

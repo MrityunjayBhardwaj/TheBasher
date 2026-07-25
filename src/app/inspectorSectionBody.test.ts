@@ -19,9 +19,12 @@ import type { DagState } from '../core/dag/state';
 import { SECTION_IDS, paramToSection, type SectionId } from './inspectorSections';
 import {
   SECTION_CONTROLS,
+  SectionBody,
   makeSectionCtx,
   sectionRendersCustomControl,
   type ControlKey,
+  type SectionControlRenderers,
+  type SectionCtx,
 } from './inspectorSectionBody';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 
@@ -163,5 +166,111 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
       .map((c) => c.applies.toString())
       .join('\n');
     expect(source).not.toMatch(/Camera|Mesh|Scene|Gltf|Group|MaterialOverride|Keyframe/);
+  });
+});
+
+// --- What the dispatcher actually emits -------------------------------------
+//
+// SectionBody is a plain function, so it can be CALLED and its returned element
+// tree read directly — no DOM, no renderer. Each control is stubbed with a
+// string naming it, so these assertions are about which controls the shared
+// dispatch emits and in what order, which is the thing both call sites depend
+// on and the thing that used to differ between them.
+
+const STUB_RENDERERS = Object.fromEntries(
+  Object.values(SECTION_CONTROLS)
+    .flat()
+    .map((c) => [c.key, (ctx: SectionCtx) => `${c.key}(${ctx.paramsNodeId},${ctx.objectNodeId})`]),
+) as SectionControlRenderers;
+
+/** Flatten the emitted tree to the strings the stubs produced, in render order. */
+function emitted(
+  sectionId: Parameters<typeof SectionBody>[0]['sectionId'],
+  ctx: SectionCtx,
+  rows: readonly (readonly [string, unknown])[] = [],
+): string[] {
+  const out: string[] = [];
+  const walk = (n: unknown): void => {
+    if (typeof n === 'string') {
+      out.push(n);
+      return;
+    }
+    if (Array.isArray(n)) {
+      n.forEach(walk);
+      return;
+    }
+    const kids = (n as { props?: { children?: unknown } } | null)?.props?.children;
+    if (kids !== undefined) walk(kids);
+  };
+  walk(
+    SectionBody({
+      sectionId,
+      ctx,
+      rows,
+      renderers: STUB_RENDERERS,
+      renderRow: (key) => `row:${key}`,
+    }),
+  );
+  return out;
+}
+
+describe('#458 the shared dispatcher emits the same body for a data half as for a whole node', () => {
+  /** The linked half of a split: params on the data node, pose on the Object. */
+  const dataHalf = (type: string, params: Record<string, unknown> = {}) =>
+    makeSectionCtx({ id: 'data', type, version: 1, params, inputs: {} }, 'obj', false);
+
+  it('renders a CurveData curve section as the control plus its non-point rows', () => {
+    const rows: [string, unknown][] = [
+      ['points', []],
+      ['closed', false],
+      ['resolution', 8],
+    ];
+    expect(emitted('curve', dataHalf('CurveData'), rows)).toEqual([
+      'curvePoints(data,obj)',
+      // `points` is owned by the control above and must not double-render.
+      'row:closed',
+      'row:resolution',
+    ]);
+  });
+
+  it('renders a data half that declares `camera` as the lens control (the #387 shape)', () => {
+    // The case this whole change exists for. Before it, the linked-data block
+    // dispatched only `curve`, so this section rendered NOTHING — a titled,
+    // empty card, with every automated check green. There is no camera data
+    // node yet; the dispatcher is asked the question a release early, because
+    // by the time one exists the answer has to already be right.
+    expect(emitted('camera', dataHalf('PerspectiveCamera'), [['fov', 50]])).toEqual([
+      'cameraLens(data,obj)',
+    ]);
+  });
+
+  it('hands the lens control BOTH ids, not one twice', () => {
+    // The lens reads its params from the data half and its pose from the
+    // Object. Collapsing the two would resolve the pose off a poseless node —
+    // which returns a fallback pose rather than an error, so the panel would
+    // show a plausible wrong focus distance and nothing would report it.
+    const [lens] = emitted('camera', dataHalf('PerspectiveCamera'));
+    expect(lens).toBe('cameraLens(data,obj)');
+    expect(lens).not.toBe('cameraLens(data,data)');
+    expect(lens).not.toBe('cameraLens(obj,obj)');
+  });
+
+  it('puts the transform controls BELOW the rows', () => {
+    const ctx = makeSectionCtx(
+      { id: 'g', type: 'Group', version: 1, params: {}, inputs: {} },
+      'g',
+      true,
+    );
+    expect(emitted('transform', ctx, [['position', [0, 0, 0]]])).toEqual([
+      'row:position',
+      'applyTransform(g,g)',
+      'setOrigin(g,g)',
+    ]);
+  });
+
+  it('suppresses every row in a section one control owns outright', () => {
+    expect(emitted('environment', dataHalf('Scene'), [['envIntensity', 1]])).toEqual([
+      'sceneEnvironment(data,obj)',
+    ]);
   });
 });

@@ -257,10 +257,20 @@ function nodeOwnsParam(
   params: Readonly<Record<string, unknown>>,
   key: string,
 ): boolean {
-  if (key in params) return true;
-  if (!nodeType) return false;
+  return key in params || declaredParamKeys(nodeType).includes(key);
+}
+
+/** The param keys a node TYPE declares, read off its schema.
+ *
+ *  The honest answer to "what params does this kind have?", and the one a guard
+ *  has to use: a node's params OBJECT is a snapshot, and not every schema can
+ *  even be defaulted into one (`BoxData.size` is a required tuple, so parsing
+ *  `{}` fails outright and would leave a sweep looking at nothing). */
+export function declaredParamKeys(nodeType: string | undefined): readonly string[] {
+  if (!nodeType) return [];
   const schema = getNodeType(nodeType)?.paramSchema;
-  return schema instanceof z.ZodObject && key in (schema.shape as Record<string, unknown>);
+  if (!(schema instanceof z.ZodObject)) return [];
+  return Object.keys(schema.shape as Record<string, unknown>);
 }
 
 /**
