@@ -34,14 +34,19 @@ describe('channelPathForBand', () => {
     expect(channelPathForBand('lights', path)).toBe(path);
   });
 
-  it('every SplitBand member has an arm (the `never` has nothing to catch today)', () => {
-    // Guard the guard: if `SplitBand` ever grows a member, the switch stops compiling
-    // — but only if this list is what the type actually contains. Keeping the list here
-    // means a widened union that someone "fixed" with a `default:` arm still shows up as
-    // an untested member rather than passing silently.
-    const bands: SplitBand[] = ['children', 'lights'];
-    expect(bands).toHaveLength(2);
-    for (const band of bands) {
+  it('every SplitBand member is exercised here, not just the two we remember', () => {
+    // Keyed by the union rather than written as `const bands: SplitBand[] = [...]`,
+    // because a widened union still accepts a two-element array and the list would go
+    // stale in silence.
+    //
+    // Be clear about what this does and does not buy, though: `tsconfig.app.json`
+    // EXCLUDES `src/**/*.test.ts`, so nothing typechecks this file in CI and the missing
+    // key would not be a build error. The real compile-time guard is the `never` in
+    // channelPathForBand itself and in renderedValueForBand — both live in files that ARE
+    // typechecked, and both were confirmed to red when a third band is added. This is the
+    // runtime companion to those, not a substitute for them.
+    const ALL_BANDS: Record<SplitBand, true> = { children: true, lights: true };
+    for (const band of Object.keys(ALL_BANDS) as SplitBand[]) {
       expect(typeof channelPathForBand(band, 'x')).toBe('string');
     }
   });
