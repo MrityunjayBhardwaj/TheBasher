@@ -51,11 +51,11 @@ export function splitCurveOps(opts: SplitCurveOpts): unknown[] {
   const dataId = opts.dataId ?? dataIdFor(objectId);
   const pts = opts.points ?? DEFAULT_POINTS;
 
-  // This builder's OWN defaulting, deliberately not shared with the unit helper:
-  // it writes points/closed/resolution and all three pose params
-  // unconditionally, where `makeSplitCurve` omits every param the caller did not pass. ~75 consumers across both
-  // tiers depend on the current behaviour, so splitKinds shares the op LIST and
-  // leaves the defaults here. See src/test-utils/splitKinds.ts.
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. It genuinely matters for this kind: the points and resolution below are a
+  // deliberate LOPSIDED arc-length fixture, NOT CurveData's schema defaults (a gentle
+  // S-curve at resolution 16, which is what the unit helper takes). Unifying the two
+  // would silently change what these specs measure. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = {
     points: pts.map((co, i) => ({ id: `cp${i}`, co })),
     closed: opts.closed ?? false,

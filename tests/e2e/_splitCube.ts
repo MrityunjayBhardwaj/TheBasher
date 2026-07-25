@@ -51,11 +51,11 @@ export function splitCubeOps(opts: SplitCubeOpts): unknown[] {
   const objectId = opts.objectId;
   const dataId = opts.dataId ?? dataIdFor(objectId);
 
-  // This builder's OWN defaulting, deliberately not shared with the unit helper: it
-  // writes all three pose params unconditionally, where `makeSplitCube` omits the ones
-  // the caller did not pass. ~75 consumers across both tiers depend on the current
-  // behaviour, and "does this node have that key" is observable — so splitKinds shares
-  // the op LIST and leaves the defaults here. See src/test-utils/splitKinds.ts.
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. `addNode` stores PARSED params, so writing a param's own schema default is
+  // byte-identical to omitting it — the pose params below are in that category. What is
+  // NOT interchangeable is a default this builder chooses DIFFERENTLY from the schema
+  // (see _splitCurve.ts). Unifying is a separate change with its own blast radius.
   const dataParams: Record<string, unknown> = { size: opts.size ?? [1, 1, 1] };
   if (opts.color) dataParams.material = { base: { color: opts.color } };
 

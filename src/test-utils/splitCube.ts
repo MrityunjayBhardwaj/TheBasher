@@ -48,9 +48,13 @@ export function makeSplitCube(state: DagState, opts: SplitCubeOpts): SplitCube {
   const objectId = opts.objectId;
   const dataId = opts.dataId ?? dataIdFor(objectId);
 
-  // This helper's OWN defaulting, deliberately not shared: it writes a pose param only
-  // when the caller passed one (the e2e builder always writes all three). Unifying the
-  // two would change what ~75 existing consumers see — see splitKinds.ts.
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. It is not interchangeable with the e2e builder's: `addNode` stores PARSED
+  // params, so omitting a param the schema defaults is byte-identical to writing that
+  // default — but where the two builders choose DIFFERENT defaults the shapes genuinely
+  // diverge (see _splitCurve.ts, whose points and resolution are a deliberate arc-length
+  // fixture, not the schema's). Unifying them is a separate change with its own blast
+  // radius. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = { size: opts.size ?? [1, 1, 1] };
   if (opts.color) dataParams.material = { base: { color: opts.color } };
 

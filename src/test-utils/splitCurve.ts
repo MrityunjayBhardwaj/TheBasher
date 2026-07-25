@@ -53,9 +53,12 @@ export function makeSplitCurve(state: DagState, opts: SplitCurveOpts): SplitCurv
   const objectId = opts.objectId;
   const dataId = opts.dataId ?? dataIdFor(objectId);
 
-  // This helper's OWN defaulting, deliberately not shared: it omits every param the
-  // caller did not pass and lets zod fill them in (the e2e builder writes points/closed/
-  // resolution and all three pose params unconditionally). See splitKinds.ts.
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. THIS is the kind where it actually matters: omitting `points`/`resolution`
+  // takes CurveData's schema defaults (a gentle S-curve at resolution 16), while the e2e
+  // builder deliberately substitutes a LOPSIDED path at resolution 32 to expose
+  // arc-length behaviour. Unifying the two would silently change what those specs
+  // measure. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = {};
   if (opts.points !== undefined) dataParams.points = withIds(opts.points);
   if (opts.closed !== undefined) dataParams.closed = opts.closed;

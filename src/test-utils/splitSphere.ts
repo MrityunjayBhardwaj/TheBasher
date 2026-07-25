@@ -51,9 +51,13 @@ export function makeSplitSphere(state: DagState, opts: SplitSphereOpts): SplitSp
   const objectId = opts.objectId;
   const dataId = opts.dataId ?? dataIdFor(objectId);
 
-  // This helper's OWN defaulting, deliberately not shared: it omits every param the
-  // caller did not pass and lets zod fill them in (the e2e builder writes `radius` and
-  // all three pose params unconditionally). See splitKinds.ts.
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. It is not interchangeable with the e2e builder's: `addNode` stores PARSED
+  // params, so omitting a param the schema defaults is byte-identical to writing that
+  // default — but where the two builders choose DIFFERENT defaults the shapes genuinely
+  // diverge (see _splitCurve.ts, whose points and resolution are a deliberate arc-length
+  // fixture, not the schema's). Unifying them is a separate change with its own blast
+  // radius. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = {};
   if (opts.radius !== undefined) dataParams.radius = opts.radius;
   if (opts.widthSegments !== undefined) dataParams.widthSegments = opts.widthSegments;

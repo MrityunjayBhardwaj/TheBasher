@@ -56,11 +56,11 @@ export function splitSphereOps(opts: SplitSphereOpts): unknown[] {
   const objectId = opts.objectId;
   const dataId = opts.dataId ?? dataIdFor(objectId);
 
-  // This builder's OWN defaulting, deliberately not shared with the unit helper:
-  // it writes `radius` and all three pose params unconditionally, where
-  // `makeSplitSphere` omits every param the caller did not pass. ~75 consumers across both
-  // tiers depend on the current behaviour, so splitKinds shares the op LIST and
-  // leaves the defaults here. See src/test-utils/splitKinds.ts.
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. `addNode` stores PARSED params, so writing a param's own schema default is
+  // byte-identical to omitting it — the pose params below are in that category. What is
+  // NOT interchangeable is a default this builder chooses DIFFERENTLY from the schema
+  // (see _splitCurve.ts). Unifying is a separate change with its own blast radius.
   const dataParams: Record<string, unknown> = { radius: opts.radius ?? 0.5 };
   if (opts.widthSegments !== undefined) dataParams.widthSegments = opts.widthSegments;
   if (opts.heightSegments !== undefined) dataParams.heightSegments = opts.heightSegments;

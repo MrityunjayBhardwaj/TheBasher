@@ -121,11 +121,19 @@ export function dataIdFor(objectId: string): string {
  * edge between them, in dependency order.
  *
  * This is the ONE place the shape lives — the node types, the socket names, the edge
- * DIRECTION and the ordering. Callers keep their own param defaulting (the unit helpers
- * omit what the caller did not pass and let zod fill in; the e2e builders always write
- * all three pose params). Those defaults are NOT unified here on purpose: ~75 call sites
- * depend on the current behaviour, and "does this node have that key" is an observable
- * difference, not a cosmetic one.
+ * DIRECTION and the ordering. Callers keep their own param defaulting.
+ *
+ * Measured, because the obvious reason turned out to be wrong: `addNode` stores PARSED
+ * params, so omitting a param whose schema has a default is byte-identical to writing
+ * that default. The pose params the two builder families disagree about are ALL in that
+ * category — unifying them changes nothing at all. What genuinely diverges is a default a
+ * builder chooses DIFFERENTLY from the schema, and today that is exactly one case: the
+ * e2e curve builder substitutes a lopsided arc-length path at resolution 32 where
+ * CurveData's schema defaults to a gentle S-curve at 16.
+ *
+ * So the defaults stay with their callers not because ~75 consumers depend on all of
+ * them, but because ONE of them is load-bearing and separating it from the rest is its
+ * own change with its own blast radius. Sharing the op list needs none of that.
  */
 export function splitOps(
   kind: SplitKindName,
