@@ -70,10 +70,16 @@ import { useDragScrub } from './dragScrub';
 import {
   formatSectionLabel,
   isDefaultCollapsed,
-  isSectionId,
   paramToSection,
+  sectionsOf,
   type SectionId,
 } from './inspectorSections';
+import {
+  SectionBody,
+  controlOwnedRowKeys,
+  makeSectionCtx,
+  type SectionControlRenderers,
+} from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
@@ -722,14 +728,6 @@ function NodeRefField({
     </label>
   );
 }
-
-/** The node types that carry per-side extend rules (#269/#270, D1). Gates the
- *  ChannelExtendControls render + the raw-row suppression to exactly these. */
-const KEYFRAME_CHANNEL_TYPES: ReadonlySet<string> = new Set([
-  'KeyframeChannelNumber',
-  'KeyframeChannelVec2',
-  'KeyframeChannelVec3',
-]);
 
 /** #270/#275 — the per-side EXTRAPOLATION control (hold/slope), grouped as one
  *  "Extend" block in the channel's animate section. Blender-grounded: this is the
@@ -2689,12 +2687,21 @@ function SectionCard({
  * inspector. Generic over the data node's declared sections, so a future SphereData surfaces
  * the same way.
  */
-function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
+function LinkedDataSections({
+  dataNodeId,
+  objectNodeId,
+  canApply,
+}: {
+  dataNodeId: string;
+  objectNodeId: string;
+  /** Asked of the OBJECT, which is the half Apply acts on. Passed down rather
+   *  than re-derived: the panel already computed it for this very node, and
+   *  `canApplyTransform` evaluates the node to answer. */
+  canApply: boolean;
+}) {
   const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
+  const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
   if (!dataNode) return null;
-  const declared: SectionId[] = (getNodeType(dataNode.type)?.inspectorSections ?? []).filter(
-    isSectionId,
-  );
   if (declared.length === 0) return null;
 
   const grouped = new Map<SectionId, [string, unknown][]>();
@@ -2726,18 +2733,21 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
           sectionId={sectionId}
           declaredSections={declared}
         >
-          {/* #385 — a data node with a CUSTOM section control (CurveData's 'curve' →
-              CurvePointRows) must render it HERE too, not only in the main-node block below.
-              Curve is the first such data node — box/sphere's data sections (mesh/material)
-              render fine through ParamRow (material via its own special-case), so this parity
-              gap was invisible until now. `points` has no generic row, so it is filtered out
-              of the raw rows to avoid a broken double-render; closed/resolution stay as rows. */}
-          {sectionId === 'curve' ? <CurvePointRows nodeId={dataNode.id} /> : null}
-          {(grouped.get(sectionId) ?? [])
-            .filter(([key]) => !(sectionId === 'curve' && key === 'points'))
-            .map(([key, value]) => (
+          {/* #458 — the SAME table the main-node block dispatches through, which
+              is the whole point: a data node's custom section control can no
+              longer exist on one road and silently render nothing on the other.
+              This block used to carry a hand-copied `'curve'` arm, so CurveData
+              worked and every other custom section would have rendered empty.
+              Two ids: the data half owns these params, the Object poses it. */}
+          <SectionBody
+            sectionId={sectionId}
+            ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
+            rows={grouped.get(sectionId) ?? []}
+            renderers={SECTION_CONTROL_RENDERERS}
+            renderRow={(key, value) => (
               <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
-            ))}
+            )}
+          />
         </SectionCard>
       ))}
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
@@ -2749,6 +2759,50 @@ function LinkedDataSections({ dataNodeId }: { dataNodeId: string }) {
     </div>
   );
 }
+
+/**
+ * How each control in the shared section table is drawn (#458).
+ *
+ * The table decides WHETHER a control renders; this map says WITH WHAT. It is
+ * a `Record<ControlKey, …>`, so adding a control to the table without wiring it
+ * here fails the build rather than shipping another empty section.
+ *
+ * Which id a control gets follows the possession that gated it: a control the
+ * table selected by `ownsParam` targets the node owning that param, and one
+ * gated by `canApplyTransform` targets the object that predicate was asked
+ * about, so offer and accept stay the same node. The lens control takes BOTH —
+ * its lens params and its pose live on opposite halves of a split camera.
+ */
+const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
+  slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
+  gltfMaterialEditor: (ctx) => (
+    <GltfMaterialEditor
+      nodeId={ctx.paramsNodeId}
+      materials={(ctx.params as { materials?: InlineMaterialSpec[] }).materials ?? []}
+    />
+  ),
+  gltfMaterialReadout: (ctx) => (
+    <GltfMaterialReadout
+      assetRef={String((ctx.params as { assetRef?: unknown }).assetRef ?? '')}
+      // A child of an imported asset owns the name of the child it stands for;
+      // the whole-asset node does not. That possession is what "is this a
+      // child?" actually means here.
+      childId={ctx.ownsParam('childName') ? ctx.paramsNodeId : null}
+    />
+  ),
+  sceneEnvironment: (ctx) => <SceneEnvironmentControls nodeId={ctx.paramsNodeId} />,
+  cameraLens: (ctx) => (
+    <CameraLensControls nodeId={ctx.paramsNodeId} poseNodeId={ctx.objectNodeId} />
+  ),
+  modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
+  constraintStack: (ctx) => <ConstraintStackControls nodeId={ctx.paramsNodeId} />,
+  driverStack: (ctx) => <DriverStackControls nodeId={ctx.paramsNodeId} />,
+  curvePoints: (ctx) => <CurvePointRows nodeId={ctx.paramsNodeId} />,
+  channelExtend: (ctx) => <ChannelExtendControls nodeId={ctx.paramsNodeId} />,
+  channelModifiers: (ctx) => <ChannelModifierControls nodeId={ctx.paramsNodeId} />,
+  applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
+  setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
+};
 
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
@@ -2773,10 +2827,10 @@ export function NPanel() {
   const collapsed = useChromeStore((s) => s.inspectorCollapsed);
   const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
 
-  // Resolve the node's declared inspectorSections via the registry
-  // (the source of truth — V14 alignment). Empty array → raw fallback.
-  const declaredRaw = node ? getNodeType(node.type)?.inspectorSections : undefined;
-  const declared: SectionId[] = (declaredRaw ?? []).filter(isSectionId);
+  // Resolve the node's declared inspectorSections through the ONE read seam
+  // (which resolves via the registry — the source of truth, V14 alignment).
+  // Empty array → raw fallback.
+  const declared = useDagStore((s) => sectionsOf(s.state, selectedId));
 
   // The general node-ref params (SampleGeometry terrain/query, a Solver's controller):
   // rendered as one NodeRefField block below the header (regardless of section mode), and
@@ -2941,6 +2995,10 @@ export function NPanel() {
               // after the declared sections (typed under (complex —
               // Pro mode) or string display — preserves zero param
               // hiding while keeping unrouted params visible).
+              // #458 — this node is not the linked half of anything, so it plays
+              // both roles: it owns the params AND it is the posing object.
+              const sectionCtx = makeSectionCtx(node, node.id, canApply);
+              const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
               const grouped: Map<SectionId, [string, unknown][]> = new Map();
               const unrouted: [string, unknown][] = [];
               for (const [key, value] of Object.entries(
@@ -2948,10 +3006,12 @@ export function NPanel() {
               )) {
                 if (isInputBinding(value)) continue; // socket binding, not param
                 if (refKeys?.has(key)) continue; // ref params render in the block above
-                // v0.6 #2 (#178, W6): slotIndex is the per-submesh addressing
-                // dimension; it renders as the dedicated SlotSelector chrome at
-                // the top of the material section, NOT as a raw numeric row.
-                if (node.type === 'MaterialOverride' && key === 'slotIndex') continue;
+                // A param a custom control renders is never ALSO a row. Asked of
+                // the shared table rather than restated here, and asked before
+                // grouping because such a key need not route to any section at
+                // all — the per-submesh slot index does not, and would otherwise
+                // land in the unrouted bucket beside the selector that owns it.
+                if (ownedRowKeys.has(key)) continue;
                 const section = paramToSection(key, declared);
                 if (section === null) {
                   unrouted.push([key, value]);
@@ -2960,14 +3020,6 @@ export function NPanel() {
                   grouped.get(section)!.push([key, value]);
                 }
               }
-              // #178 S4 — a GltfChild's captured OpenPBR materials (S2). Non-empty
-              // → the MATERIAL section routes to the editable GltfMaterialEditor;
-              // absent/empty → the read-only readout (V10/H14 backward-compat).
-              const gltfChildMaterials =
-                node.type === 'GltfChild' &&
-                Array.isArray((node.params as { materials?: unknown }).materials)
-                  ? ((node.params as { materials: InlineMaterialSpec[] }).materials ?? [])
-                  : [];
               return (
                 <>
                   {declared.map((sectionId) => (
@@ -2977,122 +3029,21 @@ export function NPanel() {
                       sectionId={sectionId}
                       declaredSections={declared}
                     >
-                      {/* v0.6 #2 (#178, W6) — per-submesh slot selector at the
-                          top of a glTF MaterialOverride's material section. Only
-                          renders for a >=2-slot glTF target; the flat material
-                          controls below author the override for the chosen slot. */}
-                      {sectionId === 'material' && node.type === 'MaterialOverride' ? (
-                        <SlotSelector nodeId={node.id} />
-                      ) : null}
-                      {/* #178 S4 — a GltfChild that captured OpenPBR materials at
-                          import (S2) gets the EDITABLE lobe editor (the same one
-                          Box/Sphere use); editing writes the child's `materials`
-                          and the S3 overlay repaints the clone live. A GltfChild
-                          with NO captured materials (pre-#178 save / empty bone)
-                          and the whole-asset GltfAsset keep the read-only readout
-                          (V10/H14 backward-compat). */}
-                      {sectionId === 'material' &&
-                      node.type === 'GltfChild' &&
-                      gltfChildMaterials.length > 0 ? (
-                        <GltfMaterialEditor nodeId={node.id} materials={gltfChildMaterials} />
-                      ) : sectionId === 'material' &&
-                        (node.type === 'GltfAsset' || node.type === 'GltfChild') ? (
-                        <GltfMaterialReadout
-                          assetRef={String((node.params as { assetRef?: unknown }).assetRef ?? '')}
-                          childId={node.type === 'GltfChild' ? node.id : null}
-                        />
-                      ) : null}
-                      {/* UX #9 — the Environment section is authored by a single
-                          custom control, NOT raw param rows (the env params route
-                          here only to leave the raw-fallback bucket). */}
-                      {sectionId === 'environment' && node.type === 'Scene' ? (
-                        <SceneEnvironmentControls nodeId={node.id} />
-                      ) : null}
-                      {/* UX #12 — the Camera (lens) section is authored by a
-                          single custom control (focal length / sensor / clipping),
-                          NOT raw param rows; the lens params route here only to
-                          leave the raw-fallback bucket. */}
-                      {sectionId === 'camera' &&
-                      (node.type === 'PerspectiveCamera' || node.type === 'OrthographicCamera') ? (
-                        <CameraLensControls nodeId={node.id} />
-                      ) : null}
-                      {/* #209 — the geometry OperatorStack UI (epic #201). Renders
-                          for the base mesh AND any modifier in its chain (Box/
-                          Sphere declare 'modifier'; ArrayModifier does too). The
-                          modifier's own params (count/offset) still render as the
-                          ParamRows below, so selecting a modifier shows both. */}
-                      {sectionId === 'modifier' ? <ModifierStackControls nodeId={node.id} /> : null}
-                      {/* #312 — the CONSTRAINT stack UI: the same rows as the modifier
-                          stack (OperatorStackRows), over a different enumerator + op-
-                          builders (a constraint is edge-less, so add/move/remove write
-                          `target`/`order` fields rather than re-wiring). Renders for the
-                          constrained OBJECT and for any constraint in its stack, so
-                          selecting a Track-To shows the stack it belongs to plus its own
-                          params in the ParamRows below. */}
-                      {sectionId === 'constraint' ? (
-                        <ConstraintStackControls nodeId={node.id} />
-                      ) : null}
-                      {/* #316 — the DRIVER stack UI: the PARAM-writing half of the same
-                          relational species, on the same shared rows (OperatorStackRows,
-                          the third caller). One stack per driven param BAND — the fold
-                          groups by paramPath, so two drivers contend only when they write
-                          the same param. Renders for the driven OBJECT and for any driver
-                          in its stacks. Creation stays on the param row (ParamDriverBind),
-                          which is where the source is chosen. */}
-                      {sectionId === 'driver' ? <DriverStackControls nodeId={node.id} /> : null}
-                      {/* #321 — a Curve's control points. A variable-length vec3 list has
-                          no generic param row, so `points` routes here and renders through
-                          a dedicated control (filtered out of the rows below so it doesn't
-                          double-render as a raw array). `closed` and `resolution` stay
-                          ordinary rows beneath it. */}
-                      {sectionId === 'curve' ? <CurvePointRows nodeId={node.id} /> : null}
-                      {/* #270 — a channel's per-side extend rules render as one
-                          "Extend / Before / After" control at the top of the animate
-                          section (Blender-grounded single per-side affordance). The
-                          two params route here to leave the raw bucket; the generic
-                          rows for them are filtered below so they don't double-render. */}
-                      {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
-                        <ChannelExtendControls nodeId={node.id} />
-                      ) : null}
-                      {/* #274 (D2) — the F-Modifier STACK (Noise …), authored by a
-                          dedicated control below the Extend block; `modifiers` routes
-                          to animate to leave the raw bucket, filtered out below. */}
-                      {sectionId === 'animate' && KEYFRAME_CHANNEL_TYPES.has(node.type) ? (
-                        <ChannelModifierControls nodeId={node.id} />
-                      ) : null}
-                      {sectionId === 'environment' || sectionId === 'camera'
-                        ? null
-                        : (grouped.get(sectionId) ?? [])
-                            .filter(
-                              ([key]) =>
-                                key !== 'extendBefore' &&
-                                key !== 'extendAfter' &&
-                                key !== 'modifiers' &&
-                                key !== 'points',
-                            )
-                            .map(([key, value]) => (
-                              <ParamRow
-                                key={key}
-                                nodeId={node.id}
-                                paramPath={key}
-                                value={value}
-                                overrideInfo={makeOverrideInfo(key)}
-                              />
-                            ))}
-                      {/* Phase 151 — Apply control in the transform card for a
-                          selected primitive. Bakes TRS → BakedMesh via the same
-                          helper the Object ▸ Apply menu uses (one undo). #376: a
-                          split `Object` bakes too. Gated by the shared
-                          canApplyTransform predicate, so the control is offered
-                          exactly when the dispatcher would accept it. */}
-                      {sectionId === 'transform' && canApply ? (
-                        <ApplyTransformControl nodeId={node.id} />
-                      ) : null}
-                      {/* #228 Slice D — Set Origin to Geometry for a Group (its
-                          origin is the `pivot` row above). */}
-                      {sectionId === 'transform' && node.type === 'Group' ? (
-                        <SetOriginControl nodeId={node.id} />
-                      ) : null}
+                      <SectionBody
+                        sectionId={sectionId}
+                        ctx={sectionCtx}
+                        rows={grouped.get(sectionId) ?? []}
+                        renderers={SECTION_CONTROL_RENDERERS}
+                        renderRow={(key, value) => (
+                          <ParamRow
+                            key={key}
+                            nodeId={node.id}
+                            paramPath={key}
+                            value={value}
+                            overrideInfo={makeOverrideInfo(key)}
+                          />
+                        )}
+                      />
                     </SectionCard>
                   ))}
                   {unrouted.length > 0 ? (
@@ -3120,7 +3071,13 @@ export function NPanel() {
             const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
               | { node?: string }
               | undefined;
-            return dataRef?.node ? <LinkedDataSections dataNodeId={dataRef.node} /> : null;
+            return dataRef?.node ? (
+              <LinkedDataSections
+                dataNodeId={dataRef.node}
+                objectNodeId={node.id}
+                canApply={canApply}
+              />
+            ) : null;
           })()}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
               edit / remove controller knobs + promote them to the Controllers dock.

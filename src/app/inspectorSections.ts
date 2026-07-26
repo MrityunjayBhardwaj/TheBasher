@@ -15,6 +15,9 @@
 // §7.3 (per-node-type collapse persistence); D-06, D-07, D-08, D-10
 // locked W4.
 
+import { getNodeType } from '../core/dag/registry';
+import type { DagState } from '../core/dag/state';
+
 export type SectionId =
   | 'transform'
   | 'mesh'
@@ -270,6 +273,48 @@ export function paramToSection(
   }
   return null;
 }
+
+/** The sections a NODE declares, narrowed to known ids.
+ *
+ *  The single read seam for "which sections does this node show?". Today it
+ *  resolves the node's TYPE and returns that type's static `inspectorSections`
+ *  — byte-identical to the two inline lookups it replaces. It takes a node id
+ *  rather than a type because the declaration is a property of the node, and
+ *  only incidentally a property of its type: a template/subgraph instance
+ *  (Milestone 2) has one type for every instance, and its sections must come
+ *  from its promoted parameters. Resolving through one call keeps that a new
+ *  implementation behind this function instead of a rework of both call sites.
+ *
+ *  Unknown strings are filtered out (the same narrowing the call sites did),
+ *  so a stale/renamed section id in a registry entry degrades to "not shown"
+ *  rather than rendering an untitled card.
+ *
+ *  REF: docs/UNIFICATION-PRINCIPLES.md §2 ("the one thing that genuinely would
+ *  not hold"); #458.
+ */
+export function sectionsOf(
+  state: DagState,
+  nodeId: string | null | undefined,
+): readonly SectionId[] {
+  const node = nodeId ? state.nodes[nodeId] : undefined;
+  if (!node) return NO_SECTIONS;
+  const declared = getNodeType(node.type)?.inspectorSections;
+  if (!declared || declared.length === 0) return NO_SECTIONS;
+  // The narrowed array is cached against the registry's own (module-constant)
+  // array so this returns a STABLE reference for a given node type. Call sites
+  // subscribe through a `useDagStore` selector, and zustand compares with
+  // Object.is — a fresh `.filter()` result every call would re-render the
+  // inspector on every unrelated store change.
+  let narrowed = narrowedSections.get(declared);
+  if (!narrowed) {
+    narrowed = declared.filter(isSectionId);
+    narrowedSections.set(declared, narrowed);
+  }
+  return narrowed;
+}
+
+const NO_SECTIONS: readonly SectionId[] = [];
+const narrowedSections = new WeakMap<readonly string[], SectionId[]>();
 
 /** Default-collapsed convention (§5.8). A section is default-collapsed
  *  iff it is NOT the primary domain of the selected node type.

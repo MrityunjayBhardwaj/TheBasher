@@ -37,7 +37,23 @@ function round(n: number, places = 1): number {
   return Math.round(n * f) / f;
 }
 
-export function CameraLensControls({ nodeId }: { nodeId: string }) {
+/**
+ * @param nodeId      the node owning the LENS params (fov/sensor/clip/focus).
+ * @param poseNodeId  the node owning the POSE (position/lookAt). The same node
+ *   today; once the camera splits into an Object + CameraData the lens params
+ *   move to the data half while the pose stays on the Object, and the derived
+ *   focus distance below spans both. Passing one id for both jobs fails
+ *   SILENTLY — `resolveCameraPoseAt` on a poseless node returns a fallback
+ *   pose, not an error, so the field would show a plausible wrong distance.
+ *   Defaults to `nodeId` so an un-split camera behaves exactly as before.
+ */
+export function CameraLensControls({
+  nodeId,
+  poseNodeId = nodeId,
+}: {
+  nodeId: string;
+  poseNodeId?: string;
+}) {
   const node = useDagStore((s) => s.state.nodes[nodeId]);
   const dispatch = useDagStore((s) => s.dispatch);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
@@ -72,7 +88,7 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
     const p = dagState.nodes[nodeId]?.params as { focusOnTarget?: unknown } | undefined;
     if (p?.focusOnTarget !== true) return null;
     try {
-      const pose = resolveCameraPoseAt(dagState, nodeId, seconds);
+      const pose = resolveCameraPoseAt(dagState, poseNodeId, seconds);
       return round(
         Math.hypot(
           pose.lookAt[0] - pose.position[0],
@@ -83,7 +99,7 @@ export function CameraLensControls({ nodeId }: { nodeId: string }) {
     } catch {
       return null;
     }
-  }, [dagState, nodeId, seconds]);
+  }, [dagState, nodeId, poseNodeId, seconds]);
 
   if (!node) return null;
   const params = (node.params ?? {}) as {
