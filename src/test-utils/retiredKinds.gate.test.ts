@@ -82,8 +82,8 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
  * `AmbientLight` is correctly absent — ambient is a World datablock and never split, the one
  * partial retirement.
  */
-export function retiredNodeTypes(): string[] {
-  return SPLIT_KIND_NAMES.flatMap((kind) => [...SPLIT_KINDS[kind].fusedTypes]).sort();
+function retiredNodeTypes(): string[] {
+  return [...new Set(SPLIT_KIND_NAMES.flatMap((kind) => [...SPLIT_KINDS[kind].fusedTypes]))].sort();
 }
 
 /**
@@ -94,7 +94,7 @@ export function retiredNodeTypes(): string[] {
  * carrier sitting further along that line. Comment bodies become spaces so that reported line
  * numbers still match the file on disk.
  */
-export function stripComments(src: string): string {
+function stripComments(src: string): string {
   let out = '';
   let i = 0;
   let quote: string | null = null;
@@ -143,7 +143,7 @@ export function stripComments(src: string): string {
 }
 
 /** The construction position: `nodeType: '<relic>'`, in any of the three quote styles. */
-export function carrierPattern(types: readonly string[]): RegExp {
+function carrierPattern(types: readonly string[]): RegExp {
   const alt = types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   return new RegExp(`\\bnodeType\\s*:\\s*['"\`](${alt})['"\`]`);
 }
@@ -196,7 +196,11 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     const sentinelRe = /['"](\w+) is retired[;,]/;
     const declared = new Set<string>();
     for (const file of scannedFiles()) {
-      const src = readFileSync(join(REPO_ROOT, file), 'utf8');
+      // Comment-stripped for the same reason the carrier sweep is: prose that quotes the
+      // sentinel while discussing a retirement would otherwise enrol a type here and break the
+      // equality below from the wrong side. String contents survive stripping, and the real
+      // sentinel lives in one.
+      const src = stripComments(readFileSync(join(REPO_ROOT, file), 'utf8'));
       for (const line of src.split('\n')) {
         const m = sentinelRe.exec(line);
         if (m) declared.add(m[1]);
@@ -210,9 +214,12 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     const files = scannedFiles();
     // Guard-the-guard: if the tracked-file walk ever returns (nearly) nothing — no git, a
     // changed layout, a filter typo — the sweep finds no carriers and reports success while
-    // having looked at nothing.
-    expect(files.length).toBeGreaterThan(200);
-    expect(files).toContain('tests/e2e/p6-w4-inspector-sections.spec.ts');
+    // having looked at nothing. Asserted per SCOPE rather than as one total, because a filter
+    // bug that dropped an entire half (all of tests/, say) would still clear a combined
+    // threshold on the surviving half alone. Counted structurally rather than by naming a
+    // canary file, which would red this gate for the unrelated reason of a rename.
+    expect(files.filter((f) => f.startsWith('tests/e2e/')).length).toBeGreaterThan(100);
+    expect(files.filter((f) => f.startsWith('src/')).length).toBeGreaterThan(300);
 
     const carriers = findCarriers(files, carrierPattern(retired));
     const accepted = new Map(ACCEPTED_CARRIERS.map((a) => [a.file, a]));
