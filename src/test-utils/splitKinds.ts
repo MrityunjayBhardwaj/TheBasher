@@ -116,6 +116,32 @@ export function dataIdFor(objectId: string): string {
   return `${objectId}_data`;
 }
 
+/** `('material.base.color', v)` → `{ material: { base: { color: v } } }`. */
+export function nestParam(path: string, value: unknown): Record<string, unknown> {
+  const parts = path.split('.');
+  let out: unknown = value;
+  for (let i = parts.length - 1; i >= 0; i--) out = { [parts[i]]: out };
+  return out as Record<string, unknown>;
+}
+
+/**
+ * The data-node params one conformance ROW is built from: the kind's minimum valid params
+ * with its BASE observable value written on top.
+ *
+ * Shared rather than written per tier on purpose. Both tiers assert against the same
+ * `distinctValues`, so if they built their fixtures separately the unit row and the e2e row
+ * could come to rest at different values while both looked correct in isolation — the
+ * instrument drifting from what it measures, one tier at a time. One builder, one resting
+ * state, and a row that disagrees across tiers is then a real disagreement.
+ */
+export function rowDataParams(kind: SplitKindName): Record<string, unknown> {
+  const spec = SPLIT_KINDS[kind];
+  return {
+    ...spec.baseDataParams,
+    ...nestParam(spec.observableDataParam, spec.distinctValues[0]),
+  };
+}
+
 /**
  * The op triple that creates one split pair: the data node, the Object, and the `data`
  * edge between them, in dependency order.
