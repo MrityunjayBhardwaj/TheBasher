@@ -1,7 +1,7 @@
 // P6 W4 acceptance — NPanel section convention (UI-SPEC §5.8 + §7.2 + §7.3).
 //
 // Coverage:
-//   #1 selecting a BoxMesh renders Mesh/Transform/Material section headers
+//   #1 selecting a split cube renders Mesh/Transform/Material section headers
 //   #2 §5.8 default-collapsed rule — primary domain expanded, others collapsed
 //   #3 toggling a section header collapses it and persists across reload
 //   #4 different node types show different sections (selecting a Transform
@@ -49,41 +49,31 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-// #365 Phase 5a (Slice 1b/1c) — the seed box is a split Object now (its Mesh/Material sections
-// come from the linked BoxData, not the Object itself). Tests #2/#3/#5 pin the section
-// MACHINERY (default-collapse, order, persistence) of a fused mesh-primary node, so they add a
-// fused SphereMesh (still geometry+transform+material in one node) and drive that — keeping
-// their intent without coupling to the split's two-node inspector layout. Test #1 stays on the
-// split box: it proves the linked-data reach makes Mesh + Material reachable for a cube.
-async function addAndSelectFusedSphere(page: import('@playwright/test').Page): Promise<void> {
-  await page.waitForFunction(() =>
-    Boolean((window as unknown as { __basher_dag?: unknown }).__basher_dag),
-  );
-  const id = await page.evaluate(() => {
-    const w = window as unknown as {
-      __basher_dag: {
-        getState: () => { dispatch: (op: unknown, source: string, desc: string) => void };
-      };
-    };
-    const sid = `sphere_test_${Date.now().toString(36)}`;
-    w.__basher_dag
-      .getState()
-      .dispatch(
-        { type: 'addNode', nodeId: sid, nodeType: 'SphereMesh', params: {} },
-        'user',
-        'e2e fused sphere',
-      );
-    return sid;
-  });
-  await page.waitForFunction(() =>
-    Boolean((window as unknown as { __basher_selection?: unknown }).__basher_selection),
-  );
-  await page.evaluate((sid) => {
-    const w = window as unknown as {
-      __basher_selection: { getState: () => { select: (id: string) => void } };
-    };
-    w.__basher_selection.getState().select(sid);
-  }, id);
+// #365 Phase 5a (Slice 1b/1c) — the seed box is a split Object now: Transform is the Object's
+// own section, Mesh + Material come from the linked BoxData.
+//
+// #471 B-III — WHY #2/#3/#5 CHANGED SUBJECT. They used to add a fused `SphereMesh` and drive
+// that, to pin the section machinery on a single node owning geometry + transform + material
+// without coupling to the split's two-block layout. `SphereMesh` retired at #384 and its
+// `evaluate` has been a throwing sentinel since, so the spec was asserting on a shape the
+// product can no longer build — the silent case the retire-a-kind gate now catches
+// (src/test-utils/retiredKinds.gate.test.ts).
+//
+// The fix is not a stand-in with the old shape, because that shape is what Stage C RETIRED.
+// The only surviving node still declaring mesh+transform+material together is `BakedMesh`, a
+// bake target whose `geometry` and 14-field `material` params are both required — a twenty-line
+// fixture standing in for something a user never selects. So these tests move to the shape a
+// user DOES select: the split pair, via the seed box, constructing nothing at all.
+//
+// That keeps every claim and adds one the fused version could not make. §5.8 ("the primary
+// domain is expanded, the rest collapse") is now observed to hold PER NODE, each block against
+// its OWN declared list: the Object's ['transform','constraint','driver','modifier'] expands
+// transform, and the linked BoxData's ['mesh','material'] independently expands mesh. A single
+// fused node cannot distinguish "the rule is applied per node" from "the rule is applied once
+// to whatever is on screen"; two blocks can.
+async function selectSeedBox(page: import('@playwright/test').Page): Promise<void> {
+  await page.getByTestId('scene-tree-row-n_box').click();
+  await expect(page.getByTestId('inspector-section-transform')).toBeVisible();
 }
 
 test('P6.W4#1 selecting a split cube renders Mesh/Transform/Material section headers (linked-data reach)', async ({
@@ -99,21 +89,33 @@ test('P6.W4#1 selecting a split cube renders Mesh/Transform/Material section hea
   await expect(page.getByTestId('inspector-linked-data')).toBeVisible();
 });
 
-test('P6.W4#2 §5.8 default-collapsed rule — primary expanded, others collapsed', async ({
+test('P6.W4#2 §5.8 default-collapsed rule — each block’s primary expanded, others collapsed', async ({
   page,
 }) => {
-  await addAndSelectFusedSphere(page);
-  // Mesh = primary domain → not collapsed (body visible).
+  await selectSeedBox(page);
+
+  // The Object's own list is ['transform','constraint','driver','modifier'] → transform is its
+  // primary domain and expands; the other three collapse.
+  await expect(page.getByTestId('inspector-section-transform')).not.toHaveAttribute(
+    'data-collapsed',
+    'true',
+  );
+  await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
+  for (const id of ['constraint', 'driver', 'modifier']) {
+    await expect(page.getByTestId(`inspector-section-${id}`)).toHaveAttribute(
+      'data-collapsed',
+      'true',
+    );
+  }
+
+  // The linked BoxData's list is ['mesh','material'] → mesh is ITS primary and expands even
+  // though it is not the Object's. This is the per-node half of the rule: if collapse were
+  // computed once for the whole panel, mesh would arrive collapsed behind transform.
   await expect(page.getByTestId('inspector-section-mesh')).not.toHaveAttribute(
     'data-collapsed',
     'true',
   );
   await expect(page.getByTestId('inspector-section-body-mesh')).toBeVisible();
-  // Transform and Material default-collapse for a mesh-primary node.
-  await expect(page.getByTestId('inspector-section-transform')).toHaveAttribute(
-    'data-collapsed',
-    'true',
-  );
   await expect(page.getByTestId('inspector-section-material')).toHaveAttribute(
     'data-collapsed',
     'true',
@@ -121,16 +123,18 @@ test('P6.W4#2 §5.8 default-collapsed rule — primary expanded, others collapse
 });
 
 test('P6.W4#3 toggling a section header persists across reload', async ({ page }) => {
-  await addAndSelectFusedSphere(page);
-  // Expand Transform (default-collapsed for a mesh-primary node).
+  await selectSeedBox(page);
+  // Both toggles move a section AWAY from its default, so a collapse state that silently reset
+  // on reload could not be mistaken for the default one. Transform defaults EXPANDED (the
+  // Object's primary) → collapse it; Material defaults COLLAPSED (not BoxData's primary) →
+  // expand it. One toggle per block, so the assertion also covers the linked half.
   await page.getByTestId('inspector-section-toggle-transform').click();
-  await expect(page.getByTestId('inspector-section-transform')).not.toHaveAttribute(
+  await expect(page.getByTestId('inspector-section-transform')).toHaveAttribute(
     'data-collapsed',
     'true',
   );
-  // Collapse Mesh (default-expanded for BoxMesh).
-  await page.getByTestId('inspector-section-toggle-mesh').click();
-  await expect(page.getByTestId('inspector-section-mesh')).toHaveAttribute(
+  await page.getByTestId('inspector-section-toggle-material').click();
+  await expect(page.getByTestId('inspector-section-material')).not.toHaveAttribute(
     'data-collapsed',
     'true',
   );
@@ -146,15 +150,14 @@ test('P6.W4#3 toggling a section header persists across reload', async ({ page }
     };
     w.__basher_chrome.getState().setLeftSidebarCollapsed(false);
   });
-  // The dispatched sphere is gone after reload (not persisted), but the collapse state is keyed
-  // by node TYPE in localStorage — a fresh SphereMesh shows the persisted choices.
-  await addAndSelectFusedSphere(page);
-  // Both user choices survive reload.
-  await expect(page.getByTestId('inspector-section-mesh')).toHaveAttribute(
+  // Collapse state is keyed by node TYPE in localStorage, not by node id, so re-selecting the
+  // box shows the persisted choices for both 'Object' and 'BoxData'.
+  await selectSeedBox(page);
+  await expect(page.getByTestId('inspector-section-transform')).toHaveAttribute(
     'data-collapsed',
     'true',
   );
-  await expect(page.getByTestId('inspector-section-transform')).not.toHaveAttribute(
+  await expect(page.getByTestId('inspector-section-material')).not.toHaveAttribute(
     'data-collapsed',
     'true',
   );
@@ -213,10 +216,12 @@ test('P6.W4#4 raw-fallback path: legacy nodes render flat (no sections)', async 
   await expect(page.getByTestId('inspector-section-transform')).toHaveCount(0);
 });
 
-test('P6.W4#5 sections appear in declared order (mesh → transform → material for a fused mesh)', async ({
+test('P6.W4#5 sections appear in declared order (transform → mesh → material across the split pair)', async ({
   page,
 }) => {
-  await addAndSelectFusedSphere(page);
+  await selectSeedBox(page);
+  // The Object's own sections come first in ITS declared order, then the linked BoxData's in
+  // ITS declared order — so the panel is two declared lists concatenated, not one re-sorted set.
   // Read DOM order of section headers.
   const order = await page.evaluate(() => {
     const sections = Array.from(document.querySelectorAll('[data-testid^="inspector-section-"]'))
@@ -229,8 +234,8 @@ test('P6.W4#5 sections appear in declared order (mesh → transform → material
     return sections;
   });
   expect(order).toEqual([
-    'inspector-section-mesh',
     'inspector-section-transform',
+    'inspector-section-mesh',
     'inspector-section-material',
   ]);
 });
