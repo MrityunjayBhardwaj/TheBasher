@@ -2218,6 +2218,20 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     if (!light) return null;
     return <LightKindR value={light} nodeId={null} constrained={false} />;
   }
+  if (data?.kind === 'CameraData') {
+    // #387 — a camera Object draws NO scene geometry, so this arm renders nothing, and
+    // that is the correct answer rather than a stub. A camera's visible body is its
+    // frustum, which is editor chrome drawn by the SEPARATE camera band
+    // (`enumerateCameraNodeIds` → :307 / :440-457) — and that band already covers a
+    // camera nested in a Group, so returning null here does not cost a grouped camera
+    // its helper.
+    //
+    // This is the arm the compiler forces once ObjectData widens (the same TS2322 the
+    // light split met). Closing it with `as MeshDataValue` also compiles, and would
+    // send a camera down the mesh road looking for a geometry it does not have — the
+    // cast that silently darkened every grouped light. Return null; never cast.
+    return null;
+  }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
 

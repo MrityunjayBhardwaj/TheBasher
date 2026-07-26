@@ -50,6 +50,7 @@ import { KeyframeChannelQuatNode } from './KeyframeChannelQuat';
 import { KeyframeChannelTextNode } from './KeyframeChannelText';
 import { KeyframeChannelVec2Node } from './KeyframeChannelVec2';
 import { KeyframeChannelVec3Node } from './KeyframeChannelVec3';
+import { CameraDataNode } from './CameraData';
 import { LightDataNode } from './LightData';
 import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
@@ -92,6 +93,13 @@ const ALL: NodeDefinition[] = [
   // Cameras
   PerspectiveCameraNode as unknown as NodeDefinition,
   OrthographicCameraNode as unknown as NodeDefinition,
+  // #387 (Stage C · C4) — the camera's data half (the lens: projection + fov/zoom,
+  // clip planes, sensor, DoF, plus the authored aim). ONE discriminated node
+  // (projection enum) covering both fused kinds — the THIRD non-mesh ObjectData, and
+  // the first whose renderer reads a pose built from RAW params rather than the
+  // evaluated value. Coexists with the fused Perspective/OrthographicCamera above;
+  // the split retires their fused evaluates in a later slice.
+  CameraDataNode as unknown as NodeDefinition,
   // Lights
   DirectionalLightNode as unknown as NodeDefinition,
   AmbientLightNode as unknown as NodeDefinition,

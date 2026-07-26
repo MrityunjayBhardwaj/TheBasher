@@ -59,6 +59,9 @@ const ALL_TYPES = [
   'BoneNameMap',
   'BoxData',
   'BoxMesh',
+  // #387 (Stage C · C4) — the camera's data half. Every split kind adds its data type
+  // here: BoxData, SphereData, CurveData, LightData, and now CameraData.
+  'CameraData',
   'CameraSelect',
   'Character',
   'Clamp',

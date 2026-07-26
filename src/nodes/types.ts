@@ -982,16 +982,55 @@ export interface LightDataValue {
 }
 
 /**
+ * The camera's data half — the LENS (projection + focal length/zoom, clip planes,
+ * sensor, depth of field) and the authored aim (`lookAt`/`roll`, parity-first #387
+ * D1), and DELIBERATELY no position (the Object owns it).
+ *
+ * ONE discriminated node, not two (#387, Stage C · C4): `projection` is the enum that
+ * collapses the two fused camera NODES into one Camera datablock, Blender-style. The
+ * per-projection fields are all present (the schema defaults them) but a given
+ * projection reads only the subset it owns — `fov` is inert for an orthographic
+ * camera, `zoom` for a perspective one.
+ *
+ * ⚠️ Unlike LightData, this value is NOT what frames the shot. `recomposeCameraObject`
+ * turns the pair into the flat `CameraValue` the DAG's camera consumers read, but that
+ * value reaches the renderer only as a render-cache-key ingredient. What actually
+ * draws is a `CameraPose` built from RAW params by `activeCamera.ts`. Both roads have
+ * to be taught the pair; neither substitutes for the other.
+ */
+export interface CameraDataValue {
+  readonly kind: 'CameraData';
+  readonly projection: 'Perspective' | 'Orthographic';
+  /** Vertical FOV in degrees. Required with no schema default — see CameraData.ts. */
+  readonly fov: number;
+  /** Orthographic scale. Read by nothing today (#478); owned here regardless. */
+  readonly zoom: number;
+  readonly near: number;
+  readonly far: number;
+  readonly sensorSize: number;
+  readonly dofEnabled: boolean;
+  readonly focusDistance: number;
+  readonly fStop: number;
+  readonly focusOnTarget: boolean;
+  readonly lookAt: Vec3;
+  /** Roll about the view axis, in DEGREES (#229). */
+  readonly roll: number;
+}
+
+/**
  * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
  * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
  * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
  * gains a curve arm; the `data.kind !== 'MeshData'` guards absorb it elsewhere).
  * #386 adds LightData — the second non-mesh member; ObjectR gains a light arm that
  * recomposes it into a LightValue and renders it through the shared light band.
- * CameraData joins in a later phase (the same "one socket, discriminate on
- * value.kind" discipline V78 uses for 'SceneObject').
+ * #387 adds CameraData — the third, and the first whose renderer does not read the
+ * evaluated value at all (the pose road builds from raw params instead), so ObjectR's
+ * arm for it draws NOTHING: a camera's frustum is editor chrome from a separate band.
+ * (The same "one socket, discriminate on value.kind" discipline V78 uses for
+ * 'SceneObject'.)
  */
-export type ObjectData = MeshDataValue | CurveDataValue | LightDataValue;
+export type ObjectData = MeshDataValue | CurveDataValue | LightDataValue | CameraDataValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`
