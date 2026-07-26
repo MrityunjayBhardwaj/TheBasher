@@ -17,6 +17,8 @@
 // value does not change — so a spec that only checks "no throw" would pass while testing
 // nothing. Assert the value.
 
+import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
+
 export type SplitLightKind = 'Directional' | 'Point' | 'Spot' | 'Area';
 
 export interface SplitLightOpts {
@@ -42,8 +44,13 @@ export function splitLightOps(opts: SplitLightOpts): unknown[] {
     throw new Error('splitLightOps: AmbientLight does not split (ambient = a World datablock)');
   }
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
 
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. `addNode` stores PARSED params, so writing a param's own schema default is
+  // byte-identical to omitting it — the pose params below are in that category. What is
+  // NOT interchangeable is a default this builder chooses DIFFERENTLY from the schema
+  // (see _splitCurve.ts). Unifying is a separate change with its own blast radius.
   const dataParams: Record<string, unknown> = {
     lightKind: opts.lightKind,
     ...(opts.shading ?? {}),
@@ -54,18 +61,10 @@ export function splitLightOps(opts: SplitLightOpts): unknown[] {
     scale: opts.scale ?? [1, 1, 1],
   };
 
-  return [
-    { type: 'addNode', nodeId: dataId, nodeType: 'LightData', params: dataParams },
-    { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: objParams },
-    {
-      type: 'connect',
-      from: { node: dataId, socket: 'out' },
-      to: { node: objectId, socket: 'data' },
-    },
-  ];
+  return splitOps('light', { objectId, dataId }, { data: dataParams, object: objParams });
 }
 
 /** The data-node id `splitLightOps` will use for a given Object id. */
 export function splitLightDataId(objectId: string): string {
-  return `${objectId}_data`;
+  return dataIdFor(objectId);
 }

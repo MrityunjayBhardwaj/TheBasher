@@ -14,8 +14,10 @@
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md; src/app/addPrimitives.ts; src/app/resolveDataParamOwner.ts.
 
 import { applyOp, type DagState } from '../core/dag';
+import type { Op } from '../core/dag/types';
 import type { Vec3 } from '../nodes/types';
 import { withIds } from './curvePoints';
+import { dataIdFor, splitOps } from './splitKinds';
 
 export interface SplitCurveOpts {
   /** Id for the Object (the pose half — this is the scene child / the node you select). */
@@ -49,8 +51,14 @@ export interface SplitCurve {
  */
 export function makeSplitCurve(state: DagState, opts: SplitCurveOpts): SplitCurve {
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
 
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. THIS is the kind where it actually matters: omitting `points`/`resolution`
+  // takes CurveData's schema defaults (a gentle S-curve at resolution 16), while the e2e
+  // builder deliberately substitutes a LOPSIDED path at resolution 32 to expose
+  // arc-length behaviour. Unifying the two would silently change what those specs
+  // measure. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = {};
   if (opts.points !== undefined) dataParams.points = withIds(opts.points);
   if (opts.closed !== undefined) dataParams.closed = opts.closed;
@@ -61,23 +69,14 @@ export function makeSplitCurve(state: DagState, opts: SplitCurveOpts): SplitCurv
   if (opts.rotation) objParams.rotation = opts.rotation;
   if (opts.scale) objParams.scale = opts.scale;
 
-  let s = applyOp(state, {
-    type: 'addNode',
-    nodeId: dataId,
-    nodeType: 'CurveData',
-    params: dataParams,
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: objectId,
-    nodeType: 'Object',
-    params: objParams,
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: dataId, socket: 'out' },
-    to: { node: objectId, socket: 'data' },
-  }).next;
+  let s = state;
+  for (const op of splitOps(
+    'curve',
+    { objectId, dataId },
+    { data: dataParams, object: objParams },
+  )) {
+    s = applyOp(s, op as Op).next;
+  }
   if (opts.connectTo) {
     s = applyOp(s, {
       type: 'connect',

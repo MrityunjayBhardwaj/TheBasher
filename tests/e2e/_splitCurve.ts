@@ -18,6 +18,8 @@
 // Control points carry stable ids ({ id, co } — epic #453), minted `cp0..` here so the
 // CurveDataParams schema accepts them (a bare Vec3[] would fail validation).
 
+import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
+
 export interface SplitCurveOpts {
   /** Id for the Object — the pose half, and the node a spec selects / poses / references. */
   objectId: string;
@@ -46,9 +48,14 @@ const DEFAULT_POINTS: [number, number, number][] = [
  */
 export function splitCurveOps(opts: SplitCurveOpts): unknown[] {
   const objectId = opts.objectId;
-  const dataId = opts.dataId ?? `${objectId}_data`;
+  const dataId = opts.dataId ?? dataIdFor(objectId);
   const pts = opts.points ?? DEFAULT_POINTS;
 
+  // Defaulting stays HERE rather than in the shared descriptor, which owns only the op
+  // list. It genuinely matters for this kind: the points and resolution below are a
+  // deliberate LOPSIDED arc-length fixture, NOT CurveData's schema defaults (a gentle
+  // S-curve at resolution 16, which is what the unit helper takes). Unifying the two
+  // would silently change what these specs measure. See src/test-utils/splitKinds.ts.
   const dataParams: Record<string, unknown> = {
     points: pts.map((co, i) => ({ id: `cp${i}`, co })),
     closed: opts.closed ?? false,
@@ -60,18 +67,10 @@ export function splitCurveOps(opts: SplitCurveOpts): unknown[] {
     scale: opts.scale ?? [1, 1, 1],
   };
 
-  return [
-    { type: 'addNode', nodeId: dataId, nodeType: 'CurveData', params: dataParams },
-    { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: objParams },
-    {
-      type: 'connect',
-      from: { node: dataId, socket: 'out' },
-      to: { node: objectId, socket: 'data' },
-    },
-  ];
+  return splitOps('curve', { objectId, dataId }, { data: dataParams, object: objParams });
 }
 
 /** The data-node id `splitCurveOps` will use for a given Object id. */
 export function splitCurveDataId(objectId: string): string {
-  return `${objectId}_data`;
+  return dataIdFor(objectId);
 }
