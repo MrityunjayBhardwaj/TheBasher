@@ -3,11 +3,12 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  cameraPoseFromNode,
+  cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPose,
   resolveActiveCameraPoseAt,
   resolveCameraFrustumPose,
+  resolveCameraPoseAt,
   selectActiveCameraNode,
 } from './activeCamera';
 import { buildDefaultDagState } from '../core/project/default';
@@ -15,6 +16,7 @@ import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { splitOps } from '../test-utils/splitKinds';
 
 // buildDefaultDagState / applyOp resolve node types from the registry, which
 // is populated by registerAll (a side-effecting boot step in the real app).
@@ -233,10 +235,10 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
   });
 });
 
-describe('activeCamera — cameraPoseFromNode', () => {
+describe('activeCamera — cameraPoseFromPair', () => {
   it('reads pose from the default seed camera (matches default.ts)', () => {
     const state = buildDefaultDagState();
-    const pose = cameraPoseFromNode(selectActiveCameraNode(state));
+    const pose = cameraPoseFromPair(selectActiveCameraNode(state), null);
     expect(pose).toEqual({
       kind: 'PerspectiveCamera',
       position: [3, 2, 3],
@@ -249,12 +251,12 @@ describe('activeCamera — cameraPoseFromNode', () => {
   });
 
   it('returns null for a null node', () => {
-    expect(cameraPoseFromNode(null)).toBeNull();
+    expect(cameraPoseFromPair(null, null)).toBeNull();
   });
 
   it('defends against missing params with the default pose values', () => {
     const node = { id: 'c', type: 'PerspectiveCamera', params: {}, inputs: {} } as unknown as Node;
-    const pose = cameraPoseFromNode(node);
+    const pose = cameraPoseFromPair(node, null);
     expect(pose).toEqual(DEFAULT_CAMERA_POSE);
   });
 
@@ -265,10 +267,146 @@ describe('activeCamera — cameraPoseFromNode', () => {
       params: { position: [1, 2, 3], lookAt: [0, 1, 0], near: 0.5, far: 50 },
       inputs: {},
     } as unknown as Node;
-    const pose = cameraPoseFromNode(node);
+    const pose = cameraPoseFromPair(node, null);
     expect(pose?.kind).toBe('OrthographicCamera');
     expect(pose?.position).toEqual([1, 2, 3]);
     expect(pose?.lookAt).toEqual([0, 1, 0]);
+  });
+
+  // #387 — the split half of the same function. The fused cases above are the CONTROL:
+  // they must keep reading everything off one node, byte-identical to pre-split.
+  it('spans the pair — position off the Object, every lens field off the CameraData', () => {
+    const object = {
+      id: 'n_cam',
+      type: 'Object',
+      // `lookAt`/`fov` planted on the OBJECT too, at values the assertion would catch.
+      // The Object owns position and NOTHING else on this road; if the read ever falls
+      // back to the object's bag, these are what it would report.
+      params: { position: [7, 1, -4], lookAt: [9, 9, 9], fov: 12, roll: 33 },
+      inputs: { data: { node: 'n_cam_data', socket: 'out' } },
+    } as unknown as Node;
+    const data = {
+      id: 'n_cam_data',
+      type: 'CameraData',
+      params: {
+        projection: 'Perspective',
+        fov: 28,
+        near: 0.02,
+        far: 250,
+        lookAt: [0, 1, 0],
+        roll: 5,
+      },
+      inputs: {},
+    } as unknown as Node;
+
+    expect(cameraPoseFromPair(object, data)).toEqual({
+      kind: 'PerspectiveCamera',
+      position: [7, 1, -4],
+      lookAt: [0, 1, 0],
+      fov: 28,
+      near: 0.02,
+      far: 250,
+      roll: 5,
+    });
+  });
+
+  it('takes the ortho kind from the data half’s projection, not the Object’s type', () => {
+    const object = {
+      id: 'n_cam',
+      type: 'Object',
+      params: { position: [0, 0, 5] },
+      inputs: { data: { node: 'n_cam_data', socket: 'out' } },
+    } as unknown as Node;
+    const data = {
+      id: 'n_cam_data',
+      type: 'CameraData',
+      // A split camera's node type is `Object` for BOTH projections, so the fused
+      // `node.type === 'OrthographicCamera'` test cannot answer this question any more.
+      params: { projection: 'Orthographic', fov: 45, zoom: 60 },
+      inputs: {},
+    } as unknown as Node;
+
+    expect(cameraPoseFromPair(object, data)?.kind).toBe('OrthographicCamera');
+  });
+});
+
+describe('activeCamera — the split camera pose road (#387)', () => {
+  /** An Object posing a CameraData, built through real ops so params are schema-parsed. */
+  function buildSplitCamera(): DagState {
+    let s = emptyDagState();
+    for (const op of splitOps(
+      'camera',
+      { objectId: 'n_cam' },
+      {
+        data: { fov: 28, near: 0.02, far: 250, lookAt: [0, 1, 0] },
+        object: { position: [7, 1, -4] },
+      },
+    )) {
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    }
+    return s;
+  }
+
+  function withChannel(
+    s: DagState,
+    id: string,
+    nodeType: string,
+    target: string,
+    paramPath: string,
+    value: unknown,
+  ): DagState {
+    return applyOp(s, {
+      type: 'addNode',
+      nodeId: id,
+      nodeType,
+      params: {
+        target,
+        paramPath,
+        keyframes: [
+          { time: 0, value, easing: 'linear' },
+          { time: 1, value, easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+  }
+
+  it('poses a split camera from both halves with no channels at all', () => {
+    const pose = resolveCameraPoseAt(buildSplitCamera(), 'n_cam', 0);
+    expect(pose.position).toEqual([7, 1, -4]);
+    expect(pose.fov).toBe(28);
+    expect(pose.lookAt).toEqual([0, 1, 0]);
+    // 45 is DEFAULT_CAMERA_POSE.fov — what this resolver returns when it reads neither
+    // half. Naming it keeps a passing assertion from being a coincidence.
+    expect(pose.fov).not.toBe(DEFAULT_CAMERA_POSE.fov);
+  });
+
+  // The property R4 does not ask: the pose is SPANNED, so one resolve must gather from
+  // BOTH ids. A scan that reached only the data half would pass R4's fov assertion while
+  // dropping the Object's own position channel, and vice versa.
+  it('overlays a channel on the Object AND one on the CameraData in the same resolve', () => {
+    let s = buildSplitCamera();
+    s = withChannel(s, 'ch_pos', 'KeyframeChannelVec3', 'n_cam', 'position', [1, 2, 3]);
+    s = withChannel(s, 'ch_fov', 'KeyframeChannelNumber', 'n_cam_data', 'fov', 85);
+
+    const pose = resolveCameraPoseAt(s, 'n_cam', 1);
+    expect(pose.position).toEqual([1, 2, 3]);
+    expect(pose.fov).toBe(85);
+    // Unchannelled lens fields still come from the data half, not the default pose.
+    expect(pose.near).toBe(0.02);
+    expect(pose.far).toBe(250);
+  });
+
+  it('a channel targeting an unrelated node still moves nothing', () => {
+    let s = buildSplitCamera();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_other',
+      nodeType: 'CameraData',
+      params: { fov: 100 },
+    } as Parameters<typeof applyOp>[1]).next;
+    s = withChannel(s, 'ch_other', 'KeyframeChannelNumber', 'n_other', 'fov', 120);
+
+    expect(resolveCameraPoseAt(s, 'n_cam', 1).fov).toBe(28);
   });
 });
 
