@@ -415,7 +415,10 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
   // the same node type, so the data TYPE alone cannot tell a perspective from an
   // orthographic; cameraProjectionsFor narrows those Objects by the posed `projection`.
   // The fused types stay listed for as long as unmigrated projects can carry them.
-  if (/\b(perspective|orthographic)?\s*\b(camera|cameras)\b/.test(q)) {
+  // One rule for all three camera nouns: the projection is NOT discriminated here (a
+  // qualified "perspective camera" wears the same node type as any other), it is
+  // discriminated by cameraProjectionsFor during the narrowing pass.
+  if (/\b(camera|cameras)\b/.test(q)) {
     return ['Object', 'PerspectiveCamera', 'OrthographicCamera'];
   }
   if (/\bcharacter(s)?\b/.test(q)) return ['Character'];

@@ -43,7 +43,13 @@ export const shotCreateMutator: MutatorDefinition<ShotCreateSpec> = {
   },
   contract: {
     requiredEdges: [],
-    requiredNodeTypes: ['PerspectiveCamera', 'Scene'],
+    // #387 — the camera is NOT declared here. `contract.requiredNodeTypes` is a
+    // node-TYPE mechanism (gate 4 compares `node.type === requiredType`), and a split
+    // camera is an Object posing a CameraData, so a type token cannot express it. The
+    // possession-keyed precondition below owns the check instead — and is strictly
+    // stronger, since it validates the SPECIFIC `cameraId` rather than "some camera
+    // exists somewhere in the closure".
+    requiredNodeTypes: ['Scene'],
     preserves: ['position', 'rotation', 'scale', 'material', 'children', 'animation'],
   },
   buildClosureSpec(spec): ClosureSpec {

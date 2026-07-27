@@ -16,6 +16,8 @@ import { stripTargetRows } from '../timeline/NlaAddStripPopover';
 import { resolveCameraPoseAt } from './activeCamera';
 import { identify } from '../agent/identify/identify';
 import { shotCreateMutator } from '../agent/mutators/builders/shotCreate';
+import { validatePlan } from '../agent/mutators/validate';
+import { addPassMutator } from '../agent/mutators/builders/addPass';
 
 beforeAll(() => {
   __reseedAllNodesForTests();
@@ -285,14 +287,39 @@ describe('#387 slice 3 — the traps a passing re-key can still leave open', () 
     let s = splitCamera();
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
-    const spec = { cameraId: 'n_cam', sceneId: 'scene', startTime: 0, endTime: 4 };
-    const res = shotCreateMutator.preconditions!(
-      spec as never,
-      { nodes: {}, edges: [] } as never,
+    // Through validatePlan — the road the agent actually travels. Calling
+    // `preconditions()` directly would skip the contract_scope gate, which is a
+    // SEPARATE type-keyed check; a test that stops at the precondition reports the
+    // half that was fixed and cannot see the half that was not.
+    const spec = {
+      cameraId: 'n_cam',
+      sceneId: 'scene',
+      startTime: 0,
+      endTime: 4,
+      shotId: 'shot_1',
+    };
+    const res = validatePlan(shotCreateMutator, spec as never, s, 'shot on a split camera');
+    expect(res.ok, `shotCreate refused a split camera: ${res.ok ? '' : res.reason}`).toBe(true);
+  });
+
+  // Same road, same reason: addPass resolves the camera IMPLICITLY (no cameraId given),
+  // which is the case a type-keyed `findUnique` answers "none" for post-split.
+  it('the agent can add a render pass that resolves a split camera implicitly', () => {
+    let s = splitCamera();
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'job1',
+      nodeType: 'RenderJob',
+      params: {},
+    }).next;
+    const res = validatePlan(
+      addPassMutator,
+      { jobId: 'job1', passKind: 'beauty' } as never,
       s,
+      'add a beauty pass',
     );
-    expect(res, `shotCreate refused a split camera: ${'reason' in res ? res.reason : ''}`).toEqual({
-      ok: true,
-    });
+    expect(res.ok, `addPass refused a split camera: ${res.ok ? '' : res.reason}`).toBe(true);
   });
 });
