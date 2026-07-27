@@ -290,14 +290,25 @@ describe('bundleToProject', () => {
     expect(project.createdAt).toBe(9999);
     // The DAG survives the round-trip with NOTHING lost. #365 Phase 5a: the default's box
     // is already split-native (Object + BoxData), so the BoxMesh→split pass adds nothing.
-    // #386 Stage C · C3: the default's light is split by the v5→v6 pass — the only thing
-    // the migration may ADD is a LightData half (and once the default seed itself becomes
-    // split-native, `added` is empty and this stays green).
+    // #386 Stage C · C3: the default's light is split by the v5→v6 pass, and #387 Stage
+    // C · C4: its camera is split by the v6→v7 pass — so the only things the migration
+    // may ADD are those data halves (and as each seed becomes split-native in turn,
+    // `added` shrinks toward empty and this stays green).
+    //
+    // This is a SECOND road onto the same migration ladder — a bundle carries a raw DAG
+    // and `bundleToProject` migrates it — which is why a per-kind split reds here as
+    // well as in migrations.test.ts. Keep the allowed set explicit rather than widening
+    // to "anything new": a node type appearing that no split pass produces is exactly
+    // the loss this assertion exists to catch.
     const migratedIds = Object.keys(project.state.nodes);
     const srcIds = Object.keys(src.state.nodes);
     for (const id of srcIds) expect(migratedIds).toContain(id); // nothing lost
     const added = migratedIds.filter((id) => !srcIds.includes(id));
-    expect(added.every((id) => project.state.nodes[id].type === 'LightData')).toBe(true);
+    const addedTypes = added.map((id) => project.state.nodes[id].type);
+    expect(addedTypes.every((t) => t === 'LightData' || t === 'CameraData')).toBe(true);
+    // ...and the camera half is actually there, so a pass that silently stopped running
+    // cannot pass this vacuously (the default seed has exactly one camera).
+    expect(addedTypes).toContain('CameraData');
     expect(project.state.outputs).toEqual(src.state.outputs);
   });
 
