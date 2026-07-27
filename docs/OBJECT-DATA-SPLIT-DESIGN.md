@@ -313,6 +313,30 @@ Corroborating, from the containment reference itself: **§159 — Houdini resolv
 | 7   | **glTF's data contract**                 | **The `data` socket carries a `GeometryRef` HANDLE, never vertices** — already the shipped SOP contract (§2.1.1). Neither (a) "SOPs never will" nor (b) "convert on import": both false. **`GltfAsset` should not be a value KIND at all** — "came from a glTF" is a fact about a NODE, never a permanent property of the value (neither reference does otherwise). It became a kind only because **V101's projection had no TARGET vocabulary to project into** — the same defect as the object↔data fusion. ⇒ **the glTF fix is DOWNSTREAM of this milestone, not adjacent to it: the split creates the vocabulary that makes the projection expressible.** Follow-up issue, out of scope here. **THERE IS NO SEAM — not even skinning** (§2.1.1): it decomposes into four words, one of which (`SkeletonValue`) already ships, and the other two blockers are pre-catalogued gaps (S14 attributes, S15 n-ary roles). **Every special case in this arc — glTF, material, skinning — reduces to "we lack a word", never "the domain is like that."**                                                                                                   |
 | 8   | **Material** — _the same shape as row 1_ | **The material is its OWN DATA NODE; assignment is a typed `material` SOCKET.** Both references agree: `Material(ID)` is a datablock / a SHOP node, and the assignment is a **pointer** (Blender's slot + per-face `material_index`; Houdini's `shop_materialpath` attribute) — §2.1.2. **The noun ALREADY EXISTS: `MaterialValue`, `kind:'Material'` (`types.ts:147`) — it is merely trapped inside `MaterialOverride`'s wrapper, and two more vocabularies grew beside it** (one whose docstring admits it _"mirror[s] MaterialValue 1:1"_ = a parallel list, V101). **Object-vs-data is NOT "material's home"** — the home is always its own node; Blender's `link` (default `'DATA'`) only picks **who holds the pointer**, a per-slot affordance, not an architecture decision. **Per-face assignment needs per-element attributes — the SAME missing word as skin weights (S14).** Consequences: the 3 vocabularies collapse to 1; `sourceMaterial`/hand-carrying disappear; **#358 becomes unrepresentable**; and **§4's landmine becomes VISIBLE IN THE GRAPH** (twenty edges to one Material node) instead of an invisible three.js reference. |
 
+#### 2.3.1 Row 6 is **NOT closed by the camera split (#387)** — read this before citing it
+
+The camera split shipped `lookAt` and `roll` on **`CameraData`**, not as a derived/constraint
+concern on the Object. That is parity-first, following the `LightData.target`/`lookAt` precedent
+already on `main`, and it is deliberately **less** than row 6 asks for. #387 must not be read as
+having resolved this row. The deferred piece is tracked as **#487**.
+
+The blocker is specific, and it is a migration blocker rather than a design disagreement. Turning an
+authored aim into Object rotation means computing `rotation(t)` from `position`, `lookAt` and `roll`
+— three independently keyed channels whose key times need not coincide. The composition is
+non-linear, so a baked rotation curve is an approximation of the authored one, and every kind's
+migration so far has been held to a byte-identity gate. Meeting that gate here needs either a
+resampling policy nobody has chosen or a constraint-shaped representation that keeps the aim
+authored, which is a larger piece of work than the split itself.
+
+What the interim shape costs, stated so it is not rediscovered:
+
+- the camera pose **spans both halves** — `position` on the Object, `lookAt`/`roll` on the
+  `CameraData` — so every pose consumer reads two nodes. The light carries the same wart.
+- `resolveWorldTransform` keeps a bespoke camera arm, and the gizmo keeps its two-translate
+  body+aim shape instead of the generic transform gizmo.
+- `rotation` on a camera `Object` does nothing. It is pinned by a test rather than left as an
+  invisible trap.
+
 ### 2.4 What we are explicitly NOT doing
 
 - **Not** introducing contexts / network levels / subnets (§2.2).
