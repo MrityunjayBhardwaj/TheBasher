@@ -14,7 +14,20 @@
 // static authored fov while the view camera still moves → the read==render
 // equality breaks at t=1.
 
+//
+// ⚠️ #387 C4: the camera is SPLIT — an `Object` (pose) wired to a `CameraData` (lens). Two
+// consequences for this spec, and they point in opposite directions:
+//   • the READ side moved. `CameraLensControls` keys its rows to the node that owns the
+//     param, so the fov / near fields are now `inspector-camera-*-n_camera_data`.
+//   • the channel below still targets the OBJECT, deliberately. That is the pre-split
+//     shape, and both the pose resolver and `resolveEvaluatedParam` reach across the pair
+//     in both directions, so an old project's camera channel keeps animating without ever
+//     being re-pointed. Keeping the fixture on the Object half is what asks that question
+//     end-to-end; the migration's own re-targeting is pinned by unit id-equalities, because
+//     the render cannot tell the two routings apart at all.
+
 import { test, expect } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface BasherWindow {
   __basher_view_camera?: () => {
@@ -116,8 +129,9 @@ test.describe('#194 camera inspector read-side parity', () => {
     await selectCamera(page);
     await lookThrough(page);
 
-    const fovText = page.getByTestId('inspector-camera-fov-n_camera');
-    const focal = page.getByTestId('inspector-camera-focal-n_camera');
+    const lens = await dataNodeIdOf(page, 'n_camera');
+    const fovText = page.getByTestId(`inspector-camera-fov-${lens}`);
+    const focal = page.getByTestId(`inspector-camera-focal-${lens}`);
 
     // t=0 — the inspector shows the EVALUATED fov (20°), and it equals the render.
     await setTime(page, 0);
@@ -146,7 +160,7 @@ test.describe('#194 camera inspector read-side parity', () => {
     ]);
     await selectCamera(page);
 
-    const near = page.getByTestId('inspector-camera-near-n_camera');
+    const near = page.getByTestId(`inspector-camera-near-${await dataNodeIdOf(page, 'n_camera')}`);
 
     await setTime(page, 0);
     expect(Number(await near.inputValue())).toBeCloseTo(0.5, 1);
