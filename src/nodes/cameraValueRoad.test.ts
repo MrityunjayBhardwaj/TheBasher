@@ -221,8 +221,18 @@ describe('#387 slice 4 — the other seven gathers', () => {
       // not invalidate its cache. A "the hash flips when fov changes" test would NOT
       // discriminate here, because the raw ObjectValue carries `data.fov` too and hashing
       // it flips just the same ([[H180]] vacuous negative).
+      //
+      // ⚠️ THE SCENE HERE IS DELIBERATELY CAMERA-LESS, and that is not tidiness. The
+      // hash covers (passKind, params, scene, camera, time), so wiring the camera into
+      // `scene.camera` as well — the obvious fixture, and what the first draft did — puts
+      // it into the hash TWICE and the test reds whenever EITHER road breaks. Measured:
+      // with `Scene`'s recompose removed and all four passes intact, all four of these
+      // failed. That instrument cannot say which road broke. Feeding the camera only
+      // through the pass's own `camera` socket makes each row sensitive to its own road
+      // and nothing else.
       const build = (cameraOps: unknown[]) => {
-        let s = sceneWith(cameraOps, 'n_cam');
+        let s = applyAll(emptyDagState(), cameraOps);
+        s = applyOp(s, { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} }).next;
         s = applyOp(s, {
           type: 'addNode',
           nodeId: 'n_time',
