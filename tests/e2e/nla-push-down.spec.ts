@@ -297,3 +297,74 @@ test('NLA 5E#2 — no bare channels: the button is DISABLED; a forced call retur
 
   expect(errors).toEqual([]);
 });
+
+// #479 — the OFFER half, which no unit test can see. The accept's refusal is unit-tested
+// (dispatchMutator.test.ts); what only the browser can answer is whether the BUTTON asks
+// the same question. A guard on the dispatcher alone leaves the affordance live and the
+// mutator refusing — the failure this pairing exists to catch.
+//
+// The subject is the default project's camera, which HAS bare channels here (so the
+// button's other precondition is satisfied and the refusal is the only thing disabling
+// it) and which a strip cannot drive: the camera pose is resolved outside the strip fold,
+// so pushing down would delete the animation rather than convert it. Cameras become valid
+// targets when #480 lands, and this test flips with it.
+test('NLA 5E#3 — a camera is REFUSED on both sides: the button is disabled AND a forced call keeps the channel', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  // A bare fov ramp on the scene camera, through the shipped keyframe road.
+  await okDispatch(
+    page,
+    'mutator.timeline.addChannel',
+    {
+      target: 'n_camera',
+      paramPath: 'fov',
+      valueType: 'number',
+      channelId: 'n_camera_fov_channel',
+      initialKeyframe: { time: 0, value: 30, easing: 'linear' },
+    },
+    'seed a bare fov channel on the camera',
+  );
+  await okDispatch(
+    page,
+    'mutator.timeline.keyframe',
+    { channelId: 'n_camera_fov_channel', time: 2, value: 130, easing: 'linear' },
+    'second bare key',
+  );
+
+  await selectNode(page, 'n_camera');
+  await openNlaTab(page);
+
+  // THE OFFER: disabled, and the title says why — not the generic "no bare channels"
+  // message, which would mean the button is disabled for the wrong reason.
+  const button = page.getByTestId('nla-push-down');
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute('title', /cannot drive a camera/i);
+
+  // THE ACCEPT, through the same toast funnel: refused, and surfaced.
+  const res = await page.evaluate(() =>
+    (window as unknown as BasherWindow).__basher_nlaPushDown!('n_camera'),
+  );
+  expect(res.ok).toBe(false);
+  expect(res.reason).toMatch(/cannot drive a camera/i);
+  await expect(page.getByTestId('toast-error')).toBeVisible();
+
+  // THE CONSEQUENCE: the animation is still there. Before the guard this call minted a
+  // strip that folds nothing and deleted the channel it converted.
+  const nodes = await page.evaluate(
+    () => (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes,
+  );
+  expect(nodes['n_camera_fov_channel'], 'the fov channel survives the refusal').toBeTruthy();
+  expect(await nodeIdsOfType(page, 'Strip')).toEqual([]);
+  expect(await nodeIdsOfType(page, 'Action')).toEqual([]);
+
+  // CONTROL: the same pane, same session — a mesh with bare channels is still offered,
+  // so the guard refuses cameras rather than disabling push-down outright.
+  await seedBareRamp(page);
+  await selectNode(page, 'n_box');
+  await expect(button).toBeEnabled();
+
+  expect(errors).toEqual([]);
+});
