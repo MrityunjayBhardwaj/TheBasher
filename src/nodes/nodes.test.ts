@@ -161,11 +161,14 @@ describe('default project', () => {
     const state = buildDefaultDagState();
     // #365 Phase 5a (Slice 1b) — the box is the object↔data split: n_box (the Object/pose) +
     // n_box_data (the BoxData/geometry). #386 C3 — the key light is split too: n_light (the
-    // Object/pose, id inherited) + n_light_data (the LightData/shading).
+    // Object/pose, id inherited) + n_light_data (the LightData/shading). #387 C4 — and so is
+    // the camera: n_camera (the Object/pose, id inherited) + n_camera_data (the CameraData/
+    // lens). Every seeded scene object is now split-native; nothing in a new project migrates.
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
       'n_box_data',
       'n_camera',
+      'n_camera_data',
       'n_light',
       'n_light_data',
       'n_render',
@@ -213,7 +216,12 @@ describe('default project', () => {
     const project = buildDefaultProject();
     const parsed = ProjectSchema.parse(project);
     expect(parsed.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    expect(parsed.nodeVersions.PerspectiveCamera).toBe(1);
+    // #387 C4 — the seed camera is split-native, so the fused type no longer appears in a
+    // NEW project's nodeVersions at all. Asserted as a positive on both halves (rather than
+    // just swapping the key) so a seed that silently stopped minting either one cannot pass.
+    expect(parsed.nodeVersions.CameraData).toBe(1);
+    expect(parsed.nodeVersions.Object).toBe(1);
+    expect(parsed.nodeVersions.PerspectiveCamera).toBeUndefined();
   });
 });
 

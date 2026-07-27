@@ -52,18 +52,28 @@ describe('snapshotCameraFromOrbit', () => {
     const before = Object.keys(useDagStore.getState().state.nodes).length;
     await snapshotCameraFromOrbit();
     const after = useDagStore.getState();
-    expect(Object.keys(after.state.nodes).length).toBe(before + 1);
+    // #387 C4 — a snapshot now mints the object↔data PAIR, so TWO nodes appear.
+    expect(Object.keys(after.state.nodes).length).toBe(before + 2);
 
-    // The Scene's camera input now points to a NEW PerspectiveCamera node.
+    // The Scene's camera input now points to a NEW camera OBJECT (the posable half).
     const sceneCam = after.state.nodes.scene.inputs.camera;
     expect(sceneCam).toBeDefined();
     if (Array.isArray(sceneCam)) throw new Error('camera is single-cardinality');
     expect(sceneCam!.node).not.toBe('cam');
     const newCamNode = after.state.nodes[sceneCam!.node];
-    expect(newCamNode.type).toBe('PerspectiveCamera');
-    expect(newCamNode.params).toMatchObject({
+    expect(newCamNode.type).toBe('Object');
+    // The POSE the orbit camera was sitting at lands on the Object...
+    expect(newCamNode.params).toMatchObject({ position: [2, 3, 4] });
+    // ...and the LENS it was wearing lands on the CameraData it points at. Asserted through
+    // the `data` edge rather than by id, so a pair that was minted but never wired reds.
+    const dataRef = newCamNode.inputs.data;
+    expect(dataRef).toBeDefined();
+    if (Array.isArray(dataRef)) throw new Error('data is single-cardinality');
+    const lensNode = after.state.nodes[dataRef!.node];
+    expect(lensNode.type).toBe('CameraData');
+    expect(lensNode.params).toMatchObject({
+      projection: 'Perspective',
       fov: 45,
-      position: [2, 3, 4],
       lookAt: [1, 0, 0],
     });
 

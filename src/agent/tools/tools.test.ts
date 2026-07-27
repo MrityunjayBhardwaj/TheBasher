@@ -250,11 +250,27 @@ describe('camera.snapshot tool', () => {
     );
 
     expect(result1.ops).toEqual(result2.ops);
-    // Should disconnect old + addNode + connect new = 3 ops
-    expect(result1.ops).toHaveLength(3);
-    expect(result1.ops[0].type).toBe('disconnect');
-    expect(result1.ops[1].type).toBe('addNode');
-    expect(result1.ops[2].type).toBe('connect');
+    // #387 C4 — the snapshot mints the object↔data PAIR, so: disconnect old + addNode
+    // (CameraData) + addNode (Object) + connect the `data` edge + connect the Object to
+    // scene.camera = 5 ops. Both ids are derived from the same content hash, which is what
+    // keeps the twice-call equality above meaningful for the pair as well.
+    expect(result1.ops).toHaveLength(5);
+    expect(result1.ops.map((o) => o.type)).toEqual([
+      'disconnect',
+      'addNode',
+      'addNode',
+      'connect',
+      'connect',
+    ]);
+    const added = result1.ops.filter((o) => o.type === 'addNode');
+    expect(added.map((o) => (o as { nodeType: string }).nodeType)).toEqual([
+      'CameraData',
+      'Object',
+    ]);
+    // scene.camera receives the OBJECT half, never the lens.
+    const last = result1.ops[4] as { to: { node: string; socket: string }; from: { node: string } };
+    expect(last.to.socket).toBe('camera');
+    expect(last.from.node).toBe((added[1] as { nodeId: string }).nodeId);
   });
 
   it('returns Op[] with just addNode + connect when no camera is wired (twice-call)', () => {
@@ -276,9 +292,15 @@ describe('camera.snapshot tool', () => {
     );
 
     expect(result1.ops).toEqual(result2.ops);
-    expect(result1.ops).toHaveLength(2);
-    expect(result1.ops[0].type).toBe('addNode');
-    expect(result1.ops[1].type).toBe('connect');
+    // #387 C4 — the pair again: addNode (CameraData) + addNode (Object) + the `data` edge +
+    // the scene.camera edge. No disconnect, because nothing was wired.
+    expect(result1.ops).toHaveLength(4);
+    expect(result1.ops.map((o) => o.type)).toEqual(['addNode', 'addNode', 'connect', 'connect']);
+    expect(
+      result1.ops
+        .filter((o) => o.type === 'addNode')
+        .map((o) => (o as { nodeType: string }).nodeType),
+    ).toEqual(['CameraData', 'Object']);
   });
 
   it('throws when scene output is missing', () => {

@@ -3,6 +3,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  cameraPoseForNodeId,
   cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPose,
@@ -12,6 +13,7 @@ import {
   resolveCameraPoseAt,
   selectActiveCameraNode,
 } from './activeCamera';
+import { cameraDataOf } from './cameraNode';
 import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
@@ -31,7 +33,10 @@ describe('activeCamera — selectActiveCameraNode', () => {
     const node = selectActiveCameraNode(state);
     expect(node).not.toBeNull();
     expect(node?.id).toBe('n_camera');
-    expect(node?.type).toBe('PerspectiveCamera');
+    // #387 C4 — the seed camera is split-native: the node wired into scene.camera is the
+    // OBJECT (pose) half, which keeps the id `n_camera`. Its lens lives on the CameraData.
+    expect(node?.type).toBe('Object');
+    expect(cameraDataOf(state, 'n_camera')?.type).toBe('CameraData');
   });
 
   it('returns null when no scene output is declared', () => {
@@ -239,7 +244,11 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
 describe('activeCamera — cameraPoseFromPair', () => {
   it('reads pose from the default seed camera (matches default.ts)', () => {
     const state = buildDefaultDagState();
-    const pose = cameraPoseFromPair(selectActiveCameraNode(state), null);
+    // #387 C4 — the seed camera is a PAIR, so the pose must be resolved through the id
+    // (which finds the lens half itself). Passing `null` for the data half here would hand
+    // the resolver one half of a split camera — see the sibling test below, which pins what
+    // that silently returns.
+    const pose = cameraPoseForNodeId(state, 'n_camera');
     expect(pose).toEqual({
       kind: 'PerspectiveCamera',
       position: [3, 2, 3],
@@ -249,6 +258,23 @@ describe('activeCamera — cameraPoseFromPair', () => {
       far: 500,
       roll: 0,
     });
+  });
+
+  // ⚠️ WHY THIS SIBLING EXISTS. Every field asserted above EXCEPT `far` is byte-identical to
+  // `DEFAULT_CAMERA_POSE` — the seed camera was authored at the default framing. So the
+  // assertion above can only distinguish "read the lens half" from "read nothing at all"
+  // through `far` (500 vs the 1000 default), and it was exactly that field that caught the
+  // half-pair read when the seed was split. This test pins the failure mode directly instead
+  // of leaving it resting on one lucky field.
+  it('given ONLY the Object half, a split camera silently poses at the DEFAULT lens', () => {
+    const state = buildDefaultDagState();
+    const objectOnly = cameraPoseFromPair(selectActiveCameraNode(state), null);
+    expect(objectOnly).toEqual({
+      ...DEFAULT_CAMERA_POSE,
+      position: [3, 2, 3], // the Object half's own param — the one thing that does survive
+    });
+    expect(objectOnly?.far).toBe(DEFAULT_CAMERA_POSE.far);
+    expect(objectOnly?.far).not.toBe(500);
   });
 
   it('returns null for a null node', () => {

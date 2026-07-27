@@ -31,11 +31,26 @@ interface ExampleDef {
 // edges) — every example frames a calm, lit scene the same way default.ts does.
 function scaffold(): Op[] {
   return [
+    // #387 Stage C (C4) — the camera is split-native (CameraData + Object), exactly like
+    // default.ts, so a bundled example stays split-native + orphan-free (#436). The Object
+    // keeps the id `n_camera`, so the scene.camera edge below is unchanged. Framing values
+    // preserved exactly as the fused scaffold carried them.
+    {
+      type: 'addNode',
+      nodeId: 'n_camera_data',
+      nodeType: 'CameraData',
+      params: { projection: 'Perspective', fov: 45, near: 0.01, far: 500, lookAt: [0, 0.4, 0] },
+    },
     {
       type: 'addNode',
       nodeId: 'n_camera',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: 45, near: 0.01, far: 500, position: [4, 2.5, 4], lookAt: [0, 0.4, 0] },
+      nodeType: 'Object',
+      params: { position: [4, 2.5, 4], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    },
+    {
+      type: 'connect',
+      from: { node: 'n_camera_data', socket: 'out' },
+      to: { node: 'n_camera', socket: 'data' },
     },
     // #386 Stage C (C3) — the key light is split-native (LightData + Object), exactly like
     // default.ts, so a bundled example stays split-native + orphan-free (#436). The Object

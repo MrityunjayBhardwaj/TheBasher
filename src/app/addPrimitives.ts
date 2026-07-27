@@ -284,6 +284,50 @@ export function buildAddPrimitiveOps(
     };
   }
 
+  // #387 Stage C (C4) — a camera is the object↔data split too: an Object (the pose) wired to
+  // a CameraData (the lens: projection/fov/zoom/clip planes/DoF, plus the aim params lookAt
+  // and roll, which stay on the data half parity-first, #387 D1). Both projections mint the
+  // SAME node pair and differ only in `projection` — one datablock with a discriminator, as
+  // LightData did for four light kinds. Split-native, so "Add ▸ Camera ▸ Perspective" and the
+  // v6→v7 load-migration converge on one shape (K23).
+  //
+  // ⚠️ THIS BRANCH MUST BE AN EXPLICIT LITERAL, and that is the whole reason it exists rather
+  // than falling through to the generic tail. The tail mints `nodeType: nodeTypeFor(kind)` — a
+  // CALL, not a literal — and the retire-a-kind gate's signal is a construction POSITION, so a
+  // camera left on the tail would keep minting a fused node with NOTHING going red once the
+  // fused types retire. `buildAddPrimitiveOps` is covered by a unit test naming both camera
+  // kinds for exactly this reason; that test is the gate the grep cannot be.
+  //
+  // Cameras stay FLOATING (no scene edge) — unchanged from the fused behaviour: the user
+  // wires a camera to `scene.camera` deliberately.
+  if (isCamera(kind)) {
+    const dataId = newId('data');
+    const objId = newId('cam');
+    return {
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: dataId,
+          nodeType: 'CameraData',
+          params: cameraDataParamsFor(kind),
+        },
+        {
+          type: 'addNode',
+          nodeId: objId,
+          nodeType: 'Object',
+          params: paramsFor(kind, position),
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: objId, socket: 'data' },
+        },
+      ],
+      description: `Add ${humanLabel(kind)}`,
+      newNodeId: objId,
+    };
+  }
+
   const id = newId(prefixFor(kind));
   const ops: Op[] = [];
   const params = paramsFor(kind, position);
@@ -358,12 +402,13 @@ function isSolverKind(kind: PrimitiveKind): boolean {
  *  scene object ends up creatable but un-referrable (#324). */
 export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
-    // #365 Ph5a / #384 C1 / #385 C2 / #386 C3 — a Cube, Sphere, Curve AND the four posable
-    // lights are all the object↔data split; the node the director selects and refers to is the
-    // Object (the BoxData/SphereData/CurveData/LightData is its data leaf, not a scene object).
-    // Each mints the split via the early-return branches above; this mapping only feeds
-    // identify's ALL_PRIMITIVE_TYPES, so all resolve to their real 'Object' node type rather
-    // than a fused kind. (AmbientLight stays fused → the default arm returns its own type.)
+    // #365 Ph5a / #384 C1 / #385 C2 / #386 C3 / #387 C4 — a Cube, Sphere, Curve, the four
+    // posable lights AND both cameras are all the object↔data split; the node the director
+    // selects and refers to is the Object (the BoxData/SphereData/CurveData/LightData/
+    // CameraData is its data leaf, not a scene object). Each mints the split via the
+    // early-return branches above; this mapping only feeds identify's ALL_PRIMITIVE_TYPES, so
+    // all resolve to their real 'Object' node type rather than a fused kind. (AmbientLight
+    // stays fused → the default arm returns its own type.)
     case 'Cube':
     case 'Sphere':
     case 'Curve':
@@ -371,9 +416,11 @@ export function nodeTypeFor(kind: PrimitiveKind): string {
     case 'PointLight':
     case 'SpotLight':
     case 'AreaLight':
+    case 'PerspectiveCamera':
+    case 'OrthographicCamera':
       return 'Object';
     default:
-      return kind; // AmbientLight (stays fused), cameras, etc. — direct mapping
+      return kind; // AmbientLight (stays fused), empties, compute nodes — direct mapping
   }
 }
 
@@ -487,6 +534,29 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
   }
 }
 
+/**
+ * #387 C4 — the CameraData (lens) half of a newly added camera. Sister to
+ * `lightDataParamsFor`: the pose lives on the Object (`paramsFor`), the lens lives here.
+ *
+ * ⚠️ EVERY VALUE IS PRESERVED EXACTLY as the fused builders seeded it — `far: 1000` (which
+ * differs from `CameraData`'s own zod default of 500, and from the seed project's 500) and
+ * the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
+ * changes the SHAPE a new camera is minted in, nothing about what it looks like. The ortho
+ * `zoom: 1` in particular is currently read by no renderer at all (#478) — it is seeded here
+ * unchanged so that issue stays exactly as measurable as it was, and is fixed under #478.
+ *
+ * `fov` is written for BOTH projections because `CameraData.fov` is required with no zod
+ * default (deliberately — 45 is the pose road's failure value, so it must never arrive as a
+ * silent fallback). Under `projection: 'Orthographic'` it is inert: the recompose reads
+ * `zoom`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
+ */
+function cameraDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
+  const shared = { fov: 45, near: 0.01, far: 1000, lookAt: [0, 0, 0] };
+  return kind === 'OrthographicCamera'
+    ? { projection: 'Orthographic', zoom: 1, ...shared }
+    : { projection: 'Perspective', ...shared };
+}
+
 /** Default params per kind. AmbientLight has no position; everything
  *  else accepts the spawn point. */
 function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown> {
@@ -512,10 +582,12 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     // (no pose), minted directly as an AmbientLight node by the generic tail.
     case 'AmbientLight':
       return { intensity: 0.3, color: '#ffffff' };
+    // #387 C4 — a camera is the object↔data split; these params are the OBJECT half's TRS
+    // only. The lens (fov/zoom/near/far/lookAt/roll) is minted by cameraDataParamsFor onto
+    // the CameraData half by the camera branch above.
     case 'PerspectiveCamera':
-      return { fov: 45, near: 0.01, far: 1000, position, lookAt: [0, 0, 0] };
     case 'OrthographicCamera':
-      return { zoom: 1, near: 0.01, far: 1000, position, lookAt: [0, 0, 0] };
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     case 'Group':
       return {};
     case 'Transform':

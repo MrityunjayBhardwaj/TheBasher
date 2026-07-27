@@ -72,17 +72,36 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       });
     }
 
+    // #387 C4 — the agent's camera snapshot mints the object↔data split, the same pair the
+    // Add menu and the v6→v7 migration produce: a CameraData (lens) posed by an Object.
+    // The data id is DERIVED from the deterministic camera id above, so the whole pair stays
+    // content-addressed — two identical snapshot requests still produce identical ids.
+    // `scene.camera` is wired to the OBJECT (the posable half every consumer addresses).
+    const dataId = `${newId}__data`;
     ops.push({
       type: 'addNode',
-      nodeId: newId,
-      nodeType: 'PerspectiveCamera',
+      nodeId: dataId,
+      nodeType: 'CameraData',
       params: {
+        projection: 'Perspective',
         fov: args.fov,
         near: 0.01,
         far: 1000,
-        position: args.position,
         lookAt: args.lookAt,
       },
+    });
+
+    ops.push({
+      type: 'addNode',
+      nodeId: newId,
+      nodeType: 'Object',
+      params: { position: args.position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+
+    ops.push({
+      type: 'connect',
+      from: { node: dataId, socket: 'out' },
+      to: { node: newId, socket: 'data' },
     });
 
     ops.push({
