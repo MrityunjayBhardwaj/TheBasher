@@ -9,6 +9,7 @@ import type {
   SceneValue,
 } from './types';
 import { recomposeLightObject } from './lightRecompose';
+import { recomposeCameraObject } from './cameraRecompose';
 
 // UX #9 — scene-level environment (HDRI/IBL) source. Discriminated so the
 // editor authors exactly one of: nothing / a drei preset (CDN) / an imported
@@ -57,7 +58,12 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     // these fields still resolves to `none` rather than crashing.
     return {
       kind: 'Scene',
-      camera: inputs.camera as CameraValue,
+      // #387 — a camera is now an `Object` posing a `CameraData`. Recompose the pair
+      // back into the flat `CameraValue` every camera consumer downstream reads. A
+      // still-fused camera returns null → passes through unchanged, byte-identically.
+      // Recomposing HERE and not in the consumer is what keeps the read side and the
+      // render side on one value (V117).
+      camera: recomposeCameraObject(inputs.camera) ?? (inputs.camera as CameraValue),
       // #386 — a posable light is now an `Object` posing a `LightData`. Recompose
       // each gathered entry back into the flat `LightValue` the renderer's light
       // band consumes (the ONE shared helper, also used at LightRig.evaluate and

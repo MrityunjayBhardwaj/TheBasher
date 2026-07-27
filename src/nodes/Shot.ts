@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CameraValue, SceneValue, ShotValue } from './types';
+import { recomposeCameraObject } from './cameraRecompose';
 
 export const ShotParams = z.object({
   name: z.string().default('Shot'),
@@ -36,7 +37,10 @@ export const ShotNode: NodeDefinition<ShotParams, ShotValue> = {
       name: params.name,
       startTime: params.startTime,
       endTime: params.endTime,
-      camera: (inputs.camera as CameraValue | undefined) ?? null,
+      // #387 — recompose a split camera pair into the flat CameraValue (fused → null →
+      // unchanged). The Shot's camera is read back by the shot surfaces and the agent.
+      camera:
+        recomposeCameraObject(inputs.camera) ?? (inputs.camera as CameraValue | undefined) ?? null,
       scene: (inputs.scene as SceneValue | undefined) ?? null,
     };
   },

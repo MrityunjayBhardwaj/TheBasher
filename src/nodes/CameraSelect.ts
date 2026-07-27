@@ -25,6 +25,7 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CameraValue, SceneObject } from './types';
+import { recomposeCameraObject } from './cameraRecompose';
 
 export const CameraSelectParams = z.object({
   /** Index of the live camera into the `cameras` list (edge order). Clamped to a
@@ -70,6 +71,11 @@ export const CameraSelectNode: NodeDefinition<CameraSelectParams, CameraValue | 
     // The wired inputs are cameras; surface the active one as the CameraValue
     // Scene.camera expects. (A mis-wired non-camera would be transitional impurity
     // until Inc 4 flatten — the UI only wires cameras here.)
-    return (candidates[idx] as CameraValue) ?? null;
+    // #387 — the picked candidate may be an `Object` posing a `CameraData`; recompose it
+    // into the flat CameraValue `Scene.camera` expects (fused → null → unchanged). The
+    // SELECTION is by index over `candidates`, which is untouched: the recompose happens
+    // after the pick, so the index a CameraSelect addresses by cannot shift.
+    const picked = candidates[idx];
+    return recomposeCameraObject(picked) ?? (picked as CameraValue) ?? null;
   },
 };
