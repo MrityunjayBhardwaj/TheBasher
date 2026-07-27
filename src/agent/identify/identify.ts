@@ -414,12 +414,16 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
   // camera is the Object+CameraData split (nodeType 'Object'), and BOTH projections wear
   // the same node type, so the data TYPE alone cannot tell a perspective from an
   // orthographic; cameraProjectionsFor narrows those Objects by the posed `projection`.
-  // The fused types stay listed for as long as unmigrated projects can carry them.
   // One rule for all three camera nouns: the projection is NOT discriminated here (a
   // qualified "perspective camera" wears the same node type as any other), it is
   // discriminated by cameraProjectionsFor during the narrowing pass.
+  //
+  // The fused types were listed here through the coexistence slices and were DROPPED at
+  // retirement (S8) — a fused camera cannot exist in a live DagState, because the load
+  // migration splits it before identify ever sees it. This mirrors the light rule above,
+  // which kept only 'AmbientLight' for the same reason: it is the one that stays fused.
   if (/\b(camera|cameras)\b/.test(q)) {
-    return ['Object', 'PerspectiveCamera', 'OrthographicCamera'];
+    return ['Object'];
   }
   if (/\bcharacter(s)?\b/.test(q)) return ['Character'];
   // #324 — the words a DIRECTOR uses for the two objects the agent was blind to. Neither is

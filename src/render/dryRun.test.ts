@@ -3,6 +3,7 @@ import { StubComfyUICapability, type ComfyInputs, type ComfyWorkflowJson } from 
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { dryRun, framePath, type CompileWorkflowFn } from './dryRun';
 
@@ -25,12 +26,14 @@ function buildDryRunState(
 ) {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
-  }).next;
+  // #387 C4 — the fused camera node type is retired; a camera is now an Object posing a
+  // CameraData. `position` stays on the Object, the lens moves to the data half.
+  s = makeSplitCamera(s, {
+    objectId: 'cam',
+    fov: 60,
+    position: [0, 0, 5],
+    lens: { lookAt: [0, 0, 0] },
+  }).state;
   s = makeSplitCube(s, { objectId: 'box', size: [1, 1, 1], position: [0, 0, 0] }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   s = applyOp(s, {

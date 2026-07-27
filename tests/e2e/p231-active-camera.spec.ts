@@ -6,6 +6,7 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { splitCameraOps } from './_splitCamera';
 
 interface CamRef {
   node: string;
@@ -59,16 +60,17 @@ async function boot(page: Page) {
   });
 }
 
+/** Add a 2nd camera as the SPLIT pair (#387 C4) — the fused node type is retired, so this is
+ *  now the only shape the product can build. `position` goes on the Object (the row the
+ *  outliner shows and the id `scene.camera` binds); the lens goes on its CameraData. */
 async function addSecondCamera(page: Page) {
-  await page.evaluate((id) => {
-    const w = window as unknown as W;
-    w.__basher_dag.getState().dispatch({
-      type: 'addNode',
-      nodeId: id,
-      nodeType: 'PerspectiveCamera',
-      params: { position: [0, 6, 0], lookAt: [0, 0, 0], fov: 50 },
-    });
-  }, CAM2);
+  await page.evaluate(
+    (ops) => {
+      const w = window as unknown as W;
+      for (const op of ops) w.__basher_dag.getState().dispatch(op);
+    },
+    splitCameraOps({ objectId: CAM2, position: [0, 6, 0], lookAt: [0, 0, 0], fov: 50 }),
+  );
 }
 
 test.describe('#231 Inc 3.2 — multi-camera active model', () => {

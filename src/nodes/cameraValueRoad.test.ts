@@ -57,15 +57,24 @@ function splitCameraOps(objectId: string, data: Record<string, unknown> = {}) {
   );
 }
 
-/** The pre-split form, authored with the SAME lens — the byte-identity control. */
-function fusedCameraOp(nodeId: string, nodeType = 'PerspectiveCamera'): Op {
-  return {
-    type: 'addNode',
-    nodeId,
-    nodeType,
-    params: { ...LENS, position: POSE },
-  } as Op;
-}
+/**
+ * What the pre-split `PerspectiveCamera` produced for that same lens, written out by hand.
+ *
+ * It USED to be a live resolve of a fused node — the honest control while both forms could
+ * coexist. Slice 8 retired the fused types (their `evaluate` throws), so that control cannot
+ * be built any more, and this literal replaces it. The substitution is not a loss: a hand-
+ * written expectation states the struct the split MUST produce, where the live control only
+ * said "whatever the relic said", and a relic can no longer drift.
+ */
+const CANONICAL_PERSPECTIVE: CameraValue = {
+  kind: 'PerspectiveCamera',
+  fov: 28,
+  near: 0.02,
+  far: 250,
+  position: [7, 1, -4],
+  lookAt: [0, 1, 0],
+  roll: 15,
+};
 
 /** A Scene whose `camera` input is fed by `cameraId`. */
 function sceneWith(cameraOps: unknown[], cameraId: string): DagState {
@@ -99,13 +108,12 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
     expect(cam.position).toEqual([7, 1, -4]);
   });
 
-  it('is byte-identical to the fused camera authored with the same lens', () => {
-    // The migration's real contract, stated one slice before the migration exists: a
-    // project that splits must produce the SAME value, or every render cache keyed on it
-    // invalidates and every consumer sees a different struct on load.
-    const split = sceneCamera(sceneWith(splitCameraOps('n_cam'), 'n_cam'));
-    const fused = sceneCamera(sceneWith([fusedCameraOp('n_cam')], 'n_cam'));
-    expect(split).toEqual(fused);
+  it('is byte-identical to what the fused camera produced for the same lens', () => {
+    // The migration's real contract: a project that splits must produce the SAME value, or
+    // every render cache keyed on it invalidates and every consumer sees a different struct
+    // on load. Measured against the canonical struct rather than a live fused resolve — see
+    // CANONICAL_PERSPECTIVE on why the control had to become a literal at slice 8.
+    expect(sceneCamera(sceneWith(splitCameraOps('n_cam'), 'n_cam'))).toEqual(CANONICAL_PERSPECTIVE);
   });
 
   it('reads the projection discriminator, not the node type', () => {
@@ -118,31 +126,39 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
     if (cam.kind !== 'OrthographicCamera') throw new Error('unreachable');
     expect(cam.zoom).toBe(12);
     expect(cam.position).toEqual([7, 1, -4]);
-    // …and it must equal what the fused OrthographicCamera produces, same as above.
-    const fused = sceneCamera(
-      sceneWith(
-        [
-          {
-            type: 'addNode',
-            nodeId: 'n_cam',
-            nodeType: 'OrthographicCamera',
-            params: { ...LENS, zoom: 12, position: POSE },
-          } as Op,
-        ],
-        'n_cam',
-      ),
-    );
-    expect(cam).toEqual(fused);
+    // …and it must equal what the fused OrthographicCamera produced, same as above. Note
+    // there is no `fov` on this arm — the orthographic value never carried one, so the
+    // whole struct is asserted rather than field-by-field: an extra key is a difference.
+    expect(cam).toEqual({
+      kind: 'OrthographicCamera',
+      zoom: 12,
+      near: 0.02,
+      far: 250,
+      position: [7, 1, -4],
+      lookAt: [0, 1, 0],
+      roll: 15,
+    });
   });
 
-  it('leaves a still-fused camera untouched (coexistence)', () => {
-    // The recompose returns null for anything that is not an Object posing a CameraData,
-    // and the caller keeps the original. Without this, wiring the recompose in would be a
-    // regression for every unmigrated project — which is every project until slice 7.
-    const cam = sceneCamera(sceneWith([fusedCameraOp('n_cam')], 'n_cam'));
-    expect(cam.kind).toBe('PerspectiveCamera');
-    if (cam.kind !== 'PerspectiveCamera') throw new Error('unreachable');
-    expect(cam.fov).toBe(28);
+  it('leaves an Object that is NOT posing a CameraData untouched', () => {
+    // The surviving half of what used to be the coexistence test. Until slice 8 this asked
+    // "a still-FUSED camera passes through unrecomposed", which was the load-bearing claim
+    // while unmigrated projects existed; the fused node can no longer evaluate, so that
+    // subject is gone. The claim underneath it is not: the recompose declines anything that
+    // is not an Object posing a CameraData, and the caller KEEPS THE ORIGINAL.
+    //
+    // Which of those two halves this row actually detects was measured, not assumed. Widening
+    // the recompose's guard to accept any Object-with-data leaves this GREEN — the projection
+    // switch has no arm for a BoxData, so it falls out returning undefined and the `??` keeps
+    // the original anyway. The guard is doubly protected. The CALLER'S FALLBACK is not:
+    // dropping Scene's `?? (inputs.camera as CameraValue)` reds exactly this row. So read it
+    // as a pin on the pass-through, which is the single-guarded half and the realistic
+    // mistake — a gather that trusts the recompose to answer for every value it is handed.
+    const cam = sceneCamera(
+      sceneWith(splitOps('box', { objectId: 'n_cam' }, { data: { size: [1, 1, 1] } }), 'n_cam'),
+    );
+    expect(cam.kind).toBe('Object');
+    expect(cam).not.toHaveProperty('fov');
   });
 
   it("drops the Object's rotation and scale — the parity-first decision, pinned", () => {
@@ -216,11 +232,17 @@ describe('#387 slice 4 — the other seven gathers', () => {
   it.each(['BeautyPass', 'DepthPass', 'IDPass', 'NormalPass'])(
     '%s hashes the recomposed lens, not the Object shape',
     (passType) => {
-      // The pass's `sourceHash` is a render-cache key. The claim is EQUALITY with the
-      // fused camera's hash: same lens, same pose, same key — so migrating a project does
-      // not invalidate its cache. A "the hash flips when fov changes" test would NOT
-      // discriminate here, because the raw ObjectValue carries `data.fov` too and hashing
-      // it flips just the same ([[H180]] vacuous negative).
+      // The pass's `sourceHash` is a render-cache key, and the claim is that it is keyed on
+      // the RECOMPOSED lens rather than on the raw Object.
+      //
+      // It used to be phrased as equality with a live fused camera's hash — the migration
+      // contract, exactly. Slice 8 retired the fused node, so the discriminator moved to the
+      // other property that separates the two structs: a recomposed CameraValue has NO
+      // `rotation`, while the raw ObjectValue does. Two split cameras differing ONLY in the
+      // Object's rotation must therefore hash IDENTICALLY — which also means a rotate drag
+      // cannot thrash the render cache. Note what the obvious alternative would not buy: "the
+      // hash flips when fov changes" does NOT discriminate, because the raw ObjectValue
+      // carries `data.fov` too and hashing it flips just the same ([[H180]] vacuous negative).
       //
       // ⚠️ THE SCENE HERE IS DELIBERATELY CAMERA-LESS, and that is not tidiness. The
       // hash covers (passKind, params, scene, camera, time), so wiring the camera into
@@ -253,7 +275,11 @@ describe('#387 slice 4 — the other seven gathers', () => {
         }
         return (evaluate(s, 'n_pass').value as ImageValue).sourceHash;
       };
-      expect(build(splitCameraOps('n_cam'))).toBe(build([fusedCameraOp('n_cam')]));
+      const rotated = [
+        ...splitCameraOps('n_cam'),
+        { type: 'setParam', nodeId: 'n_cam', paramPath: 'rotation', value: [0, 45, 0] } as Op,
+      ];
+      expect(build(splitCameraOps('n_cam'))).toBe(build(rotated));
     },
   );
 

@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 
@@ -205,12 +206,14 @@ function buildSceneWithCamera(): DagState {
     params: {},
   }).next;
   // Wire scene as the active output
-  state = applyOp(state, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.1, far: 1000, position: [3, 2, 3], lookAt: [0, 0, 0] },
-  }).next;
+  // #387 C4 — the fused camera node type is retired; a camera is an Object posing a
+  // CameraData. `position` on the Object, the lens on the data half.
+  state = makeSplitCamera(state, {
+    objectId: 'cam',
+    fov: 45,
+    position: [3, 2, 3],
+    lens: { near: 0.1, far: 1000, lookAt: [0, 0, 0] },
+  }).state;
   state = applyOp(state, {
     type: 'connect',
     from: { node: 'cam', socket: 'out' },
@@ -684,12 +687,8 @@ import { renderSummarizePassTool } from './renderSummarizePass';
 function buildJobScene(): DagState {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [0, 0, 5] },
-  }).next;
+  // #387 C4 — a camera is an Object posing a CameraData (see above).
+  s = makeSplitCamera(s, { objectId: 'cam', fov: 45, position: [0, 0, 5] }).state;
   s = makeSplitCube(s, { objectId: 'box', size: [1, 1, 1] }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   s = applyOp(s, {

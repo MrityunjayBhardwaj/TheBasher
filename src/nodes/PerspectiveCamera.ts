@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { CameraValue } from './types';
 
 export const PerspectiveCameraParams = z.object({
   fov: z.number().min(1).max(170),
@@ -34,7 +33,7 @@ export const PerspectiveCameraParams = z.object({
 });
 export type PerspectiveCameraParams = z.infer<typeof PerspectiveCameraParams>;
 
-export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, CameraValue> = {
+export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, never> = {
   type: 'PerspectiveCamera',
   version: 1,
   pure: true,
@@ -45,15 +44,18 @@ export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, Came
   // UX #12 — Camera (lens) is the primary domain for a camera node; Transform
   // (position / lookAt) is secondary. Mirrors Scene leading with Environment.
   inspectorSections: ['camera', 'transform', 'constraint', 'driver'],
-  evaluate(params) {
-    return {
-      kind: 'PerspectiveCamera',
-      fov: params.fov,
-      near: params.near,
-      far: params.far,
-      position: params.position,
-      lookAt: params.lookAt,
-      roll: params.roll,
-    };
+  // Retired (#387 S8): a perspective camera is now an Object → CameraData, so the lens no
+  // longer lives on a node of this type. This node stays registered SOLELY so the
+  // load-migration (migrateFusedCameraToSplit) can normalize an old fused camera through its
+  // OWN version ladder before splitting it. It never evaluates.
+  //
+  // The `PerspectiveCameraValue` interface in types.ts STAYS — unlike the curve, the camera's
+  // value kind is the RECOMPOSITION TARGET (cameraRecompose.ts) that the value road and the
+  // `pose.kind` consumers still read, and 'PerspectiveCamera' remains an Add-menu creation
+  // kind. Retiring the node type does not retire the word.
+  evaluate(): never {
+    throw new Error(
+      'PerspectiveCamera is retired; projects migrate to Object+CameraData on load (#387)',
+    );
   },
 };

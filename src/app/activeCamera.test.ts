@@ -18,6 +18,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { splitOps } from '../test-utils/splitKinds';
 
@@ -66,12 +67,14 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
    *  cameras edge order: [n_camera (idx 0), n_cam2 (idx 1)]. */
   function buildMultiCamera(active = 0): DagState {
     let state = buildDefaultDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_cam2',
-      nodeType: 'PerspectiveCamera',
-      params: { position: [10, 0, 0], lookAt: [0, 0, 0], fov: 60 },
-    }).next;
+    // #387 C4 — the fused camera node type is retired; a camera is an Object posing a
+    // CameraData. `position` on the Object, the lens on the data half.
+    state = makeSplitCamera(state, {
+      objectId: 'n_cam2',
+      fov: 60,
+      position: [10, 0, 0],
+      lens: { lookAt: [0, 0, 0] },
+    }).state;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_camsel',
@@ -191,12 +194,14 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
       from: { node: 'n_grp', socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     }).next;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_cam2',
-      nodeType: 'PerspectiveCamera',
-      params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
-    }).next;
+    // #387 C4 — as above: the split pair, with the pose on the Object so the group-lift
+    // this test measures still acts on the half that owns the TRS.
+    state = makeSplitCamera(state, {
+      objectId: 'n_cam2',
+      fov: 50,
+      position: [0, 0, 0],
+      lens: { lookAt: [0, 0, -1] },
+    }).state;
     // Nest the camera under the Group.
     state = applyOp(state, {
       type: 'connect',
