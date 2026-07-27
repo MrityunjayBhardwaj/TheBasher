@@ -103,7 +103,25 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
   evaluate(params) {
     return {
       kind: 'CameraData',
-      projection: params.projection ?? 'Perspective',
+      // NORMALISED, not merely defaulted, and the difference is load-bearing. `?? ` only
+      // catches `undefined`/`null`; a bag carrying some OTHER string passes straight
+      // through, and nothing downstream re-checks. Load is where that arrives: it parses
+      // the generic `NodeSchema` (`schema.ts`) and never a per-type `paramSchema`, so a
+      // hand-edited or corrupted save reaches here unvalidated.
+      //
+      // The consequence is silent rather than loud. `CameraDataValue.projection` is typed
+      // as the two-member union, so an out-of-union value makes this function violate its
+      // own return type; `recomposeCameraObject`'s switch then matches no case and returns
+      // `undefined`, which every one of its nine call sites absorbs with
+      // `?? (inputs.camera as CameraValue)` — handing a raw `ObjectValue` to a camera
+      // consumer, which reads `fov`/`near`/`far` as `undefined`.
+      //
+      // Fixing it HERE rather than with a `default:` arm in that switch is deliberate: the
+      // switch's exhaustiveness over the union is what turns a future third projection into
+      // a compile error, and a `default` would silently absorb it instead. Same shape as
+      // `cameraProjectionFromPair` (`cameraNode.ts`), which already normalises this way —
+      // one discriminator, one rule, both roads.
+      projection: params.projection === 'Orthographic' ? 'Orthographic' : 'Perspective',
       // NO `?? fallback`, byte-identical to what the fused PerspectiveCamera does with
       // the same required param. Inventing one here would be the 45 the schema note
       // above refuses, just moved a layer further from where anyone would look for it.

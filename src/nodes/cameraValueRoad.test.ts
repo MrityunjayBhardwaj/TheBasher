@@ -28,6 +28,8 @@ import type { DagState, Op } from '../core/dag/types';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { __reseedAllNodesForTests } from './registerAll';
 import { splitOps } from '../test-utils/splitKinds';
+import { CameraDataNode } from './CameraData';
+import { recomposeCameraObject } from './cameraRecompose';
 import { runRenderJob, type PassEncoder } from '../render/runRenderJob';
 import type { CameraValue, ImageValue, SceneValue, ShotValue } from './types';
 
@@ -334,5 +336,58 @@ describe('#387 slice 4 — the other seven gathers', () => {
         expect(cam.position).toEqual([7, 1, -4]);
       },
     );
+  });
+});
+
+// The hydrate seam, and the reason it is a SEPARATE concern from the schema's default.
+//
+// Load parses the generic `NodeSchema` (`src/core/project/schema.ts`) and never a
+// per-type `paramSchema`, so a hand-edited or corrupted save reaches `evaluate` with its
+// params unvalidated. `?? 'Perspective'` only guards `undefined`/`null`; some OTHER string
+// passes straight through, and `CameraDataValue.projection` is typed as a two-member
+// union — so `evaluate` would be violating its own return type, and `recomposeCameraObject`
+// would fall out of its switch returning `undefined`, which all nine call sites absorb with
+// `?? (inputs.camera as CameraValue)`. The camera consumer then reads `fov` as `undefined`
+// with nothing raised anywhere.
+//
+// Pinned at `evaluate` rather than at the switch on purpose: a `default:` arm there would
+// silently swallow a future third projection that the exhaustiveness check is meant to turn
+// into a compile error.
+describe('#387 — an out-of-union `projection` is NORMALISED at evaluate, not passed through', () => {
+  it('evaluates a corrupted discriminator to Perspective, so the value honours its own type', () => {
+    const value = CameraDataNode.evaluate(
+      { projection: 'Ortho', fov: 28, near: 0.01, far: 500 } as never,
+      {} as never,
+      {} as never,
+    ) as { projection: string };
+    expect(value.projection).toBe('Perspective');
+  });
+
+  it('so the recompose returns a real camera instead of undefined for such a bag', () => {
+    const data = CameraDataNode.evaluate(
+      { projection: 'Ortho', fov: 28, near: 0.01, far: 500 } as never,
+      {} as never,
+      {} as never,
+    );
+    const out = recomposeCameraObject({
+      kind: 'Object',
+      position: [1, 2, 3],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      data,
+    });
+    // NOT `toBeTruthy()`: `undefined` is what the bug produced, and only naming the kind
+    // distinguishes "recomposed" from "fell out of the switch".
+    expect(out?.kind).toBe('PerspectiveCamera');
+    expect(out?.fov).toBe(28);
+  });
+
+  it('and a WELL-FORMED orthographic bag is untouched — the normalisation is not a clamp', () => {
+    const value = CameraDataNode.evaluate(
+      { projection: 'Orthographic', fov: 28, near: 0.01, far: 500 } as never,
+      {} as never,
+      {} as never,
+    ) as { projection: string };
+    expect(value.projection).toBe('Orthographic');
   });
 });
