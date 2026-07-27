@@ -42,6 +42,7 @@ import {
 import { bareChannelNodesForSubject } from '../nodeChannels';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { isCameraNode } from '../cameraNode';
+import { stripDriveRefusal } from '../stripDrive';
 import { ActionChannelSchema, type ActionChannel } from '../../nodes/Action';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
@@ -942,6 +943,14 @@ export function dispatchPushDownToStrip(targetId: string): DispatchResult {
   const base = useDagStore.getState().state;
   const target = base.nodes[targetId];
   if (!target) return { ok: false, reason: `target "${targetId}" not in DAG.` };
+
+  // 0 — #479: REFUSE before anything is deleted. Push-down's destructive half is correct
+  //     only because the Strip it mints drives the same target; where the placement cannot
+  //     drive it, the composite still ran the deletion and the animation was lost. The SAME
+  //     expression gates the button (NlaLanePane's PushDownButton) — offer == accept (V108).
+  //     Temporary: #480 makes cameras foldable and this goes away with stripDrive.ts.
+  const undrivable = stripDriveRefusal(base, targetId);
+  if (undrivable) return { ok: false, reason: `"${targetId}": ${undrivable}` };
 
   // 1 — the target's bare channels: the SAME enumerator the fold's bare seam
   //     consumes (layeredChannels.ts:224 → directChannelValuesForTarget wraps

@@ -32,24 +32,31 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { buildSceneTreeRows } from '../app/sceneTreeWalk';
-import { isCameraNode } from '../app/cameraNode';
+import { stripDriveRefusal } from '../app/stripDrive';
 import type { DagState } from '../core/dag/state';
 import { commitNla } from './nlaCommit';
 
 /** Valid add-strip targets: the outliner's scene rows (depth > 0 — the Scene
- *  container itself is not a strip target) minus every camera row. Camera strips
- *  are the documented KNOWN-LIMIT (Strip.ts:13-16); not a silent no-op, so the UI
- *  must not offer them.
+ *  container itself is not a strip target) minus every row a strip could not
+ *  actually drive. That exclusion is `stripDriveRefusal` — the SAME expression
+ *  the push-down offer and accept consume (#479), so this picker and push-down
+ *  cannot disagree about which targets are reachable (the agent road is
+ *  deliberately still ungated — see Strip.ts); plus the camera band socket,
+ *  which excludes a camera row structurally. Pure — unit/e2e assert the
+ *  exclusion. Cameras become valid targets when #480 lands.
  *
- *  #387 — the camera test is POSSESSION-keyed (`isCameraNode`), not type-keyed. A
- *  TOP-LEVEL camera is also excluded structurally by the camera band socket, so a
- *  type test looked sufficient; a camera NESTED IN A GROUP carries the Group's
- *  socket instead, and post-split its `nodeType` is 'Object' — so a type test
- *  fails open on exactly that case and offers a strip that folds nothing.
- *  Pure — unit/e2e assert the exclusion, on a GROUPED camera. */
+ *  #387 — the refusal's camera test is POSSESSION-keyed (`isCameraNode`), so this
+ *  picker inherits the split form transitively rather than spelling a type list.
+ *  That matters for exactly one shape: a TOP-LEVEL camera is already excluded by
+ *  the band socket, but a camera NESTED IN A GROUP carries the Group's socket
+ *  instead, and post-split its `nodeType` is 'Object' — a type test fails open on
+ *  it and offers a strip that folds nothing. Asserted on a GROUPED camera. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
   return buildSceneTreeRows(state)
-    .filter((r) => r.depth > 0 && r.parent?.socket !== 'camera' && !isCameraNode(state, r.nodeId))
+    .filter(
+      (r) =>
+        r.depth > 0 && r.parent?.socket !== 'camera' && stripDriveRefusal(state, r.nodeId) === null,
+    )
     .map((r) => ({ id: r.nodeId, label: r.display }));
 }
 
