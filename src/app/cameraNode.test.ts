@@ -13,6 +13,9 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { stripTargetRows } from '../timeline/NlaAddStripPopover';
+import { resolveCameraPoseAt } from './activeCamera';
+import { identify } from '../agent/identify/identify';
+import { shotCreateMutator } from '../agent/mutators/builders/shotCreate';
 
 beforeAll(() => {
   __reseedAllNodesForTests();
@@ -243,5 +246,53 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
     expect(ids, 'a strip on a camera folds nothing, so it must not be offered').not.toContain(
       'n_cam',
     );
+  });
+});
+
+describe('#387 slice 3 — the traps a passing re-key can still leave open', () => {
+  // THE GIZMO TRAP, second half. The first half — that CameraGizmo MOUNTS for a split
+  // camera — is a component concern and is an e2e obligation (slice 9/10). This is the
+  // half that makes the trap visible at all: even with the right gizmo mounted, the
+  // camera Object HAS a `rotation` param (every Object does), and the pose road does not
+  // read it. A rotate drag would turn a gizmo while the rendered camera sat still.
+  it('a `rotation` written on a camera Object does not move the rendered pose', () => {
+    const s = splitCamera();
+    const before = resolveCameraPoseAt(s, 'n_cam', 0);
+    const rotated = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'n_cam',
+      paramPath: 'rotation',
+      value: [0.7, 1.4, 0.2],
+    }).next;
+    expect(
+      rotated.nodes['n_cam'].params.rotation,
+      'the fixture must actually have written a rotation',
+    ).toEqual([0.7, 1.4, 0.2]);
+    // The aim stays on the data half (parity-first), so `rotation` is inert by design.
+    // If this ever starts failing, the camera grew a second orientation source.
+    expect(resolveCameraPoseAt(rotated, 'n_cam', 0)).toEqual(before);
+  });
+
+  it('the agent can identify a split camera, and a cube is not swept in', () => {
+    let s = splitCamera();
+    s = applyAll(s, splitOps('box', { objectId: 'n_box' }, { data: { size: [1, 1, 1] } }));
+    const r = identify({ query: 'the camera' }, s);
+    expect(r.type, 'a camera noun must resolve to something').toBe('match');
+    if (r.type === 'match') expect(r.selectors).toEqual(['n_cam']);
+  });
+
+  it('the agent can target a split camera for a shot', () => {
+    let s = splitCamera();
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
+    const spec = { cameraId: 'n_cam', sceneId: 'scene', startTime: 0, endTime: 4 };
+    const res = shotCreateMutator.preconditions!(
+      spec as never,
+      { nodes: {}, edges: [] } as never,
+      s,
+    );
+    expect(res, `shotCreate refused a split camera: ${'reason' in res ? res.reason : ''}`).toEqual({
+      ok: true,
+    });
   });
 });
