@@ -363,10 +363,18 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     readRendered: (r) => at(r, 'fov'),
     // `camera` renders `CameraLensControls`, not generic param rows.
     customSections: ['camera'],
+    // ⚠️ The third entry says "static" on purpose. A focus PULL is by definition
+    // animated, and `focusDistance`/`fStop`/`sensorSize` reach neither `CameraValue`
+    // nor `CameraPose` — keying one animates nothing (#193, [[V121]]). Claiming the
+    // pull as a primary workflow would make this row assert a capability the product
+    // does not have, which is worse than not listing it: the row is the thing other
+    // rows are checked against. The limit is PINNED as an equality by
+    // `activeCamera.test.ts` ("the DoF road reads RAW params"), so it reds the day
+    // #193 wires a channel overlay into the DoF road and this text goes stale.
     primaryWorkflows: [
       'frame the shot by focal length / field of view',
       'set the clip planes',
-      'author a depth-of-field focus pull',
+      'set the depth-of-field focus (static — an animated focus pull does not reach the render, #193)',
     ],
   },
 };

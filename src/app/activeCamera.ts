@@ -38,7 +38,14 @@ import {
 import type { FChannelModifier } from '../nodes/channelModifiers';
 import { bareChannelNodesForSubject } from './nodeChannels';
 import { linkedDataNodeId } from './resolveDataParamOwner';
-import { cameraDataOf, cameraProjectionFromPair, isCameraNode } from './cameraNode';
+import {
+  cameraDataOf,
+  cameraLensParams,
+  cameraProjectionFromPair,
+  cameraProjectionOf,
+  isCameraNode,
+} from './cameraNode';
+import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 
 /** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
  *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
@@ -404,4 +411,56 @@ export function resolveCameraPoseAt(
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
   const result = pose ?? base;
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
+}
+
+/**
+ * The active DoF effect settings for the camera `cameraId` at clip-time `seconds`,
+ * or null when DoF is off / the camera is orthographic / `cameraId` is not a camera.
+ *
+ * #387 D9 — this is the TWO-IDS seam for depth of field, and it exists as a function
+ * (rather than inline at each caller) because the two halves answer DIFFERENT questions
+ * and the failure of mixing them up is silent:
+ *   - the LENS half (`CameraData` when split, the node itself when fused) owns
+ *     `dofEnabled`/`focusDistance`/`fStop`/`focusOnTarget`/`fov`/`sensorSize` and the
+ *     `projection` discriminator;
+ *   - the POSE half (the `Object`) is what `resolveCameraPoseAt` must be given, because
+ *     `position` lives there. Handed the data half instead it returns a FALLBACK pose,
+ *     not an error, so `focusOnTarget` would silently focus at a plausible wrong depth.
+ * Both roads that honour `focusOnTarget` (the live viewport and the still render) call
+ * THIS, so they cannot drift apart.
+ *
+ * ⚠️ #193 / [[V121]] — the lens params handed to `resolveCameraDof` are the node's RAW
+ * `params`. No channel overlay is applied, deliberately: `focusDistance`/`fStop`/
+ * `sensorSize` reach neither `CameraValue` nor `CameraPose`, so keying them animates
+ * nothing. That is a KNOWN LIMIT, not an oversight — an animated focus pull does not
+ * reach the render (#193). `activeCamera.test.ts` pins it as an equality so it reds the
+ * day #193 wires an overlay in, rather than being re-discovered as a bug.
+ *
+ * The `focusOnTarget` read is done FIRST and the pose is resolved only when it is set:
+ * reversing the order costs a full pose resolve per frame for a camera that will not
+ * use it.
+ */
+export function resolveCameraDofAt(
+  state: DagState,
+  cameraId: string | null | undefined,
+  seconds: number,
+  cache?: EvaluatorCache,
+): DofEffectSettings | null {
+  if (!cameraId) return null;
+  const lens = cameraLensParams(state, cameraId);
+  if (!lens) return null;
+  let targetFocusDistance: number | undefined;
+  if (lens.focusOnTarget === true) {
+    try {
+      const pose = resolveCameraPoseAt(state, cameraId, seconds, cache);
+      targetFocusDistance = Math.hypot(
+        pose.lookAt[0] - pose.position[0],
+        pose.lookAt[1] - pose.position[1],
+        pose.lookAt[2] - pose.position[2],
+      );
+    } catch {
+      /* fall back to the authored focusDistance */
+    }
+  }
+  return resolveCameraDof(lens, cameraProjectionOf(state, cameraId), targetFocusDistance);
 }

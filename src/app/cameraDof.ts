@@ -1,6 +1,6 @@
 // cameraDof — depth-of-field param → effect-settings bridge (UX #12 slice 2).
 //
-// A director authors DoF as three intuitive params on a PerspectiveCamera:
+// A director authors DoF as three intuitive params on a perspective camera:
 // dofEnabled, focusDistance (world units), and fStop (aperture f-number). The
 // postprocessing DepthOfFieldEffect is parameterized by focusDistance +
 // focusRange (both world units) + bokehScale. This module is the SINGLE pure
@@ -18,7 +18,7 @@
 // REF: src/app/cameraLens.ts (focal length); postprocessing DepthOfFieldEffect
 //      ctor (focusDistance default 3.0, focusRange default 2.0, world units).
 
-import type { Node } from '../core/dag/types';
+import type { CameraProjection } from './cameraNode';
 import { focalLengthFromFov, DEFAULT_SENSOR_MM } from './cameraLens';
 
 /** The director-facing DoF params, read defensively (pre-DoF projects → off). */
@@ -69,9 +69,19 @@ export function dofEffectSettings(
   return { focusDistance: fd, focusRange, bokehScale };
 }
 
-/** Resolve a camera node's active DoF effect settings, or null when DoF is off
- *  / the node isn't a perspective camera. Reads the lens (fov + sensorSize) to
- *  derive focal length. Pure — both the viewport and the still call THIS.
+/** Resolve a camera's active DoF effect settings, or null when DoF is off / the
+ *  camera is orthographic. Reads the lens (fov + sensorSize) to derive focal
+ *  length. Pure — the viewport, the still and the video render all call THIS.
+ *
+ *  #387 D9 — this takes the params bag that OWNS THE LENS plus the projection,
+ *  not a node. Post-split the lens lives on the `CameraData` while the node every
+ *  caller holds is the `Object`, and both projections wear `type === 'Object'`, so
+ *  the old `node.type !== 'PerspectiveCamera'` gate answered "not a camera" for a
+ *  split perspective camera (DoF silently OFF) and "perspective" for a split ortho
+ *  one. The gate is now keyed on STRUCTURE — the projection discriminator the pair
+ *  actually carries — not on the node's identity ([[V119]]). Resolving which bag
+ *  and which projection is the CALLER's job (`cameraLensParams` /
+ *  `cameraProjectionOf`), which keeps this module DAG-free.
  *
  *  #247 — `targetFocusDistance` is |position − lookAt| resolved by the CALLER (it
  *  has the evaluated/Track-To pose; this module stays THREE/DAG-free). When the
@@ -79,16 +89,17 @@ export function dofEffectSettings(
  *  plane tracks the lookAt (the reticle / bound target) instead of the authored
  *  `focusDistance`. */
 export function resolveCameraDof(
-  node: Node | null | undefined,
+  lensParams: Record<string, unknown> | null | undefined,
+  projection: CameraProjection | null | undefined,
   targetFocusDistance?: number | null,
 ): DofEffectSettings | null {
-  if (!node || node.type !== 'PerspectiveCamera') return null;
-  const params = node.params as Record<string, unknown>;
-  const dof = readDofParams(params);
+  if (!lensParams || projection !== 'Perspective') return null;
+  const dof = readDofParams(lensParams);
   if (!dof.enabled) return null;
-  const fov = typeof params.fov === 'number' ? params.fov : 45;
-  const sensor = typeof params.sensorSize === 'number' ? params.sensorSize : DEFAULT_SENSOR_MM;
-  const focusOnTarget = params.focusOnTarget === true;
+  const fov = typeof lensParams.fov === 'number' ? lensParams.fov : 45;
+  const sensor =
+    typeof lensParams.sensorSize === 'number' ? lensParams.sensorSize : DEFAULT_SENSOR_MM;
+  const focusOnTarget = lensParams.focusOnTarget === true;
   const focusDistance =
     focusOnTarget && typeof targetFocusDistance === 'number' && targetFocusDistance > 0
       ? targetFocusDistance

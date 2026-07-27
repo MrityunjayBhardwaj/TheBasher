@@ -90,13 +90,13 @@ import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import {
   enumerateCameraNodeIds,
+  resolveCameraDofAt,
   resolveCameraFrustumPose,
   resolveCameraPoseAt,
   selectActiveCameraNode,
 } from '../app/activeCamera';
 import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
-import { resolveCameraDof } from '../app/cameraDof';
 import { degVec3ToRad } from './rotation';
 import { selectNode } from './selectNodeOnClick';
 import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
@@ -309,25 +309,18 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // UX #12 — the active camera's depth-of-field, resolved through the SAME pure
   // helper the offscreen still uses (cameraDof.ts) so the live bokeh matches the
   // rendered bokeh. null when DoF is off → PostFx mounts no DepthOfField.
-  // #247 — when `focusOnTarget` is set, the focus plane tracks the lookAt: pass the
-  // resolved |position − lookAt| (channels + Track-To at the live playhead) so
-  // moving the reticle / binding a target moves the focus plane (re-runs on every
+  // #247 — when `focusOnTarget` is set, the focus plane tracks the lookAt: the
+  // resolved |position − lookAt| (channels + Track-To at the live playhead) is used
+  // so moving the reticle / binding a target moves the focus plane (re-runs on every
   // DAG change; a pure scrub of an animated camera does not re-run — documented).
-  const activeCameraNode = activeCameraId ? state.nodes[activeCameraId] : null;
-  let targetFocusDistance: number | undefined;
-  if ((activeCameraNode?.params as { focusOnTarget?: unknown } | undefined)?.focusOnTarget) {
-    try {
-      const pose = resolveCameraPoseAt(state, activeCameraId!, useTimeStore.getState().seconds);
-      targetFocusDistance = Math.hypot(
-        pose.lookAt[0] - pose.position[0],
-        pose.lookAt[1] - pose.position[1],
-        pose.lookAt[2] - pose.position[2],
-      );
-    } catch {
-      /* fall back to the authored focusDistance */
-    }
-  }
-  const activeDof = resolveCameraDof(activeCameraNode, targetFocusDistance);
+  //
+  // #387 — this block used to read `focusOnTarget` off the node it also posed. Post
+  // split those are two DIFFERENT nodes (the lens flag on the `CameraData`, the
+  // position on the `Object`) and `resolveCameraPoseAt` on the wrong half returns a
+  // fallback pose rather than an error. `resolveCameraDofAt` owns both reaches and is
+  // the SAME function the still render calls, so the viewport and the still cannot
+  // focus at different depths.
+  const activeDof = resolveCameraDofAt(state, activeCameraId, useTimeStore.getState().seconds);
 
   return (
     <OverlayMembershipContext.Provider value={overlayMembership}>

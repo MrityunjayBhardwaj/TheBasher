@@ -15,6 +15,7 @@
 
 import { resolveActiveCameraPoseAt, selectActiveCameraNode } from './activeCamera';
 import { resolveCameraDof } from './cameraDof';
+import { cameraLensParams, cameraProjectionOf } from './cameraNode';
 import { useDagStore } from '../core/dag/store';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
@@ -96,7 +97,22 @@ export async function renderAnimationToFile(
   // (viewport==render parity, V37/V51). The DAG itself doesn't change per frame
   // (animation is channels sampled by time), so only the time advances.
   const activeCamera = selectActiveCameraNode(state);
-  const dof = resolveCameraDof(activeCamera);
+  // #387 — the lens params come from the half that OWNS them: the `CameraData` when the
+  // camera is split, the node itself when fused. `cameraLensParams` answers for both, so
+  // this road did not have to learn the split.
+  //
+  // ⚠️ THE THIRD ROAD DELIBERATELY DOES NOT PASS A FOCUS DISTANCE, and that is a
+  // PRE-EXISTING asymmetry this rewrite PRESERVES rather than resolves: the viewport and
+  // the still render both honour `focusOnTarget` (they call `resolveCameraDofAt`, which
+  // resolves |position − lookAt| at the playhead), while the exported video ignores it and
+  // focuses at the authored `focusDistance`. Passing one here would change what every
+  // exported video looks like — a real behaviour change, riding in on a signature change,
+  // which is exactly the wrong place for it. Entrenching it silently would be equally
+  // wrong, so it is named here and filed: #483.
+  const dof = resolveCameraDof(
+    activeCamera ? cameraLensParams(state, activeCamera.id) : null,
+    activeCamera ? cameraProjectionOf(state, activeCamera.id) : null,
+  );
 
   const fps = FRAMES_PER_SECOND;
   const time = useTimeStore.getState();
