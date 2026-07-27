@@ -68,6 +68,7 @@ import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveActiveCameraPoseAt } from './activeCamera';
+import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
@@ -1248,7 +1249,8 @@ export function Gizmo() {
   // selection change or a DAG change (a node losing/gaining a position param).
   const selectedIds = useSelectionStore((s) => s.selectedNodeIds);
   const primaryId = useSelectionStore((s) => s.primaryNodeId);
-  const nodes = useDagStore((s) => s.state.nodes);
+  const state = useDagStore((s) => s.state);
+  const nodes = state.nodes;
   // #322 — THE ELEMENT-GIZMO GATE (Blender's object→element swap). When a control point of
   // the selected Curve is picked, the OBJECT gizmo yields: CurvePointHandles mounts a
   // translate gizmo on the POINT instead. Two TransformControls in one viewport would fight
@@ -1260,8 +1262,11 @@ export function Gizmo() {
   for (const id of selectedIds) if (getManipulable(nodes[id] ?? null)) manipCount++;
   if (curvePoint) return null;
   if (manipCount > 1) return <MultiGizmo />;
-  const primary = primaryId ? nodes[primaryId] : null;
-  if (primary && (primary.type === 'PerspectiveCamera' || primary.type === 'OrthographicCamera')) {
+  // #387 — possession, not type: post-split a camera's `type` is 'Object', so a type test
+  // mounts SingleGizmo on a camera and a rotate drag writes `rotation`, which the camera
+  // pose road does not read (the aim stays on the data half). Silent: the gizmo turns and
+  // nothing moves.
+  if (primaryId && isCameraNode(state, primaryId)) {
     return <CameraGizmo />;
   }
   return <SingleGizmo />;

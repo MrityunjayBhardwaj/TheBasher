@@ -24,11 +24,7 @@
 import type { DagState } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { enumerateCameraNodeIds, selectActiveCameraNode } from './activeCamera';
-
-function isCameraNode(state: DagState, id: string): boolean {
-  const t = state.nodes[id]?.type;
-  return t === 'PerspectiveCamera' || t === 'OrthographicCamera';
-}
+import { isCameraNode } from './cameraNode';
 
 /** A node id derived from `base`, guaranteed absent from `nodes`. Deterministic
  *  (no Date.now/Math.random) so the builder is unit-testable. */

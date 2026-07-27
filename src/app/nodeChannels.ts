@@ -231,3 +231,19 @@ export function directChannelValuesForTarget(
 ): KeyframeChannelValue[] {
   return channelValuesFromNodes(directChannelNodesForTarget(nodes, targetId));
 }
+
+/**
+ * {@link bareChannelValuesForSubject}'s VALUES form — the both-halves counterpart of
+ * {@link directChannelValuesForTarget}, with the same on-demand-only caveat.
+ *
+ * A read-side resolver over a SPLIT node must use this rather than the exact-id form, or
+ * it silently misses every channel authored on the data half: the channel's `target` is
+ * the data id while the resolver is asked about the Object the director selected.
+ */
+export function bareChannelValuesForSubject(
+  nodes: Readonly<Record<string, NodeLike & { id: string }>>,
+  subjectId: string,
+  dataId: string | null,
+): KeyframeChannelValue[] {
+  return channelValuesFromNodes(bareChannelNodesForSubject(nodes, subjectId, dataId));
+}

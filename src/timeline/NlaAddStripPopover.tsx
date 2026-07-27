@@ -32,23 +32,24 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { buildSceneTreeRows } from '../app/sceneTreeWalk';
+import { isCameraNode } from '../app/cameraNode';
 import type { DagState } from '../core/dag/state';
 import { commitNla } from './nlaCommit';
 
-/** Camera node types — excluded from the target list (camera strips are the
- *  documented Phase-3+ KNOWN-LIMIT, Strip.ts:13-16; not a silent no-op, so
- *  the UI simply must not offer them). */
-const CAMERA_NODE_TYPES = new Set(['PerspectiveCamera', 'OrthographicCamera']);
-
 /** Valid add-strip targets: the outliner's scene rows (depth > 0 — the Scene
- *  container itself is not a strip target) minus every camera row (by TYPE
- *  and by the camera band socket, so a camera nested in a Group is excluded
- *  too). Pure — unit/e2e assert the exclusion. */
+ *  container itself is not a strip target) minus every camera row. Camera strips
+ *  are the documented KNOWN-LIMIT (Strip.ts:13-16); not a silent no-op, so the UI
+ *  must not offer them.
+ *
+ *  #387 — the camera test is POSSESSION-keyed (`isCameraNode`), not type-keyed. A
+ *  TOP-LEVEL camera is also excluded structurally by the camera band socket, so a
+ *  type test looked sufficient; a camera NESTED IN A GROUP carries the Group's
+ *  socket instead, and post-split its `nodeType` is 'Object' — so a type test
+ *  fails open on exactly that case and offers a strip that folds nothing.
+ *  Pure — unit/e2e assert the exclusion, on a GROUPED camera. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
   return buildSceneTreeRows(state)
-    .filter(
-      (r) => r.depth > 0 && r.parent?.socket !== 'camera' && !CAMERA_NODE_TYPES.has(r.nodeType),
-    )
+    .filter((r) => r.depth > 0 && r.parent?.socket !== 'camera' && !isCameraNode(state, r.nodeId))
     .map((r) => ({ id: r.nodeId, label: r.display }));
 }
 

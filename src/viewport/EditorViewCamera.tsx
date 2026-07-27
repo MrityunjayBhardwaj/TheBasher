@@ -31,12 +31,12 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
-  cameraDataNodeFor,
   cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPoseAt,
   selectActiveCameraNode,
 } from '../app/activeCamera';
+import { cameraDataOf } from '../app/cameraNode';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
@@ -139,7 +139,7 @@ export function EditorViewCamera() {
   // discipline as the Object above (Ops are immutable, so an unrelated edit leaves
   // the ref untouched): without it a lens edit would not re-render this component and
   // the free view would keep booting at a stale fov.
-  const camDataNode = useDagStore((s) => (camNode ? cameraDataNodeFor(s.state, camNode.id) : null));
+  const camDataNode = useDagStore((s) => (camNode ? cameraDataOf(s.state, camNode.id) : null));
   const pose = useMemo(
     () => cameraPoseFromPair(camNode, camDataNode) ?? DEFAULT_CAMERA_POSE,
     [camNode, camDataNode],

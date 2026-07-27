@@ -3,7 +3,6 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  cameraDataNodeFor,
   cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPose,
@@ -397,23 +396,8 @@ describe('activeCamera — the split camera pose road (#387)', () => {
     expect(pose.far).toBe(250);
   });
 
-  // PINS the narrowing in `cameraDataNodeFor`. Falsified: deleting that type test
-  // leaves the whole suite green, because no other ObjectData kind happens to declare
-  // a field named fov/near/far/lookAt/roll — so the wrong lens would read as "absent"
-  // and land on DEFAULT_CAMERA_POSE, the same 45 a total read failure returns. The
-  // consequence is unobservable through the pose; the contract is not, so it is pinned
-  // here rather than left as a defensive line nothing can fail.
-  it('does not treat a non-camera data node as a lens', () => {
-    let s = emptyDagState();
-    // `size` is BoxData's one required param (no zod default).
-    for (const op of splitOps('box', { objectId: 'n_box' }, { data: { size: [1, 1, 1] } })) {
-      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
-    }
-    expect(cameraDataNodeFor(s, 'n_box')).toBeNull();
-    // And the camera case is the positive control — without it a function that always
-    // returned null would pass the line above.
-    expect(cameraDataNodeFor(buildSplitCamera(), 'n_cam')?.type).toBe('CameraData');
-  });
+  // The lens-node narrowing that used to be pinned here now lives with the function
+  // it guards, in cameraNode.test.ts.
 
   it('a channel targeting an unrelated node still moves nothing', () => {
     let s = buildSplitCamera();

@@ -26,6 +26,7 @@ import type { Candidate, IdentifyArgs, IdentifyResult, IdentifyStrategy } from '
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
 import { SCENE_OBJECT_KINDS, nodeTypeFor } from '../../app/addPrimitives';
 import { lightKindOf } from '../../app/lightNode';
+import { cameraProjectionOf, type CameraProjection } from '../../app/cameraNode';
 
 // ---------------------------------------------------------------------------
 // Schema (zod) — boundary validation per V7 / H5.
@@ -166,6 +167,18 @@ export function identify(
       if (state.nodes[c.id]?.type === 'AmbientLight') return true;
       const lk = lightKindOf(state.nodes, c.id);
       return lk !== null && lightKinds.has(lk);
+    });
+  }
+
+  // #387 C4 — the camera analogue of the light narrowing above. A camera noun infers
+  // 'Object', which every split cube/sphere/curve also wears, so without this a query for
+  // "the camera" would sweep the whole scene. Narrowing by the posed projection filters
+  // to actual cameras AND distinguishes the two projections, which share a node type.
+  const cameraProjections = typeFilter ? null : cameraProjectionsFor(q);
+  if (cameraProjections && typeMatched.length > 0) {
+    typeMatched = typeMatched.filter((c) => {
+      const proj = cameraProjectionOf(state, c.id);
+      return proj !== null && cameraProjections.has(proj);
     });
   }
 
@@ -349,6 +362,17 @@ function geometryDataTypesFor(q: string): string[] | null {
 // (all four pose 'LightData'); this returns the lightKind set to match instead. Null when the
 // query names no light noun; the specific set for a specific noun; all four for generic "light".
 // AmbientLight is intentionally absent — it poses no LightData and is matched by its own type.
+// #387 C4 — the projections a camera noun names, or null when the query names no camera
+// noun. Mirrors lightKindsFor: the generic noun accepts both, a qualified one narrows.
+function cameraProjectionsFor(q: string): Set<CameraProjection> | null {
+  if (/\bperspective\s+camera\b/.test(q)) return new Set<CameraProjection>(['Perspective']);
+  if (/\borthographic\s+camera\b/.test(q)) return new Set<CameraProjection>(['Orthographic']);
+  if (/\b(camera|cameras)\b/.test(q)) {
+    return new Set<CameraProjection>(['Perspective', 'Orthographic']);
+  }
+  return null;
+}
+
 function lightKindsFor(q: string): Set<string> | null {
   const kinds = new Set<string>();
   if (/\b(directional\s+light|sun)\b/.test(q)) kinds.add('Directional');
@@ -386,10 +410,14 @@ function inferNodeTypes(q: string): NodeTypeId[] | null {
   // #384 Stage C — a sphere is the Object+SphereData split (nodeType 'Object'). Slice 4 retires
   // the fused 'SphereMesh' value kind (old saves split on load), so "sphere" resolves to 'Object'.
   if (/\b(spheres?|balls?|spheremesh)\b/.test(q)) return ['Object'];
-  // Specific cameras before the generic "camera" rule (parallels lights).
-  if (/\bperspective\s+camera\b/.test(q)) return ['PerspectiveCamera'];
-  if (/\borthographic\s+camera\b/.test(q)) return ['OrthographicCamera'];
-  if (/\b(camera|cameras)\b/.test(q)) return ['PerspectiveCamera', 'OrthographicCamera'];
+  // Specific cameras before the generic "camera" rule (parallels lights). #387 C4 — a
+  // camera is the Object+CameraData split (nodeType 'Object'), and BOTH projections wear
+  // the same node type, so the data TYPE alone cannot tell a perspective from an
+  // orthographic; cameraProjectionsFor narrows those Objects by the posed `projection`.
+  // The fused types stay listed for as long as unmigrated projects can carry them.
+  if (/\b(perspective|orthographic)?\s*\b(camera|cameras)\b/.test(q)) {
+    return ['Object', 'PerspectiveCamera', 'OrthographicCamera'];
+  }
   if (/\bcharacter(s)?\b/.test(q)) return ['Character'];
   // #324 — the words a DIRECTOR uses for the two objects the agent was blind to. Neither is
   // ever called by its type name in a sentence: nobody says "add a Curve node", they say

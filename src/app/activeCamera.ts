@@ -38,6 +38,7 @@ import {
 import type { FChannelModifier } from '../nodes/channelModifiers';
 import { bareChannelNodesForSubject } from './nodeChannels';
 import { linkedDataNodeId } from './resolveDataParamOwner';
+import { cameraDataOf, cameraProjectionFromPair, isCameraNode } from './cameraNode';
 
 /** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
  *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
@@ -174,7 +175,7 @@ function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: n
  *  CameraSelect addresses by). */
 export function enumerateCameraNodeIds(state: DagState): string[] {
   return Object.values(state.nodes)
-    .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
+    .filter((n) => isCameraNode(state, n.id))
     .map((n) => n.id);
 }
 
@@ -194,20 +195,6 @@ export function resolveCameraFrustumPose(
   if (!local) return null;
   const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
   return parentWorld ? composeCameraPoseWithParent(local, parentWorld) : local;
-}
-
-/** The `CameraData` node an Object poses, or null when there is none — a fused
- *  camera, or an Object posing some other kind of data.
- *
- *  The type check is not defensive padding: `linkedDataNodeId` returns whatever
- *  hangs off the `data` input, and reading lens params off a `BoxData` would
- *  silently produce `DEFAULT_CAMERA_POSE`'s fov rather than an error (#387 V-45,
- *  the value a failed read hands back). */
-export function cameraDataNodeFor(state: DagState, cameraId: string): Node | null {
-  const dataId = linkedDataNodeId(state, cameraId);
-  if (!dataId) return null;
-  const data = state.nodes[dataId] ?? null;
-  return data?.type === 'CameraData' ? data : null;
 }
 
 /**
@@ -234,11 +221,11 @@ export function cameraPoseFromPair(
   // Fused: one node holds everything. Split: the lens half answers for everything
   // but `position`, which the Object owns.
   const lens = (dataNode ? dataNode.params : o) as Record<string, unknown>;
-  const kind: CameraKind = dataNode
-    ? lens.projection === 'Orthographic'
-      ? 'OrthographicCamera'
-      : 'PerspectiveCamera'
-    : objectNode.type === 'OrthographicCamera'
+  // The projection rule lives in ONE place (cameraNode.ts) — spelled here as well it
+  // would be a drift site the moment a third form lands. A non-camera node still poses
+  // as perspective, which is the pre-split fallback this must not change.
+  const kind: CameraKind =
+    cameraProjectionFromPair(objectNode, dataNode) === 'Orthographic'
       ? 'OrthographicCamera'
       : 'PerspectiveCamera';
   return {
@@ -258,7 +245,7 @@ export function cameraPoseFromPair(
 export function cameraPoseForNodeId(state: DagState, cameraId: string): CameraPose | null {
   const node = state.nodes[cameraId] ?? null;
   if (!node) return null;
-  return cameraPoseFromPair(node, cameraDataNodeFor(state, cameraId));
+  return cameraPoseFromPair(node, cameraDataOf(state, cameraId));
 }
 
 /** Convenience: the active camera's static authored pose, or the default when
