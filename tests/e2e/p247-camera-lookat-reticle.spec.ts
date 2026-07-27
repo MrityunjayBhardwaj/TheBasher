@@ -9,6 +9,7 @@
 // DAG lookAt; if the aim were still a triad, `reticle` would be absent.
 
 import { expect, test } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface CamGizmo {
   position: number[] | null;
@@ -63,11 +64,17 @@ async function selectCamera(page: import('@playwright/test').Page, id: string) {
   await page.waitForTimeout(150);
 }
 
-async function lookAt(page: import('@playwright/test').Page, id: string) {
+/** The camera's aim point. Takes the camera's OBJECT id — the node a director selects and
+ *  the rest of this spec addresses — and reaches through to the CameraData, which owns
+ *  `lookAt` since #387 C4 split the camera. Resolved here rather than at each call site so
+ *  the spec keeps talking about "the camera's lookAt" and only this function knows the aim
+ *  moved halves. Reading it off the Object yields `undefined`, not a stale point. */
+async function lookAt(page: import('@playwright/test').Page, objectId: string) {
+  const lens = await dataNodeIdOf(page, objectId);
   return page.evaluate((cid) => {
     const st = (window as unknown as BasherWindow).__basher_dag!.getState().state;
     return st.nodes[cid].params.lookAt as number[];
-  }, id);
+  }, lens);
 }
 
 test.describe('#247 camera lookAt reticle', () => {

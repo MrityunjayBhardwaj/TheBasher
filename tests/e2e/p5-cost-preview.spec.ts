@@ -12,6 +12,7 @@
 // up against the real server in Wave D4 — only the capability swaps.
 
 import { test, expect } from './_fixtures';
+import { objectPosing } from './_seedNodes';
 
 interface StubComfyWindow {
   __basher_useStubComfy?: () => void;
@@ -54,118 +55,127 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd = 2) {
-  await page.evaluate(async (end) => {
-    const w = window as unknown as StubComfyWindow;
-    const dag = w.__basher_dag!.getState();
-    const nodes = dag.state.nodes;
-    const findOf = (t: string) => Object.entries(nodes).find(([, n]) => n.type === t)?.[0];
-    const timeId = findOf('TimeSource');
-    const camId = findOf('PerspectiveCamera');
-    const sceneId = findOf('Scene');
-    if (!timeId || !camId || !sceneId) {
-      throw new Error(
-        `seed scene missing time/cam/scene: time=${timeId} cam=${camId} scene=${sceneId}`,
-      );
-    }
-    // Wire all three required upstream passes — stylizedRealism preset
-    // mandates beauty + depth + normal. Match the addAIPass Mutator's
-    // canonical wiring shape so the cost preview's compile() finds them.
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'p_test',
-          nodeType: 'Prompt',
-          params: { text: 'a stylized cube', negative: '', tags: [] },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'beauty_test',
-          nodeType: 'BeautyPass',
-          params: {},
-        },
-        {
-          type: 'addNode',
-          nodeId: 'depth_test',
-          nodeType: 'DepthPass',
-          params: {},
-        },
-        {
-          type: 'addNode',
-          nodeId: 'normal_test',
-          nodeType: 'NormalPass',
-          params: {},
-        },
-        {
-          type: 'addNode',
-          nodeId: 'cw_test',
-          nodeType: 'ComfyUIWorkflow',
-          params: {
-            presetId: 'stylizedRealism',
-            frameStart: 0,
-            frameEnd: end,
-            lastGoodFrame: -1,
-            outputPath: 'renders/cw_test/stylized_stylizedRealism',
-          },
-        },
-        ...['beauty_test', 'depth_test', 'normal_test'].flatMap((passId) => [
+  // #387 C4 — the camera is no longer a node of type `PerspectiveCamera`; it is an
+  // `Object` posing a `CameraData`. Found by possession here, and resolved outside the
+  // page callback because that is where the shared helper lives. The old type lookup
+  // returned undefined and the seed threw before any of this spec's real subject —
+  // the ComfyUI cost preview — was reached.
+  const seedCamId = await objectPosing(page, 'CameraData');
+  await page.evaluate(
+    async ({ end, seedCamId: camIdIn }) => {
+      const w = window as unknown as StubComfyWindow;
+      const dag = w.__basher_dag!.getState();
+      const nodes = dag.state.nodes;
+      const findOf = (t: string) => Object.entries(nodes).find(([, n]) => n.type === t)?.[0];
+      const timeId = findOf('TimeSource');
+      const camId = camIdIn;
+      const sceneId = findOf('Scene');
+      if (!timeId || !camId || !sceneId) {
+        throw new Error(
+          `seed scene missing time/cam/scene: time=${timeId} cam=${camId} scene=${sceneId}`,
+        );
+      }
+      // Wire all three required upstream passes — stylizedRealism preset
+      // mandates beauty + depth + normal. Match the addAIPass Mutator's
+      // canonical wiring shape so the cost preview's compile() finds them.
+      dag.dispatchAtomic(
+        [
           {
-            type: 'connect',
-            from: { node: sceneId, socket: 'out' },
-            to: { node: passId, socket: 'scene' },
+            type: 'addNode',
+            nodeId: 'p_test',
+            nodeType: 'Prompt',
+            params: { text: 'a stylized cube', negative: '', tags: [] },
           },
           {
+            type: 'addNode',
+            nodeId: 'beauty_test',
+            nodeType: 'BeautyPass',
+            params: {},
+          },
+          {
+            type: 'addNode',
+            nodeId: 'depth_test',
+            nodeType: 'DepthPass',
+            params: {},
+          },
+          {
+            type: 'addNode',
+            nodeId: 'normal_test',
+            nodeType: 'NormalPass',
+            params: {},
+          },
+          {
+            type: 'addNode',
+            nodeId: 'cw_test',
+            nodeType: 'ComfyUIWorkflow',
+            params: {
+              presetId: 'stylizedRealism',
+              frameStart: 0,
+              frameEnd: end,
+              lastGoodFrame: -1,
+              outputPath: 'renders/cw_test/stylized_stylizedRealism',
+            },
+          },
+          ...['beauty_test', 'depth_test', 'normal_test'].flatMap((passId) => [
+            {
+              type: 'connect',
+              from: { node: sceneId, socket: 'out' },
+              to: { node: passId, socket: 'scene' },
+            },
+            {
+              type: 'connect',
+              from: { node: camId, socket: 'out' },
+              to: { node: passId, socket: 'camera' },
+            },
+            {
+              type: 'connect',
+              from: { node: timeId, socket: 'out' },
+              to: { node: passId, socket: 'time' },
+            },
+            {
+              type: 'connect',
+              from: { node: passId, socket: 'out' },
+              to: { node: 'cw_test', socket: 'pass-input' },
+            },
+          ]),
+          {
             type: 'connect',
-            from: { node: camId, socket: 'out' },
-            to: { node: passId, socket: 'camera' },
+            from: { node: 'p_test', socket: 'out' },
+            to: { node: 'cw_test', socket: 'prompt' },
           },
           {
             type: 'connect',
             from: { node: timeId, socket: 'out' },
-            to: { node: passId, socket: 'time' },
+            to: { node: 'cw_test', socket: 'time' },
           },
-          {
-            type: 'connect',
-            from: { node: passId, socket: 'out' },
-            to: { node: 'cw_test', socket: 'pass-input' },
-          },
-        ]),
-        {
-          type: 'connect',
-          from: { node: 'p_test', socket: 'out' },
-          to: { node: 'cw_test', socket: 'prompt' },
-        },
-        {
-          type: 'connect',
-          from: { node: timeId, socket: 'out' },
-          to: { node: 'cw_test', socket: 'time' },
-        },
-      ],
-      'user',
-      'p5-c5-e2e seed',
-    );
+        ],
+        'user',
+        'p5-c5-e2e seed',
+      );
 
-    // Pre-populate raw pass bytes at the D-04 paths the preset's compile()
-    // reads. Production produces these via runRenderJob; for the cost-
-    // preview spec we only need bytes that exist (content is not asserted
-    // by the stub capability beyond hashing).
-    //
-    // Path formula matches stylizedRealism.rawPassPath:
-    //   `renders/cw_test/${passKind}_NNNN.png`
-    // dryRun probes frame 0 of frameStart..frameEnd, so frame 0000 must
-    // exist for all three required passes.
-    const fakeBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    // Submit (C5.3) iterates frames 0..frameEnd; each frame's compile()
-    // reads raw passes at THAT frame's path. Seed all frames in range.
-    for (let f = 0; f <= end; f++) {
-      const padded = f.toString().padStart(4, '0');
-      for (const kind of ['beauty', 'depth', 'normal']) {
-        await w.__basher_writeOpfsBytes!(`renders/cw_test/${kind}_${padded}.png`, fakeBytes);
+      // Pre-populate raw pass bytes at the D-04 paths the preset's compile()
+      // reads. Production produces these via runRenderJob; for the cost-
+      // preview spec we only need bytes that exist (content is not asserted
+      // by the stub capability beyond hashing).
+      //
+      // Path formula matches stylizedRealism.rawPassPath:
+      //   `renders/cw_test/${passKind}_NNNN.png`
+      // dryRun probes frame 0 of frameStart..frameEnd, so frame 0000 must
+      // exist for all three required passes.
+      const fakeBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      // Submit (C5.3) iterates frames 0..frameEnd; each frame's compile()
+      // reads raw passes at THAT frame's path. Seed all frames in range.
+      for (let f = 0; f <= end; f++) {
+        const padded = f.toString().padStart(4, '0');
+        for (const kind of ['beauty', 'depth', 'normal']) {
+          await w.__basher_writeOpfsBytes!(`renders/cw_test/${kind}_${padded}.png`, fakeBytes);
+        }
       }
-    }
 
-    w.__basher_selection!.getState().select('cw_test');
-  }, frameEnd);
+      w.__basher_selection!.getState().select('cw_test');
+    },
+    { end: frameEnd, seedCamId },
+  );
 }
 
 test('P5#C5.1 selecting a ComfyUIWorkflow node embeds CostPreview in Inspector', async ({

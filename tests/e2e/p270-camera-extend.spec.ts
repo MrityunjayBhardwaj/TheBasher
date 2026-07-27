@@ -3,6 +3,7 @@
 // (__basher_evaluated_param → ch.sample()). Pre-fix the frustum clamped while the
 // read cycled (H40 divergence). Post-fix they agree AND cycle.
 import { expect, test } from './_fixtures';
+import { dataNodeIdOf, objectPosing } from './_seedNodes';
 
 interface CamPose {
   fov: number;
@@ -37,44 +38,55 @@ test('camera fov honours cycle-offset extend on render+read', async ({ page }) =
     Boolean((window as unknown as W).__basher_dag && (window as unknown as W).__basher_time),
   );
 
-  const camId = await page.evaluate(() => {
-    const w = window as unknown as W;
-    const nodes = w.__basher_dag.getState().state.nodes;
-    const id = Object.keys(nodes).find((k) => nodes[k].type === 'PerspectiveCamera');
-    if (!id) return null;
-    w.__basher_dag.getState().dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'tmp270cam_ch',
-          nodeType: 'KeyframeChannelNumber',
-          params: {
-            name: 'fov',
-            target: id,
-            paramPath: 'fov',
-            keyframes: [
-              { time: 0, value: 30, easing: 'linear' },
-              { time: 2, value: 60, easing: 'linear' },
-            ],
-            // #275 — cycle-offset is now a Cycles F-Modifier on the stack.
-            modifiers: [
-              {
-                type: 'cycles',
-                beforeMode: 'none',
-                afterMode: 'repeat-offset',
-                beforeCycles: 0,
-                afterCycles: 0,
-              },
-            ],
+  // #387 C4 — this used to find the camera as "the node of type PerspectiveCamera", which
+  // no longer exists: a camera is an `Object` posing a `CameraData`, so the finder returned
+  // undefined and the channel below was never seeded. Note the shape of that failure — the
+  // retired type name appears in a FINDER, not in a construction, so a sweep looking for
+  // where retired kinds are BUILT walks straight past it while the spec quietly tests
+  // nothing. Asking possession is what makes the question survive the split.
+  //
+  // The ids then part ways: the channel targets the LENS half, which owns `fov` and is
+  // where the app's own routing puts it, while both readings stay on the OBJECT — the
+  // frustum seam is keyed by the posed node, and the evaluated-param read reaches across
+  // the pair on its own. That asymmetry is the point of the test, not an accident of it.
+  const camId = await objectPosing(page, 'CameraData');
+  const lensId = await dataNodeIdOf(page, camId);
+  await page.evaluate(
+    ({ lens }) => {
+      const w = window as unknown as W;
+      w.__basher_dag.getState().dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'tmp270cam_ch',
+            nodeType: 'KeyframeChannelNumber',
+            params: {
+              name: 'fov',
+              target: lens,
+              paramPath: 'fov',
+              keyframes: [
+                { time: 0, value: 30, easing: 'linear' },
+                { time: 2, value: 60, easing: 'linear' },
+              ],
+              // #275 — cycle-offset is now a Cycles F-Modifier on the stack.
+              modifiers: [
+                {
+                  type: 'cycles',
+                  beforeMode: 'none',
+                  afterMode: 'repeat-offset',
+                  beforeCycles: 0,
+                  afterCycles: 0,
+                },
+              ],
+            },
           },
-        },
-      ],
-      'e2e',
-      'tmp270-cam-seed',
-    );
-    return id;
-  });
-  expect(camId).not.toBeNull();
+        ],
+        'e2e',
+        'tmp270-cam-seed',
+      );
+    },
+    { lens: lensId },
+  );
 
   // t=6: cycle-offset → fov = 30 + 3·(60-30) = 120 (travelled), NOT clamped to 60.
   await page.evaluate(() => (window as unknown as W).__basher_time.getState().setTime(6));

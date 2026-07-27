@@ -8,6 +8,7 @@
 // and not change when the lookAt / target moves.
 
 import { expect, test } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -61,21 +62,26 @@ test.describe('#247 DoF focus on target', () => {
     page,
   }) => {
     const { camId, targetId, targetPos } = await setup(page);
-    await page.locator(`[data-testid="inspector-camera-dof-${camId}"]`).check();
-    await page.locator(`[data-testid="inspector-camera-focus-on-target-${camId}"]`).check();
+    // #387 C4 — every control below is a LENS control (DoF, focus, the aim dropdown), so
+    // they key on the CameraData even though the director selected the camera Object. The
+    // focus distance is the interesting one: it is derived from |position − lookAt|, which
+    // now spans both halves.
+    const lens = await dataNodeIdOf(page, camId);
+    await page.locator(`[data-testid="inspector-camera-dof-${lens}"]`).check();
+    await page.locator(`[data-testid="inspector-camera-focus-on-target-${lens}"]`).check();
     await page.waitForTimeout(200);
 
-    const focusField = page.locator(`[data-testid="inspector-camera-focus-${camId}"]`);
+    const focusField = page.locator(`[data-testid="inspector-camera-focus-${lens}"]`);
     // Default lookAt = [0,0,0], camera at [3,2,3] → focus = |[3,2,3]| ≈ 4.7.
     expect(Number(await focusField.inputValue())).toBeCloseTo(dist([3, 2, 3], [0, 0, 0]), 1);
     expect(await focusField.getAttribute('readonly')).not.toBeNull();
     const camParams = await page.evaluate((cid) => {
       return (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[cid].params;
-    }, camId);
+    }, lens);
     expect(camParams.focusOnTarget).toBe(true);
 
     // Bind a target → focus jumps to the distance to it.
-    await page.selectOption(`[data-testid="inspector-camera-lookat-${camId}"]`, targetId);
+    await page.selectOption(`[data-testid="inspector-camera-lookat-${lens}"]`, targetId);
     await page.waitForTimeout(250);
     expect(Number(await focusField.inputValue())).toBeCloseTo(dist([3, 2, 3], targetPos), 1);
   });
