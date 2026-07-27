@@ -39,9 +39,10 @@ import { commitNla } from './nlaCommit';
 /** Valid add-strip targets: the outliner's scene rows (depth > 0 — the Scene
  *  container itself is not a strip target) minus every row a strip could not
  *  actually drive. That exclusion is `stripDriveRefusal` — the SAME expression
- *  the push-down offer and accept consume (#479), so the three roads to a strip
- *  cannot disagree about which targets are reachable; plus the camera band
- *  socket, which excludes a camera row structurally. Pure — unit/e2e assert the
+ *  the push-down offer and accept consume (#479), so this picker and push-down
+ *  cannot disagree about which targets are reachable (the agent road is
+ *  deliberately still ungated — see Strip.ts); plus the camera band socket,
+ *  which excludes a camera row structurally. Pure — unit/e2e assert the
  *  exclusion. Cameras become valid targets when #480 lands. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
   return buildSceneTreeRows(state)
