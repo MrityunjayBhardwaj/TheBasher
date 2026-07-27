@@ -376,6 +376,31 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
       'set the clip planes',
       'set the depth-of-field focus (static — an animated focus pull does not reach the render, #193)',
     ],
+    // The camera is the first kind to answer the management road NO, and the answer is
+    // #479's, not the split's: an NLA strip cannot drive a camera at all, because the pose
+    // is resolved by `activeCamera.ts`'s private per-channel scan, which never consults the
+    // strip fold. Push-down is a COMPOSITE whose destructive half — delete the bare
+    // channels — is sound only because the strip it mints drives the same target, so on a
+    // camera it deleted the animation and replaced it with a strip that folds nothing.
+    // Both sides now refuse through one expression (`stripDriveRefusal`).
+    //
+    // ⚠️ WHAT THIS CELL DOES *NOT* COVER, stated because the road's own question hides
+    // behind it: the refusal short-circuits BEFORE the enumeration, so for this kind R8
+    // never gets to ask whether offer and accept enumerate the data half alike — the thing
+    // #386 broke. Two independently sufficient links, one of them untested, which is
+    // exactly the shape that makes a green cell lie. The row compensates by asserting WHICH
+    // refusal fired (the camera's, naming #480 — not "no bare keyframe channels to push
+    // down", which is what a blind enumeration would say). When #480 lands and this entry
+    // is deleted, the refusal goes and the enumeration link comes back under test.
+    roadAnswers: {
+      management: {
+        reaches: false,
+        why:
+          'an NLA strip cannot drive a camera — the pose is resolved outside the strip ' +
+          'fold, so push-down would delete the animation instead of converting it',
+        issue: '#480',
+      },
+    },
   },
 };
 
