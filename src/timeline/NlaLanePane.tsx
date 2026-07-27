@@ -73,6 +73,7 @@ import { NlaStripInspector } from './NlaStripInspector';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { bareChannelNodesForSubject } from '../app/nodeChannels';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
+import { stripDriveRefusal } from '../app/stripDrive';
 import type { TimelineView } from './timelineView';
 
 // ── Strip drag record (the LayerTimeline BarDrag shape): everything the
@@ -174,6 +175,13 @@ export function NlaLanePane() {
     () =>
       primaryNodeId ? bareChannelNodesForSubject(nodes, primaryNodeId, linkedDataId).length : 0,
     [nodes, primaryNodeId, linkedDataId],
+  );
+  // #479 — the accept's refusal, read through the SAME expression the mutator uses
+  // (V108): a strip that cannot drive the selection must not be OFFERED either, or the
+  // button stays live and dispatchPushDownToStrip refuses what the UI promised. Returns
+  // a string|null, so the selector stays referentially stable. Goes away with #480.
+  const pushDownRefusal = useDagStore((s) =>
+    primaryNodeId ? stripDriveRefusal(s.state, primaryNodeId) : null,
   );
 
   const seconds = useTimeStore((s) => s.seconds);
@@ -516,6 +524,7 @@ export function NlaLanePane() {
               onAddStrip={onOpenAddStrip}
               pushDownTargetId={primaryNodeId}
               bareChannelCount={bareChannelCount}
+              pushDownRefusal={pushDownRefusal}
             />
           ) : (
             <>
@@ -549,7 +558,11 @@ export function NlaLanePane() {
                   hasActions={hasActions}
                   onClick={(e) => onOpenAddStrip(e, null)}
                 />
-                <PushDownButton targetId={primaryNodeId} bareChannelCount={bareChannelCount} />
+                <PushDownButton
+                  targetId={primaryNodeId}
+                  bareChannelCount={bareChannelCount}
+                  refusal={pushDownRefusal}
+                />
               </div>
             </>
           )}
@@ -1045,11 +1058,13 @@ function EmptyState({
   onAddStrip,
   pushDownTargetId,
   bareChannelCount,
+  pushDownRefusal,
 }: {
   hasActions: boolean;
   onAddStrip: (e: React.MouseEvent, trackId: string | null) => void;
   pushDownTargetId: string | null;
   bareChannelCount: number;
+  pushDownRefusal: string | null;
 }) {
   return (
     <div
@@ -1068,7 +1083,11 @@ function EmptyState({
           hasActions={hasActions}
           onClick={(e) => onAddStrip(e, null)}
         />
-        <PushDownButton targetId={pushDownTargetId} bareChannelCount={bareChannelCount} />
+        <PushDownButton
+          targetId={pushDownTargetId}
+          bareChannelCount={bareChannelCount}
+          refusal={pushDownRefusal}
+        />
       </div>
     </div>
   );
@@ -1078,21 +1097,27 @@ function EmptyState({
 // channels into an Action + a Strip placing it back — ONE composite dispatch =
 // ONE undo entry (dispatchPushDownToStrip via the commitNlaPushDown toast
 // funnel; refusals + {ok:false} always reach the notification surface, H70).
-// Enabled iff the selection has ≥1 bare channel (§1.6); the disabled title
+// Enabled iff the selection has ≥1 bare channel (§1.6) AND a strip could
+// actually drive it (#479 — `refusal` is the accept's own expression, so the
+// button can never promise what the dispatcher will refuse); the disabled title
 // says exactly why. Same class set as AddStripButton — no new contrast pairing.
 function PushDownButton({
   targetId,
   bareChannelCount,
+  refusal,
 }: {
   targetId: string | null;
   bareChannelCount: number;
+  /** Why a strip could not drive `targetId`, or null. Goes away with #480. */
+  refusal: string | null;
 }) {
-  const enabled = targetId !== null && bareChannelCount > 0;
+  const enabled = targetId !== null && bareChannelCount > 0 && refusal === null;
   const title = !targetId
     ? 'Select an object in the viewport first'
-    : bareChannelCount === 0
-      ? 'The selected object has no bare keyframe channels to push down'
-      : `Convert ${bareChannelCount} bare channel${bareChannelCount === 1 ? '' : 's'} into an Action + strip (one undo step)`;
+    : (refusal ??
+      (bareChannelCount === 0
+        ? 'The selected object has no bare keyframe channels to push down'
+        : `Convert ${bareChannelCount} bare channel${bareChannelCount === 1 ? '' : 's'} into an Action + strip (one undo step)`));
   return (
     <button
       type="button"

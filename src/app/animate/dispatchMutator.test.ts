@@ -22,6 +22,7 @@ import {
 } from './dispatchMutator';
 import { layeredChannelValues } from '../layeredChannels';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
+import { resolveCameraPoseAt } from '../activeCamera';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -688,6 +689,70 @@ describe('5E — dispatchPushDownToStrip (bare channels → Action + Strip, ONE 
     }
     expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
     expect(useDagStore.getState().undoStack).toHaveLength(0);
+  });
+
+  // #479 — push-down is a COMPOSITE whose destructive half (delete the bare channels) is
+  // correct ONLY because the Strip it mints drives the same target. A camera's pose is
+  // resolved by a private scan that overwrites per-channel instead of folding strips
+  // (Strip.ts:13-16), so the replacement drives nothing and the deletion is pure loss.
+  // Measured before the guard: offer 1, accept {ok:true}, strip minted, channel gone,
+  // fov at t=1 falling 80 → 28 with the inspector still showing the animation.
+  //
+  // Fixture values are pairwise distinct ON PURPOSE (H177 / the slice-2 falsify rule):
+  // 80 = animated mid-ramp · 30 = animated at t=0 · 28 = the static base (channel missed)
+  // · 45 = DEFAULT_CAMERA_POSE.fov (the pose road failed entirely). A single shared value
+  // would let three different failures read as success.
+  function seedAnimatedCamera(): DagState {
+    let s = buildSceneWithCamera();
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'n_cam',
+      paramPath: 'fov',
+      value: 28,
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cam_fov_channel',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'fov',
+        target: 'n_cam',
+        paramPath: 'fov',
+        keyframes: [
+          { time: 0, value: 30, easing: 'linear' },
+          { time: 2, value: 130, easing: 'linear' },
+        ],
+      },
+    }).next;
+    return s;
+  }
+
+  it('REFUSES a camera target: a strip cannot drive a camera pose, so the channels SURVIVE', () => {
+    useDagStore.getState().hydrate(seedAnimatedCamera());
+    const before = JSON.stringify(useDagStore.getState().state);
+    // The animation is live before the attempt — 80 mid-ramp, not the 28 base and not the
+    // 45 fallback, so the probe is measuring the channel and not its own fixture.
+    expect(resolveCameraPoseAt(useDagStore.getState().state, 'n_cam', 1).fov).toBe(80);
+
+    const res = dispatchPushDownToStrip('n_cam');
+
+    expect({
+      ok: res.ok,
+      fovAfter: resolveCameraPoseAt(useDagStore.getState().state, 'n_cam', 1).fov,
+      channelSurvives: !!useDagStore.getState().state.nodes['cam_fov_channel'],
+      stripMinted: !!useDagStore.getState().state.nodes['nla_strip_1'],
+    }).toEqual({ ok: false, fovAfter: 80, channelSurvives: true, stripMinted: false });
+    if (!res.ok) {
+      expect(res.reason).toContain('n_cam');
+      expect(res.reason).toMatch(/camera/i);
+    }
+    expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
+    expect(useDagStore.getState().undoStack).toHaveLength(0);
+    // The consequence, not just the verdict: the animation still renders.
+    expect(
+      resolveCameraPoseAt(useDagStore.getState().state, 'n_cam', 1).fov,
+      'the fov animation survives the refused push-down',
+    ).toBe(80);
   });
 });
 

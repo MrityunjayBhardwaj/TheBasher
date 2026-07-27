@@ -32,22 +32,22 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { buildSceneTreeRows } from '../app/sceneTreeWalk';
+import { stripDriveRefusal } from '../app/stripDrive';
 import type { DagState } from '../core/dag/state';
 import { commitNla } from './nlaCommit';
 
-/** Camera node types — excluded from the target list (camera strips are the
- *  documented Phase-3+ KNOWN-LIMIT, Strip.ts:13-16; not a silent no-op, so
- *  the UI simply must not offer them). */
-const CAMERA_NODE_TYPES = new Set(['PerspectiveCamera', 'OrthographicCamera']);
-
 /** Valid add-strip targets: the outliner's scene rows (depth > 0 — the Scene
- *  container itself is not a strip target) minus every camera row (by TYPE
- *  and by the camera band socket, so a camera nested in a Group is excluded
- *  too). Pure — unit/e2e assert the exclusion. */
+ *  container itself is not a strip target) minus every row a strip could not
+ *  actually drive. That exclusion is `stripDriveRefusal` — the SAME expression
+ *  the push-down offer and accept consume (#479), so the three roads to a strip
+ *  cannot disagree about which targets are reachable; plus the camera band
+ *  socket, which excludes a camera row structurally. Pure — unit/e2e assert the
+ *  exclusion. Cameras become valid targets when #480 lands. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
   return buildSceneTreeRows(state)
     .filter(
-      (r) => r.depth > 0 && r.parent?.socket !== 'camera' && !CAMERA_NODE_TYPES.has(r.nodeType),
+      (r) =>
+        r.depth > 0 && r.parent?.socket !== 'camera' && stripDriveRefusal(state, r.nodeId) === null,
     )
     .map((r) => ({ id: r.nodeId, label: r.display }));
 }
