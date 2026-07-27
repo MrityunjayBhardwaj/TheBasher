@@ -1213,6 +1213,15 @@ function buildFusedCamerasJson() {
       roll: CAM_ROLL,
     },
   });
+  // A Scene consuming the perspective camera. This is the POINT of id inheritance:
+  // the edge names `n_persp` and must still name it after the split, with no
+  // re-pointing pass anywhere in the migration.
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'connect',
+    from: { node: 'n_persp', socket: 'out' },
+    to: { node: 'n_scene', socket: 'camera' },
+  });
   add({
     type: 'addNode',
     nodeId: 'n_fov',
@@ -1318,6 +1327,23 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     // perspective-only fields onto an ortho bag is the plausible wrong thing to do.
     expect('dofEnabled' in (orthoData.params as object)).toBe(false);
     expect('sensorSize' in (orthoData.params as object)).toBe(false);
+  });
+
+  it('the consumer edge needs NO re-pointing — scene.camera still names the inherited id', () => {
+    // The whole reason the fused node is converted IN PLACE rather than replaced. The
+    // migration contains no edge-rewriting pass at all for cameras; this is what makes
+    // that correct, and it covers `CameraSelect.cameras` edges, constraint targets and
+    // saved selections by the same mechanism.
+    const m = loadFromBytes(buildFusedCamerasJson());
+    const cam = (m.state.nodes.n_scene.inputs as Record<string, { node: string; socket: string }>)
+      .camera;
+    expect(cam.node).toBe('n_persp');
+    // ...and what it now names is the Object half, which is where the pose lives.
+    expect(m.state.nodes.n_persp.type).toBe('Object');
+    // The data half is a NEW node the scene does not reference — it hangs off the
+    // Object's `data` input only.
+    const data = splitCameraDataNode(m, 'n_persp')!;
+    expect(cam.node).not.toBe(data.id);
   });
 
   it('routes channels by paramPath — asserted on the TARGET ID per half, not on the resolved pose', () => {
