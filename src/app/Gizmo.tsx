@@ -53,6 +53,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { useDagStore } from '../core/dag/store';
+import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { evaluate } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue } from '../nodes/types';
@@ -1105,15 +1106,33 @@ function CameraGizmo() {
   // H36 single-write: route XOR setParam, never both).
   function writeCameraParam(path: 'position' | 'lookAt' | 'roll', value: unknown) {
     if (!camId) return;
-    if (routeAnimatedGrab(camId, path, value)) return;
+    // #387 D1 — the camera pose SPANS both halves: the Object keeps `position`, while
+    // `lookAt` and `roll` moved to the CameraData (parity-first, following LightData).
+    // So this chokepoint has to ask WHICH half owns the path before writing, or two of
+    // the three writes land on a node with no such param, where a setParam is reported
+    // and then dropped (#423) — the reticle springs back and nothing says why.
+    //
+    // The read side already reaches across the pair for these exact three paths
+    // (`resolveWorldTransform`), which is what made the gap silent: the resolver was
+    // looking for the value on a node this function never wrote to. The routing has to
+    // cover the ANIMATED road too, or a gizmo-authored `lookAt` key mints a channel
+    // targeting the Object while the resolver reads the data half's.
+    //
+    // `resolveDataParamOwner` returns the Object's own id for params the Object still
+    // carries, so `position` is unchanged. Its possession test reads live params, which
+    // is only sound because `lookAt` and `roll` are both declared with zod defaults on
+    // CameraData and `addNode` stores PARSED params — every instance carries the keys.
+    // An optional param with no default would resolve to the Object forever.
+    const owner = resolveDataParamOwner(useDagStore.getState().state, camId, path) ?? camId;
+    if (routeAnimatedGrab(owner, path, value)) return;
     useDagStore
       .getState()
       .dispatch(
-        { type: 'setParam', nodeId: camId, paramPath: path, value },
+        { type: 'setParam', nodeId: owner, paramPath: path, value },
         'user',
         `camera ${path}`,
       );
-    autoKeyCommit(camId, path, value);
+    autoKeyCommit(owner, path, value);
   }
 
   // #231 Inc 3.3 — a world-space point → the camera's LOCAL space when nested
