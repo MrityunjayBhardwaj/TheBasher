@@ -126,14 +126,43 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
       // transform). Wiring the stack into the data lane itself is the follow-on
       // increment; it needs every data kind to exist first (Stage C).
       const data = value.data;
-      if (!data || data.kind !== 'MeshData') return null; // an Empty / non-mesh data
-      return {
-        geometry: data.geometry,
-        transform: trsOf(value),
-        // MeshData holds either spec; carry it verbatim (#358). ObjectR narrows a
-        // baked data material to its fallback, so widening here is render-safe.
-        material: data.material,
-      };
+      if (!data) return null; // an Empty
+      // ⚠️ THIS WAS `data.kind !== 'MeshData'`, AND THAT SHAPE IS WHY #388 NEARLY SHIPPED
+      // BROKEN. An inequality guard is ALREADY TOTAL: every present and future union
+      // member that is not `MeshData` takes the early return, so widening `ObjectData`
+      // cannot redden it — the exact dual of a `never`-closed switch, which does. Baked
+      // was absorbed here in complete silence, and the answer it got (null) was wrong,
+      // invisible for four splits only because null was RIGHT for curve/light/camera.
+      // Spelled as an exhaustive switch, the next data kind (glTF, #389) is a compile
+      // error here instead of a silently missing "+ Add Modifier".
+      switch (data.kind) {
+        case 'MeshData':
+          return {
+            geometry: data.geometry,
+            transform: trsOf(value),
+            // MeshData holds either spec; carry it verbatim (#358). ObjectR narrows a
+            // baked data material to its fallback, so widening here is render-safe.
+            material: data.material,
+          };
+        case 'BakedData':
+          // #388 — the SAME answer the fused `BakedMesh` arm above gives, and it must be:
+          // an Object posing a BakedData is what a fused BakedMesh became, so anything
+          // else would make the modifier offer depend on when the project was saved. The
+          // array geometry over a baked ref is still not sync-buildable, so the result
+          // renders blank and reports to the asset-error banner exactly as a fused baked
+          // source does (#258) — inherited behaviour, not a new limit.
+          return { geometry: data.geometry, transform: trsOf(value), material: data.material };
+        case 'CurveData':
+        case 'LightData':
+        case 'CameraData':
+          // Not a mesh face — nothing for a geometry modifier to reshape.
+          return null;
+        default: {
+          const exhaustiveData: never = data;
+          void exhaustiveData;
+          return null;
+        }
+      }
     }
     // Not leaf meshes — a modifier passes through them unchanged (v1 scope).
     case 'GltfAsset':

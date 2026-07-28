@@ -21,6 +21,7 @@ import { emptyDagState, applyOp, type DagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { canModifyGeometry, modifierSource } from './modifierGeometry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import type { SceneChild } from '../nodes/types';
@@ -93,6 +94,52 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
   it('offers modifiers on a cube — the offer is the accept condition (V108)', () => {
     const { state, objectId } = splitCubeWithArray();
     expect(canModifyGeometry(state, objectId)).toBe(true);
+  });
+
+  // #388 C5 — THE PAIR THAT WAS SILENTLY BROKEN, and the reason this file gained a case.
+  // `modifierSource`'s Object arm used to narrow with `data.kind !== 'MeshData'`. An
+  // inequality guard is ALREADY TOTAL, so adding `BakedData` to the `ObjectData` union
+  // could not redden it: a baked pair fell through to `return null` and BOTH halves of
+  // V108 dropped together — the "+ Add Modifier" affordance vanished at exactly the
+  // moment the modifier stopped working, which reads as deliberate product design rather
+  // than a regression. The fused `BakedMesh` is the control: it has always been a modifier
+  // source, and the pair is what a fused baked mesh BECOMES, so any difference between
+  // them would make modifiability depend on when the project was saved.
+  it('offers modifiers on a baked PAIR, exactly as on the fused BakedMesh (the H215 hole)', () => {
+    const geometry = {
+      key: 'baked|pair-8',
+      kind: 'baked' as const,
+      descriptor: { kind: 'baked' as const, hash: 'pair', vertexCount: 8 },
+    };
+    const material = { ...(rowDataParams('baked').material as Record<string, unknown>) };
+
+    let s: DagState = emptyDagState();
+    for (const op of splitOps(
+      'baked',
+      { objectId: 'n_pair' },
+      { data: { geometry, material }, object: { position: [1, 2, 3] } },
+    )) {
+      s = applyOp(s, op as never).next;
+    }
+    // The CONTROL: the fused node carrying the same buffer, material and pose.
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_fused',
+      nodeType: 'BakedMesh',
+      params: { geometry, material, position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+
+    const pair = modifierSource(evaluate(s, 'n_pair').value as SceneChild);
+    const fused = modifierSource(evaluate(s, 'n_fused').value as SceneChild);
+    expect(fused).not.toBeNull(); // the control must work, or this test proves nothing
+    expect(pair).not.toBeNull();
+    expect(pair).toEqual(fused); // geometry, material AND the inherited pose
+
+    // V108 — offer == accept. Both halves ask the same function, which is WHY they went
+    // wrong together and stayed consistent while doing it; assert them against the
+    // control rather than against each other.
+    expect(canModifyGeometry(s, 'n_fused')).toBe(true);
+    expect(canModifyGeometry(s, 'n_pair')).toBe(true);
   });
 
   it('does not offer modifiers on an Empty (an Object with no data)', () => {

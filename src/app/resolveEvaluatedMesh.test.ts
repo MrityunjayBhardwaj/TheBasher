@@ -6,13 +6,14 @@
 // REF: PLAN.md Wave 1 Task 2; hetvabhasa H40; vyapti V20.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyOp } from '../core/dag';
+import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { makeSplitSphere } from '../test-utils/splitSphere';
+import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 
 const BOX_ID = 'n_box';
 const SPHERE_ID = 'n_sphere';
@@ -174,6 +175,51 @@ describe('resolveEvaluatedMesh', () => {
     expect(mesh!.transform.scale).toEqual([1, 1, 1]);
     // The ONE rich material face (M6).
     expect(mesh!.material).toEqual(material);
+  });
+
+  // #388 C5 — the read road for a baked PAIR, pinned against the fused node as a control.
+  // This branch used to narrow with `data.kind !== 'MeshData'`, which is already total, so
+  // widening `ObjectData` could not redden it and a baked pair silently resolved to null —
+  // no mesh for the gizmo, the inspector or the UV projection. The fused node is what a
+  // saved project still carries and what the pair migrates FROM, so the two must agree on
+  // everything the buffer owns.
+  it('projects a baked PAIR the same as the fused BakedMesh (the silently-absorbed guard)', () => {
+    __reseedAllNodesForTests();
+    const geometry = {
+      key: 'baked|pair-8',
+      kind: 'baked' as const,
+      descriptor: { kind: 'baked' as const, hash: 'pairhash', vertexCount: 8 },
+    };
+    const material = { ...(rowDataParams('baked').material as Record<string, unknown>) };
+
+    let state: DagState = emptyDagState();
+    for (const op of splitOps(
+      'baked',
+      { objectId: 'n_pair' },
+      { data: { geometry, material }, object: { position: [3, -2, 5] } },
+    )) {
+      state = applyOp(state, op as never).next;
+    }
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_fused',
+      nodeType: 'BakedMesh',
+      params: { geometry, material, position: [3, -2, 5], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+
+    const fused = resolveEvaluatedMesh(state, 'n_fused', ctxAt(0));
+    const pair = resolveEvaluatedMesh(state, 'n_pair', ctxAt(0));
+    expect(fused).not.toBeNull(); // the control must work, or this test proves nothing
+    expect(pair).not.toBeNull();
+    // The handle and the captured spec pass through VERBATIM on both roads.
+    expect(pair!.geometry).toEqual(fused!.geometry);
+    expect(pair!.material).toEqual(fused!.material);
+    // `uvs` is null for a baked ref on BOTH roads — the bytes are not sync-buildable, so
+    // a non-null here would mean the pair took the primitive registry path by mistake.
+    expect(pair!.uvs).toBeNull();
+    expect(fused!.uvs).toBeNull();
+    // The pose is carried by the Object half and lands at the same place.
+    expect(pair!.transform.position).toEqual(fused!.transform.position);
   });
 
   it('returns null for a non-mesh node (identity-null, no crash)', () => {

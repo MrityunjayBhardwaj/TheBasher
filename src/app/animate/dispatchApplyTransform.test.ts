@@ -32,6 +32,16 @@ import {
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
 
+/** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
+ *  #388 made this the load-bearing question in this file: an Apply now mints an
+ *  `Object` + `BakedData` pair, and a split primitive is ALSO an `Object`, so the node's
+ *  own `type` no longer changes across a bake. What changes is what it POSES. */
+function dataHalfOf(state: DagState, objectId: string) {
+  const binding = state.nodes[objectId]?.inputs?.data;
+  const ref = Array.isArray(binding) ? binding[0] : binding;
+  return ref ? state.nodes[ref.node] : undefined;
+}
+
 const PRIM_ID = 'n_prim';
 // The SphereData half of the split sphere `buildSplitSphereState` mints (makeSplitSphere's
 // default `${objectId}_data`). Geometry params (radius/segments) + material live here.
@@ -165,15 +175,25 @@ describe('dispatchApplyTransform (primitives)', () => {
     // resolves. What changes is the node's TYPE, not its identity.
     const next = stateRef.current;
     expect(result.bakedId).toBe(PRIM_ID);
-    expect(next.nodes[PRIM_ID].type).toBe('BakedMesh');
-    // ...and the split sphere is gone: exactly one BakedMesh, the SphereData half retired,
-    // and no Object survives — no primitive left.
-    expect(Object.values(next.nodes).filter((n) => n.type === 'BakedMesh')).toHaveLength(1);
+    expect(next.nodes[PRIM_ID].type).toBe('Object');
+    // #388 — the bake mints the PAIR, so what sits at the inherited id is an Object POSING
+    // a BakedData. The split sphere is gone: its SphereData half retired, and exactly one
+    // BakedData exists — the one this Object poses.
+    const bakedData = dataHalfOf(next, PRIM_ID);
+    expect(bakedData?.type).toBe('BakedData');
+    expect(Object.values(next.nodes).filter((n) => n.type === 'BakedData')).toHaveLength(1);
     expect(next.nodes[PRIM_DATA_ID]).toBeUndefined();
-    expect(Object.values(next.nodes).some((n) => n.type === 'Object')).toBe(false);
+    // Exactly ONE Object, the baked one at the inherited id. This used to read "no Object
+    // survives"; post-flip the bake's own product is an Object, so the assertion has to
+    // name WHICH — a second one would mean the source pair was never retired.
+    expect(
+      Object.values(next.nodes)
+        .filter((n) => n.type === 'Object')
+        .map((n) => n.id),
+    ).toEqual([PRIM_ID]);
     const baked = next.nodes[result.bakedId];
     expect(baked).toBeDefined();
-    expect(baked.type).toBe('BakedMesh');
+    expect(baked.type).toBe('Object');
     // transform identity (the TRS is baked into the verts).
     expect(baked.params.position).toEqual([0, 0, 0]);
     expect(baked.params.scale).toEqual([1, 1, 1]);
@@ -181,7 +201,10 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(selected).toEqual([result.bakedId]);
 
     // SC-1 — the baked geometry bbox is 2×1×1 (the unit box scaled on X).
-    const ref = baked.params.geometry as { descriptor: { hash: string; vertexCount: number } };
+    // The buffer handle lives on the DATA half now, not on the posed node.
+    const ref = bakedData!.params.geometry as {
+      descriptor: { hash: string; vertexCount: number };
+    };
     const geom = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
     geom.computeBoundingBox();
     const size = new Vector3();
@@ -216,7 +239,8 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(Array.isArray(sceneChildren)).toBe(true);
     const childRefs = (Array.isArray(sceneChildren) ? sceneChildren : []).map((r) => r.node);
     expect(childRefs).toContain(result.bakedId);
-    expect(next.nodes[result.bakedId].type).toBe('BakedMesh');
+    expect(next.nodes[result.bakedId].type).toBe('Object');
+    expect(dataHalfOf(next, result.bakedId)?.type).toBe('BakedData');
     // Nothing points at an id that no longer exists — the real failure this guards.
     for (const n of Object.values(next.nodes)) {
       for (const binding of Object.values(n.inputs)) {
@@ -262,7 +286,8 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(next.nodes[track.target]).toBeDefined();
     expect(next.nodes[track.aimNode]).toBeDefined();
     expect(track.target).toBe(result.bakedId);
-    expect(next.nodes[track.target].type).toBe('BakedMesh');
+    expect(next.nodes[track.target].type).toBe('Object');
+    expect(dataHalfOf(next, track.target)?.type).toBe('BakedData');
   });
 
   it('#412: a HELD transient edit on the applied node does not survive onto the baked one', async () => {
@@ -359,7 +384,9 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(calls).toHaveLength(1); // still ONE atomic composite
 
     const next = stateRef.current;
-    expect(next.nodes[PRIM_ID].type).toBe('BakedMesh'); // baked away as a TYPE, id kept (#412)
+    // Baked away, id kept (#412). Post-#388 the id holds an Object either way, so the
+    // BAKE is visible in what it poses, not in the node's own type.
+    expect(dataHalfOf(next, PRIM_ID)?.type).toBe('BakedData');
     // the modifier's single `target` now points at the baked node (still a bare
     // ref, not promoted to a list), and Scene.children too.
     const modTarget = next.nodes['n_mod'].inputs.target;
@@ -380,8 +407,12 @@ describe('dispatchApplyTransform (primitives)', () => {
     for (let i = inverses.length - 1; i >= 0; i--) back = applyOp(back, inverses[i]).next;
     // Under id-inheritance the id is present either way, so "toBeDefined" would pass
     // without undo running at all. Assert the TYPE came back — that is what undo restores.
+    // ⚠️ #388 — the TYPE comparison alone is now VACUOUS: a split sphere and a baked pair
+    // both put an `Object` at this id, so it passes whether or not undo ran. The DATA half
+    // is the discriminator, so assert the pair's substance came back.
     expect(back.nodes[PRIM_ID].type).toBe(state.nodes[PRIM_ID].type);
-    expect(back.nodes[PRIM_ID].type).not.toBe('BakedMesh');
+    expect(dataHalfOf(back, PRIM_ID)?.type).toBe(dataHalfOf(state, PRIM_ID)?.type);
+    expect(dataHalfOf(back, PRIM_ID)?.type).not.toBe('BakedData');
     expect((back.nodes['n_mod'].inputs.target as { node: string }).node).toBe(PRIM_ID);
   });
 
@@ -513,19 +544,26 @@ describe('dispatchApplyTransform (primitives)', () => {
 
     expect(result.ok).toBe(true);
     const next = stateRef.current;
-    // Both halves of the pair are retired as NODES — but the OBJECT's id is inherited by
-    // the BakedMesh (#412), so it survives as an identity while its type changes. Only the
-    // data node's id genuinely disappears (nothing replaces it).
+    // The source pair is retired as NODES — but the OBJECT's id is inherited by the bake's
+    // own Object (#412), so it survives as an identity while what it poses changes from a
+    // BoxData to a BakedData. The source data node's id genuinely disappears.
     const bakedId = (result as { ok: true; bakedId: string }).bakedId;
     expect(bakedId).toBe(cube.objectId);
-    expect(next.nodes[cube.objectId].type).toBe('BakedMesh');
+    expect(next.nodes[cube.objectId].type).toBe('Object');
+    expect(dataHalfOf(next, cube.objectId)?.type).toBe('BakedData');
     expect(next.nodes[cube.dataId]).toBeUndefined();
-    expect(Object.values(next.nodes).some((n) => n.type === 'Object')).toBe(false);
+    expect(Object.values(next.nodes).some((n) => n.type === 'BoxData')).toBe(false);
+    expect(
+      Object.values(next.nodes)
+        .filter((n) => n.type === 'Object')
+        .map((n) => n.id),
+    ).toEqual([cube.objectId]);
 
-    // The pose baked INTO the geometry: the BakedMesh sits at identity, and the geometry's
-    // bbox carries the Object's +2 x-offset (bake-what-renders, not a re-posed node).
+    // The pose baked INTO the geometry: the baked Object sits at identity, and the
+    // geometry's bbox carries the source Object's +2 x-offset (bake-what-renders, not a
+    // re-posed node). The handle is on the DATA half.
     expect(next.nodes[bakedId].params.position).toEqual([0, 0, 0]);
-    const ref = next.nodes[bakedId].params.geometry as {
+    const ref = dataHalfOf(next, bakedId)!.params.geometry as {
       descriptor: { hash: string; vertexCount: number };
     };
     const geom = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
@@ -579,7 +617,7 @@ describe('dispatchApplyTransform (primitives)', () => {
 
     expect(result.ok).toBe(true);
     const next = stateRef.current;
-    expect(next.nodes['n_cube_a'].type).toBe('BakedMesh'); // the baked Object retired (id kept)
+    expect(dataHalfOf(next, 'n_cube_a')?.type).toBe('BakedData'); // baked (id kept, #412)
     expect(next.nodes['n_shared_data']).toBeDefined(); // the SHARED data survived
     expect(next.nodes['n_cube_b']).toBeDefined(); // …and the sibling still poses it
     expect(next.nodes['n_cube_b'].inputs.data).toEqual({ node: 'n_shared_data', socket: 'out' });
@@ -609,7 +647,7 @@ describe('dispatchApplyTransform (primitives)', () => {
       setSelection: () => {},
     });
     expect(result.ok).toBe(true);
-    expect(stateRef.current.nodes[cube.objectId].type).toBe('BakedMesh'); // id kept (#412)
+    expect(dataHalfOf(stateRef.current, cube.objectId)?.type).toBe('BakedData'); // id kept (#412)
     expect(stateRef.current.nodes[cube.dataId]).toBeUndefined();
 
     // Apply each op's inverse in reverse — the same round-trip SC-5 uses.
@@ -891,12 +929,18 @@ describe('dispatchApplyTransform (glTF child)', () => {
     expect(calls).toHaveLength(1); // ONE Cmd+Z
 
     const next = stateRef.current;
-    // GltfChild removed; one BakedMesh added with the rich captured spec.
+    // GltfChild removed; one baked PAIR added, the rich captured spec on the data half.
     expect(next.nodes['n_child']).toBeUndefined();
     const baked = next.nodes[result.bakedId];
-    expect(baked.type).toBe('BakedMesh');
+    expect(baked.type).toBe('Object');
     expect(baked.params.scale).toEqual([1, 1, 1]);
-    const spec = baked.params.material as { color: string; roughness: number; metalness: number };
+    const bakedData = dataHalfOf(next, result.bakedId);
+    expect(bakedData?.type).toBe('BakedData');
+    const spec = bakedData!.params.material as {
+      color: string;
+      roughness: number;
+      metalness: number;
+    };
     expect(spec.color).toBe('#abcdef'); // captured from the live clone material
     expect(spec.roughness).toBeCloseTo(0.25, 5);
     expect(spec.metalness).toBeCloseTo(0.75, 5);
@@ -907,7 +951,9 @@ describe('dispatchApplyTransform (glTF child)', () => {
     expect(selected).toEqual([result.bakedId]);
 
     // SC-2 (resolver half) — the baked geometry carries the scale=2 (2×2×2 box).
-    const ref = baked.params.geometry as { descriptor: { hash: string; vertexCount: number } };
+    const ref = bakedData!.params.geometry as {
+      descriptor: { hash: string; vertexCount: number };
+    };
     const geom = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
     geom.computeBoundingBox();
     const size = new Vector3();

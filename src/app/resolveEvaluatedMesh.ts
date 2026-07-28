@@ -247,8 +247,14 @@ export function resolveEvaluatedMesh(
     // non-mesh data (camera/light in later phases) → no mesh here either.
     const value = evaluate(state, selectedId, { ctx, cache }).value as ObjectValue | undefined;
     const data = value?.data;
-    if (!value || !data || data.kind !== 'MeshData') return null;
-    const geometry = data.geometry;
+    if (!value || !data) return null; // an Empty / not an Object
+    // ⚠️ THIS WAS `data.kind !== 'MeshData'`. An inequality guard is already TOTAL, so
+    // widening `ObjectData` could never redden it and `BakedData` was absorbed here in
+    // silence — with the wrong answer, since a baked mesh IS a mesh face. Spelled as an
+    // exhaustive switch, the next data kind (glTF, #389) is a compile error instead.
+    if (data.kind === 'CurveData' || data.kind === 'LightData' || data.kind === 'CameraData') {
+      return null; // not a mesh face
+    }
     // The pose is the Object's own band (the same evaluated walk the primitives
     // use — animation/constraints/channels overlay it, V57); fall back to the
     // value's static TRS when the Object isn't in the rendered scene to walk.
@@ -257,6 +263,18 @@ export function resolveEvaluatedMesh(
       rotation: value.rotation,
       scale: isVec3(value.scale) ? value.scale : IDENTITY_SCALE, // C-1 hydrate guard
     });
+    if (data.kind === 'BakedData') {
+      // #388 — the Object half of a baked pair. Byte-identical to the fused `BakedMesh`
+      // branch above on everything the buffer owns: the handle is already authoritative
+      // (OPFS, content-hashed), the material is the captured spec verbatim, and `uvs` is
+      // null because a baked ref is not sync-buildable from the registry. Only the
+      // TRANSFORM differs, and it differs the way every split kind's does — resolved
+      // through the Object's own animated band rather than read off raw params.
+      return { geometry: data.geometry, uvs: null, material: data.material, transform };
+    }
+    const exhaustiveData: 'MeshData' = data.kind;
+    void exhaustiveData;
+    const geometry = data.geometry;
     return {
       geometry,
       uvs: resolveRegistryUVs(geometry),
