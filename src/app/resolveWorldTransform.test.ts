@@ -16,6 +16,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitLight } from '../test-utils/splitLight';
+import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 
 const BOX_ID = 'n_box';
@@ -499,5 +500,65 @@ describe('resolveWorldTransform — #231 Inc 2a grouped light', () => {
     expect(parent).not.toBeNull();
     // The parent world is the Group's translation: its 4th column is [5,0,0].
     expect(parent!.elements[12]).toBeCloseTo(5, 6);
+  });
+});
+
+// #388 C5 — the baked mesh's identity-scale rule, asserted across BOTH shapes it comes in.
+//
+// `BakedMeshR` renders a baked mesh at identity scale because the transform is already in
+// the vertices, and `localMatrix` mirrors that so the read road and the render road agree
+// (H40, one band). The split gave the baked mesh a SECOND shape — an `Object` posing a
+// `BakedData`, whose value kind is 'Object' — and keying the rule on the fused kind alone
+// silently exempted it: measured at world scale [3,3,3] against the fused node's [1,1,1]
+// on the same param, while the renderer drew both at 1. The fused node is the control, and
+// it is the whole point: the pair must not answer differently from what it replaced.
+//
+// ⚠️ This pins AGREEMENT BETWEEN THE TWO SHAPES, not the value [1,1,1] as a product
+// decision. Whether a baked mesh should honour its scale at all is #489; if that lands,
+// both roads change together and this test's fused control moves with the pair.
+describe('resolveWorldTransform — a baked mesh ignores its scale in BOTH shapes (#388)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+  });
+
+  it('a baked PAIR reports the same world scale as the fused BakedMesh it replaced', () => {
+    const geometry = {
+      key: 'baked|ws-8',
+      kind: 'baked' as const,
+      descriptor: { kind: 'baked' as const, hash: 'wshash', vertexCount: 8 },
+    };
+    const material = rowDataParams('baked').material as Record<string, unknown>;
+
+    let state: DagState = buildDefaultDagState();
+    for (const op of splitOps(
+      'baked',
+      { objectId: 'n_wspair' },
+      { data: { geometry, material }, object: { scale: [3, 3, 3] } },
+    )) {
+      state = applyOp(state, op as Op).next;
+    }
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_wsfused',
+      nodeType: 'BakedMesh',
+      params: { geometry, material, position: [0, 0, 0], rotation: [0, 0, 0], scale: [3, 3, 3] },
+    }).next;
+    const sceneId = state.outputs.scene!.node;
+    for (const id of ['n_wspair', 'n_wsfused']) {
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      }).next;
+    }
+
+    const fused = resolveWorldTransform(state, 'n_wsfused', ctxAt(0));
+    const pair = resolveWorldTransform(state, 'n_wspair', ctxAt(0));
+    expect(fused).not.toBeNull(); // the control must resolve, or this proves nothing
+    expect(pair).not.toBeNull();
+    expect(pair!.scale).toEqual(fused!.scale);
+    // …and it is the identity the renderer actually draws at, not the [3,3,3] param.
+    expect(pair!.scale).toEqual([1, 1, 1]);
   });
 });

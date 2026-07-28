@@ -134,9 +134,22 @@ function localMatrix(value: SceneChild): THREE.Matrix4 {
   if (v.kind === 'MaterialOverride') return m;
   const pos = isVec3(v.position) ? v.position : ([0, 0, 0] as Vec3);
   const rot = isVec3(v.rotation) ? v.rotation : ([0, 0, 0] as Vec3);
-  // A baked mesh renders at identity scale (the transform is in the geometry).
-  const scl: Vec3 =
-    v.kind === 'BakedMesh' ? [1, 1, 1] : isVec3(v.scale) ? v.scale : ([1, 1, 1] as Vec3);
+  // A baked mesh renders at identity scale (the transform is in the geometry) — and that
+  // has to hold for BOTH shapes it comes in. #388 split the baked mesh into an `Object`
+  // posing a `BakedData`, whose value kind is 'Object', so keying this rule on the fused
+  // kind alone put the read road (which would take the Object's scale) and the render road
+  // (`BakedMeshR`, still identity) into disagreement the moment anyone scaled a baked pair
+  // — measured at [3,3,3] vs [1,1,1] against the fused node as a control. The fused node
+  // kept the two roads in agreement by ignoring scale on both; the pair is the same mesh
+  // and inherits the same answer.
+  //
+  // If #489 decides a baked mesh SHOULD honour its scale, both roads change together:
+  // this predicate and `BakedMeshR`'s `scale={[1,1,1]}`. That they are two places is the
+  // reason this comment names the other one.
+  const isBakedShape =
+    v.kind === 'BakedMesh' ||
+    (v.kind === 'Object' && (v as { data?: { kind?: string } }).data?.kind === 'BakedData');
+  const scl: Vec3 = isBakedShape ? [1, 1, 1] : isVec3(v.scale) ? v.scale : ([1, 1, 1] as Vec3);
   const q = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(rot[0] * DEG2RAD, rot[1] * DEG2RAD, rot[2] * DEG2RAD, 'XYZ'),
   );
