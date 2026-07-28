@@ -79,6 +79,12 @@ describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries
     expect(iconKindForNode(s, 'x', 'LightData')).toBe('light');
     expect(iconKindForNode(s, 'x', 'CameraData')).toBe('camera');
     expect(iconKindForNode(s, 'x', 'CurveData')).toBe('curve');
+    // #388 — `BakedData` now carries this alone: the explicit `nodeType === 'BakedMesh'`
+    // arm was deleted with the fused kind (doubly dead — nothing carries that type, and
+    // `endsWith('Mesh')` already matched it). The sweep below sees this kind but only asks
+    // "not a dot", which by its own header cannot catch a wrong-but-plausible icon, so the
+    // stem `Baked` is pinned BY VALUE here.
+    expect(iconKindForNode(s, 'x', 'BakedData')).toBe('mesh');
   });
 
   // THE STRUCTURAL GUARD — see the file header.

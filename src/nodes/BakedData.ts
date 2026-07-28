@@ -20,12 +20,13 @@
 // error. Blender agrees from its own side: its Mesh datablock always holds real
 // vertices, and the procedural cases live in modifiers.
 //
-// Coexists with the fused `BakedMesh`. The format migration (v7 → v8) splits every
-// saved fused baked mesh into the pair, and `ObjectR` renders the pair by recomposing
-// it onto `BakedMeshR` — the SAME async-geometry + baked-material road the fused node
-// draws through (`bakedRecompose.ts`). Still to come: flip `dispatchApplyTransform` to
-// mint the pair (both sites), teach the three `!== 'MeshData'` guards, retire the
-// fused kind.
+// This is now the ONLY shape a baked mesh takes. The format migration (v7 → v8) splits
+// every saved fused baked mesh into the pair, `dispatchApplyTransform` mints the pair at
+// both of its sites, all three `!== 'MeshData'` guards discriminate instead of absorbing,
+// and the fused `BakedMesh` is a throwing relic kept only so the load ladder can still
+// normalize a saved fused node on its way through the migration. `ObjectR` renders the
+// pair by recomposing it onto `BakedMeshR` — the SAME async-geometry + baked-material
+// road the fused node drew through (`bakedRecompose.ts`).
 //
 // H14 hydrate seam: `evaluate` re-guards nothing here because BOTH params are
 // REQUIRED with no meaningful default — a baked mesh without its buffer handle or

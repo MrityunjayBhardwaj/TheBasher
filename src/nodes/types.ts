@@ -1058,7 +1058,8 @@ export interface BakedDataValue {
  * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
  * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
  * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
- * gains a curve arm; the `data.kind !== 'MeshData'` guards absorb it elsewhere).
+ * gains a curve arm; elsewhere it was ABSORBED by `data.kind !== 'MeshData'` guards —
+ * see #388 below for why that shape was a defect and where all three now discriminate).
  * #386 adds LightData — the second non-mesh member; ObjectR gains a light arm that
  * recomposes it into a LightValue and renders it through the shared light band.
  * #387 adds CameraData — the third, and the first whose renderer does not read the

@@ -1523,6 +1523,11 @@ interface MeshChildProps {
 
 const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
+    // #388 S5 — no DAG node evaluates to a `BakedMeshValue` any more (the fused kind is
+    // retired), so nothing reaches this arm through the value flow. It stays for the same
+    // two reasons the four posable light arms below do: the value kind remains the
+    // RECOMPOSITION TARGET — ObjectR rebuilds one from the pair and renders it through
+    // this very component — and dropping it would leave this switch non-exhaustive.
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
     case 'ModifiedMesh':
