@@ -2225,6 +2225,24 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // cast that silently darkened every grouped light. Return null; never cast.
     return null;
   }
+  if (data?.kind === 'BakedData') {
+    // #388 — ⚠️ THIS NULL IS TEMPORARY AND WRONG, unlike the three arms above.
+    // A curve draws its own chrome, a light recomposes, a camera correctly draws
+    // nothing. A baked mesh IS render geometry and MUST draw — it just cannot draw
+    // through `ObjectMeshR`, whose whole road is synchronous: `geometryRegistry.get`
+    // returns null for a baked handle BY DESIGN (the caller is expected to suspend
+    // and prime), and `usePrimitiveMaterial` wants an inline OpenPBR IR, not the flat
+    // baked spec. Falling through to it renders an invisible object with a grey
+    // material — measured, both halves, before this node existed.
+    //
+    // The async road already exists in `BakedMeshR` (`useBakedGeometry` + Suspense).
+    // Teaching this arm that road is the renderer slice, and it is the big one.
+    // Until then nothing can reach here: no migration mints a `BakedData` and no
+    // producer emits one, so this is unreachable rather than merely unfinished.
+    // Do NOT close it by casting to `MeshDataValue` — that compiles and renders the
+    // measured failure instead of nothing.
+    return null;
+  }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
 

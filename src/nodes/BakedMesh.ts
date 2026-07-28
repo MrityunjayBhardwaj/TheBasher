@@ -67,8 +67,10 @@ export const BakedMaterialSpecSchema = z.object({
     .optional(),
 });
 
-/** Zod for the baked `GeometryRef` handle carried as a param. */
-const BakedGeometryRefSchema = z.object({
+/** Zod for the baked `GeometryRef` handle carried as a param. Shared with
+ *  `BakedData`, the data half of the split (#388) — one spelling of the handle,
+ *  so the pair cannot drift from the fused node while both exist. */
+export const BakedGeometryRefSchema = z.object({
   key: z.string(),
   kind: z.literal('baked'),
   descriptor: z.object({

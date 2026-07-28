@@ -1018,6 +1018,34 @@ export interface CameraDataValue {
 }
 
 /**
+ * The baked mesh's data half — an authoritative OPFS-backed geometry handle plus
+ * the rich captured material, and DELIBERATELY no transform (the Object owns it).
+ *
+ * ⚠️ THIS IS DELIBERATELY NOT A `MeshDataValue`, even though the field lists match
+ * (#388, Stage C · C5). The two are the same SHAPE and different CONTRACTS, and the
+ * difference was measured, not reasoned: patching a `MeshData` producer to emit
+ * baked payloads renders a baked material as the grey `#808080` fallback (ObjectR
+ * narrows with `'base' in mat`, and a baked spec has no `base` key) and renders a
+ * baked geometry as NOTHING AT ALL (`geometryRegistry.get` returns null for baked
+ * refs by design, and the renderer returns null on a miss). Both silent; typecheck
+ * clean throughout. The axis underneath is RECIPE vs BUFFER — `BoxData`/`SphereData`
+ * are rebuildable-from-params and resolve SYNCHRONOUSLY through the registry, while a
+ * baked buffer is authoritative, content-hashed, and arrives ASYNCHRONOUSLY through
+ * OPFS + Suspense. Separate members keep that in the type system: a consumer that has
+ * not learned the async road gets a COMPILE ERROR rather than an empty viewport.
+ *
+ * `material` is non-nullable, matching the fused `BakedMeshValue` — a bake always
+ * captures a resolved material (primitives leave the map refs null; a glTF bake
+ * captures the post-override material including textures).
+ */
+export interface BakedDataValue {
+  readonly kind: 'BakedData';
+  /** Always `GeometryRef{kind:'baked'}` — an OPFS handle, never rebuildable. */
+  readonly geometry: GeometryRef;
+  readonly material: BakedMaterialSpec;
+}
+
+/**
  * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
  * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
  * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
@@ -1027,10 +1055,18 @@ export interface CameraDataValue {
  * #387 adds CameraData — the third, and the first whose renderer does not read the
  * evaluated value at all (the pose road builds from raw params instead), so ObjectR's
  * arm for it draws NOTHING: a camera's frustum is editor chrome from a separate band.
+ * #388 adds BakedData — the first member whose geometry is ASYNCHRONOUS (an OPFS
+ * buffer reached through Suspense, not a synchronously rebuildable registry entry),
+ * which is exactly why it is its own member rather than a second `MeshData` producer.
  * (The same "one socket, discriminate on value.kind" discipline V78 uses for
  * 'SceneObject'.)
  */
-export type ObjectData = MeshDataValue | CurveDataValue | LightDataValue | CameraDataValue;
+export type ObjectData =
+  | MeshDataValue
+  | CurveDataValue
+  | LightDataValue
+  | CameraDataValue
+  | BakedDataValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`
