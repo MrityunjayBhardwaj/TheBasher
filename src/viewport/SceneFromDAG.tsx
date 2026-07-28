@@ -2237,8 +2237,15 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     //
     // The async road already exists in `BakedMeshR` (`useBakedGeometry` + Suspense).
     // Teaching this arm that road is the renderer slice, and it is the big one.
-    // Until then nothing can reach here: no migration mints a `BakedData` and no
-    // producer emits one, so this is unreachable rather than merely unfinished.
+    // ⚠️ AND IT IS REACHABLE NOW. The v7 → v8 migration mints a `BakedData` for every
+    // saved fused `BakedMesh`, so this arm went from unreachable to load-bearing the
+    // moment that pass landed: a project on disk with a baked mesh loads split and the
+    // mesh DOES NOT DRAW until this arm learns the async road. That is the cost of the
+    // consumers-before-producers ordering being taken one step out of order here, it is
+    // contained only because a kind-split branch is atomically mergeable and never ships
+    // mid-split, and it makes the renderer slice a MERGE BLOCKER rather than a later
+    // nicety. The live producers (`dispatchApplyTransform`) still mint fused, so a bake
+    // performed in-session is unaffected; it is specifically the reload that goes blank.
     // Do NOT close it by casting to `MeshDataValue` — that compiles and renders the
     // measured failure instead of nothing.
     return null;

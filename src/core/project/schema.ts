@@ -37,7 +37,12 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // THIRD non-mesh data, and the first kind whose renderer never reads the evaluated
 // value — the pose road reads the pair's raw params). See migrations.ts
 // formatMigrations[6].
-export const PROJECT_FORMAT_VERSION = 7;
+// v8 (#388 Stage C · C5): split each fused `BakedMesh` into Object + BakedData — the
+// last node that still minted a fused pair, and the FIRST data half that is genuinely
+// render geometry without riding the `MeshData` road (an OPFS-persisted buffer reached
+// asynchronously, not a recipe rebuilt from params). See migrations.ts
+// formatMigrations[7].
+export const PROJECT_FORMAT_VERSION = 8;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
