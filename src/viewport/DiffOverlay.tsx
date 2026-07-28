@@ -284,7 +284,10 @@ function GhostChild({ value }: { value: SceneObject }) {
       // the ghost band is the one camera consumer that wants the pair left alone.
       if (!data || data.kind !== 'MeshData') return null;
       const desc = data.geometry.descriptor;
-      const color = data.material && 'base' in data.material ? data.material.base.color : '#ffffff';
+      // #388 — `'base' in data.material` was here to exclude a `BakedMaterialSpec`, an arm
+      // `MeshDataValue.material` no longer admits (no producer ever emitted one). A ghost
+      // reads the inline colour or falls back to white when the data node has no material.
+      const color = data.material ? data.material.base.color : '#ffffff';
       const geom =
         desc.kind === 'box' ? (
           <boxGeometry args={desc.size as [number, number, number]} />

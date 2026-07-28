@@ -919,14 +919,23 @@ export interface CharacterValue {
  * The data half — geometry + material, and DELIBERATELY NO transform. Carries
  * the same `GeometryRef` handle every mesh/baked/array value already uses (never
  * inline buffers), so the Object that points here renders through the identical
- * geometryRegistry path. `material` mirrors the read-side union
- * (InlineMaterialSpec | BakedMaterialSpec | null) so a data node can hold either
- * an inline (box/sphere) or a baked material without a per-kind switch.
+ * geometryRegistry path.
+ *
+ * `material` is INLINE ONLY, and the narrowing is the point. It used to admit a
+ * `BakedMaterialSpec` too, on the reasoning that "a data node can hold either without a
+ * per-kind switch" — but no producer ever emitted one: `BoxData`/`SphereData` hydrate an
+ * inline IR and nothing else evaluates to a `MeshData`. That arm was DEAD WIDTH: the type
+ * admitted a payload every consumer narrowed straight back out, so five branches sat
+ * unexercised and `npm run typecheck` waved an incompatible baked payload through to the
+ * browser, where it rendered as the grey fallback. A baked mesh has its own member of the
+ * `ObjectData` union now (#388), which is where the per-kind switch genuinely belongs —
+ * the two roads are not interchangeable (sync registry + inline IR vs async OPFS Suspense
+ * + a flat six-slot spec), and pretending otherwise in the type is what hid that.
  */
 export interface MeshDataValue {
   readonly kind: 'MeshData';
   readonly geometry: GeometryRef;
-  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  readonly material: InlineMaterialSpec | null;
 }
 
 /**

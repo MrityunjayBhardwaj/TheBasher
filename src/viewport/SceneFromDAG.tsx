@@ -2270,11 +2270,16 @@ function ObjectMeshR({
 }) {
   const shading = useViewportStore((s) => s.shading);
   // Hooks run unconditionally (rules-of-hooks): the material builds even for an
-  // Empty; the geom guard below is a plain branch with no hooks after it. Narrow
-  // to the inline material (`base` distinguishes it from a BakedMaterialSpec);
-  // Phase 1's BoxData only ever emits inline, baked data is a later phase.
+  // Empty; the geom guard below is a plain branch with no hooks after it.
+  //
+  // #388 — this used to read `mat && 'base' in mat ? mat : FALLBACK`, hand-narrowing a
+  // union that admitted a `BakedMaterialSpec`. Nothing ever produced one: the arm was dead
+  // width, and its only effect was to render an incompatible payload as grey instead of
+  // failing. `MeshDataValue.material` is inline-only now, so the structural test is gone
+  // and the fallback covers exactly the case it was always for — an Empty, or a data node
+  // with no material. A baked material reaches `BakedMeshR` through its own arm.
   const mat = data?.material ?? null;
-  const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
+  const inlineMat = mat ?? MODIFIED_FALLBACK_MATERIAL;
   const material = usePrimitiveMaterial(inlineMat, override, shading);
   const geom = data ? geometryRegistry.get(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
