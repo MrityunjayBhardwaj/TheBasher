@@ -47,13 +47,27 @@ function bw(page: import('@playwright/test').Page) {
   return page as unknown as import('@playwright/test').Page;
 }
 
-async function nodeOfType(page: import('@playwright/test').Page, type: string) {
-  return page.evaluate((t) => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const entry = Object.entries(nodes).find(([, n]) => n.type === t);
-    return entry ? { id: entry[0], params: entry[1].params } : null;
-  }, type);
+/** The baked PAIR: the `Object` half and the `BakedData` it poses.
+ *
+ *  #388 — Apply now mints the pair, so "did the bake land?" can no longer be asked as
+ *  "is there a node of type BakedMesh". Worse, it cannot be asked of the applied node's
+ *  own type either: a split primitive is ALSO an `Object`, so that comparison is true
+ *  before and after the bake. The question is what the Object POSES. */
+async function bakedPair(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state
+      .nodes as Record<
+      string,
+      { type: string; params: Record<string, unknown>; inputs?: Record<string, { node: string }> }
+    >;
+    const entry = Object.entries(nodes).find(([, n]) => {
+      const d = n.inputs?.data?.node;
+      return n.type === 'Object' && !!d && nodes[d]?.type === 'BakedData';
+    });
+    if (!entry) return null;
+    const dataId = entry[1].inputs!.data.node;
+    return { id: entry[0], params: entry[1].params, dataId, dataParams: nodes[dataId].params };
+  });
 }
 
 async function setScale(page: import('@playwright/test').Page, id: string, scale: number[]) {
@@ -159,12 +173,16 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     // The original Sphere is gone; a BakedMesh exists with identity transform.
     await page.waitForFunction(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      // #412 — the baked node INHERITS the applied id, so the bake landed when the id
-      // is still there and its TYPE has become BakedMesh (it used to be "id gone").
-      return nodes['n_apply']?.type === 'BakedMesh';
+      // #412/#388 — the baked node INHERITS the applied id, so the bake landed when the
+      // id is still there and it now poses a BakedData (it used to be "id gone", then
+      // "type became BakedMesh"; both halves of the pair are Objects, so ask possession).
+      const d = (nodes['n_apply'] as unknown as { inputs?: { data?: { node: string } } })?.inputs
+        ?.data?.node;
+      return nodes['n_apply']?.type === 'Object' && !!d && nodes[d]?.type === 'BakedData';
     });
-    const baked = await nodeOfType(page, 'BakedMesh');
+    const baked = await bakedPair(page);
     expect(baked).not.toBeNull();
+    // The POSE is identity on the Object half (the TRS is baked into the verts).
     expect(baked!.params.scale).toEqual([1, 1, 1]);
     expect(baked!.params.position).toEqual([0, 0, 0]);
 
@@ -205,9 +223,9 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     await applyTransform(page, 'n_apply', 'all');
     await page.waitForFunction(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      return Object.values(nodes).some((n) => n.type === 'BakedMesh');
+      return Object.values(nodes).some((n) => n.type === 'BakedData');
     });
-    const baked = await nodeOfType(page, 'BakedMesh');
+    const baked = await bakedPair(page);
     await page.waitForFunction(
       (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id) !== null,
       baked!.id,
@@ -228,7 +246,7 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
       Boolean((window as unknown as BasherWindow).__basher_mesh_world_bounds),
     );
 
-    const reloadedBaked = await nodeOfType(page, 'BakedMesh');
+    const reloadedBaked = await bakedPair(page);
     expect(reloadedBaked).not.toBeNull();
     await page.waitForFunction(
       (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id) !== null,
@@ -252,9 +270,11 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     await applyTransform(page, 'n_apply', 'all');
     await page.waitForFunction(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      // #412 — the baked node INHERITS the applied id, so the bake landed when the id
-      // is still there and its TYPE has become BakedMesh (it used to be "id gone").
-      return nodes['n_apply']?.type === 'BakedMesh';
+      // #412/#388 — the id is inherited and both shapes are Objects, so the bake landed
+      // when the id poses a BakedData.
+      const d = (nodes['n_apply'] as unknown as { inputs?: { data?: { node: string } } })?.inputs
+        ?.data?.node;
+      return nodes['n_apply']?.type === 'Object' && !!d && nodes[d]?.type === 'BakedData';
     });
 
     await page.evaluate(() => (window as unknown as BasherWindow).__basher_dag!.getState().undo());
@@ -273,7 +293,7 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
             inputs?: Record<string, { node: string }>;
           }
         | undefined;
-      const hasBaked = Object.values(nodes).some((n) => n.type === 'BakedMesh');
+      const hasBaked = Object.values(nodes).some((n) => n.type === 'BakedData');
       return {
         sphere: sphere ? { type: sphere.type, scale: sphere.params.scale } : null,
         dataType: nodes[dId]?.type ?? null,
@@ -397,7 +417,7 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     await applyTransform(page, 'n_apply', 'all');
     await page.waitForFunction(() => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-      return Object.values(nodes).some((n) => n.type === 'BakedMesh');
+      return Object.values(nodes).some((n) => n.type === 'BakedData');
     });
 
     // The second sphere's rendered bounds are unchanged (shared geom not corrupted).
@@ -431,11 +451,21 @@ test.describe('p151 Wave 2 — Apply a primitive end-to-end', () => {
     const state = await page.evaluate(
       ([boxId, dId]) => {
         const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-        const baked = Object.entries(nodes).find(([, n]) => n.type === 'BakedMesh');
+        const baked = Object.entries(nodes).find(([id, n]) => {
+          const d = (n as unknown as { inputs?: { data?: { node: string } } }).inputs?.data?.node;
+          void id;
+          return n.type === 'Object' && !!d && nodes[d]?.type === 'BakedData';
+        });
         return {
-          // #412 — the Object's id is inherited by the BakedMesh, so "retired" means its
-          // TYPE changed. Only the data node's id genuinely disappears.
-          objectBakedInPlace: nodes[boxId!]?.type === 'BakedMesh',
+          // #412/#388 — the Object's id is inherited by the bake's own Object, so
+          // "retired" means what it POSES changed from a BoxData to a BakedData. Only the
+          // source data node's id genuinely disappears.
+          objectBakedInPlace:
+            nodes[boxId!]?.type === 'Object' &&
+            nodes[
+              (nodes[boxId!] as unknown as { inputs?: { data?: { node: string } } })?.inputs?.data
+                ?.node ?? ''
+            ]?.type === 'BakedData',
           dataGone: !nodes[dId!],
           bakedId: baked?.[0] ?? null,
           bakedScale: baked?.[1].params.scale,

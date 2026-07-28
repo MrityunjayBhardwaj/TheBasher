@@ -42,6 +42,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // at v6 (post-light-split) carrying a fused camera would never re-run an earlier pass,
   // so its camera would never split — a silent, permanent data loss.
   6: migrateFusedCameraToSplit,
+  // v7 → v8 (#388 Stage C · C5): split each fused BakedMesh into Object + BakedData.
+  // Its OWN format version for the same reason as every kind before it: a project saved
+  // at v7 (post-camera-split) carrying a fused baked mesh would never re-run an earlier
+  // pass, so its baked mesh would never split — a silent, permanent data loss.
+  7: migrateFusedBakedMeshToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -245,8 +250,25 @@ function isDataParamPath(paramPath: unknown): boolean {
     paramPath === 'fStop' ||
     paramPath === 'focusOnTarget' ||
     paramPath === 'roll' ||
-    // Material — shared by both mesh primitives (the data half owns the look).
-    // A curve has no material, so a curve target never reaches this arm.
+    // Baked geometry (the v7→v8 pass, #388) — the OPFS handle moves to the BakedData.
+    // ONE name, not two: a baked mesh's other data param is `material`, already covered
+    // by the shared arm below since the box pass. (Whether a `geometry` channel is
+    // MEANINGFUL is a separate question — a content-hashed buffer handle is not
+    // interpolatable — but a channel naming it must still follow the param, or it
+    // silently orphans instead of visibly doing nothing.)
+    //
+    // COLLISION CHECK, re-run for this pass as the block above instructs. `geometry` is
+    // owned by exactly two node types in all of `src/nodes/` — `BakedMesh` (this pass's
+    // source) and `BakedData` (its target). No earlier split kind owns it: box (`size`),
+    // sphere (`radius`/`widthSegments`/`heightSegments`), curve (`points`/`closed`/
+    // `resolution`), light (the shading set), camera (the lens set), nor the `Object`
+    // half (`position`/`rotation`/`scale`). So the camera's argument carries unchanged:
+    // an earlier pass CAN move a stray `geometry` channel off a box, and it is inert
+    // because no earlier kind owns the name. ⚠️ #389 splits `GltfAsset`, which DOES own
+    // a geometry-ish handle — re-run this check there rather than assuming it holds.
+    paramPath === 'geometry' ||
+    // Material — shared by both mesh primitives and the baked mesh (the data half owns
+    // the look). A curve has no material, so a curve target never reaches this arm.
     paramPath.startsWith('material')
   );
 }
@@ -829,6 +851,123 @@ export function migrateFusedCameraToSplit(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 7 };
+}
+
+// ── v7 → v8: fused BakedMesh → Object + BakedData ──────────────────────────
+// (object↔data split, #388 Stage C · C5)
+//
+// The sixth kind, and the last node that still minted a fused pair. A baked mesh is a
+// real scene object with a real pose — the TRS band is identity right after Apply
+// Transform, but the mesh is first-class and re-transformable afterwards — so this is a
+// SPLIT like the five before it, not a deletion.
+//
+// The Object INHERITS the baked mesh's id, so every consumer edge, channel `target`,
+// constraint `target` and saved selection that named it still resolves with no
+// re-pointing pass. Only `geometry`/`material.*` channels re-target to the data half.
+//
+// TWO THINGS THIS KIND DOES DIFFERENTLY FROM THE CAMERA, both because of what a baked
+// mesh IS rather than any change to the recipe:
+//
+//   1. NOTHING IS INVENTED. The camera had to write `fov: 45` for an orthographic
+//      source because `CameraData.fov` is required and an ortho camera never had one.
+//      `BakedData`'s two params — `geometry` and `material` — are exactly the two the
+//      fused `BakedMesh` also required with no zod default, so every source carries
+//      both and each is copied across verbatim. A source somehow missing one fails to
+//      parse afterwards, which is precisely what the fused node would have done: the
+//      absence stays loud rather than being hydrated into a plausible wrong thing
+//      (a fabricated buffer handle would resolve to nothing; a fabricated material
+//      would render as the grey fallback the whole kind exists to avoid).
+//
+//   2. THE POSE IS HYDRATED, and here the light's `?? default` idiom IS right. All
+//      three TRS params carry `BakedMesh`'s own schema defaults (identity), so a raw
+//      save may legitimately omit them, and identity is a MEANINGFUL value for this
+//      kind — the transform was composed into the vertices, so identity is what the
+//      renderer must apply. It is not a failure sentinel the way the camera's 45 was,
+//      which is the test that decides whether to hydrate at all.
+//
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; src/nodes/BakedData.ts (why a baked payload
+//      is its own value kind and not a `MeshData`); krama K23; issue #388.
+
+export function migrateFusedBakedMeshToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 8 };
+
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const bakedDataVersion = getNodeType('BakedData')?.version ?? 1;
+
+  // bakedMeshId → its split-off data node id (used to re-target geometry/material
+  // channels).
+  const dataIdByBaked = new Map<string, string>();
+
+  for (const baked of Object.values(nodes)) {
+    // Every non-BakedMesh node is skipped — it never enters the loop. An ALREADY-split
+    // baked mesh is an `Object`, so it is skipped too: that is what makes this
+    // idempotent.
+    if (baked?.type !== 'BakedMesh' || !baked.id) continue;
+
+    // Normalize the baked mesh through its OWN migration ladder first (reuse, not a
+    // parallel copy). `BakedMesh` is v1 with no ladder steps today, but keep the pattern
+    // so a future baked-node version migrates BEFORE the split — splitting raw params
+    // before normalizing is the silent look-shift for old saves.
+    let params: Record<string, unknown> = { ...(baked.params ?? {}) };
+    const def = getNodeType('BakedMesh');
+    if (def) {
+      let v = typeof baked.version === 'number' ? baked.version : def.version;
+      let safety = 64;
+      while (v < def.version && safety-- > 0) {
+        const step = def.migrations?.[v];
+        if (!step) break;
+        params = step(params) as Record<string, unknown>;
+        v++;
+      }
+    }
+
+    const dataId = freshDataId(nodes, baked.id);
+    dataIdByBaked.set(baked.id, dataId);
+
+    // The DATA half — the buffer handle + the captured material, no pose, no inputs.
+    // Both carried verbatim; see note 1 in the header on why neither is hydrated.
+    nodes[dataId] = {
+      id: dataId,
+      type: 'BakedData',
+      version: bakedDataVersion,
+      params: { geometry: params.geometry, material: params.material },
+      inputs: {},
+    };
+
+    // The OBJECT half — the baked mesh converted IN PLACE (inherits the id). Owns the
+    // pose, points at the data node through `data`; any pre-existing inputs are kept
+    // (constraint targets, rig membership, Group parenting — all keyed on the inherited
+    // id). See note 2 on why the TRS defaults are hydrated here.
+    baked.type = 'Object';
+    baked.version = objectVersion;
+    baked.params = {
+      position: params.position ?? [0, 0, 0],
+      rotation: params.rotation ?? [0, 0, 0],
+      scale: params.scale ?? [1, 1, 1],
+    };
+    baked.inputs = { ...(baked.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-target the channels that address the DATA half. A channel names its subject by
+  // `params.target` (a node-id STRING) + `params.paramPath`; position/rotation/scale
+  // channels keep target = the baked mesh's id (now the Object).
+  if (dataIdByBaked.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const dataId = dataIdByBaked.get(target);
+      if (dataId && n.params && isDataParamPath(n.params.paramPath)) {
+        n.params.target = dataId;
+      }
+    }
+  }
+
+  return { ...proj, formatVersion: 8 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {

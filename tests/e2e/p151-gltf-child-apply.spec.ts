@@ -117,12 +117,26 @@ function gltfChildId(page: import('@playwright/test').Page, assetRefSubstr: stri
   }, assetRefSubstr);
 }
 
+/** The baked PAIR the child bake mints: the `Object` half plus the `BakedData` it poses.
+ *
+ *  #388 — the bake mints a pair rather than a fused `BakedMesh`, so the pose lives on the
+ *  Object and the buffer handle + captured material live on the data half. Found by
+ *  POSSESSION (an Object posing a BakedData) rather than by a type name, which is what a
+ *  finder like the old one could not survive. */
 function bakedMeshNode(page: import('@playwright/test').Page) {
   return page.evaluate(() => {
     const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const entry = Object.entries(nodes).find(([, n]) => n.type === 'BakedMesh');
-    return entry ? { id: entry[0], params: entry[1].params } : null;
+    const nodes = w.__basher_dag!.getState().state.nodes as Record<
+      string,
+      { type: string; params: Record<string, unknown>; inputs?: Record<string, { node: string }> }
+    >;
+    const entry = Object.entries(nodes).find(([, n]) => {
+      const d = n.inputs?.data?.node;
+      return n.type === 'Object' && !!d && nodes[d]?.type === 'BakedData';
+    });
+    if (!entry) return null;
+    const dataId = entry[1].inputs!.data.node;
+    return { id: entry[0], params: entry[1].params, dataId, dataParams: nodes[dataId].params };
   });
 }
 
@@ -179,7 +193,7 @@ test('SC-2/SC-6/SC-7: bake a textured glTF child → three-way verts + lossless 
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag!.getState().state.nodes;
-    return Object.values(nodes).some((n) => n.type === 'BakedMesh');
+    return Object.values(nodes).some((n) => n.type === 'BakedData');
   });
   const baked = await bakedMeshNode(page);
   expect(baked).not.toBeNull();
@@ -271,7 +285,7 @@ test('SC-7 isolation (H45): baking one asset instance leaves a second instance u
   expect(result.ok).toBe(true);
   await page.waitForFunction(() =>
     Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'BakedMesh',
+      (n) => n.type === 'BakedData',
     ),
   );
 
@@ -309,7 +323,7 @@ test('SC-5 undo: Apply → Cmd+Z → GltfChild restored + source child visible +
   await applyTransform(page, childId!);
   await page.waitForFunction(() =>
     Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'BakedMesh',
+      (n) => n.type === 'BakedData',
     ),
   );
 
@@ -321,7 +335,7 @@ test('SC-5 undo: Apply → Cmd+Z → GltfChild restored + source child visible +
     const gltfAsset = Object.values(nodes).find((n) => n.type === 'GltfAsset');
     return {
       childExists: Boolean(nodes[id!]),
-      hasBaked: Object.values(nodes).some((n) => n.type === 'BakedMesh'),
+      hasBaked: Object.values(nodes).some((n) => n.type === 'BakedData'),
       suppressed: gltfAsset ? gltfAsset.params.suppressedChildren : null,
     };
   }, childId);
@@ -345,7 +359,7 @@ test('M8 self-contained: bake → delete source asset → reload → baked still
   await applyTransform(page, childId!);
   await page.waitForFunction(() =>
     Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'BakedMesh',
+      (n) => n.type === 'BakedData',
     ),
   );
 

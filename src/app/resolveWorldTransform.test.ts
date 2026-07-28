@@ -16,6 +16,8 @@ import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitLight } from '../test-utils/splitLight';
+import { makeSplitCube } from '../test-utils/splitCube';
+import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 
 const BOX_ID = 'n_box';
@@ -499,5 +501,70 @@ describe('resolveWorldTransform — #231 Inc 2a grouped light', () => {
     expect(parent).not.toBeNull();
     // The parent world is the Group's translation: its 4th column is [5,0,0].
     expect(parent!.elements[12]).toBeCloseTo(5, 6);
+  });
+});
+
+// #388 C5 — the baked mesh ignores its scale on the READ road, in the shape it now has.
+//
+// `BakedMeshR` renders a baked mesh at identity scale because the transform is already in
+// the vertices, and `localMatrix` mirrors that so read and render agree (H40, one band).
+// The split gave the baked mesh a new shape — an `Object` posing a `BakedData`, whose
+// value kind is 'Object' — and keying the rule on the fused kind alone silently exempted
+// it: measured at world scale [3,3,3] while the renderer drew at [1,1,1].
+//
+// ⚠️ THE CONTROL EXPIRED WITH THE RELIC. This was written a slice earlier as an equality
+// against a fused `BakedMesh` carrying the same params — the honest control, since the
+// question was "does the pair answer as the node it replaces did". Retiring the fused node
+// made its `evaluate` throw, and the walk evaluates every scene child, so that control
+// cannot be built any more. The equality WAS measured green before the retirement. What
+// replaces it is a CONTRAST control that the relic could never have provided: an ordinary
+// Object at the SAME scale, which must still report [3,3,3]. That is strictly more than
+// the old test said — it pins the rule as baked-SPECIFIC rather than as "Objects ignore
+// scale", which a lone [1,1,1] assertion would have been satisfied by.
+//
+// Whether a baked mesh should honour its scale at all is #489; if that lands, this pin and
+// `BakedMeshR`'s `scale={[1,1,1]}` move together.
+describe('resolveWorldTransform — a baked PAIR ignores its scale, an ordinary Object does not (#388)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+  });
+
+  it('baked pair → world scale [1,1,1]; a plain cube Object at the same scale → [3,3,3]', () => {
+    const geometry = {
+      key: 'baked|ws-8',
+      kind: 'baked' as const,
+      descriptor: { kind: 'baked' as const, hash: 'wshash', vertexCount: 8 },
+    };
+    const material = rowDataParams('baked').material as Record<string, unknown>;
+
+    let state: DagState = buildDefaultDagState();
+    for (const op of splitOps(
+      'baked',
+      { objectId: 'n_wspair' },
+      { data: { geometry, material }, object: { scale: [3, 3, 3] } },
+    )) {
+      state = applyOp(state, op as Op).next;
+    }
+    // THE CONTRAST CONTROL: a non-baked Object carrying the identical scale param.
+    const cube = makeSplitCube(state, { objectId: 'n_wscube', scale: [3, 3, 3] });
+    state = cube.state;
+
+    const sceneId = state.outputs.scene!.node;
+    for (const id of ['n_wspair', 'n_wscube']) {
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      }).next;
+    }
+
+    const pair = resolveWorldTransform(state, 'n_wspair', ctxAt(0));
+    const plain = resolveWorldTransform(state, 'n_wscube', ctxAt(0));
+    expect(pair).not.toBeNull();
+    expect(plain).not.toBeNull();
+    // The rule is BAKED-specific: same param, opposite answers.
+    expect(pair!.scale).toEqual([1, 1, 1]);
+    expect(plain!.scale).toEqual([3, 3, 3]);
   });
 });

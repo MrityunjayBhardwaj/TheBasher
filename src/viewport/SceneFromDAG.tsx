@@ -81,6 +81,7 @@ import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
+import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -1522,6 +1523,11 @@ interface MeshChildProps {
 
 const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
+    // #388 S5 — no DAG node evaluates to a `BakedMeshValue` any more (the fused kind is
+    // retired), so nothing reaches this arm through the value flow. It stays for the same
+    // two reasons the four posable light arms below do: the value kind remains the
+    // RECOMPOSITION TARGET — ObjectR rebuilds one from the pair and renders it through
+    // this very component — and dropping it would leave this switch non-exhaustive.
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
     case 'ModifiedMesh':
@@ -2225,6 +2231,31 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // cast that silently darkened every grouped light. Return null; never cast.
     return null;
   }
+  if (data?.kind === 'BakedData') {
+    // #388 — a baked mesh IS render geometry and MUST draw, unlike the three arms
+    // above (a curve draws its own chrome, a light recomposes, a camera correctly
+    // draws nothing). It just cannot draw through `ObjectMeshR`, whose whole road is
+    // synchronous: `geometryRegistry.get` returns null for a baked handle BY DESIGN
+    // (the caller is expected to suspend and prime), and `usePrimitiveMaterial` wants
+    // an inline OpenPBR IR, not the flat baked spec. Falling through to it renders an
+    // invisible object with a grey material — measured, both halves, before `BakedData`
+    // existed, which is why baked took its own member of the `ObjectData` union.
+    //
+    // So RECOMPOSE and hand the flat value to `BakedMeshR`, the renderer the fused
+    // `BakedMesh` already uses: `useBakedGeometry` (the OPFS read + Suspense) for the
+    // async handle, and the imperative six-slot build for the baked material. One band
+    // (H40) — the pair draws through the identical component as the fused node, so the
+    // two cannot drift while both exist, and there is no parallel async walk to keep in
+    // step. Never `as MeshDataValue`: that compiles and renders the measured failure
+    // (invisible geometry, grey material) instead of drawing.
+    //
+    // This arm is what closes the reload gap the v7 → v8 migration opened: that pass
+    // mints a `BakedData` for every saved fused `BakedMesh`, so a project on disk with a
+    // baked mesh loads split and drew NOTHING until this road existed.
+    const baked = recomposeBakedObject(value);
+    if (!baked) return null;
+    return <BakedMeshR value={baked} override={override} />;
+  }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
 
@@ -2244,11 +2275,16 @@ function ObjectMeshR({
 }) {
   const shading = useViewportStore((s) => s.shading);
   // Hooks run unconditionally (rules-of-hooks): the material builds even for an
-  // Empty; the geom guard below is a plain branch with no hooks after it. Narrow
-  // to the inline material (`base` distinguishes it from a BakedMaterialSpec);
-  // Phase 1's BoxData only ever emits inline, baked data is a later phase.
+  // Empty; the geom guard below is a plain branch with no hooks after it.
+  //
+  // #388 — this used to read `mat && 'base' in mat ? mat : FALLBACK`, hand-narrowing a
+  // union that admitted a `BakedMaterialSpec`. Nothing ever produced one: the arm was dead
+  // width, and its only effect was to render an incompatible payload as grey instead of
+  // failing. `MeshDataValue.material` is inline-only now, so the structural test is gone
+  // and the fallback covers exactly the case it was always for — an Empty, or a data node
+  // with no material. A baked material reaches `BakedMeshR` through its own arm.
   const mat = data?.material ?? null;
-  const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
+  const inlineMat = mat ?? MODIFIED_FALLBACK_MATERIAL;
   const material = usePrimitiveMaterial(inlineMat, override, shading);
   const geom = data ? geometryRegistry.get(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle

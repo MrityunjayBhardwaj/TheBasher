@@ -26,13 +26,14 @@ import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materi
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
 import { evaluate } from '../dag/evaluator';
 import { sampleCurve } from '../../nodes/curveMath';
-import type { CurveDataValue, InlineMaterialSpec, Vec3 } from '../../nodes/types';
+import type { BakedDataValue, CurveDataValue, InlineMaterialSpec, Vec3 } from '../../nodes/types';
 import {
   KeyframeChannelNumberNode,
   type KeyframeChannelNumberParams,
 } from '../../nodes/KeyframeChannelNumber';
 import { sampleScalarKeyframesExtended, type ChannelExtend } from '../../nodes/keyframeInterp';
 import type { FModNoise } from '../../nodes/channelModifiers';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { migrateNodes, migrateProjectFormat } from './migrations';
 import { buildDefaultDagState } from './default';
 import { ProjectSchema, type Project } from './schema';
@@ -278,8 +279,9 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
   it('splits the box: n_box becomes an Object (id inherited) + a wired BoxData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxJson());
     // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves)
-    // → 6 (light pass, no lights) → 7 (camera split — this fixture HAS a camera).
-    expect(migrated.formatVersion).toBe(7);
+    // → 6 (light pass, no lights) → 7 (camera split — this fixture HAS a camera)
+    // → 8 (baked pass, no baked meshes).
+    expect(migrated.formatVersion).toBe(8);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -507,8 +509,8 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
   it('splits the sphere: n_sphere becomes an Object (id inherited) + a wired SphereData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
     // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass) → 6 (light pass, no
-    // lights) → 7 (camera split — this fixture HAS a camera).
-    expect(migrated.formatVersion).toBe(7);
+    // lights) → 7 (camera split — this fixture HAS a camera) → 8 (baked pass, none).
+    expect(migrated.formatVersion).toBe(8);
     // The sphere node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_sphere;
     expect(obj.type).toBe('Object');
@@ -698,8 +700,9 @@ function splitCurveDataNode(project: Project, curveId: string) {
 describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#385)', () => {
   it('splits the curve: n_curve becomes an Object (id inherited) + a wired CurveData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
-    // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights) → 7 (camera).
-    expect(migrated.formatVersion).toBe(7);
+    // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights) → 7 (camera)
+    // → 8 (baked pass, no baked meshes).
+    expect(migrated.formatVersion).toBe(8);
     const obj = migrated.state.nodes.n_curve;
     expect(obj.type).toBe('Object');
     const op = obj.params as Record<string, unknown>;
@@ -938,8 +941,9 @@ function splitLightDataNode(project: Project, lightId: string) {
 describe('object↔data split v5 → v6: fused posable lights → Object + LightData (#386)', () => {
   it('splits each posable kind byte-identically: the Object inherits the id, the LightData owns the shading', () => {
     const m = loadFromBytes(buildFusedLightsJson());
-    // 5 → 6 (light pass) → 7 (camera pass, no cameras in this fixture).
-    expect(m.formatVersion).toBe(7);
+    // 5 → 6 (light pass) → 7 (camera pass) → 8 (baked pass); this fixture has
+    // neither a camera nor a baked mesh, so the last two steps are no-ops.
+    expect(m.formatVersion).toBe(8);
 
     // Directional → Object(pose) + LightData{lightKind, intensity, color}.
     const dir = m.state.nodes.n_dir;
@@ -1132,7 +1136,7 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       state: { nodes, outputs: s.outputs },
     };
     const m = loadFromBytes(mixed);
-    expect(m.formatVersion).toBe(7);
+    expect(m.formatVersion).toBe(8);
     // Control a — the curve split.
     expect(m.state.nodes.n_curve.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
@@ -1275,8 +1279,9 @@ function splitCameraDataNode(project: Project, cameraId: string) {
 describe('object↔data split v6 → v7: fused cameras → Object + CameraData (#387)', () => {
   it('splits both projections: the Object inherits the id and the pose, the CameraData owns the lens', () => {
     const m = loadFromBytes(buildFusedCamerasJson());
-    // 6 → 7 (camera pass only; this fixture has no box/sphere/curve/light).
-    expect(m.formatVersion).toBe(7);
+    // 6 → 7 (camera split) → 8 (baked pass, no baked meshes); this fixture has no
+    // box/sphere/curve/light either.
+    expect(m.formatVersion).toBe(8);
 
     // Perspective → Object(pose only) + CameraData(the whole lens + the aim).
     const persp = m.state.nodes.n_persp;
@@ -1468,7 +1473,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       },
     };
     const m = loadFromBytes(strayOnNonCamera);
-    expect(m.formatVersion).toBe(7);
+    expect(m.formatVersion).toBe(8);
     expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
   });
 
@@ -1601,7 +1606,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       },
       state: { nodes, outputs: s.outputs },
     });
-    expect(m.formatVersion).toBe(7);
+    expect(m.formatVersion).toBe(8);
     // Controls — every earlier kind still splits.
     expect(m.state.nodes.n_box.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
@@ -1617,6 +1622,476 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     // And the camera split alongside them.
     expect(m.state.nodes.n_persp.type).toBe('Object');
     expect(splitCameraDataNode(m, 'n_persp')).toBeDefined();
+  });
+});
+
+// ── v7 → v8: fused BakedMesh → Object + BakedData (#388 Stage C · C5) ──────
+//
+// The sixth kind, and the last node that still minted a fused pair.
+//
+// THE FIXTURE IS DELIBERATELY POSED AWAY FROM IDENTITY, and that is the one thing this
+// kind's fixture must get right. A baked mesh comes out of Apply Transform with identity
+// TRS — which is ALSO `BakedMesh`'s schema default AND what a completely broken pose
+// carry would produce. A fixture built at identity is green whether or not the migration
+// carries the pose at all (H177). A baked mesh is first-class and re-transformable after
+// the bake, so a non-identity pose is a legitimate saved state and the only one that can
+// tell the two apart.
+//
+// The material colour likewise avoids `#808080` on purpose: that is the grey fallback a
+// discarded baked spec renders as, so a fixture asserting it would pass precisely when
+// the road is broken.
+//
+// ⚠️ WHAT THIS SUITE DOES AND DOES NOT PROVE. It proves the migrated pair carries the
+// right params and evaluates to the right VALUE. It does NOT prove the pair DRAWS — that
+// is a fact about the live three.js scene, and no assertion here can see it. The renderer
+// slice has since taught `ObjectR`'s BakedData arm the async road (it recomposes and
+// renders through `BakedMeshR`), and the drawing is observed in a browser rather than
+// inferred from a green suite here. `resolveEvaluatedMesh` still does not span the pair
+// — that is the flip slice's. This is also why the byte-identity check below compares
+// against CANONICAL
+// values rather than a live fused resolve — the fused node retires two slices from now
+// and a fixture that compares against it dies with it.
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; K23; issue #388.
+
+const BAKED_POSITION: Vec3 = [3, -2, 5];
+const BAKED_ROTATION: Vec3 = [0, 30, 0];
+const BAKED_SCALE: Vec3 = [2, 1, 0.5];
+const BAKED_GEOMETRY = {
+  key: 'baked|p388mig',
+  kind: 'baked' as const,
+  descriptor: { kind: 'baked' as const, hash: 'p388mig', vertexCount: 24 },
+};
+/** The full rich spec a bake captures. `#c81e5a` is neither a schema default nor the
+ *  `#808080` grey a discarded baked spec renders as. */
+const BAKED_MATERIAL = {
+  materialClass: 'physical' as const,
+  color: '#c81e5a',
+  roughness: 0.42,
+  metalness: 0.75,
+  opacity: 1,
+  transparent: false,
+  emissive: '#000000',
+  emissiveIntensity: 0,
+  map: null,
+  normalMap: null,
+  roughnessMap: null,
+  metalnessMap: null,
+  aoMap: null,
+  emissiveMap: null,
+};
+
+/** A v7 project with a fused BakedMesh posed away from identity, consumed by a Scene,
+ *  and carrying three channels: `material.roughness` and `geometry` (data params → must
+ *  follow the BakedData) and `position` (a transform → must stay on the inherited-id
+ *  Object). */
+function buildFusedBakedMeshJson() {
+  let s = emptyDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_baked',
+    nodeType: 'BakedMesh',
+    params: {
+      geometry: BAKED_GEOMETRY,
+      position: BAKED_POSITION,
+      rotation: BAKED_ROTATION,
+      scale: BAKED_SCALE,
+      material: BAKED_MATERIAL,
+    },
+  });
+  // A Scene consuming the baked mesh. This is the POINT of id inheritance: the edge
+  // names `n_baked` and must still name it after the split, with no re-pointing pass.
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'connect',
+    from: { node: 'n_baked', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  // A full render root, because `resolveEvaluatedTransform` walks from `outputs.render`
+  // and returns null without one — a legitimate null that reads exactly like a broken
+  // pose carry. The camera is built SPLIT-NATIVE: this fixture is stamped v7, so the
+  // 6→7 camera pass never runs on it, and a fused `PerspectiveCamera` here would stay
+  // fused and throw on evaluate (it is a retired relic as of #387 slice 8).
+  s = makeSplitCamera(s, {
+    objectId: 'n_camera',
+    position: [3, 2, 3],
+    lens: { lookAt: [0, 0, 0], near: 0.01, far: 500 },
+    connectTo: { node: 'n_scene', socket: 'camera' },
+  }).state;
+  add({
+    type: 'addNode',
+    nodeId: 'n_render',
+    nodeType: 'RenderOutput',
+    params: { postFx: { tonemap: 'ACES', smaa: true } },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_scene', socket: 'out' },
+    to: { node: 'n_render', socket: 'scene' },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_rough',
+    nodeType: 'KeyframeChannelNumber',
+    params: {
+      name: 'roughness',
+      target: 'n_baked',
+      paramPath: 'material.roughness',
+      keyframes: [
+        { time: 0, value: 0.42, easing: 'linear' },
+        { time: 1, value: 0.9, easing: 'linear' },
+      ],
+    },
+  });
+  // A `geometry` channel. It is not a MEANINGFUL animation — a content-hashed buffer
+  // handle is not interpolatable — but `paramPath` is free text and a saved project can
+  // carry one, and the choice is between following the param to its new owner and
+  // silently orphaning it onto a transform-only Object. This is the ONLY channel in the
+  // suite that exercises the `geometry` arm this pass added to `isDataParamPath`;
+  // without it that arm could be deleted with no test going red.
+  add({
+    type: 'addNode',
+    nodeId: 'n_geom',
+    nodeType: 'KeyframeChannelNumber',
+    params: {
+      name: 'geometry',
+      target: 'n_baked',
+      paramPath: 'geometry',
+      keyframes: [
+        { time: 0, value: 0, easing: 'linear' },
+        { time: 1, value: 1, easing: 'linear' },
+      ],
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_bpos',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_baked',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: BAKED_POSITION, easing: 'linear' },
+        { time: 1, value: [3, 7, 5], easing: 'linear' },
+      ],
+    },
+  });
+  const nodes = JSON.parse(JSON.stringify(s.nodes));
+  return {
+    formatVersion: 7,
+    id: 'p388-baked-split',
+    name: 'pre-split baked mesh',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: { BakedMesh: nodes.n_baked.version },
+    state: {
+      nodes,
+      outputs: {
+        ...s.outputs,
+        scene: { node: 'n_scene', socket: 'out' },
+        render: { node: 'n_render', socket: 'out' },
+      },
+    },
+  };
+}
+
+/** The BakedData node a split produced from the baked mesh `bakedId`. */
+function splitBakedDataNode(project: Project, bakedId: string) {
+  return Object.values(project.state.nodes).find(
+    (n) => n.type === 'BakedData' && n.id.startsWith(`${bakedId}__data`),
+  );
+}
+
+describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData (#388)', () => {
+  it('splits the baked mesh: the Object inherits the id and the pose, the BakedData owns the buffer + material', () => {
+    const m = loadFromBytes(buildFusedBakedMeshJson());
+    // 7 → 8 (baked pass only; this fixture has no earlier fused kind).
+    expect(m.formatVersion).toBe(8);
+
+    const obj = m.state.nodes.n_baked;
+    expect(obj.type).toBe('Object');
+    // The WHOLE pose, carried across unchanged — and every component differs from the
+    // identity default, so "carried" and "defaulted" are distinguishable here.
+    expect(obj.params).toEqual({
+      position: BAKED_POSITION,
+      rotation: BAKED_ROTATION,
+      scale: BAKED_SCALE,
+    });
+    // The data params LEFT the Object.
+    expect('geometry' in (obj.params as object)).toBe(false);
+    expect('material' in (obj.params as object)).toBe(false);
+
+    // The data half owns exactly the two params, both verbatim — this migration invents
+    // nothing at all, unlike the camera's one `fov: 45` for an orthographic source.
+    const data = splitBakedDataNode(m, 'n_baked')!;
+    expect(data).toBeDefined();
+    expect(data.params).toEqual({ geometry: BAKED_GEOMETRY, material: BAKED_MATERIAL });
+    // ...and no pose came with it.
+    for (const p of ['position', 'rotation', 'scale']) {
+      expect(p in (data.params as object)).toBe(false);
+    }
+    expect((obj.inputs as Record<string, { node: string }>).data.node).toBe(data.id);
+  });
+
+  it('the consumer edge needs NO re-pointing — scene.children still names the inherited id', () => {
+    // The whole reason the fused node is converted IN PLACE rather than replaced. The
+    // migration contains no edge-rewriting pass at all; this is what makes that correct,
+    // and it covers constraint targets and saved selections by the same mechanism.
+    const m = loadFromBytes(buildFusedBakedMeshJson());
+    const children = (m.state.nodes.n_scene.inputs as Record<string, { node: string }[]>).children;
+    expect(children.map((r) => r.node)).toContain('n_baked');
+    expect(m.state.nodes.n_baked.type).toBe('Object');
+    // The data half is a NEW node the scene does not reference — it hangs off the
+    // Object's `data` input only.
+    const data = splitBakedDataNode(m, 'n_baked')!;
+    expect(children.map((r) => r.node)).not.toContain(data.id);
+  });
+
+  it('routes channels by paramPath: material.* AND geometry → the BakedData, position → the Object', () => {
+    const m = loadFromBytes(buildFusedBakedMeshJson());
+    const data = splitBakedDataNode(m, 'n_baked')!;
+    // `material.*` rides the arm the box pass added — the baked mesh inherits it rather
+    // than needing a second one.
+    expect((m.state.nodes.n_rough.params as { target: string }).target).toBe(data.id);
+    // `geometry` is the ONE name this pass added to the shared predicate.
+    expect((m.state.nodes.n_geom.params as { target: string }).target).toBe(data.id);
+    // A `position` channel addresses the pose → it stays on the inherited-id Object.
+    expect((m.state.nodes.n_bpos.params as { target: string }).target).toBe('n_baked');
+  });
+
+  it('the Object inherits the id, so a position channel still animates it', () => {
+    const m = loadFromBytes(buildFusedBakedMeshJson());
+    const p0 = resolveEvaluatedTransform(m.state, 'n_baked', ctxAt(0))!.position;
+    const p1 = resolveEvaluatedTransform(m.state, 'n_baked', ctxAt(1))!.position;
+    expect(p0).toEqual(BAKED_POSITION);
+    expect(p1[1]).toBe(7); // the channel drives the Object's position
+  });
+
+  it('evaluates to the CANONICAL baked value — the handle and the rich spec, not a MeshData', () => {
+    const m = loadFromBytes(buildFusedBakedMeshJson());
+    const data = splitBakedDataNode(m, 'n_baked')!;
+    const value = evaluate(m.state, data.id).value as BakedDataValue;
+    // The KIND is the assertion that matters most here. A `MeshData` would typecheck at
+    // every consumer and render the material as grey and the geometry as nothing, both
+    // silently — which is exactly why baked has its own member of the ObjectData union.
+    expect(value.kind).toBe('BakedData');
+    expect(value.geometry).toEqual(BAKED_GEOMETRY);
+    expect(value.material).toEqual(BAKED_MATERIAL);
+    // Not a degenerate fixture: the colour differs from the grey a discarded baked spec
+    // renders as, so this assertion can tell a live carry from a swallowed one.
+    expect(value.material.color).not.toBe('#808080');
+  });
+
+  it('hydrates a MISSING pose to identity — the one place this pass supplies a value', () => {
+    // The mirror of the camera's missing-`fov` test, and it lands the other way. All
+    // three TRS params carry `BakedMesh`'s own schema default, so a hand-edited save may
+    // omit them; identity is MEANINGFUL for this kind (the transform was composed into
+    // the vertices, so identity is what the renderer must apply) rather than a failure
+    // sentinel, which is the test for whether to hydrate at all.
+    const noPose = {
+      formatVersion: 7,
+      id: 'p388-nopose',
+      name: 'baked mesh without a stored pose',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { BakedMesh: 1 },
+      state: {
+        nodes: {
+          n_baked: {
+            id: 'n_baked',
+            type: 'BakedMesh',
+            version: 1,
+            params: { geometry: BAKED_GEOMETRY, material: BAKED_MATERIAL },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    const m = loadFromBytes(noPose);
+    expect(m.state.nodes.n_baked.params).toEqual({
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    // The DATA half still invents nothing — both its params were present and are carried
+    // through untouched.
+    expect(splitBakedDataNode(m, 'n_baked')!.params).toEqual({
+      geometry: BAKED_GEOMETRY,
+      material: BAKED_MATERIAL,
+    });
+  });
+
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
+    const once = loadFromBytes(buildFusedBakedMeshJson());
+    const twice = loadFromBytes(once);
+    for (const id of ['n_baked', 'n_scene', 'n_rough', 'n_geom', 'n_bpos']) {
+      expect(twice.state.nodes[id]).toEqual(once.state.nodes[id]);
+    }
+    expect(splitBakedDataNode(twice, 'n_baked')).toEqual(splitBakedDataNode(once, 'n_baked'));
+    // No fused baked mesh survives.
+    expect(Object.values(twice.state.nodes).some((n) => n.type === 'BakedMesh')).toBe(false);
+  });
+
+  it('COLLISION GATE: the baked pass moves a channel only when its TARGET is a baked mesh', () => {
+    // `geometry` joined the shared `isDataParamPath` predicate in this pass, and that
+    // predicate is consulted by ALL SIX passes. What keeps the name safe is NOT the name
+    // — it is that each pass gates on its OWN id map. Stamped at v7 so only the baked
+    // pass runs: with no baked mesh in the file the id map is empty and the re-target
+    // loop never executes, so a `geometry` channel on a non-baked node is untouched.
+    const strayOnNonBaked = {
+      formatVersion: 7,
+      id: 'p388-collision',
+      name: 'stray geometry channel on a plain Object',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { KeyframeChannelNumber: 2 },
+      state: {
+        nodes: {
+          n_obj: {
+            id: 'n_obj',
+            type: 'Object',
+            version: 1,
+            params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+            inputs: {},
+          },
+          n_stray: {
+            id: 'n_stray',
+            type: 'KeyframeChannelNumber',
+            version: 2,
+            params: {
+              name: 'geometry',
+              target: 'n_obj',
+              paramPath: 'geometry',
+              keyframes: [
+                { time: 0, value: 0, easing: 'linear' },
+                { time: 1, value: 1, easing: 'linear' },
+              ],
+            },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    const m = loadFromBytes(strayOnNonBaked);
+    expect(m.formatVersion).toBe(8);
+    expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
+  });
+
+  it('CONTROLS: box, curve, light and camera still split alongside the baked pass in one load', () => {
+    // A mixed formatVersion-2 scene carrying every kind split so far plus a baked mesh:
+    // all six passes run in sequence on one load, so the earlier kinds are live controls
+    // for the baked pass rather than a comment.
+    let s = emptyDagState();
+    const add = (op: Parameters<typeof applyOp>[1]) => {
+      s = applyOp(s, op).next;
+    };
+    add({
+      type: 'addNode',
+      nodeId: 'n_box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_sphere',
+      nodeType: 'SphereMesh',
+      params: { radius: 1.3 },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_curve',
+      nodeType: 'Curve',
+      params: {
+        points: [
+          { id: 'cp0', co: [0, 0, 0] },
+          { id: 'cp1', co: [1, 1, 1] },
+        ],
+      },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_point',
+      nodeType: 'PointLight',
+      params: { intensity: 2.2, position: [0, 3, 0] },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_persp',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: CAM_PERSP_FOV, far: CAM_FAR, position: CAM_POSITION, lookAt: CAM_LOOKAT },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_baked',
+      nodeType: 'BakedMesh',
+      params: {
+        geometry: BAKED_GEOMETRY,
+        position: BAKED_POSITION,
+        rotation: BAKED_ROTATION,
+        scale: BAKED_SCALE,
+        material: BAKED_MATERIAL,
+      },
+    });
+    // A light `intensity` channel — an EARLIER kind's data-param channel, routed by the
+    // same shared predicate during a different pass.
+    add({
+      type: 'addNode',
+      nodeId: 'n_lint',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'intensity',
+        target: 'n_point',
+        paramPath: 'intensity',
+        keyframes: [
+          { time: 0, value: 2.2, easing: 'linear' },
+          { time: 1, value: 6, easing: 'linear' },
+        ],
+      },
+    });
+    const nodes = JSON.parse(JSON.stringify(s.nodes));
+    const m = loadFromBytes({
+      formatVersion: 2,
+      id: 'p388-mixed',
+      name: 'box+sphere+curve+light+camera+baked',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: {
+        BoxMesh: nodes.n_box.version,
+        SphereMesh: nodes.n_sphere.version,
+        Curve: nodes.n_curve.version,
+        PointLight: nodes.n_point.version,
+        PerspectiveCamera: nodes.n_persp.version,
+        BakedMesh: nodes.n_baked.version,
+      },
+      state: { nodes, outputs: s.outputs },
+    });
+    // The full chain: 2 → 3 → 4 → 5 → 6 → 7 → 8, every step doing real work.
+    expect(m.formatVersion).toBe(8);
+    // Controls — every earlier kind still splits.
+    expect(m.state.nodes.n_box.type).toBe('Object');
+    expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
+    expect(m.state.nodes.n_sphere.type).toBe('Object');
+    expect(Object.values(m.state.nodes).some((n) => n.type === 'SphereData')).toBe(true);
+    expect(m.state.nodes.n_curve.type).toBe('Object');
+    expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
+    expect(m.state.nodes.n_point.type).toBe('Object');
+    expect(splitLightDataNode(m, 'n_point')).toBeDefined();
+    expect(m.state.nodes.n_persp.type).toBe('Object');
+    expect(splitCameraDataNode(m, 'n_persp')).toBeDefined();
+    // ...and the light's own data-param channel still routes to ITS data half, proving
+    // the baked pass's newly-added name did not disturb an earlier pass.
+    expect((m.state.nodes.n_lint.params as { target: string }).target).toBe(
+      splitLightDataNode(m, 'n_point')!.id,
+    );
+    // And the baked mesh split alongside them, pose intact.
+    expect(m.state.nodes.n_baked.type).toBe('Object');
+    expect((m.state.nodes.n_baked.params as { position: Vec3 }).position).toEqual(BAKED_POSITION);
+    expect(splitBakedDataNode(m, 'n_baked')).toBeDefined();
   });
 });
 
@@ -1775,8 +2250,8 @@ function childRefNodes(state: DagState): string[] {
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
-    // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light → 7 camera.
-    expect(migrated.formatVersion).toBe(7);
+    // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light → 7 camera → 8 baked.
+    expect(migrated.formatVersion).toBe(8);
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,

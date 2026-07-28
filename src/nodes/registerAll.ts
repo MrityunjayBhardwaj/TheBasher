@@ -12,6 +12,7 @@ import { ArrayModifierNode } from './ArrayModifier';
 // (TransformClipNode is imported later in the alphabetical block.)
 import { AreaLightNode } from './AreaLight';
 import { BakedMeshNode } from './BakedMesh';
+import { BakedDataNode } from './BakedData';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
@@ -132,6 +133,13 @@ const ALL: NodeDefinition[] = [
   // producer carrying a baked GeometryRef handle + identity TRS + rich material.
   // Registered in the Meshes block so its addNode validates at Apply time (V1).
   BakedMeshNode as unknown as NodeDefinition,
+  // #388 (Stage C · C5) — the baked mesh's data half (the OPFS handle + the captured
+  // material, no transform). The first ObjectData whose geometry is ASYNCHRONOUS, so
+  // it is its own union member rather than a second MeshData producer — reusing
+  // MeshData renders a baked material grey and a baked geometry not at all, both
+  // silently (measured; see BakedData.ts). Coexists with the fused BakedMesh above;
+  // the split retires its fused evaluate in a later slice.
+  BakedDataNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
   // #296 — a Null controller: a transformable, geometry-less scene object (Empty).
   NullNode as unknown as NodeDefinition,

@@ -275,16 +275,36 @@ function GhostChild({ value }: { value: SceneObject }) {
           </group>
         );
       }
-      // #387 — a `CameraData` Object falls through this guard and ghosts NOTHING, and
-      // that is the DECISION, not an oversight: both fused camera kinds are already in
-      // `GHOSTLESS_KINDS` above (a camera carries no geometry), so ghosting the split
-      // form would make a camera proposal MORE visible after the split than before it —
-      // a parity break in the one direction C4 is not allowed to take. The same holds
-      // for `LightData` (#386). Deliberately not routed through `recomposeCameraObject`:
-      // the ghost band is the one camera consumer that wants the pair left alone.
-      if (!data || data.kind !== 'MeshData') return null;
+      if (!data) return null; // an Empty
+      // ⚠️ THIS WAS `data.kind !== 'MeshData'` — the LAST of the three inequality guards
+      // over `ObjectData`, and the shape is the defect independent of the answer. An
+      // inequality is ALREADY TOTAL: every present and future member that is not
+      // `MeshData` takes the early return, so widening the union cannot redden it. Baked
+      // was absorbed here in the same silence as at the other two sites; the only
+      // difference is that here `null` was RIGHT, and a right answer reached by a guard
+      // that cannot fail is exactly what kept the other two wrong for four splits.
+      // Spelled as a discrimination, the next data kind (glTF, #389) has to land in one
+      // of these arms deliberately.
+      //
+      // Why each of the three opts out, so the next kind can tell which case it is:
+      // a camera and a light carry NO GEOMETRY, and both fused forms are already in
+      // `GHOSTLESS_KINDS` above (#386/#387) — ghosting the split form would make such a
+      // proposal MORE visible after the split than before it, a parity break in the one
+      // direction Stage C is not allowed to take. `BakedData` opts out for the OTHER
+      // reason (#388): it has geometry, but the bytes live in OPFS behind Suspense and
+      // this overlay is synchronous — the same reason `GltfAsset`, `BakedMesh` and
+      // `ModifiedMesh` are on that list. None is routed through its recompose helper:
+      // the ghost band is the one consumer that wants the pair left alone.
+      if (data.kind === 'BakedData' || data.kind === 'LightData' || data.kind === 'CameraData') {
+        return null;
+      }
+      const exhaustiveData: 'MeshData' = data.kind;
+      void exhaustiveData;
       const desc = data.geometry.descriptor;
-      const color = data.material && 'base' in data.material ? data.material.base.color : '#ffffff';
+      // #388 — `'base' in data.material` was here to exclude a `BakedMaterialSpec`, an arm
+      // `MeshDataValue.material` no longer admits (no producer ever emitted one). A ghost
+      // reads the inline colour or falls back to white when the data node has no material.
+      const color = data.material ? data.material.base.color : '#ffffff';
       const geom =
         desc.kind === 'box' ? (
           <boxGeometry args={desc.size as [number, number, number]} />

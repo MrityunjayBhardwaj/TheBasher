@@ -97,12 +97,12 @@ function kindForNodeType(nodeType: string): IconKind {
 
   if (nodeType.endsWith('Light')) return 'light';
   if (nodeType.endsWith('Camera')) return 'camera';
-  if (
-    nodeType === 'BakedMesh' ||
-    nodeType === 'GltfAsset' ||
-    nodeType === 'GltfChild' ||
-    nodeType.endsWith('Mesh')
-  ) {
+  // #388 — `nodeType === 'BakedMesh'` was in this list and is gone with the kind's
+  // retirement. It was doubly dead: no node carries that type once the v7 → v8 migration
+  // splits every saved one, and `endsWith('Mesh')` already matched it anyway. The pair is
+  // iconed by its halves — the Object by its data node, and `BakedData` through the
+  // `Data`-suffix branch above (stem `Baked` is a mesh stem).
+  if (nodeType === 'GltfAsset' || nodeType === 'GltfChild' || nodeType.endsWith('Mesh')) {
     return 'mesh';
   }
   return 'dot';

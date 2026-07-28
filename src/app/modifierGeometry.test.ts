@@ -21,6 +21,7 @@ import { emptyDagState, applyOp, type DagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { canModifyGeometry, modifierSource } from './modifierGeometry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import type { SceneChild } from '../nodes/types';
@@ -93,6 +94,54 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
   it('offers modifiers on a cube — the offer is the accept condition (V108)', () => {
     const { state, objectId } = splitCubeWithArray();
     expect(canModifyGeometry(state, objectId)).toBe(true);
+  });
+
+  // #388 C5 — THE PAIR THAT WAS SILENTLY BROKEN, and the reason this file gained a case.
+  // `modifierSource`'s Object arm used to narrow with `data.kind !== 'MeshData'`. An
+  // inequality guard is ALREADY TOTAL, so adding `BakedData` to the `ObjectData` union
+  // could not redden it: a baked pair fell through to `return null` and BOTH halves of
+  // V108 dropped together — the "+ Add Modifier" affordance vanished at exactly the
+  // moment the modifier stopped working, which reads as deliberate product design rather
+  // than a regression.
+  //
+  // ⚠️ THE CONTROL EXPIRED WITH THE RELIC, and the re-anchoring came out STRICTER. This
+  // was written a slice earlier as `expect(pair).toEqual(modifierSource(fusedValue))` —
+  // the fused `BakedMesh` had always been a modifier source, so it was the natural
+  // control. Retiring the fused node made its `evaluate` throw, so that comparison cannot
+  // be made any more. It is replaced by the CANONICAL struct: the pair must produce this
+  // exact source, not merely "whatever the relic used to say". The parity against the
+  // fused node WAS measured clean before the retirement, at the flip slice.
+  it('offers modifiers on a baked PAIR — the guard that absorbed it in silence (#388)', () => {
+    const geometry = {
+      key: 'baked|pair-8',
+      kind: 'baked' as const,
+      descriptor: { kind: 'baked' as const, hash: 'pair', vertexCount: 8 },
+    };
+    const material = { ...(rowDataParams('baked').material as Record<string, unknown>) };
+
+    let s: DagState = emptyDagState();
+    for (const op of splitOps(
+      'baked',
+      { objectId: 'n_pair' },
+      { data: { geometry, material }, object: { position: [1, 2, 3] } },
+    )) {
+      s = applyOp(s, op as never).next;
+    }
+
+    const pair = modifierSource(evaluate(s, 'n_pair').value as SceneChild);
+    expect(pair).not.toBeNull();
+    // The buffer handle and the captured spec ride through VERBATIM, and the modifier
+    // inherits the OBJECT's pose (a data node has no transform of its own).
+    expect(pair).toEqual({
+      geometry,
+      material,
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
+
+    // V108 — offer == accept. Both halves ask the SAME function, which is why they went
+    // wrong together and stayed consistent while doing it: a uniformly absent affordance
+    // reads as design. Assert the offer explicitly rather than trusting that agreement.
+    expect(canModifyGeometry(s, 'n_pair')).toBe(true);
   });
 
   it('does not offer modifiers on an Empty (an Object with no data)', () => {

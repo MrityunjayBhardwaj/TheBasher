@@ -57,6 +57,7 @@ import {
   SPLIT_KIND_NAMES,
   type SplitKindName,
 } from '../../src/test-utils/splitKinds';
+import { splitSphereOps } from './_splitSphere';
 
 interface DispatchResult {
   ok: boolean;
@@ -67,12 +68,23 @@ interface BasherWindow {
   __basher_dag?: {
     getState: () => {
       state: {
-        nodes: Record<string, { type: string; params: Record<string, unknown> }>;
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params: Record<string, unknown>;
+            // #388 — the baked row reads its data id off the EDGE rather than deriving it,
+            // because the Apply road mints the pair itself and picks its own fresh data id.
+            inputs?: Record<string, { node: string } | undefined>;
+          }
+        >;
         outputs: { scene?: { node: string } };
       };
       dispatchAtomic: (ops: unknown[], source: string, intent: string) => unknown;
     };
   };
+  /** The honest did-it-draw seam — no group fallback, unlike `__basher_mesh_world_position`. */
+  __basher_mesh_world_bounds?: (nodeId: string) => number[] | null;
   __basher_selection?: { getState: () => { select: (id: string | null) => void } };
   __basher_transient?: {
     getState: () => {
@@ -289,6 +301,20 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     }),
     what: "the field of view the camera's frustum is drawn with",
   },
+  baked: {
+    // Same probe as box/sphere — a baked mesh mounts in the `children` band inside a
+    // `<group name={nodeId}>` and reports a material colour — but the value reaching it
+    // travelled a different road: `ObjectR` recomposes the pair into a `BakedMeshValue`
+    // and hands it to `BakedMeshR`, whose material is built from the FLAT
+    // `BakedMaterialSpec`. So this row is the one that would catch a recompose that drops
+    // the captured spec, which renders as the `#808080` fallback rather than as nothing.
+    signature: materialColor,
+    expectHeld: () => ({
+      reaches: true,
+      value: String(SPLIT_KINDS.baked.distinctValues[1]).toLowerCase(),
+    }),
+    what: "the rendered material's captured baked colour",
+  },
 };
 
 test.beforeEach(async ({ page }) => {
@@ -345,10 +371,123 @@ test.beforeEach(async ({ page }) => {
  * something the default project already had rather than only adding to it. The per-test
  * OPFS wipe in `beforeEach` is what keeps that from leaking into the next spec.
  */
+/**
+ * The BAKED row, which is the one kind whose fixture cannot be hand-authored at all.
+ *
+ * Every other row is a `dispatchAtomic` of `splitOps` + `rowDataParams` — the data params
+ * ARE the fixture. Baked's `geometry` is not data, it is a HANDLE: a content-hash key into
+ * OPFS. The descriptor says as much ("the handle is synthetic: the conformance roads ask
+ * where a value is ROUTED, never whether OPFS holds those bytes"), and that is true of the
+ * unit tier — but this tier RENDERS. A synthetic hash addresses bytes that were never
+ * written, so `useBakedGeometry` suspends forever, the Suspense boundary never resolves,
+ * and the row fails as a 60s timeout waiting for UI that never mounts. Which is exactly
+ * how it failed: not at an assertion, at the toolbar.
+ *
+ * So the fixture drives the LIVE PRODUCER instead. Seed a split sphere carrying the row's
+ * resting colour, Apply Transform it, and let the real bake write real bytes and capture
+ * the material. The Apply road inherits the source's id on the OBJECT half, so the row
+ * still answers to `n_conf_baked` and every probe below addresses it the same way as the
+ * other five.
+ *
+ * ⚠️ The data id must be READ, not derived. Apply mints the pair itself and takes a fresh
+ * data id, and the seed sphere's own `__data` is still present when it does — so the baked
+ * data node is NOT `dataIdFor(objectId)`. Deriving it would make R8's guard-the-guard
+ * ("the channel really did land on the data half") compare against an id that does not
+ * exist, and fail for a reason that has nothing to do with push-down.
+ */
+async function buildBakedRow(page: Page, restingColor: string) {
+  const objectId = 'n_conf_baked';
+
+  await page.evaluate(
+    ({ ops, obj }) => {
+      const dag = (window as unknown as BasherWindow).__basher_dag!.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          ...(ops as unknown[]),
+          {
+            type: 'connect',
+            from: { node: obj, socket: 'out' },
+            to: { node: sceneId, socket: 'children' },
+          },
+        ],
+        'e2e',
+        'conformance baked seed',
+      );
+    },
+    {
+      ops: splitSphereOps({ objectId, radius: 0.5, color: restingColor }) as unknown[],
+      obj: objectId,
+    },
+  );
+
+  // The source has to be DRAWING before Apply can bake it — Apply reads the evaluated mesh.
+  await page.waitForFunction(
+    (id) => {
+      // Wait for the SEAM as well as the bounds. It is installed by the viewport and is not
+      // in this spec's beforeEach gate, so calling it unguarded throws "not a function"
+      // instead of waiting — and worse, it does that only when the viewport failed to
+      // mount, turning every render break below into the same unhelpful message.
+      const read = (window as unknown as BasherWindow).__basher_mesh_world_bounds;
+      return typeof read === 'function' && read(id) !== null;
+    },
+    objectId,
+    { timeout: 20_000 },
+  );
+
+  const applied = await page.evaluate(async (id) => {
+    const mod = await import('/src/app/animate/dispatchApplyTransform.ts');
+    return (await mod.dispatchApplyTransform(id, 'all')) as { ok: boolean; reason?: string };
+  }, objectId);
+  expect(applied.ok, `baked: Apply Transform failed (${applied.reason}) — no row to test`).toBe(
+    true,
+  );
+
+  // Wait on POSSESSION, not on the node's type: a split sphere and a baked pair both leave
+  // an `Object` at this id, so `type === 'Object'` is constant across the bake and would be
+  // satisfied before Apply ran at all.
+  await page.waitForFunction(
+    (id) => {
+      const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+      const dataId = nodes[id]?.inputs?.data?.node;
+      return nodes[id]?.type === 'Object' && nodes[dataId ?? '']?.type === 'BakedData';
+    },
+    objectId,
+    { timeout: 20_000 },
+  );
+  await page.waitForFunction(
+    (id) => {
+      // Wait for the SEAM as well as the bounds. It is installed by the viewport and is not
+      // in this spec's beforeEach gate, so calling it unguarded throws "not a function"
+      // instead of waiting — and worse, it does that only when the viewport failed to
+      // mount, turning every render break below into the same unhelpful message.
+      const read = (window as unknown as BasherWindow).__basher_mesh_world_bounds;
+      return typeof read === 'function' && read(id) !== null;
+    },
+    objectId,
+    { timeout: 20_000 },
+  );
+
+  const dataId = await page.evaluate(
+    (id) =>
+      (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[id]?.inputs?.data
+        ?.node ?? null,
+    objectId,
+  );
+  expect(dataId, 'baked: the pair has no data edge after Apply').not.toBeNull();
+  return { objectId, dataId: dataId! };
+}
+
 async function buildRow(page: Page, kind: SplitKindName) {
   const spec = SPLIT_KINDS[kind];
   const objectId = `n_conf_${kind}`;
   const dataId = dataIdFor(objectId);
+  // Baked answers this road differently because its fixture cannot exist as params — see
+  // `buildBakedRow`. Note this is a different FIXTURE, not a skipped road: both R5 and R8
+  // still run for baked and still assert an outcome.
+  if (kind === 'baked') {
+    return buildBakedRow(page, String(SPLIT_KINDS.baked.distinctValues[0]));
+  }
   const ops = splitOps(kind, { objectId }, { data: rowDataParams(kind) });
 
   await page.evaluate(

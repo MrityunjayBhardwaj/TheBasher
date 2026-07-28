@@ -34,7 +34,7 @@ import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 
 /** The kinds that have actually been split. One name per `ObjectData` producer. */
-export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera';
+export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked';
 
 /** The op shape the builders emit. Structurally assignable to the DAG's `Op`, but
  *  declared here so this module never imports the graph (see the header). */
@@ -160,10 +160,43 @@ export function nestParam(path: string, value: unknown): Record<string, unknown>
  */
 export function rowDataParams(kind: SplitKindName): Record<string, unknown> {
   const spec = SPLIT_KINDS[kind];
-  return {
-    ...spec.baseDataParams,
-    ...nestParam(spec.observableDataParam, spec.distinctValues[0]),
-  };
+  return deepMerge(
+    spec.baseDataParams,
+    nestParam(spec.observableDataParam, spec.distinctValues[0]),
+  );
+}
+
+/**
+ * Overlay `over` onto `base`, recursing into plain objects so a nested leaf replaces
+ * only itself.
+ *
+ * This used to be a spread, which is a SHALLOW overlay, and it was correct for as long
+ * as no kind's observable shared a root key with a required mint param — box/sphere
+ * observe `material.base.color` while minting only `size`, and their material is
+ * schema-defaulted, so the two never met. The baked mesh is the first kind where they
+ * do: its `material` is a fully required `BakedMaterialSpec` AND the root of its
+ * observable, so a shallow spread replaced the whole spec with `{color}` and the node
+ * failed to mint. The failure was loud (zod rejected the addNode), but the shape it
+ * belongs to is not: a shallow overlay silently DROPS sibling keys, and it would have
+ * done so quietly for any param bag that happened to be optional.
+ *
+ * Arrays are replaced wholesale, never merged — a `points` list or a `size` tuple is a
+ * value, not a namespace, and element-wise merging one would be nonsense.
+ */
+function deepMerge(
+  base: Record<string, unknown>,
+  over: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(over)) {
+    const prev = out[key];
+    out[key] = isPlainObject(prev) && isPlainObject(value) ? deepMerge(prev, value) : value;
+  }
+  return out;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 /**
@@ -401,6 +434,63 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
         issue: '#480',
       },
     },
+  },
+  baked: {
+    dataType: 'BakedData',
+    band: 'children',
+    fusedTypes: ['BakedMesh'],
+    migratesFromVersion: 7,
+    // BOTH params are required with no zod default — a baked mesh without its buffer
+    // handle or its captured material is not a baked mesh, and defaulting either would
+    // mint a plausible wrong thing. So the whole minimum valid node is spelled here.
+    // The handle is synthetic: the conformance roads ask where a value is ROUTED, never
+    // whether OPFS holds those bytes.
+    baseDataParams: {
+      geometry: {
+        key: 'baked|conformance',
+        kind: 'baked',
+        descriptor: { kind: 'baked', hash: 'conformance', vertexCount: 8 },
+      },
+      material: {
+        materialClass: 'standard',
+        color: '#5af07a',
+        roughness: 1,
+        metalness: 0,
+        opacity: 1,
+        transparent: false,
+        emissive: '#000000',
+        emissiveIntensity: 1,
+        map: null,
+        normalMap: null,
+        roughnessMap: null,
+        metalnessMap: null,
+        aoMap: null,
+        emissiveMap: null,
+      },
+    },
+    // `material.color` is FLAT on a BakedMaterialSpec and survives to the value
+    // verbatim. Note the path differs from box/sphere's `material.base.color` — that
+    // asymmetry is the whole recipe-vs-buffer difference showing up in one string, and
+    // it is why this kind is its own `ObjectData` member rather than a MeshData
+    // producer: an inline OpenPBR IR nests under `base`, a baked spec does not.
+    observableDataParam: 'material.color',
+    // ⚠️ NEITHER may be '#808080'. That is `MODIFIED_FALLBACK_MATERIAL`'s grey — what
+    // the renderer produces when a baked spec is narrowed by `'base' in mat` and
+    // discarded, which is the measured failure this whole kind is shaped to avoid. A
+    // fixture that assterted grey would pass precisely when the road is broken.
+    // Like the camera, the observable IS a required mint param, so `baseDataParams`
+    // deliberately holds a THIRD colour: the base written by a row must be provably
+    // written rather than a mint value coming back.
+    distinctValues: ['#c81e5a', '#1e9ac8'],
+    channelValueType: 'color',
+    readRendered: (r) => at(r, 'data', 'material', 'color'),
+    customSections: [],
+    primaryWorkflows: [
+      'apply transform to freeze a posed object into baked geometry',
+      'recolour the baked mesh',
+      're-pose the baked mesh after the bake',
+      'stack a modifier on the baked Object',
+    ],
   },
 };
 

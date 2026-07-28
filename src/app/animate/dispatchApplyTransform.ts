@@ -238,6 +238,20 @@ let bakedCounter = 0;
  * edge-less satellite node, so handing it to a standalone BakedMesh would risk colliding
  * with the same child on a later re-import; that path keeps minting deliberately.
  */
+/**
+ * A free id for the BakedData half of a baked pair. Mirrors the load migration's
+ * `freshDataId` spelling (`<object>__data`, then `__data1`, `__data2`, …) so the two
+ * roads that mint this pair — Apply and the v7 → v8 migration — produce the same-shaped
+ * ids. Nothing ADDRESSES the data half by name (every consumer reaches it through the
+ * `data` edge), so this is a readability contract, not a lookup key.
+ */
+function freshDataIdFor(state: DagState, objectId: string): string {
+  let id = `${objectId}__data`;
+  let n = 1;
+  while (state.nodes[id]) id = `${objectId}__data${n++}`;
+  return id;
+}
+
 function nextBakedId(state: DagState): string {
   // Deterministic-enough fresh id; loop until unused (collisions are vanishing).
   let id: string;
@@ -398,18 +412,37 @@ export async function dispatchApplyTransform(
   // the `data` edge is already gone when the data node is dropped.
   const retiredDataId = node.type === 'Object' ? exclusiveDataNodeOf(state, selectedId) : null;
   if (retiredDataId) ops.push({ type: 'removeNode', nodeId: retiredDataId });
-  // 4b — RE-OCCUPY it with the baked node, then replay the consumer edges onto it.
+  // 4b — RE-OCCUPY it with the baked PAIR, then replay the consumer edges onto it.
+  //
+  // #388 C5 — Apply used to mint a FUSED `BakedMesh` here, which made this the last
+  // producer in the codebase that took a split pair apart and handed back a node
+  // carrying both a transform and its own geometry. It now mints the pair the load
+  // migration already produces for every saved baked mesh, so the two roads agree and
+  // an in-session bake and a reloaded one are the same shape.
+  //
+  // The OBJECT inherits the id, exactly as it does in the migration and for the same
+  // reason: everything keyed by node id (a constraint `target`, a driver, an NLA strip,
+  // the consumer edges replayed below, the user's `meta.name`) survives the bake for
+  // free. The BakedData takes a fresh id and holds only what the buffer owns.
+  const bakedDataId = freshDataIdFor(state, bakedId);
+  ops.push({
+    type: 'addNode',
+    nodeId: bakedDataId,
+    nodeType: 'BakedData',
+    params: { geometry: bakedRef, material: spec },
+  });
   ops.push({
     type: 'addNode',
     nodeId: bakedId,
-    nodeType: 'BakedMesh',
-    params: {
-      geometry: bakedRef,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      material: spec,
-    },
+    nodeType: 'Object',
+    // IDENTITY pose — the TRS is baked into the verts. This is the one place the value
+    // is genuinely identity rather than defaulted, so it is written explicitly.
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  });
+  ops.push({
+    type: 'connect',
+    from: { node: bakedDataId, socket: 'out' },
+    to: { node: bakedId, socket: 'data' },
   });
   // Carry the user's NAME across. `meta` lives on the node, so removeNode drops it and
   // the fresh BakedMesh would fall back to `node.id` as its label — an object named "Hero"
@@ -597,18 +630,28 @@ async function dispatchApplyGltfChild(
     : [];
 
   const bakedId = nextBakedId(state);
+  // #388 C5 — mints the PAIR, like the primitive road above and like the load migration.
+  // Unlike that road there is no id to inherit: a glTF child is not a scene node, so the
+  // bake introduces a genuinely new object and both halves take fresh ids.
+  const bakedDataId = freshDataIdFor(state, bakedId);
   const ops: Op[] = [
     {
       type: 'addNode',
+      nodeId: bakedDataId,
+      nodeType: 'BakedData',
+      params: { geometry: bakedRef, material: spec },
+    },
+    {
+      type: 'addNode',
       nodeId: bakedId,
-      nodeType: 'BakedMesh',
-      params: {
-        geometry: bakedRef,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        material: spec,
-      },
+      nodeType: 'Object',
+      // IDENTITY pose — the child's world matrix is baked into the verts.
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    },
+    {
+      type: 'connect',
+      from: { node: bakedDataId, socket: 'out' },
+      to: { node: bakedId, socket: 'data' },
     },
     {
       type: 'connect',
