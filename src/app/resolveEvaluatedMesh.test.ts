@@ -135,55 +135,20 @@ describe('resolveEvaluatedMesh', () => {
     expect(mesh!.transform.rotation).toEqual([...expected.rotation]);
   });
 
-  it('projects a BakedMesh: verbatim baked handle + identity transform + rich material (4th producer)', () => {
-    let state = buildDefaultDagState();
-    const geometry = {
-      key: 'baked|deadbeef-8',
-      kind: 'baked' as const,
-      descriptor: { kind: 'baked' as const, hash: 'deadbeef', vertexCount: 8 },
-    };
-    const material = {
-      materialClass: 'standard' as const,
-      color: '#5af07a',
-      roughness: 1,
-      metalness: 0,
-      opacity: 1,
-      transparent: false,
-      emissive: '#000000',
-      emissiveIntensity: 1,
-      map: null,
-      normalMap: null,
-      roughnessMap: null,
-      metalnessMap: null,
-      aoMap: null,
-      emissiveMap: null,
-    };
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_baked',
-      nodeType: 'BakedMesh',
-      params: { geometry, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], material },
-    }).next;
-
-    const mesh = resolveEvaluatedMesh(state, 'n_baked', ctxAt(0));
-    expect(mesh).not.toBeNull();
-    // The handle is returned VERBATIM — no parallel walk, no re-derivation.
-    expect(mesh!.geometry).toEqual(geometry);
-    expect(mesh!.geometry.kind).toBe('baked');
-    // Identity transform — the TRS is baked into the verts (renderer applies identity).
-    expect(mesh!.transform.position).toEqual([0, 0, 0]);
-    expect(mesh!.transform.scale).toEqual([1, 1, 1]);
-    // The ONE rich material face (M6).
-    expect(mesh!.material).toEqual(material);
-  });
-
-  // #388 C5 — the read road for a baked PAIR, pinned against the fused node as a control.
-  // This branch used to narrow with `data.kind !== 'MeshData'`, which is already total, so
-  // widening `ObjectData` could not redden it and a baked pair silently resolved to null —
-  // no mesh for the gizmo, the inspector or the UV projection. The fused node is what a
-  // saved project still carries and what the pair migrates FROM, so the two must agree on
-  // everything the buffer owns.
-  it('projects a baked PAIR the same as the fused BakedMesh (the silently-absorbed guard)', () => {
+  // #388 C5 — the read road for a baked PAIR. This branch used to narrow with
+  // `data.kind !== 'MeshData'`, which is already total, so widening `ObjectData` could not
+  // redden it and a baked pair silently resolved to null — no mesh for the gizmo, the
+  // inspector or the UV projection.
+  //
+  // It was FIRST written against the fused `BakedMesh` as a live control, which is the
+  // strongest anchor while both shapes exist. That control expired with the fused read
+  // road (retired here — a kind whose `evaluate` throws must not keep answering reads),
+  // so the pair now pins the CANONICAL STRUCT instead: the exact projection a baked mesh
+  // must produce, rather than "whatever the relic used to say". This also carries the
+  // coverage of the deleted fused-producer test — verbatim handle, verbatim rich
+  // material, and the pose — which is where it belongs now that the pair is the only
+  // producer.
+  it('projects a baked PAIR: verbatim handle + captured spec + the Object half’s pose', () => {
     __reseedAllNodesForTests();
     const geometry = {
       key: 'baked|pair-8',
@@ -200,26 +165,22 @@ describe('resolveEvaluatedMesh', () => {
     )) {
       state = applyOp(state, op as never).next;
     }
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_fused',
-      nodeType: 'BakedMesh',
-      params: { geometry, material, position: [3, -2, 5], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    }).next;
 
-    const fused = resolveEvaluatedMesh(state, 'n_fused', ctxAt(0));
     const pair = resolveEvaluatedMesh(state, 'n_pair', ctxAt(0));
-    expect(fused).not.toBeNull(); // the control must work, or this test proves nothing
     expect(pair).not.toBeNull();
-    // The handle and the captured spec pass through VERBATIM on both roads.
-    expect(pair!.geometry).toEqual(fused!.geometry);
-    expect(pair!.material).toEqual(fused!.material);
-    // `uvs` is null for a baked ref on BOTH roads — the bytes are not sync-buildable, so
-    // a non-null here would mean the pair took the primitive registry path by mistake.
+    // The handle is returned VERBATIM — no parallel walk, no re-derivation. The bytes are
+    // authoritative in OPFS, keyed by content hash.
+    expect(pair!.geometry).toEqual(geometry);
+    expect(pair!.geometry.kind).toBe('baked');
+    // The captured spec rides through verbatim — the ONE rich material face (M6).
+    expect(pair!.material).toEqual(material);
+    // `uvs` is null for a baked ref — the bytes are not sync-buildable, so a non-null here
+    // would mean the pair took the primitive registry path by mistake.
     expect(pair!.uvs).toBeNull();
-    expect(fused!.uvs).toBeNull();
-    // The pose is carried by the Object half and lands at the same place.
-    expect(pair!.transform.position).toEqual(fused!.transform.position);
+    // The pose is carried by the Object half, which is the whole point of the split.
+    expect(pair!.transform.position).toEqual([3, -2, 5]);
+    expect(pair!.transform.rotation).toEqual([0, 0, 0]);
+    expect(pair!.transform.scale).toEqual([1, 1, 1]);
   });
 
   it('returns null for a non-mesh node (identity-null, no crash)', () => {

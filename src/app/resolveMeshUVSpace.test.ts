@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 
 beforeEach(() => {
@@ -29,47 +30,39 @@ beforeEach(() => {
   __reseedAllNodesForTests();
 });
 
-/** A BakedMesh whose geometry ref points at OPFS bytes that were never primed — the
- *  registry MISS that must read as 'loading', not 'none'. */
-function unprimedBakedMesh(): DagState {
+/** A baked mesh whose geometry ref points at OPFS bytes that were never primed — the
+ *  registry MISS that must read as 'loading', not 'none'.
+ *
+ *  #388 — this was a fused `BakedMesh` node, which is the shape that no longer exists:
+ *  the kind is retired and its read road is gone with it, so the fixture is the PAIR an
+ *  Object + `BakedData` make. The invariant under test is unchanged and belongs to the
+ *  baked AVAILABILITY CLASS, not to any one node shape — the fused node was only ever
+ *  the vehicle for reaching it. Pinning it on the shape that actually exists is what
+ *  keeps it a live test rather than a museum piece. */
+function unprimedBakedPair(): DagState {
   let s = emptyDagState();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'baked',
-    nodeType: 'BakedMesh',
-    params: {
-      geometry: {
-        kind: 'baked',
-        key: 'baked|never-primed',
-        descriptor: { kind: 'baked', hash: 'never-primed', vertexCount: 3 },
+  for (const op of splitOps(
+    'baked',
+    { objectId: 'baked' },
+    {
+      data: {
+        geometry: {
+          kind: 'baked',
+          key: 'baked|never-primed',
+          descriptor: { kind: 'baked', hash: 'never-primed', vertexCount: 3 },
+        },
+        material: rowDataParams('baked').material,
       },
-      material: {
-        materialClass: 'standard',
-        color: '#5af07a',
-        roughness: 1,
-        metalness: 0,
-        opacity: 1,
-        transparent: false,
-        emissive: '#000000',
-        emissiveIntensity: 1,
-        map: null,
-        normalMap: null,
-        roughnessMap: null,
-        metalnessMap: null,
-        aoMap: null,
-        emissiveMap: null,
-      },
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
     },
-  }).next;
+  )) {
+    s = applyOp(s, op as never).next;
+  }
   return s;
 }
 
 describe('resolveMeshUVSpace — miss semantics per availability class (#405)', () => {
   it('an unprimed BAKED geometry reads as loading, never as none', () => {
-    const space = resolveMeshUVSpace(unprimedBakedMesh(), 'baked');
+    const space = resolveMeshUVSpace(unprimedBakedPair(), 'baked');
     // The bytes live in OPFS behind an async read: "not here yet" is NOT "there is none".
     // Reporting 'none' would make the panel show its empty state and stop waiting — the
     // exact silent-miss class this module was consolidated to end.

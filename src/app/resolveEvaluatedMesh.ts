@@ -1,5 +1,8 @@
-// resolveEvaluatedMesh — project EVERY mesh-producing kind (BoxMesh, SphereMesh,
-// GltfChild) into ONE `EvaluatedMesh` (v0.6 #1, issue #150). The single producer
+// resolveEvaluatedMesh — project EVERY mesh-producing kind into ONE `EvaluatedMesh`
+// (v0.6 #1, issue #150). The kinds are named at their branches rather than here: the
+// fused mesh producers this header used to list (BoxMesh, SphereMesh, BakedMesh) are all
+// retired, and each is now read as a split `Object` reaching through its data node, which
+// is the one shape the list kept failing to keep up with. The single producer
 // the renderer, gizmo, and inspector all consume — generalizing the proven
 // `resolveEvaluatedTransform` (one-producer-many-consumers) from the transform
 // band to the whole mesh face.
@@ -42,7 +45,6 @@ import type {
   ObjectValue,
   Vec3,
 } from '../nodes/types';
-import { isBakedMaterialSpec } from '../nodes/materialSchema';
 import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
@@ -160,28 +162,14 @@ export function resolveEvaluatedMesh(
     return { geometry, uvs: null, material: null, transform };
   }
 
-  if (node.type === 'BakedMesh') {
-    // The 4th EvaluatedMesh producer (Phase 151, V29). NO parallel walk: the
-    // baked GeometryRef is already authoritative (the bytes live in OPFS, keyed
-    // by content hash) and the transform is identity (the TRS is baked INTO the
-    // verts). Return the handle + material verbatim; the renderer (BakedMeshR)
-    // loads the geometry via the suspense hook and applies identity scale (H40
-    // band-drift guard — applying the node scale would double-transform).
-    const p = node.params as {
-      geometry?: unknown;
-      position?: unknown;
-      rotation?: unknown;
-      scale?: unknown;
-      material?: unknown;
-    };
-    if (!isBakedGeometryRef(p.geometry) || !isBakedMaterialSpec(p.material)) return null;
-    const transform: MeshTransform = {
-      position: isVec3(p.position) ? p.position : [0, 0, 0],
-      rotation: isVec3(p.rotation) ? p.rotation : [0, 0, 0],
-      scale: isVec3(p.scale) ? p.scale : IDENTITY_SCALE, // C-1 hydrate guard
-    };
-    return { geometry: p.geometry, uvs: null, material: p.material, transform };
-  }
+  // #388 — the fused `node.type === 'BakedMesh'` branch was HERE, and it is gone with the
+  // node it read. A retired kind must not keep a working read road: `BakedMesh.evaluate`
+  // now throws, so a node that somehow reached this resolver would have been ANSWERED on
+  // the read side (gizmo, inspector, UV projection) while the render side refused it —
+  // the read/render disagreement the split exists to prevent, with nothing failing. A
+  // baked mesh is resolved by the `node.type === 'Object'` branch below, through its
+  // `BakedData`. Same removal the two earlier mesh kinds got at their own retirements
+  // (`a27155c` BoxMesh, `c6ffeee` SphereMesh) — this was the last one still standing.
 
   if (node.type === 'ArrayModifier') {
     // SOP / modifier (epic #201, #209) — the RECURSIVE read-side branch, the
@@ -264,11 +252,12 @@ export function resolveEvaluatedMesh(
       scale: isVec3(value.scale) ? value.scale : IDENTITY_SCALE, // C-1 hydrate guard
     });
     if (data.kind === 'BakedData') {
-      // #388 — the Object half of a baked pair. Byte-identical to the fused `BakedMesh`
-      // branch above on everything the buffer owns: the handle is already authoritative
-      // (OPFS, content-hashed), the material is the captured spec verbatim, and `uvs` is
-      // null because a baked ref is not sync-buildable from the registry. Only the
-      // TRANSFORM differs, and it differs the way every split kind's does — resolved
+      // #388 — the Object half of a baked pair, and now the ONLY road a baked mesh is
+      // read on. Everything the buffer owns passes through verbatim, exactly as the
+      // retired fused branch did: the handle is already authoritative (OPFS,
+      // content-hashed), the material is the captured spec, and `uvs` is null because a
+      // baked ref is not sync-buildable from the registry. Only the TRANSFORM differs
+      // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
       return { geometry: data.geometry, uvs: null, material: data.material, transform };
     }
@@ -286,11 +275,4 @@ export function resolveEvaluatedMesh(
   }
 
   return null; // identity-null: not a mesh producer
-}
-
-/** A `GeometryRef{kind:'baked'}` handle carried on a BakedMesh param. */
-function isBakedGeometryRef(v: unknown): v is GeometryRef {
-  if (typeof v !== 'object' || v === null) return false;
-  const r = v as { kind?: unknown; key?: unknown; descriptor?: { kind?: unknown } };
-  return r.kind === 'baked' && typeof r.key === 'string' && r.descriptor?.kind === 'baked';
 }
