@@ -12,6 +12,7 @@
 // time → frame-0 and frame-N poses are identical → these assertions fail.
 
 import { test, expect } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface BasherWindow {
   __basher_view_camera?: () => {
@@ -139,7 +140,10 @@ test.describe('#190 camera animation (viewport look-through)', () => {
       (window as unknown as BasherWindow).__basher_selection!.getState().select('n_camera'),
     );
     // The camera's fov field renders a keyframe diamond (auto, like any param).
-    const diamond = page.getByTestId('inspector-diamond-n_camera-fov');
+    // #387 C4: `fov` is a CameraData param, so the diamond — and the channel the first
+    // key mints below — are keyed to the LENS half while the selection stays the Object.
+    const lens = await dataNodeIdOf(page, 'n_camera');
+    const diamond = page.getByTestId(`inspector-diamond-${lens}-fov`);
     await expect(diamond).toBeVisible();
     await diamond.click();
     await page.waitForTimeout(150);
@@ -147,18 +151,18 @@ test.describe('#190 camera animation (viewport look-through)', () => {
     // The first key created a FREE-FLOATING KeyframeChannelNumber targeting the
     // camera node — NOT an AnimationLayer wrapping it (which would break
     // scene.camera + look-through). This is the #190 authoring branch.
-    const shape = await page.evaluate(() => {
+    const shape = await page.evaluate((lensId) => {
       const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
       const list = Object.values(nodes);
       const camChannels = list.filter(
-        (n) => n.type.startsWith('KeyframeChannel') && n.params.target === 'n_camera',
+        (n) => n.type.startsWith('KeyframeChannel') && n.params.target === lensId,
       );
       return {
         channelTypes: camChannels.map((c) => c.type),
         channelPaths: camChannels.map((c) => c.params.paramPath),
         hasLayer: list.some((n) => n.type === 'AnimationLayer'),
       };
-    });
+    }, lens);
     expect(shape.channelTypes).toEqual(['KeyframeChannelNumber']);
     expect(shape.channelPaths).toEqual(['fov']);
     // Falsifiable: revert the camera branch → the first key runs addLayer →

@@ -86,13 +86,12 @@ test('P2.1#1 Cmd+Z reverts the last Op via the global keyboard listener', async 
 });
 
 // ---------------------------------------------------------------------------
-// P2.1#2 — Cmd+Shift+C bakes a new PerspectiveCamera node and reroutes
-// scene.camera atomically. One Cmd+Z reverts the snapshot.
+// P2.1#2 — Cmd+Shift+C bakes a new camera from the current view and reroutes
+// scene.camera atomically. One Cmd+Z reverts the snapshot. Post-#387 the bake mints
+// the split PAIR (Object + CameraData), so it adds two nodes, not one.
 // ---------------------------------------------------------------------------
 
-test('P2.1#2 Cmd+Shift+C bakes a new PerspectiveCamera + reroutes scene.camera', async ({
-  page,
-}) => {
+test('P2.1#2 Cmd+Shift+C bakes a new camera pair + reroutes scene.camera', async ({ page }) => {
   const before = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     const s = w.__basher_dag!.getState().state;
@@ -115,17 +114,28 @@ test('P2.1#2 Cmd+Shift+C bakes a new PerspectiveCamera + reroutes scene.camera',
     const sceneNode = s.nodes[sceneRef.node];
     const camInput = sceneNode.inputs.camera as { node: string; socket: string };
     const newCam = s.nodes[camInput.node];
+    const lensRef = newCam?.inputs?.data as { node?: string } | undefined;
     return {
       nodeCount: Object.keys(s.nodes).length,
       cameraId: camInput.node,
       cameraType: newCam?.type,
+      lensType: lensRef?.node ? s.nodes[lensRef.node]?.type : null,
       undoLen: w.__basher_dag!.getState().undoStack.length,
     };
   });
 
-  expect(after.nodeCount).toBe(before.nodeCount + 1);
+  // #387 C4 — baking a camera from the view now mints a PAIR: the `Object` that carries
+  // the pose and gets wired to `scene.camera`, plus the `CameraData` holding the lens. So
+  // the scene grows by two, and the type this test used to name has retired.
+  //
+  // Asserting the lens as well is not padding. An `Object` alone would satisfy both the
+  // count and the type — it is what a bake that forgot the lens, or wired the two
+  // together backwards, would leave behind — and the camera would then quietly fall back
+  // to a default pose instead of the view it was baked from.
+  expect(after.nodeCount).toBe(before.nodeCount + 2);
   expect(after.cameraId).not.toBe(before.cameraId);
-  expect(after.cameraType).toBe('PerspectiveCamera');
+  expect(after.cameraType).toBe('Object');
+  expect(after.lensType).toBe('CameraData');
   expect(after.undoLen).toBeGreaterThan(0);
 
   // One undo reverts the entire atomic group → camera input restored.

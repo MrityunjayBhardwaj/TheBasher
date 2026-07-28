@@ -30,10 +30,11 @@
 //      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issues #471, #387.
 
 import type { SplitBand } from '../app/objectDataBand';
+import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 
 /** The kinds that have actually been split. One name per `ObjectData` producer. */
-export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light';
+export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera';
 
 /** The op shape the builders emit. Structurally assignable to the DAG's `Op`, but
  *  declared here so this module never imports the graph (see the header). */
@@ -109,7 +110,30 @@ export interface SplitKindSpec {
   /** This kind's primary workflows that route through a param the split MOVED. Asserted
    *  non-empty: an empty list would read as coverage while checking nothing. */
   readonly primaryWorkflows: readonly string[];
+  /**
+   * A road's answer may be NO — provided it is ASSERTED. `{reaches:false}` is NOT an
+   * opt-out: the road still builds the fixture, still applies the stimulus, and then
+   * asserts the outcome did NOT move, keyed to the issue, as an EQUALITY. So the cell
+   * reads "asked, answered no, here is why" and goes RED the day the gap closes. That
+   * is the whole difference from a skip, which is a claim about the suite's
+   * willingness to look rather than about the system. There is still no
+   * `skipRoads`/`supports`/`applicable` field, and there never will be.
+   *
+   * ONLY the management road lives here. The transient road's identical union already
+   * ships as `HeldExpectation` in the browser tier and is reached per kind through
+   * `RENDER_PROBES` — recording it a second time would give one answer two homes, and
+   * one of them would eventually be the stale one.
+   */
+  readonly roadAnswers?: {
+    readonly management?: RoadAnswer;
+  };
 }
+
+/** See `SplitKindSpec.roadAnswers`. A NO must carry its reason and its issue, so the
+ *  cell is a claim about the product that someone can go and close. */
+export type RoadAnswer =
+  | { readonly reaches: true }
+  | { readonly reaches: false; readonly why: string; readonly issue: string };
 
 /** The data-node id every split builder derives for a given Object id. */
 export function dataIdFor(objectId: string): string {
@@ -198,6 +222,12 @@ export function renderedValueForBand(band: SplitBand, objectValue: unknown): unk
       return objectValue;
     case 'lights':
       return recomposeLightObject(objectValue);
+    case 'camera':
+      // Flattened by `recomposeCameraObject` into the `CameraValue` the DAG's camera
+      // consumers read. ⚠️ That value is NOT what frames the shot — see
+      // `renderReachForBand`, which is what the roads dispatch on so the camera's
+      // channel road is asked about the POSE resolver rather than about this.
+      return recomposeCameraObject(objectValue);
     default: {
       const exhaustive: never = band;
       void exhaustive;
@@ -287,6 +317,90 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     readRendered: (r) => at(r, 'intensity'),
     customSections: [],
     primaryWorkflows: ['dim or brighten the light', 'arrange the three-point studio rig'],
+  },
+  camera: {
+    dataType: 'CameraData',
+    // A THIRD band, and it is not a variation on the two above — see the note under
+    // `readRendered`. Adding it to `SplitBand` is what makes `channelPathForBand` and
+    // `renderedValueForBand` refuse to compile until the camera's shape is decided.
+    band: 'camera',
+    // Two fused camera NODES collapse into one data node, the way four light nodes did.
+    // Perspective and orthographic are one datablock with a projection discriminator in
+    // every reference model, and they already share every param but `fov`/`zoom`.
+    fusedTypes: ['PerspectiveCamera', 'OrthographicCamera'],
+    migratesFromVersion: 6,
+    // `fov` is the ONE camera param with no zod default (`z.number().min(1).max(170)`),
+    // so it is the only one a valid CameraData must be minted with.
+    //
+    // ⚠️ 50, deliberately NOT the base value below, and camera is the first kind where
+    // that distinction is even expressible: every earlier kind's observable had a zod
+    // default, so "the value a freshly minted node holds" and "the value the fixture
+    // writes" were different by construction. Here the observable IS the required mint
+    // param, so making them equal would collapse the registry gate's base-vs-default
+    // check into `28 !== 28` — a fixture measuring its own input. Keeping them apart
+    // also makes the guard-the-guard road load-bearing for this kind: it now proves the
+    // fixture's 28 was actually written, rather than that a mint value came back.
+    // 50 is a plain valid fov and is none of 28 / 85 / 45.
+    baseDataParams: { fov: 50 },
+    // Measured, not assumed (#387 census): of the eleven params the fused camera holds,
+    // only `fov`/`near`/`far` reach the render road under their own name. The five DoF
+    // and sensor params never enter the evaluated value at all, and ortho `zoom` enters
+    // it and is read by nothing (#478). `fov` is the only lens param that is both
+    // primary and reachable.
+    observableDataParam: 'fov',
+    // Neither value may be 45: that is what `cameraPoseFromNode` falls back to when the
+    // read fails (`DEFAULT_CAMERA_POSE.fov`) and what `addPrimitives` seeds, so a broken
+    // road returns 45 and must not agree with either assertion.
+    distinctValues: [28, 85],
+    channelValueType: 'number',
+    // NO `.data`, and for a DIFFERENT reason than the light's flatness. The light band
+    // flattens the pair into a `LightValue` the renderer reads. The camera renderer does
+    // not read the evaluated value at all: `CameraValue` reaches it only as an ingredient
+    // in `buildPassSourceHash` (a cache key), while every actual render road consumes
+    // `CameraPose`, which `cameraPoseFromNode` builds from RAW params and overlays with
+    // its own private channel scan keyed on the node id. So this extractor is a claim
+    // about a struct the band has to produce, not about the node's output.
+    readRendered: (r) => at(r, 'fov'),
+    // `camera` renders `CameraLensControls`, not generic param rows.
+    customSections: ['camera'],
+    // ⚠️ The third entry says "static" on purpose. A focus PULL is by definition
+    // animated, and `focusDistance`/`fStop`/`sensorSize` reach neither `CameraValue`
+    // nor `CameraPose` — keying one animates nothing (#193, [[V121]]). Claiming the
+    // pull as a primary workflow would make this row assert a capability the product
+    // does not have, which is worse than not listing it: the row is the thing other
+    // rows are checked against. The limit is PINNED as an equality by
+    // `activeCamera.test.ts` ("the DoF road reads RAW params"), so it reds the day
+    // #193 wires a channel overlay into the DoF road and this text goes stale.
+    primaryWorkflows: [
+      'frame the shot by focal length / field of view',
+      'set the clip planes',
+      'set the depth-of-field focus (static — an animated focus pull does not reach the render, #193)',
+    ],
+    // The camera is the first kind to answer the management road NO, and the answer is
+    // #479's, not the split's: an NLA strip cannot drive a camera at all, because the pose
+    // is resolved by `activeCamera.ts`'s private per-channel scan, which never consults the
+    // strip fold. Push-down is a COMPOSITE whose destructive half — delete the bare
+    // channels — is sound only because the strip it mints drives the same target, so on a
+    // camera it deleted the animation and replaced it with a strip that folds nothing.
+    // Both sides now refuse through one expression (`stripDriveRefusal`).
+    //
+    // ⚠️ WHAT THIS CELL DOES *NOT* COVER, stated because the road's own question hides
+    // behind it: the refusal short-circuits BEFORE the enumeration, so for this kind R8
+    // never gets to ask whether offer and accept enumerate the data half alike — the thing
+    // #386 broke. Two independently sufficient links, one of them untested, which is
+    // exactly the shape that makes a green cell lie. The row compensates by asserting WHICH
+    // refusal fired (the camera's, naming #480 — not "no bare keyframe channels to push
+    // down", which is what a blind enumeration would say). When #480 lands and this entry
+    // is deleted, the refusal goes and the enumeration link comes back under test.
+    roadAnswers: {
+      management: {
+        reaches: false,
+        why:
+          'an NLA strip cannot drive a camera — the pose is resolved outside the strip ' +
+          'fold, so push-down would delete the animation instead of converting it',
+        issue: '#480',
+      },
+    },
   },
 };
 

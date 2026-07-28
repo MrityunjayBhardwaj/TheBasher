@@ -41,6 +41,7 @@ import {
 } from '../../core/comfy/basherControllers';
 import { bareChannelNodesForSubject } from '../nodeChannels';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
+import { isCameraNode } from '../cameraNode';
 import { stripDriveRefusal } from '../stripDrive';
 import { ActionChannelSchema, type ActionChannel } from '../../nodes/Action';
 import type { ClosureSpec } from '../../agent/closure/types';
@@ -500,11 +501,11 @@ function inferValueType(value: unknown): 'number' | 'vec2' | 'vec3' | 'quat' | '
  * (addLayer.ts:95-123) — that is the H34 orphan fix; it is NOT
  * reimplemented here. Any validate `!ok` → abort, mutate nothing.
  */
-/** Camera node types (#190). Wired into scene.camera, outside the AnimationLayer
- *  machinery — their channels target the camera node directly, no layer. */
-function isCameraNodeType(type: string | undefined): boolean {
-  return type === 'PerspectiveCamera' || type === 'OrthographicCamera';
-}
+/** Cameras (#190) are wired into scene.camera, outside the AnimationLayer machinery —
+ *  their channels target the camera node directly, no layer. #387: asked by POSSESSION
+ *  (isCameraNode), because post-split the node type is 'Object' and a type test would
+ *  route a camera's first key into the addLayer composite, wrapping it in a Mesh-typed
+ *  layer and breaking selectActiveCameraNode. */
 
 /** GltfChild (#188). NOT a scene producer (no `out` socket, no scene edge), so it
  *  CANNOT be wrapped in an AnimationLayer — its material channels target the child
@@ -783,7 +784,7 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   // addLayer composite (which would wrap the Camera in a Mesh-typed layer and
   // break selectActiveCameraNode). Same propose→accept spine, camera-specific
   // op set. Subsequent keys flow through the existing channel-id keyframe path.
-  if (isCameraNodeType(base.nodes[targetId]?.type)) {
+  if (isCameraNode(base, targetId)) {
     return dispatchDirectFirstKey(args, base, {
       allowed: ['number', 'vec3'],
       intentTag: 'user:camera.firstKey',

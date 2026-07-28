@@ -46,17 +46,38 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
       to: { node: sceneRef.node, socket: 'camera' },
     });
   }
+  // #387 C4 — camera-from-view mints the object↔data split: a CameraData (the lens the
+  // editor view is wearing) and an Object (the pose it is sitting at), wired via `data`.
+  // The lens/pose values are byte-identical to what the fused node carried; only the shape
+  // changed. `scene.camera` is wired to the OBJECT — it is the posable half, it inherits the
+  // role the fused node had, and it is what every camera consumer addresses.
+  const dataId = `${newId}__data`;
   ops.push({
     type: 'addNode',
-    nodeId: newId,
-    nodeType: 'PerspectiveCamera',
+    nodeId: dataId,
+    nodeType: 'CameraData',
     params: {
+      projection: 'Perspective',
       fov,
       near: 0.01,
       far: 1000,
-      position: [cam.position.x, cam.position.y, cam.position.z],
       lookAt: target ? [target.x, target.y, target.z] : [0, 0, 0],
     },
+  });
+  ops.push({
+    type: 'addNode',
+    nodeId: newId,
+    nodeType: 'Object',
+    params: {
+      position: [cam.position.x, cam.position.y, cam.position.z],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    },
+  });
+  ops.push({
+    type: 'connect',
+    from: { node: dataId, socket: 'out' },
+    to: { node: newId, socket: 'data' },
   });
   ops.push({
     type: 'connect',

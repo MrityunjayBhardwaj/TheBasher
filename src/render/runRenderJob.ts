@@ -25,6 +25,7 @@
 // upgrade as Wave B.1 if perf demands").
 
 import { evaluate } from '../core/dag/evaluator';
+import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
@@ -116,8 +117,15 @@ export async function runRenderJob(
       }
       const scene = evaluate(state, sceneRef.node, { ctx, socket: sceneRef.socket })
         .value as SceneValue;
-      const camera = evaluate(state, cameraRef.node, { ctx, socket: cameraRef.socket })
-        .value as CameraValue;
+      // #387 — this is a RAW `evaluate` + cast, not a socket gather, so it is its own
+      // road and needs the recompose in its own right: a split camera reaching the
+      // encoder as an ObjectValue would hand it a struct with no `fov`/`lookAt` at all.
+      // Fused → null → unchanged.
+      const cameraValue = evaluate(state, cameraRef.node, {
+        ctx,
+        socket: cameraRef.socket,
+      }).value;
+      const camera = recomposeCameraObject(cameraValue) ?? (cameraValue as CameraValue);
 
       const bytes = await deps.encoder({ pass, scene, camera, frame, seconds });
       const path = framePath(meta.outputPath, pass.passKind, frame);

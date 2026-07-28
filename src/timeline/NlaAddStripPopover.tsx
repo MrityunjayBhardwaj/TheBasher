@@ -43,7 +43,14 @@ import { commitNla } from './nlaCommit';
  *  cannot disagree about which targets are reachable (the agent road is
  *  deliberately still ungated — see Strip.ts); plus the camera band socket,
  *  which excludes a camera row structurally. Pure — unit/e2e assert the
- *  exclusion. Cameras become valid targets when #480 lands. */
+ *  exclusion. Cameras become valid targets when #480 lands.
+ *
+ *  #387 — the refusal's camera test is POSSESSION-keyed (`isCameraNode`), so this
+ *  picker inherits the split form transitively rather than spelling a type list.
+ *  That matters for exactly one shape: a TOP-LEVEL camera is already excluded by
+ *  the band socket, but a camera NESTED IN A GROUP carries the Group's socket
+ *  instead, and post-split its `nodeType` is 'Object' — a type test fails open on
+ *  it and offers a strip that folds nothing. Asserted on a GROUPED camera. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
   return buildSceneTreeRows(state)
     .filter(

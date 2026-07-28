@@ -28,12 +28,20 @@
 // three.js object. That is why this road is in the browser tier at all.
 //
 // THE ROW MAY CHOOSE HOW A ROAD ASKS, NEVER WHETHER IT RUNS
-// Both roads run for all four kinds. What varies is phrasing: which scene socket the band
+// Both roads run for all five kinds. What varies is phrasing: which scene socket the band
 // mounts in (which is the band, literally — `SplitBand`'s members ARE the socket names),
 // and how the rendered value is read back, since a mesh reports a material colour, a light
-// reports an intensity and a curve reports the vertex count of the polyline it draws.
-// There is deliberately no skip field and no per-kind early return; a kind that could not
-// answer would have to be answered differently, not excluded.
+// reports an intensity, a curve reports the vertex count of the polyline it draws and a
+// camera reports the field of view its frustum is drawn with. There is deliberately no skip
+// field and no per-kind early return; a kind that could not answer would have to be
+// answered differently, not excluded.
+//
+// TWO KINDS ANSWER NO, AND THEY ANSWER DIFFERENT ROADS
+// The curve's render cannot follow a held edit (#474) and the camera's cannot either, for
+// an unrelated reason (#484); the camera additionally refuses push-down altogether (#480).
+// Each NO still builds the fixture, still applies the stimulus, and asserts the outcome as
+// an EQUALITY against the issue — so the day any of the three is fixed, the row goes red
+// and says which one.
 //
 // REF: src/test-utils/splitKinds.ts (the rows); src/app/objectDataBand.ts (the band rule);
 //      src/viewport/SceneFromDAG.tsx (useDataParamTransients / useLightShadingTransients);
@@ -86,8 +94,9 @@ interface BasherWindow {
  *
  * `signature` is whatever quantity the held edit is supposed to move; `expectHeld` says what
  * must become of it, given what it rested at. Three kinds name the value they expect. The
- * curve records that its render cannot follow at all (#474) — still an answer, still
- * asserted, never a skip. See `HeldExpectation`.
+ * curve records that its render cannot follow at all (#474), and the camera that its pose
+ * road consults no transient at all (#484) — still answers, still asserted, never a skip.
+ * See `HeldExpectation`.
  *
  * Note what none of them do: re-derive the expected value from the param. The curve's
  * vertex count is a function of `resolution` and `closed`, and computing it here would mean
@@ -190,6 +199,33 @@ async function lightIntensity(page: Page): Promise<number | null> {
   });
 }
 
+/**
+ * The field of view the camera row's FRUSTUM is currently drawn with.
+ *
+ * The camera band has no mounted object to read the way the others do — the mesh bands
+ * traverse a named group's material, the light band finds a three.js light. What the
+ * viewport actually draws for a camera node is its frustum gizmo, whose geometry is a pure
+ * function of the resolved pose's `fov` (`CameraHelpers.tsx`, perspectiveFrustumSegments),
+ * and `CameraHelper` records that pose on `__basher_frustum_pose` keyed by node id — the
+ * DEV observation seam #240 added for exactly this question. Reading the seam rather than
+ * measuring the LineSegments' extents keeps the test from re-implementing the frustum
+ * math, the same reason the curve row counts vertices instead of re-deriving them.
+ *
+ * MEASURED sensitive, in this order, before the row below was written: with the row built
+ * the seam reads 28 — the fixture's base value, and none of 50 (what a freshly minted
+ * CameraData holds) or 45 (`DEFAULT_CAMERA_POSE.fov`, what a failed read returns), so the
+ * pose road demonstrably reached the DATA half. Seeding the channel moves it to 1. So the
+ * probe tracks this row's camera and is not a constant, which is what the negative
+ * expectation below needs in order to mean anything.
+ */
+async function cameraFrustumFov(page: Page, objectId: string): Promise<number | null> {
+  return page.evaluate((id) => {
+    const w = window as unknown as { __basher_frustum_pose?: Record<string, { fov?: number }> };
+    const fov = w.__basher_frustum_pose?.[id]?.fov;
+    return typeof fov === 'number' ? fov : null;
+  }, objectId);
+}
+
 const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
   box: {
     signature: materialColor,
@@ -229,6 +265,29 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     signature: lightIntensity,
     expectHeld: () => ({ reaches: true, value: SPLIT_KINDS.light.distinctValues[1] as number }),
     what: "the mounted light's intensity",
+  },
+  camera: {
+    // MEASURED, not assumed, and measured on BOTH halves: with the channel seeded and a
+    // held edit of 85 applied to `fov`, the frustum stayed at 1 — whether the transient was
+    // keyed to the CameraData or to the Object. So this is not the wrong-half mistake it
+    // would resemble; the camera pose road simply does not consult transients at all.
+    // `resolveCameraPoseAt` says so in as many words ("a render is of committed DAG
+    // state"), which makes the camera the one kind whose held edit is refused by design
+    // rather than by oversight — and the design predates the split, so the answer here is
+    // not a regression this slice introduced.
+    //
+    // It is still a real gap for a director: dragging the focal-length slider on an
+    // animated camera moves the number and not the shot.
+    signature: cameraFrustumFov,
+    expectHeld: () => ({
+      reaches: false,
+      why:
+        'the camera pose is resolved from committed DAG state only — `resolveCameraPoseAt` ' +
+        'deliberately applies no transient overlay, so no held lens edit can reach the ' +
+        'frustum or the look-through view',
+      issue: '#484',
+    }),
+    what: "the field of view the camera's frustum is drawn with",
   },
 };
 
@@ -272,9 +331,19 @@ test.beforeEach(async ({ page }) => {
  * Build one conformance row in the live app: the data node, the Object, the `data` edge,
  * and the connect into the band's scene socket.
  *
- * `SplitBand`'s members ARE the scene socket names ('children' / 'lights'), so the band
- * chooses where the pair mounts with no second mapping to keep in step — and a third band
- * is already a compile error at `channelPathForBand`, which is where it should be decided.
+ * `SplitBand`'s members ARE the scene socket names ('children' / 'lights' / 'camera'), so
+ * the band chooses where the pair mounts with no second mapping to keep in step — and a
+ * fourth band is already a compile error at `channelPathForBand`, which is where it should
+ * be decided.
+ *
+ * ⚠️ THE CAMERA ROW REPLACES THE PROJECT CAMERA, deliberately. `scene.camera` is a
+ * single-cardinality socket, so connecting the row's Object there displaces the seed
+ * camera's edge (measured: `scene.camera` goes from `n_camera` to `n_conf_camera`; the
+ * `n_camera` node itself survives, merely unwired). That is a feature for these rows — the
+ * row's camera becomes the ACTIVE one, which is the state the pose road is interesting in
+ * — but it is worth naming, because it is the one band where building a row mutates
+ * something the default project already had rather than only adding to it. The per-test
+ * OPFS wipe in `beforeEach` is what keeps that from leaking into the next spec.
  */
 async function buildRow(page: Page, kind: SplitKindName) {
   const spec = SPLIT_KINDS[kind];
@@ -312,8 +381,8 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
   test('every descriptor row has a render probe, and every probe has a row', async () => {
     expect(
       SPLIT_KIND_NAMES.length,
-      'fewer than 4 split kinds — the descriptor has drifted and every row below is vacuous',
-    ).toBeGreaterThanOrEqual(4);
+      'fewer than 5 split kinds — the descriptor has drifted and every row below is vacuous',
+    ).toBeGreaterThanOrEqual(5);
     expect(
       Object.keys(RENDER_PROBES).sort(),
       'RENDER_PROBES and SPLIT_KINDS disagree — a kind with no probe runs no browser road, ' +
@@ -438,13 +507,29 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       await page.getByTestId('timeline-tab-nla').click();
       await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');
 
+      // Whether push-down reaches this kind at all. Unset means YES, so a kind that has
+      // never been asked fails loudly rather than being quietly excused.
+      //
+      // Both sides below are asserted through THIS ONE expression rather than through a
+      // branch, and that is the point of the road: offer and accept must agree, so they
+      // have to be compared against the same value. An `if (negative) return` would leave
+      // the metadata gate satisfied — `why` present, `issue` present — while nothing ran.
+      const answer = spec.roadAnswers?.management;
+      const expectOffer = answer?.reaches ?? true;
+
       // THE OFFER — the surface counts the selected Object's bare channels.
       await expect(
         page.getByTestId('nla-push-down'),
-        `${kind}: push-down is dead for ${objectId}, whose ${param} is visibly keyframed. The ` +
-          `enumeration behind the button is addressing the Object by exact id and cannot see ` +
-          `the data half's channel — and zero channels is a legitimate answer, so it says nothing`,
-      ).toBeEnabled();
+        expectOffer
+          ? `${kind}: push-down is dead for ${objectId}, whose ${param} is visibly keyframed. ` +
+              `The enumeration behind the button is addressing the Object by exact id and ` +
+              `cannot see the data half's channel — and zero channels is a legitimate answer, ` +
+              `so it says nothing`
+          : `${kind}: push-down is OFFERED for ${objectId}, but this kind cannot be driven by ` +
+              `a strip (${answer && !answer.reaches ? answer.why : ''}). Either the guard has ` +
+              `been lost — in which case accepting will DELETE the animation — or the gap is ` +
+              `fixed and this row should say so`,
+      ).toBeEnabled({ enabled: expectOffer });
 
       // THE ACCEPT — the mutator enumerates them again, and must find the same set.
       const accepted = await page.evaluate(
@@ -453,9 +538,66 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       );
       expect(
         accepted.ok,
-        `${kind}: the surface OFFERED push-down and the mutator REFUSED it: ${accepted.reason}. ` +
-          `Offer and accept are running different enumerations`,
-      ).toBe(true);
+        `${kind}: the surface and the mutator disagree — the button says ` +
+          `${expectOffer ? 'yes' : 'no'} and the dispatcher says ${accepted.ok ? 'yes' : 'no'}` +
+          `${accepted.reason ? ` (${accepted.reason})` : ''}. They are running different ` +
+          `enumerations, or one of them has a guard the other lacks`,
+      ).toBe(expectOffer);
+
+      if (!expectOffer) {
+        const no = answer as { reaches: false; why: string; issue: string };
+
+        // What follows is the NEGATIVE branch, and it returns at the end — but note what it
+        // asserts on the way there. Both sides above already ran against the shared
+        // expression; below, this kind asserts four further things the positive branch never
+        // has to: which refusal fired, that offer and accept explain it identically, and
+        // that nothing was destroyed. A `return` that arrives after more assertions than the
+        // path it skips is not a skip.
+
+        // WHICH refusal fired. Two independently sufficient ones exist — this kind's own,
+        // and "no bare keyframe channels to push down" — and the second is precisely the
+        // #386 bug this road hunts: an enumeration blind to the data half refuses too, for
+        // the wrong reason, and would satisfy a bare `ok === false`. So the cell would read
+        // as covered while the road's real question went unasked. Naming the issue in the
+        // reason is what separates them.
+        expect(
+          accepted.reason ?? '',
+          `${kind}: push-down refused, but not for this kind's reason — it said ` +
+            `"${accepted.reason}". If that is the empty-enumeration refusal then the channel ` +
+            `on the data half is invisible to the mutator, which is a real bug wearing this ` +
+            `row's expected answer as a disguise`,
+        ).toContain(no.issue);
+
+        // Offer and accept must agree on the SENTENCE, not merely on the verdict. They read
+        // it from one expression (`stripDriveRefusal`), and if that ever forks, the button's
+        // tooltip and the toast start explaining the same refusal differently.
+        const title = await page.getByTestId('nla-push-down').getAttribute('title');
+        expect(
+          accepted.reason ?? '',
+          `${kind}: the button explains the refusal as "${title}" while the dispatcher says ` +
+            `"${accepted.reason}" — two sources for one answer`,
+        ).toContain(title ?? ' ');
+
+        // AND NOTHING WAS DESTROYED. This is the whole reason the refusal exists: push-down
+        // is a composite whose destructive half is sound only because the strip it mints
+        // drives the same target. A refusal that still deleted the channel would leave the
+        // object un-animated with nothing to show for it.
+        const wreckage = await page.evaluate((chId) => {
+          const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+          const count = (t: string) => Object.values(nodes).filter((n) => n.type === t).length;
+          return {
+            channelSurvived: Boolean(nodes[chId]),
+            actions: count('Action'),
+            strips: count('Strip'),
+          };
+        }, channelId);
+        expect(
+          wreckage,
+          `${kind}: push-down refused and destroyed something anyway — the refusal has to come ` +
+            `BEFORE the deletion, or it converts a known limit into data loss (${no.issue})`,
+        ).toEqual({ channelSurvived: true, actions: 0, strips: 0 });
+        return;
+      }
 
       // And the accept did what the offer promised: an Action + a Strip on the OBJECT (a
       // Strip carries one target, and a data node never gets its own lane), bare channel gone.

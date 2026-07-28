@@ -37,6 +37,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // saved at v5 (post-curve-split) carrying a fused light would never re-run an earlier
   // pass, so its light would never split — a silent, permanent data loss.
   5: migrateFusedLightToSplit,
+  // v6 → v7 (#387 Stage C · C4): split the two fused cameras into Object + CameraData.
+  // Its OWN format version for the same reason as every kind before it: a project saved
+  // at v6 (post-light-split) carrying a fused camera would never re-run an earlier pass,
+  // so its camera would never split — a silent, permanent data loss.
+  6: migrateFusedCameraToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -182,17 +187,17 @@ function isDataParamPath(paramPath: unknown): boolean {
     // channel whose `target` is a FORMER LIGHT id (the caller gates on the light map),
     // so a MaterialOverride's own bare `color` channel is never mis-retargeted.
     //
-    // ⚠️ THIS PREDICATE IS SHARED BY ALL FOUR SPLIT PASSES (box v2→v3, sphere v3→v4,
-    // curve v4→v5, light v5→v6). Each pass gates on its OWN id map, so a name added
-    // for one kind can still fire for an EARLIER kind's node if that kind happens to
-    // own a param of the same name — and it would move a channel that should have
-    // stayed on the Object, silently. Checked for this pass: none of BoxMesh (size),
+    // ⚠️ THIS PREDICATE IS SHARED BY ALL FIVE SPLIT PASSES (box v2→v3, sphere v3→v4,
+    // curve v4→v5, light v5→v6, camera v6→v7). Each pass gates on its OWN id map, so a
+    // name added for one kind can still fire for an EARLIER kind's node if that kind
+    // happens to own a param of the same name — and it would move a channel that should
+    // have stayed on the Object, silently. Checked for this pass: none of BoxMesh (size),
     // SphereMesh (radius/widthSegments/heightSegments) or Curve (points/closed/
     // resolution) owns any name above (`widthSegments` ≠ `width` — these are exact
     // matches, not prefixes). The combined box+sphere+curve+light migration fixture
-    // runs the earlier kinds' channels THROUGH this pass as live controls. When #387
-    // adds the camera's names here, re-run that check — a collision has no compiler
-    // and no runtime error, only a channel that quietly stops rendering.
+    // runs the earlier kinds' channels THROUGH this pass as live controls. When a SIXTH
+    // kind adds its names here, re-run that check — a collision has no compiler and no
+    // runtime error, only a channel that quietly stops rendering.
     paramPath === 'lightKind' ||
     paramPath === 'intensity' ||
     paramPath === 'color' ||
@@ -205,6 +210,41 @@ function isDataParamPath(paramPath: unknown): boolean {
     paramPath === 'target' ||
     paramPath === 'lookAt' ||
     paramPath === 'tex' ||
+    // Camera lens (the v6→v7 pass, #387) — the whole lens moves to the CameraData:
+    // how it projects, its focal length / ortho scale, clip planes, the DoF bag, and
+    // (parity-first, #387 D1) the aim params `lookAt`/`roll`. `lookAt` is already
+    // listed above for the area light and wants moving for both kinds, so it needs no
+    // second arm.
+    //
+    // COLLISION CHECK, re-run for this pass as the block above instructs. None of the
+    // eleven names below is owned by ANY earlier split kind: box (`size`), sphere
+    // (`radius`/`widthSegments`/`heightSegments`), curve (`points`/`closed`/
+    // `resolution`), light (`lightKind`/`intensity`/`color`/`distance`/`decay`/`angle`/
+    // `penumbra`/`width`/`height`/`target`/`lookAt`/`tex`), nor by the `Object` half
+    // every kind produces (`position`/`rotation`/`scale`).
+    //
+    // ⚠️ AND THE PRECISE STATEMENT OF WHY THAT IS ENOUGH, because the obvious one is
+    // wrong: a camera name CAN fire during an earlier pass. `paramPath` is free text,
+    // so nothing stops a channel carrying `paramPath: 'fov'` while targeting a box —
+    // and the box pass, gating only on its own id map plus this predicate, WILL move it
+    // to the BoxData. That is not new with the camera: `intensity` (a light name) has
+    // behaved this way for a box since #386. It is harmless for exactly one reason —
+    // no earlier kind OWNS any of these names, so such a channel was already driving
+    // nothing, and the re-target moves an inert channel between two halves of the same
+    // subject without changing a single rendered value. The check that actually matters
+    // is therefore the ownership one above; a name that an earlier kind DID own would
+    // be a real, silent mis-move. Both properties are pinned in migrations.test.ts.
+    paramPath === 'projection' ||
+    paramPath === 'fov' ||
+    paramPath === 'zoom' ||
+    paramPath === 'near' ||
+    paramPath === 'far' ||
+    paramPath === 'sensorSize' ||
+    paramPath === 'dofEnabled' ||
+    paramPath === 'focusDistance' ||
+    paramPath === 'fStop' ||
+    paramPath === 'focusOnTarget' ||
+    paramPath === 'roll' ||
     // Material — shared by both mesh primitives (the data half owns the look).
     // A curve has no material, so a curve target never reaches this arm.
     paramPath.startsWith('material')
@@ -624,6 +664,171 @@ export function migrateFusedLightToSplit(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 6 };
+}
+
+// ── v6 → v7: fused Perspective/OrthographicCamera → Object + CameraData ────
+// (object↔data split, #387 Stage C · C4)
+//
+// The per-kind repeat, one format version after the light's. Two fused camera NODES
+// collapse into ONE `CameraData` carrying a `projection` discriminator — the same call
+// the light made for its four kinds, and for the same reason: every reference model
+// (Blender included) treats perspective and orthographic as one camera datablock with
+// a type enum, and the two nodes already share every param but `fov`/`zoom`.
+//
+// The Object INHERITS the camera's id, so `scene.camera` edges, `CameraSelect.cameras`
+// edges, constraint targets, saved selections and transform channels all still resolve
+// — only lens/aim channels re-target to the fresh CameraData (the §5 id-stability
+// crux; getting it backwards silently orphans every channel).
+//
+// PARITY-FIRST (#387 D1): `lookAt` and `roll` move to the CameraData with the rest of
+// the lens, and the Object's `rotation` is written as identity and left UNUSED by the
+// camera road. Baking aim into a quaternion is exact for a STATIC pose but NOT for an
+// animated one — `rotation(t)` is a non-linear function of three independently keyed
+// channels whose key times need not coincide — and every prior kind's migration met a
+// byte-identity gate. The shipped LightData made the same call for the same reason.
+//
+// Runs on RAW JSON before the schema parses. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5;
+// src/nodes/CameraData.ts; src/nodes/cameraRecompose.ts; issue #387.
+
+/** Fused camera node TYPE → the CameraData `projection` discriminator. */
+const CAMERA_PROJECTION_OF: Record<string, 'Perspective' | 'Orthographic'> = {
+  PerspectiveCamera: 'Perspective',
+  OrthographicCamera: 'Orthographic',
+};
+
+/** Build a camera's CameraData param bag from its fused params, hydrating each lens
+ *  field from the SOURCE KIND'S own zod default. Only the kind's own subset is
+ *  written; CameraData's schema defaults the rest (an orthographic source has no DoF
+ *  or sensor params at all, so those are simply absent and default on parse). */
+function cameraDataParamsFor(
+  projection: 'Perspective' | 'Orthographic',
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const aim = {
+    lookAt: params.lookAt ?? [0, 0, 0],
+    roll: params.roll ?? 0,
+  };
+  switch (projection) {
+    case 'Perspective':
+      return {
+        projection: 'Perspective',
+        // ⚠️ NO `?? 45` — and this is the ONE place the light's hydrate idiom must not
+        // be copied. 45 is `DEFAULT_CAMERA_POSE.fov`: exactly what the pose road
+        // returns when a read FAILS. A fallback here would make "this camera's fov
+        // never arrived" indistinguishable from "this camera is framed at 45°",
+        // which is precisely why `CameraData.fov` is required with no zod default.
+        // `PerspectiveCameraParams.fov` is itself required, so a saved project always
+        // carries one; if a hand-edited file does not, the absence is carried
+        // faithfully and stays loud rather than being papered over here.
+        ...(params.fov !== undefined ? { fov: params.fov } : {}),
+        near: params.near ?? 0.01,
+        far: params.far ?? 500,
+        sensorSize: params.sensorSize ?? 36,
+        dofEnabled: params.dofEnabled ?? false,
+        focusDistance: params.focusDistance ?? 5,
+        fStop: params.fStop ?? 2.8,
+        focusOnTarget: params.focusOnTarget ?? false,
+        ...aim,
+      };
+    case 'Orthographic':
+      return {
+        projection: 'Orthographic',
+        // D5 — the ONE invented value in this migration, in exactly one place.
+        // `CameraData.fov` is required (see the note above) and an orthographic
+        // source never had one. It is INERT while `projection === 'Orthographic'`
+        // (the recompose reads `zoom`), and it is the value a later switch to
+        // perspective would land on anyway. `addPrimitives.paramsFor` does the same.
+        fov: 45,
+        zoom: params.zoom ?? 50,
+        near: params.near ?? 0.01,
+        far: params.far ?? 500,
+        ...aim,
+      };
+  }
+}
+
+export function migrateFusedCameraToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 7 };
+
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const cameraDataVersion = getNodeType('CameraData')?.version ?? 1;
+
+  // cameraId → its split-off data node id (used to re-target lens/aim channels).
+  const dataIdByCamera = new Map<string, string>();
+
+  for (const camera of Object.values(nodes)) {
+    const projection = camera?.type ? CAMERA_PROJECTION_OF[camera.type] : undefined;
+    // Every non-camera node is skipped — it never enters the loop. An ALREADY-split
+    // camera is an `Object`, so it is skipped too: that is what makes this idempotent.
+    if (!projection || !camera.id) continue;
+
+    // Normalize the camera through its OWN migration ladder first (reuse, not a
+    // parallel copy). Both camera kinds are v1 with no ladder steps today, but keep
+    // the pattern so a future camera-node version migrates BEFORE the split —
+    // splitting raw params before normalizing is the silent look-shift for old saves.
+    let params: Record<string, unknown> = { ...(camera.params ?? {}) };
+    const def = getNodeType(camera.type!);
+    if (def) {
+      let v = typeof camera.version === 'number' ? camera.version : def.version;
+      let safety = 64;
+      while (v < def.version && safety-- > 0) {
+        const step = def.migrations?.[v];
+        if (!step) break;
+        params = step(params) as Record<string, unknown>;
+        v++;
+      }
+    }
+
+    const dataId = freshDataId(nodes, camera.id);
+    dataIdByCamera.set(camera.id, dataId);
+
+    // The DATA half — the lens, no pose, no inputs. Per-projection hydrate.
+    nodes[dataId] = {
+      id: dataId,
+      type: 'CameraData',
+      version: cameraDataVersion,
+      params: cameraDataParamsFor(projection, params),
+      inputs: {},
+    };
+
+    // The OBJECT half — the camera converted IN PLACE (inherits the id). Owns the
+    // pose, points at the data node through `data`; any pre-existing inputs are kept
+    // (constraint targets, rig membership, Group parenting — all keyed on the
+    // inherited id). `rotation`/`scale` are written as identity because neither fused
+    // camera type HAS them: aim stays on the data half (D1), so the camera road
+    // ignores the Object's rotation (see cameraRecompose.ts, which drops it).
+    camera.type = 'Object';
+    camera.version = objectVersion;
+    camera.params = {
+      position: params.position,
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    camera.inputs = { ...(camera.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-target the channels that address the DATA half. A channel names its subject by
+  // `params.target` (a node-id STRING) + `params.paramPath`; a CameraData's own
+  // `lookAt` is a Vec3 ARRAY, so it is skipped by the `typeof === 'string'` guard —
+  // the same non-collision the light relies on. position channels keep target = the
+  // camera id (now the Object).
+  if (dataIdByCamera.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const dataId = dataIdByCamera.get(target);
+      if (dataId && n.params && isDataParamPath(n.params.paramPath)) {
+        n.params.target = dataId;
+      }
+    }
+  }
+
+  return { ...proj, formatVersion: 7 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {

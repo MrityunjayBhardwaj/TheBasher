@@ -22,6 +22,7 @@ import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cam
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { CameraLookAtTarget } from './CameraLookAtTarget';
 import { resolveCameraPoseAt } from './activeCamera';
+import { cameraProjectionOf } from './cameraNode';
 import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
@@ -113,7 +114,14 @@ export function CameraLensControls({
     fStop?: number;
     focusOnTarget?: boolean;
   };
-  const isOrtho = node.type === 'OrthographicCamera';
+  // #387 — which lens block to render is a question about the camera's PROJECTION, not
+  // about the node's type. Post-split BOTH projections wear `type === 'Object'` on the
+  // node this control is mounted for, so `node.type === 'OrthographicCamera'` answers
+  // "perspective" for every split ortho camera: focal length + sensor + DoF rows on a
+  // camera that has none, and the `zoom` field gone. Asked through `cameraProjectionOf`
+  // (which reads the `CameraData.projection` discriminator when split and the node type
+  // when fused), so a still-fused camera is byte-identical ([[V119]]).
+  const isOrtho = cameraProjectionOf(dagState, poseNodeId) === 'Orthographic';
 
   const dofEnabled = params.dofEnabled ?? false;
   const focusOnTarget = params.focusOnTarget ?? false;
@@ -187,8 +195,11 @@ export function CameraLensControls({
 
   return (
     <div className="flex flex-col" data-testid={`inspector-camera-${nodeId}`}>
-      {/* #247 — bind the lookAt to a scene object (Track-To); the reticle follows it. */}
-      <CameraLookAtTarget nodeId={nodeId} />
+      {/* #247 — bind the lookAt to a scene object (Track-To); the reticle follows it.
+          #387 — it needs BOTH ids for the same reason this control does: it WRITES
+          `lookAt` (the lens half) but authors the Track-To constraint against the
+          OBJECT, which is where the pose resolver reads constraints from. */}
+      <CameraLookAtTarget nodeId={nodeId} poseNodeId={poseNodeId} />
       {isOrtho ? (
         <label className={ROW}>
           <span className={LABEL}>zoom</span>

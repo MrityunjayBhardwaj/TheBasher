@@ -13,7 +13,8 @@
 // tick. Reading params directly mirrors framing.ts `anchorForNode` and
 // Gizmo's `getManipulable` — both read `params.position` for cameras.
 //
-// `cameraPoseFromNode` reads the static AUTHORED pose (the base). For the
+// `cameraPoseForNodeId` reads the static AUTHORED pose (the base) from BOTH
+// halves of a split camera, or from the single node of a fused one. For the
 // EVALUATED pose at a given time — base overlaid with any keyframe channels
 // targeting the camera — use `resolveActiveCameraPoseAt` (#190). The camera is
 // wired via `scene.camera` (a single `Camera`-typed ref), NOT `scene.children`,
@@ -35,7 +36,16 @@ import {
   type ChannelExtrapolate,
 } from '../nodes/keyframeInterp';
 import type { FChannelModifier } from '../nodes/channelModifiers';
-import { isKeyframeChannelNode } from './animate/paramAnimationState';
+import { bareChannelNodesForSubject } from './nodeChannels';
+import { linkedDataNodeId } from './resolveDataParamOwner';
+import {
+  cameraDataOf,
+  cameraLensParams,
+  cameraProjectionFromPair,
+  cameraProjectionOf,
+  isCameraNode,
+} from './cameraNode';
+import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 
 /** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
  *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
@@ -172,7 +182,7 @@ function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: n
  *  CameraSelect addresses by). */
 export function enumerateCameraNodeIds(state: DagState): string[] {
   return Object.values(state.nodes)
-    .filter((n) => n.type === 'PerspectiveCamera' || n.type === 'OrthographicCamera')
+    .filter((n) => isCameraNode(state, n.id))
     .map((n) => n.id);
 }
 
@@ -188,47 +198,74 @@ export function resolveCameraFrustumPose(
   ctx: { time: { frame: number; seconds: number; normalized: number } },
   cache?: EvaluatorCache,
 ): CameraPose | null {
-  const local = cameraPoseFromNode(state.nodes[cameraId] ?? null);
+  const local = cameraPoseForNodeId(state, cameraId);
   if (!local) return null;
   const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
   return parentWorld ? composeCameraPoseWithParent(local, parentWorld) : local;
 }
 
-/** Read a camera node's pose from its params, with defensive defaults so a
- *  malformed or pre-field-existed project never throws. Returns null only for
- *  a null node (caller falls back to DEFAULT_CAMERA_POSE). */
-export function cameraPoseFromNode(node: Node | null): CameraPose | null {
-  if (!node) return null;
-  const p = node.params as Record<string, unknown>;
+/**
+ * Read a camera's pose from the params of its two halves, with defensive defaults
+ * so a malformed or pre-field-existed project never throws. Returns null only for
+ * a null object node (caller falls back to DEFAULT_CAMERA_POSE).
+ *
+ * #387 — the pose is now SPANNED across the pair. `position` is the Object's;
+ * `lookAt`/`roll`/`fov`/`near`/`far` are the `CameraData`'s (parity-first, D1: the
+ * aim stays on the data half, so a keyed camera never needs a non-commuting
+ * aim→rotation bake). `dataNode === null` is the FUSED case and reads every field
+ * off the object node, byte-identical to the pre-split single-node read.
+ *
+ * This is the one place the two halves are recombined for the pose road. The value
+ * road recombines them separately in `recomposeCameraObject`, because the renderer
+ * never reads a camera's evaluated value — see that file.
+ */
+export function cameraPoseFromPair(
+  objectNode: Node | null,
+  dataNode: Node | null,
+): CameraPose | null {
+  if (!objectNode) return null;
+  const o = objectNode.params as Record<string, unknown>;
+  // Fused: one node holds everything. Split: the lens half answers for everything
+  // but `position`, which the Object owns.
+  const lens = (dataNode ? dataNode.params : o) as Record<string, unknown>;
+  // The projection rule lives in ONE place (cameraNode.ts) — spelled here as well it
+  // would be a drift site the moment a third form lands. A non-camera node still poses
+  // as perspective, which is the pre-split fallback this must not change.
   const kind: CameraKind =
-    node.type === 'OrthographicCamera' ? 'OrthographicCamera' : 'PerspectiveCamera';
+    cameraProjectionFromPair(objectNode, dataNode) === 'Orthographic'
+      ? 'OrthographicCamera'
+      : 'PerspectiveCamera';
   return {
     kind,
-    position: isVec3(p.position) ? p.position : DEFAULT_CAMERA_POSE.position,
-    lookAt: isVec3(p.lookAt) ? p.lookAt : DEFAULT_CAMERA_POSE.lookAt,
-    fov: typeof p.fov === 'number' ? p.fov : DEFAULT_CAMERA_POSE.fov,
-    near: typeof p.near === 'number' ? p.near : DEFAULT_CAMERA_POSE.near,
-    far: typeof p.far === 'number' ? p.far : DEFAULT_CAMERA_POSE.far,
-    roll: typeof p.roll === 'number' ? p.roll : DEFAULT_CAMERA_POSE.roll,
+    position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
+    lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
+    fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
+    near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
+    far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
+    roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,
   };
+}
+
+/** {@link cameraPoseFromPair} applied to a node id — resolves the data half itself.
+ *  Prefer this at every call site that has the state: it cannot be given only one
+ *  half of a split camera by accident. */
+export function cameraPoseForNodeId(state: DagState, cameraId: string): CameraPose | null {
+  const node = state.nodes[cameraId] ?? null;
+  if (!node) return null;
+  return cameraPoseFromPair(node, cameraDataOf(state, cameraId));
 }
 
 /** Convenience: the active camera's static authored pose, or the default when
  *  none is wired. For the EVALUATED pose at a time, use
  *  `resolveActiveCameraPoseAt`. */
 export function resolveActiveCameraPose(state: DagState): CameraPose {
-  return cameraPoseFromNode(selectActiveCameraNode(state)) ?? DEFAULT_CAMERA_POSE;
+  const node = selectActiveCameraNode(state);
+  return (node ? cameraPoseForNodeId(state, node.id) : null) ?? DEFAULT_CAMERA_POSE;
 }
-
-/** The keyframe-able camera params. Cameras aim via `lookAt`, not the rotation
- *  band, so position + lookAt are the spatial channels; fov/near/far are scalar.
- *  This is the closed set the resolver overlays and the authoring path keys. */
-export const ANIMATABLE_CAMERA_VEC3_PARAMS = ['position', 'lookAt'] as const;
-export const ANIMATABLE_CAMERA_SCALAR_PARAMS = ['fov', 'near', 'far', 'roll'] as const;
 
 /**
  * The active camera's EVALUATED pose at clip-time `seconds` (#190): the static
- * authored base (`cameraPoseFromNode`) overlaid with any `KeyframeChannel*`
+ * authored base (`cameraPoseForNodeId`) overlaid with any `KeyframeChannel*`
  * node whose `target` is the camera node, sampled at `seconds`.
  *
  * This is THE single source feeding the live viewport look-through (slice 4),
@@ -284,20 +321,31 @@ export function resolveCameraPoseAt(
   cache?: EvaluatorCache,
 ): CameraPose {
   const node = state.nodes[cameraId] ?? null;
-  const base = cameraPoseFromNode(node) ?? DEFAULT_CAMERA_POSE;
+  const base = cameraPoseForNodeId(state, cameraId) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
 
-  // Overlay every channel targeting this camera node. Sample by the channel's
-  // value type and write by paramPath. A channel with zero keyframes is skipped
-  // (an empty sampler returns 0/[0,0,0] — never let that clobber the base).
+  // Overlay every channel belonging to this camera. Sample by the channel's value
+  // type and write by paramPath.
+  //
+  // #387 — "belonging to" spans the PAIR, and this is the hazard the camera split
+  // turns on. The scan used to match `params.target === node.id` by hand; post-split
+  // the lens lives on the CameraData, so `addChannel` routes an fov/clip/aim channel
+  // to the DATA id while the user selects, and every surface addresses, the Object.
+  // An exact-id scan therefore finds nothing and the camera freezes on screen while
+  // the inspector still shows the value moving — silently, because "no channels" is a
+  // legitimate answer. `bareChannelNodesForSubject` is the SAME enumerator the
+  // management surfaces use (V108: one predicate, no second walk), it preserves
+  // Object-first order, and it already drops empty channels — so the inline
+  // zero-keyframe skip that used to live here is gone rather than duplicated.
   let pose: CameraPose | null = null; // clone lazily, only when a channel hits
-  for (const ch of Object.values(state.nodes)) {
-    if (!isKeyframeChannelNode(ch)) continue;
+  for (const ch of bareChannelNodesForSubject(
+    state.nodes,
+    node.id,
+    linkedDataNodeId(state, node.id),
+  )) {
     const p = ch.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
-    if (p.target !== node.id) continue;
     const path = p.paramPath;
     const keyframes = Array.isArray(p.keyframes) ? p.keyframes : [];
-    if (keyframes.length === 0) continue;
 
     if ((path === 'position' || path === 'lookAt') && ch.type === 'KeyframeChannelVec3') {
       pose ??= { ...base };
@@ -363,4 +411,56 @@ export function resolveCameraPoseAt(
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
   const result = pose ?? base;
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
+}
+
+/**
+ * The active DoF effect settings for the camera `cameraId` at clip-time `seconds`,
+ * or null when DoF is off / the camera is orthographic / `cameraId` is not a camera.
+ *
+ * #387 D9 — this is the TWO-IDS seam for depth of field, and it exists as a function
+ * (rather than inline at each caller) because the two halves answer DIFFERENT questions
+ * and the failure of mixing them up is silent:
+ *   - the LENS half (`CameraData` when split, the node itself when fused) owns
+ *     `dofEnabled`/`focusDistance`/`fStop`/`focusOnTarget`/`fov`/`sensorSize` and the
+ *     `projection` discriminator;
+ *   - the POSE half (the `Object`) is what `resolveCameraPoseAt` must be given, because
+ *     `position` lives there. Handed the data half instead it returns a FALLBACK pose,
+ *     not an error, so `focusOnTarget` would silently focus at a plausible wrong depth.
+ * Both roads that honour `focusOnTarget` (the live viewport and the still render) call
+ * THIS, so they cannot drift apart.
+ *
+ * ⚠️ #193 / [[V121]] — the lens params handed to `resolveCameraDof` are the node's RAW
+ * `params`. No channel overlay is applied, deliberately: `focusDistance`/`fStop`/
+ * `sensorSize` reach neither `CameraValue` nor `CameraPose`, so keying them animates
+ * nothing. That is a KNOWN LIMIT, not an oversight — an animated focus pull does not
+ * reach the render (#193). `activeCamera.test.ts` pins it as an equality so it reds the
+ * day #193 wires an overlay in, rather than being re-discovered as a bug.
+ *
+ * The `focusOnTarget` read is done FIRST and the pose is resolved only when it is set:
+ * reversing the order costs a full pose resolve per frame for a camera that will not
+ * use it.
+ */
+export function resolveCameraDofAt(
+  state: DagState,
+  cameraId: string | null | undefined,
+  seconds: number,
+  cache?: EvaluatorCache,
+): DofEffectSettings | null {
+  if (!cameraId) return null;
+  const lens = cameraLensParams(state, cameraId);
+  if (!lens) return null;
+  let targetFocusDistance: number | undefined;
+  if (lens.focusOnTarget === true) {
+    try {
+      const pose = resolveCameraPoseAt(state, cameraId, seconds, cache);
+      targetFocusDistance = Math.hypot(
+        pose.lookAt[0] - pose.position[0],
+        pose.lookAt[1] - pose.position[1],
+        pose.lookAt[2] - pose.position[2],
+      );
+    } catch {
+      /* fall back to the authored focusDistance */
+    }
+  }
+  return resolveCameraDof(lens, cameraProjectionOf(state, cameraId), targetFocusDistance);
 }

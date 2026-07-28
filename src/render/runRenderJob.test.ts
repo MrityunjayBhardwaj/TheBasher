@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { stubEncoder } from './encoders/stubEncoder';
 import { runRenderJob } from './runRenderJob';
@@ -33,12 +34,9 @@ function buildJobState(opts: {
   const passes = opts.passes ?? ['BeautyPass'];
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [0, 0, 5] },
-  }).next;
+  // #387 C4 — the fused camera node type is retired; a camera is now an Object posing a
+  // CameraData. `position` stays on the Object, the lens moves to the data half.
+  s = makeSplitCamera(s, { objectId: 'cam', fov: 45, position: [0, 0, 5] }).state;
   s = makeSplitCube(s, { objectId: 'box', size: [1, 1, 1] }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   s = applyOp(s, {

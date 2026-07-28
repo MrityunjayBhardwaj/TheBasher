@@ -21,6 +21,7 @@ import {
   type TimeValue,
 } from './types';
 import { buildPassSourceHash } from './passes/passHash';
+import { recomposeCameraObject } from './cameraRecompose';
 
 export const IDPassParams = z.object({
   width: z.number().int().positive().default(DEFAULT_IMAGE_DESCRIPTOR.width),
@@ -43,7 +44,12 @@ export const IDPassNode: NodeDefinition<IDPassParams, ImageValue> = {
   inspectorSections: ['render'],
   evaluate(params, inputs: ResolvedInputs): ImageValue {
     const scene = inputs.scene as SceneValue | undefined;
-    const camera = inputs.camera as CameraValue | undefined;
+    // #387 — a camera may arrive as an `Object` posing a `CameraData`; recompose it into
+    // the flat CameraValue before it enters `buildPassSourceHash`. Skipping this hashes the
+    // Object shape instead of the lens, so two DIFFERENT lenses on one pose collide on a
+    // cache key and the pass silently reuses stale pixels. Fused → null → unchanged.
+    const camera =
+      recomposeCameraObject(inputs.camera) ?? (inputs.camera as CameraValue | undefined);
     const time = inputs.time as TimeValue | undefined;
     return {
       kind: 'Image',

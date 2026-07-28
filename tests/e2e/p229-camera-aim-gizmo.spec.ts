@@ -10,6 +10,7 @@
 // move the DAG lookAt and the look-through direction would not change.
 
 import { expect, test } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface CamView {
   position: [number, number, number];
@@ -89,6 +90,11 @@ test.describe('#229 camera aim gizmo', () => {
     const id = await camId(page);
     await selectCamera(page, id);
 
+    // #387 C4 — the pose SPANS the pair: `position` stays on the Object the director
+    // selects, while `lookAt` and `roll` live on its CameraData. Reading the aim off the
+    // Object returns `undefined`, not a stale value, so the two halves are named apart
+    // here rather than routed by a helper that would re-implement the product's own rule.
+    const lens = await dataNodeIdOf(page, id);
     const pos = (await camParam(page, id, 'position')) as [number, number, number];
 
     // Drag the aim handle to a new world point.
@@ -99,7 +105,7 @@ test.describe('#229 camera aim gizmo', () => {
     await page.waitForTimeout(100);
 
     // Side A — the DAG lookAt param updated.
-    const lookAt = (await camParam(page, id, 'lookAt')) as [number, number, number];
+    const lookAt = (await camParam(page, lens, 'lookAt')) as [number, number, number];
     expect(lookAt[0]).toBeCloseTo(5, 3);
     expect(lookAt[1]).toBeCloseTo(1, 3);
     expect(lookAt[2]).toBeCloseTo(0, 3);
@@ -121,8 +127,9 @@ test.describe('#229 camera aim gizmo', () => {
     const id = await camId(page);
     await selectCamera(page, id);
 
+    const lens = await dataNodeIdOf(page, id);
     const pos = (await camParam(page, id, 'position')) as [number, number, number];
-    const before = (await camParam(page, id, 'lookAt')) as [number, number, number];
+    const before = (await camParam(page, lens, 'lookAt')) as [number, number, number];
     const distBefore = Math.hypot(before[0] - pos[0], before[1] - pos[1], before[2] - pos[2]);
 
     // Rotate the camera body to an absolute orientation (euler degrees). A 30°
@@ -132,8 +139,8 @@ test.describe('#229 camera aim gizmo', () => {
     });
     await page.waitForTimeout(100);
 
-    const after = (await camParam(page, id, 'lookAt')) as [number, number, number];
-    const roll = (await camParam(page, id, 'roll')) as number;
+    const after = (await camParam(page, lens, 'lookAt')) as [number, number, number];
+    const roll = (await camParam(page, lens, 'roll')) as number;
     const distAfter = Math.hypot(after[0] - pos[0], after[1] - pos[1], after[2] - pos[2]);
 
     // The aim moved (re-aimed) but kept its distance from the camera.

@@ -8,6 +8,7 @@
 // the freeze-on-clear the camera would snap back to a stale lookAt.
 
 import { expect, test } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface Node {
   type: string;
@@ -67,7 +68,10 @@ test.describe('#247 camera look-at target', () => {
     await ready(page);
     const { camId, targetId, targetPos } = await ids(page);
     await selectCam(page, camId);
-    await page.selectOption(`[data-testid="inspector-camera-lookat-${camId}"]`, targetId);
+    // #387 C4 — the aim dropdown and `lookAt` belong to the CameraData; the Track-To it
+    // mints still targets the OBJECT, since a constraint drives the posed node.
+    const lens = await dataNodeIdOf(page, camId);
+    await page.selectOption(`[data-testid="inspector-camera-lookat-${lens}"]`, targetId);
     await page.waitForTimeout(200);
 
     const g = await gizmo(page);
@@ -89,7 +93,10 @@ test.describe('#247 camera look-at target', () => {
     await ready(page);
     const { camId, targetId } = await ids(page);
     await selectCam(page, camId);
-    await page.selectOption(`[data-testid="inspector-camera-lookat-${camId}"]`, targetId);
+    // #387 C4 — the aim dropdown and `lookAt` belong to the CameraData; the Track-To it
+    // mints still targets the OBJECT, since a constraint drives the posed node.
+    const lens = await dataNodeIdOf(page, camId);
+    await page.selectOption(`[data-testid="inspector-camera-lookat-${lens}"]`, targetId);
     await page.waitForTimeout(150);
     // Move the target, then re-select the camera (real unmount/remount → fresh seed).
     await page.evaluate((tid) => {
@@ -116,9 +123,12 @@ test.describe('#247 camera look-at target', () => {
     await ready(page);
     const { camId, targetId, targetPos } = await ids(page);
     await selectCam(page, camId);
-    await page.selectOption(`[data-testid="inspector-camera-lookat-${camId}"]`, targetId);
+    // #387 C4 — the aim dropdown and `lookAt` belong to the CameraData; the Track-To it
+    // mints still targets the OBJECT, since a constraint drives the posed node.
+    const lens = await dataNodeIdOf(page, camId);
+    await page.selectOption(`[data-testid="inspector-camera-lookat-${lens}"]`, targetId);
     await page.waitForTimeout(150);
-    await page.selectOption(`[data-testid="inspector-camera-lookat-${camId}"]`, '');
+    await page.selectOption(`[data-testid="inspector-camera-lookat-${lens}"]`, '');
     await page.waitForTimeout(150);
 
     const g = await gizmo(page);
@@ -126,7 +136,7 @@ test.describe('#247 camera look-at target', () => {
     const camLookAt = await page.evaluate((cid) => {
       const st = (window as unknown as BasherWindow).__basher_dag!.getState().state;
       return st.nodes[cid].params.lookAt as number[];
-    }, camId);
+    }, lens);
     expect(camLookAt).toEqual(targetPos); // frozen to the last aim, no jump
     const tt = await page.evaluate((cid) => {
       const st = (window as unknown as BasherWindow).__basher_dag!.getState().state;

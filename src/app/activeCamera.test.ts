@@ -3,18 +3,24 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  cameraPoseFromNode,
+  cameraPoseForNodeId,
+  cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPose,
   resolveActiveCameraPoseAt,
+  resolveCameraDofAt,
   resolveCameraFrustumPose,
+  resolveCameraPoseAt,
   selectActiveCameraNode,
 } from './activeCamera';
+import { cameraDataOf } from './cameraNode';
 import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { splitOps } from '../test-utils/splitKinds';
 
 // buildDefaultDagState / applyOp resolve node types from the registry, which
 // is populated by registerAll (a side-effecting boot step in the real app).
@@ -28,7 +34,10 @@ describe('activeCamera — selectActiveCameraNode', () => {
     const node = selectActiveCameraNode(state);
     expect(node).not.toBeNull();
     expect(node?.id).toBe('n_camera');
-    expect(node?.type).toBe('PerspectiveCamera');
+    // #387 C4 — the seed camera is split-native: the node wired into scene.camera is the
+    // OBJECT (pose) half, which keeps the id `n_camera`. Its lens lives on the CameraData.
+    expect(node?.type).toBe('Object');
+    expect(cameraDataOf(state, 'n_camera')?.type).toBe('CameraData');
   });
 
   it('returns null when no scene output is declared', () => {
@@ -58,12 +67,14 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
    *  cameras edge order: [n_camera (idx 0), n_cam2 (idx 1)]. */
   function buildMultiCamera(active = 0): DagState {
     let state = buildDefaultDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_cam2',
-      nodeType: 'PerspectiveCamera',
-      params: { position: [10, 0, 0], lookAt: [0, 0, 0], fov: 60 },
-    }).next;
+    // #387 C4 — the fused camera node type is retired; a camera is an Object posing a
+    // CameraData. `position` on the Object, the lens on the data half.
+    state = makeSplitCamera(state, {
+      objectId: 'n_cam2',
+      fov: 60,
+      position: [10, 0, 0],
+      lens: { lookAt: [0, 0, 0] },
+    }).state;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_camsel',
@@ -183,12 +194,14 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
       from: { node: 'n_grp', socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     }).next;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_cam2',
-      nodeType: 'PerspectiveCamera',
-      params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
-    }).next;
+    // #387 C4 — as above: the split pair, with the pose on the Object so the group-lift
+    // this test measures still acts on the half that owns the TRS.
+    state = makeSplitCamera(state, {
+      objectId: 'n_cam2',
+      fov: 50,
+      position: [0, 0, 0],
+      lens: { lookAt: [0, 0, -1] },
+    }).state;
     // Nest the camera under the Group.
     state = applyOp(state, {
       type: 'connect',
@@ -233,10 +246,14 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
   });
 });
 
-describe('activeCamera — cameraPoseFromNode', () => {
+describe('activeCamera — cameraPoseFromPair', () => {
   it('reads pose from the default seed camera (matches default.ts)', () => {
     const state = buildDefaultDagState();
-    const pose = cameraPoseFromNode(selectActiveCameraNode(state));
+    // #387 C4 — the seed camera is a PAIR, so the pose must be resolved through the id
+    // (which finds the lens half itself). Passing `null` for the data half here would hand
+    // the resolver one half of a split camera — see the sibling test below, which pins what
+    // that silently returns.
+    const pose = cameraPoseForNodeId(state, 'n_camera');
     expect(pose).toEqual({
       kind: 'PerspectiveCamera',
       position: [3, 2, 3],
@@ -248,13 +265,30 @@ describe('activeCamera — cameraPoseFromNode', () => {
     });
   });
 
+  // ⚠️ WHY THIS SIBLING EXISTS. Every field asserted above EXCEPT `far` is byte-identical to
+  // `DEFAULT_CAMERA_POSE` — the seed camera was authored at the default framing. So the
+  // assertion above can only distinguish "read the lens half" from "read nothing at all"
+  // through `far` (500 vs the 1000 default), and it was exactly that field that caught the
+  // half-pair read when the seed was split. This test pins the failure mode directly instead
+  // of leaving it resting on one lucky field.
+  it('given ONLY the Object half, a split camera silently poses at the DEFAULT lens', () => {
+    const state = buildDefaultDagState();
+    const objectOnly = cameraPoseFromPair(selectActiveCameraNode(state), null);
+    expect(objectOnly).toEqual({
+      ...DEFAULT_CAMERA_POSE,
+      position: [3, 2, 3], // the Object half's own param — the one thing that does survive
+    });
+    expect(objectOnly?.far).toBe(DEFAULT_CAMERA_POSE.far);
+    expect(objectOnly?.far).not.toBe(500);
+  });
+
   it('returns null for a null node', () => {
-    expect(cameraPoseFromNode(null)).toBeNull();
+    expect(cameraPoseFromPair(null, null)).toBeNull();
   });
 
   it('defends against missing params with the default pose values', () => {
     const node = { id: 'c', type: 'PerspectiveCamera', params: {}, inputs: {} } as unknown as Node;
-    const pose = cameraPoseFromNode(node);
+    const pose = cameraPoseFromPair(node, null);
     expect(pose).toEqual(DEFAULT_CAMERA_POSE);
   });
 
@@ -265,10 +299,149 @@ describe('activeCamera — cameraPoseFromNode', () => {
       params: { position: [1, 2, 3], lookAt: [0, 1, 0], near: 0.5, far: 50 },
       inputs: {},
     } as unknown as Node;
-    const pose = cameraPoseFromNode(node);
+    const pose = cameraPoseFromPair(node, null);
     expect(pose?.kind).toBe('OrthographicCamera');
     expect(pose?.position).toEqual([1, 2, 3]);
     expect(pose?.lookAt).toEqual([0, 1, 0]);
+  });
+
+  // #387 — the split half of the same function. The fused cases above are the CONTROL:
+  // they must keep reading everything off one node, byte-identical to pre-split.
+  it('spans the pair — position off the Object, every lens field off the CameraData', () => {
+    const object = {
+      id: 'n_cam',
+      type: 'Object',
+      // `lookAt`/`fov` planted on the OBJECT too, at values the assertion would catch.
+      // The Object owns position and NOTHING else on this road; if the read ever falls
+      // back to the object's bag, these are what it would report.
+      params: { position: [7, 1, -4], lookAt: [9, 9, 9], fov: 12, roll: 33 },
+      inputs: { data: { node: 'n_cam_data', socket: 'out' } },
+    } as unknown as Node;
+    const data = {
+      id: 'n_cam_data',
+      type: 'CameraData',
+      params: {
+        projection: 'Perspective',
+        fov: 28,
+        near: 0.02,
+        far: 250,
+        lookAt: [0, 1, 0],
+        roll: 5,
+      },
+      inputs: {},
+    } as unknown as Node;
+
+    expect(cameraPoseFromPair(object, data)).toEqual({
+      kind: 'PerspectiveCamera',
+      position: [7, 1, -4],
+      lookAt: [0, 1, 0],
+      fov: 28,
+      near: 0.02,
+      far: 250,
+      roll: 5,
+    });
+  });
+
+  it('takes the ortho kind from the data half’s projection, not the Object’s type', () => {
+    const object = {
+      id: 'n_cam',
+      type: 'Object',
+      params: { position: [0, 0, 5] },
+      inputs: { data: { node: 'n_cam_data', socket: 'out' } },
+    } as unknown as Node;
+    const data = {
+      id: 'n_cam_data',
+      type: 'CameraData',
+      // A split camera's node type is `Object` for BOTH projections, so the fused
+      // `node.type === 'OrthographicCamera'` test cannot answer this question any more.
+      params: { projection: 'Orthographic', fov: 45, zoom: 60 },
+      inputs: {},
+    } as unknown as Node;
+
+    expect(cameraPoseFromPair(object, data)?.kind).toBe('OrthographicCamera');
+  });
+});
+
+describe('activeCamera — the split camera pose road (#387)', () => {
+  /** An Object posing a CameraData, built through real ops so params are schema-parsed. */
+  function buildSplitCamera(): DagState {
+    let s = emptyDagState();
+    for (const op of splitOps(
+      'camera',
+      { objectId: 'n_cam' },
+      {
+        data: { fov: 28, near: 0.02, far: 250, lookAt: [0, 1, 0] },
+        object: { position: [7, 1, -4] },
+      },
+    )) {
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    }
+    return s;
+  }
+
+  function withChannel(
+    s: DagState,
+    id: string,
+    nodeType: string,
+    target: string,
+    paramPath: string,
+    value: unknown,
+  ): DagState {
+    return applyOp(s, {
+      type: 'addNode',
+      nodeId: id,
+      nodeType,
+      params: {
+        target,
+        paramPath,
+        keyframes: [
+          { time: 0, value, easing: 'linear' },
+          { time: 1, value, easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+  }
+
+  it('poses a split camera from both halves with no channels at all', () => {
+    const pose = resolveCameraPoseAt(buildSplitCamera(), 'n_cam', 0);
+    expect(pose.position).toEqual([7, 1, -4]);
+    expect(pose.fov).toBe(28);
+    expect(pose.lookAt).toEqual([0, 1, 0]);
+    // 45 is DEFAULT_CAMERA_POSE.fov — what this resolver returns when it reads neither
+    // half. Naming it keeps a passing assertion from being a coincidence.
+    expect(pose.fov).not.toBe(DEFAULT_CAMERA_POSE.fov);
+  });
+
+  // The property R4 does not ask: the pose is SPANNED, so one resolve must gather from
+  // BOTH ids. A scan that reached only the data half would pass R4's fov assertion while
+  // dropping the Object's own position channel, and vice versa.
+  it('overlays a channel on the Object AND one on the CameraData in the same resolve', () => {
+    let s = buildSplitCamera();
+    s = withChannel(s, 'ch_pos', 'KeyframeChannelVec3', 'n_cam', 'position', [1, 2, 3]);
+    s = withChannel(s, 'ch_fov', 'KeyframeChannelNumber', 'n_cam_data', 'fov', 85);
+
+    const pose = resolveCameraPoseAt(s, 'n_cam', 1);
+    expect(pose.position).toEqual([1, 2, 3]);
+    expect(pose.fov).toBe(85);
+    // Unchannelled lens fields still come from the data half, not the default pose.
+    expect(pose.near).toBe(0.02);
+    expect(pose.far).toBe(250);
+  });
+
+  // The lens-node narrowing that used to be pinned here now lives with the function
+  // it guards, in cameraNode.test.ts.
+
+  it('a channel targeting an unrelated node still moves nothing', () => {
+    let s = buildSplitCamera();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_other',
+      nodeType: 'CameraData',
+      params: { fov: 100 },
+    } as Parameters<typeof applyOp>[1]).next;
+    s = withChannel(s, 'ch_other', 'KeyframeChannelNumber', 'n_other', 'fov', 120);
+
+    expect(resolveCameraPoseAt(s, 'n_cam', 1).fov).toBe(28);
   });
 });
 
@@ -503,5 +676,138 @@ describe('activeCamera — Track-To migration (#204)', () => {
     }).next;
     // Byte-identical to the unconstrained base pose.
     expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([0, 0, 0]);
+  });
+});
+
+describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
+  /** A split camera with DoF authored on the LENS half. `focusDistance: 3` is none of:
+   *  the schema default (5), the `DofParams` fallback (5), |position − lookAt| for this
+   *  fixture (√65 ≈ 8.06), or |position − lookAt| for `DEFAULT_CAMERA_POSE` (√22 ≈ 4.69).
+   *  Every wrong road therefore lands on a number this test can name. */
+  function buildSplitDofCamera(data: Record<string, unknown> = {}): DagState {
+    let s = emptyDagState();
+    for (const op of splitOps(
+      'camera',
+      { objectId: 'n_cam' },
+      {
+        data: {
+          fov: 28,
+          near: 0.02,
+          far: 250,
+          lookAt: [0, 1, 0],
+          dofEnabled: true,
+          focusDistance: 3,
+          fStop: 2.8,
+          ...data,
+        },
+        object: { position: [7, 1, -4] },
+      },
+    )) {
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    }
+    return s;
+  }
+
+  function withChannel(
+    s: DagState,
+    id: string,
+    nodeType: string,
+    target: string,
+    paramPath: string,
+    from: unknown,
+    to: unknown,
+  ): DagState {
+    return applyOp(s, {
+      type: 'addNode',
+      nodeId: id,
+      nodeType,
+      params: {
+        target,
+        paramPath,
+        keyframes: [
+          { time: 0, value: from, easing: 'linear' },
+          { time: 1, value: to, easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+  }
+
+  // The whole point of D9. Pre-split this road gated on `node.type === 'PerspectiveCamera'`;
+  // a split camera's node is an `Object`, so the gate answered "not a camera" and DoF went
+  // silently OFF — no error, no warning, just a sharp image where the director authored bokeh.
+  it('reads the lens half of a split camera — the type gate would have returned null here', () => {
+    const dof = resolveCameraDofAt(buildSplitDofCamera(), 'n_cam', 0);
+    expect(dof).not.toBeNull();
+    expect(dof!.focusDistance).toBe(3);
+  });
+
+  it('is null for an orthographic split camera, and for a camera with DoF off', () => {
+    expect(
+      resolveCameraDofAt(buildSplitDofCamera({ projection: 'Orthographic' }), 'n_cam', 0),
+    ).toBeNull();
+    expect(resolveCameraDofAt(buildSplitDofCamera({ dofEnabled: false }), 'n_cam', 0)).toBeNull();
+  });
+
+  // #247 spans the pair: the flag and the authored distance are the CameraData's, the
+  // position is the Object's. This is the assertion the pre-mortem asks for — a fixture
+  // whose pose sits at a NON-default position, so the expected distance cannot be the
+  // one a fallback pose would produce.
+  it('focus-on-target derives |position − lookAt| across BOTH halves', () => {
+    const dof = resolveCameraDofAt(buildSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
+    expect(dof!.focusDistance).toBeCloseTo(Math.sqrt(65), 6);
+    // Naming the two numbers a broken road would return keeps the pass from being luck:
+    // √22 is what a fallback DEFAULT_CAMERA_POSE gives, 3 is the authored value that
+    // would stand if the flag were read off the wrong half.
+    expect(dof!.focusDistance).not.toBeCloseTo(Math.sqrt(22), 6);
+    expect(dof!.focusDistance).not.toBe(3);
+  });
+
+  // Handed the DATA half instead of the Object, this answers NULL rather than a plausible
+  // wrong number — `cameraLensParams` refuses a node that poses nothing. Pinned because
+  // the surrounding code's whole hazard is that the two ids are interchangeable-looking.
+  it('returns null when given the data half instead of the Object', () => {
+    expect(resolveCameraDofAt(buildSplitDofCamera(), 'n_cam_data', 0)).toBeNull();
+  });
+
+  // ── D12 — the pinned negative. ────────────────────────────────────────────────────
+  //
+  // The camera row's `primaryWorkflows` says the DoF focus is STATIC. This is that claim,
+  // asserted where it can fail: the DoF road hands `resolveCameraDof` the lens node's RAW
+  // params, so a keyframed `focusDistance` reaches nothing (#193, [[V121]]).
+  //
+  // The CONTROL below is what makes this a claim about the road rather than about a
+  // time-blind function: `resolveCameraDofAt` demonstrably DOES vary with `seconds` on the
+  // focus-on-target path, because that path goes through `resolveCameraPoseAt`. So "the
+  // authored focus did not move between t=0 and t=1" is a fact about which params get
+  // overlaid, not about the fixture failing to animate anything.
+  it('#193 — a keyframed focusDistance does NOT reach the DoF road (pinned limit)', () => {
+    const s = withChannel(
+      buildSplitDofCamera(),
+      'ch_focus',
+      'KeyframeChannelNumber',
+      'n_cam_data',
+      'focusDistance',
+      3,
+      40,
+    );
+    expect(resolveCameraDofAt(s, 'n_cam', 0)!.focusDistance).toBe(3);
+    // The equality that reds the day #193 wires a channel overlay into this road — at
+    // which point this test SHOULD fail and the row's workflow text should change with it.
+    expect(resolveCameraDofAt(s, 'n_cam', 1)!.focusDistance).toBe(3);
+    expect(resolveCameraDofAt(s, 'n_cam', 1)!.focusDistance).not.toBe(40);
+  });
+
+  it('CONTROL — the same road DOES vary with time on the focus-on-target path', () => {
+    const s = withChannel(
+      buildSplitDofCamera({ focusOnTarget: true }),
+      'ch_pos',
+      'KeyframeChannelVec3',
+      'n_cam',
+      'position',
+      [7, 1, -4],
+      [0, 1, 10],
+    );
+    expect(resolveCameraDofAt(s, 'n_cam', 0)!.focusDistance).toBeCloseTo(Math.sqrt(65), 6);
+    expect(resolveCameraDofAt(s, 'n_cam', 1)!.focusDistance).toBeCloseTo(10, 6);
   });
 });

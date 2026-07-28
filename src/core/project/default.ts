@@ -17,11 +17,34 @@ import { composeProject, type Project } from './index';
 export const DEFAULT_PROJECT_ID = 'default';
 
 const DEFAULT_OPS: Op[] = [
+  // #387 Stage C (C4) — the camera is split-native: a CameraData (the lens — projection,
+  // fov, clip planes, and the aim params lookAt/roll which stay on the data half
+  // parity-first, #387 D1) and an Object (the pose) that points at it via `data`.
+  //
+  // ⚠️ THE OBJECT KEEPS THE ID `n_camera`. That id is what `scene.camera` names below, what
+  // the v6→v7 migration's id-inheritance produces for an old fused save, and what ~18 e2e
+  // files address. The pair a migrated project ends up with and the pair a NEW project starts
+  // with are therefore the same shape with the same id — a new project is split-native, so it
+  // needs no migration on boot (K23).
+  //
+  // Values preserved EXACTLY as the fused seed carried them (fov 45 / near 0.01 / far 500 /
+  // position [3,2,3] / lookAt [0,0,0]): the flip changes the shape, not the framing.
+  {
+    type: 'addNode',
+    nodeId: 'n_camera_data',
+    nodeType: 'CameraData',
+    params: { projection: 'Perspective', fov: 45, near: 0.01, far: 500, lookAt: [0, 0, 0] },
+  },
   {
     type: 'addNode',
     nodeId: 'n_camera',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
+    nodeType: 'Object',
+    params: { position: [3, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  },
+  {
+    type: 'connect',
+    from: { node: 'n_camera_data', socket: 'out' },
+    to: { node: 'n_camera', socket: 'data' },
   },
   // #386 Stage C (C3) — the key light is split-native: a LightData (kind + shading) and an
   // Object (pose) that points at it via `data`. The Object keeps the id `n_light`, so the

@@ -14,6 +14,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
+import { isCameraNode } from '../../../app/cameraNode';
 
 const ShotCreateSpec = z.object({
   cameraId: z.string().min(1),
@@ -42,7 +43,13 @@ export const shotCreateMutator: MutatorDefinition<ShotCreateSpec> = {
   },
   contract: {
     requiredEdges: [],
-    requiredNodeTypes: ['PerspectiveCamera', 'Scene'],
+    // #387 — the camera is NOT declared here. `contract.requiredNodeTypes` is a
+    // node-TYPE mechanism (gate 4 compares `node.type === requiredType`), and a split
+    // camera is an Object posing a CameraData, so a type token cannot express it. The
+    // possession-keyed precondition below owns the check instead — and is strictly
+    // stronger, since it validates the SPECIFIC `cameraId` rather than "some camera
+    // exists somewhere in the closure".
+    requiredNodeTypes: ['Scene'],
     preserves: ['position', 'rotation', 'scale', 'material', 'children', 'animation'],
   },
   buildClosureSpec(spec): ClosureSpec {
@@ -54,7 +61,9 @@ export const shotCreateMutator: MutatorDefinition<ShotCreateSpec> = {
   preconditions(spec, _closure, state) {
     const camera = state.nodes[spec.cameraId];
     if (!camera) return { ok: false, reason: `Camera "${spec.cameraId}" not in DAG.` };
-    if (camera.type !== 'PerspectiveCamera' && camera.type !== 'OrthographicCamera') {
+    // #387 — possession, not type: post-split a camera is an Object posing a CameraData,
+    // so a type test rejects every migrated camera with "is Object; expected a Camera".
+    if (!isCameraNode(state, spec.cameraId)) {
       return {
         ok: false,
         reason: `cameraId "${spec.cameraId}" is ${camera.type}; expected a Camera node.`,

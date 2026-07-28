@@ -53,3 +53,27 @@ export async function objectPosing(page: Page, dataType: string): Promise<string
 export function seedCubeObjectId(page: Page): Promise<string> {
   return objectPosing(page, 'BoxData');
 }
+
+/**
+ * The data half of a split Object — the node reached through its `data` socket.
+ *
+ * The inverse of `objectPosing`, and it exists for the same reason. Every builder in the
+ * suite happens to derive `${objectId}_data`, and the default project happens to agree
+ * (`n_camera` → `n_camera_data`), so a spec can hardcode that string and pass. But that
+ * is a NAMING CONVENTION standing in for a structural fact, which is the ordinal picker's
+ * disease wearing different clothes: it is correct only for as long as two independent
+ * conventions keep agreeing, and nothing fails loudly on the day they stop.
+ *
+ * This matters most for INSPECTOR testids. Post-split the lens/shading rows are keyed on
+ * the DATA node's id while the spec selects the OBJECT, so every such testid has to name a
+ * node the spec did not choose — and `getByTestId` on a wrong id is simply not visible,
+ * which reads as a product failure rather than as a fixture aiming at nothing.
+ */
+export async function dataNodeIdOf(page: Page, objectId: string): Promise<string> {
+  const id = await page.evaluate((oid) => {
+    const s = (window as unknown as SeedWin).__basher_dag.getState().state;
+    return s.nodes[oid]?.inputs?.data?.node ?? null;
+  }, objectId);
+  if (!id) throw new Error(`${objectId} has no data half wired to its \`data\` socket`);
+  return id;
+}

@@ -122,8 +122,10 @@ describe('C2 — inspectorSections declarations', () => {
       }
     }
     // Guard the guard: a sweep that checked nothing would pass vacuously.
+    // Bumped with each split kind even though the floor was already satisfied — a floor
+    // nobody re-derives is a floor that stops tracking what it guards (#387).
     expect(sectionsChecked, 'no sections were checked — the sweep drifted').toBeGreaterThanOrEqual(
-      4,
+      5,
     );
   });
 

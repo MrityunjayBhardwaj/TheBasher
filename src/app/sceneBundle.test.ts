@@ -288,16 +288,27 @@ describe('bundleToProject', () => {
     expect(project.name).toBe('Orig');
     expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(project.createdAt).toBe(9999);
-    // The DAG survives the round-trip with NOTHING lost. #365 Phase 5a: the default's box
-    // is already split-native (Object + BoxData), so the BoxMesh→split pass adds nothing.
-    // #386 Stage C · C3: the default's light is split by the v5→v6 pass — the only thing
-    // the migration may ADD is a LightData half (and once the default seed itself becomes
-    // split-native, `added` is empty and this stays green).
+    // The DAG survives the round-trip with NOTHING lost — and, as of #387 C4, with nothing
+    // ADDED either. Every scene object in the seed is now split-native (box #365, light
+    // #386, camera #387), so a fresh project has no fused node left for any split pass to
+    // convert. `added` reaching empty is the completion condition Stage C was aiming at,
+    // not a weakening of this assertion.
+    //
+    // This is a SECOND road onto the same migration ladder — a bundle carries a raw DAG
+    // and `bundleToProject` migrates it — which is why a per-kind split reds here as well
+    // as in migrations.test.ts.
     const migratedIds = Object.keys(project.state.nodes);
     const srcIds = Object.keys(src.state.nodes);
     for (const id of srcIds) expect(migratedIds).toContain(id); // nothing lost
     const added = migratedIds.filter((id) => !srcIds.includes(id));
-    expect(added.every((id) => project.state.nodes[id].type === 'LightData')).toBe(true);
+    expect(added).toEqual([]);
+    // ...and the data halves really did travel, so "added nothing" cannot be read as
+    // "carried nothing": a seed that regressed to a fused camera would both ADD a node
+    // here and drop CameraData from the carried set.
+    const carriedTypes = migratedIds.map((id) => project.state.nodes[id].type);
+    expect(carriedTypes).toContain('CameraData');
+    expect(carriedTypes).toContain('LightData');
+    expect(carriedTypes).not.toContain('PerspectiveCamera');
     expect(project.state.outputs).toEqual(src.state.outputs);
   });
 

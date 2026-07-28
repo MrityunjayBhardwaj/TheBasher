@@ -200,13 +200,12 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   // #209 — the geometry OperatorStack UI.
   modifier: [{ key: 'modifierStack', applies: whenDeclared, placement: 'before' }],
   effect: [],
-  // UX #9 / UX #12 — the environment and lens sections are authored ENTIRELY by
-  // one control; their params route here only to stay out of the unrouted
-  // bucket. Both are ungated: the four other one-control sections already are,
-  // and the camera's `type === 'PerspectiveCamera' || 'OrthographicCamera'`
-  // gate was an artifact of predating the object↔data split, not a rule —
-  // carrying it here would mean a split camera's data half matches neither and
-  // the lens panel renders empty.
+  // UX #9 / UX #12 — the environment and lens sections lead with one control; their
+  // params route here only to stay out of the unrouted bucket. Both are ungated: the
+  // four other one-control sections already are, and the camera's
+  // `type === 'PerspectiveCamera' || 'OrthographicCamera'` gate was an artifact of
+  // predating the object↔data split, not a rule — carrying it here would mean a split
+  // camera's data half matches neither and the lens panel renders empty.
   environment: [
     {
       key: 'sceneEnvironment',
@@ -215,8 +214,41 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       suppressesAllRows: true,
     },
   ],
+  // #387 — the lens control OWNS NINE KEYS, it does not own the section.
+  //
+  // It used to say `suppressesAllRows`, which was true while every param routed to
+  // `camera` was one the control authors. A split `CameraData` breaks that: it declares
+  // ONLY `camera`, so its `lookAt`, `roll` and `projection` route here too — and
+  // `CameraLensControls` authors none of the three. Under whole-section suppression
+  // they would render NOWHERE: no row, no control, no error, and a "does the card
+  // render?" guard cannot see it, because the card is not empty. Listing the nine keys
+  // the control actually writes lets the rest fall through as labelled generic rows,
+  // which is the shape `lightKind`/`target`/`lookAt` already have on a LightData.
+  //
+  // Byte-identical for a FUSED camera: it declares `transform` as well, so its
+  // `lookAt`/`roll` match the transform arm first and still render there.
+  //
+  // The nine are exactly the keys `paramToSection` routes to `camera` and exactly the
+  // keys `CameraLensControls` writes — the two lists were re-derived against each other
+  // rather than assumed equal, and `inspectorSectionBody.test.ts` pins that any key
+  // dropped from here reappears as a stray row.
   camera: [
-    { key: 'cameraLens', applies: whenDeclared, placement: 'before', suppressesAllRows: true },
+    {
+      key: 'cameraLens',
+      applies: whenDeclared,
+      placement: 'before',
+      omitRowKeys: [
+        'fov',
+        'sensorSize',
+        'zoom',
+        'near',
+        'far',
+        'dofEnabled',
+        'focusDistance',
+        'fStop',
+        'focusOnTarget',
+      ],
+    },
   ],
   layout: [],
 };

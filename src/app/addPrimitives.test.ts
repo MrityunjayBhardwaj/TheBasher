@@ -95,9 +95,42 @@ describe('buildAddPrimitiveOps', () => {
     }
   });
 
+  // #387 C4 — THIS IS THE GATE THE GREP CANNOT BE. The retire-a-kind gate looks for a
+  // CONSTRUCTION POSITION (`nodeType: '<relic>'`), and the Add menu's generic tail mints
+  // `nodeType: nodeTypeFor(kind)` — a CALL. A camera left on that tail would go on minting a
+  // fused node with nothing going red when the fused types retire. These two tests name both
+  // camera kinds explicitly and assert the PAIR, so the Add menu cannot silently regress.
+  it.each(['PerspectiveCamera', 'OrthographicCamera'] as const)(
+    '%s adds the object↔data PAIR — CameraData + Object + the data edge',
+    (kind) => {
+      const r = buildAddPrimitiveOps(seedSceneState(), kind, [3, 2, 3])!;
+      const adds = r.ops.filter((o) => o.type === 'addNode');
+      expect(adds.map((o) => (o as { nodeType: string }).nodeType)).toEqual([
+        'CameraData',
+        'Object',
+      ]);
+      const dataId = (adds[0] as { nodeId: string }).nodeId;
+      const objId = (adds[1] as { nodeId: string }).nodeId;
+      // The pair is WIRED — two loose nodes would satisfy a presence check vacuously.
+      expect(r.ops).toContainEqual({
+        type: 'connect',
+        from: { node: dataId, socket: 'out' },
+        to: { node: objId, socket: 'data' },
+      });
+      // The director selects and poses the OBJECT half.
+      expect(r.newNodeId).toBe(objId);
+      // The lens half carries the projection discriminator; the pose half carries TRS.
+      const lens = (adds[0] as { params: Record<string, unknown> }).params;
+      expect(lens.projection).toBe(kind === 'OrthographicCamera' ? 'Orthographic' : 'Perspective');
+      expect((adds[1] as { params: Record<string, unknown> }).params.position).toEqual([3, 2, 3]);
+    },
+  );
+
   it('cameras add only — no auto-wire to scene.camera (single-cardinality)', () => {
     const r = buildAddPrimitiveOps(seedSceneState(), 'PerspectiveCamera', [3, 2, 3])!;
-    expect(r.ops.filter((o) => o.type === 'connect')).toHaveLength(0);
+    // The only edge is the pair's own `data` wire — nothing reaches the Scene.
+    expect(r.ops.filter((o) => o.type === 'connect')).toHaveLength(1);
+    expect(r.ops.filter((o) => o.type === 'connect' && o.to.socket === 'camera')).toHaveLength(0);
     expect(r.ops[0].type).toBe('addNode');
   });
 

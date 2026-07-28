@@ -31,11 +31,12 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import {
-  cameraPoseFromNode,
+  cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPoseAt,
   selectActiveCameraNode,
 } from '../app/activeCamera';
+import { cameraDataOf } from '../app/cameraNode';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
@@ -133,7 +134,16 @@ export function EditorViewCamera() {
   // Subscribe to the active camera NODE (stable identity → re-render only on
   // a camera change, not every store tick), derive its pose via useMemo.
   const camNode = useDagStore((s) => selectActiveCameraNode(s.state));
-  const pose = useMemo(() => cameraPoseFromNode(camNode) ?? DEFAULT_CAMERA_POSE, [camNode]);
+  // #387 — a split camera's lens lives on its linked CameraData, so the static pose
+  // is read from BOTH halves. Subscribe to the data NODE under the same stable-ref
+  // discipline as the Object above (Ops are immutable, so an unrelated edit leaves
+  // the ref untouched): without it a lens edit would not re-render this component and
+  // the free view would keep booting at a stale fov.
+  const camDataNode = useDagStore((s) => (camNode ? cameraDataOf(s.state, camNode.id) : null));
+  const pose = useMemo(
+    () => cameraPoseFromPair(camNode, camDataNode) ?? DEFAULT_CAMERA_POSE,
+    [camNode, camDataNode],
+  );
   // #204 — a STABLE evaluator cache for the per-frame look-through pose resolve.
   // resolveActiveCameraPoseAt only evaluates the render root when the camera
   // carries a Track-To (to read the aim target's world pos via #202); the cache

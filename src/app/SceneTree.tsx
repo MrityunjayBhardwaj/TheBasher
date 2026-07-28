@@ -28,6 +28,7 @@ import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
+import { isCameraNode } from './cameraNode';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
@@ -545,7 +546,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   //   - 'root' : a NESTED camera dropped on the Scene root → disconnect from its
   //              Group → floating top-level (still enumerated + still active if it was).
   function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
-    if (!srcRow.nodeType.endsWith('Camera')) return null;
+    if (!isCameraNode(state, srcRow.nodeId)) return null; // possession, not the type's name (#387)
     if (dstRow.key === srcRow.key) return null;
     if (dstRow.nodeType === 'Group') {
       return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current group
@@ -698,7 +699,13 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // affordance instead of the eye (the eye toggles `meta.hidden`, which the
           // renderer only honours for top-level CHILDREN — a camera frustum isn't in
           // that band, so the eye would be a lying affordance on a camera).
-          const isCamera = row.nodeType.endsWith('Camera');
+          // #387 C4 — keyed on POSSESSION, not on the type's NAME. A split camera is an
+          // `Object` posing a `CameraData`, and `'Object'.endsWith('Camera')` is false, so
+          // the name-shaped predicate silently stripped the active-camera marker, the
+          // Set-Active affordance AND the eye suppression from every camera the moment
+          // creation flipped. A name-SHAPE gate is invisible to a sweep that greps for the
+          // type LITERALS — which is exactly how these four sites survived the slice-3 pass.
+          const isCamera = isCameraNode(state, row.nodeId);
           const isActiveCamera = isCamera && row.nodeId === activeCameraId;
           const isHideable = !filtering && row.depth === 1 && !isCamera;
           const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
@@ -882,8 +889,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   Select Hierarchy
                 </CtxItem>
                 {/* #231 Inc 3.2 — only on a camera that isn't already active. */}
-                {state.nodes[ctxMenu.nodeId]?.type.endsWith('Camera') &&
-                ctxMenu.nodeId !== activeCameraId ? (
+                {isCameraNode(state, ctxMenu.nodeId) && ctxMenu.nodeId !== activeCameraId ? (
                   <CtxItem
                     testId="outliner-ctx-set-active-camera"
                     onClick={() => setActiveCameraAction(ctxMenu.nodeId, true)}

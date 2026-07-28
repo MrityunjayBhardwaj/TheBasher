@@ -33,7 +33,11 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // non-mesh data). See migrations.ts formatMigrations[4].
 // v6 (#386 Stage C · C3): split the four posable lights into Object + LightData (the
 // SECOND non-mesh data; AmbientLight stays fused). See migrations.ts formatMigrations[5].
-export const PROJECT_FORMAT_VERSION = 6;
+// v7 (#387 Stage C · C4): split the two fused cameras into Object + CameraData (the
+// THIRD non-mesh data, and the first kind whose renderer never reads the evaluated
+// value — the pose road reads the pair's raw params). See migrations.ts
+// formatMigrations[6].
+export const PROJECT_FORMAT_VERSION = 7;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

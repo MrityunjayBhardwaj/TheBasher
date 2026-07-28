@@ -237,8 +237,18 @@ export function paramToSection(
   }
   // Camera params (UX #12) — fov / sensorSize / near / far / zoom (ortho). Routed
   // here so they group under the Camera section's custom control instead of the
-  // raw-fallback bucket; the custom control (CameraLensControls) authors them, so
-  // the generic ParamRows for this section are suppressed (mirrors Environment).
+  // raw-fallback bucket; the custom control (CameraLensControls) authors those nine,
+  // so they are listed in its `omitRowKeys` and do not double-render beneath it.
+  //
+  // #387 adds `projection`, `lookAt` and `roll`, which the lens control does NOT
+  // author — they render as labelled generic rows in this section, the same shape
+  // `lightKind`/`target`/`lookAt` have on a LightData. That only works because the
+  // section stopped suppressing all its rows; routing them into a suppressing section
+  // would have made them render nowhere at all.
+  //
+  // A FUSED camera is unaffected: it declares 'transform' too, so the transform arm
+  // above claims its `lookAt`/`roll` first. Only a CameraData — which declares
+  // 'camera' and nothing else — reaches these three here.
   if (
     declaredSections.includes('camera') &&
     (paramPath === 'fov' ||
@@ -252,7 +262,12 @@ export function paramToSection(
       // #247 (fix #257): focusOnTarget is authored by CameraLensControls' DoF
       // block; without routing it here it ALSO leaked into the raw unrouted-params
       // bucket as a second, duplicate toggle.
-      paramPath === 'focusOnTarget')
+      paramPath === 'focusOnTarget' ||
+      // #387 — the projection discriminator (the Camera Type enum) and the authored
+      // aim, which stays on the data half parity-first.
+      paramPath === 'projection' ||
+      paramPath === 'lookAt' ||
+      paramPath === 'roll')
   ) {
     return 'camera';
   }

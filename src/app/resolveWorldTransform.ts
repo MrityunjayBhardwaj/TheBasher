@@ -69,7 +69,9 @@ import type { EvalCtx, NodeRef } from '../core/dag/types';
 import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { directChannelValuesForTarget } from './nodeChannels';
+import { directChannelValuesForTarget, bareChannelValuesForSubject } from './nodeChannels';
+import { cameraLensParams, isCameraNode } from './cameraNode';
+import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
 import { useTransientEditStore } from './stores/transientEditStore';
@@ -296,15 +298,26 @@ export function resolveWorldTransform(
   //    why this stays inline (the activeCamera import would cycle) and why a camera
   //    Track-To aim is not reflected here.
   const camNode = state.nodes[selectedId];
-  if (camNode && (camNode.type === 'PerspectiveCamera' || camNode.type === 'OrthographicCamera')) {
-    const cp = camNode.params as { position?: unknown; lookAt?: unknown; roll?: unknown };
+  if (camNode && isCameraNode(state, selectedId)) {
+    // #387 — TWO reaches, and both must move together. The RAW read: `position` stays on
+    // the Object (it owns the TRS) while `lookAt`/`roll` moved to the CameraData, so a
+    // split camera read off one bag silently aims at the world origin. The CHANNEL read:
+    // a channel on the aim targets the DATA half, so an exact-id scan finds nothing and a
+    // keyed aim freezes. `cameraLensParams` answers the first; the both-ids enumerator —
+    // the same one push-down and the render overlay consume — answers the second.
+    const op = camNode.params as { position?: unknown };
+    const cp = (cameraLensParams(state, selectedId) ?? {}) as { lookAt?: unknown; roll?: unknown };
     let cam: { position: Vec3; lookAt: Vec3; roll: number } = {
       // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
-      position: isVec3(cp.position) ? cp.position : [3, 2, 3],
+      position: isVec3(op.position) ? op.position : [3, 2, 3],
       lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
       roll: typeof cp.roll === 'number' ? cp.roll : 0,
     };
-    const camChannels = directChannelValuesForTarget(state.nodes, selectedId).filter(
+    const camChannels = bareChannelValuesForSubject(
+      state.nodes,
+      selectedId,
+      linkedDataNodeId(state, selectedId),
+    ).filter(
       (c) => c.paramPath === 'position' || c.paramPath === 'lookAt' || c.paramPath === 'roll',
     );
     if (camChannels.length > 0) {

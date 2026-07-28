@@ -18,8 +18,11 @@
 //
 // REF: issue #168 / #190; THESIS.md §11; activeCamera.ts (#165); renderToImage.ts.
 
-import { resolveActiveCameraPoseAt, selectActiveCameraNode } from './activeCamera';
-import { resolveCameraDof } from './cameraDof';
+import {
+  resolveActiveCameraPoseAt,
+  resolveCameraDofAt,
+  selectActiveCameraNode,
+} from './activeCamera';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from './stores/timeStore';
 import { useEditorStore } from './stores/editorStore';
@@ -83,17 +86,28 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
   // time). An unanimated camera resolves to the static authored pose.
   const seconds = useTimeStore.getState().seconds;
   const pose = resolveActiveCameraPoseAt(state, seconds);
-  // UX #12 — depth of field, resolved through the SAME pure helper the live
-  // viewport uses (cameraDof.ts) so the still's bokeh matches the screen. null
-  // when off → the fast manual render path. (Aperture reads static here; framing
-  // is the #190 scope.) #247 — focus-on-target uses the evaluated pose distance
-  // (|position − lookAt| at this frame) so the still's focus matches the viewport.
-  const targetFocusDistance = Math.hypot(
-    pose.lookAt[0] - pose.position[0],
-    pose.lookAt[1] - pose.position[1],
-    pose.lookAt[2] - pose.position[2],
-  );
-  const dof = resolveCameraDof(activeCamera, targetFocusDistance);
+  // UX #12 — depth of field, resolved through the SAME helper the live viewport uses
+  // so the still's bokeh matches the screen. null when off → the fast manual render
+  // path. (Aperture reads static here; framing is the #190 scope.) #247 —
+  // focus-on-target uses the evaluated pose distance (|position − lookAt| at this
+  // frame) so the still's focus matches the viewport.
+  //
+  // #387 — `resolveCameraDofAt` re-resolves that pose internally (and only when
+  // `focusOnTarget` is actually set, which the old unconditional Math.hypot here did
+  // not check). The result is identical — `resolveCameraDof` ignored the distance
+  // unless the flag was set — and it is now ONE road with the viewport instead of two
+  // hand-mirrored ones, which is what post-split keeps the lens half and the pose half
+  // from being read off the wrong node here but not there.
+  //
+  // ⚠️ PRESERVED, NOT FIXED: `activeCamera` is `selectActiveCameraNode(state)` with NO
+  // `seconds`, while the FRAMING above uses the seconds-aware active camera. They differ
+  // only when a `CameraSelect.active` is keyframed — a camera CUT — and there the still
+  // is framed by camera B while its aperture is read off camera A. That was already true
+  // before this rewrite (the flag was read off `activeCamera` too); it is left alone here
+  // because changing which camera the DoF comes from changes what a rendered still looks
+  // like, and that belongs in its own issue with its own observation, not in a signature
+  // slice. See #483.
+  const dof = resolveCameraDofAt(state, activeCamera?.id, seconds);
   // Control passes (depth/normal) ignore DoF — they encode geometry, not a
   // photographic frame; the override path renders raw values without the bokeh.
   const blob = await renderSceneToPngBlob({

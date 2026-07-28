@@ -6,7 +6,16 @@
 // → renderToImage composer path) makes the with-DoF render identical to the
 // without-DoF render, and the pixel-difference check fails.
 
+//
+// ⚠️ #387 C4: the camera is SPLIT, and the DoF params (`dofEnabled` / `focusDistance` /
+// `fStop`) live on its `CameraData` half. Both halves matter here for DIFFERENT reasons:
+// the director still selects the camera `Object`, while the controls and the setParams
+// below must address the CameraData — a setParam aimed at the Object is surfaced but is
+// still a no-op (#423), which would leave the render unchanged and read as "DoF is broken"
+// rather than "the fixture wrote to the wrong half".
+
 import { test, expect } from './_fixtures';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface W {
   __basher_selection?: { getState: () => { select: (id: string) => void } };
@@ -76,12 +85,13 @@ test.describe('#12 depth of field', () => {
     await page.evaluate(() =>
       (window as unknown as W).__basher_selection!.getState().select('n_camera'),
     );
-    await expect(page.getByTestId('inspector-camera-dof-n_camera')).toBeVisible();
+    const lens = await dataNodeIdOf(page, 'n_camera');
+    await expect(page.getByTestId(`inspector-camera-dof-${lens}`)).toBeVisible();
     // Focus + f-stop fields appear only once DoF is on.
-    await expect(page.getByTestId('inspector-camera-focus-n_camera')).toHaveCount(0);
-    await page.getByTestId('inspector-camera-dof-n_camera').check();
-    await expect(page.getByTestId('inspector-camera-focus-n_camera')).toBeVisible();
-    await expect(page.getByTestId('inspector-camera-fstop-n_camera')).toBeVisible();
+    await expect(page.getByTestId(`inspector-camera-focus-${lens}`)).toHaveCount(0);
+    await page.getByTestId(`inspector-camera-dof-${lens}`).check();
+    await expect(page.getByTestId(`inspector-camera-focus-${lens}`)).toBeVisible();
+    await expect(page.getByTestId(`inspector-camera-fstop-${lens}`)).toBeVisible();
   });
 
   test('the offscreen render applies bokeh — DoF changes the image (V37 parity)', async ({
@@ -93,16 +103,22 @@ test.describe('#12 depth of field', () => {
 
     // Enable DoF with the focus plane in FRONT of the cubes (1.2) at a wide
     // aperture — the cubes (~5 units away) fall well out of focus and blur.
-    await page.evaluate(() =>
-      (window as unknown as W).__basher_dag!.getState().dispatchAtomic(
-        [
-          { type: 'setParam', nodeId: 'n_camera', paramPath: 'dofEnabled', value: true },
-          { type: 'setParam', nodeId: 'n_camera', paramPath: 'focusDistance', value: 1.2 },
-          { type: 'setParam', nodeId: 'n_camera', paramPath: 'fStop', value: 1.2 },
-        ],
-        'user',
-        'enable dof',
-      ),
+    // Addressed to the LENS half: these three are CameraData params, and the same write
+    // aimed at the Object would be reported and dropped, leaving the two renders identical
+    // and the pixel-difference assertion below blaming the DoF feature for it.
+    const lens = await dataNodeIdOf(page, 'n_camera');
+    await page.evaluate(
+      (id) =>
+        (window as unknown as W).__basher_dag!.getState().dispatchAtomic(
+          [
+            { type: 'setParam', nodeId: id, paramPath: 'dofEnabled', value: true },
+            { type: 'setParam', nodeId: id, paramPath: 'focusDistance', value: 1.2 },
+            { type: 'setParam', nodeId: id, paramPath: 'fStop', value: 1.2 },
+          ],
+          'user',
+          'enable dof',
+        ),
+      lens,
     );
     await page.waitForTimeout(200);
     const blurred = await page.evaluate(() => (window as unknown as W).__basher_render_png!());

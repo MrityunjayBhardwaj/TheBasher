@@ -11,6 +11,7 @@ import { buildDefaultDagState, buildDefaultProject } from '../core/project/defau
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 // P7.12 D-04 — node defs for the inputs:{} purity assertion.
@@ -59,6 +60,9 @@ const ALL_TYPES = [
   'BoneNameMap',
   'BoxData',
   'BoxMesh',
+  // #387 (Stage C · C4) — the camera's data half. Every split kind adds its data type
+  // here: BoxData, SphereData, CurveData, LightData, and now CameraData.
+  'CameraData',
   'CameraSelect',
   'Character',
   'Clamp',
@@ -158,11 +162,14 @@ describe('default project', () => {
     const state = buildDefaultDagState();
     // #365 Phase 5a (Slice 1b) — the box is the object↔data split: n_box (the Object/pose) +
     // n_box_data (the BoxData/geometry). #386 C3 — the key light is split too: n_light (the
-    // Object/pose, id inherited) + n_light_data (the LightData/shading).
+    // Object/pose, id inherited) + n_light_data (the LightData/shading). #387 C4 — and so is
+    // the camera: n_camera (the Object/pose, id inherited) + n_camera_data (the CameraData/
+    // lens). Every seeded scene object is now split-native; nothing in a new project migrates.
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
       'n_box_data',
       'n_camera',
+      'n_camera_data',
       'n_light',
       'n_light_data',
       'n_render',
@@ -210,7 +217,12 @@ describe('default project', () => {
     const project = buildDefaultProject();
     const parsed = ProjectSchema.parse(project);
     expect(parsed.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    expect(parsed.nodeVersions.PerspectiveCamera).toBe(1);
+    // #387 C4 — the seed camera is split-native, so the fused type no longer appears in a
+    // NEW project's nodeVersions at all. Asserted as a positive on both halves (rather than
+    // just swapping the key) so a seed that silently stopped minting either one cannot pass.
+    expect(parsed.nodeVersions.CameraData).toBe(1);
+    expect(parsed.nodeVersions.Object).toBe(1);
+    expect(parsed.nodeVersions.PerspectiveCamera).toBeUndefined();
   });
 });
 
@@ -282,8 +294,9 @@ describe('P1 new node types — pure twice-eval', () => {
   // #386 S4 — the four posable lights (Directional/Point/Spot/Area) are RETIRED: they no
   // longer evaluate (their evaluate throws), so they are NOT in the twice-eval walk. Only
   // AmbientLight (which stays fused) remains here; the relics' throw is asserted below.
+  // #387 S8 — both fused cameras left this walk for the same reason, and their throw is
+  // asserted alongside the lights'.
   it.each([
-    ['OrthographicCamera', { zoom: 50, position: [0, 0, 5] }],
     ['AmbientLight', { intensity: 0.4 }],
     ['GltfAsset', { assetRef: 'assets/test.glb' }],
     ['Transform', { position: [1, 0, 0] }],
@@ -301,7 +314,7 @@ describe('P1 new node types — pure twice-eval', () => {
   });
 });
 
-describe('#386 S4 — the four posable lights are retired migration relics', () => {
+describe('retired migration relics — the posable lights (#386 S4) and both cameras (#387 S8)', () => {
   it.each([
     ['DirectionalLight', { intensity: 1, position: [5, 5, 3] }],
     ['PointLight', { intensity: 1, position: [0, 2, 0] }],
@@ -309,6 +322,21 @@ describe('#386 S4 — the four posable lights are retired migration relics', () 
     ['AreaLight', { intensity: 5, position: [0, 5, 0], width: 2, height: 2 }],
   ])(
     '%s.evaluate throws (retired; projects migrate to Object+LightData on load)',
+    (type, params) => {
+      const state = buildOne(type, params);
+      expect(() => evaluate(state, 'n')).toThrow(/retired/);
+    },
+  );
+
+  // #387 S8 — the two fused cameras, same shape. Both projections retire together: unlike
+  // the lights there is no partial-retirement survivor, because a camera has no non-object
+  // form. Note the WORDS 'PerspectiveCamera'/'OrthographicCamera' live on past this — as
+  // `CameraValue.kind` and as Add-menu creation kinds — so only the NODE type is gone.
+  it.each([
+    ['PerspectiveCamera', { fov: 45, position: [0, 0, 5] }],
+    ['OrthographicCamera', { zoom: 50, position: [0, 0, 5] }],
+  ])(
+    '%s.evaluate throws (retired; projects migrate to Object+CameraData on load)',
     (type, params) => {
       const state = buildOne(type, params);
       expect(() => evaluate(state, 'n')).toThrow(/retired/);
@@ -1379,12 +1407,14 @@ describe('P3 — KeyframeChannelText / Image (discrete step, inc 3)', () => {
 describe('P3 — Shot + Cut (editorial)', () => {
   function buildShot(name: string, nodeId: string) {
     let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'cam',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: 45, near: 0.1, far: 100, position: [0, 0, 5], lookAt: [0, 0, 0] },
-    }).next;
+    // #387 C4 — the fused camera node type is retired; a camera is now an Object posing a
+    // CameraData. `position` stays on the Object, the lens moves to the data half.
+    state = makeSplitCamera(state, {
+      objectId: 'cam',
+      fov: 45,
+      position: [0, 0, 5],
+      lens: { near: 0.1, far: 100, lookAt: [0, 0, 0] },
+    }).state;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'scene',
@@ -1479,12 +1509,8 @@ function buildPassState(passType: 'BeautyPass' | 'IDPass') {
     nodeType: 'TimeSource',
     params: {},
   }).next;
-  state = applyOp(state, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [0, 0, 5] },
-  }).next;
+  // #387 C4 — a camera is an Object posing a CameraData (see buildShot above).
+  state = makeSplitCamera(state, { objectId: 'cam', fov: 45, position: [0, 0, 5] }).state;
   state = makeSplitCube(state, { objectId: 'box' }).state;
   state = applyOp(state, {
     type: 'addNode',
@@ -1753,12 +1779,13 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
     const promptText = opts.promptText ?? 'a cinematic cube';
     let s = emptyDagState();
     s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'cam',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
-    }).next;
+    // #387 C4 — a camera is an Object posing a CameraData (see buildShot above).
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      fov: 60,
+      position: [0, 0, 5],
+      lens: { lookAt: [0, 0, 0] },
+    }).state;
     s = makeSplitCube(s, { objectId: 'box', position: opts.boxPosition ?? [0, 0, 0] }).state;
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, {
@@ -1900,12 +1927,13 @@ describe('P5 — VideoStitch (impure metadata, D-01/D-05)', () => {
     // and gives us a consistent sourceHash test surface. (For Wave D
     // metadata-only purposes, the upstream's passKind doesn't matter
     // — VideoStitch hashes whatever Image arrives.)
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'cam',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: 60, position: [0, 0, 5], lookAt: [0, 0, 0] },
-    }).next;
+    // #387 C4 — a camera is an Object posing a CameraData (see buildShot above).
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      fov: 60,
+      position: [0, 0, 5],
+      lens: { lookAt: [0, 0, 0] },
+    }).state;
     s = makeSplitCube(s, { objectId: 'box', position: [0, 0, 0] }).state;
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, {

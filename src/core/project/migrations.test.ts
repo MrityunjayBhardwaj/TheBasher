@@ -20,6 +20,7 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
+import { DEFAULT_CAMERA_POSE, resolveCameraPoseAt } from '../../app/activeCamera';
 import { sphereGeometryRef } from '../../app/modifierGeometry';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materialSchema';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
@@ -277,8 +278,8 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
   it('splits the box: n_box becomes an Object (id inherited) + a wired BoxData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxJson());
     // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves)
-    // → 6 (light pass, no lights).
-    expect(migrated.formatVersion).toBe(6);
+    // → 6 (light pass, no lights) → 7 (camera split — this fixture HAS a camera).
+    expect(migrated.formatVersion).toBe(7);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -505,8 +506,9 @@ function splitSphereDataNode(project: Project, sphereId: string) {
 describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereData (#384)', () => {
   it('splits the sphere: n_sphere becomes an Object (id inherited) + a wired SphereData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
-    // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass) → 6 (light pass, no lights).
-    expect(migrated.formatVersion).toBe(6);
+    // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass) → 6 (light pass, no
+    // lights) → 7 (camera split — this fixture HAS a camera).
+    expect(migrated.formatVersion).toBe(7);
     // The sphere node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_sphere;
     expect(obj.type).toBe('Object');
@@ -696,8 +698,8 @@ function splitCurveDataNode(project: Project, curveId: string) {
 describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#385)', () => {
   it('splits the curve: n_curve becomes an Object (id inherited) + a wired CurveData', () => {
     const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
-    // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights).
-    expect(migrated.formatVersion).toBe(6);
+    // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights) → 7 (camera).
+    expect(migrated.formatVersion).toBe(7);
     const obj = migrated.state.nodes.n_curve;
     expect(obj.type).toBe('Object');
     const op = obj.params as Record<string, unknown>;
@@ -936,8 +938,8 @@ function splitLightDataNode(project: Project, lightId: string) {
 describe('object↔data split v5 → v6: fused posable lights → Object + LightData (#386)', () => {
   it('splits each posable kind byte-identically: the Object inherits the id, the LightData owns the shading', () => {
     const m = loadFromBytes(buildFusedLightsJson());
-    // 5 → 6 (light pass only, this fixture has no box/sphere/curve).
-    expect(m.formatVersion).toBe(6);
+    // 5 → 6 (light pass) → 7 (camera pass, no cameras in this fixture).
+    expect(m.formatVersion).toBe(7);
 
     // Directional → Object(pose) + LightData{lightKind, intensity, color}.
     const dir = m.state.nodes.n_dir;
@@ -1130,7 +1132,7 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       state: { nodes, outputs: s.outputs },
     };
     const m = loadFromBytes(mixed);
-    expect(m.formatVersion).toBe(6);
+    expect(m.formatVersion).toBe(7);
     // Control a — the curve split.
     expect(m.state.nodes.n_curve.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
@@ -1143,6 +1145,478 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
     // And the light split alongside them.
     expect(m.state.nodes.n_point.type).toBe('Object');
     expect(splitLightDataNode(m, 'n_point')).toBeDefined();
+  });
+});
+
+// ── object↔data split (#387 Stage C · C4): fused cameras → Object + CameraData ──
+// The per-kind repeat for the THIRD non-mesh data, one format version after the
+// light's (v6→v7). Two fused camera NODES collapse into ONE CameraData carrying a
+// `projection` discriminator, the way four light nodes collapsed into `lightKind`.
+//
+// ⚠️ EVERY FIXTURE VALUE BELOW IS DELIBERATELY OFF THE DEFAULTS, and for this kind
+// that is load-bearing rather than hygiene. `DEFAULT_CAMERA_POSE` is what the pose
+// road returns when a read FAILS — and the default project is framed at exactly
+// `fov: 45, position: [3,2,3], lookAt: [0,0,0]`, so a COMPLETELY broken split would
+// still resolve to those numbers and pass. fov 28 / position [7,1,-4] /
+// lookAt [1,2,3] / roll 12 / far 250 each differ from both the schema default and
+// the pose fallback (H177/V15).
+//
+// The gate that matters: a channel's `params.target` is asserted PER HALF and
+// DIRECTLY, not only through the resolved pose. Post-split the resolver reads BOTH
+// halves, so a channel re-targeted to the wrong half still resolves correctly today
+// and the pose cannot tell you — the assertion has to name the id.
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; K23; issue #387.
+
+const CAM_PERSP_FOV = 28;
+const CAM_POSITION: Vec3 = [7, 1, -4];
+const CAM_LOOKAT: Vec3 = [1, 2, 3];
+const CAM_ROLL = 12;
+const CAM_FAR = 250;
+
+/** A v6 project with a fused PERSPECTIVE camera (non-default lens + aim) and a fused
+ *  ORTHOGRAPHIC one, plus two channels on the perspective camera: `fov` (a lens param
+ *  → must follow the CameraData) and `position` (a transform → must stay on the
+ *  inherited-id Object). */
+function buildFusedCamerasJson() {
+  let s = emptyDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_persp',
+    nodeType: 'PerspectiveCamera',
+    params: {
+      fov: CAM_PERSP_FOV,
+      near: 0.05,
+      far: CAM_FAR,
+      sensorSize: 24,
+      dofEnabled: true,
+      focusDistance: 7.5,
+      fStop: 1.4,
+      focusOnTarget: true,
+      position: CAM_POSITION,
+      lookAt: CAM_LOOKAT,
+      roll: CAM_ROLL,
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_ortho',
+    nodeType: 'OrthographicCamera',
+    params: {
+      zoom: 33,
+      near: 0.02,
+      far: CAM_FAR,
+      position: [-2, 6, 9],
+      lookAt: CAM_LOOKAT,
+      roll: CAM_ROLL,
+    },
+  });
+  // A Scene consuming the perspective camera. This is the POINT of id inheritance:
+  // the edge names `n_persp` and must still name it after the split, with no
+  // re-pointing pass anywhere in the migration.
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'connect',
+    from: { node: 'n_persp', socket: 'out' },
+    to: { node: 'n_scene', socket: 'camera' },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_fov',
+    nodeType: 'KeyframeChannelNumber',
+    params: {
+      name: 'fov',
+      target: 'n_persp',
+      paramPath: 'fov',
+      keyframes: [
+        { time: 0, value: CAM_PERSP_FOV, easing: 'linear' },
+        { time: 1, value: 85, easing: 'linear' },
+      ],
+    },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_campos',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'position',
+      target: 'n_persp',
+      paramPath: 'position',
+      keyframes: [
+        { time: 0, value: CAM_POSITION, easing: 'linear' },
+        { time: 1, value: [7, 9, -4], easing: 'linear' },
+      ],
+    },
+  });
+  const nodes = JSON.parse(JSON.stringify(s.nodes));
+  return {
+    formatVersion: 6,
+    id: 'p387-camera-split',
+    name: 'pre-split cameras',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {
+      PerspectiveCamera: nodes.n_persp.version,
+      OrthographicCamera: nodes.n_ortho.version,
+    },
+    state: { nodes, outputs: s.outputs },
+  };
+}
+
+/** The CameraData node a split produced from the camera `cameraId`. */
+function splitCameraDataNode(project: Project, cameraId: string) {
+  return Object.values(project.state.nodes).find(
+    (n) => n.type === 'CameraData' && n.id.startsWith(`${cameraId}__data`),
+  );
+}
+
+describe('object↔data split v6 → v7: fused cameras → Object + CameraData (#387)', () => {
+  it('splits both projections: the Object inherits the id and the pose, the CameraData owns the lens', () => {
+    const m = loadFromBytes(buildFusedCamerasJson());
+    // 6 → 7 (camera pass only; this fixture has no box/sphere/curve/light).
+    expect(m.formatVersion).toBe(7);
+
+    // Perspective → Object(pose only) + CameraData(the whole lens + the aim).
+    const persp = m.state.nodes.n_persp;
+    expect(persp.type).toBe('Object');
+    // rotation/scale are IDENTITY literals: neither fused camera type has them, and
+    // parity-first (D1) keeps aim on the data half, so the camera road never reads
+    // the Object's rotation.
+    expect(persp.params).toEqual({
+      position: CAM_POSITION,
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    const perspData = splitCameraDataNode(m, 'n_persp')!;
+    expect(perspData.params).toEqual({
+      projection: 'Perspective',
+      fov: CAM_PERSP_FOV,
+      near: 0.05,
+      far: CAM_FAR,
+      sensorSize: 24,
+      dofEnabled: true,
+      focusDistance: 7.5,
+      fStop: 1.4,
+      focusOnTarget: true,
+      lookAt: CAM_LOOKAT,
+      roll: CAM_ROLL,
+    });
+    expect((persp.inputs as Record<string, { node: string }>).data.node).toBe(perspData.id);
+
+    // Orthographic → the same Object shape + a CameraData discriminated the other way.
+    const ortho = m.state.nodes.n_ortho;
+    expect(ortho.type).toBe('Object');
+    expect(ortho.params).toEqual({ position: [-2, 6, 9], rotation: [0, 0, 0], scale: [1, 1, 1] });
+    const orthoData = splitCameraDataNode(m, 'n_ortho')!;
+    expect(orthoData.params).toEqual({
+      projection: 'Orthographic',
+      // D5 — the ONE invented value in this migration. An orthographic source never
+      // had an fov and `CameraData.fov` is required; it is inert while the projection
+      // is orthographic (the recompose reads `zoom`).
+      fov: 45,
+      zoom: 33,
+      near: 0.02,
+      far: CAM_FAR,
+      lookAt: CAM_LOOKAT,
+      roll: CAM_ROLL,
+    });
+    // The orthographic source has no DoF/sensor params at all, so the migration writes
+    // none — CameraData's schema defaults them. Asserted as an absence because writing
+    // perspective-only fields onto an ortho bag is the plausible wrong thing to do.
+    expect('dofEnabled' in (orthoData.params as object)).toBe(false);
+    expect('sensorSize' in (orthoData.params as object)).toBe(false);
+  });
+
+  it('the consumer edge needs NO re-pointing — scene.camera still names the inherited id', () => {
+    // The whole reason the fused node is converted IN PLACE rather than replaced. The
+    // migration contains no edge-rewriting pass at all for cameras; this is what makes
+    // that correct, and it covers `CameraSelect.cameras` edges, constraint targets and
+    // saved selections by the same mechanism.
+    const m = loadFromBytes(buildFusedCamerasJson());
+    const cam = (m.state.nodes.n_scene.inputs as Record<string, { node: string; socket: string }>)
+      .camera;
+    expect(cam.node).toBe('n_persp');
+    // ...and what it now names is the Object half, which is where the pose lives.
+    expect(m.state.nodes.n_persp.type).toBe('Object');
+    // The data half is a NEW node the scene does not reference — it hangs off the
+    // Object's `data` input only.
+    const data = splitCameraDataNode(m, 'n_persp')!;
+    expect(cam.node).not.toBe(data.id);
+  });
+
+  it('routes channels by paramPath — asserted on the TARGET ID per half, not on the resolved pose', () => {
+    const m = loadFromBytes(buildFusedCamerasJson());
+    const data = splitCameraDataNode(m, 'n_persp')!;
+    // A lens (`fov`) channel re-targets to the fresh CameraData.
+    expect((m.state.nodes.n_fov.params as { target: string }).target).toBe(data.id);
+    // A `position` channel addresses the pose → stays on the inherited-id Object.
+    expect((m.state.nodes.n_campos.params as { target: string }).target).toBe('n_persp');
+    // WHY THE IDS AND NOT THE POSE: `resolveCameraPoseAt` gathers channels from BOTH
+    // halves (slice 2), so a channel parked on the wrong half still animates the pose
+    // correctly today and the resolved value cannot distinguish the two. The pose
+    // assertion below is a real gate for the STATIC lens; only these two lines gate
+    // the routing.
+  });
+
+  it('the migrated pair resolves to the canonical pose (byte-identity, vs a canonical value not a live fused resolve)', () => {
+    const m = loadFromBytes(buildFusedCamerasJson());
+    // Compared against a hand-written canonical CameraPose rather than a live resolve
+    // of the fused node — slice 8 deletes the fused camera types, and a fixture that
+    // compares against them dies with them (the sphere's shipped lesson).
+    expect(resolveCameraPoseAt(m.state, 'n_persp', 0)).toEqual({
+      kind: 'PerspectiveCamera',
+      position: CAM_POSITION,
+      lookAt: CAM_LOOKAT,
+      fov: CAM_PERSP_FOV,
+      near: 0.05,
+      far: CAM_FAR,
+      roll: CAM_ROLL,
+    });
+    // The orthographic half keeps its own discriminator through the split.
+    expect(resolveCameraPoseAt(m.state, 'n_ortho', 0).kind).toBe('OrthographicCamera');
+    // Not a degenerate all-default fixture: every asserted value differs from the
+    // pose fallback a broken road would return.
+    expect(DEFAULT_CAMERA_POSE.fov).not.toBe(CAM_PERSP_FOV);
+    expect(DEFAULT_CAMERA_POSE.position).not.toEqual(CAM_POSITION);
+  });
+
+  it('carries a MISSING perspective fov faithfully — it does NOT invent the 45 the pose road falls back to', () => {
+    // A hand-edited perspective camera with no stored fov. `PerspectiveCameraParams.fov`
+    // is required so a real save always carries one; the point is the DECISION, which
+    // CameraData.ts states: 45 is `DEFAULT_CAMERA_POSE.fov`, so hydrating it here would
+    // make "the fov never arrived" indistinguishable from "framed at 45°" one layer
+    // below where anyone would look. The absence stays loud instead (H177).
+    const noFov = {
+      formatVersion: 6,
+      id: 'p387-nofov',
+      name: 'perspective camera without fov',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { PerspectiveCamera: 1 },
+      state: {
+        nodes: {
+          n_persp: {
+            id: 'n_persp',
+            type: 'PerspectiveCamera',
+            version: 1,
+            params: { position: CAM_POSITION, lookAt: CAM_LOOKAT },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    const data = splitCameraDataNode(loadFromBytes(noFov), 'n_persp')!;
+    expect('fov' in (data.params as object)).toBe(false);
+    expect((data.params as { fov?: number }).fov).not.toBe(45);
+  });
+
+  it('is idempotent — re-loading a split project is a stable no-op', () => {
+    const once = loadFromBytes(buildFusedCamerasJson());
+    const twice = loadFromBytes(once);
+    for (const id of ['n_persp', 'n_ortho', 'n_fov', 'n_campos']) {
+      expect(twice.state.nodes[id]).toEqual(once.state.nodes[id]);
+    }
+    expect(splitCameraDataNode(twice, 'n_persp')).toEqual(splitCameraDataNode(once, 'n_persp'));
+    // No fused camera survives.
+    for (const t of ['PerspectiveCamera', 'OrthographicCamera']) {
+      expect(Object.values(twice.state.nodes).some((n) => n.type === t)).toBe(false);
+    }
+  });
+
+  it('COLLISION GATE: the camera pass moves a channel only when its TARGET is a camera', () => {
+    // `fov` and ten siblings joined the shared `isDataParamPath` predicate in this
+    // pass, and that predicate is consulted by ALL FIVE passes. What keeps a name safe
+    // is NOT the name — it is that each pass gates on its OWN id map. Stamped at v6 so
+    // only the camera pass runs: with no camera in the file the id map is empty and the
+    // re-target loop never executes, so a `fov` channel on a non-camera is untouched.
+    const strayOnNonCamera = {
+      formatVersion: 6,
+      id: 'p387-collision',
+      name: 'stray fov channel on a non-camera',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { KeyframeChannelNumber: 2 },
+      state: {
+        nodes: {
+          n_obj: {
+            id: 'n_obj',
+            type: 'Object',
+            version: 1,
+            params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+            inputs: {},
+          },
+          n_stray: {
+            id: 'n_stray',
+            type: 'KeyframeChannelNumber',
+            version: 2,
+            params: {
+              name: 'fov',
+              target: 'n_obj',
+              paramPath: 'fov',
+              keyframes: [
+                { time: 0, value: 10, easing: 'linear' },
+                { time: 1, value: 20, easing: 'linear' },
+              ],
+            },
+            inputs: {},
+          },
+        },
+        outputs: {},
+      },
+    };
+    const m = loadFromBytes(strayOnNonCamera);
+    expect(m.formatVersion).toBe(7);
+    expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
+  });
+
+  it('...and an EARLIER pass may still reparent such a channel, which is inert and pre-dates the camera', () => {
+    // The precise statement of why the ownership check in `isDataParamPath` is enough.
+    // `paramPath` is free text, so a channel can carry a camera's name while targeting
+    // a BOX — and the v2→v3 box pass, gating on its own id map plus the SHARED
+    // predicate, does move it to the BoxData. That is not a camera regression: the
+    // CONTROL below shows `intensity` (a LIGHT name, in the predicate since #386)
+    // behaves identically. It is harmless because no earlier kind OWNS either name, so
+    // both channels were already driving nothing — the move relocates an inert channel
+    // between two halves of the same subject. A name an earlier kind DID own would be a
+    // real, silent mis-move, which is what the ownership check exists to prevent.
+    let s = emptyDagState();
+    const add = (op: Parameters<typeof applyOp>[1]) => {
+      s = applyOp(s, op).next;
+    };
+    add({
+      type: 'addNode',
+      nodeId: 'n_box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    });
+    for (const [id, path] of [
+      ['n_stray_fov', 'fov'],
+      ['n_stray_int', 'intensity'],
+    ] as const) {
+      add({
+        type: 'addNode',
+        nodeId: id,
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: path,
+          target: 'n_box',
+          paramPath: path,
+          keyframes: [
+            { time: 0, value: 10, easing: 'linear' },
+            { time: 1, value: 20, easing: 'linear' },
+          ],
+        },
+      });
+    }
+    const nodes = JSON.parse(JSON.stringify(s.nodes));
+    const m = loadFromBytes({
+      formatVersion: 2,
+      id: 'p387-inert-reparent',
+      name: 'stray camera-name and light-name channels on a box',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { BoxMesh: nodes.n_box.version },
+      state: { nodes, outputs: s.outputs },
+    });
+    const boxData = Object.values(m.state.nodes).find(
+      (n) => n.type === 'BoxData' && n.id.startsWith('n_box__data'),
+    )!;
+    // Both move, and they move the SAME way — the camera's names inherit an existing
+    // property of the shared predicate rather than introducing one.
+    expect((m.state.nodes.n_stray_fov.params as { target: string }).target).toBe(boxData.id);
+    expect((m.state.nodes.n_stray_int.params as { target: string }).target).toBe(boxData.id);
+    // The box's own geometry road is unaffected either way — nothing reads `fov` or
+    // `intensity` off a BoxData, which is exactly why this is inert.
+    expect(m.state.nodes.n_box.type).toBe('Object');
+  });
+
+  it('CONTROLS: box, curve and light still split alongside the camera pass in one load', () => {
+    // A mixed formatVersion-2 scene carrying every kind split so far plus a camera:
+    // all five passes run in sequence on one load, so the earlier kinds are live
+    // controls for the camera pass rather than a comment.
+    let s = emptyDagState();
+    const add = (op: Parameters<typeof applyOp>[1]) => {
+      s = applyOp(s, op).next;
+    };
+    add({
+      type: 'addNode',
+      nodeId: 'n_box',
+      nodeType: 'BoxMesh',
+      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_curve',
+      nodeType: 'Curve',
+      params: {
+        points: [
+          { id: 'cp0', co: [0, 0, 0] },
+          { id: 'cp1', co: [1, 1, 1] },
+        ],
+      },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_point',
+      nodeType: 'PointLight',
+      params: { intensity: 2.2, position: [0, 3, 0] },
+    });
+    add({
+      type: 'addNode',
+      nodeId: 'n_persp',
+      nodeType: 'PerspectiveCamera',
+      params: { fov: CAM_PERSP_FOV, far: CAM_FAR, position: CAM_POSITION, lookAt: CAM_LOOKAT },
+    });
+    // A light `intensity` channel — an EARLIER kind's data-param channel, routed by the
+    // same shared predicate during a different pass.
+    add({
+      type: 'addNode',
+      nodeId: 'n_lint',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'intensity',
+        target: 'n_point',
+        paramPath: 'intensity',
+        keyframes: [
+          { time: 0, value: 2.2, easing: 'linear' },
+          { time: 1, value: 6, easing: 'linear' },
+        ],
+      },
+    });
+    const nodes = JSON.parse(JSON.stringify(s.nodes));
+    const m = loadFromBytes({
+      formatVersion: 2,
+      id: 'p387-mixed',
+      name: 'box+curve+light+camera',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: {
+        BoxMesh: nodes.n_box.version,
+        Curve: nodes.n_curve.version,
+        PointLight: nodes.n_point.version,
+        PerspectiveCamera: nodes.n_persp.version,
+      },
+      state: { nodes, outputs: s.outputs },
+    });
+    expect(m.formatVersion).toBe(7);
+    // Controls — every earlier kind still splits.
+    expect(m.state.nodes.n_box.type).toBe('Object');
+    expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
+    expect(m.state.nodes.n_curve.type).toBe('Object');
+    expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
+    expect(m.state.nodes.n_point.type).toBe('Object');
+    expect(splitLightDataNode(m, 'n_point')).toBeDefined();
+    // ...and the light's own data-param channel still routes to ITS data half, proving
+    // the camera's newly-added names did not disturb an earlier pass.
+    expect((m.state.nodes.n_lint.params as { target: string }).target).toBe(
+      splitLightDataNode(m, 'n_point')!.id,
+    );
+    // And the camera split alongside them.
+    expect(m.state.nodes.n_persp.type).toBe('Object');
+    expect(splitCameraDataNode(m, 'n_persp')).toBeDefined();
   });
 });
 
@@ -1301,7 +1775,8 @@ function childRefNodes(state: DagState): string[] {
 describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)', () => {
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
-    expect(migrated.formatVersion).toBe(6); // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light
+    // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light → 7 camera.
+    expect(migrated.formatVersion).toBe(7);
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
@@ -1514,13 +1989,14 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
 describe('Curve v1 → v2: control points gain stable ids (#453/#454)', () => {
   // NON-default coordinates on purpose: a dropped `co` would otherwise read the schema
   // default and the golden would pass vacuously.
-  // formatVersion 6 (current): isolates the Curve NODE ladder (v1→v2 points get ids)
+  // formatVersion 7 (current): isolates the Curve NODE ladder (v1→v2 points get ids)
   // from the v4→v5 FORMAT split. The two are orthogonal — the split's normalize step
   // reuses this same node ladder — so stamping the current format keeps this a pure
   // node-migration test (a v4 stamp would trip the 4→5 split and turn n_curve into an
-  // Object, hiding the very migration under test).
+  // Object, hiding the very migration under test). This stamp tracks the CURRENT
+  // format on every bump, so no format pass runs at all here.
   const V1_CURVE_PROJECT = {
-    formatVersion: 6,
+    formatVersion: 7,
     id: 'p454-curve-ids',
     name: 'pre-id curve',
     createdAt: 0,

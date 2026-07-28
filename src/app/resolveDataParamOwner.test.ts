@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 
 beforeEach(() => {
@@ -65,5 +66,36 @@ describe('resolveDataParamOwner', () => {
     const s = splitPair();
     expect(resolveDataParamOwner(s, 'obj', 'radius')).toBeNull();
     expect(resolveDataParamOwner(s, 'missing', 'material')).toBeNull();
+  });
+
+  // #485 — the camera is the first kind whose POSE spans both halves, and this helper is
+  // what the gizmo's write chokepoint asks before every `position` / `lookAt` / `roll`
+  // write. It got that wrong once already: all three went to the Object, where two of them
+  // are silently dropped, and the aim reticle stopped working with nothing to show for it.
+  //
+  // The split is not obvious from the outside — `position` is a pose param and stays, while
+  // `lookAt` and `roll` are ALSO pose params and move — so it is pinned per param rather
+  // than described.
+  it('splits a camera pose across both halves — position stays, lookAt and roll move', () => {
+    const cam = makeSplitCamera(emptyDagState(), { objectId: 'cam' });
+
+    expect(resolveDataParamOwner(cam.state, 'cam', 'position')).toBe('cam');
+    expect(resolveDataParamOwner(cam.state, 'cam', 'lookAt')).toBe(cam.dataId);
+    expect(resolveDataParamOwner(cam.state, 'cam', 'roll')).toBe(cam.dataId);
+    // The lens rides with the aim, for the same reason.
+    expect(resolveDataParamOwner(cam.state, 'cam', 'fov')).toBe(cam.dataId);
+  });
+
+  // The reach above is only sound because CameraData DECLARES `lookAt` and `roll` with zod
+  // defaults and `addNode` stores PARSED params, so a freshly minted lens carries both keys.
+  // This helper's possession test reads live params: an optional param with no default would
+  // be absent until something wrote it, and this would resolve to the Object forever — the
+  // self-locking shape that has bitten a possession check here before. So the presence of
+  // the keys is asserted directly, not assumed by the test above passing.
+  it('the camera lens carries its aim keys at mint, which is what makes the reach work', () => {
+    const cam = makeSplitCamera(emptyDagState(), { objectId: 'cam' });
+    const lensParams = cam.state.nodes[cam.dataId].params as Record<string, unknown>;
+
+    expect(Object.keys(lensParams)).toEqual(expect.arrayContaining(['lookAt', 'roll']));
   });
 });

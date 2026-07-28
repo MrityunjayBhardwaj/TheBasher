@@ -41,7 +41,8 @@ import { validatePlan } from '../agent/mutators/validate';
 import { overlayChannels } from '../nodes/overlayChannels';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { resolveEvaluatedParam } from '../app/resolveEvaluatedParam';
-import { channelPathForBand } from '../app/objectDataBand';
+import { channelPathForBand, renderReachForBand } from '../app/objectDataBand';
+import { resolveCameraPoseAt } from '../app/activeCamera';
 import {
   dataIdFor,
   renderedValueForBand,
@@ -163,6 +164,48 @@ describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
   });
 
   it('R4 — a channel written at the band path is visible to the renderer', () => {
+    // ONE road, asked in the phrasing its band requires — never skipped for a band.
+    // `renderReachForBand` decides the phrasing, and it is pinned as an equality in
+    // objectDataBand.test.ts precisely so a band cannot quietly choose the easier
+    // question: routing the camera down the 'evaluated-value' arm below would PASS
+    // (the recomposed CameraValue is flat and accepts the overlay) while never asking
+    // whether the rendered camera moved.
+    if (renderReachForBand(spec.band) === 'params-resolver') {
+      // The camera. Nothing renders from its evaluated value: `cameraPoseFromNode`
+      // builds a CameraPose from RAW params and `resolveCameraPoseAt` applies channels
+      // itself, keyed on the node id. So the question has to be put to that resolver,
+      // with a real channel node — and it must target the DATA half, because that is
+      // where the split moved the param and where `addChannel` will route it.
+      const { state, objectId, dataId } = buildKind(kind);
+      const withChannel = applyOp(state, {
+        type: 'addNode',
+        nodeId: 'n_ch',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          target: dataId,
+          paramPath: param,
+          keyframes: [
+            { time: 0, value: overlaid, easing: 'linear' },
+            { time: 1, value: overlaid, easing: 'linear' },
+          ],
+        },
+      } as Op).next;
+
+      const posed = resolveCameraPoseAt(withChannel, objectId, 1);
+      expect(
+        posed.fov,
+        `${spec.dataType}: a channel on "${param}" targets the data half, but the pose ` +
+          `resolver every render road funnels through reports ${posed.fov}. ` +
+          `${JSON.stringify(base)} means the resolver reads the pair but not its ` +
+          `channels; 45 means it read neither and returned DEFAULT_CAMERA_POSE. Either ` +
+          `way this param animates in the inspector and freezes on screen`,
+      ).toEqual(overlaid);
+      // And not either value a broken road hands back for free.
+      expect(posed.fov).not.toEqual(base);
+      expect(posed.fov).not.toEqual(45);
+      return;
+    }
+
     const { state, objectId } = buildKind(kind);
     const renderBase = renderedValueForBand(
       spec.band,
@@ -353,9 +396,9 @@ describe.each(SPLIT_KIND_NAMES)('R10 — wrong-half write — %s', (kind) => {
 });
 
 describe('the roads cover every kind', () => {
-  it('runs for all four split kinds', () => {
+  it('runs for every split kind', () => {
     // Guard the guard, one level up: `describe.each` over an empty list is zero tests
-    // and a green suite.
-    expect(SPLIT_KIND_NAMES.length).toBeGreaterThanOrEqual(4);
+    // and a green suite. 5 with the camera (#387); 4 before it.
+    expect(SPLIT_KIND_NAMES.length).toBeGreaterThanOrEqual(5);
   });
 });

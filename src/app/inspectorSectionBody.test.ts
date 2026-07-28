@@ -94,18 +94,31 @@ describe('#458 per-section row suppression is equivalent to the global filter it
     }
   });
 
-  it('suppresses the four keys the global filter did, plus the one the caller skipped by type', () => {
+  it('omits exactly the five original keys plus the nine the lens control authors', () => {
     const omitted = Object.values(SECTION_CONTROLS)
       .flat()
       .flatMap((c) => c.omitRowKeys ?? []);
     expect(omitted.sort()).toEqual([
+      // #387 — the nine keys CameraLensControls writes. They are listed rather than
+      // suppressed wholesale because a CameraData's `projection`/`lookAt`/`roll` route
+      // to the SAME section and the control does not author them: under whole-section
+      // suppression those three would render nowhere, silently.
+      'dofEnabled',
       'extendAfter',
       'extendBefore',
+      'fStop',
+      'far',
+      'focusDistance',
+      'focusOnTarget',
+      'fov',
       'modifiers',
+      'near',
       'points',
+      'sensorSize',
       // Was a `node.type === 'MaterialOverride'` skip in the caller. It routes
       // to no section, so only the pre-grouping skip keeps it off screen.
       'slotIndex',
+      'zoom',
     ]);
   });
 
@@ -260,6 +273,29 @@ describe('#458 the shared dispatcher emits the same body for a data half as for 
     // by the time one exists the answer has to already be right.
     expect(emitted('camera', dataHalf('PerspectiveCamera'), [['fov', 50]])).toEqual([
       'cameraLens(data,obj)',
+    ]);
+  });
+
+  it('renders the lens control ABOVE the camera params it does not author (#387)', () => {
+    // The assertion is the ROW SET, not the card's presence — and that distinction is
+    // the whole point. A CameraData declares only `camera`, so its `projection`,
+    // `lookAt` and `roll` route here, and CameraLensControls authors none of them.
+    // Restore `suppressesAllRows` on this section and the three rows below vanish while
+    // the card stays non-empty (the control is still there), which is why the earlier
+    // instance of this bug was detectable only in a browser.
+    const rows: [string, unknown][] = [
+      ['fov', 28],
+      ['projection', 'Perspective'],
+      ['lookAt', [0, 0, 0]],
+      ['roll', 0],
+    ];
+    expect(emitted('camera', dataHalf('PerspectiveCamera'), rows)).toEqual([
+      'cameraLens(data,obj)',
+      // `fov` is absent: the control owns it. The other three are not owned, so they
+      // fall through as labelled generic rows.
+      'row:projection',
+      'row:lookAt',
+      'row:roll',
     ]);
   });
 

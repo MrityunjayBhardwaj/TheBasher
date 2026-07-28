@@ -6,6 +6,7 @@
 
 import { expect, test } from './_fixtures';
 import type { JSHandle, Page } from '@playwright/test';
+import { splitCameraDataId, splitCameraOps } from './_splitCamera';
 
 interface CamRef {
   node: string;
@@ -47,6 +48,17 @@ const groupChildren = (page: Page, groupId: string) =>
 
 const GRP = 'n_p231nc_grp';
 const CAM = 'n_p231nc_cam';
+/** The lens half. Post-split (#387 C4) the camera is an Object + CameraData pair, so `lookAt`
+ *  — an AIM param, parity-first on the data half — is read from HERE, not from `CAM`. Reading
+ *  it off the Object would report `undefined` no matter what the gizmo wrote. */
+const CAM_DATA = splitCameraDataId(CAM);
+/** One camera, built the only way the product can build one. Local origin, looking -Z. */
+const CAM_OPS = splitCameraOps({
+  objectId: CAM,
+  position: [0, 0, 0],
+  lookAt: [0, 0, -1],
+  fov: 50,
+});
 
 test.describe('#231 Inc 3.3 — nested camera world pose', () => {
   test('a camera under a Group looks through from the group-composed world', async ({
@@ -62,7 +74,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
     // Group@[5,1,0] → scene.children; camera (local origin, looking -Z) nested in it
     // AND wired active into scene.camera (single socket → replaces the seed camera).
     await page.evaluate(
-      ({ grp, cam }) => {
+      ({ grp, cam, camOps }) => {
         const d = (op: unknown) => (window as unknown as W).__basher_dag.getState().dispatch(op);
         d({ type: 'addNode', nodeId: grp, nodeType: 'Group', params: { position: [5, 1, 0] } });
         d({
@@ -70,12 +82,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
           from: { node: grp, socket: 'out' },
           to: { node: 'n_scene', socket: 'children' },
         });
-        d({
-          type: 'addNode',
-          nodeId: cam,
-          nodeType: 'PerspectiveCamera',
-          params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
-        });
+        for (const op of camOps) d(op);
         d({
           type: 'connect',
           from: { node: cam, socket: 'out' },
@@ -87,7 +94,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
           to: { node: 'n_scene', socket: 'camera' },
         });
       },
-      { grp: GRP, cam: CAM },
+      { grp: GRP, cam: CAM, camOps: CAM_OPS },
     );
 
     // Look through the active camera (Numpad-0 analog).
@@ -124,7 +131,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
 
     // A Group + a floating top-level camera (both project as outliner rows).
     await page.evaluate(
-      ({ grp, cam }) => {
+      ({ grp, camOps }) => {
         const d = (op: unknown) => (window as unknown as W).__basher_dag.getState().dispatch(op);
         d({ type: 'addNode', nodeId: grp, nodeType: 'Group', params: { position: [4, 0, 0] } });
         d({
@@ -132,14 +139,9 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
           from: { node: grp, socket: 'out' },
           to: { node: 'n_scene', socket: 'children' },
         });
-        d({
-          type: 'addNode',
-          nodeId: cam,
-          nodeType: 'PerspectiveCamera',
-          params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
-        });
+        for (const op of camOps) d(op);
       },
-      { grp: GRP, cam: CAM },
+      { grp: GRP, camOps: CAM_OPS },
     );
 
     await expect(page.locator(`[data-testid="scene-tree-row-${CAM}"]`)).toBeVisible();
@@ -172,7 +174,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
 
     // A camera nested in Group@[5,0,0] AND active (so the CameraGizmo mounts on it).
     await page.evaluate(
-      ({ grp, cam }) => {
+      ({ grp, cam, camOps }) => {
         const d = (op: unknown) => (window as unknown as W).__basher_dag.getState().dispatch(op);
         d({ type: 'addNode', nodeId: grp, nodeType: 'Group', params: { position: [5, 0, 0] } });
         d({
@@ -180,12 +182,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
           from: { node: grp, socket: 'out' },
           to: { node: 'n_scene', socket: 'children' },
         });
-        d({
-          type: 'addNode',
-          nodeId: cam,
-          nodeType: 'PerspectiveCamera',
-          params: { position: [0, 0, 0], lookAt: [0, 0, -1], fov: 50 },
-        });
+        for (const op of camOps) d(op);
         d({
           type: 'connect',
           from: { node: cam, socket: 'out' },
@@ -198,7 +195,7 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
         });
         (window as unknown as W).__basher_selection!.getState().select(cam);
       },
-      { grp: GRP, cam: CAM },
+      { grp: GRP, cam: CAM, camOps: CAM_OPS },
     );
     await page.waitForFunction(() => Boolean((window as unknown as W).__basher_camera_gizmo_grab));
     await page.waitForTimeout(150);
@@ -212,13 +209,13 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
     await page.waitForTimeout(100);
 
     const lookAt = await page.evaluate(
-      (cam) =>
-        (window as unknown as W).__basher_dag.getState().state.nodes[cam].params.lookAt as [
+      (camData) =>
+        (window as unknown as W).__basher_dag.getState().state.nodes[camData].params.lookAt as [
           number,
           number,
           number,
         ],
-      CAM,
+      CAM_DATA,
     );
     expect(lookAt[0]).toBeCloseTo(0, 2); // world 5 − group 5
     expect(lookAt[1]).toBeCloseTo(2, 2);

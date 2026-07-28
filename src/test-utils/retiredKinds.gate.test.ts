@@ -60,6 +60,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { stripComments } from './sourceScan';
 import { SPLIT_KINDS, SPLIT_KIND_NAMES } from './splitKinds';
 
 const REPO_ROOT = join(__dirname, '..', '..');
@@ -86,61 +87,10 @@ function retiredNodeTypes(): string[] {
   return [...new Set(SPLIT_KIND_NAMES.flatMap((kind) => [...SPLIT_KINDS[kind].fusedTypes]))].sort();
 }
 
-/**
- * Blank out comments, preserving line count and every string's contents.
- *
- * It tracks quote state rather than deleting from `//` to end-of-line, because the naive form
- * would swallow the rest of any line containing a `://` inside a string — and with it a real
- * carrier sitting further along that line. Comment bodies become spaces so that reported line
- * numbers still match the file on disk.
- */
-function stripComments(src: string): string {
-  let out = '';
-  let i = 0;
-  let quote: string | null = null;
-  while (i < src.length) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (quote) {
-      if (c === '\\') {
-        out += src.slice(i, i + 2);
-        i += 2;
-        continue;
-      }
-      if (c === quote) quote = null;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') {
-      quote = c;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && next === '/') {
-      while (i < src.length && src[i] !== '\n') {
-        out += ' ';
-        i += 1;
-      }
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      out += '  ';
-      i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
-        out += src[i] === '\n' ? '\n' : ' ';
-        i += 1;
-      }
-      out += '  ';
-      i += 2;
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
-}
+// `stripComments` moved to `./sourceScan` when #387's band grep-gate became its second
+// consumer — same reasoning, stated there. Enumerating tracked files stayed HERE (and in
+// the other gate) because `src/test-utils/*.ts` is typechecked against a tsconfig with no
+// `@types/node`, so a shared helper could not call `git ls-files`.
 
 /** The construction position: `nodeType: '<relic>'`, in any of the three quote styles. */
 function carrierPattern(types: readonly string[]): RegExp {
@@ -185,7 +135,8 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     const retired = retiredNodeTypes();
     // Guard-the-guard: an empty or shrunken subject would make every assertion below pass
     // vacuously, which is the exact failure mode this gate exists to prevent one level down.
-    expect(retired.length).toBeGreaterThanOrEqual(7);
+    // 9 with the camera's two fused types (#387); 7 before it.
+    expect(retired.length).toBeGreaterThanOrEqual(9);
 
     // The independent cross-check, and the reason a forgotten retirement cannot slip through:
     // a relic announces itself in its own source with the sentinel `'<Type> is retired;'`.

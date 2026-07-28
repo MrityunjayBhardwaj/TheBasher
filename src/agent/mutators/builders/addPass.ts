@@ -27,6 +27,7 @@ import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
+import { isCameraNode } from '../../../app/cameraNode';
 import type { NodeId, Op } from '../../../core/dag/types';
 
 const PassKind = z.enum(['beauty', 'id', 'depth', 'normal']);
@@ -57,6 +58,20 @@ function findUnique(state: DagState, type: string): NodeId | null {
   let found: NodeId | null = null;
   for (const node of Object.values(state.nodes)) {
     if (node.type !== type) continue;
+    if (found !== null) return null; // ambiguous — caller must pre-pick.
+    found = node.id;
+  }
+  return found;
+}
+
+/** The one camera in the DAG, or null when there are none or several. #387 — asked by
+ *  POSSESSION, because post-split both projections wear nodeType 'Object': two type
+ *  lookups would find no camera at all, and `findUnique(state, 'Object')` would be
+ *  ambiguous the moment the scene holds any other object. */
+function findUniqueCamera(state: DagState): NodeId | null {
+  let found: NodeId | null = null;
+  for (const node of Object.values(state.nodes)) {
+    if (!isCameraNode(state, node.id)) continue;
     if (found !== null) return null; // ambiguous — caller must pre-pick.
     found = node.id;
   }
@@ -122,10 +137,7 @@ export const addPassMutator: MutatorDefinition<AddPassSpec> = {
           'Could not resolve a unique Scene node. Pass sceneId explicitly when the project has multiple Scenes (or none).',
       };
     }
-    const cameraId =
-      spec.cameraId ??
-      findUnique(state, 'PerspectiveCamera') ??
-      findUnique(state, 'OrthographicCamera');
+    const cameraId = spec.cameraId ?? findUniqueCamera(state);
     if (!cameraId) {
       return {
         ok: false,
@@ -147,10 +159,7 @@ export const addPassMutator: MutatorDefinition<AddPassSpec> = {
     const usedIds = new Set<NodeId>(Object.keys(state.nodes));
     const passId = spec.passId ?? defaultPassId(spec.jobId, spec.passKind, usedIds);
     const sceneId = spec.sceneId ?? findUnique(state, 'Scene');
-    const cameraId =
-      spec.cameraId ??
-      findUnique(state, 'PerspectiveCamera') ??
-      findUnique(state, 'OrthographicCamera');
+    const cameraId = spec.cameraId ?? findUniqueCamera(state);
     const timeId = findUnique(state, 'TimeSource');
     if (!sceneId || !cameraId || !timeId) {
       throw new Error(

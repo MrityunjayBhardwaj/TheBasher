@@ -9,6 +9,7 @@
 // dropdown reads 'n_aimA' while the camera obeys 'n_aimB'.
 
 import { test, expect } from '@playwright/test';
+import { dataNodeIdOf } from './_seedNodes';
 
 interface W {
   __basher_dag: {
@@ -76,7 +77,10 @@ test('camera look-at dropdown reflects the WINNING constraint, not the bottom on
     return camId;
   });
 
-  const dropdown = page.getByTestId(`inspector-camera-lookat-${camId}`);
+  // #387 C4 — the aim dropdown is a lens control, so it keys on the CameraData; the two
+  // Track-To constraints above still target the OBJECT, which is what they pose.
+  const lensId = await dataNodeIdOf(page, camId);
+  const dropdown = page.getByTestId(`inspector-camera-lookat-${lensId}`);
   await expect(dropdown).toBeVisible({ timeout: 10_000 });
   const shown = await dropdown.inputValue();
   console.log('DROPDOWN SHOWS:', shown, '| camera actually obeys the TOP member → n_aimB');

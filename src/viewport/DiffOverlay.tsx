@@ -275,6 +275,13 @@ function GhostChild({ value }: { value: SceneObject }) {
           </group>
         );
       }
+      // #387 — a `CameraData` Object falls through this guard and ghosts NOTHING, and
+      // that is the DECISION, not an oversight: both fused camera kinds are already in
+      // `GHOSTLESS_KINDS` above (a camera carries no geometry), so ghosting the split
+      // form would make a camera proposal MORE visible after the split than before it —
+      // a parity break in the one direction C4 is not allowed to take. The same holds
+      // for `LightData` (#386). Deliberately not routed through `recomposeCameraObject`:
+      // the ghost band is the one camera consumer that wants the pair left alone.
       if (!data || data.kind !== 'MeshData') return null;
       const desc = data.geometry.descriptor;
       const color = data.material && 'base' in data.material ? data.material.base.color : '#ffffff';

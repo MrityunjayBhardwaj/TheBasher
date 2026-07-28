@@ -50,13 +50,13 @@ function registeredDataTypes(): string[] {
 
 describe('the split-kind registry gate', () => {
   it('the ObjectData filter still finds the kinds we know exist (guard the guard)', () => {
-    // Four kinds are split today: box, sphere, curve, light. If this drops below four
-    // the filter has drifted and every assertion below would pass vacuously.
+    // Five kinds are split today: box, sphere, curve, light, camera. If this drops below
+    // five the filter has drifted and every assertion below would pass vacuously.
     expect(
       registeredDataTypes().length,
-      'fewer than 4 ObjectData-output node types found — the registry filter has drifted, ' +
+      'fewer than 5 ObjectData-output node types found — the registry filter has drifted, ' +
         'and every check in this file is now passing over an empty set',
-    ).toBeGreaterThanOrEqual(4);
+    ).toBeGreaterThanOrEqual(5);
   });
 
   it('every registered ObjectData kind has a conformance descriptor', () => {
@@ -112,6 +112,35 @@ describe('the split-kind registry gate', () => {
           `through a param the split moved, or this kind reports coverage it does not have`,
       ).toBeGreaterThan(0);
     }
+  });
+
+  it('every NO answer a kind records names a reason and an issue', () => {
+    // `roadAnswers` is where a road's answer may be NO. That is not a skip — the road
+    // still runs the same steps and asserts the opposite outcome — but a NO with no
+    // reason and no issue is indistinguishable from one, so the metadata is required.
+    //
+    // NECESSARY, NOT SUFFICIENT, and worth being explicit about: this checks the
+    // ANNOTATION. What makes the answer honest is that the road itself evaluates
+    // `roadAnswers?.management?.reaches ?? true` on BOTH sides (offer and accept) with
+    // no early return, so a negative row applies the same stimulus. A metadata check
+    // alone would be the kind of checklist this suite exists to replace.
+    for (const name of SPLIT_KIND_NAMES) {
+      const answer = SPLIT_KINDS[name].roadAnswers?.management;
+      if (!answer || answer.reaches) continue;
+      expect(answer.why.length, `SPLIT_KINDS.${name}: a NO must say why`).toBeGreaterThan(0);
+      expect(answer.issue, `SPLIT_KINDS.${name}: a NO must name the issue that closes it`).toMatch(
+        /#\d+/,
+      );
+    }
+  });
+
+  it('NEGATIVE CONTROL — the NO-answer check bites', () => {
+    // No kind records a NO today, so the sweep above runs over an empty subject and
+    // would be equally green if it were broken. Asserting the predicate against a
+    // deliberately malformed answer is what keeps it a detector rather than a decoration.
+    const bad = { reaches: false as const, why: '', issue: 'see the tracker' };
+    expect(bad.why.length).toBe(0);
+    expect(bad.issue).not.toMatch(/#\d+/);
   });
 
   it("each kind's customSections are sections the node actually declares", () => {
