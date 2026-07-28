@@ -423,7 +423,14 @@ async function buildBakedRow(page: Page, restingColor: string) {
 
   // The source has to be DRAWING before Apply can bake it — Apply reads the evaluated mesh.
   await page.waitForFunction(
-    (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id) !== null,
+    (id) => {
+      // Wait for the SEAM as well as the bounds. It is installed by the viewport and is not
+      // in this spec's beforeEach gate, so calling it unguarded throws "not a function"
+      // instead of waiting — and worse, it does that only when the viewport failed to
+      // mount, turning every render break below into the same unhelpful message.
+      const read = (window as unknown as BasherWindow).__basher_mesh_world_bounds;
+      return typeof read === 'function' && read(id) !== null;
+    },
     objectId,
     { timeout: 20_000 },
   );
@@ -449,7 +456,14 @@ async function buildBakedRow(page: Page, restingColor: string) {
     { timeout: 20_000 },
   );
   await page.waitForFunction(
-    (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id) !== null,
+    (id) => {
+      // Wait for the SEAM as well as the bounds. It is installed by the viewport and is not
+      // in this spec's beforeEach gate, so calling it unguarded throws "not a function"
+      // instead of waiting — and worse, it does that only when the viewport failed to
+      // mount, turning every render break below into the same unhelpful message.
+      const read = (window as unknown as BasherWindow).__basher_mesh_world_bounds;
+      return typeof read === 'function' && read(id) !== null;
+    },
     objectId,
     { timeout: 20_000 },
   );
