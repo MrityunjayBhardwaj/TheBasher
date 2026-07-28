@@ -99,15 +99,21 @@ export const BakedMeshNode: NodeDefinition<BakedMeshParams, BakedMeshValue> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'constraint', 'driver', 'material'],
-  evaluate(params) {
-    return {
-      kind: 'BakedMesh',
-      geometry: params.geometry,
-      position: params.position,
-      rotation: params.rotation,
-      // C-1 (V10/H14 two-layer guard): default identity HERE too, not just schema.
-      scale: params.scale ?? [1, 1, 1],
-      material: params.material,
-    };
+  // RETIRED (#388 Stage C · C5). A baked mesh is an `Object` → `BakedData` split: saved
+  // projects migrate on load (v7 → v8) and Apply Transform mints the pair directly, so no
+  // live `BakedMesh` node ever reaches evaluate. Kept as a hard fail-fast: if one somehow
+  // does, that is a migration bug, not a silently identity-posed mesh.
+  //
+  // EVERYTHING ELSE IS DELIBERATELY KEPT — type, version, params, registration. The load
+  // ladder normalizes a saved fused node through this definition BEFORE the format
+  // migration splits it, so removing the schema would break the very projects the
+  // migration exists to rescue.
+  //
+  // `BakedMeshValue` also survives, and not merely as a leftover: it is the RECOMPOSITION
+  // TARGET. `ObjectR` rebuilds one from the pair (`bakedRecompose.ts`) and renders it
+  // through `BakedMeshR`, which is how the pair and the fused node were kept on one render
+  // road in the first place. The same shape the light split left behind.
+  evaluate(): never {
+    throw new Error('BakedMesh is retired; projects migrate to Object+BakedData on load');
   },
 };

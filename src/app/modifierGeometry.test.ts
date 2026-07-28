@@ -102,10 +102,16 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
   // could not redden it: a baked pair fell through to `return null` and BOTH halves of
   // V108 dropped together — the "+ Add Modifier" affordance vanished at exactly the
   // moment the modifier stopped working, which reads as deliberate product design rather
-  // than a regression. The fused `BakedMesh` is the control: it has always been a modifier
-  // source, and the pair is what a fused baked mesh BECOMES, so any difference between
-  // them would make modifiability depend on when the project was saved.
-  it('offers modifiers on a baked PAIR, exactly as on the fused BakedMesh (the H215 hole)', () => {
+  // than a regression.
+  //
+  // ⚠️ THE CONTROL EXPIRED WITH THE RELIC, and the re-anchoring came out STRICTER. This
+  // was written a slice earlier as `expect(pair).toEqual(modifierSource(fusedValue))` —
+  // the fused `BakedMesh` had always been a modifier source, so it was the natural
+  // control. Retiring the fused node made its `evaluate` throw, so that comparison cannot
+  // be made any more. It is replaced by the CANONICAL struct: the pair must produce this
+  // exact source, not merely "whatever the relic used to say". The parity against the
+  // fused node WAS measured clean before the retirement, at the flip slice.
+  it('offers modifiers on a baked PAIR — the guard that absorbed it in silence (#388)', () => {
     const geometry = {
       key: 'baked|pair-8',
       kind: 'baked' as const,
@@ -121,24 +127,20 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
     )) {
       s = applyOp(s, op as never).next;
     }
-    // The CONTROL: the fused node carrying the same buffer, material and pose.
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'n_fused',
-      nodeType: 'BakedMesh',
-      params: { geometry, material, position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    }).next;
 
     const pair = modifierSource(evaluate(s, 'n_pair').value as SceneChild);
-    const fused = modifierSource(evaluate(s, 'n_fused').value as SceneChild);
-    expect(fused).not.toBeNull(); // the control must work, or this test proves nothing
     expect(pair).not.toBeNull();
-    expect(pair).toEqual(fused); // geometry, material AND the inherited pose
+    // The buffer handle and the captured spec ride through VERBATIM, and the modifier
+    // inherits the OBJECT's pose (a data node has no transform of its own).
+    expect(pair).toEqual({
+      geometry,
+      material,
+      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    });
 
-    // V108 — offer == accept. Both halves ask the same function, which is WHY they went
-    // wrong together and stayed consistent while doing it; assert them against the
-    // control rather than against each other.
-    expect(canModifyGeometry(s, 'n_fused')).toBe(true);
+    // V108 — offer == accept. Both halves ask the SAME function, which is why they went
+    // wrong together and stayed consistent while doing it: a uniformly absent affordance
+    // reads as design. Assert the offer explicitly rather than trusting that agreement.
     expect(canModifyGeometry(s, 'n_pair')).toBe(true);
   });
 
