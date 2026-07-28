@@ -159,6 +159,17 @@ describe('road-coverage gate (#491)', () => {
     expect(bad, bad.join('\n')).toEqual([]);
   });
 
+  it('every road points at a file that exists', () => {
+    // `runsIn` is checked for content only on derived roads, where it carries the
+    // iterate-the-kinds claim. On a delegated road nothing else reads it, which is exactly
+    // the kind of field that quietly comes to name a spec somebody renamed two refactors
+    // ago — still legible, no longer true, and pointing whoever reads it at nothing.
+    const missing = ROAD_IDS.map((id) => SPLIT_ROADS[id])
+      .filter((r) => readRepoFile(r.runsIn) === null)
+      .map((r) => `${r.id}: runsIn ${r.runsIn} does not exist`);
+    expect(missing, missing.join('\n')).toEqual([]);
+  });
+
   it('a derived road really does iterate the kind set', () => {
     // The strongest claim in the table, and the only one whose failure is silent: a road
     // that stops looping still reads as "cannot go stale".
