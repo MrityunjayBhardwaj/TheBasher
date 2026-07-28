@@ -711,11 +711,23 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
         // it from one expression (`stripDriveRefusal`), and if that ever forks, the button's
         // tooltip and the toast start explaining the same refusal differently.
         const title = await page.getByTestId('nla-push-down').getAttribute('title');
+        // The button must HAVE a tooltip before its sentence can be compared with the
+        // dispatcher's. Asserted on its own line rather than folded into a fallback on the
+        // comparison below, because every value that could stand in for a missing title is
+        // either vacuously contained ('' is a substring of everything) or a literal control
+        // character. This line used to be the latter, and one NUL byte made the whole file
+        // read as binary to grep -- so every repo-wide sweep skipped the matrix silently
+        // while git grep still found it (#493).
+        expect(
+          title,
+          `${kind}: the push-down button carries no title, so the refusal it OFFERS cannot ` +
+            `be compared with the one the dispatcher ACCEPTS`,
+        ).not.toBeNull();
         expect(
           accepted.reason ?? '',
           `${kind}: the button explains the refusal as "${title}" while the dispatcher says ` +
             `"${accepted.reason}" — two sources for one answer`,
-        ).toContain(title ?? ' ');
+        ).toContain(String(title));
 
         // AND NOTHING WAS DESTROYED. This is the whole reason the refusal exists: push-down
         // is a composite whose destructive half is sound only because the strip it mints
