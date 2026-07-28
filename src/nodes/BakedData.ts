@@ -20,9 +20,12 @@
 // error. Blender agrees from its own side: its Mesh datablock always holds real
 // vertices, and the procedural cases live in modifiers.
 //
-// Coexists with the fused `BakedMesh`; nothing migrates in C5-Slice-1. Later slices
-// add the format migration, teach the renderer the async-geometry + baked-material
-// road, flip `dispatchApplyTransform` to mint the pair, and retire the fused kind.
+// Coexists with the fused `BakedMesh`. The format migration (v7 → v8) splits every
+// saved fused baked mesh into the pair, and `ObjectR` renders the pair by recomposing
+// it onto `BakedMeshR` — the SAME async-geometry + baked-material road the fused node
+// draws through (`bakedRecompose.ts`). Still to come: flip `dispatchApplyTransform` to
+// mint the pair (both sites), teach the three `!== 'MeshData'` guards, retire the
+// fused kind.
 //
 // H14 hydrate seam: `evaluate` re-guards nothing here because BOTH params are
 // REQUIRED with no meaningful default — a baked mesh without its buffer handle or

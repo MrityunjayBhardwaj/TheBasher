@@ -1642,11 +1642,13 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
 // the road is broken.
 //
 // ⚠️ WHAT THIS SUITE DOES AND DOES NOT PROVE. It proves the migrated pair carries the
-// right params and evaluates to the right VALUE. It does NOT prove the pair DRAWS — at
-// this slice `ObjectR`'s BakedData arm still returns null and `resolveEvaluatedMesh`
-// does not span the pair, so there is no render-parity gate to write yet and a green
-// suite here must not be read as one. Those are the renderer slice's, and the e2e
-// tier's. This is also why the byte-identity check below compares against CANONICAL
+// right params and evaluates to the right VALUE. It does NOT prove the pair DRAWS — that
+// is a fact about the live three.js scene, and no assertion here can see it. The renderer
+// slice has since taught `ObjectR`'s BakedData arm the async road (it recomposes and
+// renders through `BakedMeshR`), and the drawing is observed in a browser rather than
+// inferred from a green suite here. `resolveEvaluatedMesh` still does not span the pair
+// — that is the flip slice's. This is also why the byte-identity check below compares
+// against CANONICAL
 // values rather than a live fused resolve — the fused node retires two slices from now
 // and a fixture that compares against it dies with it.
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; K23; issue #388.

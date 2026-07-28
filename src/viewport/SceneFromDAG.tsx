@@ -81,6 +81,7 @@ import { useEnvironmentTexture } from '../app/asset/environmentTextureLoader';
 import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
+import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -2226,29 +2227,29 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     return null;
   }
   if (data?.kind === 'BakedData') {
-    // #388 — ⚠️ THIS NULL IS TEMPORARY AND WRONG, unlike the three arms above.
-    // A curve draws its own chrome, a light recomposes, a camera correctly draws
-    // nothing. A baked mesh IS render geometry and MUST draw — it just cannot draw
-    // through `ObjectMeshR`, whose whole road is synchronous: `geometryRegistry.get`
-    // returns null for a baked handle BY DESIGN (the caller is expected to suspend
-    // and prime), and `usePrimitiveMaterial` wants an inline OpenPBR IR, not the flat
-    // baked spec. Falling through to it renders an invisible object with a grey
-    // material — measured, both halves, before this node existed.
+    // #388 — a baked mesh IS render geometry and MUST draw, unlike the three arms
+    // above (a curve draws its own chrome, a light recomposes, a camera correctly
+    // draws nothing). It just cannot draw through `ObjectMeshR`, whose whole road is
+    // synchronous: `geometryRegistry.get` returns null for a baked handle BY DESIGN
+    // (the caller is expected to suspend and prime), and `usePrimitiveMaterial` wants
+    // an inline OpenPBR IR, not the flat baked spec. Falling through to it renders an
+    // invisible object with a grey material — measured, both halves, before `BakedData`
+    // existed, which is why baked took its own member of the `ObjectData` union.
     //
-    // The async road already exists in `BakedMeshR` (`useBakedGeometry` + Suspense).
-    // Teaching this arm that road is the renderer slice, and it is the big one.
-    // ⚠️ AND IT IS REACHABLE NOW. The v7 → v8 migration mints a `BakedData` for every
-    // saved fused `BakedMesh`, so this arm went from unreachable to load-bearing the
-    // moment that pass landed: a project on disk with a baked mesh loads split and the
-    // mesh DOES NOT DRAW until this arm learns the async road. That is the cost of the
-    // consumers-before-producers ordering being taken one step out of order here, it is
-    // contained only because a kind-split branch is atomically mergeable and never ships
-    // mid-split, and it makes the renderer slice a MERGE BLOCKER rather than a later
-    // nicety. The live producers (`dispatchApplyTransform`) still mint fused, so a bake
-    // performed in-session is unaffected; it is specifically the reload that goes blank.
-    // Do NOT close it by casting to `MeshDataValue` — that compiles and renders the
-    // measured failure instead of nothing.
-    return null;
+    // So RECOMPOSE and hand the flat value to `BakedMeshR`, the renderer the fused
+    // `BakedMesh` already uses: `useBakedGeometry` (the OPFS read + Suspense) for the
+    // async handle, and the imperative six-slot build for the baked material. One band
+    // (H40) — the pair draws through the identical component as the fused node, so the
+    // two cannot drift while both exist, and there is no parallel async walk to keep in
+    // step. Never `as MeshDataValue`: that compiles and renders the measured failure
+    // (invisible geometry, grey material) instead of drawing.
+    //
+    // This arm is what closes the reload gap the v7 → v8 migration opened: that pass
+    // mints a `BakedData` for every saved fused `BakedMesh`, so a project on disk with a
+    // baked mesh loads split and drew NOTHING until this road existed.
+    const baked = recomposeBakedObject(value);
+    if (!baked) return null;
+    return <BakedMeshR value={baked} override={override} />;
   }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
