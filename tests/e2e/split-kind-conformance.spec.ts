@@ -120,6 +120,30 @@ interface RenderProbe {
   signature: (page: Page, objectId: string) => Promise<number | string | null>;
   /** What `signature` must read once the held edit is applied, given its resting value. */
   expectHeld: (resting: number | string) => HeldExpectation;
+  /**
+   * What `signature` must read for a BARE pair — mounted at the scene root with no channel,
+   * no constraint and no transient. This is R1's whole claim, and it needed its own field
+   * rather than reusing `expectHeld`'s resting value for two reasons.
+   *
+   * First, no other road ever observes the bare arm. R5 and R8 both call `seedRowChannel`
+   * BEFORE their first read, and that is not incidental — seeding the channel is what puts
+   * the object on the overlay road at all, because `OverlayDispatch` mounts a plain
+   * `MeshChild` for anything with no channel and no constraint and that arm applies no
+   * overlays by design. So the arm most objects in a real project actually take was the one
+   * arm the browser tier never looked at.
+   *
+   * Second, a bare `not.toBeNull()` would pass for free on three of the six kinds. The mesh
+   * bands read a material colour, and a recompose that drops the spec renders the `#808080`
+   * fallback — non-null, wrong, and indistinguishable from success. So the expectation is a
+   * VALUE, and every value here was MEASURED against a live scene rather than derived.
+   *
+   * Note the curve, which is why this is a per-kind field and not `distinctValues[0]`: its
+   * probe counts polyline vertices while its observable param is the boolean `closed`, so
+   * the two are different quantities and no generic derivation could relate them. Computing
+   * the count here would mean re-implementing the sampler inside the test — the exact drift
+   * between instrument and subject that these roads exist to catch.
+   */
+  expectBare: number | string;
   /** What the probe measures, for the failure message. */
   what: string;
 }
@@ -245,6 +269,10 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
       reaches: true,
       value: String(SPLIT_KINDS.box.distinctValues[1]).toLowerCase(),
     }),
+    // MEASURED against a live scene: a bare pair draws #c81e5a, which is the colour
+    // `rowDataParams` mints the data node with. It is neither the renderer's #808080
+    // fallback nor BoxData's own #5af07a schema default, so this cannot pass by collision.
+    expectBare: String(SPLIT_KINDS.box.distinctValues[0]).toLowerCase(),
     what: "the rendered material's base colour",
   },
   sphere: {
@@ -253,6 +281,8 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
       reaches: true,
       value: String(SPLIT_KINDS.sphere.distinctValues[1]).toLowerCase(),
     }),
+    // MEASURED: #c81e5a, same reasoning as the box.
+    expectBare: String(SPLIT_KINDS.sphere.distinctValues[0]).toLowerCase(),
     what: "the rendered material's base colour",
   },
   curve: {
@@ -271,11 +301,20 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
         'baked from closed/resolution/points), so a transient cannot reach it',
       issue: '#474',
     }),
+    // MEASURED at 65, and deliberately a LITERAL. The curve is the one kind whose probe
+    // measures a different quantity than its observable param — vertices drawn versus the
+    // boolean `closed` — so there is nothing to derive this from. Re-deriving it would mean
+    // re-implementing `CurveData.evaluate`'s sampler in the test, which is the instrument
+    // drifting into the subject. If the sampler's resolution default changes, this reds and
+    // the right response is to re-measure, not to compute.
+    expectBare: 65,
     what: 'the vertex count of the polyline the viewport draws',
   },
   light: {
     signature: lightIntensity,
     expectHeld: () => ({ reaches: true, value: SPLIT_KINDS.light.distinctValues[1] as number }),
+    // MEASURED: 3.5, the intensity the data node is minted with.
+    expectBare: SPLIT_KINDS.light.distinctValues[0] as number,
     what: "the mounted light's intensity",
   },
   camera: {
@@ -299,6 +338,10 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
         'frustum or the look-through view',
       issue: '#484',
     }),
+    // MEASURED: 28. Worth noting against the row above — the camera refuses a HELD lens edit
+    // by design, but its committed fov reaches the frustum perfectly well. Those are
+    // different claims, and only this one is R1's.
+    expectBare: SPLIT_KINDS.camera.distinctValues[0] as number,
     what: "the field of view the camera's frustum is drawn with",
   },
   baked: {
@@ -313,6 +356,10 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
       reaches: true,
       value: String(SPLIT_KINDS.baked.distinctValues[1]).toLowerCase(),
     }),
+    // MEASURED: #c81e5a. This is the cell that would catch a recompose dropping the captured
+    // BakedMaterialSpec, because that failure renders as the #808080 fallback — a non-null
+    // reading that a bare existence check would have accepted.
+    expectBare: String(SPLIT_KINDS.baked.distinctValues[0]).toLowerCase(),
     what: "the rendered material's captured baked colour",
   },
 };
@@ -613,6 +660,41 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
         `${kind}: releasing the held edit left ${probe.what} at ${JSON.stringify(withHeld)} — ` +
           `the overlay is not being cleared, so the render no longer follows the committed value`,
       ).toEqual(resting);
+    });
+
+    test(`R1 ${kind} — a BARE split pair at the scene root mounts and draws`, async ({ page }) => {
+      // Deliberately nothing after the build: no channel, no constraint, no transient. That
+      // is the whole point of this row. R5 and R8 both seed a channel before their first
+      // read, which moves the object onto the overlay road, so between them they never
+      // observed the plain `MeshChild` arm — the arm almost every object in a real project
+      // takes. The five kinds that were gaps on this road were gaps for that reason.
+      const { objectId } = await buildRow(page, kind);
+
+      const drawn = await expectEventually(
+        page,
+        probe,
+        objectId,
+        (v) => v === probe.expectBare,
+        // Same settling budget the other rows get. A shorter one here would make "the pair
+        // never mounted" and "we did not wait long enough" the same failure.
+        8_000,
+      );
+
+      // Two assertions rather than one, and in this order, because they fail for different
+      // reasons and the messages are not interchangeable: null means nothing mounted at all,
+      // a wrong value means it mounted and drew the wrong thing (for the mesh bands, most
+      // likely the #808080 fallback after a dropped material spec).
+      expect(
+        drawn,
+        `${kind}: nothing mounted for ${objectId} — ${probe.what} could not be read at all, so ` +
+          `a split pair wired straight to the scene root never reached the viewport`,
+      ).not.toBeNull();
+      expect(
+        drawn,
+        `${kind}: the pair mounted but ${probe.what} read ${JSON.stringify(drawn)} instead of ` +
+          `${JSON.stringify(probe.expectBare)} — the data half's committed value is not ` +
+          `reaching the render on the bare arm`,
+      ).toEqual(probe.expectBare);
     });
 
     test(`R8 ${kind} — what push-down OFFERS equals what it ACCEPTS`, async ({ page }) => {

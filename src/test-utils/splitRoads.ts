@@ -123,19 +123,23 @@ const RENDER_GAP =
   'broken root/nested mount for this kind would not be reported';
 
 export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
+  // PROMOTED from delegated to derived (#500). The five gaps here were honest, and the reason
+  // they existed is worth keeping: R5 and R8 both seed a channel BEFORE their first read,
+  // because that is what puts the object on the overlay road at all — `OverlayDispatch` mounts
+  // a plain `MeshChild` for anything with no channel and no constraint. So between them the
+  // browser tier never observed the BARE arm, which is the arm almost every object in a real
+  // project takes. Closing this was not a matter of naming an existing spec: the row had to be
+  // written, and it asserts a MEASURED value per kind rather than mere non-nullness, because on
+  // the three mesh bands a dropped material spec renders the #808080 fallback — non-null, wrong,
+  // and accepted by any existence check.
+  //
+  // `split-light-observation.spec.ts` still exists and still runs; it is simply no longer the
+  // only thing standing behind this road.
   R1: {
     id: 'R1',
     title: 'root render — a split pair at the scene root mounts and draws',
-    runsIn: 'tests/e2e/split-light-observation.spec.ts',
-    derivation: 'delegated',
-    coverage: {
-      light: { by: 'tests/e2e/split-light-observation.spec.ts' },
-      box: gap(RENDER_GAP, ['tests/e2e/perf-render-count.spec.ts']),
-      sphere: gap(RENDER_GAP, ['tests/e2e/p1-acceptance.spec.ts']),
-      curve: gap(RENDER_GAP, ['tests/e2e/p321-curve-object.spec.ts']),
-      camera: gap(RENDER_GAP, ['tests/e2e/p231-active-camera.spec.ts']),
-      baked: gap(RENDER_GAP, ['tests/e2e/p151-apply-transform.spec.ts']),
-    },
+    runsIn: 'tests/e2e/split-kind-conformance.spec.ts',
+    derivation: 'derived',
   },
   R2: {
     id: 'R2',

@@ -217,10 +217,31 @@ describe('road-coverage gate (#491)', () => {
       (n, r) => n + SPLIT_KIND_NAMES.filter((k) => isCovered(r.coverage![k])).length,
       0,
     );
+    console.log(
+      `split-roads coverage: ${covered}/${total} delegated cells covered; ` +
+        `${derivedRoads().length}/${ROAD_IDS.length} roads derived (full coverage by construction)`,
+    );
+
     // Pinned as a floor, not an equality: it must not silently REGRESS, and it should not
     // churn when a gap is closed. Raise it when cells are promoted (#491).
     expect(covered).toBeGreaterThanOrEqual(4);
-    expect(total).toBe(24);
+
+    // This replaces a hardcoded `total === 24` (#500). That number was 4 delegated roads × 6
+    // kinds, and what it was really protecting is that a road cannot leave the table
+    // unnoticed. But it also read the INTENDED direction of travel as a regression: promoting
+    // a whole road from delegated to derived — which is what closing a road's gaps properly
+    // looks like — shrinks the denominator and reddened this assertion for the right work.
+    //
+    // So pin the thing that actually matters instead: every road sits on exactly one side,
+    // and the derived count is a floor so a road cannot be DELETED to make a promotion look
+    // free. Combined with `ROAD_IDS.length === 10` above, the total is fully determined
+    // without naming it.
+    expect(delegatedRoads().length + derivedRoads().length).toBe(ROAD_IDS.length);
+    expect(
+      derivedRoads().length,
+      'a derived road has been removed rather than promoted — the denominator shrank without ' +
+        'coverage being added',
+    ).toBeGreaterThanOrEqual(7);
   });
 });
 
