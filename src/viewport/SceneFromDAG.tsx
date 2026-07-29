@@ -82,6 +82,7 @@ import { averageRadiance, studioLightDrive } from '../app/averageRadiance';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
+import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -2257,26 +2258,33 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     return <BakedMeshR value={baked} override={override} />;
   }
   if (data?.kind === 'ModifiedData') {
-    // #415 SLICE 1 — DELIBERATELY NOT DRAWING YET, and this is a temporary that must
-    // not outlive slice 2.
+    // #415 — a modifier's output IS render geometry and MUST draw, so this arm
+    // RECOMPOSES and hands the flat value to `ModifiedMeshR`, the renderer the fused
+    // `ModifiedMesh` already draws through: the same synchronous `geometryRegistry.get`
+    // (which recursively builds an `array` descriptor from its source) and the same
+    // `usePrimitiveMaterial`. One band (H40) — the pair and the fused node cannot drift
+    // while both exist, and there is no parallel sync walk to keep in step. This is the
+    // THIRD time a fused renderer already existed and the right answer was a recompose
+    // rather than an implementation (light → baked → here).
     //
-    // The real arm is a RECOMPOSE onto `ModifiedMeshR` — the renderer the fused
-    // `ModifiedMesh` already draws through — exactly as the baked arm above recomposes
-    // onto `BakedMeshR`. That is the third time a fused renderer already existed and
-    // the right answer was to recompose rather than reimplement.
+    // NEVER `as MeshDataValue`, and not a fall-through to `ObjectMeshR` either, even
+    // though that road is also synchronous: `ModifiedDataValue.material` carries the
+    // wide Inline|Baked union (a modifier over a baked source inherits a
+    // `BakedMaterialSpec`, #358) while `ObjectMeshR`'s prop is the union #388 narrowed
+    // to inline-only. The cast compiles and renders the measured #388 failure — a baked
+    // spec as the grey `#808080` fallback. `ModifiedMeshR` already owns the narrowing
+    // for exactly this union, so recomposing inherits that decision unchanged.
     //
-    // It is closed with an explicit `null` rather than falling through to
-    // `ObjectMeshR`, and NEVER with `as MeshDataValue`. The cast compiles and then
-    // renders the measured #388 failure (invisible geometry + grey material) instead
-    // of drawing; `ModifiedDataValue.material` carries the wide Inline|Baked union that
-    // `ObjectMeshR`'s `usePrimitiveMaterial` road cannot consume.
-    //
-    // Nothing can reach this branch today — no producer mints a `ModifiedData` until
-    // the slice-3 socket flip. That unreachability is recorded HERE, in the arm itself,
-    // because a comment is the only record an unreachable arm has and comments have no
-    // detector: the moment slice 3 lands the first producer, this goes LIVE and a
-    // modifier pair silently stops drawing. Slice 2 must replace it BEFORE that.
-    return null;
+    // THIS ARM LANDS BEFORE ANY PRODUCER, deliberately. Slice 1 parked it at an explicit
+    // `null` under a comment stating nothing could reach it — and a comment is the only
+    // record an unreachable arm has, with no detector and nothing to fail when it stops
+    // being true (H216, measured on #388: the migration landed first there and a baked
+    // mesh silently stopped drawing on reload for two commits). The slice-3 socket flip
+    // mints the first `ModifiedData`; this road exists first so that flip cannot blank a
+    // modifier pair.
+    const modified = recomposeModifiedObject(value);
+    if (!modified) return null;
+    return <ModifiedMeshR value={modified} override={override} />;
   }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
