@@ -19,14 +19,13 @@
 // source, then mirrored = 6 × source) — proving the substrate composes ACROSS
 // modifier types, not just Array-of-Array. The recursive registry build is the risky bit.
 //
-// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
-// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
-// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
-// the sphere split, so these cases failed rather than testing anything. #377 decided it:
-// the stack attaches to the OBJECT and evaluates over its data — `modifierSource`
-// (src/app/modifierGeometry.ts:120) reaches through the `data` socket for geometry and
-// material while inheriting the Object's TRS — so `object.out → modifier.target` is the
-// shape a user actually has.
+// #462/#415: the modifier SOURCE is a SPLIT sphere, and the stack sits BETWEEN the
+// SphereData and the Object (`SphereData → Mirror → Object`). It was a fused `SphereMesh`
+// (put there by #365 Slice 2), then briefly `object.out → modifier.target` (#377, the
+// shape available before every data kind existed). #415 moved it onto the data lane, so
+// the OBJECT stays the scene child and the modifier is a property of it — geometry and
+// material come off the data (`modifierDataSource`), and the pose is applied once above
+// the whole stack rather than inherited hop by hop.
 //
 // It stays a SPHERE rather than moving to the split cube because the render-side check
 // locates the mirrored mesh by a vertex COUNT that has to be unique in a starter scene
@@ -39,7 +38,8 @@
 //      src/viewport/SceneFromDAG.tsx (ModifiedMeshR); vyapti V58/V37; H40/H111; #462.
 
 import { expect, test } from './_fixtures';
-import { splitSphereOps } from './_splitSphere';
+import { splitSphereDataId, splitSphereOps } from './_splitSphere';
+import { modifierChainOps } from './_modifierStack';
 
 interface Op {
   type: string;
@@ -66,6 +66,8 @@ interface ThreeObjLike {
 
 const MBOX = 'p209m_box';
 const MMIR = 'p209m_mirror';
+/** The SphereData the stack sits on (#415 — the modifier splices onto the data lane). */
+const MDATA = splitSphereDataId(MBOX);
 
 /** The modifier's source: a split sphere at x=4, well clear of the starter scene. The
  *  Object (`MBOX`) is what the modifier's `target` socket takes; the SphereData behind it
@@ -147,7 +149,7 @@ test('#209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; re
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir, ops }) => {
+    ({ box, ops, chain }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
@@ -156,20 +158,11 @@ test('#209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; re
           ...(ops as Op[]),
           // offset 2 → the reflected half lands across x=2, separated from the source
           // (a geometry-centered primitive mirrored at the origin would just overlap).
-          {
-            type: 'addNode',
-            nodeId: mir,
-            nodeType: 'MirrorModifier',
-            params: { axis: 'x', offset: 2, muted: false },
-          },
+          ...(chain as Op[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: mir, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: mir, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
@@ -177,7 +170,21 @@ test('#209 — Sphere → MirrorModifier → Scene renders the MERGED mirror; re
         'sphere → mirror → scene',
       );
     },
-    { box: MBOX, mir: MMIR, ops: sphereSource() },
+    {
+      box: MBOX,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: MBOX,
+        dataId: MDATA,
+        modifiers: [
+          {
+            id: MMIR,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', offset: 2, muted: false },
+          },
+        ],
+      }),
+    },
   );
 
   // Side B (resolver): the registry-built mirror = source + reflection = 2 × source.
@@ -219,27 +226,18 @@ test('#209 — muting the Mirror collapses the output back to the source (falsif
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir, ops }) => {
+    ({ box, ops, chain }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as Op[]),
-          {
-            type: 'addNode',
-            nodeId: mir,
-            nodeType: 'MirrorModifier',
-            params: { axis: 'x', muted: false },
-          },
+          ...(chain as Op[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: mir, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: mir, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
@@ -247,7 +245,15 @@ test('#209 — muting the Mirror collapses the output back to the source (falsif
         'sphere → mirror → scene',
       );
     },
-    { box: MBOX, mir: MMIR, ops: sphereSource() },
+    {
+      box: MBOX,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: MBOX,
+        dataId: MDATA,
+        modifiers: [{ id: MMIR, nodeType: 'MirrorModifier', params: { axis: 'x', muted: false } }],
+      }),
+    },
   );
 
   // Active → 2 × source. Derive the source passthrough by muting.
@@ -266,38 +272,18 @@ test('#209 — a MIXED chain Sphere → Array(3) → Mirror composes (3× → 6�
 }) => {
   const ARR = 'p209m_arr';
   await page.evaluate(
-    ({ box, arr, mir, ops }) => {
+    ({ box, ops, chain }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as Op[]),
-          {
-            type: 'addNode',
-            nodeId: arr,
-            nodeType: 'ArrayModifier',
-            params: { count: 3, offset: [2, 0, 0], muted: false },
-          },
-          {
-            type: 'addNode',
-            nodeId: mir,
-            nodeType: 'MirrorModifier',
-            params: { axis: 'y', muted: false },
-          },
+          ...(chain as Op[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: arr, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: arr, socket: 'out' },
-            to: { node: mir, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: mir, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
@@ -305,7 +291,22 @@ test('#209 — a MIXED chain Sphere → Array(3) → Mirror composes (3× → 6�
         'sphere → array → mirror → scene',
       );
     },
-    { box: MBOX, arr: ARR, mir: MMIR, ops: sphereSource() },
+    {
+      box: MBOX,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: MBOX,
+        dataId: MDATA,
+        modifiers: [
+          {
+            id: ARR,
+            nodeType: 'ArrayModifier',
+            params: { count: 3, offset: [2, 0, 0], muted: false },
+          },
+          { id: MMIR, nodeType: 'MirrorModifier', params: { axis: 'y', muted: false } },
+        ],
+      }),
+    },
   );
 
   // Side B: array (3 × source) then mirror (× 2) at the top of the chain.

@@ -60,7 +60,7 @@ import type { CharacterValue } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
 import { useEditorStore } from './stores/editorStore';
-import { isModifierNode, resolveStackBase } from './operatorStack';
+import { isModifierNode, resolveStackObject } from './operatorStack';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3, maybeSnapTransform, useViewportStore } from './stores/viewportStore';
@@ -180,17 +180,24 @@ function getManipulable(node: Node | null): Manipulable | null {
 
 function SingleGizmo() {
   const primarySelectedId = useSelectionStore((s) => s.primaryNodeId);
-  // When a geometry MODIFIER (Array/Mirror) is selected, the gizmo edits the BASE
-  // mesh's transform: the modifier inherits the source's TRS and renders the
-  // modified result THERE (resolveEvaluatedMesh), so dragging the base moves the
-  // whole result. The literal selection stays on the modifier (its stack UI +
-  // inspector params); only the gizmo's transform TARGET redirects to the base.
-  // Closes the #209 "gizmo inert on a selected modifier" known-limit. For a normal
-  // node, or a dangling modifier, this is identity (targets the selection itself).
+  // When a geometry MODIFIER (Array/Mirror) is selected, the gizmo edits the OBJECT
+  // that wears the stack's result: the modifier has no pose of its own, so dragging
+  // the object moves the whole modified result. The literal selection stays on the
+  // modifier (its stack UI + inspector params); only the gizmo's transform TARGET
+  // redirects. Closes the #209 "gizmo inert on a selected modifier" known-limit. For a
+  // normal node, or a dangling modifier, this is identity (targets the selection).
+  //
+  // ⚠️ #415 REVERSED THE DIRECTION OF THIS WALK, and the direction is the whole
+  // correctness question. The modifier used to sit DOWNSTREAM of the object, so the
+  // pose was found by walking DOWN the `target` chain to the base (`resolveStackBase`).
+  // On the data lane the modifier sits BETWEEN the data and the object, so walking down
+  // now lands on the DATA node — which has no transform at all, by construction. The
+  // pose is downstream: walk UP through `out` to the poser (`resolveStackObject`).
   const selectedId = useDagStore((s) => {
     if (!primarySelectedId) return null;
     const sel = s.state.nodes[primarySelectedId];
-    return isModifierNode(sel) ? resolveStackBase(s.state, primarySelectedId) : primarySelectedId;
+    if (!isModifierNode(sel)) return primarySelectedId;
+    return resolveStackObject(s.state, primarySelectedId) ?? primarySelectedId;
   });
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
   const mode = useGizmoStore((s) => s.mode);

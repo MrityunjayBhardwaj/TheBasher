@@ -19,26 +19,32 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
-import { SPLIT_KINDS, SPLIT_KIND_NAMES } from './splitKinds';
+import { isDataKindDef, SPLIT_KINDS, SPLIT_KIND_NAMES, type DataLaneDef } from './splitKinds';
 
 beforeAll(() => {
   __resetRegistryForTests();
   registerAllNodes();
 });
 
-/** Every node type in `snap` whose `out` socket produces an `ObjectData`. */
-function dataTypesIn(snap: Record<string, { outputs?: Record<string, { type?: string }> }>) {
+/**
+ * Every node type in `snap` that is a data KIND — an `ObjectData` producer that is not
+ * merely an operator over `ObjectData`.
+ *
+ * #415: this used to be "emits ObjectData", full stop, and the modifier stack moving
+ * onto the data lane made that over-broad — a modifier produces the socket without
+ * being a kind of data. The discriminator lives in `splitKinds.ts` because the outliner
+ * icon sweep derives the same set and the two must not drift apart.
+ */
+function dataTypesIn(snap: Record<string, DataLaneDef>) {
   return Object.entries(snap)
-    .filter(([, def]) => def.outputs?.out?.type === 'ObjectData')
+    .filter(([, def]) => isDataKindDef(def))
     .map(([type]) => type);
 }
 
 /** THE GATE, as a function of a registry snapshot rather than of global state — which
  *  is what lets the falsification below run it against a registry containing a kind
  *  that does not exist, instead of against a doctored copy of one that does. */
-function undescribedDataTypes(
-  snap: Record<string, { outputs?: Record<string, { type?: string }> }>,
-): string[] {
+function undescribedDataTypes(snap: Record<string, DataLaneDef>): string[] {
   const described = new Set(SPLIT_KIND_NAMES.map((k) => SPLIT_KINDS[k].dataType));
   return dataTypesIn(snap).filter((t) => !described.has(t));
 }
@@ -84,6 +90,34 @@ describe('the split-kind registry gate', () => {
       TeapotData: { outputs: { out: { type: 'ObjectData' } } },
     };
     expect(undescribedDataTypes(withSynthetic)).toEqual(['TeapotData']);
+  });
+
+  // THE CONTROL ON THE NARROWING, and it is the assertion that makes #415's change to
+  // this gate honest rather than convenient.
+  //
+  // #415 taught `dataTypesIn` to skip data-lane OPERATORS, which is a narrowing — and a
+  // narrowed gate is indistinguishable from a weakened one unless something proves it
+  // still catches what it used to. So both arms run against the SAME synthetic registry:
+  // an operator (data in, data out) must be skipped, and a kind sitting right beside it
+  // must still be named. If the exclusion were written even slightly too wide — matching
+  // any node with a `target` input, say — the teapot would vanish with it and this test
+  // would fail rather than quietly reporting an empty set forever.
+  it('NARROWING CONTROL — an operator on the data lane is skipped; a real kind beside it is not', () => {
+    const withBoth = {
+      ...snapshotRegistry(),
+      // A modifier-shaped node: the same socket type on both sides, which is exactly
+      // what makes it stackable and exactly why it is not a KIND of data.
+      SubdivideModifier: {
+        inputs: { target: { type: 'ObjectData' } },
+        outputs: { out: { type: 'ObjectData' } },
+      },
+      TeapotData: { outputs: { out: { type: 'ObjectData' } } },
+    };
+    expect(undescribedDataTypes(withBoth)).toEqual(['TeapotData']);
+
+    // …and the predicate says so directly, not just by the set it produces.
+    expect(isDataKindDef(withBoth.SubdivideModifier)).toBe(false);
+    expect(isDataKindDef(withBoth.TeapotData)).toBe(true);
   });
 
   it('every descriptor names a node type that is actually registered', () => {

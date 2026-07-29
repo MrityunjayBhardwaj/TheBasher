@@ -76,8 +76,10 @@ function vertsUnder(page: import('@playwright/test').Page, nodeId: string): Prom
   }, nodeId);
 }
 
-/** The node id of the single modifier row in the stack (`modifier-row-<id>`) — the
- *  scene child once the modifier is spliced in ahead of the base. */
+/** The node id of the single modifier row in the stack (`modifier-row-<id>`). #415 — it
+ *  is NOT the scene child any more: the stack splices onto the object's data lane, so the
+ *  Object stays the scene child and the modifier is a property of it. Measure geometry
+ *  under `CUBE`; use this id only to address the operator itself. */
 async function soleModifierId(page: import('@playwright/test').Page): Promise<string> {
   const testId = await page
     .locator('[data-testid^="modifier-row-"]')
@@ -166,22 +168,42 @@ test('#209 — "+ Array" adds a modifier and the viewport renders the merged arr
   await expect(stack.locator('[data-testid^="modifier-row-"]')).toHaveCount(1);
   const modifierId = await soleModifierId(page);
 
-  // ...and the live viewport now renders a merged array under the modifier: an
-  // integer multiple of the source, strictly more than the bare cube.
-  await expect
-    .poll(() => vertsUnder(page, modifierId), { timeout: 10_000 })
-    .toBeGreaterThan(cubeVerts);
-  const arrayed = await vertsUnder(page, modifierId);
+  // ...and the live viewport renders the merged array UNDER THE CUBE — an integer
+  // multiple of the source, strictly more than the bare cube.
+  //
+  // ⚠️ #415 MOVED THE SUBJECT OF EVERY MEASUREMENT BELOW, from `modifierId` to `CUBE`,
+  // and this is the assertion that proves the whole slice from a user's seat. The
+  // modifier used to BE the scene child, so the merged geometry hung under a group named
+  // after the operator; the cube the user selected had been displaced behind it. Now the
+  // geometry hangs under the CUBE, which is the point: a modifier is a property of the
+  // object, not a thing standing in front of it. This failed loudly (-1, no such scene
+  // object) rather than silently when the flip landed — the good arm of [[H218]].
+  await expect.poll(() => vertsUnder(page, CUBE), { timeout: 10_000 }).toBeGreaterThan(cubeVerts);
+  const arrayed = await vertsUnder(page, CUBE);
   expect(arrayed % cubeVerts).toBe(0); // genuinely COUNT copies of the source
 
+  // POSSESSION, not type names: the operator is not a scene object at all any more.
+  // Without this, `vertsUnder(CUBE)` growing would be consistent with the modifier ALSO
+  // still rendering separately — which is exactly the double-render the flip could have
+  // produced and did produce in the inspector before it was fixed.
+  expect(await vertsUnder(page, modifierId)).toBe(-1);
+
   // Mute the modifier (the row's ● toggle) → the operator is bypassed, the merged
-  // array collapses back to the bare source.
+  // array collapses back to the bare source — still measured under the cube.
   await stack.locator('[data-testid^="modifier-mute-"]').first().click();
-  await expect.poll(() => vertsUnder(page, modifierId), { timeout: 10_000 }).toBe(cubeVerts);
+  await expect.poll(() => vertsUnder(page, CUBE), { timeout: 10_000 }).toBe(cubeVerts);
 
   // Un-mute → the array comes back.
   await stack.locator('[data-testid^="modifier-mute-"]').first().click();
-  await expect.poll(() => vertsUnder(page, modifierId), { timeout: 10_000 }).toBe(arrayed);
+  await expect.poll(() => vertsUnder(page, CUBE), { timeout: 10_000 }).toBe(arrayed);
+
+  // …and the cube's OWN data rows survived the modifier. This is the regression the
+  // stack-count failure was a symptom of: the Object's `data` input now names the top of
+  // the stack, so a panel reading it directly showed the operator's sections in place of
+  // the cube's — the size and colour rows silently disappeared behind a second, empty
+  // modifier stack. The linked-data block resolves through the chain instead.
+  await expect(page.getByTestId('inspector-linked-data')).toHaveCount(1);
+  await expect(page.getByTestId('inspector-linked-data')).toContainText('BoxData');
 });
 
 test('#209 — a second add stacks, and delete removes a modifier', async ({ page }) => {

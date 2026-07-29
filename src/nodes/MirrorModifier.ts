@@ -1,22 +1,28 @@
 // MirrorModifier — the SECOND geometry MODIFIER (SOP), epic #201 / #209, the
-// geometry half of [[V58]]. Like the ArrayModifier it is a `Mesh → Mesh` wrapper
-// sub-chain node (the §2.2 model): it consumes a source mesh, rewrites its
-// GEOMETRY (here: reflect across a local-origin plane and merge the reflection
-// back with the original → a symmetric whole, Blender's Mirror), and INHERITS the
-// source's transform + material so the result sits where the source was.
+// geometry half of [[V58]]. Like the ArrayModifier it is a `data → data` sub-chain
+// node (the §2.2 model): it consumes source mesh DATA, rewrites its GEOMETRY (here:
+// reflect across a local-origin plane and merge the reflection back with the
+// original → a symmetric whole, Blender's Mirror), and inherits the source's MATERIAL.
 //
 // It exists to PROVE the modifier substrate generalizes: a new modifier is just a
-// node + a `geometryRegistry.build` branch + the shared projection key + the
-// read-side parity twin + four one-line registrations (MODIFIER_NODE_TYPES, the
-// ADDABLE list, the agent ModifierType enum, registerAll). resolveEvaluatedMesh's
-// recursive walk + ModifiedMeshR are GENERIC over any ModifiedMeshValue — no
-// per-modifier render branch.
+// node + a `geometryRegistry.build` branch + the shared projection key + four
+// one-line registrations (MODIFIER_NODE_TYPES, the ADDABLE list, the agent
+// ModifierType enum, registerAll). The read road and `ModifiedMeshR` are GENERIC over
+// any modifier — no per-modifier render branch. #415 confirmed the claim the cheap
+// way: moving the stack onto the data lane changed both modifiers identically, and
+// nothing downstream of them at all.
+//
+// #415 — see the ArrayModifier header for the topology and why the TRS left: the
+// modifier now sits BETWEEN the data node and the Object (`BoxData → Mirror → Object`)
+// instead of downstream of the Object, so the Object stays the scene object and owns
+// the pose, applied once above the whole stack.
 //
 // Non-destructive (V58): the geometry is a rebuildable `GeometryRef` handle
 // (geometryRegistry builds the `mirror` descriptor on demand). `muted` bypasses
 // the operator: evaluate returns the source UNCHANGED, byte-identical to no
-// modifier. v1 scope: box/sphere sources (sync registry build); a glTF/baked
-// source passes THROUGH unchanged (async geometry — a clean follow-up).
+// modifier. v1 scope: box/sphere data (sync registry build); baked data passes its
+// material through but is not sync-buildable (async geometry — a clean follow-up),
+// and non-mesh data (curve/light/camera) passes THROUGH unchanged.
 //
 // REF: src/nodes/ArrayModifier.ts (the sibling modifier template);
 //      src/app/modifierGeometry.ts (the shared projection + mirror-wrap);
@@ -24,8 +30,8 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { SceneChild } from './types';
-import { mirrorGeometryRef, modifierSource } from '../app/modifierGeometry';
+import type { ObjectData } from './types';
+import { mirrorGeometryRef, modifierDataSource } from '../app/modifierGeometry';
 
 export const MirrorModifierParams = z.object({
   /** The axis to reflect across (the negated component). Default 'x' (the most common). */
@@ -39,31 +45,27 @@ export const MirrorModifierParams = z.object({
 });
 export type MirrorModifierParams = z.infer<typeof MirrorModifierParams>;
 
-export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, SceneChild> = {
+export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData> = {
   type: 'MirrorModifier',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: MirrorModifierParams,
-  inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
-  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
+  inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
+  outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   inspectorSections: ['modifier'],
   evaluate(params, inputs) {
-    const src = inputs.target as SceneChild | undefined;
+    const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.
-    if (!src) return src as unknown as SceneChild;
+    if (!src) return src as unknown as ObjectData;
     // Mute-bypass (V58) — identity passthrough, byte-identical to no modifier.
     if (params.muted) return src;
-    const source = modifierSource(src);
-    // Non-modifiable source (glTF / Group / Scatter / an Empty) — pass through.
+    const source = modifierDataSource(src);
+    // Non-mesh data (curve / light / camera) — pass through unchanged.
     if (!source) return src;
-    const t = source.transform;
     return {
-      kind: 'ModifiedMesh',
+      kind: 'ModifiedData',
       geometry: mirrorGeometryRef(source.geometry, params.axis, params.offset),
-      position: t.position,
-      rotation: t.rotation,
-      scale: t.scale,
       material: source.material,
     };
   },

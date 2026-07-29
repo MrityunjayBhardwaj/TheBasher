@@ -25,9 +25,17 @@
 // value does not change — so a spec that only checks "no throw" would pass while testing
 // nothing. Assert the resulting value.
 //
-// A MODIFIER attaches to the OBJECT, not to the data node (#377): `modifierSource`
-// (src/app/modifierGeometry.ts:120) reaches through the `data` socket for geometry+material
-// and inherits the Object's TRS. Wire `object.out → modifier.target`.
+// A MODIFIER attaches to the object's DATA (#415), not to the Object itself: the stack sits
+// BETWEEN them (`SphereData → Array → Object`), so the Object stays the scene child and
+// keeps the pose, applied once above the whole stack. Do not wire `object.out →
+// modifier.target` — `target` takes `ObjectData` and the connect check refuses a
+// `SceneObject`. Use `modifierChainOps` (./_modifierStack) rather than spelling the edges;
+// it is the one description of that topology and mirrors what "+ Add Modifier" builds.
+//
+// (This paragraph said the opposite until #415, and said it as an instruction — which is
+// why the flip re-aimed five specs at once. #377 had attached the stack downstream of the
+// Object as the shape available at the time; §3.1's final shape puts it upstream, on the
+// data chain.)
 
 import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
 

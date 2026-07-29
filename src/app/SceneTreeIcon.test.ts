@@ -19,6 +19,7 @@ import { emptyDagState, applyOp } from '../core/dag';
 import { listNodeTypes, getNodeType } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { isDataKindDef } from '../test-utils/splitKinds';
 import { iconKindForNode } from './SceneTreeIcon';
 
 describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries it', () => {
@@ -95,9 +96,12 @@ describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries
   // case above — that one proves Object → data → icon works, this one proves every
   // data kind has an icon to delegate TO.
   it('every registered data-socket node type resolves to a real icon, not a dot', () => {
-    const dataKinds = listNodeTypes().filter(
-      (type) => getNodeType(type)?.outputs?.out?.type === 'ObjectData',
-    );
+    // #415 — "emits ObjectData" stopped meaning "is a data kind" the moment the modifier
+    // stack moved onto the data lane: an Array/Mirror modifier produces the socket
+    // without being a KIND of data, and has no outliner row of its own to icon (it lives
+    // in the Object's modifier stack). The discriminator is shared with the conformance
+    // registry gate, which derived this same set independently and broke identically.
+    const dataKinds = listNodeTypes().filter((type) => isDataKindDef(getNodeType(type)));
     // Guard the guard: if this ever finds nothing, the filter has drifted and the
     // test would pass vacuously for every future data kind.
     expect(dataKinds.length).toBeGreaterThan(0);
