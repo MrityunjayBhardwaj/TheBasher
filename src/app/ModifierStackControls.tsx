@@ -23,7 +23,8 @@
 
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
-import { canModifyGeometry } from './modifierGeometry';
+import { canModifyGeometry, resolveDataKind } from './modifierGeometry';
+import { dataSectionCapability } from './dataSectionCapability';
 import { OperatorStackRows } from './OperatorStackRows';
 import {
   buildAddModifierOps,
@@ -40,6 +41,10 @@ const ADDABLE: ReadonlyArray<{ type: string; label: string }> = [
   { type: 'ArrayModifier', label: 'Array' },
   { type: 'MirrorModifier', label: 'Mirror' },
 ];
+
+/** #498 — a module constant, not a fresh `[]` per render, so the rows keep a stable
+ *  prop identity on the refused path exactly as they do on the offered one. */
+const EMPTY_ADDABLE: ReadonlyArray<{ type: string; label: string }> = [];
 
 /** #256 (V38) — a geometry modifier only rewrites mesh data; on non-mesh data it passes
  *  THROUGH unchanged. Silently doing nothing reads as "the modifier is broken", so the
@@ -66,7 +71,23 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   const base = resolveStackBase(state, nodeId);
   const stack = enumerateModifierStack(state, base);
 
-  const unsupportedSource = stack.length > 0 && !canModifyGeometry(state, base);
+  // #498 — the OFFER now asks the same predicate the accept does, instead of computing
+  // it and using it only to pick a banner. `addable` is derived rather than static: an
+  // add that `buildAddModifierOps` would refuse is not shown at all, so the panel cannot
+  // advertise an action that silently does nothing.
+  const canAdd = canModifyGeometry(state, base);
+  const addable = canAdd ? ADDABLE : EMPTY_ADDABLE;
+
+  // The three-state answer, which `canModifyGeometry` alone cannot give: it is false for
+  // a curve, a light and a camera alike, and those do not deserve the same sentence. A
+  // curve is a tracked gap (#349); a camera has nothing to reshape and never will.
+  const dataKind = resolveDataKind(state, base);
+  const capability = dataKind ? dataSectionCapability(dataKind, 'modifier') : null;
+
+  // The residual banner: modifiers are present on a source that cannot be reshaped and
+  // whose kind did not explain why (an un-evaluable source — a cycle or a dangling ref).
+  const unsupportedSource = stack.length > 0 && !canAdd;
+
   // PRESENTATION ONLY — names the source in the banner. It must never become the
   // gate again (#377): `canModifyGeometry` above is the single source of truth.
   const baseType = state.nodes[base]?.type;
@@ -95,7 +116,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
     <OperatorStackRows
       testIdPrefix="modifier"
       entries={stack}
-      addable={ADDABLE}
+      addable={addable}
       selectedNodeId={selectedNodeId}
       emptyLabel="No modifiers."
       onSelect={select}
@@ -104,7 +125,30 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
       onRemove={onRemove}
       onAdd={onAdd}
       banner={
-        unsupportedSource ? (
+        // #498 — the banner now fires on the CAPABILITY, not on `stack.length > 0`. It
+        // used to explain modifiers that were already there and doing nothing; with the
+        // add refused, the section would otherwise be silently empty and the user would
+        // be left to guess why there is no "+ Add".
+        capability?.state === 'never' ? (
+          <p
+            data-testid="modifier-not-applicable"
+            className="rounded border border-border-strong bg-bg-2 px-1.5 py-1 text-fg-dim"
+          >
+            Modifiers reshape mesh data. {baseType} has no geometry to rewrite, so this stack stays
+            empty.
+          </p>
+        ) : capability?.state === 'not-yet' ? (
+          <p
+            data-testid="modifier-unsupported-source"
+            className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
+          >
+            ⚠ Modifiers do not reshape {baseType} yet. This is a gap rather than a limit — see issue
+            #{capability.issue}.
+          </p>
+        ) : unsupportedSource ? (
+          // The residual case: a source that IS a modifiable kind but could not be
+          // evaluated (a cycle, a dangling ref). Rare, and worth its own sentence rather
+          // than being folded into either answer above.
           <p
             data-testid="modifier-unsupported-source"
             className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"

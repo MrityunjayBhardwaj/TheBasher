@@ -38,7 +38,8 @@ import { evaluate } from '../core/dag/evaluator';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
-import { canModifyGeometry, modifierDataSource } from './modifierGeometry';
+import { canModifyGeometry, modifierDataSource, resolveDataKind } from './modifierGeometry';
+import { buildDefaultDagState } from '../core/project/default';
 import { buildAddModifierOps, resolveStackBase } from './operatorStack';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import type { ObjectData } from '../nodes/types';
@@ -299,6 +300,37 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
     // Muted → the SOURCE DATA rides through verbatim (it used to be the Object, because
     // the Object used to be what the modifier consumed).
     expect((evaluate(s, seeded.modifierId).value as ObjectData).kind).toBe('MeshData');
+  });
+});
+
+// #498 — `resolveDataKind`, the fact the OFFER needs that `canModifyGeometry` cannot give.
+describe('#498 resolveDataKind — the kind, not just the boolean', () => {
+  beforeEach(() => {
+    __reseedAllNodesForTests();
+  });
+
+  it('names each data kind in the default project, and refuses non-data nodes', () => {
+    const state = buildDefaultDagState();
+    expect(resolveDataKind(state, 'n_box_data')).toBe('MeshData');
+    expect(resolveDataKind(state, 'n_camera_data')).toBe('CameraData');
+    expect(resolveDataKind(state, 'n_light_data')).toBe('LightData');
+
+    // The Object is NOT a data node — it emits 'SceneObject'. Returning its kind here
+    // would make the panel classify the wrong half of the pair.
+    expect(resolveDataKind(state, 'n_box')).toBeNull();
+    expect(resolveDataKind(state, 'nonexistent')).toBeNull();
+  });
+
+  it('agrees with canModifyGeometry about which kinds are modifiable', () => {
+    // The two are read together by the panel — one picks the buttons, the other the
+    // sentence. If they disagreed the panel would say one thing and do another.
+    const state = buildDefaultDagState();
+    for (const id of ['n_box_data', 'n_camera_data', 'n_light_data']) {
+      const kind = resolveDataKind(state, id);
+      expect(kind, `${id} must resolve to a kind`).not.toBeNull();
+      const modifiable = canModifyGeometry(state, id);
+      expect(modifiable).toBe(kind === 'MeshData');
+    }
   });
 });
 
