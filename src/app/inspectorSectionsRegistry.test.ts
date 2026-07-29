@@ -15,6 +15,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
 import { isSectionId, paramToSection } from './inspectorSections';
+import { DATA_DEPENDENT_SECTIONS } from './dataSectionCapability';
 import {
   declaredParamKeys,
   makeSectionCtx,
@@ -273,6 +274,55 @@ describe('C2 — inspectorSections declarations', () => {
         def.inspectorSections,
         `${type} should omit inspectorSections so raw-fallback renders`,
       ).toBeUndefined();
+    }
+  });
+
+  // #498 — THE RECURRENCE GUARD, and the reason this issue was worth doing before the
+  // material socket work.
+  //
+  // `ObjectNode` declares its sections unconditionally. For three of the four that is
+  // correct: the Object owns the pose, so 'transform' (and therefore 'constraint' and
+  // 'driver') applies no matter what data hangs off it. 'modifier' was the exception and
+  // nothing said so, which is how a camera came to advertise "+ Array".
+  //
+  // Fixing the modifier case alone would leave the NEXT data-dependent section to repeat
+  // it — and one is coming: #394 moves material onto a socket, and a Camera datablock has
+  // no material slots at all (measured on Blender 5.1.1: `Camera` has no `materials`
+  // property, while Mesh, Curve, Volume and six other kinds do). So the durable answer is
+  // not "gate the modifier section" but "force every section the Object declares to be
+  // classified as one or the other".
+  //
+  // The OBJECT_OWNED list is the load-bearing half: a deliberate always-applies and a
+  // forgotten never-classified are indistinguishable unless the meaning is written down.
+  it('#498 every section ObjectNode declares is either Object-owned or classified by data kind', () => {
+    const OBJECT_OWNED: readonly string[] = [
+      // The Object owns the transform, so all three hold for any data — including none
+      // at all (an Empty). These are the justified opt-outs.
+      'transform',
+      'constraint',
+      'driver',
+    ];
+
+    const snap = snapshotRegistry();
+    const def = snap['Object'];
+    expect(def, 'Object missing from registry').toBeDefined();
+    const declared = (def.inspectorSections ?? []).filter(isSectionId);
+    expect(declared.length, 'Object declares no sections — the sweep drifted').toBeGreaterThan(0);
+
+    for (const sectionId of declared) {
+      const objectOwned = OBJECT_OWNED.includes(sectionId);
+      const dataClassified = (DATA_DEPENDENT_SECTIONS as readonly string[]).includes(sectionId);
+      expect(
+        objectOwned !== dataClassified,
+        `Object declares "${sectionId}" but it is ${
+          objectOwned && dataClassified
+            ? 'BOTH Object-owned and data-classified — pick one'
+            : 'NEITHER Object-owned nor in the data-kind capability table. ' +
+              'Either add it to OBJECT_OWNED (it applies whatever the data is), or add it ' +
+              'to DataDependentSection in dataSectionCapability.ts and answer it per kind. ' +
+              'Leaving it unclassified is how #498 happened.'
+        }`,
+      ).toBe(true);
     }
   });
 });
