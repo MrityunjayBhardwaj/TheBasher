@@ -95,9 +95,24 @@ export interface RoadSpec {
   readonly coverage?: Record<SplitKindName, RoadCell>;
 }
 
-/** Compact constructor for an unnamed cell, so 20 of them stay readable. */
-function gap(why: string, candidates?: readonly string[]): RoadGap {
-  return { gap: true, why, issue: '#491', ...(candidates ? { candidates } : {}) };
+/**
+ * Compact constructor for an unnamed cell, so a dozen of them stay readable.
+ *
+ * `issue` is a REQUIRED parameter and used to be a hardcoded '#491' (#500). That default
+ * outlived its issue: #491 closed while every cell still pointed at it, so nineteen declared
+ * gaps read as tracked debt against something nobody was going to reopen. A default is the
+ * wrong shape for this field precisely because it is the field that has to stay current —
+ * making it a parameter means a new gap cannot be written without naming somewhere for it to
+ * be fixed.
+ *
+ * ⚠️ WHAT THE GATE CANNOT CHECK, stated here because nothing else can state it: the gate
+ * verifies that an issue number is PRESENT and well-formed. It cannot verify that the issue
+ * is still OPEN — a unit test does not reach the network, and should not. So this field is
+ * enforced in shape and trusted in substance, which is exactly how it went stale the first
+ * time. When closing an issue that a cell names, grep this file for the number.
+ */
+function gap(why: string, issue: string, candidates?: readonly string[]): RoadGap {
+  return { gap: true, why, issue, ...(candidates ? { candidates } : {}) };
 }
 
 /**
@@ -118,9 +133,10 @@ export const KIND_MARKERS: Record<SplitKindName, readonly string[]> = {
   baked: ['BakedData', 'buildBakedRow'],
 };
 
-const RENDER_GAP =
-  'no spec is named for this kind on this road — the delegate builds a light, so a ' +
-  'broken root/nested mount for this kind would not be reported';
+const NESTED_UNOBSERVABLE =
+  'no probe can observe this kind nested: a nested object loses its object3D name, so every ' +
+  'node-id dev seam reads null for it (#501, measured with a positive control). Blocked on ' +
+  'the instrument, not on a spec being written';
 
 export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
   // PROMOTED from delegated to derived (#500). The five gaps here were honest, and the reason
@@ -149,10 +165,22 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
     coverage: {
       light: { by: 'tests/e2e/split-light-observation.spec.ts' },
       camera: { by: 'tests/e2e/p231-nested-camera.spec.ts' },
-      box: gap(RENDER_GAP, ['tests/e2e/p230-nested-gizmo-world.spec.ts']),
-      sphere: gap(RENDER_GAP),
-      curve: gap(RENDER_GAP),
-      baked: gap(RENDER_GAP),
+      // These four are BLOCKED, not merely unwritten, and the reason replaces a false one
+      // (#501). The previous text blamed the delegate for building a light. Measured: nesting
+      // any object under a Group drops its wrapping three.js group's `name`, so all five
+      // node-id dev seams — bounds, position, quaternion, scale, material — return null for a
+      // nested object. Controlled on the SEED box, in this road's own candidate spec's op
+      // order: named `n_box:Group` at the root, and after nesting the only named object in the
+      // scene is the group. The pixels are fine; the identity is what goes.
+      //
+      // So this road cannot be closed by parameterising a delegate, because no probe can see
+      // the subject. That is a different kind of blocker from an unwritten spec, and it is
+      // invisible from a coverage table — which records which spec was named, never whether an
+      // instrument could reach the case at all.
+      box: gap(NESTED_UNOBSERVABLE, '#501', ['tests/e2e/p230-nested-gizmo-world.spec.ts']),
+      sphere: gap(NESTED_UNOBSERVABLE, '#501'),
+      curve: gap(NESTED_UNOBSERVABLE, '#501'),
+      baked: gap(NESTED_UNOBSERVABLE, '#501'),
     },
   },
   R3: {
@@ -183,16 +211,22 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
       curve: gap(
         'the delegate builds a cube; the curve specs below drive constraints but have ' +
           'not been confirmed to ask THIS road (does a constraint reach a DATA param)',
+        '#500',
         ['tests/e2e/p341-constraint-ref-picker.spec.ts', 'tests/e2e/p339-follow-path.spec.ts'],
       ),
-      light: gap('the delegate builds a cube', ['tests/e2e/p265-aimable-light-track-to.spec.ts']),
-      sphere: gap('the delegate builds a cube'),
+      light: gap('the delegate builds a cube', '#500', [
+        'tests/e2e/p265-aimable-light-track-to.spec.ts',
+      ]),
+      sphere: gap('the delegate builds a cube', '#500'),
       // No candidate: the only two specs that build a split camera (p231-active-camera,
       // p231-nested-camera) drive neither constraint. p204-camera-track-to sounds right and
       // is not — it builds a CUBE and points a camera at it, so the constrained half is the
       // cube's. This cell has nowhere to start from, which is worth recording.
-      camera: gap('the delegate builds a cube, and no spec constrains a split camera at all'),
-      baked: gap('the delegate builds a cube'),
+      camera: gap(
+        'the delegate builds a cube, and no spec constrains a split camera at all',
+        '#500',
+      ),
+      baked: gap('the delegate builds a cube', '#500'),
     },
   },
   R7: {
@@ -206,13 +240,13 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
       // declares, so a kind naming a section it does not have fails today. What no spec
       // asks for these five is the other direction: that the declared sections actually
       // RENDER as headers in the inspector for this kind.
-      sphere: gap('the delegate drives a box; nothing renders this kind’s sections', [
+      sphere: gap('the delegate drives a box; nothing renders this kind’s sections', '#500', [
         'tests/e2e/inspector-enum-param.spec.ts',
       ]),
-      curve: gap('the delegate drives a box, and the curve declares a custom section'),
-      light: gap('the delegate drives a box'),
-      camera: gap('the delegate drives a box, and the camera declares a custom section'),
-      baked: gap('the delegate drives a box'),
+      curve: gap('the delegate drives a box, and the curve declares a custom section', '#500'),
+      light: gap('the delegate drives a box', '#500'),
+      camera: gap('the delegate drives a box, and the camera declares a custom section', '#500'),
+      baked: gap('the delegate drives a box', '#500'),
     },
   },
   R8: {
