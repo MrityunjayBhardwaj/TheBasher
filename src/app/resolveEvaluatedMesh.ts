@@ -261,6 +261,21 @@ export function resolveEvaluatedMesh(
       // through the Object's own animated band rather than read off raw params.
       return { geometry: data.geometry, uvs: null, material: data.material, transform };
     }
+    if (data.kind === 'ModifiedData') {
+      // #415 — the Object half of a modifier pair. Same shape as the `MeshData` arm
+      // below (the modifier's geometry IS a registry handle, so UVs resolve
+      // synchronously), and the material passes verbatim: `EvaluatedMesh.material`
+      // already carries the wide Inline|Baked union that `ModifiedDataValue` does,
+      // widened by #358 precisely so a baked-sourced modifier stops dropping its
+      // material here.
+      const modGeometry = data.geometry;
+      return {
+        geometry: modGeometry,
+        uvs: resolveRegistryUVs(modGeometry),
+        material: data.material,
+        transform,
+      };
+    }
     const exhaustiveData: 'MeshData' = data.kind;
     void exhaustiveData;
     const geometry = data.geometry;

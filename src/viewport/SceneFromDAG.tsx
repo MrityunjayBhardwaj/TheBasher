@@ -2256,6 +2256,28 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     if (!baked) return null;
     return <BakedMeshR value={baked} override={override} />;
   }
+  if (data?.kind === 'ModifiedData') {
+    // #415 SLICE 1 — DELIBERATELY NOT DRAWING YET, and this is a temporary that must
+    // not outlive slice 2.
+    //
+    // The real arm is a RECOMPOSE onto `ModifiedMeshR` — the renderer the fused
+    // `ModifiedMesh` already draws through — exactly as the baked arm above recomposes
+    // onto `BakedMeshR`. That is the third time a fused renderer already existed and
+    // the right answer was to recompose rather than reimplement.
+    //
+    // It is closed with an explicit `null` rather than falling through to
+    // `ObjectMeshR`, and NEVER with `as MeshDataValue`. The cast compiles and then
+    // renders the measured #388 failure (invisible geometry + grey material) instead
+    // of drawing; `ModifiedDataValue.material` carries the wide Inline|Baked union that
+    // `ObjectMeshR`'s `usePrimitiveMaterial` road cannot consume.
+    //
+    // Nothing can reach this branch today — no producer mints a `ModifiedData` until
+    // the slice-3 socket flip. That unreachability is recorded HERE, in the arm itself,
+    // because a comment is the only record an unreachable arm has and comments have no
+    // detector: the moment slice 3 lands the first producer, this goes LIVE and a
+    // modifier pair silently stops drawing. Slice 2 must replace it BEFORE that.
+    return null;
+  }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
 

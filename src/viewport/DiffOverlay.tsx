@@ -295,7 +295,18 @@ function GhostChild({ value }: { value: SceneObject }) {
       // this overlay is synchronous — the same reason `GltfAsset`, `BakedMesh` and
       // `ModifiedMesh` are on that list. None is routed through its recompose helper:
       // the ghost band is the one consumer that wants the pair left alone.
-      if (data.kind === 'BakedData' || data.kind === 'LightData' || data.kind === 'CameraData') {
+      // #415 — `ModifiedData` joins them for the SAME parity reason the list is built
+      // on: its fused form `ModifiedMesh` is already in `GHOSTLESS_KINDS`, so ghosting
+      // the split form would make a proposal MORE visible after the split than before
+      // it. Its geometry is a modifier OUTPUT besides — a rebuilt buffer whose
+      // descriptor is neither 'box' nor 'sphere', so the synchronous ghost below could
+      // not draw it anyway.
+      if (
+        data.kind === 'BakedData' ||
+        data.kind === 'LightData' ||
+        data.kind === 'CameraData' ||
+        data.kind === 'ModifiedData'
+      ) {
         return null;
       }
       const exhaustiveData: 'MeshData' = data.kind;

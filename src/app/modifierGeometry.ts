@@ -152,6 +152,16 @@ export function modifierSource(value: SceneChild): ModifierSource | null {
           // renders blank and reports to the asset-error banner exactly as a fused baked
           // source does (#258) — inherited behaviour, not a new limit.
           return { geometry: data.geometry, transform: trsOf(value), material: data.material };
+        case 'ModifiedData':
+          // #415 — a modifier over a modifier's output: the CHAIN case. The same
+          // recompose the two arms above give, and it must be, for the same parity
+          // reason: an Object posing a `ModifiedData` is what a fused `ModifiedMesh`
+          // becomes (see the `ModifiedMesh` arm at the top of this switch, which
+          // already recomposes exactly this way), so answering differently would make
+          // "can I stack a second modifier?" depend on when the project was saved.
+          // Geometry + material off the data, TRS off the Object — a data node has no
+          // pose of its own to contribute.
+          return { geometry: data.geometry, transform: trsOf(value), material: data.material };
         case 'CurveData':
         case 'LightData':
         case 'CameraData':
