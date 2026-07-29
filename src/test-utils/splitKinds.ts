@@ -36,6 +36,43 @@ import { recomposeLightObject } from '../nodes/lightRecompose';
 /** The kinds that have actually been split. One name per `ObjectData` producer. */
 export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked';
 
+/** As much of a node definition as the data-lane predicates below read. Declared
+ *  structurally so this module still never imports the registry (see the header). */
+export interface DataLaneDef {
+  readonly inputs?: Record<string, { type?: string } | undefined>;
+  readonly outputs?: Record<string, { type?: string } | undefined>;
+}
+
+/**
+ * Is this node type an OPERATOR on the data lane — `ObjectData` in, `ObjectData` out?
+ * The geometry modifiers (Array, Mirror) are the first, from #415.
+ *
+ * ⚠️ THIS PREDICATE EXISTS BECAUSE "EMITS ObjectData" STOPPED MEANING "IS A DATA KIND".
+ * Until #415 the two were the same set, so two separate gates (this module's registry
+ * gate and the outliner-icon sweep) each derived "data kind" as `outputs.out.type ===
+ * 'ObjectData'` — independently, in two files, with no shared definition. Moving the
+ * modifier stack onto the data lane added a producer that is a FUNCTION from data to
+ * data rather than a kind OF data, and both gates fired at once. They were right to:
+ * the assumption really had changed. What they could not do is agree, which is why the
+ * discriminator now lives here once instead of being re-spelled per gate.
+ *
+ * The structural shape is the honest one: an operator DECLARES the same socket type on
+ * both sides, because that is what makes it stackable. A leaf data node has no inputs
+ * at all. Nothing here is matched against a type name.
+ */
+export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
+  return def?.inputs?.target?.type === 'ObjectData' && def?.outputs?.out?.type === 'ObjectData';
+}
+
+/**
+ * Is this node type a data KIND — a producer of `ObjectData` that is not merely an
+ * operator over it? This is the set every conformance road and every outliner icon has
+ * to answer for. See {@link isDataOperatorDef} for why the two questions parted ways.
+ */
+export function isDataKindDef(def: DataLaneDef | undefined): boolean {
+  return def?.outputs?.out?.type === 'ObjectData' && !isDataOperatorDef(def);
+}
+
 /** The op shape the builders emit. Structurally assignable to the DAG's `Op`, but
  *  declared here so this module never imports the graph (see the header). */
 export type SplitOp =

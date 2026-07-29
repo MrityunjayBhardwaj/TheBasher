@@ -24,6 +24,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeRef, Op } from '../core/dag/types';
+import { getNodeType } from '../core/dag/registry';
 import { nodeDisplayName } from './sceneTreeWalk';
 
 /** The geometry-operator (SOP / modifier) node types this stack manages. A node
@@ -63,6 +64,19 @@ export interface ModifierEntry {
 
 const OUT = 'out';
 const TARGET = 'target';
+const DATA = 'data';
+
+/**
+ * Is `node` a POSER — an object that wears data through a `data` input? Derived from
+ * the registry (it declares a `data` input carrying the `ObjectData` socket), never
+ * matched against `type === 'Object'`: a type list is exactly the drift #377 measured
+ * when the modifier's supported-source set named a retired type AND missed a live one
+ * at the same time. A future poser is covered the day it declares the socket.
+ */
+function isPoserNode(node: Node | undefined): boolean {
+  if (!node) return false;
+  return getNodeType(node.type)?.inputs[DATA]?.type === 'ObjectData';
+}
 
 /** The single ref a (possibly list) input binding holds for `socket`, or null. */
 function singleRef(node: Node | undefined, socket: string): NodeRef | null {
@@ -165,9 +179,58 @@ export function resolveOperatorBase(
   return cur;
 }
 
-/** The base mesh of a geometry-modifier stack from any node in it. */
+/**
+ * The base mesh DATA of a geometry-modifier stack from any node in it — the data node,
+ * any modifier in the chain, or the OBJECT that poses the result.
+ *
+ * #415 — the stack moved onto the data lane (`BoxData → Array → Object`), so the base
+ * is the DATA node, one hop further up than it used to be. From an Object the walk now
+ * starts by stepping THROUGH its `data` input; from a modifier or the data node itself
+ * it is the generic `target`-chain walk, unchanged. That extra hop is what makes the
+ * Object the thing the user selects while the stack still resolves — the panel is on
+ * the Object (it declares the 'modifier' section), the operators are on its data.
+ *
+ * An Object with no data (an Empty) has no stack, so it is its own base — the caller
+ * then enumerates an empty stack, which is the honest answer.
+ */
 export function resolveStackBase(state: DagState, nodeId: string): string {
+  const node = state.nodes[nodeId];
+  if (isPoserNode(node)) {
+    const data = singleRef(node, DATA);
+    if (!data) return nodeId; // an Empty — nothing on the data lane to modify
+    return resolveOperatorBase(state, data.node, isModifierNode);
+  }
   return resolveOperatorBase(state, nodeId, isModifierNode);
+}
+
+/**
+ * The OBJECT a geometry-modifier stack feeds, from any node in it — walk FORWARD along
+ * `out` past the rest of the chain to the poser that wears the result. Null when the
+ * chain is dangling (no consumer yet) or feeds something that is not a poser.
+ *
+ * This is the exact INVERSE of {@link resolveStackBase}, and #415 is why both exist:
+ * pre-flip the modifier sat downstream of the Object, so everything about pose was
+ * found by walking DOWN to the base. Post-flip the pose lives downstream instead, so
+ * a surface that needs "where does this modified geometry actually sit?" — the gizmo,
+ * the read road — has to walk UP. Getting the direction wrong lands on the data node,
+ * which has no transform at all, so it fails visibly rather than subtly.
+ */
+export function resolveStackObject(state: DagState, nodeId: string): string | null {
+  let cur = nodeId;
+  const seen = new Set<string>([nodeId]);
+  for (;;) {
+    const consumer = findConsumer(state, cur, OUT);
+    if (!consumer) return null; // dangling chain — nothing wears it yet
+    if (isModifierNode(state.nodes[consumer.node])) {
+      if (seen.has(consumer.node)) return null; // cycle guard
+      seen.add(consumer.node);
+      cur = consumer.node;
+      continue;
+    }
+    return consumer.socket === DATA && isPoserNode(state.nodes[consumer.node])
+      ? consumer.node
+      : null;
+  }
 }
 
 /** The base Image source of an effect stack from any node in it (an effect or the
@@ -253,7 +316,18 @@ export function buildAddOperatorOps(
   return { ops, modifierId };
 }
 
-/** Insert a geometry modifier at the top of `baseNodeId`'s stack. */
+/**
+ * Insert a geometry modifier at the top of `baseNodeId`'s stack, where `baseNodeId` is
+ * the mesh DATA node (pass `resolveStackBase(state, selectedId)`).
+ *
+ * #415 — THE FLIP ONTO THE DATA LANE NEEDED NO CHANGE HERE, and that is the design
+ * claim paying out rather than a coincidence. {@link buildAddOperatorOps} splices into
+ * `topProducer.out → consumer` without naming either side, so moving the stack from
+ * `Object.out → mod.target → Scene.children` to `Data.out → mod.target → Object.data`
+ * changed only what `resolveStackBase` RESOLVES; the re-wiring authority is identical.
+ * One wiring road means the panel, the agent op and the migration cannot disagree —
+ * which is precisely what a temporary dual-socket shim would have re-introduced.
+ */
 export function buildAddModifierOps(
   state: DagState,
   baseNodeId: string,

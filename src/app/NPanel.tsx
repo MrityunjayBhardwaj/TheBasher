@@ -55,6 +55,7 @@ import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
 import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
+import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
 import {
   dispatchApplyTransform,
@@ -2813,6 +2814,21 @@ export function NPanel() {
   const canApply = useDagStore((s) =>
     selectedId ? canApplyTransform(s.state, selectedId) : false,
   );
+  // #415 — THE OBJECT'S `data` INPUT IS NO LONGER THE DATA NODE once a modifier is on it.
+  // The stack splices into that very edge (`BoxData → Array → Object`), so `inputs.data`
+  // names the TOP OF THE STACK. Reading it directly showed the ArrayModifier's sections in
+  // place of the cube's: the geometry and material rows vanished the moment a modifier was
+  // added, and a second modifier stack appeared beside the real one (the operator declares
+  // 'modifier', so it rendered its own). Resolve THROUGH the chain to the base — the same
+  // walk the stack panel does — so the linked half is the data node whatever sits above it.
+  // Selected down to an id string so unrelated DAG changes don't re-render the panel.
+  const linkedDataId = useDagStore((s) => {
+    if (!selectedId) return null;
+    const base = resolveStackBase(s.state, selectedId);
+    // `resolveStackBase` is identity for a node with no data lane (an Empty, or any
+    // non-poser) — that is not a linked data node, it is the selection itself.
+    return base === selectedId ? null : base;
+  });
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
   // #225 — when >1 node is selected the inspector renders the shared-edit
@@ -3067,18 +3083,13 @@ export function NPanel() {
               material live on the BoxData it points at via `data`. Render that data node's
               sections here so a selected cube's colour + size are editable (routed to the data
               node). */}
-          {(() => {
-            const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
-              | { node?: string }
-              | undefined;
-            return dataRef?.node ? (
-              <LinkedDataSections
-                dataNodeId={dataRef.node}
-                objectNodeId={node.id}
-                canApply={canApply}
-              />
-            ) : null;
-          })()}
+          {linkedDataId ? (
+            <LinkedDataSections
+              dataNodeId={linkedDataId}
+              objectNodeId={node.id}
+              canApply={canApply}
+            />
+          ) : null}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
               edit / remove controller knobs + promote them to the Controllers dock.
               A footer control (not a per-node-type section) since spare params are

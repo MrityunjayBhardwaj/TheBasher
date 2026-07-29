@@ -23,6 +23,12 @@ Each row is a real consolidation that shipped, with what it uses to decide.
 
 > Line references in this section describe the code **as it stood before #458**, which is what the
 > argument is about. The last row is the gap #458 closes; §3 records what actually changed.
+>
+> One name in the table no longer exists. #415 moved the modifier stack onto the data lane, so
+> `modifierSource` — which classified a posed **scene value** and reached through its `data` socket —
+> was replaced by `modifierDataSource`, which asks the same question of an `ObjectData` directly and
+> has no `Object` arm to reach through. The row's argument is unchanged: it is still keyed on the
+> evaluated value kind and still `never`-closed. Only the union it switches over got narrower.
 
 | Unification                           | Decided by                                               | Node-type list?             | Reaches through `data`?    |
 | ------------------------------------- | -------------------------------------------------------- | --------------------------- | -------------------------- |
@@ -120,7 +126,7 @@ Sort the keying strategies by what survives a subgraph wrapping the node:
 
 | Keyed by                                                                             | Survives?                 | Why                                                                                    |
 | ------------------------------------------------------------------------------------ | ------------------------- | -------------------------------------------------------------------------------------- |
-| **evaluated value kind** (`modifierSource`)                                          | yes, untouched            | a subgraph still outputs an `ObjectData` / `SceneChild`; how it was built is invisible |
+| **evaluated value kind** (`modifierDataSource`)                                      | yes, untouched            | a subgraph still outputs an `ObjectData` / `SceneChild`; how it was built is invisible |
 | **possession** (`resolveDataParamOwner`)                                             | yes                       | "does this node own a param under this root" is true of a promoted parm too            |
 | **declaration** (`inspectorSections`)                                                | only if resolved per-node | it is currently a static per-**type** property                                         |
 | **type string** (camera gate, `MaterialOverride`, `GltfChild`, keyframe-channel set) | no                        | a subgraph wrapping a camera has type `TemplateInstance`                               |

@@ -41,16 +41,22 @@ const ADDABLE: ReadonlyArray<{ type: string; label: string }> = [
   { type: 'MirrorModifier', label: 'Mirror' },
 ];
 
-/** #256 (V38) — a geometry modifier only rewrites a leaf mesh; on a glTF / Group /
- *  other source it passes THROUGH unchanged (async geometry is a documented v1
- *  follow-up). Silently doing nothing reads as "the modifier is broken" on an
- *  imported asset, so the banner says so instead.
+/** #256 (V38) — a geometry modifier only rewrites mesh data; on non-mesh data it passes
+ *  THROUGH unchanged. Silently doing nothing reads as "the modifier is broken", so the
+ *  banner says so instead.
  *
  *  #377/[[V108]] — this used to be `new Set(['BoxMesh','SphereMesh','BakedMesh'])`,
  *  which drifted in BOTH directions at once: `BoxMesh` retired in Slice 2 and was
  *  still listed, while the `Object` a cube actually is had never been added, so the
  *  banner declared every cube unsupported. The offer now asks the SAME predicate the
- *  modifier's `evaluate` accepts. Do not reintroduce a type list here. */
+ *  modifier's `evaluate` accepts. Do not reintroduce a type list here.
+ *
+ *  #415 SHRANK WHAT THIS BANNER IS FOR, which is a good outcome rather than a loss. It
+ *  used to explain a Group or a glTF import passing through — sources that were only
+ *  ever wireable because `target` took the widest socket in the app. On the data lane
+ *  `target` takes `ObjectData`, so those cannot be connected at all: the connect check
+ *  refuses them, and the case the banner explained stops existing. What remains is
+ *  genuine and narrower — mesh data can be reshaped, curve/light/camera data cannot. */
 
 export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   const state = useDagStore((s) => s.state);
@@ -103,8 +109,8 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
             data-testid="modifier-unsupported-source"
             className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
           >
-            ⚠ Modifiers only reshape primitive meshes (Box, Sphere). This{' '}
-            {baseType === 'GltfAsset' ? 'imported' : baseType} source passes through unchanged.
+            ⚠ Modifiers only reshape mesh data (Box, Sphere, baked). This {baseType} source passes
+            through unchanged.
           </p>
         ) : null
       }

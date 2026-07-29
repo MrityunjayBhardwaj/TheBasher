@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp } from '../core/dag';
-import { buildAddModifierOps, findConsumer } from './operatorStack';
+import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
@@ -253,13 +253,13 @@ describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
         },
         mir: {
           id: 'mir',
-          type: 'MirrorModifier',
+          type: 'MaterialOverride',
           params: {},
           inputs: { target: { node: 'arr', socket: 'out' } },
         },
         arr: {
           id: 'arr',
-          type: 'ArrayModifier',
+          type: 'Transform',
           params: {},
           inputs: { target: { node: 'box', socket: 'out' } },
         },
@@ -268,6 +268,15 @@ describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
       outputs: { scene: { node: 'scene' } },
     }) as unknown as DagState;
 
+  // #415 — THE WRAPPER TYPES HERE WERE RETYPED, and only the types. The subject is the
+  // GENERIC splice-out (`isTargetWrapperNode` is derived from the registry: a `target`
+  // input plus an `out` output), never anything specific to modifiers. The chain used to
+  // be `box → ArrayModifier → MirrorModifier → scene`, which the data-lane flip made
+  // impossible to build — a modifier's `target` takes `ObjectData` now, so a fixture
+  // wiring a SceneObject into it describes a graph the app would refuse. Transform and
+  // MaterialOverride are the SceneObject wrappers that still chain exactly this way, so
+  // the invariant is unchanged and the fixture stops describing an impossible topology.
+  // (The fused `BoxMesh` leaf is separate, pre-existing debt — #476.)
   it('deleting the MIDDLE of a stack splices the base up to the surviving wrapper', () => {
     const ops = buildDeleteNodesOps(stackState(), ['arr']);
     // box takes arr's place in mir's target slot.
@@ -320,18 +329,28 @@ describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
     // The default box is the split-native Object `n_box` (posed over a BoxData).
     const base = buildDefaultDagState();
     const boxId = 'n_box';
+    const boxDataId = 'n_box_data'; // #415 — the stack lives on the data lane
     expect(base.nodes[boxId]).toBeDefined();
-    const add = buildAddModifierOps(base, boxId, 'ArrayModifier', { count: 3, offset: [2, 0, 0] });
+    expect(base.nodes[boxDataId]).toBeDefined();
+    const add = buildAddModifierOps(base, resolveStackBase(base, boxId), 'ArrayModifier', {
+      count: 3,
+      offset: [2, 0, 0],
+    });
     expect(add).not.toBeNull();
     let s = (add!.ops as Op[]).reduce((acc, op) => applyOp(acc, op).next, base);
-    // Now scene → modifier → box. Delete the modifier through the generic path.
+    // Now data → modifier → object → scene. Delete the modifier through the generic path.
     const delOps = buildDeleteNodesOps(s, [add!.modifierId]);
     s = delOps.reduce((acc, op) => applyOp(acc, op).next, s);
-    // The modifier is gone AND the box is back to being a direct scene child.
     expect(s.nodes[add!.modifierId]).toBeUndefined();
     expect(s.nodes[boxId]).toBeDefined();
-    const consumer = findConsumer(s, boxId);
-    expect(consumer?.socket).toBe('children'); // renderable again, not stranded
+    // #415 — RE-AIMED, because the old assertion goes VACUOUS here. It checked that the
+    // box was "a direct scene child again" — true only because the modifier used to
+    // stand between the box and the scene. Post-flip the Object feeds the scene the
+    // whole time, so that check passes even with the splice removed entirely. The edge
+    // that genuinely has to be re-joined is data → Object.data. → [[H218]]
+    expect(findConsumer(s, boxDataId)).toEqual({ node: boxId, socket: 'data' });
+    // Kept as a genuine invariant now rather than as the moving part it used to be.
+    expect(findConsumer(s, boxId)?.socket).toBe('children'); // renderable, not stranded
   });
 });
 

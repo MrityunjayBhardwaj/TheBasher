@@ -16,14 +16,18 @@
 // is primitive-agnostic (the source's own vert count is derived at runtime, never
 // hardcoded).
 //
-// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
-// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
-// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
-// the sphere split, so these cases failed rather than testing anything. #377 decided it:
-// the stack attaches to the OBJECT and evaluates over its data — `modifierSource`
-// (src/app/modifierGeometry.ts:120) reaches through the `data` socket for geometry and
-// material while inheriting the Object's TRS — so `object.out → modifier.target` is the
-// shape a user actually has.
+// #462/#415: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData —
+// and the stack sits BETWEEN the two (`SphereData → Array → Object`). It was a fused
+// `SphereMesh` (put there by #365 Slice 2), then briefly `object.out → modifier.target`
+// (#377, the shape available before every data kind existed). #415 moved it onto the data
+// lane, so the OBJECT is the scene child and the modifier is a property of it — which is
+// what a user actually has, and what both references do.
+//
+// ⚠️ THE ASSERTIONS BELOW SURVIVED THE FLIP UNCHANGED, and that is worth noticing rather
+// than enjoying: they locate the arrayed mesh by VERTEX COUNT and assert RATIOS against a
+// runtime-derived passthrough, so they never named the scene child at all. A spec written
+// against `node.type` would have gone quietly vacuous here ([[H218]]) — this one could not,
+// because it never asked what the subject was, only how much geometry it had.
 //
 // It stays a SPHERE rather than moving to the split cube because the render-side check
 // locates the arrayed mesh by a vertex COUNT that has to be unique in a starter scene
@@ -38,7 +42,8 @@
 //      (ModifiedMeshR); src/app/resolveEvaluatedMesh.ts; vyapti V58/V37; H40.
 
 import { expect, test } from './_fixtures';
-import { splitSphereOps } from './_splitSphere';
+import { splitSphereDataId, splitSphereOps } from './_splitSphere';
+import { modifierChainOps } from './_modifierStack';
 
 interface Op {
   type: string;
@@ -68,8 +73,9 @@ const MARR = 'p209_array';
 const COUNT = 3; // 3 copies of the source → COUNT × (source verts) merged
 
 /** The modifier's source: a split sphere at x=4, well clear of the starter scene. The
- *  Object (`MBOX`) is what the modifier's `target` socket takes; the SphereData behind it
- *  carries the geometry the modifier reshapes. */
+ *  SphereData (`MDATA`) is what the modifier's `target` socket takes; the Object (`MBOX`)
+ *  wears the result and is the scene child. */
+const MDATA = splitSphereDataId(MBOX);
 const sphereSource = () => splitSphereOps({ objectId: MBOX, position: [4, 0, 0] });
 
 /** Every rendered Mesh's position-attribute vertex count, in the live three scene. */
@@ -149,27 +155,18 @@ test('#209 — Sphere → ArrayModifier → Scene renders the MERGED array; rend
   // A fresh sphere (NOT the default scene box), wired through an ArrayModifier into
   // the scene children. The arrayed mesh is the only one with COUNT× the source.
   await page.evaluate(
-    ({ box, arr, count, ops }) => {
+    ({ box, ops, chain }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as Op[]),
-          {
-            type: 'addNode',
-            nodeId: arr,
-            nodeType: 'ArrayModifier',
-            params: { count, offset: [2, 0, 0], muted: false },
-          },
+          ...(chain as Op[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: arr, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: arr, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
@@ -177,7 +174,21 @@ test('#209 — Sphere → ArrayModifier → Scene renders the MERGED array; rend
         'sphere → array → scene',
       );
     },
-    { box: MBOX, arr: MARR, count: COUNT, ops: sphereSource() },
+    {
+      box: MBOX,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: MBOX,
+        dataId: MDATA,
+        modifiers: [
+          {
+            id: MARR,
+            nodeType: 'ArrayModifier',
+            params: { count: COUNT, offset: [2, 0, 0], muted: false },
+          },
+        ],
+      }),
+    },
   );
 
   // Side B (resolver): the registry-built array vertex count = COUNT × (source verts).
@@ -220,27 +231,18 @@ test('#209 — muting the modifier collapses the output back to the source (fals
   page,
 }) => {
   await page.evaluate(
-    ({ box, arr, count, ops }) => {
+    ({ box, ops, chain }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as Op[]),
-          {
-            type: 'addNode',
-            nodeId: arr,
-            nodeType: 'ArrayModifier',
-            params: { count, offset: [2, 0, 0], muted: false },
-          },
+          ...(chain as Op[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: arr, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: arr, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
@@ -248,7 +250,21 @@ test('#209 — muting the modifier collapses the output back to the source (fals
         'sphere → array → scene',
       );
     },
-    { box: MBOX, arr: MARR, count: COUNT, ops: sphereSource() },
+    {
+      box: MBOX,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: MBOX,
+        dataId: MDATA,
+        modifiers: [
+          {
+            id: MARR,
+            nodeType: 'ArrayModifier',
+            params: { count: COUNT, offset: [2, 0, 0], muted: false },
+          },
+        ],
+      }),
+    },
   );
 
   // Active → COUNT × source. Derive the source passthrough by muting.
@@ -273,38 +289,17 @@ test('#209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array �
   const A1 = 'p209_a1';
   const A2 = 'p209_a2';
   await page.evaluate(
-    ({ box, a1, a2, ops }) => {
+    ({ box, ops, chain }) => {
       const w = window as unknown as ModWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as Op[]),
-          {
-            type: 'addNode',
-            nodeId: a1,
-            nodeType: 'ArrayModifier',
-            params: { count: 3, offset: [2, 0, 0], muted: false },
-          },
-          {
-            type: 'addNode',
-            nodeId: a2,
-            nodeType: 'ArrayModifier',
-            params: { count: 2, offset: [0, 3, 0], muted: false },
-          },
+          ...(chain as Op[]),
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: a1, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: a1, socket: 'out' },
-            to: { node: a2, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: a2, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
@@ -312,7 +307,26 @@ test('#209 — a 2-deep modifier chain renders CUMULATIVELY (array of an array �
         'sphere → array → array → scene',
       );
     },
-    { box: MBOX, a1: A1, a2: A2, ops: sphereSource() },
+    {
+      box: MBOX,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: MBOX,
+        dataId: MDATA,
+        modifiers: [
+          {
+            id: A1,
+            nodeType: 'ArrayModifier',
+            params: { count: 3, offset: [2, 0, 0], muted: false },
+          },
+          {
+            id: A2,
+            nodeType: 'ArrayModifier',
+            params: { count: 2, offset: [0, 3, 0], muted: false },
+          },
+        ],
+      }),
+    },
   );
 
   // Side B: the cumulative multipliers hold — inner = 3 × source, outer = 2 × inner.

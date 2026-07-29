@@ -1,18 +1,20 @@
-// #209 — the gizmo on a SELECTED MODIFIER (the last #209 known-limit). A geometry
-// modifier inherits its source's transform and renders the modified result there,
-// so the gizmo should edit the BASE mesh's transform when a modifier is selected —
-// dragging moves the whole modified result. The selection stays on the modifier
-// (its stack UI + inspector params); only the gizmo's transform TARGET redirects.
+// #209 — the gizmo on a SELECTED MODIFIER (the last #209 known-limit). A modifier has no
+// pose of its own; the OBJECT that wears the stack's result owns it (#415), so the gizmo
+// should edit that object's transform when a modifier is selected — dragging moves the
+// whole modified result. The selection stays on the modifier (its stack UI + inspector
+// params); only the gizmo's transform TARGET redirects.
 //
 // BOUNDARY-PAIR: selecting a MirrorModifier (a) MOUNTS the gizmo (before the fix it
-// was inert — the modifier has no position param) seeded at the base's transform,
-// and (b) a grab writes the BASE node's `position` param (not the modifier's) → the
+// was inert — the modifier has no position param) seeded at the OBJECT's transform,
+// and (b) a grab writes the OBJECT's `position` param (not the modifier's) → the
 // rendered modified mesh moves with it.
 //
-// REF: src/app/Gizmo.tsx (the targetId redirect via resolveStackBase); vyapti V64; #462.
+// REF: src/app/Gizmo.tsx (the targetId redirect via resolveStackObject); vyapti V64;
+//      #462; issue #415.
 
 import { expect, test } from './_fixtures';
-import { splitSphereOps } from './_splitSphere';
+import { splitSphereDataId, splitSphereOps } from './_splitSphere';
+import { modifierChainOps } from './_modifierStack';
 
 interface Op {
   type: string;
@@ -49,22 +51,29 @@ interface ThreeObjLike {
 const BOX = 'giz_box';
 const MIR = 'giz_mirror';
 
-// #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
-// was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
-// target was the still-undecided #377 path), and that node's `evaluate` has thrown since
-// the sphere split, so this case failed rather than testing anything.
+// #462/#415: the modifier SOURCE is a SPLIT sphere, and the stack sits BETWEEN the
+// SphereData and the Object (`SphereData → Mirror → Object`).
 //
-// The retarget SHARPENS what (b) proves. `position` now lives on the Object, one edge
-// away from the SphereData that owns the geometry, so `resolveStackBase` has to walk
-// modifier → Object and the grab has to land on the pose half. On the fused node both
-// halves were the same node, and a redirect to either would have passed identically.
+// ⚠️ #415 REVERSED THE WALK THIS SPEC IS ABOUT, and the reversal is the whole reason the
+// case still discriminates. Pre-flip the modifier sat downstream of the Object, so the
+// gizmo found the pose by walking DOWN the `target` chain to the base. On the data lane
+// walking down lands on the SphereData — which has NO transform at all — so the redirect
+// had to reverse and walk UP through `out` to the Object that wears the result.
+//
+// That is exactly the kind of change an assertion can sleep through, so note what does
+// NOT save this spec: (b) asserts the grab writes `nodes[BOX].params.position`, and BOX
+// is the Object id BOTH BEFORE AND AFTER the flip — that assertion is constant across the
+// transition ([[H218]]). What actually catches a wrong direction is (a): a gizmo pointed
+// at the data node finds no `position` param, so it never mounts and the proxy read
+// fails. Direction is proven by the MOUNT, not by the write.
 //
 // The mirror merges 2× the source, whatever the sphere's vert count is; the count is a
 // rendezvous marker to locate the rendered mesh, so it is derived at runtime rather
 // than hardcoded (the sphere-agnostic form of the old `=== 48`).
 
-/** The modifier's source: a split sphere at x=1 — the BASE transform (a) asserts and (b)
- *  moves. The Object (`BOX`) is what the modifier's `target` socket takes. */
+/** The modifier's source: a split sphere at x=1 — the Object's transform is what (a)
+ *  asserts and (b) moves. The SphereData (`DATA`) is what the modifier's `target` takes. */
+const DATA = splitSphereDataId(BOX);
 const sphereSource = () => splitSphereOps({ objectId: BOX, position: [1, 0, 0] });
 
 /** The world-space x of the rendered mirror mesh (its inherited transform), located
@@ -111,36 +120,42 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir, ops }) => {
+    ({ box, mir, ops, chain }) => {
       const w = window as unknown as GizWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as Op[]),
-          {
-            type: 'addNode',
-            nodeId: mir,
-            nodeType: 'MirrorModifier',
-            params: { axis: 'x', offset: 2, muted: false },
-          },
+          ...(chain as Op[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: mir, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: mir, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
         'e2e',
-        'box → mirror → scene',
+        'sphere data → mirror → object → scene',
       );
       w.__basher_selection.getState().select(mir); // select the MODIFIER
     },
-    { box: BOX, mir: MIR, ops: sphereSource() },
+    {
+      box: BOX,
+      mir: MIR,
+      ops: sphereSource(),
+      chain: modifierChainOps({
+        objectId: BOX,
+        dataId: DATA,
+        modifiers: [
+          {
+            id: MIR,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', offset: 2, muted: false },
+          },
+        ],
+      }),
+    },
   );
 
   // Wait for the mirror to build, then capture its merged vertex count (2× the
@@ -156,8 +171,9 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
   );
 
   // (a) The gizmo MOUNTED (it was inert on a modifier before) and seeded at the
-  // BASE box's transform [1,0,0] — not the modifier (which has no position). The
-  // grab seam itself only appears once the gizmo has mounted.
+  // OBJECT's transform [1,0,0] — not the modifier (which has no position) and not the
+  // SphereData (which has none either). The grab seam only appears once it has mounted,
+  // which is what makes this the assertion that catches a wrong walk direction.
   await page.waitForFunction(
     () => {
       const w = window as unknown as GizWindow;
@@ -171,7 +187,25 @@ test('selecting a modifier mounts the gizmo at the BASE transform; a grab moves 
   );
   expect(proxy.map((n) => Math.round(n))).toEqual([1, 0, 0]);
 
-  // (b) A grab writes the BASE node's position (not the modifier's).
+  // POSSESSION (H218) — the modifier really is on the data lane. Without this, (a) and
+  // (b) would both hold on a chain wired the OLD way, and this spec would report that the
+  // flip worked while measuring a graph the flip never touched.
+  const wiring = await page.evaluate(
+    ({ box, mir }) => {
+      const nodes = (window as unknown as GizWindow).__basher_dag.getState().state.nodes as Record<
+        string,
+        { inputs?: Record<string, { node?: string } | undefined> }
+      >;
+      return {
+        modTarget: nodes[mir]?.inputs?.target?.node,
+        objectData: nodes[box]?.inputs?.data?.node,
+      };
+    },
+    { box: BOX, mir: MIR },
+  );
+  expect(wiring).toEqual({ modTarget: DATA, objectData: MIR });
+
+  // (b) A grab writes the OBJECT's position (not the modifier's, and not the data's).
   await page.evaluate(() =>
     (window as unknown as GizWindow).__basher_gizmo_grab!('translate', [5, 0, 0]),
   );

@@ -41,7 +41,7 @@
 // Adding a member to `SplitBand` (the camera band, #387) is deliberately a COMPILE
 // ERROR here: at the one site that has to decide the new band's channel shape. Do NOT
 // add a `default:` arm that guesses — the defensive-looking fallthrough IS the bug
-// ([[V109]], and the same reasoning that closes `modifierSource`).
+// ([[V109]], and the same reasoning that closes `modifierDataSource`).
 //
 // REF: src/viewport/SceneFromDAG.tsx (the four hooks that consume this);
 //      src/nodes/lightRecompose.ts (the flattening the 'lights' band names);

@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { makeSplitCube } from '../../test-utils/splitCube';
 import {
   __resetMutatorRegistryForTests,
   getMutator,
@@ -41,6 +42,34 @@ beforeEach(() => {
   __reseedAllNodesForTests();
   __resetMutatorRegistryForTests();
 });
+
+/**
+ * A SPLIT scene: an `Object` (`box`) posing a `BoxData`, wired into a Scene aggregator.
+ *
+ * #415 — the modifier cases need this and `buildScene()` cannot give it. `buildScene`
+ * still constructs fused `BoxMesh`/`SphereMesh` nodes, which are RETIRED relics whose
+ * `evaluate` throws; they survive here because these mutator cases only ever wire and
+ * inspect them, never evaluate them — the retired-type-as-fixture shape [[H219]] names,
+ * and already tracked as #476. Moving the whole file onto split fixtures is that issue's
+ * job, not this slice's. What this slice cannot do is leave the MODIFIER cases on a
+ * fused node, because there is no data lane under one and the stack now lives there.
+ */
+function buildSplitScene(): { state: DagState; dataId: string } {
+  let s = emptyDagState();
+  const seeded = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    color: '#ff0000',
+  });
+  s = seeded.state;
+  s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'box', socket: 'out' },
+    to: { node: 'scene', socket: 'children' },
+  }).next;
+  return { state: s, dataId: seeded.dataId };
+}
 
 function buildScene(): DagState {
   // Two cubes and a sphere wired into a Scene aggregator. scene is the
@@ -269,8 +298,8 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
     return (ops as { type: string }[]).reduce((s, op) => applyOp(s, op as never).next, state);
   }
 
-  it('passes all five gates and wires Box → ArrayModifier → Scene', () => {
-    const state = buildScene();
+  it('passes all five gates and wires BoxData → ArrayModifier → Object', () => {
+    const { state, dataId } = buildSplitScene();
     const result = validatePlan(
       addModifierMutator,
       { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
@@ -282,16 +311,21 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
     // addNode(ArrayModifier) + disconnect + 2× connect.
     expect(result.ops.some((o) => o.type === 'addNode')).toBe(true);
     const next = applyOps(state, result.ops);
-    const stack = enumerateModifierStack(next, 'box');
+    const stack = enumerateModifierStack(next, dataId);
     expect(stack).toHaveLength(1);
     expect(stack[0].type).toBe('ArrayModifier');
-    // The box now feeds the modifier; the modifier feeds the scene's children.
-    expect(findConsumer(next, 'box')).toEqual({ node: stack[0].nodeId, socket: 'target' });
-    expect(findConsumer(next, stack[0].nodeId)).toEqual({ node: 'scene', socket: 'children' });
+    // #415 — the DATA feeds the modifier; the modifier feeds the OBJECT's `data`. The
+    // agent still names the object ("box"), which is what a director would say; the
+    // mutator resolves the lane. That resolution is the assertion: naming the object and
+    // wiring the object's `out` are exactly what this op must no longer do.
+    expect(findConsumer(next, dataId)).toEqual({ node: stack[0].nodeId, socket: 'target' });
+    expect(findConsumer(next, stack[0].nodeId)).toEqual({ node: 'box', socket: 'data' });
+    // …and the Object is still the scene child, before and after (H218 invariant).
+    expect(findConsumer(next, 'box')).toEqual({ node: 'scene', socket: 'children' });
   });
 
   it('mints a deterministic modifierId (target + short type)', () => {
-    const state = buildScene();
+    const { state } = buildSplitScene();
     const result = validatePlan(
       addModifierMutator,
       { target: 'box', modifierType: 'ArrayModifier' },
@@ -305,7 +339,7 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
   });
 
   it('precondition fails for an unknown target', () => {
-    const state = buildScene();
+    const { state } = buildSplitScene();
     const result = validatePlan(
       addModifierMutator,
       { target: 'ghost', modifierType: 'ArrayModifier' },
@@ -316,7 +350,7 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
   });
 
   it('wires a MirrorModifier with its axis param (and does not leak Array params)', () => {
-    const state = buildScene();
+    const { state, dataId } = buildSplitScene();
     const result = validatePlan(
       addModifierMutator,
       // offset is Array's Vec3 param — it must NOT reach the Mirror node (whose
@@ -330,7 +364,7 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
     const add = result.ops.find((o) => o.type === 'addNode');
     expect(add && add.type === 'addNode' ? add.params : null).toEqual({ axis: 'z' });
     const next = applyOps(state, result.ops);
-    const stack = enumerateModifierStack(next, 'box');
+    const stack = enumerateModifierStack(next, dataId);
     expect(stack).toHaveLength(1);
     expect(stack[0].type).toBe('MirrorModifier');
   });
@@ -1834,11 +1868,15 @@ describe('deleteNode mutator', () => {
     // `to.node` (the consumer, in closure via 'parent'), so the plan is accepted.
     // Without the splice the mesh would strand; a rejected plan would mean the agent
     // can't delete a modifier at all. Both failure modes are pinned here.
-    let state = buildScene();
-    const add = buildAddModifierOps(state, 'box', 'ArrayModifier', { count: 2, offset: [1, 0, 0] });
+    const seeded = buildSplitScene();
+    let state = seeded.state;
+    const add = buildAddModifierOps(state, seeded.dataId, 'ArrayModifier', {
+      count: 2,
+      offset: [1, 0, 0],
+    });
     expect(add).not.toBeNull();
     state = add!.ops.reduce((s, op) => applyOp(s, op).next, state);
-    // scene → modifier → box. Delete the modifier through the agent mutator.
+    // data → modifier → object → scene. Delete the modifier through the agent mutator.
     const result = validatePlan(
       deleteNodeMutator,
       { targetSelectors: [add!.modifierId] },
@@ -1847,12 +1885,17 @@ describe('deleteNode mutator', () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // Fold the accepted plan and confirm the box is a direct scene child again.
+    // Fold the accepted plan and confirm the data feeds the Object directly again.
     let s = state;
     for (const op of result.ops) s = applyOp(s, op).next;
     expect(s.nodes[add!.modifierId]).toBeUndefined();
     expect(s.nodes.box).toBeDefined();
-    expect(findConsumer(s, 'box')?.socket).toBe('children');
+    // #415 — THE ASSERTION HAD TO MOVE OR IT WOULD HAVE GONE VACUOUS. It read
+    // `findConsumer(s, 'box')?.socket === 'children'`, which proved the splice while the
+    // modifier stood between the box and the scene. Post-flip the Object feeds the scene
+    // whether or not the splice happened, so that check passes with the splice deleted.
+    // What actually has to be re-joined is the DATA lane. → [[H218]]
+    expect(findConsumer(s, seeded.dataId)).toEqual({ node: 'box', socket: 'data' });
   });
 });
 

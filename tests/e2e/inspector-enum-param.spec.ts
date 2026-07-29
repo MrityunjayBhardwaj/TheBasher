@@ -13,7 +13,8 @@
 // REF: src/app/NPanel.tsx (EnumField + stringEnumOptions); src/nodes/MirrorModifier.ts.
 
 import { expect, test } from './_fixtures';
-import { splitSphereOps } from './_splitSphere';
+import { splitSphereDataId, splitSphereOps } from './_splitSphere';
+import { modifierChainOps } from './_modifierStack';
 
 interface Op {
   type: string;
@@ -43,6 +44,8 @@ interface ThreeObjLike {
 
 const BOX = 'enum_box';
 const MIR = 'enum_mirror';
+/** The SphereData the stack sits on (#415 — the modifier splices onto the data lane). */
+const DATA = splitSphereDataId(BOX);
 
 // #462: the modifier SOURCE is a SPLIT sphere — an Object posed over a SphereData. It
 // was a fused `SphereMesh` (put there by #365 Slice 2, when a split Object as a modifier
@@ -107,36 +110,42 @@ test('the inspector enum dropdown authors a string-enum param (axis) through to 
   page,
 }) => {
   await page.evaluate(
-    ({ box, mir, ops }) => {
+    ({ box, mir, ops, chain }) => {
       const w = window as unknown as EnumWindow;
       const dag = w.__basher_dag.getState();
       const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           ...(ops as { type: string; [k: string]: unknown }[]),
-          {
-            type: 'addNode',
-            nodeId: mir,
-            nodeType: 'MirrorModifier',
-            params: { axis: 'x', offset: 2, muted: false },
-          },
+          ...(chain as { type: string; [k: string]: unknown }[]),
+          // The OBJECT is the scene child — the modifier is a property of it (#415).
           {
             type: 'connect',
             from: { node: box, socket: 'out' },
-            to: { node: mir, socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: mir, socket: 'out' },
             to: { node: sceneId, socket: 'children' },
           },
         ],
         'e2e',
-        'box → mirror → scene',
+        'sphere data → mirror → object → scene',
       );
       w.__basher_selection.getState().select(mir); // open the modifier's inspector
     },
-    { box: BOX, mir: MIR, ops: splitSphereOps({ objectId: BOX, radius: 0.5 }) },
+    {
+      box: BOX,
+      mir: MIR,
+      ops: splitSphereOps({ objectId: BOX, radius: 0.5 }),
+      chain: modifierChainOps({
+        objectId: BOX,
+        dataId: DATA,
+        modifiers: [
+          {
+            id: MIR,
+            nodeType: 'MirrorModifier',
+            params: { axis: 'x', offset: 2, muted: false },
+          },
+        ],
+      }),
+    },
   );
 
   await page.waitForFunction(

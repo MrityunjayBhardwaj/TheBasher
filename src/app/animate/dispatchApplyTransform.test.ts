@@ -341,17 +341,25 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(stateRef.current.nodes[result.bakedId].meta?.name).toBe('Hero');
   });
 
-  it('#259/H140: rewires a SINGLE-cardinality consumer socket (a modifier target) without rolling back', async () => {
+  it('#259/H140: rewires a SINGLE-cardinality consumer socket (a wrapper target) without rolling back', async () => {
     // The box feeds TWO consumers of different cardinality at once: Scene.children
-    // (LIST) and an ArrayModifier's `target` (SINGLE). Before the fix, the single
-    // socket's connect-before-disconnect threw ("bound producer is <baked>, not
-    // n_box") and rolled back the whole atomic composite → Apply silently no-op'd.
+    // (LIST) and a wrapper's `target` (SINGLE). Before the fix, the single socket's
+    // connect-before-disconnect threw ("bound producer is <baked>, not n_box") and
+    // rolled back the whole atomic composite → Apply silently no-op'd.
+    //
+    // ⚠️ #415 RE-ANCHORED THE WRAPPER, and the reason is worth stating: this case used
+    // an `ArrayModifier`, whose `target` was the handiest single-cardinality socket
+    // taking a `SceneObject`. It no longer takes one — a modifier consumes `ObjectData`
+    // now, so an Object cannot be wired into it and the fixture could not be built at
+    // all. `Transform` is the same SHAPE (single-cardinality `target: SceneObject`) and
+    // is what the invariant was always about: the subject here is `applyConnect`'s
+    // single-socket rewire, not anything specific to modifiers.
     let state = buildSplitSphereState();
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'n_mod',
-      nodeType: 'ArrayModifier',
-      params: { count: 3, offset: [2, 0, 0], muted: false },
+      nodeType: 'Transform',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     }).next;
     // box.out → n_mod.target (single). Box stays wired to Scene.children (list) too.
     state = applyOp(state, {
@@ -387,7 +395,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // Baked away, id kept (#412). Post-#388 the id holds an Object either way, so the
     // BAKE is visible in what it poses, not in the node's own type.
     expect(dataHalfOf(next, PRIM_ID)?.type).toBe('BakedData');
-    // the modifier's single `target` now points at the baked node (still a bare
+    // the wrapper's single `target` now points at the baked node (still a bare
     // ref, not promoted to a list), and Scene.children too.
     const modTarget = next.nodes['n_mod'].inputs.target;
     expect(Array.isArray(modTarget)).toBe(false);

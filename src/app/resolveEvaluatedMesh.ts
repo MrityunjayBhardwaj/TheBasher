@@ -41,11 +41,12 @@ import type {
   EvaluatedMesh,
   GeometryRef,
   MeshTransform,
-  MirrorAxis,
+  ObjectData,
   ObjectValue,
   Vec3,
 } from '../nodes/types';
-import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
+import { modifierDataSource } from './modifierGeometry';
+import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { get as getRegistryGeometry } from './geometryRegistry';
@@ -53,6 +54,14 @@ import { extractUVIslands } from './uvIslands';
 import type { EvaluatedUVs } from '../nodes/types';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
+
+/** The pose of a modifier chain nothing wears yet — a dangling stack has no Object to
+ *  take one from, and inventing the source's would re-fuse what the split separated. */
+const IDENTITY_TRANSFORM: MeshTransform = {
+  position: [0, 0, 0],
+  rotation: [0, 0, 0],
+  scale: IDENTITY_SCALE,
+};
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
@@ -171,58 +180,45 @@ export function resolveEvaluatedMesh(
   // `BakedData`. Same removal the two earlier mesh kinds got at their own retirements
   // (`a27155c` BoxMesh, `c6ffeee` SphereMesh) — this was the last one still standing.
 
-  if (node.type === 'ArrayModifier') {
-    // SOP / modifier (epic #201, #209) — the RECURSIVE read-side branch, the
-    // parity twin of `ArrayModifier.evaluate`. Resolve the SOURCE mesh (the node
-    // wired into `inputs.target`) the same way the renderer evaluates it, then
-    // wrap its geometry in the `array` descriptor through the SAME
-    // `arrayGeometryRef` the evaluate path uses → identical deterministic key on
-    // both roads (H40 one band, no drift). The modifier INHERITS the source's
-    // transform + material (geometry is modified in local space; the source's TRS
-    // positions the whole result). A muted modifier returns the source verbatim.
-    const binding = node.inputs.target;
-    if (!binding || Array.isArray(binding)) return null;
-    const source = resolveEvaluatedMesh(state, binding.node, ctx, cache);
-    if (!source) return null; // unwired / non-leaf-mesh source — nothing to modify
-    const muted = (node.params as { muted?: unknown }).muted === true;
-    if (muted) return source; // mute-bypass (V58): identity passthrough
-    const p = node.params as { count?: unknown; offset?: unknown };
-    const count = typeof p.count === 'number' ? p.count : 3;
-    const offset: Vec3 = isVec3(p.offset) ? p.offset : [2, 0, 0];
-    const geometry = arrayGeometryRef(source.geometry, count, offset);
+  if (isModifierNode(node)) {
+    // SOP / modifier (epic #201, #209) — the read-side branch for a selected operator
+    // (its geometry drives the UV editor, the inspector and the #209 boundary-pair
+    // seam). One branch now serves BOTH modifiers, where there used to be a
+    // per-modifier copy.
+    //
+    // #415 REPLACED THE RECURSION, and it was not optional. The old branch resolved
+    // `inputs.target` by recursing into this same resolver and inherited the source's
+    // TRANSFORM from the result. On the data lane `target` names a DATA node — and a
+    // data node has no transform to report, by construction, which is the entire point
+    // of the split. There is no honest `EvaluatedMesh` to recurse into, so the source
+    // is read from the modifier's OWN evaluated value (`ModifiedDataValue`, or the
+    // passthrough its source hands back when muted or non-mesh) and the pose is taken
+    // from the OBJECT that wears the stack — the only node in the chain that has one.
+    //
+    // Reading this node's own evaluated value is also what keeps the two roads in one
+    // band (H40): the geometry handle here is byte-identically the handle the renderer
+    // draws, rather than a hand-rebuilt twin that has to be kept in step. Mute-bypass,
+    // param defaults and non-mesh passthrough all come from the node's `evaluate`, so
+    // they cannot answer differently on this road either.
+    const value = evaluate(state, selectedId, { ctx, cache }).value as ObjectData | undefined;
+    if (!value) return null; // unwired — nothing to modify
+    const source = modifierDataSource(value);
+    if (!source) return null; // non-mesh data passed through (curve/light/camera)
+    // The pose is the wearing Object's own animated band — resolved through the SAME
+    // Object branch below, so a modified mesh and its object can never disagree about
+    // where they are. A dangling chain (nothing wears it yet) has no pose at all.
+    const objectId = resolveStackObject(state, selectedId);
+    const transform = objectId
+      ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
+      : IDENTITY_TRANSFORM;
     return {
-      geometry,
-      // The modified geometry is SYNC-buildable (a box/sphere source), so its UVs
-      // (the merged source islands) come from the SAME registry path as Box/Sphere
-      // (#209 UV follow-up). A glTF/baked source still resolves to null upstream.
-      uvs: resolveRegistryUVs(geometry),
+      geometry: source.geometry,
+      // The modified geometry is SYNC-buildable (box/sphere data), so its UVs (the
+      // merged source islands) come from the SAME registry path as Box/Sphere (#209 UV
+      // follow-up). Baked data is not sync-buildable → the registry misses → null.
+      uvs: resolveRegistryUVs(source.geometry),
       material: source.material,
-      transform: source.transform,
-    };
-  }
-
-  if (node.type === 'MirrorModifier') {
-    // SOP / modifier (epic #201, #209) — the RECURSIVE read-side branch, the parity
-    // twin of `MirrorModifier.evaluate` (identical shape to the ArrayModifier branch
-    // above). Resolve the SOURCE mesh the same way the renderer evaluates it, then
-    // wrap its geometry in the `mirror` descriptor through the SAME `mirrorGeometryRef`
-    // the evaluate path uses → identical deterministic key on both roads (H40, no
-    // drift). A muted modifier returns the source verbatim.
-    const binding = node.inputs.target;
-    if (!binding || Array.isArray(binding)) return null;
-    const source = resolveEvaluatedMesh(state, binding.node, ctx, cache);
-    if (!source) return null; // unwired / non-leaf-mesh source — nothing to modify
-    const muted = (node.params as { muted?: unknown }).muted === true;
-    if (muted) return source; // mute-bypass (V58): identity passthrough
-    const p = node.params as { axis?: unknown; offset?: unknown };
-    const axis: MirrorAxis = p.axis === 'y' || p.axis === 'z' ? p.axis : 'x';
-    const offset = typeof p.offset === 'number' ? p.offset : 0;
-    const geometry = mirrorGeometryRef(source.geometry, axis, offset);
-    return {
-      geometry,
-      uvs: resolveRegistryUVs(geometry), // sync-buildable → real UV islands (#209 follow-up)
-      material: source.material,
-      transform: source.transform,
+      transform,
     };
   }
 
@@ -260,6 +256,21 @@ export function resolveEvaluatedMesh(
       // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
       return { geometry: data.geometry, uvs: null, material: data.material, transform };
+    }
+    if (data.kind === 'ModifiedData') {
+      // #415 — the Object half of a modifier pair. Same shape as the `MeshData` arm
+      // below (the modifier's geometry IS a registry handle, so UVs resolve
+      // synchronously), and the material passes verbatim: `EvaluatedMesh.material`
+      // already carries the wide Inline|Baked union that `ModifiedDataValue` does,
+      // widened by #358 precisely so a baked-sourced modifier stops dropping its
+      // material here.
+      const modGeometry = data.geometry;
+      return {
+        geometry: modGeometry,
+        uvs: resolveRegistryUVs(modGeometry),
+        material: data.material,
+        transform,
+      };
     }
     const exhaustiveData: 'MeshData' = data.kind;
     void exhaustiveData;

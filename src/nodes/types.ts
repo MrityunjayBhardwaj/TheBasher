@@ -1055,6 +1055,44 @@ export interface BakedDataValue {
 }
 
 /**
+ * A geometry modifier's output, as data (#415). Exactly {@link ModifiedMeshValue}
+ * MINUS the TRS — a data node has no pose to carry, because the Object above the
+ * stack owns it.
+ *
+ * That subtraction is GROUNDED IN BOTH REFERENCES, not argued from symmetry:
+ *  - Houdini states it as an invariant (`ref/houdini/SOP.md:128`, S8): a modifier
+ *    authors in local/object space and the object transform is inherited above the
+ *    stack, "applied once, never baked into a modifier's local output".
+ *  - Blender DEMONSTRATES it (measured live, v5.1.1 — see
+ *    `ref/GROUND_TRUTH_BLENDER_MODIFIER_DATA.md` §3): the evaluated mesh datablock
+ *    has no `matrix_world` and no `location`, its local vertex coords are unchanged
+ *    by a non-uniform object pose, and the world position is recovered only by
+ *    `object.matrix_world @ local`.
+ *
+ * `material` keeps the WIDE union — deliberately NOT `MeshDataValue`'s narrower
+ * `InlineMaterialSpec | null`. A modifier over a `BakedData` source carries a
+ * `BakedMaterialSpec`, and #388 narrowed `MeshDataValue.material` to Inline-only
+ * because nothing ever produced the baked arm there. Emitting this as a
+ * `MeshDataValue` would give that material nowhere to go — the identical shape #388
+ * MEASURED before it started (material → grey `#808080`, geometry → mesh count 3→0,
+ * typecheck clean the whole way). Hence its own member. → [[H213]] · [[B31]]
+ *
+ * Material inheritance surviving the move is likewise observed, not assumed: Blender
+ * attaches material to the DATA by default (`material_slots[n].link === 'DATA'`) and
+ * the material survives modifier evaluation (§4 of the same doc). Dropping it here
+ * would silently strip every modifier's source material.
+ *
+ * NOTE: no producer yet. The `ArrayModifier`/`SolidifyModifier` retype that mints this
+ * lands with the socket flip and the format migration, which `ops.ts`'s exact-string
+ * socket equality forces into ONE atomic commit.
+ */
+export interface ModifiedDataValue {
+  readonly kind: 'ModifiedData';
+  readonly geometry: GeometryRef;
+  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+}
+
+/**
  * The value union flowing through the 'ObjectData' socket. Phase 1 seeded it with
  * MeshData (box/sphere); #385 adds CurveData — the first non-mesh member, so a
  * consumer that assumed MeshData must now discriminate on `value.kind` (ObjectR
@@ -1068,6 +1106,12 @@ export interface BakedDataValue {
  * #388 adds BakedData — the first member whose geometry is ASYNCHRONOUS (an OPFS
  * buffer reached through Suspense, not a synchronously rebuildable registry entry),
  * which is exactly why it is its own member rather than a second `MeshData` producer.
+ * #415 adds ModifiedData — the first member produced by an OPERATOR rather than by a
+ * leaf, which is what moves the modifier stack onto the data lane
+ * (`BoxData → ArrayModifier → Object`). It is also the first member whose material
+ * union is WIDER than MeshData's, and that asymmetry is the reason it cannot simply
+ * BE a MeshData: a modifier over a baked source carries a BakedMaterialSpec, which
+ * MeshData no longer admits (#388 narrowed it). See ModifiedDataValue above.
  * (The same "one socket, discriminate on value.kind" discipline V78 uses for
  * 'SceneObject'.)
  */
@@ -1076,7 +1120,8 @@ export type ObjectData =
   | CurveDataValue
   | LightDataValue
   | CameraDataValue
-  | BakedDataValue;
+  | BakedDataValue
+  | ModifiedDataValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`

@@ -19,7 +19,11 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
-import { buildAddModifierOps, MODIFIER_NODE_TYPES } from '../../../app/operatorStack';
+import {
+  buildAddModifierOps,
+  MODIFIER_NODE_TYPES,
+  resolveStackBase,
+} from '../../../app/operatorStack';
 
 // The geometry modifiers. New modifiers join MODIFIER_NODE_TYPES + this enum.
 const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier']);
@@ -113,9 +117,14 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const used = new Set<NodeId>(Object.keys(state.nodes));
     const modifierId = spec.modifierId ?? defaultModifierId(spec.target, spec.modifierType, used);
+    // #415 — the agent names the OBJECT ("cube"), which is the right thing for it to
+    // name; the stack lives on that object's DATA. Resolving through the same
+    // `resolveStackBase` the panel uses is what keeps the agent op and the UI on one
+    // wiring road — passing `spec.target` straight through would have wired the Object's
+    // `out` into a socket that no longer accepts it.
     const res = buildAddModifierOps(
       state,
-      spec.target,
+      resolveStackBase(state, spec.target),
       spec.modifierType,
       specParams(spec),
       modifierId,
