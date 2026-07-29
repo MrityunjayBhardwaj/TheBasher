@@ -24,6 +24,7 @@ import {
   MODIFIER_NODE_TYPES,
   resolveStackBase,
 } from '../../../app/operatorStack';
+import { canModifyGeometry } from '../../../app/modifierGeometry';
 
 // The geometry modifiers. New modifiers join MODIFIER_NODE_TYPES + this enum.
 const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier']);
@@ -111,6 +112,20 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     }
     if (spec.modifierId !== undefined && state.nodes[spec.modifierId]) {
       return { ok: false, reason: `modifierId "${spec.modifierId}" already exists.` };
+    }
+    // #498 — the same refusal `buildAddModifierOps` now makes, asked here so the agent
+    // gets a structured reason instead of `build` throwing a misleading "not in DAG".
+    // Asked through `canModifyGeometry` (the modifier's own accept predicate) rather
+    // than a type list, so this cannot drift from what the builder will actually do.
+    const base = resolveStackBase(state, spec.target);
+    if (!canModifyGeometry(state, base)) {
+      return {
+        ok: false,
+        reason:
+          `"${spec.target}" resolves to data that a geometry modifier cannot reshape. ` +
+          `Modifiers apply to mesh data (box, sphere, baked, or another modifier's output); ` +
+          `curve, light and camera data have no geometry to rewrite.`,
+      };
     }
     return { ok: true };
   },

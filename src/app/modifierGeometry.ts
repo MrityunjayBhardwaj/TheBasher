@@ -181,6 +181,36 @@ export function canModifyGeometry(state: DagState, nodeId: string): boolean {
 }
 
 /**
+ * The `ObjectData` KIND a node evaluates to, or null when it is not a data node or
+ * cannot be evaluated.
+ *
+ * #498 — the offer needs the kind, not just the boolean {@link canModifyGeometry}
+ * returns. That predicate answers false identically for a curve, a light and a camera,
+ * and the panel has to say something different about a curve (a real gap, #349) than
+ * about a camera (nothing to reshape, ever). Deliberately the SAME registry check and
+ * the SAME try/catch as `canModifyGeometry` — it is the one road, asked for one more
+ * fact, rather than a second way of finding out what a node is.
+ *
+ * ⚠️ CALL THIS FROM A COMPONENT BODY, NEVER FROM A STORE SELECTOR. It evaluates, and
+ * `evaluate` hashes params BEFORE the cache lookup, so an uncached call is not free
+ * ([[H48]] — a read-side resolver re-evaluating per inspector row is what produced the
+ * measured ~458ms edit-lag on a heavy asset). A zustand selector runs on every store
+ * change, including every playhead tick while playing.
+ */
+export function resolveDataKind(state: DagState, nodeId: string): ObjectData['kind'] | null {
+  const node = state.nodes[nodeId];
+  if (!node) return null;
+  const def = getNodeType(node.type);
+  if (def?.outputs.out?.type !== 'ObjectData') return null;
+  try {
+    const value = evaluate(state, nodeId).value as ObjectData | undefined;
+    return value?.kind ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Wrap a source `GeometryRef` in an `array` descriptor: `count` copies of the
  * source, each translated by `i*offset` in the source's LOCAL space, merged. The
  * key folds the source key + params so identical inputs share a registry-cached
