@@ -217,14 +217,31 @@ describe('road-coverage gate (#491)', () => {
       (n, r) => n + SPLIT_KIND_NAMES.filter((k) => isCovered(r.coverage![k])).length,
       0,
     );
+    // Every cell that somebody is answerable for: the derived roads cover their kinds by
+    // construction, the delegated ones cell by cell.
+    const answered = derivedRoads().length * SPLIT_KIND_NAMES.length + covered;
+    const allCells = ROAD_IDS.length * SPLIT_KIND_NAMES.length;
     console.log(
-      `split-roads coverage: ${covered}/${total} delegated cells covered; ` +
-        `${derivedRoads().length}/${ROAD_IDS.length} roads derived (full coverage by construction)`,
+      `split-roads coverage: ${answered}/${allCells} cells answered ` +
+        `(${covered}/${total} delegated cells covered; ` +
+        `${derivedRoads().length}/${ROAD_IDS.length} roads derived)`,
     );
 
-    // Pinned as a floor, not an equality: it must not silently REGRESS, and it should not
-    // churn when a gap is closed. Raise it when cells are promoted (#491).
-    expect(covered).toBeGreaterThanOrEqual(4);
+    // THE FLOOR IS ON `answered`, NOT ON `covered` (#500, R7).
+    //
+    // A floor on delegated covered cells has the same defect as the hardcoded `total === 24`
+    // this file already replaced, one level in: promoting a road from delegated to derived
+    // — the intended direction of travel, and what closing a road's gaps properly looks like
+    // — moves its covered cells OUT of the numerator. R7 went derived with its one covered
+    // cell (box) and this assertion reddened for work that strictly increased coverage.
+    //
+    // `answered` is the quantity that actually cannot go down without coverage being lost:
+    // a promotion converts one covered cell into six answered ones, and closing a gap adds
+    // one. Both directions of real progress raise it; only deleting coverage lowers it.
+    expect(
+      answered,
+      'fewer cells are answered than before — coverage has regressed, not been restructured',
+    ).toBeGreaterThanOrEqual(51);
 
     // This replaces a hardcoded `total === 24` (#500). That number was 4 delegated roads × 6
     // kinds, and what it was really protecting is that a road cannot leave the table
@@ -241,7 +258,7 @@ describe('road-coverage gate (#491)', () => {
       derivedRoads().length,
       'a derived road has been removed rather than promoted — the denominator shrank without ' +
         'coverage being added',
-    ).toBeGreaterThanOrEqual(7);
+    ).toBeGreaterThanOrEqual(8);
   });
 });
 

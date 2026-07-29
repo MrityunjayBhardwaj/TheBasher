@@ -19,7 +19,13 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
-import { isDataKindDef, SPLIT_KINDS, SPLIT_KIND_NAMES, type DataLaneDef } from './splitKinds';
+import {
+  isDataKindDef,
+  OBJECT_SECTIONS,
+  SPLIT_KINDS,
+  SPLIT_KIND_NAMES,
+  type DataLaneDef,
+} from './splitKinds';
 
 beforeAll(() => {
   __resetRegistryForTests();
@@ -175,6 +181,38 @@ describe('the split-kind registry gate', () => {
     const bad = { reaches: false as const, why: '', issue: 'see the tracker' };
     expect(bad.why.length).toBe(0);
     expect(bad.issue).not.toMatch(/#\d+/);
+  });
+
+  it("each kind's dataSections MIRROR what the data node declares, exactly and in order", () => {
+    // An EQUALITY, not a subset — that is the whole difference from the customSections
+    // check below. The sections road asserts that selecting the Object renders every
+    // section the pair declares AND nothing beyond it; a subset would let a section be
+    // dropped from the descriptor and the road would still pass, having stopped looking
+    // at it. Order is pinned too, because §5.8's default-collapsed rule keys off the
+    // first entry, so a reordered list is a different UI.
+    const snap = snapshotRegistry();
+    for (const name of SPLIT_KIND_NAMES) {
+      const spec = SPLIT_KINDS[name];
+      expect(
+        spec.dataSections,
+        `SPLIT_KINDS.${name}.dataSections has drifted from ${spec.dataType}.inspectorSections — ` +
+          `the sections road would assert against a list the product no longer declares`,
+      ).toEqual(snap[spec.dataType]?.inspectorSections ?? []);
+    }
+  });
+
+  it('OBJECT_SECTIONS mirrors what the Object declares', () => {
+    // The other half of the same pin. Every kind pairs the SAME Object, so this list is
+    // shared across all six rows — which makes a single drift here wrong six times over.
+    const snap = snapshotRegistry();
+    expect(
+      OBJECT_SECTIONS,
+      'OBJECT_SECTIONS has drifted from ObjectNode.inspectorSections',
+    ).toEqual(snap['Object']?.inspectorSections ?? []);
+    // Guard the guard: an empty registry lookup would make the equality above pass only
+    // if the constant were also empty, but it would pass SILENTLY the day someone empties
+    // both. The Object owning a transform section is the split's founding claim.
+    expect(OBJECT_SECTIONS, 'the Object half must own transform').toContain('transform');
   });
 
   it("each kind's customSections are sections the node actually declares", () => {

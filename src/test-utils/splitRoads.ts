@@ -231,23 +231,23 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
   },
   R7: {
     id: 'R7',
+    // PROMOTED delegated → derived (#500). p6-w4-inspector-sections drove the seed box and
+    // nothing else, so five kinds declared sections that no test had ever seen rendered.
+    //
+    // The gaps were honest about what was unasked but understated it in one place: they said
+    // the registry gate pins `customSections` as a subset of the declaration, implying only
+    // the render side was missing. The subset was also too weak to drive a row — it is the
+    // custom-BODIED sections, not the declared ones, and `LightData` declares `light` while
+    // listing no custom section at all. So the descriptor gained `dataSections`, pinned as an
+    // EQUALITY against the live `inspectorSections` both ways, and the browser row asserts
+    // that the pair's two declared lists render and that nothing renders beyond them.
+    //
+    // The reach is what makes this per-kind rather than one test: the Object's own sections
+    // come from the selected node, while the data half's have to cross the linked-data block.
+    // The row scopes the data assertions to that block for exactly that reason.
     title: 'declared sections — the inspector shows the sections the pair declares',
-    runsIn: 'tests/e2e/p6-w4-inspector-sections.spec.ts',
-    derivation: 'delegated',
-    coverage: {
-      box: { by: 'tests/e2e/p6-w4-inspector-sections.spec.ts' },
-      // The registry gate already pins `customSections` as a SUBSET of what each node
-      // declares, so a kind naming a section it does not have fails today. What no spec
-      // asks for these five is the other direction: that the declared sections actually
-      // RENDER as headers in the inspector for this kind.
-      sphere: gap('the delegate drives a box; nothing renders this kind’s sections', '#500', [
-        'tests/e2e/inspector-enum-param.spec.ts',
-      ]),
-      curve: gap('the delegate drives a box, and the curve declares a custom section', '#500'),
-      light: gap('the delegate drives a box', '#500'),
-      camera: gap('the delegate drives a box, and the camera declares a custom section', '#500'),
-      baked: gap('the delegate drives a box', '#500'),
-    },
+    runsIn: 'tests/e2e/split-kind-conformance.spec.ts',
+    derivation: 'derived',
   },
   R8: {
     id: 'R8',

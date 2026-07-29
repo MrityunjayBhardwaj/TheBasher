@@ -51,6 +51,7 @@
 import { test, expect, type Page } from './_fixtures';
 import {
   dataIdFor,
+  OBJECT_SECTIONS,
   rowDataParams,
   splitOps,
   SPLIT_KINDS,
@@ -697,6 +698,64 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       ).toEqual(probe.expectBare);
     });
 
+    test(`R7 ${kind} — the inspector renders the sections the PAIR declares`, async ({ page }) => {
+      // The road this closes was delegated to p6-w4-inspector-sections, which drives the
+      // seed BOX and nothing else — so five kinds declared sections that no test ever saw
+      // rendered. The registry gate already pins the descriptor to the declaration; what
+      // it cannot see is whether the declaration reaches the DOM, and for the data half
+      // that reach crosses the linked-data block rather than the selected node's own.
+      const { objectId } = await buildRow(page, kind);
+      await selectNode(page, objectId);
+
+      // The Object's own sections come from the selected node directly. Same list for every
+      // kind, so a failure here is the split's shared half breaking, not this kind's.
+      for (const id of OBJECT_SECTIONS) {
+        await expect(
+          page.getByTestId(`inspector-section-${id}`),
+          `${kind}: the Object declares "${id}" but the inspector renders no such header`,
+        ).toBeVisible();
+      }
+
+      // The data half's sections have to arrive through the linked-data block — scoped to
+      // it deliberately. An unscoped lookup would pass if the section rendered anywhere on
+      // the panel, including from the Object's own list, and the reach is the claim.
+      const linked = page.getByTestId('inspector-linked-data');
+      await expect(
+        linked,
+        `${kind}: no linked-data block, so nothing the data half declares can reach the panel`,
+      ).toBeVisible();
+      for (const id of spec.dataSections) {
+        await expect(
+          linked.getByTestId(`inspector-section-${id}`),
+          `${kind}: ${spec.dataType} declares "${id}" but it does not render inside the ` +
+            `linked-data block — the section reaches the panel for the box and not for this kind`,
+        ).toBeVisible();
+      }
+
+      // And nothing BEYOND the two declared lists. Without this the row would be satisfied
+      // by a panel that renders every section for every kind, which is the exact defect
+      // #498 found on the action side: a camera offering a modifier stack it cannot have.
+      // Read the HEADER family specifically. A section renders four testids that all begin
+      // `inspector-section-` — the card, the header, the body and the toggle — so matching
+      // the common prefix and subtracting the ones with a sub-prefix means the check has to
+      // know the full list of families, and silently absorbs the next one added. One exact
+      // family has no such ambiguity, and the header is the thing this road is about.
+      const rendered = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-testid^="inspector-section-header-"]')).map(
+          (el) => (el.getAttribute('data-testid') ?? '').replace('inspector-section-header-', ''),
+        ),
+      );
+      expect(
+        rendered.length,
+        `${kind}: no section headers at all — the completeness check below would pass ` +
+          `vacuously if the panel rendered nothing`,
+      ).toBeGreaterThan(0);
+      expect(
+        [...new Set(rendered)].sort(),
+        `${kind}: the panel renders sections the pair does not declare`,
+      ).toEqual([...new Set([...OBJECT_SECTIONS, ...spec.dataSections])].sort());
+    });
+
     test(`R8 ${kind} — what push-down OFFERS equals what it ACCEPTS`, async ({ page }) => {
       const { objectId, dataId } = await buildRow(page, kind);
 
@@ -873,6 +932,23 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
  * enumerate, R5 needs the param to be animated before a held edit can exist. Sharing it
  * also means the two rows cannot drift into animating different things.
  */
+/**
+ * Select a node and wait until the inspector is actually showing IT.
+ *
+ * Selecting through the store rather than the outliner is deliberate: several of these
+ * rows mint objects the scene tree may not surface (the camera and light bands), and the
+ * sections road is about what the panel renders for a selection, not about how the
+ * selection was made. The wait is on the panel's own node attribution, so a row cannot
+ * read the previous selection's sections and pass.
+ */
+async function selectNode(page: Page, nodeId: string): Promise<void> {
+  await page.evaluate(
+    (id) => (window as unknown as BasherWindow).__basher_selection!.getState().select(id),
+    nodeId,
+  );
+  await expect(page.getByTestId('inspector')).toBeVisible();
+}
+
 async function seedRowChannel(page: Page, kind: SplitKindName, objectId: string): Promise<string> {
   const spec = SPLIT_KINDS[kind];
   const channelId = `n_conf_${kind}_channel`;

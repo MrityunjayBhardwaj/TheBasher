@@ -144,6 +144,21 @@ export interface SplitKindSpec {
    *  the sections road in the e2e tier; the registry gate keeps it a subset of what the
    *  node actually declares, so it cannot quietly go stale. */
   readonly customSections: readonly string[];
+  /**
+   * Every section the DATA half declares, in declared order — the full list, not the
+   * custom-bodied subset above. This is what the sections road asserts actually RENDERS as
+   * a header when the OBJECT is selected, which is the only way the linked-data reach gets
+   * observed per kind.
+   *
+   * Distinct from `customSections`, and the light is why: `LightData` declares `['light']`
+   * while its `customSections` is empty, because that section's body is generic param rows.
+   * A subset field cannot express "these and no others", so it cannot drive an assertion
+   * that a kind renders the sections it declares and nothing extra.
+   *
+   * The registry gate pins this as an EQUALITY against the live `inspectorSections`, both
+   * ways, so it is a mirror of the declaration rather than a second copy of it.
+   */
+  readonly dataSections: readonly string[];
   /** This kind's primary workflows that route through a param the split MOVED. Asserted
    *  non-empty: an empty list would read as coverage while checking nothing. */
   readonly primaryWorkflows: readonly string[];
@@ -331,6 +346,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
     customSections: [],
+    dataSections: ['mesh', 'material'],
     primaryWorkflows: ['resize the box', 'recolour the box', 'stack a modifier on the Object'],
   },
   sphere: {
@@ -345,6 +361,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
     customSections: [],
+    dataSections: ['mesh', 'material'],
     primaryWorkflows: [
       'change the radius',
       'recolour the sphere',
@@ -367,6 +384,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     channelValueType: 'number',
     readRendered: (r) => at(r, 'data', 'closed'),
     customSections: ['curve'],
+    dataSections: ['curve'],
     primaryWorkflows: ['edit control points', 'follow-path a camera along the curve'],
   },
   light: {
@@ -386,6 +404,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     // mesh-band extractors above is the band difference made visible.
     readRendered: (r) => at(r, 'intensity'),
     customSections: [],
+    dataSections: ['light'],
     primaryWorkflows: ['dim or brighten the light', 'arrange the three-point studio rig'],
   },
   camera: {
@@ -433,6 +452,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     readRendered: (r) => at(r, 'fov'),
     // `camera` renders `CameraLensControls`, not generic param rows.
     customSections: ['camera'],
+    dataSections: ['camera'],
     // ⚠️ The third entry says "static" on purpose. A focus PULL is by definition
     // animated, and `focusDistance`/`fStop`/`sensorSize` reach neither `CameraValue`
     // nor `CameraPose` — keying one animates nothing (#193, [[V121]]). Claiming the
@@ -522,6 +542,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'color'),
     customSections: [],
+    dataSections: ['material'],
     primaryWorkflows: [
       'apply transform to freeze a posed object into baked geometry',
       'recolour the baked mesh',
@@ -533,3 +554,15 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
 
 /** Every split kind, as rows. */
 export const SPLIT_KIND_NAMES = Object.keys(SPLIT_KINDS) as SplitKindName[];
+
+/**
+ * The sections the OBJECT half declares — the same list for every kind, because every
+ * kind pairs the same `Object` node with a different data node. That sameness is the
+ * point of the split, and stating it once is what lets the sections road assert the
+ * per-kind part (`dataSections`) as the ONLY thing that varies.
+ *
+ * Pinned as an equality against the live `ObjectNode.inspectorSections` by the registry
+ * gate, for the same reason `dataSections` is: a copy that can drift would turn the
+ * sections road from an observation into a restatement of itself.
+ */
+export const OBJECT_SECTIONS: readonly string[] = ['transform', 'constraint', 'driver', 'modifier'];
