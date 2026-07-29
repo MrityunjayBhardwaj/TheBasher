@@ -1524,11 +1524,25 @@ interface MeshChildProps {
 
 const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
   switch (value.kind) {
-    // #388 S5 — no DAG node evaluates to a `BakedMeshValue` any more (the fused kind is
-    // retired), so nothing reaches this arm through the value flow. It stays for the same
-    // two reasons the four posable light arms below do: the value kind remains the
-    // RECOMPOSITION TARGET — ObjectR rebuilds one from the pair and renders it through
-    // this very component — and dropping it would leave this switch non-exhaustive.
+    // #388 S5 / #415 S5 — no DAG node evaluates to a `BakedMeshValue` or a
+    // `ModifiedMeshValue` any more (the fused baked kind is retired; the modifiers emit
+    // `ModifiedData` since the data-lane flip), so nothing reaches either arm through the
+    // value flow.
+    //
+    // ⚠️ #415 S5 CORRECTED THIS COMMENT — it previously gave two reasons for keeping the
+    // baked arm and BOTH were false, which is why the audit is recorded here rather than
+    // just fixed. (1) It said ObjectR "rebuilds one from the pair and renders it through
+    // this very component". It does not: ObjectR's recompose arms call `<BakedMeshR>` and
+    // `<ModifiedMeshR>` DIRECTLY, bypassing MeshChild entirely. (2) It said dropping the
+    // arm "would leave this switch non-exhaustive". The switch had no `never` and no
+    // `default` — deleting an arm typechecked cleanly. Both are now true instead of
+    // asserted: the closure at the bottom of this switch is real, so these arms ARE
+    // load-bearing, and the recompose road is described where it actually runs.
+    //
+    // They stay for the reason the four posable light arms below do — the value kinds
+    // remain the RECOMPOSITION TARGETS, so the flat shape must keep a renderer — plus the
+    // closure. Do NOT delete them to "remove dead code": the union members still exist,
+    // and an arm-less member now fails to compile, which is the point.
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
     case 'ModifiedMesh':
@@ -1589,6 +1603,22 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
     // its own TRS, byte-identical to the fused mesh it will replace (Phase 1).
     case 'Object':
       return <ObjectR value={value} override={override} />;
+    // #415 S5 — CLOSED BY A `never` ([[V109]]). It was not closed before, and two arms
+    // above claimed in prose that it was ("dropping it would leave this switch
+    // non-exhaustive"). MEASURED: deleting the `ModifiedMesh` arm typechecked cleanly,
+    // and the positive control — deleting the live `Object` arm — errored only with
+    // TS6133 "ObjectR is declared but never read". The sole signal this switch produced
+    // was an unused import, which says nothing about the union. A `SceneObject` kind
+    // added with no arm here fell off the end and returned `undefined`.
+    //
+    // Now it is a compile error, which is what the two arms needed to be true. All 17
+    // members of `SceneObject` already had an arm, so closing it costs nothing today and
+    // is the whole point tomorrow — #389's glTF child is the next member.
+    default: {
+      const exhaustive: never = value;
+      void exhaustive;
+      return null;
+    }
   }
 });
 
