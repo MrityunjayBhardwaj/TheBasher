@@ -10,10 +10,10 @@
 //      the two roads must produce the SAME geometry key (H40, one band).
 //   2. THE OFFER. `canModifyGeometry` is the predicate the UI gates on, and it is the
 //      predicate `evaluate` accepts — V108. A cube must be offered modifiers.
-//   3. THE `never` GATE. `modifierSource` has no `default:` arm, so a new SceneChild
-//      kind fails to compile until its answer is declared (V109). Stage C puts five
-//      more data kinds behind `Object`; this is what stops each one being a silent
-//      passthrough. Verified by falsification, noted at the bottom.
+//   3. THE `never` GATE. `modifierDataSource` has no `default:` arm, so a new
+//      `ObjectData` kind fails to compile until its answer is declared (V109). Stage C
+//      put five data kinds behind `Object` and #415 added a sixth; this is what stops
+//      each one being a silent passthrough. Verified by falsification, noted at the bottom.
 //
 // #415 — THE ATTACHMENT MOVED, AND TWO CASES HERE INVERTED RATHER THAN MOVED.
 // The stack now splices between the mesh data and the Object (`BoxData → Array →
@@ -38,10 +38,10 @@ import { evaluate } from '../core/dag/evaluator';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
-import { canModifyGeometry, modifierSource } from './modifierGeometry';
+import { canModifyGeometry, modifierDataSource } from './modifierGeometry';
 import { buildAddModifierOps, resolveStackBase } from './operatorStack';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
-import type { ObjectData, SceneChild } from '../nodes/types';
+import type { ObjectData } from '../nodes/types';
 
 /** A split cube with an ArrayModifier spliced onto its DATA lane. Returns the ids.
  *  Built through the production builder, so the topology here is whatever the panel
@@ -134,13 +134,15 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
   // moment the modifier stopped working, which reads as deliberate product design rather
   // than a regression.
   //
-  // ⚠️ THE CONTROL EXPIRED WITH THE RELIC, and the re-anchoring came out STRICTER. This
-  // was written a slice earlier as `expect(pair).toEqual(modifierSource(fusedValue))` —
-  // the fused `BakedMesh` had always been a modifier source, so it was the natural
-  // control. Retiring the fused node made its `evaluate` throw, so that comparison cannot
-  // be made any more. It is replaced by the CANONICAL struct: the pair must produce this
-  // exact source, not merely "whatever the relic used to say". The parity against the
-  // fused node WAS measured clean before the retirement, at the flip slice.
+  // ⚠️ THIS CASE HAS NOW BEEN RE-ANCHORED TWICE, and both times it came out stricter.
+  // First: it was written as `expect(pair).toEqual(modifierSource(fusedValue))`, with the
+  // fused `BakedMesh` as the natural control — retiring that node made its `evaluate`
+  // throw, so the comparison became impossible and was replaced by the CANONICAL struct
+  // (the pair must produce THIS source, not merely "whatever the relic used to say").
+  // Second, here: #415 slice 4 deleted `modifierSource` itself, so the subject moves from
+  // the posed Object to the DATA node the stack actually sits on. What the move buys is
+  // the third assertion below — the source's SHAPE. The old form could not state that a
+  // modifier source carries no pose, because the function it called returned one.
   it('offers modifiers on a baked PAIR — the guard that absorbed it in silence (#388)', () => {
     const geometry = {
       key: 'baked|pair-8',
@@ -158,21 +160,26 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
       s = applyOp(s, op as never).next;
     }
 
-    const pair = modifierSource(evaluate(s, 'n_pair').value as SceneChild);
-    expect(pair).not.toBeNull();
-    // The buffer handle and the captured spec ride through VERBATIM, and the modifier
-    // inherits the OBJECT's pose (a data node has no transform of its own).
-    expect(pair).toEqual({
-      geometry,
-      material,
-      transform: { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    });
+    // #415 — the stack sits on the DATA lane, so the source is classified there. The id
+    // is read off the edge (`resolveStackBase`) rather than spelled out, because the
+    // data-id convention has three spellings in this repo and deriving it by hand is how
+    // a test ends up asserting against a node nobody wired.
+    const dataId = resolveStackBase(s, 'n_pair');
+    const src = modifierDataSource(evaluate(s, dataId).value as ObjectData);
+    expect(src).not.toBeNull();
+    // The buffer handle and the captured spec ride through VERBATIM.
+    expect(src).toEqual({ geometry, material });
+    // …and NOTHING ELSE rides through. The Object is posed at [1,2,3] and a modifier
+    // source must not see it: on the data lane the pose is applied once, above the whole
+    // stack. `toEqual` above already pins the exact shape, but state it by name — this is
+    // the claim the deleted `modifierSource` could not make, since it returned a pose.
+    expect(src).not.toHaveProperty('transform');
+    expect(src).not.toHaveProperty('position');
 
     // V108 — offer == accept. Both halves ask the SAME function, which is why they went
     // wrong together and stayed consistent while doing it: a uniformly absent affordance
     // reads as design. Assert the offer explicitly rather than trusting that agreement.
-    // #415 — asked of the DATA half, which is where the stack lives now.
-    expect(canModifyGeometry(s, resolveStackBase(s, 'n_pair'))).toBe(true);
+    expect(canModifyGeometry(s, dataId)).toBe(true);
   });
 
   it('does not offer modifiers on an Empty (an Object with no data)', () => {
@@ -188,9 +195,28 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
     // different (and much weaker) statement that would hold even for a real cube.
     expect(resolveStackBase(s, 'n_empty')).toBe('n_empty');
     expect(canModifyGeometry(s, 'n_empty')).toBe(false);
-    // ...and the modifier itself agrees — offer and accept cannot drift apart.
-    const value = evaluate(s, 'n_empty').value as SceneChild;
-    expect(modifierSource(value)).toBeNull();
+
+    // …and the accept half agrees — offer and accept cannot drift apart (V108). #415
+    // slice 4 RE-ANCHORED this. It used to ask `modifierSource(evaluate(...))` and expect
+    // null, which was the right question while a modifier consumed scene values. That
+    // function is gone, and the reason it is gone is the stronger statement: an Object
+    // emits `SceneObject`, the modifier's `target` takes `ObjectData`, and `ops.ts`
+    // compares socket types by exact string equality. The refusal is now STRUCTURAL —
+    // there is no wiring to classify, so the offer's `false` cannot be a classifier
+    // disagreeing with a graph that was allowed to exist.
+    const withArr = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_arr',
+      nodeType: 'ArrayModifier',
+      params: { count: 4, offset: [2, 0, 0] },
+    }).next;
+    expect(() =>
+      applyOp(withArr, {
+        type: 'connect',
+        from: { node: 'n_empty', socket: 'out' },
+        to: { node: 'n_arr', socket: 'target' },
+      }),
+    ).toThrow(/type mismatch/);
   });
 
   // #415 — RE-ANCHORED. This used to feed the modifier a Group, which is now REFUSED at
@@ -277,6 +303,14 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
 });
 
 // FALSIFICATION (run by hand, not automatable without breaking the build):
-// adding a kind to the `SceneChild` union without an arm in `modifierSource` fails
+// adding a kind to the `ObjectData` union without an arm in `modifierDataSource` fails
 // typecheck at the `never` assertion — TS2322, "not assignable to type 'never'".
 // Do not add a `default:` arm to restore it; that is the bug this closes.
+//
+// #415 slice 4 — the gate MOVED unions with the classifier. It used to close over
+// `SceneChild` (every posed scene value) and now closes over `ObjectData` (the data lane
+// alone), which is a narrowing, and a narrowed gate is indistinguishable from a weakened
+// one by inspection. What makes it still load-bearing: `ObjectData` is the union every
+// modifier source is drawn from now, because `target` takes that socket and nothing else
+// can reach it. The union that shrank is exactly the set of values that can no longer be
+// wired to a modifier at all — asserted directly by the two `type mismatch` cases above.

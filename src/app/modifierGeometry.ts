@@ -13,6 +13,14 @@
 // cannot be answered two ways, which is what it was split into three switches to do
 // before #377 consolidated it.
 //
+// #415 SLICE 4 FINISHED THAT COLLAPSE by deleting the last remnant of the old shape:
+// `modifierSource`, the SceneObject-side classifier that took a posed scene value and
+// returned geometry + material + a TRS to carry forward. The flip left it with no
+// production callers and only its own tests, which is the state a dead function is
+// hardest to see from ([[H219]]) — full coverage, green suite, zero callers. Its `never`
+// gate and its baked/chained arms did not go with it; they live in `modifierDataSource`,
+// which answers the same question of the data lane where the stack now sits.
+//
 // v1 scope: box/sphere data (the registry builds it SYNC). Baked data carries its
 // material through but is not sync-buildable (OPFS — outside the sync registry);
 // modifiers over it are a clean follow-up. Non-mesh data passes through untouched.
@@ -26,23 +34,20 @@ import type {
   BakedMaterialSpec,
   GeometryRef,
   InlineMaterialSpec,
-  MeshTransform,
   MirrorAxis,
   ObjectData,
-  SceneChild,
   Vec3,
 } from '../nodes/types';
 import { evaluate } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 
-const IDENTITY_SCALE: Vec3 = [1, 1, 1];
-
 /**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
- * descriptor). Shared by the fused `BoxMesh` source projection (below) AND the
- * `BoxData` node of the object↔data split (#361), so both roads hand the registry
- * the identical key → one cached build, byte-identical geometry (H40, no drift).
+ * descriptor). It was shared by the fused `BoxMesh`'s source projection and by
+ * `BoxData`; the fused kind is retired, so `BoxData` (#361) is the only caller left
+ * and the "one cached build, byte-identical geometry" claim (H40, no drift) is now
+ * held by construction rather than by two roads agreeing.
  */
 export function boxGeometryRef(size: Vec3): GeometryRef {
   return {
@@ -54,12 +59,12 @@ export function boxGeometryRef(size: Vec3): GeometryRef {
 
 /**
  * The ONE place a sphere's `radius`/`widthSegments`/`heightSegments` become a
- * `GeometryRef` (deterministic key + descriptor). Parallel to {@link boxGeometryRef}:
- * shared by the fused `SphereMesh` source projection (below) + the read road
- * (`resolveEvaluatedMesh`) AND the `SphereData` node of the object↔data split (#384),
- * so every road hands the registry the identical key → one cached build,
- * byte-identical geometry (H40, no drift). Coexists with `SphereMesh` until the
- * fused value kind retires; then only `SphereData` calls it.
+ * `GeometryRef` (deterministic key + descriptor). Parallel to {@link boxGeometryRef},
+ * and its old note has come true: it named the fused `SphereMesh` projection and the
+ * read road beside `SphereData` (#384), and predicted that "then only `SphereData`
+ * calls it". `SphereMesh` is retired and the read road no longer rebuilds a handle of
+ * its own (#415 — it reads the one the evaluator already produced), so that is now the
+ * measured state, not a forecast.
  */
 export function sphereGeometryRef(
   radius: number,
@@ -74,24 +79,17 @@ export function sphereGeometryRef(
 }
 
 /**
- * Everything a geometry modifier needs from its source value: the handle to
- * reshape, the pose to carry forward so the result sits where the source sat, and
- * the material to inherit. `null` from {@link modifierSource} means "this value is
- * not a modifiable source" — the modifier passes through unchanged.
- */
-export interface ModifierSource {
-  readonly geometry: GeometryRef;
-  readonly transform: MeshTransform;
-  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
-}
-
-/**
- * Everything a geometry modifier needs from its source DATA — the same thing minus
- * the pose, because on the data lane (#415) there is no pose to take: the Object
- * above the stack owns it, and a data node has none of its own. Both references
- * state it (Houdini S8: authored in object space, the transform applied once above
- * the stack; Blender 5.1.1 measured: the evaluated mesh datablock has no
- * `matrix_world`) — see `ModifiedDataValue` in src/nodes/types.ts.
+ * Everything a geometry modifier needs from its source DATA: the handle to reshape
+ * and the material to inherit. `null` from {@link modifierDataSource} means "this
+ * value is not a modifiable source" — the modifier passes it through unchanged.
+ *
+ * There is NO pose here, and that absence is the point. On the data lane (#415) there
+ * is none to take: the Object above the stack owns it, and a data node has none of its
+ * own. Both references state it (Houdini S8: authored in object space, the transform
+ * applied once above the stack; Blender 5.1.1 measured: the evaluated mesh datablock
+ * has no `matrix_world`) — see `ModifiedDataValue` in src/nodes/types.ts. The
+ * predecessor of this interface carried a `transform` field for the SceneObject-side
+ * road, which is what #415 removed.
  */
 export interface ModifierDataSource {
   readonly geometry: GeometryRef;
@@ -104,13 +102,13 @@ export interface ModifierDataSource {
  * "not a mesh face" and the modifier passes the value through unchanged.
  *
  * #415 moved the modifier onto the data lane, so THIS is the classifier the modifier's
- * own `evaluate` asks, and the one `canModifyGeometry` and the read road ask too. The
- * SceneObject-side twin {@link modifierSource} delegates its `Object` arm here — it has
- * no production callers left, so that delegation is now the only thing keeping the two
- * answers provably identical while it waits to be deleted.
+ * own `evaluate` asks, and the one `canModifyGeometry` and the read road ask too. It is
+ * now the ONLY one: the SceneObject-side twin `modifierSource` — which answered the same
+ * question of a posed scene value and delegated its `Object` arm here — was deleted once
+ * the flip left it with no production callers. There is no second answer to keep in step.
  *
  * The switch is CLOSED BY A `never` ([[V109]]) — this is the same exhaustive guard
- * #388 installed in `modifierSource`, MOVED here rather than deleted, and it must stay
+ * #388 installed in the twin, MOVED here rather than deleted, and it must stay
  * exhaustive for the same reason: an inequality guard (`data.kind !== 'MeshData'`) is
  * ALREADY TOTAL, so widening `ObjectData` cannot redden it and a genuinely mesh-like
  * new member gets absorbed in silence with the wrong answer. A new data kind is a
@@ -145,95 +143,11 @@ export function modifierDataSource(data: ObjectData): ModifierDataSource | null 
 }
 
 /**
- * ⚠️ NO PRODUCTION CALLERS AS OF #415 — SLICE 4 DELETES THIS. Read that before treating
- * its test coverage as evidence it is load-bearing.
- *
- * The modifier used to consume a scene VALUE, so this was the classifier its `evaluate`
- * asked. On the data lane it asks {@link modifierDataSource} instead, and
- * `canModifyGeometry` and the read road followed. What is left is a function exercised
- * only by `modifierGeometry.test.ts` — which is exactly the shape that survives longest
- * unnoticed ([[H219]]: a retired thing lives on wherever it was never the subject). It is
- * kept for one slice rather than deleted here because #415 slice 4 collapses the whole
- * read road together, with its own falsification; deleting it mid-flip would enlarge an
- * already atomic commit for no gain. If slice 4 slips, this note is the reason to come
- * back — not a reason to keep it.
- *
- * Project a resolved mesh VALUE into the source a modifier consumes — THE ONE
- * kind-dispatch for "can this be modified, and with what?".
- *
- * It was three separate switches over one union (geometry / transform / material),
- * which is the parallel-list shape [[V101]] warns about: the object↔data split
- * added an `Object` arm to the read road (`resolveEvaluatedMesh`) and to none of
- * these, so a modifier on a split cube RESOLVED as an array and RENDERED as a
- * plain cube — the two roads disagreed with nothing to catch it (#377). One
- * classifier means a new kind is answered once or not at all, never half.
- *
- * The switch is CLOSED BY A `never` ([[V109]]): adding a `SceneChild` kind is a
- * COMPILE ERROR here, not a silent passthrough. Do NOT reintroduce a `default:` —
- * the defensive-looking arm is precisely the bug. Stage C puts five more data
- * kinds behind `Object`, and every one of them must land here deliberately.
- *
- * Sphere/Box build the SAME deterministic key `resolveEvaluatedMesh` builds (so
- * the array key matches on both roads); BakedMesh/ModifiedMesh already carry a
- * handle (chained modifiers); an `Object` reaches THROUGH its `data` socket for
- * geometry+material while keeping its OWN TRS — the same reach the read road does,
- * so read==render by construction.
- */
-export function modifierSource(value: SceneChild): ModifierSource | null {
-  switch (value.kind) {
-    case 'ModifiedMesh':
-      return { geometry: value.geometry, transform: trsOf(value), material: value.material };
-    case 'BakedMesh':
-      // A baked source carries its captured BakedMaterialSpec (scalars + maps).
-      // ModifiedMeshValue.material was widened to that union (#358), so the material
-      // now rides through verbatim instead of dropping to null. RENDERING a baked
-      // material on a modifier is the deferred baked-sourced-modifier follow-up (the
-      // array geometry over a baked ref is not sync-buildable either); ModifiedMeshR
-      // narrows a baked spec to its fallback exactly as ObjectR does.
-      return { geometry: value.geometry, transform: trsOf(value), material: value.material };
-    case 'Object': {
-      // The object↔data split (#377): the Object owns the pose, the data node owns
-      // geometry + material. Reach through `data` — the modifier reshapes the mesh
-      // DATA and inherits the OBJECT's TRS, which is the attachment the design and
-      // both references agree on (Blender: mesh datablock → the Object's modifier
-      // stack → object transform; Houdini: SOP chain in object space → OBJ transform).
-      //
-      // #415 — the `data.kind` dispatch that used to be written out HERE now lives in
-      // {@link modifierDataSource}, because the modifier's own `evaluate` asks the same
-      // question of the same union on the data lane. It was MOVED, not weakened: it is
-      // still the one `never`-closed switch, so a new `ObjectData` member is still a
-      // compile error rather than a silently missing "+ Add Modifier". Delegating is
-      // what makes "can I modify this?" impossible to answer two ways.
-      const data = value.data;
-      if (!data) return null; // an Empty
-      const src = modifierDataSource(data);
-      if (!src) return null;
-      // Substance off the data, pose off the Object — the split's whole shape.
-      return { geometry: src.geometry, transform: trsOf(value), material: src.material };
-    }
-    // Not leaf meshes — a modifier passes through them unchanged (v1 scope).
-    case 'GltfAsset':
-    case 'Transform':
-    case 'Null':
-    case 'Group':
-    case 'MaterialOverride':
-    case 'Scatter':
-    case 'Character':
-      return null;
-    default: {
-      const exhaustive: never = value;
-      void exhaustive;
-      return null;
-    }
-  }
-}
-
-/**
  * Can a geometry modifier actually reshape the mesh produced by `nodeId`?
  *
  * This is the OFFER half of [[V108]]: the UI must gate "+ Add Modifier" on the
  * SAME condition the modifier's own `evaluate` accepts — literally by evaluating
- * the source and asking {@link modifierSource}, never by matching a list of node
+ * the source and asking {@link modifierDataSource}, never by matching a list of node
  * types. The list it replaces (`SUPPORTED_BASE_TYPES`) had drifted both ways at
  * once: it still named `BoxMesh`, retired in Slice 2, and had never gained
  * `Object`, so the banner called a split cube unsupported while a fused relic was
@@ -266,15 +180,6 @@ export function canModifyGeometry(state: DagState, nodeId: string): boolean {
   }
 }
 
-/** The full TRS band of a value that carries one, with the C-1 (V10/H14) hydrate guard. */
-function trsOf(value: { position: Vec3; rotation: Vec3; scale: Vec3 }): MeshTransform {
-  return {
-    position: value.position,
-    rotation: value.rotation,
-    scale: value.scale ?? IDENTITY_SCALE,
-  };
-}
-
 /**
  * Wrap a source `GeometryRef` in an `array` descriptor: `count` copies of the
  * source, each translated by `i*offset` in the source's LOCAL space, merged. The
@@ -296,9 +201,13 @@ export function arrayGeometryRef(source: GeometryRef, count: number, offset: Vec
  * reflection back with the original (Blender's Mirror → a symmetric whole, 2× the
  * vertices). The key folds the source key + axis so identical inputs share a
  * registry-cached build and two axes never false-share (§48). The ONE place a
- * source ref becomes a mirror descriptor — both the evaluate road
- * (`MirrorModifier.evaluate`) and the read-side walk (`resolveEvaluatedMesh`) call
- * it → one deterministic key on both roads (H40, no drift).
+ * source ref becomes a mirror descriptor.
+ *
+ * It used to be called on BOTH roads — `MirrorModifier.evaluate` and the read-side
+ * walk in `resolveEvaluatedMesh`, which rebuilt the handle itself and relied on the
+ * two agreeing (H40, no drift). #415 removed the second caller: the read road now
+ * reads the handle the evaluator already produced, so the roads share the VALUE
+ * rather than a recipe for reproducing it. Same invariant, one fewer place to break.
  */
 export function mirrorGeometryRef(
   source: GeometryRef,
