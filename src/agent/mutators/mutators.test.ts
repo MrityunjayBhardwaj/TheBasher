@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { buildDefaultDagState } from '../../core/project/default';
 import {
   __resetMutatorRegistryForTests,
   getMutator,
@@ -297,6 +298,40 @@ describe('addModifier mutator (geometry OperatorStack — #209)', () => {
   ): DagState {
     return (ops as { type: string }[]).reduce((s, op) => applyOp(s, op as never).next, state);
   }
+
+  // #498 — the agent half of the accept. `build` throws a "not in DAG" error on a null
+  // from the builder, so without this precondition the agent's refusal would arrive as a
+  // crash naming the wrong cause. Asked through the same `canModifyGeometry` the builder
+  // uses, so the two cannot disagree about what is refusable.
+  it('#498 rejects a camera and a light at the precondition gate, with an honest reason', () => {
+    const state = buildDefaultDagState();
+    for (const target of ['n_camera', 'n_light']) {
+      const result = validatePlan(
+        addModifierMutator,
+        { target, modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
+        state,
+        `array the ${target}`,
+      );
+      expect(result.ok, `${target} must be rejected`).toBe(false);
+      if (result.ok) continue;
+      // The reason must name the real cause. A generic "not in DAG" would send the agent
+      // hunting for a missing node that is right there.
+      expect(result.reason).toMatch(/cannot reshape/i);
+      expect(result.reason).not.toMatch(/not in DAG/i);
+    }
+  });
+
+  it('#498 still accepts the split cube — the positive control for the rejection above', () => {
+    // Without this, a gate that rejected EVERYTHING would pass the test above.
+    const { state } = buildSplitScene();
+    const result = validatePlan(
+      addModifierMutator,
+      { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
+      state,
+      'array the box',
+    );
+    expect(result.ok).toBe(true);
+  });
 
   it('passes all five gates and wires BoxData → ArrayModifier → Object', () => {
     const { state, dataId } = buildSplitScene();
@@ -4028,9 +4063,16 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       build: buildSceneForBake,
       spec: { assetRef: BAKE_ASSET, childName: 'bone_1' },
     },
+    // #498 — RE-ANCHORED onto the SPLIT cube. This entry used `buildScene`, whose 'box'
+    // is a fused `BoxMesh` — a retired relic that emits 'SceneObject', not 'ObjectData'.
+    // The probe only BUILDS ops and compares their shapes, never applying them, so the
+    // invalid wiring (a SceneObject into a socket that takes ObjectData) was never
+    // validated and the stale fixture went on passing. Gating the accept on the
+    // modifier's own predicate is what surfaced it. The rest of `buildScene`'s fused
+    // fixtures are #476's scope, not this slice's.
     'mutator.geometry.addModifier': {
       mutator: _addModifierM as MutatorDefinition<unknown>,
-      build: buildScene,
+      build: () => buildSplitScene().state,
       spec: { target: 'box', modifierType: 'ArrayModifier', count: 3, offset: [2, 0, 0] },
     },
     // #281 — F-Modifier on the collinear `ch` channel. Emits setParam('modifiers');

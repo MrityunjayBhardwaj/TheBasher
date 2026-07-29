@@ -25,6 +25,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
+import { canModifyGeometry } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
 
 /** The geometry-operator (SOP / modifier) node types this stack manages. A node
@@ -327,6 +328,21 @@ export function buildAddOperatorOps(
  * changed only what `resolveStackBase` RESOLVES; the re-wiring authority is identical.
  * One wiring road means the panel, the agent op and the migration cannot disagree —
  * which is precisely what a temporary dual-socket shim would have re-introduced.
+ *
+ * #498 — AND THAT IS WHY THE REFUSAL GOES HERE rather than in the panel's `onAdd`.
+ * A camera Object offered "+ Array" and clicking it SUCCEEDED: an `ArrayModifier` was
+ * minted and spliced into `CameraData → ArrayModifier → Object.data`, inert but real and
+ * persistable. The predicate that would have refused it was already being computed one
+ * layer up and used only to pick a warning banner. Gating the panel alone would have left
+ * the agent's `addModifier` op free to mint the same graph, so the check belongs at the
+ * one authority both of them go through — the same argument that made this function
+ * survive the #415 flip untouched, applied to the accept instead of the wiring.
+ *
+ * Returns null for a source that cannot be reshaped, which is what every caller already
+ * does on a null (the panel skips the dispatch; the agent's precondition reports it).
+ * `canModifyGeometry` refuses curve, light and camera data alike — a curve is a REAL gap
+ * (#349) rather than a category error, but adding a modifier to one today would still
+ * mint an inert node, so the accept is the same and only the affordance differs.
  */
 export function buildAddModifierOps(
   state: DagState,
@@ -335,6 +351,7 @@ export function buildAddModifierOps(
   params: Record<string, unknown> = {},
   explicitId?: string,
 ): AddModifierResult | null {
+  if (!canModifyGeometry(state, baseNodeId)) return null;
   return buildAddOperatorOps(
     state,
     baseNodeId,

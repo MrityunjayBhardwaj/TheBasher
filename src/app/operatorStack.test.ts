@@ -208,4 +208,56 @@ describe('operatorStack', () => {
     expect(buildToggleModifierMuteOp(state, BOX)).toBeNull();
     expect(buildMoveModifierOps(state, BOX, 'up')).toBeNull();
   });
+
+  // #498 — the ACCEPT half. Before this, adding a modifier to a camera SUCCEEDED: an
+  // ArrayModifier was minted and spliced into `CameraData → ArrayModifier → Object.data`,
+  // inert but real and persistable. The refusal lives in the builder rather than the panel
+  // because the agent's addModifier op goes through the same builder, so gating the panel
+  // alone would have left the agent able to mint exactly the same graph.
+  describe('#498 the builder refuses data that cannot be reshaped', () => {
+    it('refuses a camera and a light, and still accepts the cube (the positive control)', () => {
+      const state = buildDefaultDagState();
+
+      // The control FIRST, and it is load-bearing: a uniform null across subject and
+      // control would mean the gate refuses everything, which reads exactly like a
+      // working refusal until you check the one case that must still pass.
+      expect(
+        buildAddModifierOps(state, resolveStackBase(state, BOX), 'ArrayModifier', {
+          count: 3,
+          offset: [2, 0, 0],
+        }),
+        'the cube must still accept a modifier',
+      ).not.toBeNull();
+
+      for (const objectId of ['n_camera', 'n_light']) {
+        expect(
+          buildAddModifierOps(state, resolveStackBase(state, objectId), 'ArrayModifier', {
+            count: 3,
+            offset: [2, 0, 0],
+          }),
+          `${objectId} must be refused`,
+        ).toBeNull();
+      }
+    });
+
+    it('refuses through the DATA node too, not just the Object the user selects', () => {
+      // resolveStackBase hops Object → data, so the panel passes the data node. Asserting
+      // both entry points stops a future caller that already holds the data id from
+      // slipping past the gate.
+      const state = buildDefaultDagState();
+      expect(buildAddModifierOps(state, 'n_camera_data', 'ArrayModifier', {})).toBeNull();
+      expect(buildAddModifierOps(state, 'n_light_data', 'ArrayModifier', {})).toBeNull();
+    });
+
+    it('leaves the graph untouched when it refuses', () => {
+      // The refusal must be a non-event, not a partial write. Node count is the cheapest
+      // honest witness that nothing was minted.
+      const state = buildDefaultDagState();
+      const before = Object.keys(state.nodes).length;
+      expect(
+        buildAddModifierOps(state, resolveStackBase(state, 'n_camera'), 'ArrayModifier', {}),
+      ).toBeNull();
+      expect(Object.keys(state.nodes).length).toBe(before);
+    });
+  });
 });
