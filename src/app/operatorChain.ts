@@ -32,6 +32,27 @@ export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set([
   'MirrorModifier',
 ]);
 
+/** The MATERIAL-operator node types — the material half of the data lane (#394 S3c).
+ *
+ *  A TUPLE, not a `Set`, and that is load-bearing: `MaterialLaneType` is derived from it,
+ *  so the per-field ownership switch in `resolveMaterialFieldOwner` closes on a `never`
+ *  ([[V109]]). Adding a member here without teaching that switch what the new operator
+ *  MASKS is a compile error — which is the only structural defence against the exact
+ *  silent failure the lane re-mints: an operator that forces a field while a write road
+ *  still aims at the layer below it, reporting success and changing nothing.
+ *
+ *  SEPARATE from {@link MODIFIER_NODE_TYPES} on purpose: that set drives what the MODIFIER
+ *  section offers, and a material operator reshapes no geometry. Both are walked past by
+ *  {@link isDataLaneOperator}, which asks about SHAPE and needs neither list. */
+export const MATERIAL_LANE_TYPES = ['SetMaterialOp', 'MaterialOverrideOp'] as const;
+export type MaterialLaneType = (typeof MATERIAL_LANE_TYPES)[number];
+
+export function isMaterialLaneOperator(node: Node | undefined): node is Node & {
+  type: MaterialLaneType;
+} {
+  return !!node && (MATERIAL_LANE_TYPES as readonly string[]).includes(node.type);
+}
+
 /** The video-effect (Image→Image) node types — the lift to the Image socket
  *  (epic #235 / spine 1e+). An effect is a typed `target: Image`/`out: Image`
  *  operator on the SAME sub-chain engine as a geometry modifier; new effects

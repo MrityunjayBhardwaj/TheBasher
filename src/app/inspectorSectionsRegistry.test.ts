@@ -57,10 +57,22 @@ describe('C2 — inspectorSections declarations', () => {
   // "has reachable params"). That is the exact hole the box split had to patch by
   // hand. Sweep every registered `ObjectData`-output node and assert its sections
   // are non-empty, so a new data kind cannot register with unreachable params.
-  it('every ObjectData-output node declares non-empty inspectorSections (params are reachable)', () => {
+  //
+  // #394 S3c NARROWS THE FILTER TO PRODUCERS — read the premise above, not the old
+  // filter: the guard is about a node whose PARAMS would be unreachable. A data-lane
+  // OPERATOR (`target: ObjectData → out: ObjectData`) can have none to strand — its
+  // material arrives over an edge drawn in the graph, and `muted` is a stack control —
+  // so forcing it to declare a section produces the titled, permanently empty card the
+  // #458 half below exists to catch. The reference draws the same line: Blender's
+  // Material Properties panel is Slot List → Data-Block → Link (`render/materials/
+  // assignment.rst:19-101`), while `Set Material` is a Geometry Nodes node that never
+  // appears in it. An operator that DOES declare a section (ArrayModifier → 'modifier')
+  // is still fully checked by #458, which deliberately keeps the wider filter.
+  it('every ObjectData-output PRODUCER declares non-empty inspectorSections (params are reachable)', () => {
     const snap = snapshotRegistry();
     const dataKinds = Object.entries(snap).filter(
-      ([, def]) => def.outputs?.out?.type === 'ObjectData',
+      ([, def]) =>
+        def.outputs?.out?.type === 'ObjectData' && def.inputs?.target?.type !== 'ObjectData',
     );
     // Guard the guard: if the filter ever finds nothing, the walk has drifted and the
     // test would pass vacuously for every future data kind.

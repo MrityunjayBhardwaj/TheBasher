@@ -104,6 +104,9 @@ const ALL_TYPES = [
   // the per-object redirect/tint, not the material itself.
   'Material',
   'MaterialOverride',
+  // #394 S3c — the material half of the data lane (`ObjectData → ObjectData`), beside
+  // the geometry modifiers below. The sparse diff; `SetMaterialOp` is its wholesale sibling.
+  'MaterialOverrideOp',
   'Math',
   'MediaClip',
   'MirrorModifier',
@@ -126,6 +129,9 @@ const ALL_TYPES = [
   'SampleGeometry',
   'Scatter',
   'Scene',
+  // #394 S3c — the wholesale half of the material lane. NO inspector section: it is a
+  // graph node like its reference (Blender GN `Set Material`), authored by the edge.
+  'SetMaterialOp',
   'Shot',
   'Skeleton',
   'Solver',
