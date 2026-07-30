@@ -52,6 +52,7 @@ import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
+import { exposeParams, groupExposedRows, type ExposedParam } from './exposeParams';
 import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
@@ -2692,6 +2693,7 @@ function LinkedDataSections({
   dataNodeId,
   objectNodeId,
   canApply,
+  rows,
 }: {
   dataNodeId: string;
   objectNodeId: string;
@@ -2699,28 +2701,25 @@ function LinkedDataSections({
    *  than re-derived: the panel already computed it for this very node, and
    *  `canApplyTransform` evaluates the node to answer. */
   canApply: boolean;
+  /** #394 P2 — this block's rows, GENERATED FROM the data node by `exposeParams`
+   *  rather than grouped here from its params. Passed in (not computed here) so the
+   *  panel builds ONE projection per render and both blocks read the same one.
+   *
+   *  The behaviour is unchanged and that is the claim under test: the byte-identical
+   *  gate asserts this block's rows against a transcription of what it used to do,
+   *  and a browser probe checks that transcription against the real DOM. */
+  rows: readonly ExposedParam[];
 }) {
   const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
   const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
   if (!dataNode) return null;
   if (declared.length === 0) return null;
 
-  const grouped = new Map<SectionId, [string, unknown][]>();
-  // #386 — the main-block inspector renders un-sectioned params via an `unrouted`
-  // bucket (:2942-2943); the linked-data block historically DROPPED them (the H189
-  // parity gap). Mirror the bucket here as defense-in-depth so a data param that
-  // routes to no declared section renders as a raw row instead of vanishing.
-  const unrouted: [string, unknown][] = [];
-  for (const [key, value] of Object.entries((dataNode.params ?? {}) as Record<string, unknown>)) {
-    if (isInputBinding(value)) continue;
-    const section = paramToSection(key, declared);
-    if (section === null) {
-      unrouted.push([key, value]);
-      continue;
-    }
-    if (!grouped.has(section)) grouped.set(section, []);
-    grouped.get(section)!.push([key, value]);
-  }
+  // #386 — un-sectioned params render in an `unrouted` bucket rather than vanishing (the
+  // H189 parity gap). That bucket is now the projection's `section: null` rows: it is a
+  // real destination in the model, not an absence, which is why it survived the move.
+  const { bySection, unrouted } = groupExposedRows(rows);
+  const valueOf = (key: string) => (dataNode.params as Record<string, unknown> | undefined)?.[key];
 
   return (
     <div data-testid="inspector-linked-data" className="flex flex-col">
@@ -2743,7 +2742,7 @@ function LinkedDataSections({
           <SectionBody
             sectionId={sectionId}
             ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
-            rows={grouped.get(sectionId) ?? []}
+            rows={(bySection.get(sectionId) ?? []).map((key) => [key, valueOf(key)] as const)}
             renderers={SECTION_CONTROL_RENDERERS}
             renderRow={(key, value) => (
               <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
@@ -2754,8 +2753,8 @@ function LinkedDataSections({
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
           after the declared sections so a future data kind's un-routed param never
           silently vanishes (the H189 class). */}
-      {unrouted.map(([key, value]) => (
-        <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
+      {unrouted.map((key) => (
+        <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={valueOf(key)} />
       ))}
     </div>
   );
@@ -2854,6 +2853,25 @@ export function NPanel() {
   // "(complex)" object row.
   const refParamMeta = node ? getNodeType(node.type)?.refParams : undefined;
   const refKeys = refParamMeta ? new Set(Object.keys(refParamMeta)) : null;
+
+  // #394 P2 — ONE projection per render, and the rows are generated FROM the chain rather
+  // than found by starting at the selection and resolving outward.
+  //
+  // ⚠️ NOT a `useDagStore` selector, and that is load-bearing. `exposeParams` returns a
+  // fresh array every call, zustand compares selector results with `Object.is`, so a
+  // selector would re-render the inspector on EVERY store change — the same hazard
+  // `sectionsOf` caches a stable reference to avoid, and the shape behind the measured
+  // ~458ms edit lag. Subscribe to `state` (stable under structural sharing unless the DAG
+  // actually changed) and memoize on it.
+  //
+  // `canApply` is threaded in because the predicate EVALUATES; the panel already computed
+  // it, and letting the projection recompute would add a third evaluate per render.
+  const dagState = useDagStore((s) => s.state);
+  const projection = useMemo(
+    () => exposeParams(dagState, selectedId, { canApply }),
+    [dagState, selectedId, canApply],
+  );
+  const linkedRows = useMemo(() => projection.filter((r) => r.origin === 'base'), [projection]);
 
   // #130 (D-04) — the override-set descriptor for this node type (null for the
   // ~38 node types that track no overrides). `makeOverrideInfo` returns the
@@ -3088,6 +3106,7 @@ export function NPanel() {
               dataNodeId={linkedDataId}
               objectNodeId={node.id}
               canApply={canApply}
+              rows={linkedRows}
             />
           ) : null}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /

@@ -103,6 +103,31 @@ export interface DerivedParam {
  *  union from the start so 1:N is not retrofitted onto a struct with optional fields. */
 export type ExposedParam = DerivedParam;
 
+/**
+ * Rows regrouped the way a panel draws them: per section, plus the unrouted bucket.
+ *
+ * Lives here rather than in the panel because BOTH inspector blocks need it and a second
+ * spelling is a second answer. Order within each bucket is the projection's own order,
+ * which is the panel's order — see the ORDER note in the header.
+ */
+export function groupExposedRows(rows: readonly ExposedParam[]): {
+  bySection: ReadonlyMap<SectionId, string[]>;
+  unrouted: string[];
+} {
+  const bySection = new Map<SectionId, string[]>();
+  const unrouted: string[] = [];
+  for (const r of rows) {
+    if (r.home.section === null) {
+      unrouted.push(r.paramPath);
+      continue;
+    }
+    const list = bySection.get(r.home.section);
+    if (list) list.push(r.paramPath);
+    else bySection.set(r.home.section, [r.paramPath]);
+  }
+  return { bySection, unrouted };
+}
+
 /** One node's position in the chain, addressed WITHOUT its id.
  *
  *  `nodeId` is per-instance: a template mints fresh ids every time it is instantiated, so
@@ -286,11 +311,21 @@ function linkedProducers(state: DagState, node: Node): { node: Node; socket: str
 export function exposeParams(
   state: DagState,
   selectedId: string | null | undefined,
+  opts?: {
+    /** `canApplyTransform(state, selectedId)`, when the caller has already computed it.
+     *
+     *  Not a convenience. That predicate EVALUATES the node, and the inspector already
+     *  computes it for its own section context on every render — so without this the panel
+     *  would evaluate a third time per render purely to build the projection. #498 measured
+     *  and deliberately kept two; a third would be a regression paid for nothing. Omitted,
+     *  the projection computes it itself, which is what every non-UI caller wants. */
+    canApply?: boolean;
+  },
 ): ExposedParam[] {
   const selected = selectedId ? state.nodes[selectedId] : undefined;
   if (!selected) return [];
 
-  const canApply = canApplyTransform(state, selected.id);
+  const canApply = opts?.canApply ?? canApplyTransform(state, selected.id);
 
   // The chain below the selection: base ← op₀ … opₙ ← poser. `resolveDataLaneBase` is
   // identity for a node with no data lane, which is how a non-poser selection (a channel,
