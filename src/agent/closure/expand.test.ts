@@ -615,3 +615,96 @@ describe("P4 — 'pass-input' edge kind (Wave B — H22 live-socket isolation)",
     expect(closure.nodes.has('scene')).toBe(false);
   });
 });
+
+describe("the 'data' kind reaches THROUGH the operator stack (#516)", () => {
+  /** `BoxData → ArrayModifier → Object.data` — the post-#415 data-lane stack. */
+  function stackedPair(): DagState {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'data',
+      nodeType: 'BoxData',
+      params: { size: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'obj',
+      nodeType: 'Object',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'arr',
+      nodeType: 'ArrayModifier',
+      params: { count: 3 },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'data', socket: 'out' },
+      to: { node: 'arr', socket: 'target' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'arr', socket: 'out' },
+      to: { node: 'obj', socket: 'data' },
+    }).next;
+    return s;
+  }
+
+  const dataClosure = (s: DagState) =>
+    expandClosure({ rootSelectors: ['obj'], followedEdges: ['data'] } as ClosureSpec, s);
+
+  it('admits the base data node even with an operator between', () => {
+    // MEASURED before this: the walk stopped at the operator, so a material edit
+    // resolved the right owner and was then refused as out-of-closure — the mutator
+    // was correct and the permission scope could not see that far.
+    expect(dataClosure(stackedPair()).nodes.has('data')).toBe(true);
+  });
+
+  it('admits the operator itself too — it is on the way', () => {
+    expect(dataClosure(stackedPair()).nodes.has('arr')).toBe(true);
+  });
+
+  it('does NOT widen onto arbitrary producers — only data-lane operators extend it', () => {
+    // The narrowness is the point: declaring 'children' would have reached the data
+    // node too, and handed the mutator every upstream node as a side effect. A
+    // closure is a permission scope, so a Material node wired into the BASE's
+    // `material` socket must stay OUT of a walk that only declared 'data'.
+    let s = stackedPair();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'mat',
+      nodeType: 'Material',
+      params: { material: { name: 'shared', base: { color: '#c81e5a' } } },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'mat', socket: 'out' },
+      to: { node: 'data', socket: 'material' },
+    }).next;
+    expect(dataClosure(s).nodes.has('data')).toBe(true);
+    expect(dataClosure(s).nodes.has('mat')).toBe(false);
+  });
+
+  it('still admits the data node when no operator is present at all', () => {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'data',
+      nodeType: 'BoxData',
+      params: { size: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'obj',
+      nodeType: 'Object',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'data', socket: 'out' },
+      to: { node: 'obj', socket: 'data' },
+    }).next;
+    expect(dataClosure(s).nodes.has('data')).toBe(true);
+  });
+});
