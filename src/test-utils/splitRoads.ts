@@ -95,9 +95,24 @@ export interface RoadSpec {
   readonly coverage?: Record<SplitKindName, RoadCell>;
 }
 
-/** Compact constructor for an unnamed cell, so 20 of them stay readable. */
-function gap(why: string, candidates?: readonly string[]): RoadGap {
-  return { gap: true, why, issue: '#491', ...(candidates ? { candidates } : {}) };
+/**
+ * Compact constructor for an unnamed cell, so a dozen of them stay readable.
+ *
+ * `issue` is a REQUIRED parameter and used to be a hardcoded '#491' (#500). That default
+ * outlived its issue: #491 closed while every cell still pointed at it, so nineteen declared
+ * gaps read as tracked debt against something nobody was going to reopen. A default is the
+ * wrong shape for this field precisely because it is the field that has to stay current —
+ * making it a parameter means a new gap cannot be written without naming somewhere for it to
+ * be fixed.
+ *
+ * ⚠️ WHAT THE GATE CANNOT CHECK, stated here because nothing else can state it: the gate
+ * verifies that an issue number is PRESENT and well-formed. It cannot verify that the issue
+ * is still OPEN — a unit test does not reach the network, and should not. So this field is
+ * enforced in shape and trusted in substance, which is exactly how it went stale the first
+ * time. When closing an issue that a cell names, grep this file for the number.
+ */
+function gap(why: string, issue: string, candidates?: readonly string[]): RoadGap {
+  return { gap: true, why, issue, ...(candidates ? { candidates } : {}) };
 }
 
 /**
@@ -118,24 +133,29 @@ export const KIND_MARKERS: Record<SplitKindName, readonly string[]> = {
   baked: ['BakedData', 'buildBakedRow'],
 };
 
-const RENDER_GAP =
-  'no spec is named for this kind on this road — the delegate builds a light, so a ' +
-  'broken root/nested mount for this kind would not be reported';
+const NESTED_UNOBSERVABLE =
+  'no probe can observe this kind nested: a nested object loses its object3D name, so every ' +
+  'node-id dev seam reads null for it (#501, measured with a positive control). Blocked on ' +
+  'the instrument, not on a spec being written';
 
 export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
+  // PROMOTED from delegated to derived (#500). The five gaps here were honest, and the reason
+  // they existed is worth keeping: R5 and R8 both seed a channel BEFORE their first read,
+  // because that is what puts the object on the overlay road at all — `OverlayDispatch` mounts
+  // a plain `MeshChild` for anything with no channel and no constraint. So between them the
+  // browser tier never observed the BARE arm, which is the arm almost every object in a real
+  // project takes. Closing this was not a matter of naming an existing spec: the row had to be
+  // written, and it asserts a MEASURED value per kind rather than mere non-nullness, because on
+  // the three mesh bands a dropped material spec renders the #808080 fallback — non-null, wrong,
+  // and accepted by any existence check.
+  //
+  // `split-light-observation.spec.ts` still exists and still runs; it is simply no longer the
+  // only thing standing behind this road.
   R1: {
     id: 'R1',
     title: 'root render — a split pair at the scene root mounts and draws',
-    runsIn: 'tests/e2e/split-light-observation.spec.ts',
-    derivation: 'delegated',
-    coverage: {
-      light: { by: 'tests/e2e/split-light-observation.spec.ts' },
-      box: gap(RENDER_GAP, ['tests/e2e/perf-render-count.spec.ts']),
-      sphere: gap(RENDER_GAP, ['tests/e2e/p1-acceptance.spec.ts']),
-      curve: gap(RENDER_GAP, ['tests/e2e/p321-curve-object.spec.ts']),
-      camera: gap(RENDER_GAP, ['tests/e2e/p231-active-camera.spec.ts']),
-      baked: gap(RENDER_GAP, ['tests/e2e/p151-apply-transform.spec.ts']),
-    },
+    runsIn: 'tests/e2e/split-kind-conformance.spec.ts',
+    derivation: 'derived',
   },
   R2: {
     id: 'R2',
@@ -145,10 +165,22 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
     coverage: {
       light: { by: 'tests/e2e/split-light-observation.spec.ts' },
       camera: { by: 'tests/e2e/p231-nested-camera.spec.ts' },
-      box: gap(RENDER_GAP, ['tests/e2e/p230-nested-gizmo-world.spec.ts']),
-      sphere: gap(RENDER_GAP),
-      curve: gap(RENDER_GAP),
-      baked: gap(RENDER_GAP),
+      // These four are BLOCKED, not merely unwritten, and the reason replaces a false one
+      // (#501). The previous text blamed the delegate for building a light. Measured: nesting
+      // any object under a Group drops its wrapping three.js group's `name`, so all five
+      // node-id dev seams — bounds, position, quaternion, scale, material — return null for a
+      // nested object. Controlled on the SEED box, in this road's own candidate spec's op
+      // order: named `n_box:Group` at the root, and after nesting the only named object in the
+      // scene is the group. The pixels are fine; the identity is what goes.
+      //
+      // So this road cannot be closed by parameterising a delegate, because no probe can see
+      // the subject. That is a different kind of blocker from an unwritten spec, and it is
+      // invisible from a coverage table — which records which spec was named, never whether an
+      // instrument could reach the case at all.
+      box: gap(NESTED_UNOBSERVABLE, '#501', ['tests/e2e/p230-nested-gizmo-world.spec.ts']),
+      sphere: gap(NESTED_UNOBSERVABLE, '#501'),
+      curve: gap(NESTED_UNOBSERVABLE, '#501'),
+      baked: gap(NESTED_UNOBSERVABLE, '#501'),
     },
   },
   R3: {
@@ -179,37 +211,43 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
       curve: gap(
         'the delegate builds a cube; the curve specs below drive constraints but have ' +
           'not been confirmed to ask THIS road (does a constraint reach a DATA param)',
+        '#500',
         ['tests/e2e/p341-constraint-ref-picker.spec.ts', 'tests/e2e/p339-follow-path.spec.ts'],
       ),
-      light: gap('the delegate builds a cube', ['tests/e2e/p265-aimable-light-track-to.spec.ts']),
-      sphere: gap('the delegate builds a cube'),
+      light: gap('the delegate builds a cube', '#500', [
+        'tests/e2e/p265-aimable-light-track-to.spec.ts',
+      ]),
+      sphere: gap('the delegate builds a cube', '#500'),
       // No candidate: the only two specs that build a split camera (p231-active-camera,
       // p231-nested-camera) drive neither constraint. p204-camera-track-to sounds right and
       // is not — it builds a CUBE and points a camera at it, so the constrained half is the
       // cube's. This cell has nowhere to start from, which is worth recording.
-      camera: gap('the delegate builds a cube, and no spec constrains a split camera at all'),
-      baked: gap('the delegate builds a cube'),
+      camera: gap(
+        'the delegate builds a cube, and no spec constrains a split camera at all',
+        '#500',
+      ),
+      baked: gap('the delegate builds a cube', '#500'),
     },
   },
   R7: {
     id: 'R7',
+    // PROMOTED delegated → derived (#500). p6-w4-inspector-sections drove the seed box and
+    // nothing else, so five kinds declared sections that no test had ever seen rendered.
+    //
+    // The gaps were honest about what was unasked but understated it in one place: they said
+    // the registry gate pins `customSections` as a subset of the declaration, implying only
+    // the render side was missing. The subset was also too weak to drive a row — it is the
+    // custom-BODIED sections, not the declared ones, and `LightData` declares `light` while
+    // listing no custom section at all. So the descriptor gained `dataSections`, pinned as an
+    // EQUALITY against the live `inspectorSections` both ways, and the browser row asserts
+    // that the pair's two declared lists render and that nothing renders beyond them.
+    //
+    // The reach is what makes this per-kind rather than one test: the Object's own sections
+    // come from the selected node, while the data half's have to cross the linked-data block.
+    // The row scopes the data assertions to that block for exactly that reason.
     title: 'declared sections — the inspector shows the sections the pair declares',
-    runsIn: 'tests/e2e/p6-w4-inspector-sections.spec.ts',
-    derivation: 'delegated',
-    coverage: {
-      box: { by: 'tests/e2e/p6-w4-inspector-sections.spec.ts' },
-      // The registry gate already pins `customSections` as a SUBSET of what each node
-      // declares, so a kind naming a section it does not have fails today. What no spec
-      // asks for these five is the other direction: that the declared sections actually
-      // RENDER as headers in the inspector for this kind.
-      sphere: gap('the delegate drives a box; nothing renders this kind’s sections', [
-        'tests/e2e/inspector-enum-param.spec.ts',
-      ]),
-      curve: gap('the delegate drives a box, and the curve declares a custom section'),
-      light: gap('the delegate drives a box'),
-      camera: gap('the delegate drives a box, and the camera declares a custom section'),
-      baked: gap('the delegate drives a box'),
-    },
+    runsIn: 'tests/e2e/split-kind-conformance.spec.ts',
+    derivation: 'derived',
   },
   R8: {
     id: 'R8',
