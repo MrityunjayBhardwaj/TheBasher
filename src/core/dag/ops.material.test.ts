@@ -31,7 +31,7 @@ describe('partial material setParam re-parse (R6 — every sibling defaulted)', 
     const next = applyOp(state, setParam('material.base.metalness', 0.7)).next;
     const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
     expect(mat.base.metalness).toBe(0.7); // edited field landed
-    expect(mat.base.color).toBe('#5af07a'); // sibling preserved
+    expect(mat.base.color).toBe('#cccccc'); // sibling preserved (the standard, #394 D7)
     expect(mat.specular.roughness).toBe(0.3); // sibling defaulted, NOT dropped
     expect(mat.geometry.opacity).toBe(1);
     expect(mat.maps.albedo).toBeNull();

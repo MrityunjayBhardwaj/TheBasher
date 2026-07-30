@@ -165,10 +165,15 @@ describe('v1 box → normalize + split to Object + BoxData (byte-identical rende
 // byte-identical to a fused box; a `position` channel stays on the Object while a
 // `size` channel re-targets the data node. REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
 
+/** The colour the fused fixture AUTHORS. A saved project records its colour, and the canonical
+ *  split pair authors the same one — so the byte-identity comparison is about the SPLIT being
+ *  invisible, not about whatever the canonical seed happens to default to (#394 D7). */
+const FUSED_BOX_COLOR = '#5af07a';
+
 /** A genuinely FUSED BoxMesh scene, wired into a Scene — the pre-split shape. The default
  *  project is split-native now (#365 Phase 5a Slice 1b), so a migration fixture must build a
- *  real fused BoxMesh by hand; matches the default box's size + material so the byte-identical
- *  comparison against the (now-split) default holds. */
+ *  real fused BoxMesh by hand; it authors the same size + material as the canonical split pair
+ *  below, so the byte-identical comparison holds. */
 function buildFusedBoxDagState(): DagState {
   let s = emptyDagState();
   const add = (op: Parameters<typeof applyOp>[1]) => {
@@ -182,7 +187,7 @@ function buildFusedBoxDagState(): DagState {
       size: [1, 1, 1],
       position: [0, 0, 0],
       rotation: [0, 0, 0],
-      material: { name: 'default', base: { color: '#5af07a' } },
+      material: { name: 'default', base: { color: FUSED_BOX_COLOR } },
     },
   });
   add({
@@ -220,6 +225,42 @@ function buildFusedBoxDagState(): DagState {
       render: { node: 'n_render', socket: 'out' },
     },
   };
+}
+
+/** The CANONICAL split pair for the fused fixture above — same size, same authored
+ *  material, hand-built rather than taken from the default project. The claim under test
+ *  is "migrating a fused box yields the same thing as authoring the split pair directly",
+ *  which has nothing to do with what colour the canonical seed happens to ship (#394 D7);
+ *  reaching for `buildDefaultDagState()` quietly coupled the two. */
+function buildCanonicalSplitBoxState(): DagState {
+  let s = emptyDagState();
+  const add = (op: Parameters<typeof applyOp>[1]) => {
+    s = applyOp(s, op).next;
+  };
+  add({
+    type: 'addNode',
+    nodeId: 'n_box_data',
+    nodeType: 'BoxData',
+    params: { size: [1, 1, 1], material: { name: 'default', base: { color: FUSED_BOX_COLOR } } },
+  });
+  add({
+    type: 'addNode',
+    nodeId: 'n_box',
+    nodeType: 'Object',
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  });
+  add({
+    type: 'connect',
+    from: { node: 'n_box_data', socket: 'out' },
+    to: { node: 'n_box', socket: 'data' },
+  });
+  add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
+  add({
+    type: 'connect',
+    from: { node: 'n_box', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
+  return { ...s, outputs: { scene: { node: 'n_scene', socket: 'out' } } };
 }
 
 /** A serialized formatVersion-2 (pre-split) project: one fused BoxMesh built by
@@ -303,7 +344,7 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
   it('renders byte-identically to a fused box (the split is invisible)', () => {
     const migrated = loadFromBytes(buildV2FusedBoxJson());
     const split = resolveEvaluatedMesh(migrated.state, 'n_box', ctxAt(0));
-    const fused = resolveEvaluatedMesh(buildDefaultDagState(), 'n_box', ctxAt(0));
+    const fused = resolveEvaluatedMesh(buildCanonicalSplitBoxState(), 'n_box', ctxAt(0));
     expect(split).not.toBeNull();
     expect(fused).not.toBeNull();
     expect(split!.geometry.descriptor).toEqual(fused!.geometry.descriptor);

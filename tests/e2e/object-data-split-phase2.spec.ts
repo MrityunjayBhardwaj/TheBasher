@@ -116,8 +116,13 @@ test('Add ▸ Cube creates a split pair that renders + poses + draws a unit box'
   // MATERIAL SURVIVES THE SPLIT (the render-path question, #365 Phase 5a): the material lives
   // on the BoxData half, reached through the Object's `data` edge. Confirm the RENDERED mesh
   // (SceneFromDAG, not just the resolver) carries the OpenPBR material — a MeshPhysicalMaterial
-  // whose color is the green default (#5af07a → green-dominant after three's sRGB handling),
-  // NOT a null/fallback. Proves SceneFromDAG gives the split mesh its data-half material.
+  // whose color is the STANDARD material (#cccccc, #394 D7), NOT a null/fallback. Proves
+  // SceneFromDAG gives the split mesh its data-half material.
+  //
+  // ⚠️ Asserted as an EXACT value, not by hue. This used to check "green channel dominates",
+  // which discriminated the box's green default from the #808080 fallback grey. The standard
+  // material is itself a neutral grey, so hue no longer separates the two — only the exact
+  // value does. Any check of the form "not the fallback" has to compare values now.
   const mat = await page.evaluate(
     (id) => (window as unknown as UiWindow).__basher_mesh_material?.(id) ?? null,
     objId,
@@ -127,8 +132,9 @@ test('Add ▸ Cube creates a split pair that renders + poses + draws a unit box'
     'MeshPhysicalMaterial',
   );
   expect(mat!.color, 'the material carries a color (not a null fallback)').toBeTruthy();
-  const hex = mat!.color!.replace('#', '');
-  const [r, g, b] = [0, 2, 4].map((o) => parseInt(hex.slice(o, o + 2), 16));
-  expect(g, 'the box keeps its green default — green channel dominates').toBeGreaterThan(r);
-  expect(g, 'the box keeps its green default — green channel dominates').toBeGreaterThan(b);
+  expect(mat!.color!.toLowerCase(), 'the box carries THE standard material').toBe('#cccccc');
+  expect(
+    mat!.color!.toLowerCase(),
+    'and it is the standard material, not the missing-material fallback grey',
+  ).not.toBe('#808080');
 });
