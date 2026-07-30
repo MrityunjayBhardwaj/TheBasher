@@ -2,24 +2,38 @@
 // questions, and the rows come from the registry-backed descriptor rather than from
 // whatever anybody remembered to write a spec for.
 //
-// WHY ONLY TWO ROADS HERE
-// Ten roads make up the matrix. Six of them already have per-kind coverage somewhere in
-// this suite — root and nested render (split-light-observation), constraint reach (p422),
-// declared sections (p6-w4-inspector-sections) — and the unit tier owns read-equals-render,
-// migration, wrong-half write and the channel-path rule. Re-asking those here would either
-// duplicate them or require deleting working specs, which is a second blast radius for no
-// new coverage. The suite already runs ~110 minutes; the two roads below are the ones with
-// nothing sweeping them per kind:
+// WHICH ROADS RUN HERE, AND WHY THE LIST GREW
+// Ten roads make up the matrix. This file started with two, on the reasoning that the other
+// four browser-side roads "already have per-kind coverage somewhere in this suite — root and
+// nested render (split-light-observation), constraint reach (p422), declared sections
+// (p6-w4-inspector-sections)". That sentence was written in a comment, nothing checked it,
+// and when #491 measured it each of those specs turned out to cover exactly ONE kind. So the
+// reasoning was sound and the premise was false, which is why #500 moved three of them here
+// rather than leaving them delegated to specs that were not doing the job:
 //
+//   R1 the BARE RENDER road — a pair at the scene root, with no channel, no constraint and
+//                             no transient, mounts and draws its data half's committed value.
+//                             Unobserved until #500 precisely because every other road seeds
+//                             a channel first, which moves the object OFF this arm.
 //   R5 the TRANSIENT road   — a held (dragged, uncommitted) edit on the DATA half must
 //                             repaint the object. #400: it did not, and the resolver was
 //                             fine, so nothing outside the viewport could see it.
+//   R6 the CONSTRAINT road  — a constrained object still renders its animated data param.
+//                             #422: `OverlayDispatch` returns ConstrainedR before it considers
+//                             DirectChannelsR, so a constrained node takes a road that BOTH
+//                             data-half reaches originally missed.
+//   R7 the SECTIONS road    — the inspector renders the sections the pair declares, and
+//                             nothing beyond them. The data half's arrive through the
+//                             linked-data block, which is the reach worth asking per kind.
 //   R8 the MANAGEMENT road  — what a management surface OFFERS must equal what it ACCEPTS.
 //                             #386: a split light's keyframed intensity lives on its
 //                             LightData while the user selects the Object, so an exact-id
 //                             enumeration reported "nothing to push down" for an object
 //                             that was visibly animating. Zero is a legitimate answer, so
 //                             it failed silently.
+//
+// The unit tier owns read-equals-render, migration, wrong-half write and the channel-path
+// rule. R2 (nested render) is the one browser road still delegated, blocked on #501.
 //
 // WHY R5 IS PROBED AT THREE.JS AND NOT AT THE RESOLVER
 // `resolveEvaluatedParam` reaches Object→data on its own road. Asserting the transient
@@ -28,20 +42,28 @@
 // three.js object. That is why this road is in the browser tier at all.
 //
 // THE ROW MAY CHOOSE HOW A ROAD ASKS, NEVER WHETHER IT RUNS
-// Both roads run for all five kinds. What varies is phrasing: which scene socket the band
-// mounts in (which is the band, literally — `SplitBand`'s members ARE the socket names),
+// Every road above runs for all six kinds. What varies is phrasing: which scene socket the
+// band mounts in (which is the band, literally — `SplitBand`'s members ARE the socket names),
 // and how the rendered value is read back, since a mesh reports a material colour, a light
 // reports an intensity, a curve reports the vertex count of the polyline it draws and a
-// camera reports the field of view its frustum is drawn with. There is deliberately no skip
-// field and no per-kind early return; a kind that could not answer would have to be
-// answered differently, not excluded.
+// camera reports the field of view its frustum is drawn with. R6 needed a second per-band
+// table for the same reason — "the constraint took" is not one observable either. There is
+// deliberately no skip field and no per-kind early return; a kind that could not answer would
+// have to be answered differently, not excluded.
 //
-// TWO KINDS ANSWER NO, AND THEY ANSWER DIFFERENT ROADS
-// The curve's render cannot follow a held edit (#474) and the camera's cannot either, for
-// an unrelated reason (#484); the camera additionally refuses push-down altogether (#480).
-// Each NO still builds the fixture, still applies the stimulus, and asserts the outcome as
-// an EQUALITY against the issue — so the day any of the three is fixed, the row goes red
-// and says which one.
+// SOME KINDS ANSWER NO, AND THE NOs DO NOT TRAVEL BETWEEN ROADS
+// The curve's render cannot follow a held edit (#474) and the camera's cannot either, for an
+// unrelated reason (#484); the camera additionally refuses push-down altogether (#480). Each
+// NO still builds the fixture, still applies the stimulus, and asserts the outcome as an
+// EQUALITY against the issue — so the day any of them is fixed, the row goes red and says
+// which one.
+//
+// R6 is the reason that last clause is per ROAD and not per kind. Carrying #484's NO onto the
+// constraint road would have recorded a gap that does not exist: the camera refuses a held
+// edit because `resolveCameraPoseAt` renders committed DAG state only, and a channel IS
+// committed state, so a constrained camera does follow its animated lens. The curve's NO, by
+// contrast, does carry over — but because the SAME mechanism applies (`samples` is baked at
+// evaluate time), not because it was inherited. Both were measured on this road.
 //
 // REF: src/test-utils/splitKinds.ts (the rows); src/app/objectDataBand.ts (the band rule);
 //      src/viewport/SceneFromDAG.tsx (useDataParamTransients / useLightShadingTransients);
@@ -145,6 +167,23 @@ interface RenderProbe {
    * between instrument and subject that these roads exist to catch.
    */
   expectBare: number | string;
+  /**
+   * What `signature` must read for a CONSTRAINED object whose data param is animated by the
+   * row's shared channel — R6.
+   *
+   * A SEPARATE field from `expectHeld`, and the separation is the point. The renderer picks
+   * one overlay road per object and the constraint branch wins outright: `OverlayDispatch`
+   * returns `ConstrainedR` before it ever considers `DirectChannelsR`. So a constrained node
+   * takes a road that both data-half reaches originally missed (#398 channels, #400
+   * transients), which is how constraining a cube once froze its keyframed colour at the
+   * base value while every read surface reported it animating.
+   *
+   * The stimulus here is a CHANNEL, not a held edit, so the two kinds that refuse a
+   * transient do not automatically refuse this: a channel is committed DAG state, which is
+   * precisely what the camera's pose road says it honours. Every value below was measured on
+   * this road rather than carried over from `expectHeld`.
+   */
+  expectConstrained: HeldExpectation;
   /** What the probe measures, for the failure message. */
   what: string;
 }
@@ -274,6 +313,8 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // `rowDataParams` mints the data node with. It is neither the renderer's #808080
     // fallback nor BoxData's own #5af07a schema default, so this cannot pass by collision.
     expectBare: String(SPLIT_KINDS.box.distinctValues[0]).toLowerCase(),
+    // MEASURED on this road: the shared channel's colour reaches a constrained cube.
+    expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's base colour",
   },
   sphere: {
@@ -284,6 +325,8 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     }),
     // MEASURED: #c81e5a, same reasoning as the box.
     expectBare: String(SPLIT_KINDS.sphere.distinctValues[0]).toLowerCase(),
+    // MEASURED: same road, same answer as the box — the two mesh bands are one path here.
+    expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's base colour",
   },
   curve: {
@@ -309,6 +352,18 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // drifting into the subject. If the sampler's resolution default changes, this reds and
     // the right response is to re-measure, not to compute.
     expectBare: 65,
+    // MEASURED: the polyline stayed at 65. Same mechanism as the held edit, and worth
+    // stating precisely because the STIMULUS differs: an overlay writes `data.closed`,
+    // and the renderer reads `data.samples`, which `CurveData.evaluate()` already baked.
+    // A channel is committed state and still cannot reach a field nobody reads.
+    expectConstrained: {
+      reaches: false,
+      why:
+        'the curve renderer reads `samples`, baked at evaluate time from ' +
+        'closed/resolution/points, so no post-evaluate overlay can reach it — channel ' +
+        'or transient alike',
+      issue: '#474',
+    },
     what: 'the vertex count of the polyline the viewport draws',
   },
   light: {
@@ -316,6 +371,8 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     expectHeld: () => ({ reaches: true, value: SPLIT_KINDS.light.distinctValues[1] as number }),
     // MEASURED: 3.5, the intensity the data node is minted with.
     expectBare: SPLIT_KINDS.light.distinctValues[0] as number,
+    // MEASURED: the constrained light follows its intensity channel to 1.
+    expectConstrained: { reaches: true, value: 1 },
     what: "the mounted light's intensity",
   },
   camera: {
@@ -343,6 +400,11 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // by design, but its committed fov reaches the frustum perfectly well. Those are
     // different claims, and only this one is R1's.
     expectBare: SPLIT_KINDS.camera.distinctValues[0] as number,
+    // MEASURED, and NOT the same answer as the held edit above. The camera refuses a
+    // TRANSIENT by design — `resolveCameraPoseAt` renders committed DAG state only — but a
+    // channel IS committed state, so the constrained camera does follow it. Carrying
+    // #484's answer over to this road would have recorded a gap that does not exist.
+    expectConstrained: { reaches: true, value: 1 },
     what: "the field of view the camera's frustum is drawn with",
   },
   baked: {
@@ -361,6 +423,8 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // BakedMaterialSpec, because that failure renders as the #808080 fallback — a non-null
     // reading that a bare existence check would have accepted.
     expectBare: String(SPLIT_KINDS.baked.distinctValues[0]).toLowerCase(),
+    // MEASURED: the recomposed BakedMaterialSpec follows the channel on the constraint road.
+    expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's captured baked colour",
   },
 };
@@ -756,6 +820,68 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       ).toEqual([...new Set([...OBJECT_SECTIONS, ...spec.dataSections])].sort());
     });
 
+    test(`R6 ${kind} — a CONSTRAINED object still renders its animated data param`, async ({
+      page,
+    }) => {
+      // The road p422 opened for the cube, asked of every kind. A constraint routes the
+      // object onto `ConstrainedR`, which is a DIFFERENT road from the channel renderer —
+      // and it is the road both data-half reaches originally missed, so a kind can animate
+      // correctly everywhere else and freeze the moment it is constrained.
+      const { objectId } = await buildRow(page, kind);
+      await seedRowChannel(page, kind, objectId);
+      await constrainRow(page, objectId);
+
+      // GUARD THE GUARD, and this one carries the row: an unapplied constraint leaves the
+      // object on the channel road, where the assertion below passes for the wrong reason.
+      const witness = CONSTRAINT_WITNESS[kind];
+      let took: boolean | null = null;
+      for (let i = 0; i < 40 && took !== true; i++) {
+        took = await witness.took(page, objectId);
+        if (took !== true) await page.waitForTimeout(200);
+      }
+      expect(
+        took,
+        `${kind}: could not witness the constraint at all (${witness.how}) — the seam read ` +
+          `null, which indicts the instrument for this band before the product`,
+      ).not.toBeNull();
+      expect(
+        took,
+        `${kind}: the Track-To did not take (${witness.how}), so ${objectId} is not on the ` +
+          `constraint road and this row would be measuring the channel road instead`,
+      ).toBe(true);
+
+      const expected = probe.expectConstrained;
+      const seen = await expectEventually(
+        page,
+        probe,
+        objectId,
+        (v) => (expected.reaches ? v === expected.value : v === probe.expectBare),
+        8_000,
+      );
+
+      if (expected.reaches) {
+        expect(
+          seen,
+          `${kind}: constrained, ${probe.what} read ${JSON.stringify(seen)} instead of ` +
+            `${JSON.stringify(expected.value)} — the data half's channel does not reach the ` +
+            `constraint road, so constraining this kind freezes its animation in the viewport ` +
+            `while every read surface still reports it animating`,
+        ).toEqual(expected.value);
+        // And never the un-overlaid resting value, which is the literal #422 symptom.
+        expect(seen, `${kind}: constrained, ${probe.what} froze at its base value`).not.toEqual(
+          probe.expectBare,
+        );
+      } else {
+        // A NO is still asserted as an EQUALITY, so it reddens the day the gap closes.
+        expect(
+          seen,
+          `${kind}: recorded as not reaching the constraint road (${expected.issue}: ` +
+            `${expected.why}), but ${probe.what} read ${JSON.stringify(seen)} rather than the ` +
+            `unmoved ${JSON.stringify(probe.expectBare)} — re-measure and update the row`,
+        ).toEqual(probe.expectBare);
+      }
+    });
+
     test(`R8 ${kind} — what push-down OFFERS equals what it ACCEPTS`, async ({ page }) => {
       const { objectId, dataId } = await buildRow(page, kind);
 
@@ -948,6 +1074,136 @@ async function selectNode(page: Page, nodeId: string): Promise<void> {
   );
   await expect(page.getByTestId('inspector')).toBeVisible();
 }
+
+/**
+ * Put a Track-To on the OBJECT, which is what routes it onto `ConstrainedR`.
+ *
+ * `aimNode` is empty on purpose so the constraint aims at a fixed point rather than at
+ * another node: this road asks whether the constraint ROAD carries the data half, not
+ * whether aiming resolves correctly, and a second node in the fixture would be one more
+ * thing that can be wrong for a reason the row is not about. Mirrors p422, the spec whose
+ * single-kind coverage this road generalises.
+ */
+async function constrainRow(page: Page, objectId: string): Promise<void> {
+  await page.evaluate((obj) => {
+    const dag = (window as unknown as BasherWindow).__basher_dag!.getState();
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: `${obj}_tt`,
+          nodeType: 'TrackTo',
+          params: {
+            name: 'tt',
+            target: obj,
+            aimNode: '',
+            aimPoint: [10, 0, 0],
+            up: [0, 1, 0],
+            mute: false,
+          },
+        },
+      ],
+      'e2e',
+      'conformance row constraint',
+    );
+  }, objectId);
+}
+
+/**
+ * Did the Track-To actually take? R6's vacuity guard, and it is PER BAND for the same
+ * reason the render probes are: what "aimed" looks like differs by what the band mounts.
+ *
+ * The guard carries the row. If the constraint never applied, the object stays on the
+ * channel road, the assertion still passes, and the cell reports constraint coverage it
+ * does not have — the exact shape of the prose claim this module replaced. So a null here
+ * is a hard failure, never a shrug.
+ *
+ * MEASURED: the first draft used the rendered world quaternion for every kind and returned
+ * null for light and camera. That is the instrument, not the product — both bands say so in
+ * their own probe docs above. `LightKindR` projects onto an unnamed three.js light, and the
+ * camera band mounts no object at all, only a frustum gizmo. Neither can be addressed by
+ * `scene.getObjectByName`.
+ */
+const CONSTRAINT_WITNESS: Record<
+  SplitKindName,
+  { took: (page: Page, objectId: string) => Promise<boolean | null>; how: string }
+> = (() => {
+  /** Side A for the children band: the RENDERED world orientation left identity. Reading the
+   *  rendered quaternion rather than the DAG is the point — a TrackTo node existing proves
+   *  somebody dispatched it, not that the renderer routed the object onto ConstrainedR. */
+  const rendered = async (page: Page, objectId: string): Promise<boolean | null> => {
+    const q = await page.evaluate(
+      (id) =>
+        (
+          window as unknown as {
+            __basher_mesh_world_quaternion?: (n: string) => [number, number, number, number] | null;
+          }
+        ).__basher_mesh_world_quaternion?.(id) ?? null,
+      objectId,
+    );
+    return q === null ? null : 1 - Math.abs(q[3]) > 1e-3;
+  };
+  return {
+    box: { took: rendered, how: 'the rendered world quaternion left identity' },
+    sphere: { took: rendered, how: 'the rendered world quaternion left identity' },
+    curve: { took: rendered, how: 'the rendered world quaternion left identity' },
+    baked: { took: rendered, how: 'the rendered world quaternion left identity' },
+    light: {
+      // THE WEAKEST WITNESS HERE, and both reasons are structural rather than an omission.
+      // MEASURED before settling for it: with the identical Track-To attached, the box
+      // control resolved `rotation [0,-90,0]` and rendered a world quaternion of
+      // [0,-0.707,0,0.707], while the light Object resolved NULL and its PointLight sat at
+      // identity. Two independent reasons, both in the code:
+      //
+      //   1. This row's LightData is a POINT light, which renders identically at every
+      //      orientation. There is no side-A "aimed" to observe — not because the band hides
+      //      one, but because a point light does not have one. Swapping the row to a spot
+      //      light to win a witness would change a fixture three other roads share, and
+      //      `lightIntensity` depends on it being the scene's only point light.
+      //   2. More to the point, the light band has NO exclusive constraint branch to fall
+      //      off. `LightNode` (SceneFromDAG.tsx:717-752) takes `constrained` as a PROP and
+      //      passes it through to DirectChannelsLightR / LightKindR — the channel road and
+      //      the constraint road are the same component. The hazard R6 exists to catch is
+      //      `OverlayDispatch` picking ONE of three renderers and the constraint branch
+      //      winning outright; that is a property of the CHILDREN band, and this band is not
+      //      built that way.
+      //
+      // So the witness confirms the constraint is live in the graph the renderer reads, and
+      // the row's real assertion — that the intensity channel still reaches the render with
+      // a constraint attached — carries the cell.
+      took: async (page, objectId) => {
+        return page.evaluate((id) => {
+          const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+          return Object.values(nodes).some(
+            (n) => n.type === 'TrackTo' && n.params?.target === id && n.params?.mute !== true,
+          );
+        }, objectId);
+      },
+      how:
+        'an unmuted Track-To targets it in the graph (a point light has no observable ' +
+        'orientation, and this band has no exclusive constraint renderer to fall off)',
+    },
+    camera: {
+      // Side A after all, and a better one than the quaternion: the frustum gizmo the
+      // viewport actually draws records the pose it was drawn with on `__basher_frustum_pose`,
+      // lookAt included. A live Track-To must point that lookAt at the aim point.
+      took: async (page, objectId) => {
+        const la = await page.evaluate(
+          (id) =>
+            (
+              window as unknown as {
+                __basher_frustum_pose?: Record<string, { lookAt?: number[] }>;
+              }
+            ).__basher_frustum_pose?.[id]?.lookAt ?? null,
+          objectId,
+        );
+        if (la === null) return null;
+        return Math.hypot(la[0] - 10, la[1] - 0, la[2] - 0) < 1e-3;
+      },
+      how: "the drawn frustum's lookAt points at the aim point",
+    },
+  };
+})();
 
 async function seedRowChannel(page: Page, kind: SplitKindName, objectId: string): Promise<string> {
   const spec = SPLIT_KINDS[kind];

@@ -241,7 +241,7 @@ describe('road-coverage gate (#491)', () => {
     expect(
       answered,
       'fewer cells are answered than before — coverage has regressed, not been restructured',
-    ).toBeGreaterThanOrEqual(51);
+    ).toBeGreaterThanOrEqual(56);
 
     // This replaces a hardcoded `total === 24` (#500). That number was 4 delegated roads × 6
     // kinds, and what it was really protecting is that a road cannot leave the table
@@ -258,7 +258,7 @@ describe('road-coverage gate (#491)', () => {
       derivedRoads().length,
       'a derived road has been removed rather than promoted — the denominator shrank without ' +
         'coverage being added',
-    ).toBeGreaterThanOrEqual(8);
+    ).toBeGreaterThanOrEqual(9);
   });
 });
 
