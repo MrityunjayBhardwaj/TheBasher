@@ -27,9 +27,11 @@ import type { Node, Op } from '../core/dag/types';
 import { canModifyGeometry } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
 import {
+  isDataLaneOperator,
   isEffectNode,
   isModifierNode,
   isPoserNode,
+  resolveDataLaneBase,
   resolveOperatorBase,
   singleRef,
   type OperatorPredicate,
@@ -147,15 +149,24 @@ export function enumerateEffectStack(state: DagState, baseNodeId: string): Modif
  *
  * An Object with no data (an Empty) has no stack, so it is its own base — the caller
  * then enumerates an empty stack, which is the honest answer.
+ *
+ * #517 — THE WALK IS A SHAPE QUESTION, AND ASKING IT WITH THE CURATED MODIFIER SET STOPS
+ * IT ONE HOP SHORT. "What stands between this Object and its base data?" is answered by
+ * whether a node HAS the data-lane shape (`ObjectData → ObjectData`), never by whether
+ * the modifier section happens to offer it: #394's material operators have that shape and
+ * are deliberately not members of `MODIFIER_NODE_TYPES` (they reshape no geometry, so
+ * offering them there would be wrong). With one spliced in, the curated walk returned the
+ * OPERATOR as the base — and then `canModifyGeometry` refused it, so "+ Array" on a
+ * perfectly ordinary cube silently did nothing.
+ *
+ * So this delegates to {@link resolveDataLaneBase} — the same walk `resolveDataParamOwner`
+ * needed at #516, which had this exact blindness one layer over. MEMBERSHIP stays curated:
+ * {@link enumerateModifierStack} still lists only modifiers, and a new modifier still
+ * splices into the modifier sub-chain BELOW a material operator, which is the order both
+ * references resolve in (materials after modifiers).
  */
 export function resolveStackBase(state: DagState, nodeId: string): string {
-  const node = state.nodes[nodeId];
-  if (isPoserNode(node)) {
-    const data = singleRef(node, DATA);
-    if (!data) return nodeId; // an Empty — nothing on the data lane to modify
-    return resolveOperatorBase(state, data.node, isModifierNode);
-  }
-  return resolveOperatorBase(state, nodeId, isModifierNode);
+  return resolveDataLaneBase(state, nodeId);
 }
 
 /**
@@ -169,6 +180,13 @@ export function resolveStackBase(state: DagState, nodeId: string): string {
  * a surface that needs "where does this modified geometry actually sit?" — the gizmo,
  * the read road — has to walk UP. Getting the direction wrong lands on the data node,
  * which has no transform at all, so it fails visibly rather than subtly.
+ *
+ * #517 — and it walks past ANY data-lane operator, for the same reason its inverse does.
+ * A material operator sitting above the modifier is neither a modifier nor a poser, so
+ * the curated walk fell off the end and answered `null` — "nothing wears this result",
+ * which reads as a dangling chain rather than as a walk that stopped early. This one is
+ * the more dangerous of the pair: `null` is a legitimate answer here, so the wrong answer
+ * is indistinguishable from a real one at the call site.
  */
 export function resolveStackObject(state: DagState, nodeId: string): string | null {
   let cur = nodeId;
@@ -176,7 +194,7 @@ export function resolveStackObject(state: DagState, nodeId: string): string | nu
   for (;;) {
     const consumer = findConsumer(state, cur, OUT);
     if (!consumer) return null; // dangling chain — nothing wears it yet
-    if (isModifierNode(state.nodes[consumer.node])) {
+    if (isDataLaneOperator(state.nodes[consumer.node])) {
       if (seen.has(consumer.node)) return null; // cycle guard
       seen.add(consumer.node);
       cur = consumer.node;

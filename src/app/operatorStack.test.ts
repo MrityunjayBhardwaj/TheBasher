@@ -40,6 +40,7 @@ import {
   enumerateModifierStack,
   findConsumer,
   resolveStackBase,
+  resolveStackObject,
 } from './operatorStack';
 
 /** The OBJECT — what a user selects, and what stays the scene object throughout. */
@@ -258,6 +259,82 @@ describe('operatorStack', () => {
         buildAddModifierOps(state, resolveStackBase(state, 'n_camera'), 'ArrayModifier', {}),
       ).toBeNull();
       expect(Object.keys(state.nodes).length).toBe(before);
+    });
+  });
+
+  // #517 — THE TWO SHAPE QUESTIONS, asked with a NON-MODIFIER operator in the lane.
+  //
+  // #394 S3c registered material operators: `ObjectData → ObjectData`, so they stand in
+  // the data lane exactly like a modifier does, and they are DELIBERATELY not members of
+  // MODIFIER_NODE_TYPES (a material operator reshapes no geometry, so it must not appear
+  // in the modifier section's offer list). That split is what these cases exist for.
+  //
+  // Two of this module's questions are about SHAPE — "what stands between the Object and
+  // its base data?" (resolveStackBase) and "walk past the chain to the Object that wears
+  // the result" (resolveStackObject) — and both must walk past ANY data-lane operator.
+  // The rest are about MEMBERSHIP ("what does the modifier section manage?") and stay
+  // curated. Asked with the curated set, the two shape walks stop one hop short, and the
+  // failure is quiet: the geometry renders correctly the whole time.
+  describe('#517 a non-modifier operator in the lane is walked past, not stopped at', () => {
+    /** Splice a material operator between the DATA and the Object — the graph S3c mints,
+     *  built by hand because no UI road creates one yet (which is why this was latent). */
+    function withMaterialOp(state: DagState): { state: DagState; opId: string } {
+      const opId = 'ovr';
+      let s = applyOp(state, {
+        type: 'addNode',
+        nodeId: opId,
+        nodeType: 'MaterialOverrideOp',
+        params: { color: '#00ff88', overridden: { color: true } },
+      }).next;
+      s = applyOp(s, {
+        type: 'disconnect',
+        from: { node: BOX_DATA, socket: 'out' },
+        to: { node: BOX, socket: 'data' },
+      }).next;
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: BOX_DATA, socket: 'out' },
+        to: { node: opId, socket: 'target' },
+      }).next;
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: opId, socket: 'out' },
+        to: { node: BOX, socket: 'data' },
+      }).next;
+      return { state: s, opId };
+    }
+
+    it('the stack base of a selected Object is still the DATA node', () => {
+      const { state } = withMaterialOp(buildDefaultDagState());
+      // The Object's `data` input now names the material operator, so a walk that only
+      // steps past curated modifiers stops there and reports the OPERATOR as the base.
+      expect(resolveStackBase(state, BOX)).toBe(BOX_DATA);
+    });
+
+    it('the modifier stack is still empty and still addable through the operator', () => {
+      const { state: state0, opId } = withMaterialOp(buildDefaultDagState());
+      const base = resolveStackBase(state0, BOX);
+      expect(enumerateModifierStack(state0, base)).toEqual([]);
+
+      // The modifier goes into the MODIFIER stack — below the material operator, which is
+      // the order both references resolve in (materials after modifiers). So the splice
+      // lands between the data and the operator, and the operator keeps feeding the Object.
+      const { state, id } = addMod(state0, BOX);
+      expect(findConsumer(state, BOX_DATA)).toEqual({ node: id, socket: 'target' });
+      expect(findConsumer(state, id)).toEqual({ node: opId, socket: 'target' });
+      expect(findConsumer(state, opId)).toEqual({ node: BOX, socket: 'data' });
+      expect(enumerateModifierStack(state, BOX_DATA).map((m) => m.nodeId)).toEqual([id]);
+      // INVARIANT (H218), unchanged by the operator: the Object stays the scene object.
+      expect(sceneEdgeOf(state)?.socket).toBe('children');
+    });
+
+    it('the Object wearing a modified result is found THROUGH the operator', () => {
+      // The inverse walk — the gizmo's and the read road's question. A material operator
+      // above the modifier is neither a modifier nor a poser, so a curated walk falls off
+      // the end and answers "nothing wears this", which reads as a dangling chain.
+      const { state } = withMaterialOp(buildDefaultDagState());
+      const { state: withMod, id } = addMod(state, BOX);
+      expect(resolveStackObject(withMod, id)).toBe(BOX);
     });
   });
 });
