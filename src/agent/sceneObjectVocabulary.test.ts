@@ -20,6 +20,7 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import {
   COMPUTE_KINDS,
+  RESOURCE_KINDS,
   SCENE_OBJECT_KINDS,
   nodeTypeFor,
   type PrimitiveKind,
@@ -67,6 +68,21 @@ describe('every scene object the mouse can add, the agent can add', () => {
     // actually consults, so a stale one is the loudest failure of all ("I can't add a curve").
     for (const kind of SCENE_OBJECT_KINDS) {
       expect(meshAddTool.description).toContain(kind);
+    }
+  });
+
+  it('does NOT expose the resource vocabulary either — same decision, stated (#394)', () => {
+    // `mesh.add` PLACES a body in the scene; a Material has no body and no place, so
+    // "add a material" is not the sentence that reaches it. Pinned rather than left
+    // implicit, because this file exists to record the class where Null (#296) and Curve
+    // (#321) shipped mouse-creatable and voiceless — a resource sits in the same blind
+    // spot, and "excluded on purpose" and "forgotten" look identical without an assertion.
+    //
+    // The material's agent road is the WRITE road (a mutator that edits the material a
+    // given object resolves to), not a create verb. If a create verb is ever wanted, it
+    // belongs to a resource-shaped tool, not to `mesh.add`.
+    for (const kind of RESOURCE_KINDS) {
+      expect(meshAddSchema.safeParse({ kind }).success, `${kind} leaked into mesh.add`).toBe(false);
     }
   });
 

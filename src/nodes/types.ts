@@ -221,6 +221,30 @@ export interface InlineMaterialMaps {
   readonly ao: BakedTextureRef | null;
 }
 
+/**
+ * What a `'Material'` socket carries (#394 D1) — the FINISHED material, tagged.
+ *
+ * Tagged, not a bare `InlineMaterialSpec`, because neither reference hands over an
+ * untagged struct: Blender reaches material content through a named socket type
+ * (`NodeSocketShader`) and its material is itself a tagged ID; MaterialX's
+ * `mtlxsurfacematerial` outputs the named type `material`. The tag is what lets a
+ * consumer narrow without knowing which node produced it.
+ *
+ * It carries the AUTHORED IR — a compile *input*, not a resolved snapshot (#394 D8).
+ * That is the axis: `InlineMaterialSpec` is the source, `BakedMaterialSpec` is a
+ * three.js-shaped compile *result*. Sockets carry sources; the source-vs-snapshot
+ * split belongs downstream at the compile boundary, where it already lives
+ * (`openpbrToThree` compiles the IR, `BakedMeshR` rebuilds a snapshot).
+ *
+ * `spec` is the whole finished material, so HOW the Material node finished it stays
+ * private to that node — whether the lobes come from params today, from input sockets
+ * (textures as nodes), or from a nested shader graph later, this contract is unchanged.
+ */
+export interface OpenPBRMaterialValue {
+  readonly kind: 'OpenPBRMaterial';
+  readonly spec: InlineMaterialSpec;
+}
+
 export interface InlineMaterialSpec {
   /** Legacy display label (kept from the P0 {name,color} shape). */
   readonly name: string;

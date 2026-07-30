@@ -17,6 +17,7 @@ import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { BoxDataNode } from './BoxData';
+import { MaterialNode } from './Material';
 import { SphereDataNode } from './SphereData';
 import { ObjectNode } from './ObjectNode';
 import { CameraSelectNode } from './CameraSelect';
@@ -124,6 +125,9 @@ const ALL: NodeDefinition[] = [
   // SphereMesh below; the split retires the fused value kind in a later slice.
   SphereDataNode as unknown as NodeDefinition,
   SphereMeshNode as unknown as NodeDefinition,
+  // #394 — the material's own producer. Emits the finished OpenPBR IR as a tagged
+  // value; nothing consumes it until the data nodes grow a `material` socket.
+  MaterialNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
   // P7.7 — addressable proxy per glTF scene child (issue #91). Inputless,
   // non-producing addressing satellite; emitted one-per-child at import
