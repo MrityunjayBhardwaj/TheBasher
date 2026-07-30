@@ -23,37 +23,33 @@
 //      vyapti V58.
 
 import type { DagState } from '../core/dag/state';
-import type { Node, NodeRef, Op } from '../core/dag/types';
-import { getNodeType } from '../core/dag/registry';
+import type { Node, Op } from '../core/dag/types';
 import { canModifyGeometry } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
+import {
+  isEffectNode,
+  isModifierNode,
+  isPoserNode,
+  resolveOperatorBase,
+  singleRef,
+  type OperatorPredicate,
+} from './operatorChain';
 
-/** The geometry-operator (SOP / modifier) node types this stack manages. A node
- *  is a modifier iff its type is registered here — new modifiers (Mirror, Subdiv…)
- *  register by adding their type, nothing else. They all share the Mesh `target`
- *  input / Mesh `out` output shape, which is what makes the sub-chain uniform. */
-export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set([
-  'ArrayModifier',
-  'MirrorModifier',
-]);
-
-/** The video-effect (Image→Image) node types — the [[V58]] lift to the Image socket
- *  (epic #235 / spine 1e+). An effect is a typed `target: Image`/`out: Image`
- *  operator on the SAME sub-chain engine as a geometry modifier; new effects
- *  register by adding their type here, nothing else. The stack helpers are socket-
- *  agnostic (they re-wire `target`/`out` edges) — only this predicate differs. */
-export const EFFECT_NODE_TYPES: ReadonlySet<string> = new Set(['ColorCorrect']);
-
-/** Predicate over the set of node types an OperatorStack instance manages. */
-export type OperatorPredicate = (node: Node | undefined) => boolean;
-
-export function isModifierNode(node: Node | undefined): boolean {
-  return !!node && MODIFIER_NODE_TYPES.has(node.type);
-}
-
-export function isEffectNode(node: Node | undefined): boolean {
-  return !!node && EFFECT_NODE_TYPES.has(node.type);
-}
+// The chain vocabulary lives in `operatorChain.ts` (a leaf that imports only
+// core/dag) so surfaces which cannot import THIS module — it reaches sceneTreeWalk
+// and modifierGeometry, and sceneTreeWalk -> activeCamera -> resolveDataParamOwner
+// closes a cycle — can still share one walk (#516). Re-exported here so this stays
+// the address every existing caller already knows.
+export {
+  MODIFIER_NODE_TYPES,
+  EFFECT_NODE_TYPES,
+  isModifierNode,
+  isEffectNode,
+  isDataLaneOperator,
+  resolveOperatorBase,
+  resolveDataLaneBase,
+  type OperatorPredicate,
+} from './operatorChain';
 
 /** One entry in an operator stack, bottom (closest to the base) → top. */
 export interface ModifierEntry {
@@ -66,25 +62,6 @@ export interface ModifierEntry {
 const OUT = 'out';
 const TARGET = 'target';
 const DATA = 'data';
-
-/**
- * Is `node` a POSER — an object that wears data through a `data` input? Derived from
- * the registry (it declares a `data` input carrying the `ObjectData` socket), never
- * matched against `type === 'Object'`: a type list is exactly the drift #377 measured
- * when the modifier's supported-source set named a retired type AND missed a live one
- * at the same time. A future poser is covered the day it declares the socket.
- */
-function isPoserNode(node: Node | undefined): boolean {
-  if (!node) return false;
-  return getNodeType(node.type)?.inputs[DATA]?.type === 'ObjectData';
-}
-
-/** The single ref a (possibly list) input binding holds for `socket`, or null. */
-function singleRef(node: Node | undefined, socket: string): NodeRef | null {
-  const b = node?.inputs[socket];
-  if (!b) return null;
-  return Array.isArray(b) ? (b[0] ?? null) : b;
-}
 
 /**
  * The node + input-socket that consumes `(fromNode, fromSocket)`. Scans every
@@ -155,29 +132,6 @@ export function enumerateModifierStack(state: DagState, baseNodeId: string): Mod
  *  instantiation of {@link enumerateOperatorStack}. */
 export function enumerateEffectStack(state: DagState, baseNodeId: string): ModifierEntry[] {
   return enumerateOperatorStack(state, baseNodeId, isEffectNode);
-}
-
-/**
- * The BASE mesh of a stack from any node in it: if `nodeId` is a modifier, walk
- * down its `target` chain past modifiers to the first non-modifier producer (the
- * mesh); if it is already a mesh-producer, return it unchanged. Lets the inspector
- * show the SAME stack whether the user selected the base mesh or one of its
- * modifiers (the rendered arrayed mesh click-selects the top modifier).
- */
-export function resolveOperatorBase(
-  state: DagState,
-  nodeId: string,
-  isOp: OperatorPredicate,
-): string {
-  let cur = nodeId;
-  const seen = new Set<string>();
-  while (isOp(state.nodes[cur]) && !seen.has(cur)) {
-    seen.add(cur);
-    const up = singleRef(state.nodes[cur], TARGET);
-    if (!up) break; // dangling operator — treat it as the base
-    cur = up.node;
-  }
-  return cur;
 }
 
 /**

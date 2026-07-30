@@ -15,6 +15,7 @@
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; src/nodes/BoxData.ts; #365 Phase 5a.
 
 import type { DagState } from '../core/dag/state';
+import { resolveDataLaneBase } from './operatorChain';
 
 /**
  * The id of the data node `id` points at through its `data` input, or null when it points at
@@ -82,14 +83,18 @@ export function resolveDataParamOwner(
 
   // Reach through the split: the Object owns the transform; the data node it points at via
   // `data` owns geometry + material.
-  const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
-    | { node?: string }
-    | undefined;
-  if (dataRef?.node) {
-    const dataNode = state.nodes[dataRef.node];
-    const dataParams = dataNode?.params as Record<string, unknown> | undefined;
-    if (dataParams && paramRoot in dataParams) {
-      return linkedProducerId(state, dataRef.node, paramRoot) ?? dataRef.node;
+  //
+  // #516 — WALK THE WHOLE CHAIN, never one hop. Since the operator stack moved onto the
+  // data lane, an Object's `data` input names the TOP of the stack, so a single hop lands
+  // on an operator. Measured on a cube with one ArrayModifier: this returned null for BOTH
+  // `material` and `size`, which made every write road (setMaterialColor, randomize, scale)
+  // report that a visibly-materialed cube had no material. The walk is shared, not
+  // re-spelled here — an operator that is not a geometry modifier must be stepped past too.
+  const baseId = resolveDataLaneBase(state, id);
+  if (baseId !== id) {
+    const baseParams = state.nodes[baseId]?.params as Record<string, unknown> | undefined;
+    if (baseParams && paramRoot in baseParams) {
+      return linkedProducerId(state, baseId, paramRoot) ?? baseId;
     }
   }
 
