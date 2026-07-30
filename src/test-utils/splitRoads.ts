@@ -203,31 +203,32 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
   },
   R6: {
     id: 'R6',
+    // PROMOTED delegated → derived (#500). p422 built a cube and nothing else, and the camera
+    // cell had nowhere to start from at all — the spec that sounds right, p204-camera-track-to,
+    // builds a CUBE and points a camera AT it, so the constrained half was never the camera's.
+    //
+    // TWO ANSWERS CAME BACK DIFFERENT FROM WHAT CARRYING R5's ROW OVER WOULD HAVE RECORDED,
+    // which is the argument for measuring a road rather than reasoning from its neighbour:
+    //
+    //   The CAMERA reaches. It refuses a held edit by design (#484: `resolveCameraPoseAt`
+    //   renders committed DAG state only), but a channel IS committed state, so a constrained
+    //   camera does follow its animated lens. Copying #484's NO here would have recorded a
+    //   gap that does not exist.
+    //
+    //   The CURVE does not reach, and for the SAME mechanism as its held edit (#474) rather
+    //   than a second one: the renderer reads `samples`, baked at evaluate time, so no
+    //   post-evaluate overlay reaches it — channel or transient alike.
+    //
+    // The vacuity guard is per BAND, because "aimed" is not one observable. The children band
+    // reads the rendered world quaternion. The camera band reads the lookAt recorded on the
+    // frustum gizmo it actually drew. The light band gets the weakest witness in the table and
+    // says so: its row is a POINT light, which has no orientation to observe, and more to the
+    // point `LightNode` (SceneFromDAG.tsx:717-752) passes `constrained` as a prop rather than
+    // switching renderers — so the exclusive-branch hazard this road exists to catch is a
+    // property of the children band and structurally absent there.
     title: 'constraint reach — a constraint on the Object reaches a data param',
-    runsIn: 'tests/e2e/p422-constrained-data-param.spec.ts',
-    derivation: 'delegated',
-    coverage: {
-      box: { by: 'tests/e2e/p422-constrained-data-param.spec.ts' },
-      curve: gap(
-        'the delegate builds a cube; the curve specs below drive constraints but have ' +
-          'not been confirmed to ask THIS road (does a constraint reach a DATA param)',
-        '#500',
-        ['tests/e2e/p341-constraint-ref-picker.spec.ts', 'tests/e2e/p339-follow-path.spec.ts'],
-      ),
-      light: gap('the delegate builds a cube', '#500', [
-        'tests/e2e/p265-aimable-light-track-to.spec.ts',
-      ]),
-      sphere: gap('the delegate builds a cube', '#500'),
-      // No candidate: the only two specs that build a split camera (p231-active-camera,
-      // p231-nested-camera) drive neither constraint. p204-camera-track-to sounds right and
-      // is not — it builds a CUBE and points a camera at it, so the constrained half is the
-      // cube's. This cell has nowhere to start from, which is worth recording.
-      camera: gap(
-        'the delegate builds a cube, and no spec constrains a split camera at all',
-        '#500',
-      ),
-      baked: gap('the delegate builds a cube', '#500'),
-    },
+    runsIn: 'tests/e2e/split-kind-conformance.spec.ts',
+    derivation: 'derived',
   },
   R7: {
     id: 'R7',
