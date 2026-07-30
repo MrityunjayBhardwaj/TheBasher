@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { resolveMaterialOverrideFields } from './materialOverrideMerge';
-import type { MaterialValue } from '../nodes/types';
+import type { MaterialValue } from '../../nodes/types';
 
 const override: MaterialValue = {
   kind: 'Material',

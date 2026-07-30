@@ -12,9 +12,9 @@
 //
 // THE R1 TWO-DEFAULTS-ON-PURPOSE SPLIT (do NOT "fix" the discrepancy):
 //   • NEW boxes (zod) get OpenPBR specular.roughness = 0.3 (the correct look).
-//   • MIGRATED boxes (migrations[2]) get 0.5 — the CURRENT renderer constant
-//     (SceneFromDAG.tsx applyOverride no-override branch) — so a saved project
-//     renders BYTE-IDENTICALLY after the widen. Two deliberate defaults.
+//   • MIGRATED boxes (migrations[2]) get 0.5 — the roughness the pre-#178 renderer
+//     gave a material with no override — so a saved project renders
+//     BYTE-IDENTICALLY after the widen. Two deliberate defaults.
 //
 // REF: CONTEXT D-02/D-03 + HARD CONSTRAINTS (V10/H14); PLAN W1 (1.2/1.3/1.4);
 //      vyapti V10/V32; hetvabhasa H14; issue #178.
@@ -22,7 +22,16 @@
 import { z } from 'zod';
 import type { BakedMaterialSpec, InlineMaterialSpec } from './types';
 
-/** The renderer's current no-override roughness (SceneFromDAG.tsx applyOverride). */
+/**
+ * The roughness a pre-#178 material rendered at when no override was present.
+ *
+ * A FROZEN HISTORICAL CONSTANT, not a live mirror of anything. It used to be a
+ * hand-copy of `SceneFromDAG.applyOverride`'s no-override branch; #394 S3b deleted
+ * that branch — measured UNREACHABLE (its only call site was guarded by
+ * `override ?`, and `BakedMeshR` had grown its own no-override arm) — so the thing
+ * this once tracked no longer exists. It stays because a v2 save migrated at any
+ * future date must still land on the look it had when it was saved.
+ */
 export const CURRENT_LOOK_ROUGHNESS = 0.5;
 
 /**

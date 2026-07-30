@@ -116,7 +116,8 @@ import { PostFx } from '../render/PostFx';
 import { SceneEnvironment } from './SceneEnvironment';
 import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
-import { resolveMaterialOverrideFields } from './materialOverrideMerge';
+import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
+import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -1983,40 +1984,6 @@ function ConstrainedR({
   return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
-function applyOverride(
-  baseColor: string,
-  override: MaterialValue | undefined,
-): {
-  color: string;
-  roughness: number;
-  metalness: number;
-  opacity: number;
-  emissive: string;
-  emissiveIntensity: number;
-  transparent: boolean;
-} {
-  if (!override) {
-    return {
-      color: baseColor,
-      roughness: 0.5,
-      metalness: 0,
-      opacity: 1,
-      emissive: '#000000',
-      emissiveIntensity: 0,
-      transparent: false,
-    };
-  }
-  return {
-    color: override.color,
-    roughness: override.roughness,
-    metalness: override.metalness,
-    opacity: override.opacity,
-    emissive: override.emissive,
-    emissiveIntensity: override.emissiveIntensity,
-    transparent: override.opacity < 1,
-  };
-}
-
 // v0.6 #2 (#178, W2) — the ONE shared primitive material builder for Box+Sphere.
 // Mirrors BakedMeshR's imperative useMemo build (single writer V20): compile the
 // OpenPBR IR via openpbrToThree (the one mapping site, V29) → MeshPhysicalMaterial.
@@ -2025,24 +1992,37 @@ function applyOverride(
 // on `> 0` (WebGLPrograms.js:130,134 HAS_CLEARCOAT/HAS_TRANSMISSION; the setters
 // MeshPhysicalMaterial.js:104,176 only recompile across the 0 boundary). roughness
 // and clearcoatRoughness are set EXPLICITLY (three defaults are 1 and 0 — D-03).
-// A MaterialOverride decorator (#99/#124) still wins WHOLESALE on its 7 scalars
-// (backward-compat — a primitive has no source map); coat/transmission/ior/maps
-// always come from the IR (the override carries no opinion on them).
+// A MaterialOverride decorator (#99/#124) composes onto the IR through the ONE
+// shared rule (`composeMaterial`, #394 S3b) BEFORE the compile, so the override
+// is map-aware here exactly as it is on the glTF road: a roughness/metalness map
+// on the primitive's own material defends its channel unless the director
+// explicitly authored that field. It used to win WHOLESALE on all 7 scalars, on
+// the premise "a primitive has no source map" — false since MaterialEditor grew
+// map rows (NPanel.tsx:1395) and this very function started loading them below.
+// coat/transmission/ior/maps still always come from the IR (the override carries
+// no opinion on them), and `transparent` now comes from the compile rather than
+// being re-derived as `opacity < 1`.
 function usePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
   shading: string,
 ): THREE.MeshPhysicalMaterial {
-  const three = openpbrToThree(ir);
-  const color = override ? override.color : three.color;
-  const roughness = override ? override.roughness : three.roughness;
-  const metalness = override ? override.metalness : three.metalness;
-  const opacity = override ? override.opacity : three.opacity;
-  const emissive = override ? override.emissive : three.emissive;
-  const emissiveIntensity = override ? override.emissiveIntensity : three.emissiveIntensity;
-  const transparent = override ? override.opacity < 1 : three.transparent;
+  const three = openpbrToThree(override ? composeMaterial(ir, override) : ir);
+  const {
+    color,
+    roughness,
+    metalness,
+    opacity,
+    emissive,
+    emissiveIntensity,
+    transparent,
+    ior,
+    clearcoat,
+    clearcoatRoughness,
+    transmission,
+    thickness,
+  } = three;
   const wireframe = shading === 'wireframe';
-  const { ior, clearcoat, clearcoatRoughness, transmission, thickness } = three;
   // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
   // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
   // the loader hook, never in the resolver (V29). The ref carries the colorspace;
@@ -2399,11 +2379,14 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
   const aoTex = useBakedTexture(spec.aoMap);
   const emissiveTex = useBakedTexture(spec.emissiveMap);
 
-  // The override wins on scalar color when present (#99/#124); otherwise the
-  // baked spec's own captured scalars drive the material (a Box bake carries Box
-  // defaults; a glTF bake carries the resolved post-override scalars).
+  // The override composes onto the captured spec through the ONE shared rule
+  // (`composeBakedMaterial`, #394 S3b) when present; otherwise the baked spec's
+  // own captured scalars drive the material (a Box bake carries Box defaults; a
+  // glTF bake carries the resolved post-override scalars). The compose is
+  // map-aware: a bake that captured a roughness/metalness map keeps it, where the
+  // old `applyOverride` forced the override's scalar over it.
   const scalar = override
-    ? applyOverride(spec.color, override)
+    ? composeBakedMaterial(spec, override)
     : {
         color: spec.color,
         roughness: spec.roughness,
