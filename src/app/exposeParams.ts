@@ -59,7 +59,20 @@ import {
   sectionRowFilter,
   type SectionCtx,
 } from './inspectorSectionBody';
-import { isDataLaneOperator, isPoserNode, resolveDataLaneBase, singleRef } from './operatorChain';
+import {
+  isDataLaneOperator,
+  isMaterialLaneOperator,
+  isPoserNode,
+  resolveDataLaneBase,
+  singleRef,
+} from './operatorChain';
+import {
+  MATERIAL_FIELD_IR_PATH,
+  MATERIAL_OVERRIDE_FIELDS,
+  resolveMaterialFieldOwners,
+} from './resolveMaterialFieldOwner';
+import { nodeDisplayName } from './sceneTreeWalk';
+import type { MaterialOverrideField } from '../nodes/types';
 // The enumeration lives in `operatorStack` (it needs `nodeDisplayName`); the WALK
 // vocabulary lives in the leaf. Importing each from where it actually is keeps the leaf a
 // leaf — `operatorStack` reaches `sceneTreeWalk`, which closes a cycle back to the
@@ -85,6 +98,14 @@ export interface ExposedHome {
   readonly label?: string;
 }
 
+/** A later layer that supplies a field this row also holds — see `maskedBy`. */
+export interface MaskSource {
+  /** The node that actually supplies the value the viewport draws. */
+  readonly nodeId: string;
+  /** That node's display name, for the label. */
+  readonly label: string;
+}
+
 export interface DerivedParam {
   readonly kind: 'derived';
   /** ABSOLUTE, this instance. What a write uses. */
@@ -97,6 +118,30 @@ export interface DerivedParam {
   /** 0 = the base producer; higher = a later layer. Metadata, not the sort key. */
   readonly depth: number;
   readonly origin: ExposedOrigin;
+  /**
+   * Fields on this row whose value the viewport takes from ANOTHER node, keyed by the
+   * full param path the surface addresses (`material.specular.roughness`, or the flat
+   * `roughness` on an override operator).
+   *
+   * ── A LABEL, NEVER A REDIRECT ─────────────────────────────────────────────────────
+   *
+   * A masked row stays EDITABLE and its write still lands on its own node. Redirecting
+   * the write is what makes the failure silent; saying so out loud makes the same fact
+   * loud. This is deliberately NOT the driven-param treatment, which locks the field
+   * (`NPanel.tsx` NumericField, `readOnly = driven`): a driven value is recomputed every
+   * frame and the base is never read again, whereas a masked material field's base IS
+   * the value the moment the operator is muted, removed, or its authored bit cleared.
+   * The base is the layer below, not dead state — Houdini's rule, where an upstream node
+   * is always editable and the display flag decides only what you SEE.
+   *
+   * ── WHY A MAP AND NOT A FLAG ──────────────────────────────────────────────────────
+   *
+   * Masking is per FIELD and a row is a container of fields: one row (`n_box_data |
+   * material`) renders as eleven lobe widgets, and a sparse override can supply exactly
+   * one of them. A boolean on the row would be wrong at both ends — it would grey a
+   * whole material because one channel is forced, or say nothing because most are not.
+   */
+  readonly maskedBy?: Readonly<Record<string, MaskSource>>;
 }
 
 /** P7 adds a `'promoted'` arm (a spare param plus N drivers). The union is declared as a
@@ -390,5 +435,65 @@ export function exposeParams(
       );
     }
   }
-  return out;
+
+  return withMaterialMasking(state, selected.id, plans, out);
+}
+
+/**
+ * Attach `maskedBy` to the rows a later layer supplies (#394 P4).
+ *
+ * ⚠️ ONCE PER PROJECTION, NEVER PER ROW — the measured trap this stage carries.
+ * `resolveMaterialFieldOwners` EVALUATES to learn which source maps defend a channel, and
+ * the evaluator hashes params before its cache lookup ([[H48]]; the ~458ms inspector edit
+ * lag #498 measured). One call answers all six fields for the whole chain, and its result
+ * is distributed over the rows here. A per-row call would evaluate once per widget, and
+ * one material row is ELEVEN widgets.
+ *
+ * The guard in front of it matters as much: a chain with nothing that can mask pays
+ * NOTHING, which is every object in the default project.
+ */
+function withMaterialMasking(
+  state: DagState,
+  selectedId: string,
+  plans: readonly NodePlan[],
+  rows: readonly DerivedParam[],
+): DerivedParam[] {
+  // Two things can take authority over a material field: an operator in the lane, and a
+  // producer wired into a `material` socket (a socket SUPERSEDES the param it shares a
+  // name with — the rule `resolveDataParamOwner`'s second hop already encodes).
+  const canMask = plans.some(
+    (p) => isMaterialLaneOperator(p.node) || singleRef(p.node, 'material') !== null,
+  );
+  if (!canMask) return rows as DerivedParam[];
+
+  const owners = resolveMaterialFieldOwners(state, selectedId);
+  const labelOf = (nodeId: string) => {
+    const n = state.nodes[nodeId];
+    return n ? nodeDisplayName(n) : nodeId;
+  };
+
+  return rows.map((row) => {
+    // Where would a material field live on THIS row? Exactly two vocabularies, which is
+    // the same bridge `MATERIAL_FIELD_IR_PATH` exists for: a data node or a Material node
+    // holds every field inside one `material` IR param; an override operator holds each
+    // as a flat scalar param of its own. A row in neither shape holds no material field.
+    const pathOn = (field: MaterialOverrideField): string | null =>
+      row.paramPath === 'material'
+        ? MATERIAL_FIELD_IR_PATH[field]
+        : row.paramPath === field
+          ? field
+          : null;
+
+    const masked: Record<string, MaskSource> = {};
+    for (const field of MATERIAL_OVERRIDE_FIELDS) {
+      const owner = owners[field];
+      // Owned by this very row's node ⇒ nothing masks it. That is the common case and
+      // the reason an unmasked row is byte-identical to before this stage.
+      if (!owner || owner.nodeId === row.nodeId) continue;
+      const path = pathOn(field);
+      if (path === null) continue;
+      masked[path] = { nodeId: owner.nodeId, label: labelOf(owner.nodeId) };
+    }
+    return Object.keys(masked).length > 0 ? { ...row, maskedBy: masked } : row;
+  });
 }

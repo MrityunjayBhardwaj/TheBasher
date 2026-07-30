@@ -114,9 +114,21 @@ function mapPresenceBelow(state: DagState, opId: string): MaterialMapPresence {
   }
 }
 
+/** The six fields, derived from the IR-path table so the two cannot drift apart. */
+export const MATERIAL_OVERRIDE_FIELDS = Object.keys(
+  MATERIAL_FIELD_IR_PATH,
+) as readonly MaterialOverrideField[];
+
 /**
- * Does the material-lane operator `opId` mask `field` — and if so, where does a write to
- * that field belong?
+ * Which fields the material-lane operator `opId` masks, and where a write to each belongs.
+ *
+ * ⚠️ ALL SIX FIELDS IN ONE CALL, and that is a correctness-shaped performance property,
+ * not a micro-optimisation. This function EVALUATES (`mapPresenceBelow`), and the
+ * evaluator hashes params before its cache lookup — the shape behind the measured ~458ms
+ * inspector edit lag ([[H48]], #498). Asked once per field it evaluates six times per
+ * operator; asked once per ROW, as a naive label implementation would, it evaluates once
+ * per widget. Answering the whole set from a single `resolveMaterialOverrideFields` call
+ * is what keeps the cost proportional to the LANE rather than to the panel.
  *
  * The switch closes on a `never` over `MaterialLaneType` ([[V109]]): a new material
  * operator added to `MATERIAL_LANE_TYPES` without an arm here is a COMPILE ERROR, not a
@@ -124,86 +136,129 @@ function mapPresenceBelow(state: DagState, opId: string): MaterialMapPresence {
  * a missing arm is invisible — the write succeeds against the layer below and nothing
  * changes on screen.
  */
-function maskedBy(
+function maskedFieldsOf(
   state: DagState,
   opId: string,
-  field: MaterialOverrideField,
-): MaterialFieldOwner | null {
+): Partial<Record<MaterialOverrideField, MaterialFieldOwner>> {
   const node = state.nodes[opId];
-  if (!node) return null;
+  if (!node) return {};
   const params = node.params as Record<string, unknown>;
   // A muted layer is byte-identically no layer (V58) — it masks nothing.
-  if (params.muted === true) return null;
+  if (params.muted === true) return {};
 
+  const out: Partial<Record<MaterialOverrideField, MaterialFieldOwner>> = {};
   switch (node.type as MaterialLaneType) {
     case 'SetMaterialOp': {
       // Wholesale replace: it masks EVERY field, and its authority for each of them is
       // the Material node on its socket. Nothing connected ⇒ the operator is transparent
       // (its `evaluate` passes the source through), so it owns nothing.
       const ref = singleRef(node, 'material');
-      if (!ref) return null;
+      if (!ref) return {};
       const producer = state.nodes[ref.node]?.params as Record<string, unknown> | undefined;
       // Self-checking, exactly like the second hop in `resolveDataParamOwner`: only claim
       // the producer as the owner when it actually carries a writable material param.
-      if (!producer || !('material' in producer)) return null;
-      return { nodeId: ref.node, paramPath: MATERIAL_FIELD_IR_PATH[field] };
+      if (!producer || !('material' in producer)) return {};
+      for (const field of MATERIAL_OVERRIDE_FIELDS) {
+        out[field] = { nodeId: ref.node, paramPath: MATERIAL_FIELD_IR_PATH[field] };
+      }
+      return out;
     }
     case 'MaterialOverrideOp': {
+      // ONE call, six answers — see the note above.
       const fields = resolveMaterialOverrideFields(
         overrideValueOf(params as unknown as MaterialOverrideOpParams),
         mapPresenceBelow(state, opId),
         (params as unknown as MaterialOverrideOpParams).overridden,
       );
-      // `null` ⇒ the source keeps the channel ⇒ this layer is transparent for it. Only
-      // roughness/metalness can be null; the tint fields are always applied, which is
-      // why an override op with default params still owns `color`.
-      const written =
-        field === 'roughness'
-          ? fields.roughness !== null
-          : field === 'metalness'
-            ? fields.metalness !== null
-            : true;
-      return written ? { nodeId: opId, paramPath: field } : null;
+      for (const field of MATERIAL_OVERRIDE_FIELDS) {
+        // `null` ⇒ the source keeps the channel ⇒ this layer is transparent for it. Only
+        // roughness/metalness can be null; the tint fields are always applied, which is
+        // why an override op with default params still owns `color`.
+        const written =
+          field === 'roughness'
+            ? fields.roughness !== null
+            : field === 'metalness'
+              ? fields.metalness !== null
+              : true;
+        if (written) out[field] = { nodeId: opId, paramPath: field };
+      }
+      return out;
     }
     default: {
       const exhaustive: never = node.type as never;
       void exhaustive;
-      return null;
+      return {};
     }
   }
 }
 
 /**
- * The owner of one material FIELD for the scene object (or data node, or operator) `id`.
+ * The owner of EVERY material field for the scene object (or data node, or operator) `id`,
+ * in one walk.
  *
- * Walks the data lane from the top of the stack downwards; the first layer that masks
- * the field wins. With no material operator in the chain this returns exactly what
- * `resolveDataParamOwner(state, id, 'material')` returns, with the field's IR path — so
- * it is a strict extension of the shipped reach, not a competing one.
+ * Walks the data lane from the top of the stack downwards; for each field, the first layer
+ * that masks it wins. With no material operator in the chain every field resolves to
+ * exactly what `resolveDataParamOwner(state, id, 'material')` returns, with that field's IR
+ * path — so this is a strict extension of the shipped reach, not a competing one.
+ *
+ * This is the form the inspector's masking labels consume: the projection asks ONCE per
+ * chain and distributes the answers over its rows, never once per row.
  */
-export function resolveMaterialFieldOwner(
+export function resolveMaterialFieldOwners(
   state: DagState,
   id: string,
-  field: MaterialOverrideField,
-): MaterialFieldOwner | null {
+): Readonly<Record<MaterialOverrideField, MaterialFieldOwner | null>> {
+  const out = Object.fromEntries(MATERIAL_OVERRIDE_FIELDS.map((f) => [f, null])) as Record<
+    MaterialOverrideField,
+    MaterialFieldOwner | null
+  >;
   const node = state.nodes[id];
-  if (!node) return null;
+  if (!node) return out;
 
+  let remaining = MATERIAL_OVERRIDE_FIELDS.length;
   // The TOP of the stack: a poser names it through `data`; anything else is already in
   // the chain (a selected operator, or a bare data node with no stack at all).
   let cur: string | undefined = isPoserNode(node) ? singleRef(node, 'data')?.node : id;
   const seen = new Set<string>();
-  while (cur && isDataLaneOperator(state.nodes[cur]) && !seen.has(cur)) {
+  while (cur && remaining > 0 && isDataLaneOperator(state.nodes[cur]) && !seen.has(cur)) {
     seen.add(cur);
     if (isMaterialLaneOperator(state.nodes[cur])) {
-      const owner = maskedBy(state, cur, field);
-      if (owner) return owner;
+      const masked = maskedFieldsOf(state, cur);
+      for (const field of MATERIAL_OVERRIDE_FIELDS) {
+        const owner = masked[field];
+        if (owner && out[field] === null) {
+          out[field] = owner;
+          remaining -= 1;
+        }
+      }
     }
     // A geometry modifier is transparent to material by construction — it INHERITS the
     // source's material (`ArrayModifier.ts:76`) rather than having an opinion on it.
     cur = singleRef(state.nodes[cur], 'target')?.node;
   }
 
-  const baseOwner = resolveDataParamOwner(state, id, 'material');
-  return baseOwner ? { nodeId: baseOwner, paramPath: MATERIAL_FIELD_IR_PATH[field] } : null;
+  if (remaining > 0) {
+    const baseOwner = resolveDataParamOwner(state, id, 'material');
+    if (baseOwner) {
+      for (const field of MATERIAL_OVERRIDE_FIELDS) {
+        if (out[field] === null) {
+          out[field] = { nodeId: baseOwner, paramPath: MATERIAL_FIELD_IR_PATH[field] };
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The owner of ONE material field. Delegates to the whole-set walk so there is a single
+ * decision function — a per-field spelling would be a second answer to the same question,
+ * which is the failure this module's own header is about.
+ */
+export function resolveMaterialFieldOwner(
+  state: DagState,
+  id: string,
+  field: MaterialOverrideField,
+): MaterialFieldOwner | null {
+  return resolveMaterialFieldOwners(state, id)[field];
 }

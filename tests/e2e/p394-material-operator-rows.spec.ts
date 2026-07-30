@@ -232,6 +232,32 @@ test("#518 — editing the operator's row moves the viewport; editing the masked
   expect(await renderedRoughness(page)).toBeCloseTo(TYPED_ON_OP, 5);
 });
 
+test('#394 P4 — a masked base row is LABELLED and still editable', async ({ page }) => {
+  // The mark names the layer that actually supplies the value. It appears on the BASE's
+  // lobe rows (per channel, in the IR vocabulary) and NOT on the operator's own rows —
+  // the operator is the authority, not the masked layer.
+  const mark = page.getByTestId(`inspector-masked-${DATA}-material.specular.roughness`);
+  await expect(mark).toBeVisible();
+  await expect(mark).toHaveAttribute('data-masked-by', OP);
+  await expect(page.getByTestId(`inspector-masked-${OP}-roughness`)).toHaveCount(0);
+
+  // 🔴 LABELLED, NOT LOCKED — the property this whole slice turns on. The driven-param
+  // treatment makes a row read-only; masking must not, because the base IS the value the
+  // moment the operator is muted, removed or its authored bit cleared. A locked row would
+  // put a layer the director is meant to reach out of reach.
+  const baseRow = page.getByTestId(`inspector-input-${DATA}-material.specular.roughness`);
+  await expect(baseRow).toBeVisible();
+  await expect(baseRow).not.toHaveAttribute('readonly', /.*/);
+  await expect(baseRow).toBeEditable();
+
+  // …and the write still lands on the base, which is what "never a redirect" means.
+  await baseRow.fill('0.31');
+  await baseRow.press('Enter');
+  await expect
+    .poll(() => storedNumber(page, DATA, ['material', 'specular', 'roughness']))
+    .toBeCloseTo(0.31, 5);
+});
+
 test("#518 — an operator's section that the base does NOT declare still renders", async ({
   page,
 }) => {
