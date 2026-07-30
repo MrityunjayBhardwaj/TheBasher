@@ -20,7 +20,8 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MeshDataValue } from './types';
 import { sphereGeometryRef } from '../app/modifierGeometry';
-import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
+import { openpbrMaterialSchema } from './materialSchema';
+import { resolveNodeMaterial } from './materialSocket';
 
 // Match SphereMesh's default so an Object→SphereData look is byte-identical to a
 // fused sphere.
@@ -41,19 +42,28 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: SphereDataParams,
-  inputs: {},
+  inputs: {
+    // #394 — the material can come from a Material node instead of this node's own
+    // param. `list` cardinality is deliberate and the reason is in materialSocket.ts:
+    // the binding shape is PERSISTED, so widening it later is a format migration.
+    // Exactly one entry is read, which is also the whole correct answer for a
+    // primitive (one slot in the reference too) until per-element material.
+    material: { type: 'Material', cardinality: 'list' },
+  },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // Data owns geometry + material, NEVER a pose: no 'transform'/'constraint'
   // section (a data node has no world transform to constrain). This is exactly
   // what makes "posable" the Object's type, not a property test.
   inspectorSections: ['mesh', 'material'],
-  evaluate(params) {
+  evaluate(params, inputs) {
     return {
       kind: 'MeshData',
       geometry: sphereGeometryRef(params.radius, params.widthSegments, params.heightSegments),
-      // C-1 (V10/H14): hydrate at the evaluator too — the hydrate seam can bypass
-      // paramSchema parse (state surgery / fixtures / agent ops).
-      material: hydrateInlineMaterial(params.material),
+      // A connected Material node SUPERSEDES the param, wholesale (#394 D3); with
+      // nothing connected this is the param, hydrated exactly as before. The socket is
+      // a FOURTH source of a material value, so it goes through the SAME hydrate seam
+      // (C-1 / V10/H14) rather than around it.
+      material: resolveNodeMaterial(inputs.material, params.material),
     };
   },
 };
