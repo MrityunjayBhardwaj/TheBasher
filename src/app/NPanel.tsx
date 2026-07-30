@@ -2701,16 +2701,17 @@ function LinkedDataSections({
    *  than re-derived: the panel already computed it for this very node, and
    *  `canApplyTransform` evaluates the node to answer. */
   canApply: boolean;
-  /** #394 P2 — this block's rows, GENERATED FROM the data node by `exposeParams`
-   *  rather than grouped here from its params. Passed in (not computed here) so the
+  /** #394 P2/P3 — this block's rows, GENERATED FROM the chain by `exposeParams` rather
+   *  than grouped here from one node's params. Passed in (not computed here) so the
    *  panel builds ONE projection per render and both blocks read the same one.
    *
-   *  The behaviour is unchanged and that is the claim under test: the byte-identical
-   *  gate asserts this block's rows against a transcription of what it used to do,
-   *  and a browser probe checks that transcription against the real DOM. */
+   *  Since P3 these are the base data node's rows AND the rows of every data-lane
+   *  operator standing above it, so the rows in this block no longer share a node —
+   *  which is why every one of them is drawn against `row.nodeId`. */
   rows: readonly ExposedParam[];
 }) {
-  const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dataNode = nodes[dataNodeId] ?? null;
   const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
   if (!dataNode) return null;
   if (declared.length === 0) return null;
@@ -2719,14 +2720,30 @@ function LinkedDataSections({
   // H189 parity gap). That bucket is now the projection's `section: null` rows: it is a
   // real destination in the model, not an absence, which is why it survived the move.
   const { bySection, unrouted } = groupExposedRows(rows);
-  const valueOf = (key: string) => (dataNode.params as Record<string, unknown> | undefined)?.[key];
+
+  // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
+  // only while every row in this block came from the base — see the note on the `rows`
+  // prop. (#518)
+  const valueOf = (row: ExposedParam) =>
+    (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
+
+  // Sections to draw: the base node's declared list, plus any section a row actually
+  // routes to that the base does not declare. Without the union an operator declaring a
+  // section its base does not — a material operator over a curve, say — would contribute
+  // rows to a card that is never drawn, and they would vanish with no signal. The base's
+  // order is preserved and the extras follow, so the common case (an operator declaring
+  // `material`, which every mesh data node already declares) is byte-identical.
+  const extraSections = [...bySection.keys()].filter((s) => !declared.includes(s));
+  const cards: readonly SectionId[] = extraSections.length
+    ? [...declared, ...extraSections]
+    : declared;
 
   return (
     <div data-testid="inspector-linked-data" className="flex flex-col">
       <div className="px-3 pt-1 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Data · {dataNode.type}
       </div>
-      {declared.map((sectionId) => (
+      {cards.map((sectionId) => (
         <SectionCard
           key={sectionId}
           nodeType={dataNode.type}
@@ -2742,10 +2759,17 @@ function LinkedDataSections({
           <SectionBody
             sectionId={sectionId}
             ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
-            rows={(bySection.get(sectionId) ?? []).map((key) => [key, valueOf(key)] as const)}
+            rows={(bySection.get(sectionId) ?? []).map((row) => ({
+              key: row.paramPath,
+              value: valueOf(row),
+              // Two nodes in one card, and two operators in one lane can both own a
+              // `color` — so identity is the row's chain address, not its param name.
+              rowKey: row.relPath,
+              nodeId: row.nodeId,
+            }))}
             renderers={SECTION_CONTROL_RENDERERS}
-            renderRow={(key, value) => (
-              <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
+            renderRow={({ key, value, rowKey, nodeId }) => (
+              <ParamRow key={rowKey} nodeId={nodeId} paramPath={key} value={value} />
             )}
           />
         </SectionCard>
@@ -2753,8 +2777,13 @@ function LinkedDataSections({
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
           after the declared sections so a future data kind's un-routed param never
           silently vanishes (the H189 class). */}
-      {unrouted.map((key) => (
-        <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={valueOf(key)} />
+      {unrouted.map((row) => (
+        <ParamRow
+          key={row.relPath}
+          nodeId={row.nodeId}
+          paramPath={row.paramPath}
+          value={valueOf(row)}
+        />
       ))}
     </div>
   );
@@ -2871,7 +2900,30 @@ export function NPanel() {
     () => exposeParams(dagState, selectedId, { canApply }),
     [dagState, selectedId, canApply],
   );
-  const linkedRows = useMemo(() => projection.filter((r) => r.origin === 'base'), [projection]);
+  // #394 P3 (#518) — the linked-data block draws the base's rows AND the rows of every
+  // data-lane operator standing above it. Before this, a material operator's fields were
+  // in the projection and rendered nowhere, so the authority for a forced field could not
+  // be reached from the interface at all: the base row was editable, accepted the edit,
+  // and the viewport did not move because the operator supplied that field.
+  //
+  // Order comes from the walk (topmost operator first, base last), which is the declared
+  // precedence ladder read top-down. It is NOT re-sorted here — see the ORDER note in
+  // `exposeParams`.
+  //
+  // DECLARED LIMIT: an operator's rows that route to no section (`name`, `muted`, and the
+  // authored-bit set `overridden`) are dropped rather than shown raw. The unrouted bucket
+  // exists so a data node's VALUE param cannot silently vanish; these three are not value
+  // params but the operator's own control state, and `overridden` in particular has a
+  // purpose-built affordance (the per-field override dot) that a "(complex — Pro mode)"
+  // row would stand in front of. The operator's lifecycle controls have no home yet —
+  // that is the material section's data-block design, tracked with the lane work.
+  const linkedRows = useMemo(
+    () =>
+      projection.filter(
+        (r) => r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null),
+      ),
+    [projection],
+  );
 
   // #130 (D-04) — the override-set descriptor for this node type (null for the
   // ~38 node types that track no overrides). `makeOverrideInfo` returns the
@@ -3066,9 +3118,12 @@ export function NPanel() {
                       <SectionBody
                         sectionId={sectionId}
                         ctx={sectionCtx}
-                        rows={grouped.get(sectionId) ?? []}
+                        rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({
+                          key,
+                          value,
+                        }))}
                         renderers={SECTION_CONTROL_RENDERERS}
-                        renderRow={(key, value) => (
+                        renderRow={({ key, value }) => (
                           <ParamRow
                             key={key}
                             nodeId={node.id}

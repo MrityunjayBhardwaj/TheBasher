@@ -238,9 +238,12 @@ function emitted(
     SectionBody({
       sectionId,
       ctx,
-      rows,
+      // The cases here are written as `[key, value]` pairs because that is the shape a
+      // single-node section has; `SectionBody` takes named rows since #518 so a section
+      // fed by several nodes can carry each row's provenance and its own React identity.
+      rows: rows.map(([key, value]) => ({ key, value })),
       renderers: STUB_RENDERERS,
-      renderRow: (key) => `row:${key}`,
+      renderRow: ({ key }) => `row:${key}`,
     }),
   );
   return out;

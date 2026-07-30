@@ -372,7 +372,37 @@ export function declaredParamKeys(nodeType: string | undefined): readonly string
  * the two sites (the main-node block decorates rows with override info; the
  * linked-data block does not).
  */
-export function SectionBody({
+/**
+ * One row a section body draws.
+ *
+ * `key` is the PARAM key — what the section filter and the controls address, so it is the
+ * half that must stay a param name. `rowKey` is the React identity, and it is separate
+ * because a section can be fed by more than one node (#518, P3): a data-lane material
+ * operator and the base data node both contribute to the material section, and two
+ * operators in one lane both contribute a `roughness`. Defaults to `key`, so the
+ * single-node caller is unchanged.
+ *
+ * ⚠️ DECLARED UNTESTED, and the first statement of this claim was measurably WRONG. It
+ * read "React resolves a duplicate key by dropping one — silently". Falsified: with two
+ * override operators stacked in one lane and the identity keyed on the param name, BOTH
+ * `roughness` rows rendered. Duplicate sibling keys are still wrong — they make React's
+ * reconciliation reuse the wrong element across a reorder, so a focused input's draft can
+ * land on another row — but that consequence needs an affordance to REORDER the material
+ * lane, and none exists yet. So `rowKey` is kept because it is correct, not because a test
+ * proves it matters, and this note is here rather than a passing assertion implying it was
+ * checked.
+ */
+export interface SectionBodyRow {
+  readonly key: string;
+  readonly value: unknown;
+  readonly rowKey?: string;
+}
+
+/** Generic in the row so a caller can carry MORE than the body needs — the linked-data
+ *  block attaches each row's `nodeId`, and `renderRow` receives it typed. Re-looking it up
+ *  from the key would be resolution where provenance already exists, which is the exact
+ *  move this slice removes. */
+export function SectionBody<R extends SectionBodyRow>({
   sectionId,
   ctx,
   rows,
@@ -381,9 +411,9 @@ export function SectionBody({
 }: {
   sectionId: SectionId;
   ctx: SectionCtx;
-  rows: readonly (readonly [string, unknown])[];
+  rows: readonly R[];
   renderers: SectionControlRenderers;
-  renderRow: (key: string, value: unknown) => ReactNode;
+  renderRow: (row: R) => ReactNode;
 }) {
   const active = activeControls(sectionId, ctx);
   const { suppressAllRows, omitted } = sectionRowFilter(sectionId, ctx);
@@ -394,9 +424,7 @@ export function SectionBody({
   return (
     <>
       {at('before')}
-      {suppressAllRows
-        ? null
-        : rows.filter(([key]) => !omitted.has(key)).map(([key, value]) => renderRow(key, value))}
+      {suppressAllRows ? null : rows.filter((r) => !omitted.has(r.key)).map((r) => renderRow(r))}
       {at('after')}
     </>
   );

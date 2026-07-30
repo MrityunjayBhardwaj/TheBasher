@@ -109,21 +109,31 @@ export type ExposedParam = DerivedParam;
  * Lives here rather than in the panel because BOTH inspector blocks need it and a second
  * spelling is a second answer. Order within each bucket is the projection's own order,
  * which is the panel's order — see the ORDER note in the header.
+ *
+ * 🔴 THE BUCKETS CARRY ROWS, NOT PARAM PATHS, AND THAT IS THE POINT (#518, P3). This
+ * function used to reduce each row to its `paramPath`, which threw the `nodeId` away and
+ * forced the caller to re-attach ONE node id to every row it drew. That was harmless only
+ * while every row in a block came from a single node — and the material lane ends that:
+ * an operator's rows and the base's rows share the material section. Reduced to strings
+ * they would all have been drawn against the base, so editing an operator's field would
+ * have written to the node underneath it and changed nothing on screen. Provenance is
+ * exact and resolution is inference; a regroup that drops the exact half is where the
+ * inference gets reintroduced.
  */
 export function groupExposedRows(rows: readonly ExposedParam[]): {
-  bySection: ReadonlyMap<SectionId, string[]>;
-  unrouted: string[];
+  bySection: ReadonlyMap<SectionId, ExposedParam[]>;
+  unrouted: ExposedParam[];
 } {
-  const bySection = new Map<SectionId, string[]>();
-  const unrouted: string[] = [];
+  const bySection = new Map<SectionId, ExposedParam[]>();
+  const unrouted: ExposedParam[] = [];
   for (const r of rows) {
     if (r.home.section === null) {
-      unrouted.push(r.paramPath);
+      unrouted.push(r);
       continue;
     }
     const list = bySection.get(r.home.section);
-    if (list) list.push(r.paramPath);
-    else bySection.set(r.home.section, [r.paramPath]);
+    if (list) list.push(r);
+    else bySection.set(r.home.section, [r]);
   }
   return { bySection, unrouted };
 }
