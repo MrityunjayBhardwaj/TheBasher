@@ -29,6 +29,7 @@ Thumbs.db
 
 # Test artifacts
 playwright-report/
+blob-report/
 test-results/
 .playwright/
 
