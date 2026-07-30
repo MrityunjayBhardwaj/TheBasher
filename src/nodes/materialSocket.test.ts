@@ -17,6 +17,7 @@ import { applyOp, emptyDagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
 import { registerAllNodes } from './registerAll';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
+import { setMaterialColorMutator } from '../agent/mutators/builders/setMaterialColor';
 import type { DagState, Op } from '../core/dag/types';
 import type { MeshDataValue, OpenPBRMaterialValue } from './types';
 
@@ -164,6 +165,48 @@ describe('fan-out — one Material, many consumers (#394 D5)', () => {
     }).next;
     expect(colorOf(edited)).toBe('#00ff00');
     expect((evaluate(edited, 'd2').value as MeshDataValue).material!.base.color).toBe('#00ff00');
+  });
+});
+
+describe('the WRITE road — the agent edits what actually renders (#394 S3)', () => {
+  it('setMaterialColor on the OBJECT writes the linked Material node, and the render moves', () => {
+    // The offer==accept gate. Before the ownership hop this was the tenth instance of a
+    // shape worth naming: the mutator passed its precondition, emitted a setParam against
+    // the BoxData, applied it cleanly — and the rendered colour did not move. Reported
+    // success, did nothing. Asserted on the EVALUATED value, not on the emitted op,
+    // because "an op was produced" is exactly what the broken version also did.
+    let state = build([
+      {
+        type: 'addNode',
+        nodeId: 'm',
+        nodeType: 'Material',
+        params: { material: { name: 'shared', base: { color: NODE_COLOR } } },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'd',
+        nodeType: 'BoxData',
+        params: { size: [1, 1, 1], material: { name: 'inline', base: { color: PARAM_COLOR } } },
+      },
+      { type: 'addNode', nodeId: 'obj', nodeType: 'Object', params: { position: [0, 0, 0] } },
+      { type: 'connect', from: { node: 'd', socket: 'out' }, to: { node: 'obj', socket: 'data' } },
+      {
+        type: 'connect',
+        from: { node: 'm', socket: 'out' },
+        to: { node: 'd', socket: 'material' },
+      },
+    ]);
+    const spec = { targetSelectors: ['obj'], color: '#00ff00' };
+    expect(setMaterialColorMutator.preconditions(spec, {} as never, state).ok).toBe(true);
+    for (const op of setMaterialColorMutator.build(spec, {} as never, state)) {
+      state = applyOp(state, op).next;
+    }
+    expect(colorOf(state)).toBe('#00ff00');
+    // The data node's own param was NOT touched — the authority is the Material node, and
+    // the param is still sitting underneath waiting for an unlink.
+    expect(
+      (state.nodes.d.params as { material: { base: { color: string } } }).material.base.color,
+    ).toBe(PARAM_COLOR);
   });
 });
 

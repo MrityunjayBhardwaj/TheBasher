@@ -78,7 +78,7 @@ export function resolveDataParamOwner(
   if (!node) return null;
 
   const params = node.params as Record<string, unknown> | undefined;
-  if (params && paramRoot in params) return id;
+  if (params && paramRoot in params) return linkedProducerId(state, id, paramRoot) ?? id;
 
   // Reach through the split: the Object owns the transform; the data node it points at via
   // `data` owns geometry + material.
@@ -88,8 +88,41 @@ export function resolveDataParamOwner(
   if (dataRef?.node) {
     const dataNode = state.nodes[dataRef.node];
     const dataParams = dataNode?.params as Record<string, unknown> | undefined;
-    if (dataParams && paramRoot in dataParams) return dataRef.node;
+    if (dataParams && paramRoot in dataParams) {
+      return linkedProducerId(state, dataRef.node, paramRoot) ?? dataRef.node;
+    }
   }
 
   return null;
+}
+
+/**
+ * THE SECOND HOP (#394): a param a node owns can be SUPERSEDED by a producer wired into a
+ * socket of the same name, and then the producer is the true owner — writing the param
+ * would succeed and change nothing.
+ *
+ * Measured before this existed: with a Material node wired into a cube, `setMaterialColor`
+ * passed its precondition, emitted a `setParam` against the BoxData, applied it cleanly —
+ * and the rendered colour did not move. Success reported, nothing done. Putting the hop
+ * HERE rather than in the mutator is what keeps the read road and the write road on one
+ * answer: the inspector resolves the value it displays through the same function, so a
+ * linked material cannot render one colour and report another.
+ *
+ * Keyed on the socket sharing the param's name, and self-checking: the hop is only taken
+ * when the linked producer actually carries a param under that root, so it can be written.
+ * A socket that shadows a param is a shape, not a one-off — textures-as-nodes is the next
+ * one — and this makes the second instance free rather than a second place to forget.
+ */
+function linkedProducerId(state: DagState, ownerId: string, paramRoot: string): string | null {
+  const binding = (state.nodes[ownerId]?.inputs as Record<string, unknown> | undefined)?.[
+    paramRoot
+  ];
+  // A `list`-cardinality socket persists an array; a `single` one persists a bare ref. Read
+  // the FIRST entry either way — the same one the evaluator hands to `evaluate`, so the
+  // owner this reports is the producer whose value actually rendered.
+  const ref = (Array.isArray(binding) ? binding[0] : binding) as { node?: string } | undefined;
+  const producerId = ref?.node;
+  if (!producerId) return null;
+  const producerParams = state.nodes[producerId]?.params as Record<string, unknown> | undefined;
+  return producerParams && paramRoot in producerParams ? producerId : null;
 }
