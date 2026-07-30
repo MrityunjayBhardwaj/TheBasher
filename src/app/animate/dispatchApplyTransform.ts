@@ -158,8 +158,11 @@ function composeMaskedMatrix(
 function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterialSpec {
   return {
     materialClass: 'standard',
-    // Primitives expose color only; the remaining scalars take the renderer's
-    // un-overridden defaults (applyOverride no-override branch, SceneFromDAG).
+    // Primitives expose color only; the remaining scalars are FROZEN at the values
+    // the pre-#178 renderer used when no override was present. This used to cite
+    // `SceneFromDAG.applyOverride`'s no-override branch; #394 S3b deleted that
+    // branch as unreachable, so these are a bake-time snapshot of a historical
+    // look, not a mirror of anything live. Changing them re-bakes differently.
     // v0.6 #2 (#178): the inline color now lives at base.color (OpenPBR IR).
     color: material?.base.color ?? '#ffffff',
     roughness: 0.5,
