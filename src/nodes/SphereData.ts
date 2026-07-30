@@ -24,7 +24,6 @@ import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
 
 // Match SphereMesh's default so an Object→SphereData look is byte-identical to a
 // fused sphere.
-const SPHERE_DEFAULT_COLOR = '#88aaff';
 
 export const SphereDataParams = z.object({
   radius: z.number().positive().default(0.5),
@@ -32,7 +31,7 @@ export const SphereDataParams = z.object({
   heightSegments: z.number().int().positive().default(16),
   // The OpenPBR inline material IR — the SAME schema SphereMesh uses (byte-identical
   // defaults + the V10/H14 three-layer hydrate guard; see materialSchema.ts).
-  material: openpbrMaterialSchema(SPHERE_DEFAULT_COLOR),
+  material: openpbrMaterialSchema(),
 });
 export type SphereDataParams = z.infer<typeof SphereDataParams>;
 
@@ -54,7 +53,7 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
       geometry: sphereGeometryRef(params.radius, params.widthSegments, params.heightSegments),
       // C-1 (V10/H14): hydrate at the evaluator too — the hydrate seam can bypass
       // paramSchema parse (state surgery / fixtures / agent ops).
-      material: hydrateInlineMaterial(params.material, SPHERE_DEFAULT_COLOR),
+      material: hydrateInlineMaterial(params.material),
     };
   },
 };

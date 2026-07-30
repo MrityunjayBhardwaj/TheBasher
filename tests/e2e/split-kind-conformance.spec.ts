@@ -311,7 +311,8 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     }),
     // MEASURED against a live scene: a bare pair draws #c81e5a, which is the colour
     // `rowDataParams` mints the data node with. It is neither the renderer's #808080
-    // fallback nor BoxData's own #5af07a schema default, so this cannot pass by collision.
+    // fallback nor the standard #cccccc schema default (#394 D7 — no longer per-kind),
+    // so this cannot pass by collision.
     expectBare: String(SPLIT_KINDS.box.distinctValues[0]).toLowerCase(),
     // MEASURED on this road: the shared channel's colour reaches a constrained cube.
     expectConstrained: { reaches: true, value: '#123456' },

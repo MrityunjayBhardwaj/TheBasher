@@ -355,7 +355,12 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
 // (radius 1.3, 32×20 segments) so a dropped param can't pass vacuously (H180).
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5.
 
-const SPHERE_MIG_DEFAULT_COLOR = '#88aaff';
+// The colour the FIXTURE's saved sphere recorded. It is authored into the fixture below
+// (#394 D7) rather than left to the schema default: when the fixture omitted `material`,
+// both the saved value AND the expectation came from the live schema, so the byte-identity
+// assertion re-derived itself and could not fail when the default moved. The claim under
+// test is that the migration PRESERVES what a save recorded — so the save must record it.
+const SPHERE_MIG_SAVED_COLOR = '#88aaff';
 const SPHERE_MIG_RADIUS = 1.3;
 const SPHERE_MIG_WS = 32;
 const SPHERE_MIG_HS = 20;
@@ -379,6 +384,9 @@ function buildFusedBoxSphereDagState(): DagState {
       heightSegments: SPHERE_MIG_HS,
       position: [0, 0, 0],
       rotation: [0, 0, 0],
+      // AUTHORED, like the box below — this is a saved project, and a saved project
+      // records its colour. See SPHERE_MIG_SAVED_COLOR.
+      material: { name: 'default', base: { color: SPHERE_MIG_SAVED_COLOR } },
     },
   });
   add({
@@ -540,11 +548,13 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
     // Slice-4-durable: it compares against sphereGeometryRef, not a live fused resolve.
     const canonical = sphereGeometryRef(SPHERE_MIG_RADIUS, SPHERE_MIG_WS, SPHERE_MIG_HS);
     expect(split!.geometry.descriptor).toEqual(canonical.descriptor);
-    // The material is the canonical hydrated OpenPBR default.
-    const expectedMaterial = hydrateInlineMaterial(
-      openpbrMaterialSchema(SPHERE_MIG_DEFAULT_COLOR).parse(undefined),
-      SPHERE_MIG_DEFAULT_COLOR,
-    );
+    // The saved colour survives the migration untouched — the literal, so this can fail.
+    expect((split!.material as InlineMaterialSpec).base.color).toBe(SPHERE_MIG_SAVED_COLOR);
+    // …and the rest of the IR is the canonical hydrated OpenPBR default.
+    const expectedMaterial = hydrateInlineMaterial({
+      ...openpbrMaterialSchema().parse(undefined),
+      base: { color: SPHERE_MIG_SAVED_COLOR, metalness: 0 },
+    });
     expect(split!.material).toEqual(expectedMaterial);
     expect(split!.transform.position).toEqual([0, 0, 0]);
     expect(split!.transform.scale).toEqual([1, 1, 1]);

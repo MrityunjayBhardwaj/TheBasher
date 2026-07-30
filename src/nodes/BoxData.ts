@@ -20,13 +20,12 @@ import { boxGeometryRef } from '../app/modifierGeometry';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
 
 // Match BoxMesh's default so an Object→BoxData look is byte-identical to a box.
-const BOX_DEFAULT_COLOR = '#5af07a';
 
 export const BoxDataParams = z.object({
   size: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]),
   // The OpenPBR inline material IR — the SAME schema BoxMesh uses (byte-identical
   // defaults + the V10/H14 three-layer hydrate guard; see materialSchema.ts).
-  material: openpbrMaterialSchema(BOX_DEFAULT_COLOR),
+  material: openpbrMaterialSchema(),
 });
 export type BoxDataParams = z.infer<typeof BoxDataParams>;
 
@@ -48,7 +47,7 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
       geometry: boxGeometryRef(params.size),
       // C-1 (V10/H14): hydrate at the evaluator too — the hydrate seam can bypass
       // paramSchema parse (state surgery / fixtures / agent ops).
-      material: hydrateInlineMaterial(params.material, BOX_DEFAULT_COLOR),
+      material: hydrateInlineMaterial(params.material),
     };
   },
 };

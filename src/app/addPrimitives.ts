@@ -181,7 +181,11 @@ export function buildAddPrimitiveOps(
             radius: 0.5,
             widthSegments: 24,
             heightSegments: 16,
-            material: { name: 'default', color: '#88aaff' },
+            // No `material`: a new sphere takes the ONE standard material from the
+            // schema, exactly as a new cube does (#394 D7). The flat `{name,color}`
+            // payload that used to sit here was already inert — zod strips unknown
+            // keys, so the colour it named never reached `base.color`; the schema
+            // default was doing the work. Removed rather than left reading as live.
           },
         },
         {

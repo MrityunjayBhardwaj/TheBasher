@@ -734,7 +734,8 @@ export function boot(): Promise<void> {
               radius: 0.3,
               widthSegments: segments,
               heightSegments: segments,
-              material: { name: 'default', color: '#88aaff' },
+              // No `material` — the standard one (#394 D7). The flat `{name,color}`
+              // that used to sit here was inert (zod strips unknown keys).
             },
           });
           ops.push({

@@ -72,8 +72,13 @@ Basher v0.5 ships PBR-only materials (V9 — materials = data, not code).
 Shader authoring (TSL/OSL) is deferred to P4.
 
 ## Mesh inline material
-Most meshes (cubes, spheres) carry a \`material\` block:
-\`{ name: "default", color: "#5af07a" }\`. Only \`color\` is exposed in v0.5.
+Most mesh DATA nodes (BoxData, SphereData) carry a \`material\` block holding the
+OpenPBR IR — nested lobes, NOT a flat color:
+\`{ name: "default", base: { color: "#cccccc", metalness: 0 }, specular: { roughness: 0.3, ior: 1.5 }, … }\`
+Address a field by its full path, e.g. \`material.base.color\`. A flat top-level
+\`color\` key is NOT part of the schema and is dropped on parse.
+Every new material starts at the SAME standard base colour \`#cccccc\` — there is no
+per-primitive colour (a new cube and a new sphere look identical).
 
 ## MaterialOverride node
 Wraps a child mesh and replaces its material. Params:
