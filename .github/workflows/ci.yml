@@ -44,8 +44,23 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  e2e:
+  # SHARDED ACROSS FOUR RUNNERS (#504), and the reason is that the obvious lever
+  # does not work. The suite is 681 tests at ~11.6s each on CI (2.2h), against
+  # ~3.4s each on a 12-core dev machine — `ubuntu-latest` is 2 vCPU with software
+  # GL, so every WebGL scene renders on CPU. Raising `workers` was MEASURED and
+  # gains only 1.41x (six specs: 20.3s serial vs 14.4s at --workers=6) because
+  # total CPU is unchanged — one "serial" test already saturates ~5 cores, so
+  # extra workers on one runner just timeshare the same silicon. More MACHINES
+  # scale; more workers do not. `workers: 1` therefore stays as it is.
+  e2e-shard:
     runs-on: ubuntu-latest
+    strategy:
+      # Every shard must report, or the merged total silently describes a subset.
+      # The MIN_EXPECTED_TESTS floor in e2e-diff is what catches that, but there is
+      # no reason to help it happen.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,6 +69,14 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      # LOAD-BEARING, and not visibly so — it looks like a leftover next to a dev
+      # server. `acceptance.spec.ts`'s "#6b beacon endpoint absent in prod build"
+      # greps dist/assets/*.js to prove the dev-only beacon middleware is excluded
+      # from the bundle, and it calls `test.skip()` when dist/ is missing — so
+      # dropping this step does not fail that test, it makes it VACUOUS. Playwright
+      # decides which shard that spec lands in, so every shard builds. The shards
+      # run in parallel, so this costs no wall clock over the single runner it
+      # replaces.
       - run: npm run build
       # The suite is red on main and has been for a long time — headless-linux
       # rendering debt that passes on darwin. So this step's own pass/fail is
@@ -62,8 +85,62 @@ jobs:
       # this branch fail anything main does not? (#463 — and see the long
       # comment in scripts/e2e-diff.mjs for why this is a set difference and
       # not an allowlist someone reads.)
-      - run: npm run test:e2e
+      - run: npx playwright test --shard=${{ matrix.shard }}/4 --reporter=blob
         continue-on-error: true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+          retention-days: 1
+
+  # NAMED `e2e` DELIBERATELY: that is the required status check on `main`, and a
+  # matrix job would publish `e2e (1)`, `e2e (2)`, … so the context `e2e` would
+  # never appear and every PR would block forever on a check that cannot exist.
+  #
+  # It also puts the required check on the job that actually decides the merge,
+  # rather than on the one whose playwright step runs under continue-on-error and
+  # whose pass/fail we are explicitly told to ignore.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: e2e-shard
+    # always(), not success(): a shard job that dies on install or build must still
+    # reach the verdict step, because a missing shard has to be caught by the
+    # under-count floor rather than by this job never running.
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: blob-report-*
+          merge-multiple: true
+          path: all-blobs
+      # ASSERT THE SHARD COUNT DIRECTLY, because the vacuous-run floor does NOT
+      # cover this and it is not close. MEASURED: 681 tests over 4 shards is ~170
+      # each, so losing one whole shard leaves 511 — comfortably above
+      # MIN_EXPECTED_TESTS=500, which would then happily report "no new failures"
+      # after running three quarters of the suite. A total is a proxy for "did the
+      # suite run"; it is not a proxy for "did every shard report", so check the
+      # thing itself.
+      - name: every shard reported
+        run: |
+          found=$(find all-blobs -name '*.zip' | wc -l | tr -d ' ')
+          echo "blob reports found: $found (expected 4)"
+          if [ "$found" -ne 4 ]; then
+            echo "::error::expected 4 shard blob reports, found $found — a shard died or its upload failed. Refusing to render a verdict on a partial suite."
+            exit 1
+          fi
+      # merge-reports emits exactly the shape e2e-diff already consumes: a
+      # Playwright HTML report directory, whose index.html embeds the report as a
+      # base64 zip. So the gate script needs no changes for sharding.
+      - run: npx playwright merge-reports --reporter html ./all-blobs
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
       - run: node scripts/e2e-diff.mjs check playwright-report
       # always(), not failure(): the report is the input to the next baseline
       # diff, so it has to survive a green run too.
