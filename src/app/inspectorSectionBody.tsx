@@ -281,6 +281,33 @@ function activeControls(sectionId: SectionId, ctx: SectionCtx): readonly Section
 }
 
 /**
+ * Which of a section's generic rows survive its custom controls.
+ *
+ * `SectionBody` renders through this, and so does the exposed-param projection, for the
+ * same reason the table itself is shared: "a control replaces these rows" is a decision,
+ * and a second site that re-derives it is a second answer that will eventually differ.
+ * The projection cannot import `SectionBody` (it emits data, not React), so without this
+ * it would have to re-filter `SECTION_CONTROLS` itself — which is exactly the drift the
+ * one-table property exists to prevent.
+ *
+ * Note the SCOPE: `omitted` is per SECTION, not global. A key one section's control owns
+ * still renders as a row in a different section it routes to. The main-node panel block
+ * additionally pre-filters by `controlOwnedRowKeys` (the union across declared sections)
+ * before grouping, because a control-owned key may route to no section at all and would
+ * otherwise land in the unrouted bucket beside the control that renders it.
+ */
+export function sectionRowFilter(
+  sectionId: SectionId,
+  ctx: SectionCtx,
+): { suppressAllRows: boolean; omitted: ReadonlySet<string> } {
+  const active = activeControls(sectionId, ctx);
+  return {
+    suppressAllRows: active.some((c) => c.suppressesAllRows === true),
+    omitted: new Set(active.flatMap((c) => c.omitRowKeys ?? [])),
+  };
+}
+
+/**
  * Does this section render a custom control for this node?
  *
  * The guard's predicate. A section that routes no param to a generic row AND
@@ -359,8 +386,7 @@ export function SectionBody({
   renderRow: (key: string, value: unknown) => ReactNode;
 }) {
   const active = activeControls(sectionId, ctx);
-  const suppressAllRows = active.some((c) => c.suppressesAllRows);
-  const omitted = new Set(active.flatMap((c) => c.omitRowKeys ?? []));
+  const { suppressAllRows, omitted } = sectionRowFilter(sectionId, ctx);
   const at = (placement: 'before' | 'after') =>
     active
       .filter((c) => c.placement === placement)
