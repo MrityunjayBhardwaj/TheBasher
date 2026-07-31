@@ -247,6 +247,43 @@ export function groupExposedRows<T extends { readonly home: ExposedHome }>(
   return { bySection, unrouted };
 }
 
+/**
+ * Which inspector block draws each promoted control (#394 P7).
+ *
+ * Lives beside {@link groupExposedRows} and for the same reason: TWO blocks draw section
+ * cards — the selected node's own sections and the linked data node's — and a per-block
+ * filter cannot rule out the two failures that matter. If both blocks decide independently,
+ * a section both declare draws the control TWICE, and a section neither declares draws it
+ * ZERO times. Neither is visible from inside a block, because a block can only see the
+ * cards it draws itself.
+ *
+ * The rule: the selected node's declared sections win, the linked block takes the rest, and
+ * anything neither can place is UNPLACED — which the panel renders in a visible bucket, not
+ * a dropped row ([[V145]] reaching the interface layer). A control is the one row whose
+ * disappearance also strands something: its drives keep pulling with no handle left to
+ * reach them by.
+ *
+ * `ownSections` is the selected node's declared list; `hasLinkedBlock` says whether a linked
+ * data block is being drawn at all. Both are facts the PANEL holds and neither block does,
+ * which is why the partition is computed there and passed down.
+ */
+export function partitionPromotedRows(
+  rows: readonly PromotedParam[],
+  ownSections: readonly SectionId[],
+  hasLinkedBlock: boolean,
+): { main: PromotedParam[]; linked: PromotedParam[]; unplaced: PromotedParam[] } {
+  const main: PromotedParam[] = [];
+  const linked: PromotedParam[] = [];
+  const unplaced: PromotedParam[] = [];
+  for (const row of rows) {
+    const section = row.home.section;
+    if (section !== null && ownSections.includes(section)) main.push(row);
+    else if (section !== null && hasLinkedBlock) linked.push(row);
+    else unplaced.push(row);
+  }
+  return { main, linked, unplaced };
+}
+
 /** One node's position in the chain, addressed WITHOUT its id.
  *
  *  `nodeId` is per-instance: a template mints fresh ids every time it is instantiated, so

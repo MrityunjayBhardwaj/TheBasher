@@ -52,7 +52,15 @@ import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
-import { exposeParams, groupExposedRows, type DerivedParam, type MaskSource } from './exposeParams';
+import {
+  exposeParams,
+  groupExposedRows,
+  partitionPromotedRows,
+  type DerivedParam,
+  type MaskSource,
+  type PromotedParam,
+} from './exposeParams';
+import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
@@ -336,6 +344,11 @@ function NumericField({
         </span>
         {masked ? <MaskedMarker nodeId={nodeId} paramPath={paramPath} masked={masked} /> : null}
         <ParamDriverBind nodeId={nodeId} paramPath={paramPath} />
+        {/* #394 P7 — promote is the SAME act as binding, with the source minted instead
+            of picked ("promotion is itself a driver"), so it sits beside the bind chip
+            rather than in a surface of its own. Renders nothing where a promote could
+            not succeed — see PromoteParamControl's offer==accept note. */}
+        <PromoteParamControl nodeId={nodeId} paramPath={paramPath} />
       </span>
       <input
         type="number"
@@ -2776,6 +2789,7 @@ function LinkedDataSections({
   dataNodeId,
   objectNodeId,
   canApply,
+  promoted,
   rows,
 }: {
   dataNodeId: string;
@@ -2796,6 +2810,11 @@ function LinkedDataSections({
    *  control is an interface element with no node/param of its own to draw here, and the
    *  narrowing is on the prop rather than inside so the caller cannot quietly pass one. */
   rows: readonly DerivedParam[];
+  /** #394 P7 — the promoted controls the PANEL assigned to this block, already partitioned
+   *  against the selected node's own sections so the two blocks cannot both draw one. Kept
+   *  as a separate prop from `rows` for the same reason `rows` is narrowed: they are drawn
+   *  by a different component and must not be reachable from the derived path. */
+  promoted: readonly PromotedParam[];
 }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dataNode = nodes[dataNodeId] ?? null;
@@ -2820,7 +2839,15 @@ function LinkedDataSections({
   // rows to a card that is never drawn, and they would vanish with no signal. The base's
   // order is preserved and the extras follow, so the common case (an operator declaring
   // `material`, which every mesh data node already declares) is byte-identical.
-  const extraSections = [...bySection.keys()].filter((s) => !declared.includes(s));
+  // #394 P7 — a promoted control's home counts toward the card union for exactly the
+  // reason an operator's section does: a card that is never drawn is a row that vanishes,
+  // and a control is the one row whose disappearance also strands its drives.
+  const promotedSections = promoted
+    .map((r) => r.home.section)
+    .filter((s): s is SectionId => s !== null);
+  const extraSections = [...new Set([...bySection.keys(), ...promotedSections])].filter(
+    (s) => !declared.includes(s),
+  );
   const cards: readonly SectionId[] = extraSections.length
     ? [...declared, ...extraSections]
     : declared;
@@ -2866,6 +2893,13 @@ function LinkedDataSections({
               />
             )}
           />
+          {/* #394 P7 — the controls homed into this card. Drawn after the params so a
+              knob reads as standing in front of the rows it drives, not among them. */}
+          {promoted
+            .filter((r) => r.home.section === sectionId)
+            .map((r) => (
+              <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+            ))}
         </SectionCard>
       ))}
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
@@ -3025,6 +3059,32 @@ export function NPanel() {
           (r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null)),
       ),
     [projection],
+  );
+
+  // #394 P7 — the promoted controls this chain carries, PARTITIONED HERE and only here.
+  //
+  // A control renders in the card its `home` names, and two different blocks draw cards:
+  // this node's own sections, and the linked data node's. Partitioning in one place is
+  // what keeps a control from being drawn twice (both blocks claiming a section they both
+  // declare) or zero times (each assuming the other draws it) — the two failures a
+  // per-block filter cannot rule out on its own.
+  //
+  // The rule: the SELECTED node's declared sections win, the linked block takes the rest,
+  // and whatever neither block can place falls to a visible bucket below. That last arm is
+  // the [[V145]] degradation reaching the interface layer — an unplaceable control is
+  // shown unrouted, never dropped, because a control that vanishes takes the only handle
+  // on its drives with it.
+  const promoted = useMemo(
+    () => projection.filter((r): r is PromotedParam => r.kind === 'promoted'),
+    [projection],
+  );
+  const {
+    main: promotedMain,
+    linked: promotedLinked,
+    unplaced: promotedUnplaced,
+  } = useMemo(
+    () => partitionPromotedRows(promoted, declared, linkedDataId !== null),
+    [promoted, declared, linkedDataId],
   );
 
   // #130 (D-04) — the override-set descriptor for this node type (null for the
@@ -3235,6 +3295,13 @@ export function NPanel() {
                           />
                         )}
                       />
+                      {/* #394 P7 — controls homed into THIS node's sections, drawn after
+                          the params they stand in front of. */}
+                      {promotedMain
+                        .filter((r) => r.home.section === sectionId)
+                        .map((r) => (
+                          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+                        ))}
                     </SectionCard>
                   ))}
                   {unrouted.length > 0 ? (
@@ -3264,7 +3331,18 @@ export function NPanel() {
               objectNodeId={node.id}
               canApply={canApply}
               rows={linkedRows}
+              promoted={promotedLinked}
             />
+          ) : null}
+          {/* #394 P7 — a control neither block could place: its home names no section this
+              chain draws, or names none at all. Shown rather than dropped ([[V145]]), and
+              shown HERE rather than inside a block so the rule has one site. */}
+          {promotedUnplaced.length > 0 ? (
+            <div data-testid="inspector-promoted-unrouted" className="flex flex-col py-1">
+              {promotedUnplaced.map((r) => (
+                <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+              ))}
+            </div>
           ) : null}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
               edit / remove controller knobs + promote them to the Controllers dock.
