@@ -32,6 +32,17 @@
 //    an empty one there reads as "this material has no operators yet", which is a
 //    sentence about the wrong noun.
 //
+// ⚠️ DECLARED GAP — THE OFF-LANE RETURN IS UNTESTED AT EVERY TIER THAT EXISTS.
+//    Replacing `if (dataKind === null) return null` with a `?? 'MeshData'` fallback —
+//    which renders the empty stack on a Material node, banner-less, with no "+ Add"
+//    because the accept still refuses — reddens ZERO tests and ZERO type errors.
+//    Measured, not assumed. The property is reachable, the perturbation is the right
+//    one, and the consequence is real; the repo simply has no component-render tier for
+//    the inspector, so nothing can see a component that returns null versus one that
+//    returns rows. That is a missing TIER, not a weak claim, so the claim is not
+//    demoted — it is named here and covered by the browser observation (S3d-d) instead.
+//    Same shape as the mask-precedence gap declared one slice earlier.
+//
 // REF: src/app/OperatorStackRows.tsx (the shared rows); src/app/operatorStack.ts
 //      (enumerateMaterialStack + the material builders); src/app/dataSectionCapability.ts
 //      (the three-state answer, grounded on the Blender 5.1 datablock properties);

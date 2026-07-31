@@ -60,7 +60,13 @@ describe('#458 SECTION_CONTROLS — shape', () => {
     expect(keys.length).toBe(new Set(keys).size);
     // Guard the guard: a table that lost its entries would satisfy the two
     // assertions above vacuously.
-    expect(keys.length).toBeGreaterThanOrEqual(13);
+    //
+    // ⚠️ MOVE THIS FLOOR WHEN A CONTROL IS ADDED. It is the row count MEASURED at the
+    // last change, and a stale one goes quietly blind: #394 S3d added `materialStack`
+    // and, at 13, deleting that new row again left this assertion GREEN — the floor was
+    // still guarding the table as it stood two controls ago. A floor that does not move
+    // stops being a census and becomes a lower bound on ancient history.
+    expect(keys.length).toBeGreaterThanOrEqual(14);
   });
 
   it('places the two transform controls BELOW the rows and everything else above', () => {
